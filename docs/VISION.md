@@ -92,16 +92,30 @@ they lost. Claims are rare, so contention on one ref is negligible. In V1's test
 (2026-10-26), two machines claimed at the same instant three times; each time exactly one claim
 held and the other agent was shown it.
 
-"Seen" is made exact by a token. The `claims` tool returns the open claims and a token naming the
-tip they were read from, and `claim` takes that token back. If any claim newer than the token is
-still open, `claim` returns it instead of claiming, so an agent can't claim past something it was
-never shown, even if that claim arrived after the agent's last look.
+"Seen" is made exact by a token. The `claims` tool returns the open claims and a token naming what
+it showed, and `claim` takes that token back. If any open claim wasn't shown by the token, `claim`
+returns it instead of claiming, so an agent can't claim past something it was never shown, even
+if that claim arrived after the agent's last look.
 
 A claim ends when its session releases it or stops; a session that stops cleanly releases its
 claims. A laptop that sleeps or loses its network can't, so a claim also lapses once its session
 is missing from its device's presence, or that presence is stale: unchanged for 6 minutes,
 against a heartbeat every 2. A reader measures staleness from when it saw the presence change,
-not from the writer's clock.
+not from the writer's clock, and only up to its own last successful sync, so a reader that was
+itself asleep or offline doesn't take everyone else for gone. A daemon that stops deletes its
+presence, which ends its claims at the next sync. A claim made from the CLI ends when the daemon
+it was made under stops.
+
+Each reader works out lapsing for itself, which leaves two gaps: readers can disagree about
+whether a claim has lapsed, and a lapsed claim comes back when its laptop wakes. So a claim lists
+the claims its daemon judged lapsed when it was made, and every daemon treats those as ended from
+then on and tells the holder's session: a lapse that anyone claimed past is final, for everyone.
+A lapse nobody claimed past is undone, and the claim holds again once its device is back. A seen
+token given while a claim was lapsed doesn't cover it once it is back, so `claim` shows it like a
+newer claim. The list of ended claims is a field of the claim event, so it is part of the bus
+protocol. It replaced a timer on the holder's side, which released whatever it guessed others had
+seen lapse and could only narrow the gaps. Both gaps were found by the Opus reviews of V1 (#8),
+2026-10-26 and 27.
 
 ### One daemon per device, a thin MCP server per session
 
@@ -123,11 +137,13 @@ to start launches the daemon. A session's MCP process lives exactly as long as t
 when its connection drops the daemon announces `session.stopped`, even after a crash. Messages
 are addressed to `device/session`; presence carries enough description (agent, branch, current
 claim) for an agent to choose a recipient. A session receives the messages that arrive while it
-runs; nothing sent before it started is replayed to it.
+runs; nothing sent before it started is replayed to it. A daemon back after less than 10
+minutes down delivers what it missed only to the sessions that reconnect to it, within 30 seconds
+of its start. After longer, it skips what it missed, since no session is still waiting for it.
 
 Sessions reach the daemon over loopback TCP, on a random port written with a random token to
-`.git/t4/daemon.json`. A daemon with no sessions for 10 minutes exits, and its presence goes
-stale like any other.
+`.git/t4/daemon.json`. A daemon with no sessions and no claims made from the CLI exits after 10
+minutes, and deletes its presence.
 
 Claude Code gives its MCP servers and its hooks the same `CLAUDE_CODE_SESSION_ID`, matching the
 `session_id` a hook reads on stdin (seen in Claude Code 2.1.310, 2026-10-26). That is how a hook,
