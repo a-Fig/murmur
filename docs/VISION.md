@@ -64,7 +64,8 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
   wiped tracked files (beads #6484).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
-  when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents.
+  when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents: V1 took about 12 s
+  from a Windows laptop to a macOS machine through GitHub (2026-10-26), 2 s of it the send.
 - A device is one clone's daemon. Worktrees of a clone share its `.git`, so they share its daemon;
   a second clone on the same machine is a second device. The device ID is the hostname plus four
   random hex digits (`tyler-laptop-3f2a`), kept with the daemon's other state in `.git/t4/`, which
@@ -87,7 +88,9 @@ compare-and-swap. The daemon builds the claim on the tip it last fetched and pus
   hadn't seen. The agent decides with them in view: claim something else, coordinate, or retry.
 
 No claim is ever made without seeing every earlier one, and nobody has to be told later that
-they lost. Claims are rare, so contention on one ref is negligible.
+they lost. Claims are rare, so contention on one ref is negligible. In V1's test through GitHub
+(2026-10-26), two machines claimed at the same instant three times; each time exactly one claim
+held and the other agent was shown it.
 
 "Seen" is made exact by a token. The `claims` tool returns the open claims and a token naming the
 tip they were read from, and `claim` takes that token back. If any claim newer than the token is
@@ -153,7 +156,8 @@ a tool is crosstalk's idea.
 The socket exists: Claude Code 2.1.310 sets `CLAUDE_CODE_MESSAGING_SOCKET` (a named pipe on
 Windows) and a token for it in every child process, MCP servers and hooks included (seen
 2026-10-26). Its protocol, and whether it wakes an idle session, are unverified, as is Codex's
-hook support. V1 uses the hook.
+hook support. V1 uses the hook: Claude Code adds a `PostToolUse` hook's `additionalContext` to
+the conversation, which is how a notice reaches an agent mid-task (seen with 2.1.310, 2026-10-26).
 
 ### The envelope
 
