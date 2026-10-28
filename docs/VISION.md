@@ -63,6 +63,15 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   scale, and two of its bugs are warnings: `git push --mirror` from an ordinary clone deletes
   custom refs on the remote (beads #5266), and checking an internal branch out in the user's repo
   wiped tracked files (beads #6484).
+- `mesh/<deviceId>`, `presence/<deviceId>` and `claims` are the only names under `refs/t4/` t4
+  reads. Device IDs are lowercase letters, digits and dashes, never a name Windows can't hold as
+  a file. Anything else there is
+  left on the remote unfetched. Anyone who can push can write any of these refs, so a reader
+  holds what it reads to what t4 writes and builds over junk rather than on it, and a daemon
+  deletes refs under its own names (`presence/<deviceId>/...`), which would otherwise stop it
+  pushing its own. Names under `refs/t4/claims/`, and `refs/t4/mesh` or `refs/t4/presence` as
+  refs themselves, are reserved: the same name clash would block those refs (found by the
+  Opus reviews of V1, #8, 2026-10-28).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
   when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents: V1 took about 12 s
   from a Windows laptop to a macOS machine through GitHub (2026-10-26), 2 s of it the send.
