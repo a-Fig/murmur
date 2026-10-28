@@ -101,10 +101,13 @@ A claim ends when its session releases it or stops; a session that stops cleanly
 claims. A laptop that sleeps or loses its network can't, so a claim also lapses once its session
 is missing from its device's presence, or that presence is stale: unchanged for 6 minutes,
 against a heartbeat every 2. A reader measures staleness from when it saw the presence change,
-not from the writer's clock, and only up to its own last successful sync, so a reader that was
-itself asleep or offline doesn't take everyone else for gone. A daemon that stops deletes its
-presence, which ends its claims at the next sync. A claim made from the CLI ends when the daemon
-it was made under stops.
+on its own monotonic clock, and only up to its own last successful sync, so a reader that was
+itself asleep or offline doesn't take everyone else for gone. Only a presence it has never seen
+change is dated by the writer's clock, and never more than 2 minutes back, so a slow clock can't
+make a device look gone before its next heartbeat. A daemon that stops deletes its presence,
+which ends its claims at the next sync. A claim made from the CLI ends when the daemon it was
+made under stops. For 30 seconds after a restart, claims of the device's own sessions that
+haven't reconnected yet still hold, so a sibling session's claim doesn't end them.
 
 Each reader works out lapsing for itself, which leaves two gaps: readers can disagree about
 whether a claim has lapsed, and a lapsed claim comes back when its laptop wakes. So a claim lists
