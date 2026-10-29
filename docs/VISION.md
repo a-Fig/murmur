@@ -67,11 +67,12 @@ messages. No server, no accounts, no extra auth: whoever can push is in.
   reads. Device IDs are lowercase letters, digits and dashes, never a name Windows can't hold as
   a file. Anything else there is
   left on the remote unfetched. Anyone who can push can write any of these refs, so a reader
-  holds what it reads to what t4 writes and builds over junk rather than on it, and a daemon
-  deletes refs under its own names (`presence/<deviceId>/...`), which would otherwise stop it
-  pushing its own. Names under `refs/t4/claims/`, and `refs/t4/mesh` or `refs/t4/presence` as
-  refs themselves, are reserved: the same name clash would block those refs (found by the
-  Opus reviews of V1, #8, 2026-10-28).
+  holds what it reads to what t4 writes and builds over junk rather than on it. The remote
+  refuses a ref whose name clashes with another's, so a daemon deletes the refs that would stop
+  t4's own being pushed: those under its own names (`presence/<deviceId>/...`,
+  `mesh/<deviceId>/...`), those under `refs/t4/claims/`, and `refs/t4/mesh` or
+  `refs/t4/presence` as refs themselves. t4 writes nothing at any of them (found by the Opus
+  reviews of V1, #8, 2026-10-28).
 - Reading: poll `git ls-remote origin 'refs/t4/*'` about every 10 s, which is cheap; fetch only
   when a SHA has changed. Delivery takes roughly 10–15 s, plenty for agents: V1 took about 12 s
   from a Windows laptop to a macOS machine through GitHub (2026-10-26), 2 s of it the send.
