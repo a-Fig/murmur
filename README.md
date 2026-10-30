@@ -1,5 +1,8 @@
 # t4
 
+**Intra-repo agent communication.**
+**Your agents work better as a team.**
+
 Coding agents on different teammates' machines, working in the same repo, that can find each
 other and coordinate: who is building what, and messages between them when that isn't enough.
 Built for small teams at hackathons, on private repos.
