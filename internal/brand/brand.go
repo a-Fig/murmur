@@ -20,6 +20,8 @@ const (
 	// NamesRef is the registry of session names, one shared ref that devices take names on by
 	// compare-and-swap.
 	NamesRef = RefRoot + "names"
+	// ConfigRef holds the repo's settings for the bus, such as whether it is encrypted (#156).
+	ConfigRef = RefRoot + "config"
 
 	// StateDir is the daemon's directory inside the git common dir.
 	StateDir = Name

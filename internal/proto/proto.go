@@ -19,6 +19,9 @@ const (
 	OpLog     = "log"
 	OpStop    = "stop"
 	OpLookup  = "lookup"
+	// OpEncrypt turns encryption on for the repo's bus (#156), refusing while a device seen lately
+	// can't take part, unless Force.
+	OpEncrypt = "encrypt"
 	// OpToolStart and OpToolEnd bracket one tool call, for the hook: the daemon snapshots the
 	// worktree at the start and credits the commits that appeared by the end (#21).
 	OpToolStart = "toolstart"
@@ -34,7 +37,8 @@ const (
 //	1: OpRoute, and delivering a message as a turn (#56, #57)
 //	2: the conversation's title as the default status line, which needs the transcript the hook
 //	   reports and the Codex thread ID in the route (#66)
-const Protocol = 2
+//	3: OpEncrypt, and Encrypted in who's reply (#156)
+const Protocol = 3
 
 // How long a daemon takes to stop, once asked to: it lets its background work finish, for up to
 // DrainTimeout, then deletes its presence, for up to GoodbyeTimeout, and holds the clone's lock until
@@ -87,6 +91,8 @@ type Request struct {
 
 	// Name is the session OpLookup describes: a name, or device/session. Limit caps the messages.
 	Name string `json:"name,omitempty"`
+	// Force turns encryption on (OpEncrypt) though some devices can't take part.
+	Force bool `json:"force,omitempty"`
 
 	// For OpToolStart and OpToolEnd, which carry ClaudeSession and ClientPID too. ToolUseID pairs
 	// the two ends of one call; Claude Code gives both the same one, and calls run in parallel.
@@ -161,6 +167,8 @@ type Response struct {
 	ClaudeSession string `json:"claudeSession,omitempty"`
 
 	Devices []Device `json:"devices,omitempty"`
+	// Encrypted says the repo's bus is encrypted, in who's reply (#156).
+	Encrypted bool `json:"encrypted,omitempty"`
 
 	Messages []MessageView `json:"messages,omitempty"`
 	Events   []EventView   `json:"events,omitempty"`

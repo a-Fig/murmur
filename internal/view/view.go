@@ -95,6 +95,9 @@ func Who(r proto.Response) string {
 	default:
 		fmt.Fprintf(&b, "You are %s.\n", r.Self)
 	}
+	if r.Encrypted {
+		b.WriteString("This repo's bus is encrypted: only its devices can read what is sent.\n")
+	}
 	listed := shown(r.Devices)
 	hidden := 0
 	for i, d := range r.Devices {

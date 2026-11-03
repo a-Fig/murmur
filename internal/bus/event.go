@@ -26,6 +26,9 @@ const (
 	SessionStarted = "session.started"
 	SessionStopped = "session.stopped"
 	Message        = "message"
+	// Encrypted is any event, encrypted for the devices it is for (#156): Box holds it whole,
+	// and only its ID, sender and time are readable.
+	Encrypted = "encrypted"
 )
 
 // Event is one entry in a device's log. Fields beyond the first five depend on Type.
@@ -42,6 +45,8 @@ type Event struct {
 	To      string `json:"to,omitempty"` // message: device/session, device, or "*"
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
+
+	Box *Box `json:"box,omitempty"` // encrypted
 }
 
 // Line is the event as one readable line, used as the commit subject so that `git log` on a
@@ -54,6 +59,8 @@ func (e Event) Line() string {
 		return e.From + " stopped"
 	case Message:
 		return fmt.Sprintf("%s -> %s: %s", e.From, e.To, e.Subject)
+	case Encrypted:
+		return e.From + " (encrypted)"
 	}
 	return e.From + " " + e.Type
 }
@@ -73,6 +80,8 @@ func (e Event) Valid() bool {
 		return true
 	case Message:
 		return ValidTo(e.To) && e.Subject != ""
+	case Encrypted:
+		return e.Box != nil
 	}
 	return false
 }
@@ -187,6 +196,10 @@ type Presence struct {
 	Owner    string        `json:"owner,omitempty"` // git user.name on that clone
 	At       time.Time     `json:"at"`              // the writer's clock
 	Sessions []SessionInfo `json:"sessions"`
+	// BoxKey is the device's public box key, which others encrypt to it with (#156). Enc, in an
+	// encrypted repo, holds Host, Owner and Sessions, which are then left empty.
+	BoxKey string `json:"boxKey,omitempty"`
+	Enc    *Box   `json:"enc,omitempty"`
 }
 
 // SessionInfo is one session as its device's presence describes it.

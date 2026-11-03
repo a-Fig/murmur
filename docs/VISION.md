@@ -162,6 +162,39 @@ every device seals everything it writes, in every repo.
 - **Refusing unsealed records.** Devices that have never sealed are still read. When to refuse
   them, once every daemon in use seals, is Tyler's to decide.
 
+### Encrypted repos
+
+Added 2026-11-03 (#156). On a public repo only collaborators can write the bus, but anyone can
+read it: every message, status line and branch, in history for good. Tyler decided that day that
+a repo can choose to encrypt its bus, in the same binary, while seals stay everyone's default.
+
+- **Turning it on.** `mur encrypt` writes a sealed record on `refs/murmur/config`. A daemon that
+  reads one, sealed by a device it takes as that device's, encrypts everything it writes from then
+  on, and keeps that in `state.json`. Nothing turns it off: anyone who can push could delete the
+  ref or write another, so a daemon never goes back to writing in the clear.
+- **Box keys.** Each device has an X25519 key beside its signing key, `.git/murmur/box`, and
+  publishes its public half in every presence, encrypted repo or not, so that keys are known
+  before encryption is turned on. A presence is sealed, so a box key is as much its device's as its
+  signing key is; only a sealed presence's box key is taken.
+- **What is encrypted, and for whom.** An event is written as type `encrypted`, which older
+  daemons pass over: its ID, sender and time are readable, the rest (recipient, subject, body;
+  agent and branch) is in a box. A message to a session or device is encrypted for that device and
+  the sender's own; a broadcast, and session events, for every device whose key is known. A
+  presence keeps its device, time and box key readable, and encrypts its host, owner and sessions
+  for every device whose key is known. Each record has a fresh content key, wrapped for each
+  recipient by X25519 and HKDF-SHA256, as age does it, with AES-256-GCM, all in Go's standard
+  library. The box is bound to its event's ID and sender, or to its presence's device.
+- **Failing closed.** A message for a device whose box key isn't known is refused, never sent in
+  the clear. A broadcast goes to the devices whose keys are known.
+- **What stays readable.** Which device writes, when, and which devices each record is for. The
+  name registry stays as it is: names made at random, and the addresses they stand for, which
+  every device needs.
+- **Older daemons.** One from before encryption knows nothing of it and goes on writing in the
+  clear, and nothing can stop it. `mur encrypt` refuses while a device seen lately is unsealed or
+  has no box key, and names it; `--force` goes ahead and says which devices will leak.
+- **What a device can read.** Only what was encrypted for it: a device that joins later can't read
+  what was sent before, nor can its page or `lookup` show messages between others.
+
 ### One daemon per device, a thin MCP server per session
 
 ```

@@ -284,7 +284,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	case proto.OpWho:
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess)}
+		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess), Encrypted: d.st.Encrypted}
 		if s := d.sessions[sess]; s != nil {
 			resp.Name, resp.NamePending = s.name, s.name == ""
 		}
@@ -366,6 +366,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 			events = events[len(events)-limit:]
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
+
+	case proto.OpEncrypt:
+		return d.encrypt(ctx, req.Force)
 
 	case proto.OpStop:
 		d.log.Printf("stop requested")

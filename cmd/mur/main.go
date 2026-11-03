@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/mcpserver"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/setup"
 )
 
@@ -45,6 +46,8 @@ For humans:
   mur ui [--no-open]            open the page showing sessions and messages in a browser; --no-open
                                 only prints its address (starts the clone's daemon if it isn't running)
   mur stop                      stop this clone's daemon
+  mur encrypt [--force]         encrypt everything this repo's devices send each other from now on,
+                                for good; --force goes ahead though some devices are too old to
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
@@ -77,6 +80,8 @@ func main() {
 		err = runJoin(ctx, args, os.Stdout)
 	case "stop":
 		err = runStop(ctx, args, os.Stdout)
+	case "encrypt":
+		err = runEncrypt(ctx, args, os.Stdout)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "version", "--version":
@@ -272,6 +277,33 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	report, err := do(ctx, env, *dir)
 	fmt.Fprint(out, report.String())
 	return err
+}
+
+// runEncrypt turns encryption on for the repo's bus (#156), through the clone's daemon, which
+// it starts if it isn't running.
+func runEncrypt(ctx context.Context, args []string, out io.Writer) error {
+	fs, dir := flags("encrypt")
+	force := fs.Bool("force", false, "go ahead though some devices are too old to encrypt")
+	fs.Parse(args)
+	gitDir, err := client.FindGitDir(ctx, *dir)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	c, err := client.Connect(ctx, gitDir, true)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpEncrypt, Force: *force})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	fmt.Fprintln(out, resp.Note)
+	return nil
 }
 
 func runStop(ctx context.Context, args []string, out io.Writer) error {

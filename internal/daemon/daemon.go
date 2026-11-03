@@ -5,6 +5,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -211,16 +212,19 @@ const maxInbox = 200
 // Daemon is one running daemon. Lock order: syncMu, then advMu, then mu; or writeMu, then advMu,
 // then mu.
 type Daemon struct {
-	opt     Options
-	repo    *bus.Repo
-	dir     string
-	device  string
-	key     ed25519.PrivateKey // seals what this device writes to the bus
-	host    string
-	owner   string
-	token   string
-	started time.Time
-	log     *log.Logger
+	opt    Options
+	repo   *bus.Repo
+	dir    string
+	device string
+	key    ed25519.PrivateKey // seals what this device writes to the bus
+	boxKey *ecdh.PrivateKey   // opens what is encrypted for this device
+	// configSHA is the config ref as last read (see readConfig). Caller holds mu.
+	configSHA string
+	host      string
+	owner     string
+	token     string
+	started   time.Time
+	log       *log.Logger
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -279,7 +283,12 @@ type Daemon struct {
 	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
 	advMu   sync.Mutex // serializes processing of fetched refs
 	writeMu sync.Mutex // serializes appends to this device's log
-	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
+	// cutMu keeps a write in step with the switch to encryption (#156): an event or presence is
+	// encoded and pushed under its read lock, and the switch takes the write lock, so nothing
+	// encoded in the clear is pushed once the switch is made. Taken before mu, never under advMu
+	// by a writer.
+	cutMu  sync.RWMutex
+	ownTip string // the remote's tip of this device's log, as last known; under writeMu
 
 	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
 	setMu    sync.Mutex
@@ -457,6 +466,11 @@ type state struct {
 	// Keys is each device's public key as first seen sealing a record, this device's own included:
 	// from then on only records sealed with that key are taken as the device's (see sealOKLocked).
 	Keys map[string]string `json:"keys,omitempty"`
+	// BoxKeys is each device's box key, from its last sealed presence, that records are encrypted
+	// to it with (#156). Encrypted says this repo's bus is encrypted, which a daemon learns from
+	// the config ref and never unlearns: whoever can push could delete that ref.
+	BoxKeys   map[string]string `json:"boxKeys,omitempty"`
+	Encrypted bool              `json:"encrypted,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -610,6 +624,9 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.device, d.key = device, key
+	if d.boxKey, err = loadBoxKey(dir); err != nil {
+		return nil, err
+	}
 	d.host, _ = os.Hostname()
 	d.repo = &bus.Repo{Git: gitx.Git{Dir: opt.GitDir}, Name: device, Email: device + "@" + brand.Name + ".invalid", Key: key}
 	if d.repo.Remote, err = bus.RemoteFor(ctx, d.repo.Git); err != nil {
@@ -625,6 +642,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		d.st.Keys[d.device] = bus.PublicKey(d.key)
 		d.saveLocked()
 	}
+	d.st.BoxKeys[d.device] = bus.BoxPublic(d.boxKey)
 	d.loadSettings()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
@@ -821,7 +839,7 @@ func (d *Daemon) loadState() error {
 		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Keys: map[string]string{}}
+		Keys: map[string]string{}, BoxKeys: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -871,6 +889,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Keys == nil {
 		d.st.Keys = map[string]string{}
+	}
+	if d.st.BoxKeys == nil {
+		d.st.BoxKeys = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

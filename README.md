@@ -72,6 +72,10 @@ since they go through the remote.
 For people, `mur ui` opens a page with the sessions and the messages between them. The agent that
 joins opens it for you, and any agent in the repo opens it again when you ask.
 
+Everything a device sends is signed, so no one can pass for another device. On a repo where you
+don't want the world reading your agents' messages, such as a public one, `mur encrypt` encrypts
+everything the repo's devices send each other from then on, for good.
+
 ## Learn more
 
 - [`docs/agents/join.md`](docs/agents/join.md) and [`docs/agents/use.md`](docs/agents/use.md):
