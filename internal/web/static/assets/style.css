@@ -5310,7 +5310,8 @@ a.fx-pr:focus-visible,
   min-width: 0;
 }
 .pair-state > .pres {
-  position: static;
+  position: relative;
+  inset: auto;
   flex: none;
   box-shadow: none;
 }
@@ -5430,6 +5431,29 @@ a.fx-pr:focus-visible,
 .name-ask .btn-ghost {
   height: 2rem;
 }
+
+/* State dots, everywhere (stateDot): a shape for each state as well as a colour. Active and idle
+   are filled; do not disturb has a white bar across it; offline is a hollow ring. */
+.sdot.sdot-off {
+  background: transparent;
+  border: 1.5px solid #8a8a8a;
+}
+.sdot.sdot-dnd::after {
+  content: "";
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: #fff;
+}
+.fx-dot.sdot-dnd,
+.dev-dot.sdot-dnd {
+  position: relative;
+}
+
 /* New conversations while the list holds still: a pill over its top. */
 .list-pill-wrap {
   position: sticky;

@@ -833,12 +833,19 @@ function labelled(el, name, word) {
   return el;
 }
 
+// Every state dot, wherever it is: its shape says the state as well as its colour, as Slack's do,
+// so it reads without telling green from yellow from red. Active and idle are filled, do not disturb
+// has a white bar across it, and offline is a hollow ring. cls sizes and places it.
+function stateDot(st, cls) {
+  return h("span", { class: cls + " sdot sdot-" + st, "aria-hidden": "true" });
+}
+
 // A face with its presence dot inside it.
 function dotted(name) {
   const a = avatar(name);
   const { st, word } = presenceOf(name);
   a.classList.add("dotted");
-  a.append(h("span", { class: "pres pres-" + st }));
+  a.append(stateDot(st, "pres pres-" + st));
   return labelled(a, name, word);
 }
 
@@ -851,12 +858,17 @@ const DEVICE_WORDS = { on: "Online, a session is active", idle: "Online, all its
 
 function deviceDot(d, cls = "") {
   const st = deviceState(d);
-  return h("span", { class: ("dev-dot pres-" + st + " " + cls).trim(), role: "img", title: DEVICE_WORDS[st], "aria-label": DEVICE_WORDS[st] });
+  const dot = stateDot(st, ("dev-dot pres-" + st + " " + cls).trim());
+  dot.removeAttribute("aria-hidden");
+  dot.setAttribute("role", "img");
+  dot.setAttribute("aria-label", DEVICE_WORDS[st]);
+  dot.title = DEVICE_WORDS[st];
+  return dot;
 }
 
 function presence(name, d) {
   const { st, word } = presenceOf(name, d);
-  return labelled(h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st })), name, word);
+  return labelled(h("span", { class: "pres-wrap" }, avatar(name), stateDot(st, "pres pres-" + st)), name, word);
 }
 
 // The sidebar's top rows, one line each: an icon, a title and a count. Questions waiting take the
@@ -1393,7 +1405,7 @@ function prOf(s) {
 const FX_STATE = { on: "Active", idle: "Idle", dnd: "Do not disturb", off: "Offline" };
 
 function fxDot(st) {
-  return h("span", { class: "fx-dot fx-dot-" + st, "aria-hidden": "true" });
+  return stateDot(st, "fx-dot fx-dot-" + st);
 }
 
 // A segmented control is one stop for Tab, as a radio group is: ←/→, Home and End move along it and
@@ -3396,7 +3408,7 @@ function pairStates(c) {
     { class: "chat-about pair-states" },
     c.pair.map((n) => {
       const { st, word } = presenceOf(n);
-      return h("span", { class: "pair-state" }, h("span", { class: "pres pres-" + st, "aria-hidden": "true" }), h("span", { class: "truncate" }, n + " · " + word));
+      return h("span", { class: "pair-state" }, stateDot(st, "pres pres-" + st), h("span", { class: "truncate" }, n + " · " + word));
     }),
   );
 }
@@ -4317,13 +4329,14 @@ function faceOf(name) {
 function reachable() {
   const rows = [];
   for (const p of people()) {
-    if (p.name !== myName()) rows.push({ name: p.name, d: p.device, person: p, line: personOnline(p) ? "On " + NAME + " now" : "Person", rank: personOnline(p) ? 0 : 1, at: when(p.lastActive) || 0 });
+    if (p.name !== myName()) rows.push({ name: p.name, d: p.device, person: p, line: PERSON_TIPS[personOnline(p) ? "on" : "off"], rank: personOnline(p) ? 0 : 1, at: when(p.lastActive) || 0 });
   }
   for (const d of devices()) {
     for (const s of d.sessions) {
       if (isHidden(s)) continue;
       const st = sessionState(d, s);
-      rows.push({ name: s.name, d, s, line: s.doing || s.agent || "", rank: st === "on" ? 0 : st === "idle" ? 1 : st === "dnd" ? 2 : 3, at: when(s.lastActive) || when(s.started) || 0 });
+      // One rule for every row's subtitle: its state in words, then what it is doing.
+      rows.push({ name: s.name, d, s, line: [stateWord(d, s), s.doing].filter(Boolean).join(" · "), rank: st === "on" ? 0 : st === "idle" ? 1 : st === "dnd" ? 2 : 3, at: when(s.lastActive) || when(s.started) || 0 });
     }
   }
   return rows.sort((a, b) => a.rank - b.rank || b.at - a.at);
