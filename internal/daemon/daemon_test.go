@@ -64,6 +64,7 @@ func reftableRemote(t *testing.T) (remote string, ok bool) {
 
 // newRemote makes a bare repo to stand in for GitHub. initArgs go to its git init.
 func newRemote(t *testing.T, initArgs ...string) string {
+	debugStart(t)
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
 	git(t, root, append([]string{"init", "-q", "--bare", "--initial-branch=main"}, append(initArgs, remote)...)...)

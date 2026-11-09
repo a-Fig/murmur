@@ -1,5 +1,5 @@
-# DEBUG for #217, not to be merged: the two tests that timed out on macOS, in a loop, with a
-# goroutine dump and the daemons' logs on a failure.
+# DEBUG for #217, not to be merged: the whole daemon package, run over and over on macOS, with a
+# goroutine dump and the daemons' logs on a failure, and each test's time.
 name: debug217
 
 on:
@@ -9,23 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  loop:
+  full:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {os: macos-latest, shard: 1, load: false}
-          - {os: macos-latest, shard: 2, load: false}
-          - {os: macos-latest, shard: 3, load: false}
-          - {os: macos-latest, shard: 4, load: true}
-          - {os: macos-latest, shard: 5, load: true}
-          - {os: ubuntu-latest, shard: 6, load: true}
-          - {os: windows-latest, shard: 7, load: true}
-    runs-on: ${{ matrix.os }}
+        shard: [1, 2, 3, 4, 5]
+    runs-on: macos-latest
     timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
     env:
       DEBUG217: '1'
     steps:
@@ -38,18 +28,20 @@ jobs:
       - run: go test -race -c -o daemon.test ./internal/daemon
       - name: loop
         run: |
-          if [ "${{ matrix.load }}" = true ]; then
-            ( cd internal/daemon && while true; do ../../daemon.test -test.count=1 -test.skip 'TestSwitchFollowsTheHooksClaudeID|TestDaemonWithAThreadToWakeStaysUpAndHandsOver' > /dev/null 2>&1; done ) &
-          fi
           cd internal/daemon
-          ../../daemon.test -test.count=100 -test.timeout 52m -test.v \
-            -test.run 'TestSwitchFollowsTheHooksClaudeID|TestDaemonWithAThreadToWakeStaysUpAndHandsOver' > ../../out.txt 2>&1
-          status=$?
-          grep -E '^(--- |=== RUN|ok|FAIL|PASS)' ../../out.txt | grep -E -- '--- (FAIL|PASS)' | awk '{print $2, $3}' | sort | uniq -c
-          grep -E -- '--- (PASS|FAIL)' ../../out.txt | sed -E 's/.*\((.*)s\)/\1/' | sort -n | tail -5
-          exit $status
+          end=$(( $(date +%s) + 50*60 ))
+          i=0; failed=0
+          while [ $(( $(date +%s) + 700 )) -lt $end ]; do
+            i=$((i+1)); s=$(date +%s)
+            if ../../daemon.test -test.count=1 -test.v -test.timeout 15m > ../../out-$i.txt 2>&1; then r=ok; else r=FAIL; failed=1; fi
+            echo "run $i: $r in $(( $(date +%s) - s ))s"
+            grep -E -- '^--- FAIL' ../../out-$i.txt || true
+            grep -E -- '--- (PASS|FAIL)' ../../out-$i.txt | sed -E 's/.*--- (PASS|FAIL): ([^ ]+) \((.*)s\)/\3 \2/' | sort -rn | head -4
+            grep 'DEBUG217 goroutines' ../../out-$i.txt | tail -1
+          done
+          exit $failed
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: out-${{ matrix.shard }}
-          path: out.txt
+          path: out-*.txt

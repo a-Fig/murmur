@@ -6,6 +6,7 @@ package daemon_test
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"sync"
 	"testing"
@@ -32,4 +33,13 @@ func debugLog(d *device, tag string) *syncBuf {
 		}
 	})
 	return buf
+}
+
+// debugStart logs how many goroutines the process has when a test starts and after its cleanups,
+// so goroutines left behind by earlier tests show up as a count that grows.
+func debugStart(t *testing.T) {
+	start := runtime.NumGoroutine()
+	t.Cleanup(func() {
+		fmt.Fprintf(os.Stderr, "DEBUG217 goroutines %s: %d at start, %d after cleanup\n", t.Name(), start, runtime.NumGoroutine())
+	})
 }
