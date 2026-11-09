@@ -39,7 +39,7 @@ const ui = {
   restarting: 0, // when the restart onto an installed update was asked for
   reloadDue: false, // a new daemon is serving, and this page should load its page when it can
   // A person's account (#242).
-  setup: null, // the name being chosen: { name, error, busy, then }, then what to do once there is one
+  setup: null, // the name being chosen: { name, error, busy, then, inline }, then what to do once there is one, inline the composer asking
   picker: null, // the new-message list: { q, index }
   draftTo: null, // who a conversation with no messages yet is with
   restored: null, // the conversation a failed message's text just went back into
@@ -49,6 +49,8 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
+  relayTo: new Map(), // a conversation between two others → which of them its bar writes to
+  relayed: new Map(), // a conversation between two others → what its bar last sent: { cid, to, key }
 };
 
 class AuthError extends Error {
@@ -231,7 +233,7 @@ function render() {
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
   const skip = h("a", { class: "skip-link", href: "#", "data-key": "skip", onclick: skipToContent }, "Skip to content");
-  root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu());
+  root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && !ui.setup.inline && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu());
   content.scrollTop = scroll;
   fleetFit();
   fleetRoving();
@@ -3209,6 +3211,7 @@ function visibleMessages() {
 // Your messages: direct ones, and the group chats you have posted in, whole.
 function myMessages() {
   const mine = myName();
+  if (!mine) return [];
   const groups = new Set();
   for (const m of ui.messages) if (m.toKind !== "session" && fromName(m) === mine) groups.add(conversationOf(m).key);
   return ui.messages.filter((m) => (m.toKind === "session" ? fromName(m) === mine || toName(m) === mine : groups.has(conversationOf(m).key)));
@@ -3267,9 +3270,9 @@ function dmKey(a, b) {
 
 function draftConversation() {
   if (ui.restored?.key === ui.conversation) return { ...ui.restored, messages: [] };
-  if (!ui.draftTo || !me()) return null;
-  const pair = [...new Set([myName(), ui.draftTo])].sort();
-  const key = dmKey(myName(), ui.draftTo);
+  if (!ui.draftTo) return null;
+  const pair = [...new Set([selfName(), ui.draftTo])].sort();
+  const key = dmKey(selfName(), ui.draftTo);
   return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
@@ -3561,19 +3564,13 @@ function conversationPane(c) {
   );
 }
 
-// An empty conversation says who it is with, and what they are up to.
+// An empty conversation: the header above says who it is with and how they are; this adds what
+// they run on.
 function chatIntro(name) {
   if (!name) return null;
   const f = findSession(name);
-  const details = f ? [f.session.agent, modelOf(f.session), f.session.branch].filter(Boolean).join(" · ") : isPerson(name) ? "Person" : "";
-  return h(
-    "div",
-    { class: "chat-intro" },
-    h("div", { class: "chat-intro-face" }, avatar(name)),
-    h("h3", null, name),
-    f?.session.doing && h("p", { class: "chat-intro-doing" }, f.session.doing),
-    details && h("p", { class: "chat-intro-meta" }, details),
-  );
+  const details = f ? [f.session.doing && f.session.agent, modelOf(f.session), f.session.branch].filter(Boolean).join(" · ") : ""; // the header has the agent when it has nothing else
+  return h("div", { class: "chat-intro" }, h("p", { class: "chat-intro-meta" }, details ? "No messages yet · " + details : "No messages yet"));
 }
 
 // A sender's messages run together under one header, as long as they come close together.
@@ -3785,8 +3782,16 @@ function isPerson(name) {
   return personNames.has(name) || (!!name && name === myName());
 }
 
+// Your messages can be read, and a conversation begun, before you have a name: the name is asked for
+// when you first send. Until then the page calls you this, in its filter and its conversation keys.
+const YOU = "@you";
+
+function selfName() {
+  return myName() || YOU;
+}
+
 function isMyFilter() {
-  return !!ui.filter && !!me() && ui.filter === me().addr && ui.view === "messages";
+  return ui.view === "messages" && !!ui.filter && (ui.filter === YOU || (!!me() && ui.filter === me().addr));
 }
 
 function people() {
@@ -3851,8 +3856,7 @@ function markOpenRead() {
 
 function openYours() {
   if (!ui.state) return;
-  if (!me()) return askForName(openYours);
-  ui.filter = me().addr;
+  ui.filter = me() ? me().addr : YOU;
   ui.conversation = null;
   ui.draftTo = null;
   go("messages");
@@ -3862,20 +3866,21 @@ function openYours() {
 // Open the conversation with someone, whether or not it has any messages yet.
 function startChat(name) {
   if (!ui.state) return;
-  if (!me()) return askForName(() => startChat(name));
   if (name === myName()) return openYours();
   ui.picker = null;
-  ui.filter = me().addr;
+  ui.filter = me() ? me().addr : YOU;
   ui.draftTo = name;
-  ui.conversation = dmKey(myName(), name);
+  ui.conversation = dmKey(selfName(), name);
   go("messages");
   setView("messages"); // the hash changes later, and the composer has to be there to focus now
   focusComposer();
 }
 
-function askForName(then) {
+// The name is asked for in a dialog, or, when it is wanted to send something, in the composer that
+// is sending it (inline: that composer's textarea), so nothing covers what is being read.
+function askForName(then, inline = null) {
   const a = ui.state?.account;
-  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then };
+  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then, inline };
   render();
   const field = root.querySelector('[data-key="setup-name"]');
   field?.focus();
@@ -3889,10 +3894,11 @@ async function submitName() {
   setup.error = "";
   render();
   try {
-    const was = myName();
+    const was = selfName();
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
     ui.state.account = { ...ui.state.account, ...account };
     moveToName(was, account.name); // asked for a new name, they may have drafts under the old one
+    if (ui.filter === YOU) ui.filter = account.addr;
     ui.setup = null;
     poll();
     setup.then?.();
@@ -3952,35 +3958,7 @@ function setupDialog() {
           submitName();
         },
       },
-      h(
-        "div",
-        { class: "setup-row" },
-        h("span", { class: "setup-face" }, faceOf(s.name)),
-        h(
-          "span",
-          { class: "field setup-field" + (s.error ? " field-bad" : "") },
-          h("input", {
-            type: "text",
-            value: s.name,
-            maxlength: 32,
-            placeholder: "ada-lovelace",
-            autocomplete: "off",
-            autocapitalize: "none",
-            spellcheck: "false",
-            "aria-label": "Your name",
-            "aria-invalid": s.error ? "true" : null,
-            "data-key": "setup-name",
-            oninput: (e) => {
-              s.name = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
-              s.error = "";
-              if (e.target.value !== s.name) e.target.value = s.name;
-              root.querySelector(".setup-face")?.replaceChildren(faceOf(s.name));
-              root.querySelector(".dialog-error")?.remove();
-              root.querySelector(".setup-field")?.classList.remove("field-bad");
-            },
-          }),
-        ),
-      ),
+      nameField(s),
       s.error && h("p", { class: "dialog-error", role: "alert" }, s.error),
       h(
         "div",
@@ -3989,6 +3967,74 @@ function setupDialog() {
         h("button", { type: "submit", class: "btn btn-primary", disabled: s.busy }, s.busy ? "Saving…" : "Continue"),
       ),
     ),
+  );
+}
+
+function nameField(s) {
+  return h(
+    "div",
+    { class: "setup-row" },
+    h("span", { class: "setup-face" }, faceOf(s.name)),
+    h(
+      "span",
+      { class: "field setup-field" + (s.error ? " field-bad" : "") },
+      h("input", {
+        type: "text",
+        value: s.name,
+        maxlength: 32,
+        placeholder: "ada-lovelace",
+        autocomplete: "off",
+        autocapitalize: "none",
+        spellcheck: "false",
+        "aria-label": "Your name",
+        "aria-invalid": s.error ? "true" : null,
+        "data-key": "setup-name",
+        oninput: (e) => {
+          s.name = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
+          s.error = "";
+          if (e.target.value !== s.name) e.target.value = s.name;
+          root.querySelector(".setup-face")?.replaceChildren(faceOf(s.name));
+          root.querySelector(".dialog-error")?.remove();
+          root.querySelector(".setup-field")?.classList.remove("field-bad");
+        },
+      }),
+    ),
+  );
+}
+
+// Sending before there is a name: the name is asked for over the composer, the draft stays where
+// it is, and Send sends it once the name is saved.
+function nameAsk() {
+  const s = ui.setup;
+  const close = () => {
+    ui.setup = null;
+    render();
+    focusComposer();
+  };
+  return h(
+    "form",
+    {
+      class: "name-ask",
+      "aria-label": "Choose your name to send",
+      onsubmit: (e) => {
+        e.preventDefault();
+        submitName();
+      },
+      onkeydown: (e) => {
+        if (e.key !== "Escape") return;
+        e.preventDefault();
+        close();
+      },
+    },
+    h("p", { class: "name-ask-title" }, "Choose your name to send", h("span", { class: "name-ask-line" }, "Agents see it, and send to it.")),
+    h(
+      "div",
+      { class: "name-ask-row" },
+      nameField(s),
+      h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-send", disabled: s.busy }, s.busy ? "Saving…" : "Send"),
+      h("button", { type: "button", class: "btn btn-ghost", "data-key": "setup-cancel", onclick: close }, "Cancel"),
+    ),
+    s.error && h("p", { class: "dialog-error", role: "alert" }, s.error),
   );
 }
 
@@ -4038,7 +4084,6 @@ function newMessageButton() {
 }
 
 function openPicker() {
-  if (!me()) return askForName(openPicker);
   ui.picker = { q: "", index: 0 };
   render();
   root.querySelector('[data-key="picker-q"]')?.focus();
@@ -4165,61 +4210,147 @@ function pendingIn(c) {
 
 // Who a message written in this conversation goes to; null if it isn't yours to write in.
 function targetOf(c) {
-  if (!me()) return null;
   if (c.kind === "all") return { to: "*", label: "everyone", count: sessionCount() };
   if (c.kind === "device") {
     const d = (ui.state?.devices || []).find((x) => x.id === c.title);
-    return { to: c.title, label: groupName(c), count: d ? d.sessions.length : 0 };
+    return { to: c.title, label: groupName(c).replace(/^Everyone/, "everyone"), count: d ? d.sessions.length : 0 };
   }
-  if (!c.pair.includes(myName())) return null;
-  const other = c.pair.find((n) => n !== myName()) || myName();
+  if (!c.pair.includes(selfName())) return null;
+  const other = c.pair.find((n) => n !== selfName()) || selfName();
   return { to: other, label: other, count: 1 };
 }
 
-// Under a conversation: somewhere to write, or, under one between two others, a way to either.
+// Under a conversation: somewhere to write, or, under one between two others, a way to write to
+// either of them.
 function paneFoot(c) {
   const target = targetOf(c);
   if (target) return composer(c, target);
-  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("button", { class: "btn btn-outline", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name to write here"));
-  const running = c.pair.filter((n) => findSession(n) || findPerson(n));
-  if (!running.length) return null;
-  return h(
-    "div",
-    { class: "pane-foot" },
-    running.map((n) => h("button", { class: "btn btn-outline", "data-key": "foot-" + n, onclick: () => startChat(n) }, icon("message"), "Message " + n)),
-  );
+  const running = c.pair.filter((n) => n !== myName() && (findSession(n) || findPerson(n)));
+  return running.length ? relayBar(c, running) : null;
+}
+
+// A send button says which composer it sends, so a name chosen on first sending can press it again.
+function sendButton(key, el, onclick) {
+  return h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, "data-for": key, onclick }, icon("arrowUp"));
+}
+
+function composerChange(key, el) {
+  if (ui.armed === key) {
+    ui.armed = null;
+    root.querySelector(".composer-warn")?.remove();
+  }
+  const btn = root.querySelector(`button[data-for="${CSS.escape(key)}"]`);
+  if (btn) btn.disabled = !el.value.trim();
 }
 
 function composer(c, target) {
   const key = c.key;
   const big = target.to === "*" || (c.kind === "device" && target.count > 1);
   const trySend = () => sendFrom(c, target, el, big);
-  const el = composerFor(key, trySend, () => {
-    if (ui.armed === key) {
-      ui.armed = null;
-      root.querySelector(".composer-warn")?.remove();
-    }
-    const btn = root.querySelector(".composer-send");
-    if (btn) btn.disabled = !el.value.trim();
-  });
+  const el = composerFor(key, trySend, () => composerChange(key, el));
   el.placeholder = "Message " + target.label;
   el.setAttribute("aria-label", "Message " + target.label);
   return h(
     "div",
     { class: "composer-wrap" },
+    ui.setup?.inline === el && nameAsk(),
     ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
+    h("div", { class: "composer" }, el, sendButton(key, el, trySend)),
+  );
+}
+
+// Sending with no name yet asks for one in the composer; once it is saved, the send button that
+// asked is pressed again, in a page that now has the name.
+function needName(el) {
+  if (me()) return false;
+  askForName(() => {
+    render();
+    root.querySelector(`button[data-for="${CSS.escape(el.dataset.composer)}"]`)?.click();
+  }, el);
+  return true;
+}
+
+// A conversation between two sessions is theirs: a person can't write in it. The bar under it
+// writes to one of them, the last to speak unless the person picks the other, in the person's own
+// conversation with it, and then says that is where it went.
+function relayBar(c, running) {
+  const key = "relay:" + c.key;
+  const last = [...c.messages].reverse().find((m) => running.includes(fromName(m)));
+  let to = ui.relayTo.get(c.key);
+  if (!running.includes(to)) to = last ? fromName(last) : running[0];
+  const send = () => relaySend(c, to, el);
+  const el = composerFor(key, send, () => composerChange(key, el));
+  el.placeholder = "Message " + to + "…";
+  el.setAttribute("aria-label", "Message " + to);
+  const pick =
+    running.length > 1 &&
     h(
-      "div",
-      { class: "composer" },
-      el,
-      h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
-    ),
+      "select",
+      {
+        class: "composer-to",
+        title: "Who to message",
+        "aria-label": "Who to message",
+        "data-key": "relay-to-" + c.key,
+        onchange: (e) => {
+          ui.relayTo.set(c.key, e.target.value);
+          render();
+          el.focus({ preventScroll: true });
+        },
+      },
+      running.map((n) => h("option", { value: n }, n)),
+    );
+  if (pick) pick.value = to;
+  return h(
+    "div",
+    { class: "composer-wrap" },
+    ui.setup?.inline === el && nameAsk(),
+    relayLine(c),
+    h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
+  );
+}
+
+function relaySend(c, to, el) {
+  const text = el.value.trim();
+  if (!text || needName(el)) return;
+  const key = dmKey(myName(), to);
+  const pair = [...new Set([myName(), to])].sort();
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key, conversation: { key, kind: "dm", title: pair.join(" & "), pair }, to, text, status: "sending" };
+  ui.outbox.push(item);
+  ui.notes.delete(key);
+  ui.relayed.set(c.key, { cid: item.cid, to, key });
+  el.value = "";
+  deliver(item);
+  el.focus({ preventScroll: true });
+}
+
+// Where the last message written under this conversation went, as long as it is open.
+function relayLine(c) {
+  const sent = ui.relayed.get(c.key);
+  if (!sent) return null;
+  const item = ui.outbox.find((x) => x.cid === sent.cid);
+  const open = () => startChat(sent.to);
+  if (item?.status === "failed") {
+    return h(
+      "p",
+      { class: "relay-line relay-failed", role: "alert" },
+      "Not sent to " + sent.to + ": " + item.error,
+      h("button", { class: "msg-action", "data-key": "relay-retry", onclick: () => deliver(item) }, icon("retry"), "Try again"),
+    );
+  }
+  if (item?.status === "sending") return h("p", { class: "relay-line", role: "status" }, "Sending to " + sent.to + "…");
+  return h(
+    "p",
+    { class: "relay-line", role: "status" },
+    icon("check"),
+    "Sent to your conversation with " + sent.to,
+    h("span", { class: "relay-sep", "aria-hidden": "true" }, "·"),
+    h("button", { class: "relay-open", "data-key": "relay-open", onclick: open }, "Open"),
   );
 }
 
 function sendFrom(c, target, el, big) {
   const text = el.value.trim();
-  if (!text) return;
+  if (!text || needName(el)) return;
   if (big && ui.armed !== c.key) {
     ui.armed = c.key;
     render();
@@ -4285,7 +4416,14 @@ function waitLine(c) {
   if (!f) return h("p", { class: "wait-line wait-warn" }, target.to + " isn't running, so it may never read this.");
   const st = sessionState(f.device, f.session);
   if (st === "off") return h("p", { class: "wait-line wait-warn" }, target.to + "'s device is offline. It gets this when it's back.");
+  if (st === "dnd" && !onDnd(f.session)) return h("p", { class: "wait-line wait-warn" }, "Wake-ups are off for " + target.to + ", so your message won't wake it. It waits in its inbox.");
   if (st === "dnd") return h("p", { class: "wait-line wait-warn" }, target.to + " is on do not disturb. Your message waits in its inbox.");
+  // Before sending to an idle session: what sending does. A person's message wakes a session unless
+  // its device's wake-ups say Never, which only this device's settings can tell.
+  if (!waiting && st === "idle") {
+    const idle = target.to + " is " + stateWord(f.device, f.session).toLowerCase();
+    return h("p", { class: "wait-line" }, f.device.self ? idle + "; your message wakes it" : idle + "; your message wakes it unless wake-ups are off on " + deviceLabel(f.device));
+  }
   if (!waiting) return null;
   const active = when(f.session.lastActive);
   const sentAt = mineLast ? when(last.at) || 0 : Date.now();
@@ -4509,6 +4647,8 @@ function moveToName(was, name) {
     item.key = moved;
     item.conversation = { ...item.conversation, key: moved, pair, title: pair.join(" & ") };
   }
+  // A conversation begun before there was a name is the same one now.
+  if (was === YOU && ui.conversation) ui.conversation = rekey(ui.conversation);
   ui.restored = null;
 }
 
