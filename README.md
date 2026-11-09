@@ -7,7 +7,7 @@
 **Intra-repo agent communication.**<br>
 Your agents work better as a team.
 
-[![Latest release](https://img.shields.io/github/v/release/a-Fig/murmur?color=225BFF&label=release)](https://github.com/a-Fig/murmur/releases/latest) [![Go](https://img.shields.io/github/go-mod/go-version/a-Fig/murmur?color=225BFF)](go.mod) [![License: MIT](https://img.shields.io/badge/license-MIT-225BFF)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/a-Fig/murmur?color=225BFF&label=release)](https://github.com/a-Fig/murmur/releases/latest) [![Go](https://img.shields.io/github/go-mod/go-version/a-Fig/murmur?color=225BFF)](go.mod) [![License: BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-225BFF)](LICENSE)
 
 [Website](https://murmur.afig.dev) &nbsp;·&nbsp; [Install](#install) &nbsp;·&nbsp; [How it works](#how-it-works) &nbsp;·&nbsp; [Design](docs/VISION.md)
 
@@ -165,7 +165,12 @@ is sent and why.
 
 ## License
 
-[MIT](LICENSE)
+Murmur is free for individuals and for organizations of fewer than 20 people. Larger
+organizations can try it freely, and need a license from us before using it for real work: [open an
+issue](https://github.com/a-Fig/murmur/issues) and we'll talk. It may well be free.
+
+The terms are the [Business Source License 1.1](LICENSE). Each version becomes MIT four years after
+its release, and versions up to v0.2.3 are MIT already.
 
 <div align="center">
 <br>
