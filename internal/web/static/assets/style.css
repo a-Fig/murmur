@@ -5264,6 +5264,29 @@ a.fx-pr:focus-visible,
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+.g-sec.g-sec-toggle {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.pair-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 0.875rem;
+  min-width: 0;
+}
+.pair-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.pair-state > .pres {
+  position: static;
+  flex: none;
+  box-shadow: none;
+}
 .none-pane {
   align-items: flex-start;
 }

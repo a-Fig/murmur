@@ -673,14 +673,6 @@ function versionSection() {
 //   dnd   red     running, but on do not disturb: messages wait in its inbox
 //   off   grey    its device is unreachable
 const STATE_WORDS = { on: "Active", idle: "Idle", dnd: "Do not disturb", off: "Offline" };
-// What each state means, for a dot's tooltip.
-const STATE_TIPS = {
-  on: "Active in the last five minutes",
-  idle: "Running and reachable, but quiet",
-  dnd: "Do not disturb: messages wait in its inbox, with no turn and no notice, until it reads its inbox or the tag comes off",
-  off: "Its device can't be reached",
-};
-
 const PERSON_TIPS = { on: "On " + NAME + " now", off: "Not on " + NAME + " now" };
 
 // A model: tag (#211, derived for T3 sessions), shown beside the agent.
@@ -814,15 +806,39 @@ function quietFold(d) {
   );
 }
 
-// A face with its presence dot inside it, so it still fits the two-face pair of a DM.
+// Someone's state, in the words that go with its dot: "Active now", "Idle 22m", "On Murmur now".
+function presenceOf(name, d) {
+  const p = findPerson(name);
+  if (p) {
+    const st = personOnline(p) ? "on" : "off";
+    return { st, word: PERSON_TIPS[st] };
+  }
+  const f = findSession(name);
+  if (f) return { st: sessionState(f.device, f.session), word: stateWord(f.device, f.session) };
+  if (d) {
+    const st = sessionState(d, null);
+    return { st, word: STATE_WORDS[st] };
+  }
+  return { st: "off", word: isSettled(name) ? "Settled" : "Not running" };
+}
+
+// A face and its dot are one picture, named for who it is and what state they are in, so the dot's
+// colour is never all that says it.
+function labelled(el, name, word) {
+  el.removeAttribute("aria-hidden");
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", name + " · " + word);
+  el.title = name + " · " + word;
+  return el;
+}
+
+// A face with its presence dot inside it.
 function dotted(name) {
   const a = avatar(name);
-  const p = findPerson(name);
-  const f = findSession(name);
-  const st = p ? (personOnline(p) ? "on" : "off") : f ? sessionState(f.device, f.session) : "off";
+  const { st, word } = presenceOf(name);
   a.classList.add("dotted");
-  a.append(h("span", { class: "pres pres-" + st, title: name + ": " + (isPerson(name) ? PERSON_TIPS[st] : STATE_TIPS[st]) }));
-  return a;
+  a.append(h("span", { class: "pres pres-" + st }));
+  return labelled(a, name, word);
 }
 
 // A device: grey when unreachable, green when any of its sessions is active, else yellow.
@@ -834,18 +850,12 @@ const DEVICE_WORDS = { on: "Online, a session is active", idle: "Online, all its
 
 function deviceDot(d, cls = "") {
   const st = deviceState(d);
-  return h("span", { class: ("dev-dot pres-" + st + " " + cls).trim(), title: DEVICE_WORDS[st] });
+  return h("span", { class: ("dev-dot pres-" + st + " " + cls).trim(), role: "img", title: DEVICE_WORDS[st], "aria-label": DEVICE_WORDS[st] });
 }
 
 function presence(name, d) {
-  const p = findPerson(name);
-  if (p) {
-    const st = personOnline(p) ? "on" : "off";
-    return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: PERSON_TIPS[st] }));
-  }
-  const f = findSession(name);
-  const st = sessionState(f ? f.device : d, f ? f.session : null);
-  return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: STATE_TIPS[st] }));
+  const { st, word } = presenceOf(name, d);
+  return labelled(h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st })), name, word);
 }
 
 // The sidebar's top rows, one line each: an icon, a title and a count. Questions waiting take the
@@ -3285,14 +3295,11 @@ function avatar(name) {
   return h("span", { class: isPerson(name) ? "avatar avatar-person" : "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
 }
 
-// A group chat is named for whose it is, and its face is its members'.
+// A group chat is named for who it reaches, and its face is its members'.
 function groupName(c) {
   if (c.kind === "all") return "Everyone";
   const d = (ui.state?.devices || []).find((x) => x.id === c.title);
-  if (!d) return host(c.title);
-  if (d.self) return "This device";
-  const o = d.owner || "";
-  return o ? o[0].toUpperCase() + o.slice(1) + "'s " + (devices().filter((x) => x.owner === d.owner).length > 1 ? host(d.id) : "device") : d.id;
+  return "Everyone on " + (!d ? host(c.title) : d.self ? "this device" : deviceLabel(d));
 }
 
 function groupHost(c) {
@@ -3320,7 +3327,19 @@ function groupIcon(c) {
 function conversationIcon(c) {
   if (c.kind !== "dm") return groupIcon(c);
   if (c.pair.length === 1) return dotted(c.pair[0]);
-  return h("span", { class: "avatar-pair" }, c.pair.map(dotted));
+  return h("span", { class: "avatar-pair", "aria-hidden": "true" }, c.pair.map(avatar));
+}
+
+// Under a conversation between two others' name: each one's state, a dot and its word.
+function pairStates(c) {
+  return h(
+    "div",
+    { class: "chat-about pair-states" },
+    c.pair.map((n) => {
+      const { st, word } = presenceOf(n);
+      return h("span", { class: "pair-state" }, h("span", { class: "pres pres-" + st, "aria-hidden": "true" }), h("span", { class: "truncate" }, n + " · " + word));
+    }),
+  );
 }
 
 let chatMoved = false; // the open conversation has just changed key, and is still the one being read
@@ -3644,6 +3663,7 @@ function conversationPane(c) {
         { class: "chat-head-text" },
         h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title), o && isPerson(o) && humanTag()),
         about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
+        c.kind === "dm" && !o && c.pair.length > 1 && pairStates(c),
       ),
       of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
       c.kind !== "dm" && membersButton(c),
@@ -3681,7 +3701,7 @@ function chatMessages(c) {
     const from = fromName(m);
     const head = !prev || fromName(prev) !== from || !at || at - (when(prev.at) || 0) > RUN_MS;
     if (ui.newMark?.key === c.key && ui.newMark.id === m.id) out.push(h("div", { class: "chat-new" }, h("span", null, "New")));
-    out.push(chatMessage(m, from, at, head));
+    out.push(chatMessage(m, from, at, head, prev || c.messages[c.messages.indexOf(m) - 1]));
     prev = m;
   }
   for (const item of pendingIn(c)) {
@@ -3700,10 +3720,16 @@ function personText(m) {
   return body ? subject + "\n" + body : subject;
 }
 
-// A message's text: a person's as they wrote it, an agent's with its subject over its body.
-function messageText(m) {
+// A message's text: a person's as they wrote it, an agent's with its subject over its body. A
+// reply's subject that is only "Re: " and the subject before it says nothing the thread doesn't.
+function messageText(m, prev) {
   if (m.fromPerson) return h("div", { class: "chat-msg-body rich" }, rich(personText(m)));
-  return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
+  const echo = !!m.body && !!prev?.subject && /^re:\s*/i.test(m.subject) && bareSubject(m.subject) === bareSubject(prev.subject);
+  return [m.subject && !echo && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
+}
+
+function bareSubject(s) {
+  return (s || "").replace(/^(re:\s*)+/i, "").trim();
 }
 
 function pendingMessage(item, head) {
@@ -3738,7 +3764,7 @@ function dayLabel(t) {
   return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 
-function chatMessage(m, from, at, head) {
+function chatMessage(m, from, at, head, before) {
   const sender = findSession(from);
   const mine = from === myName();
   const copy = m.fromPerson ? personText(m) : (m.subject ? m.subject + "\n\n" : "") + (m.body || "");
@@ -3759,7 +3785,7 @@ function chatMessage(m, from, at, head) {
           sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
           h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
         ),
-      messageText(m),
+      messageText(m, before),
     ),
     h(
       "div",
