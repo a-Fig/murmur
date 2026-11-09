@@ -233,7 +233,9 @@ function render() {
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
   const skip = h("a", { class: "skip-link", href: "#", "data-key": "skip", onclick: skipToContent }, "Skip to content");
-  root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ui.setup && !ui.setup.inline && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu());
+  // replaceChildren, unlike h(), writes null and false out as text: only what is there goes in.
+  const layers = [ui.setup && !ui.setup.inline && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu()];
+  root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ...layers.filter((x) => x instanceof Node));
   content.scrollTop = scroll;
   fleetFit();
   fleetRoving();
