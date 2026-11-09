@@ -74,8 +74,8 @@ type Version struct {
 type Account struct {
 	Name string `json:"name,omitempty"` // "" until they choose one
 	Addr string `json:"addr,omitempty"`
-	// Suggested is the name to offer someone who has none, from their git user name. "" if that
-	// makes no name, or one already taken.
+	// Suggested is the name to offer someone who has none, or whose name was Taken, from their git
+	// user name. "" if that makes no name, or one already taken.
 	Suggested string `json:"suggested,omitempty"`
 	// Unread is the IDs of the messages sent to them that they haven't opened.
 	Unread []string `json:"unread,omitempty"`

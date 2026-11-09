@@ -57,7 +57,7 @@ func main() {
 		log.Fatalf("-update must be none, auto, manual or ready")
 	}
 	if *taken {
-		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
+		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0", Suggested: "tyler"}
 	}
 	go src.run()
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)

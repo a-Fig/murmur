@@ -259,6 +259,9 @@ func (d *Daemon) accountLocked() web.Account {
 		return web.Account{Suggested: d.suggestedNameLocked()}
 	}
 	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked()}
+	if a.Taken != "" {
+		a.Suggested = d.suggestedNameLocked() // the page offers it in place of the taken name
+	}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
 		a.Unread = append(a.Unread, m.Event.ID)
 	}
