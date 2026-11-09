@@ -153,30 +153,42 @@ export function contributors(commits) {
 
 // The GitHub account behind each device owner, for the stats page's users (#323). Murmur sends
 // nothing that names an account, and a bus commit names only its device, so an owner (the git user
-// name its presence shows) is matched to the repo's commit authors of the same name. Of the
-// identities that name has committed as, a GitHub login wins, then the one with the most commits.
-// An email is turned into its login when lookup(sha) can say, so the same person committing from
-// two addresses is one account. lookup answers the commit author's login, null when GitHub links
-// the commit to no account, or undefined when it couldn't ask. An owner with no commit under its
-// name is left out, and so is one whose lookup couldn't be asked: the site keeps the account it
-// was matched to before, and sending the email in its place would replace a login with it.
+// name its presence shows) is matched to the repo's commit authors of the same name.
+//
+// The site keeps whatever account a device is sent last, so the choice must not drift as history
+// grows: identities are taken oldest first, by each one's oldest commit, which new commits never
+// change. A GitHub login wins, the oldest; else the oldest email that lookup(sha) turns into a
+// login, so one person committing from two addresses is one account; else the oldest email.
+// lookup answers the commit author's login, null when GitHub links the commit to no account, or
+// undefined when it couldn't ask. An owner with no commit under its name is left out, and so is one
+// with an email that couldn't be asked about before a login was found: it might have been the
+// login, and the site keeps the account it was sent before. At most MAX_LOOKUPS emails are asked
+// about per owner.
+const MAX_LOOKUPS = 5;
 export async function accounts(owners, commits, lookup) {
-  const byName = new Map(); // name -> identity -> { n, sha }
-  for (const c of commits) {
+  const byName = new Map(); // name -> identity -> { sha, at }: its oldest commit, and that commit's place
+  commits.forEach((c, at) => { // newest first, so the last one kept is the oldest
     if (!byName.has(c.name)) byName.set(c.name, new Map());
-    const m = byName.get(c.name);
-    if (!m.has(c.identity)) m.set(c.identity, { n: 0, sha: c.sha });
-    m.get(c.identity).n++;
-  }
-  const isLogin = s => (s.startsWith('login:') ? 1 : 0);
+    byName.get(c.name).set(c.identity, { sha: c.sha, at });
+  });
   const out = new Map(); // owner -> identity
   for (const owner of new Set(owners)) {
     const m = byName.get(owner.trim().toLowerCase());
     if (!m) continue;
-    const [[who, { sha }]] = [...m].sort(([a, x], [b, y]) => isLogin(b) - isLogin(a) || y.n - x.n || a.localeCompare(b));
-    const login = isLogin(who) ? null : await lookup(sha);
-    if (login === undefined) continue;
-    out.set(owner, login ? 'login:' + login.toLowerCase() : who);
+    const oldestFirst = [...m].sort(([, x], [, y]) => y.at - x.at);
+    const login = oldestFirst.find(([who]) => who.startsWith('login:'));
+    if (login) {
+      out.set(owner, login[0]);
+      continue;
+    }
+    let found = null, unsure = false;
+    for (const [, { sha }] of oldestFirst.slice(0, MAX_LOOKUPS)) {
+      const l = await lookup(sha);
+      if (l === undefined) { unsure = true; break; }
+      if (l) { found = 'login:' + l.toLowerCase(); break; }
+    }
+    if (found) out.set(owner, found);
+    else if (!unsure) out.set(owner, oldestFirst[0][0]);
   }
   return out;
 }
