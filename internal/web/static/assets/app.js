@@ -237,6 +237,7 @@ function render() {
   if (pane) pane.scrollTop = paneScroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
   if (sideNow) sideNow.scrollTop = side;
+  sideFade(root.querySelector(".sidebar-content"));
   restoreChatScroll(chat);
   if (keep) {
     const el = root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
@@ -317,7 +318,7 @@ function miniSidebar() {
       "div",
       { class: "mini-scroll" },
       miniYou(),
-      top("sessions", "users", "All sessions", ui.view === "sessions"),
+      miniSessions(),
       top("messages", "message", "All conversations", ui.view === "messages" && !ui.filter),
       top("recent", "clock", "Recent messages", ui.view === "recent"),
       ui.tagFilter &&
@@ -339,7 +340,7 @@ function miniSidebar() {
         const live = shownSessions(liveSessions(d));
         if (ui.tagFilter && !live.length) return null;
         return [
-          h("div", { class: "mini-dev", title: (d.self ? "This device" : d.owner || d.id) + " · " + live.length }, deviceDot(d)),
+          h("div", { class: "mini-dev", title: deviceLabel(d) + " · " + live.length }, deviceDot(d)),
           live.map((s) => {
             const key = s.addr || s.name;
             return h(
@@ -366,6 +367,27 @@ function miniSidebar() {
   );
 }
 
+// All sessions, with a yellow dot while a question waits on one of them.
+function miniSessions() {
+  const n = ui.state ? runningNeeds().size : 0;
+  const label = n ? "All sessions, " + n + (n === 1 ? " needs" : " need") + " a look" : "All sessions";
+  return h(
+    "button",
+    {
+      class: "mini-btn" + (ui.view === "sessions" ? " current" : ""),
+      title: label,
+      "aria-label": label,
+      "data-key": "mini-sessions",
+      onclick: () => {
+        ui.filter = null;
+        go("sessions");
+      },
+    },
+    icon("users"),
+    n > 0 && h("span", { class: "mini-need" }),
+  );
+}
+
 function miniYou() {
   const n = unreadCount();
   return h(
@@ -379,6 +401,7 @@ function miniYou() {
 function sidebar() {
   if (mini) return miniSidebar();
   const devs = devices();
+  const needs = ui.state ? runningNeeds() : new Map();
   return h(
     "aside",
     { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME },
@@ -390,14 +413,14 @@ function sidebar() {
     ),
     h(
       "div",
-      { class: "sidebar-content" },
+      { class: "sidebar-content", onscroll: (e) => sideFade(e.currentTarget) },
       h(
         "div",
         { class: "sidebar-group g-top" },
         yourRow(),
-        topRow("sessions", "users", "All sessions", allSessionsSub()),
+        topRow("sessions", "users", "All sessions", ui.state ? devs.reduce((n, d) => n + liveSessions(d).length, 0) : null, needs.size),
         allButton(),
-        topRow("recent", "clock", "Recent messages", plural(ui.messages.length, "message")),
+        topRow("recent", "clock", "Recent messages", ui.messages.length),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       peopleGroup(),
@@ -414,9 +437,8 @@ function sidebar() {
               class: "device-link" + (d.reachable ? "" : " stale"),
               title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
             },
-            icon("laptop"),
-            h("span", { class: "label" }, deviceDot(d), deviceLabel(d), h("span", { class: "dev-host" }, host(d.id))),
-            d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
+            h("span", { class: "label" }, deviceDot(d), deviceLabel(d)),
+            !d.reachable && h("span", { class: "dev-you" }, "offline"),
             h("span", { class: "menu-count" }, live.length),
           ),
           live.length > 0 &&
@@ -434,14 +456,14 @@ function sidebar() {
                       class: "side-session",
                       "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
                       "data-key": "ss-" + s.name,
-                      title: s.doing || s.name,
+                      title: s.doing ? s.name + ": " + s.doing : s.name,
                       onclick: () => {
                         ui.filter = key;
                         ui.conversation = null;
                         go("messages");
                       },
                     },
-                    ...sideSessionBody(d, s),
+                    ...sideSessionBody(d, s, needs.has(s.name)),
                   ),
                   s.addr && tagButton(s),
                   messageButton(s.name),
@@ -487,13 +509,13 @@ function yourRow() {
   const a = me();
   const n = unreadCount();
   const count = a ? yourConversationCount() : 0;
-  const sub = !ui.state ? "" : !a ? "Talk to your agents" : a.taken ? "Choose a new name" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
+  const title = !ui.state ? null : !a ? "Talk to your agents" : a.taken ? "Choose a new name" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
   return h(
     "button",
-    { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", onclick: openYours },
+    { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", title, onclick: openYours },
     h("span", { class: "all-ico ico-you" }, icon("user")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "Your messages"), h("span", { class: "all-sub" }, sub)),
-    n > 0 && h("span", { class: "unread-badge" }, n),
+    h("span", { class: "all-title" }, "Your messages"),
+    a?.taken ? h("span", { class: "all-warn" }, "New name") : n > 0 ? h("span", { class: "unread-badge", "aria-label": n + " unread" }, n) : count > 0 && h("span", { class: "all-n" }, count),
   );
 }
 
@@ -519,14 +541,9 @@ function peopleGroup() {
           { class: "side-li" },
           h(
             "button",
-            { class: "side-session", "data-key": "person-" + p.name, title: "Message " + p.name, onclick: () => startChat(p.name) },
+            { class: "side-session", "data-key": "person-" + p.name, title: "Message " + p.name + " · " + (personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)), onclick: () => startChat(p.name) },
             presence(p.name, p.device),
-            h(
-              "span",
-              { class: "side-session-text" },
-              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, p.name), humanTag()),
-              h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
-            ),
+            h("span", { class: "name-line side-session-name" }, h("span", { class: "truncate" }, p.name), humanTag()),
           ),
         ),
       ),
@@ -853,8 +870,9 @@ function presence(name, d) {
   return h("span", { class: "pres-wrap" }, avatar(name), h("span", { class: "pres pres-" + st, title: STATE_TIPS[st] }));
 }
 
-// The sidebar's top rows: a picture, a title and a count under it.
-function topRow(view, iconName, title, sub) {
+// The sidebar's top rows, one line each: an icon, a title and a count. Questions waiting take the
+// count's place on All sessions, as unread mail does: the number to act on.
+function topRow(view, iconName, title, n, need = 0) {
   return h(
     "button",
     {
@@ -867,8 +885,16 @@ function topRow(view, iconName, title, sub) {
       },
     },
     h("span", { class: "all-ico" }, icon(iconName)),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, title), h("span", { class: "all-sub" }, sub)),
+    h("span", { class: "all-title" }, title),
+    need
+      ? h("span", { class: "all-need", title: need + (need === 1 ? " needs" : " need") + " a look" }, h("span", { class: "side-flag", "aria-hidden": "true" }), need)
+      : n != null && h("span", { class: "all-n" }, n),
   );
+}
+
+// The sidebar fades at its foot while there is more of it below.
+function sideFade(el) {
+  el?.classList.toggle("more", el.scrollHeight - el.scrollTop - el.clientHeight > 4);
 }
 
 // Settled sessions: stopped, or settled in T3, so their device leaves them out of presence (#189).
@@ -979,13 +1005,6 @@ function settledRow(r) {
   );
 }
 
-// All sessions' count: those running, and those settled if there are any, else the devices.
-function allSessionsSub() {
-  const settled = settledSessions().length;
-  const live = devices().reduce((n, d) => n + liveSessions(d).length, 0);
-  return plural(live, "session") + " · " + (settled ? settled + " settled" : plural(devices().length, "device"));
-}
-
 // A device's one name, wherever it is shown: "This device", or its host as people say it, with its
 // owner's name when the host doesn't already carry it ("maya-mbp", "Tyler's mac-mini").
 function deviceLabel(d) {
@@ -1016,7 +1035,8 @@ function allButton() {
       },
     },
     h("span", { class: "all-ico" }, icon("message")),
-    h("span", { class: "all-text" }, h("span", { class: "all-title" }, "All conversations"), h("span", { class: "all-sub" }, plural(count, "conversation"))),
+    h("span", { class: "all-title" }, "All conversations"),
+    h("span", { class: "all-n" }, count),
   );
 }
 
@@ -1028,27 +1048,14 @@ function allConversations() {
   return list;
 }
 
-// A session in the sidebar: its face and state, what it's doing, and its branch and pull request.
-function sideSessionBody(d, s) {
-  const prs = ui.state?.prs || {};
-  const pr = s.branch && Object.hasOwn(prs, s.branch) ? prs[s.branch] : null;
-  const chips = tagChips(s, Infinity, true);
+// A session in the sidebar is one line, for getting around, as in Slack's and Discord's lists: its
+// face and state, its name, and the yellow dot that marks it in All sessions when it owes an answer.
+// All sessions has the rest.
+function sideSessionBody(d, s, owes) {
   return [
     presence(s.name, d),
-    h(
-      "span",
-      { class: "side-session-text" },
-      h("span", { class: "side-session-name truncate" }, s.name),
-      h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
-      (s.branch || pr || chips) &&
-        h(
-          "span",
-          { class: "g-meta" },
-          s.branch && h("span", { class: "g-branch truncate" }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
-          pr && h("span", { class: "g-pr" + (pr.draft ? " draft" : "") }, "#" + pr.number),
-          chips,
-        ),
-    ),
+    h("span", { class: "side-session-name truncate" }, s.name),
+    owes && h("span", { class: "side-flag", title: "Waiting on an answer from " + s.name, "aria-label": "waiting on an answer" }),
   ];
 }
 
@@ -1513,7 +1520,7 @@ function sessionsPage() {
           icon("search"),
           h("input", {
             type: "search",
-            placeholder: tab === "settled" ? "Search settled sessions" : "Search sessions",
+            placeholder: "Search",
             "aria-label": "Search sessions",
             value: F.q,
             "data-key": "fx-q",
