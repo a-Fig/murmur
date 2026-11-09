@@ -1978,7 +1978,9 @@ function fleetRow(d, s, need, on, F, pinned) {
     ),
     h("div", { class: "fx-c fx-c-state", role: "cell" }, fxDot(state), FX_STATE[state]),
     h("div", { class: "fx-c fx-c-doing", role: "cell" }, s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : fxDash()),
-    h("div", { class: "fx-c fx-c-branch", role: "cell" }, s.branch ? [h("span", { class: "mono", title: s.branch }, s.branch), pr && fxPr(pr)] : fxDash()),
+    !pinned && F.by === "branch"
+      ? h("div", { class: "fx-c fx-c-branch", role: "cell" }, pr && fxPr(pr))
+      : h("div", { class: "fx-c fx-c-branch", role: "cell" }, s.branch ? [h("span", { class: "mono", title: s.branch }, s.branch), pr && fxPr(pr)] : fxDash()),
     h("div", { class: "fx-c fx-c-last", role: "cell" }, t ? agoEl("span", "", t) : fxDash()),
     h(
       "div",
@@ -2265,15 +2267,30 @@ document.addEventListener("focusin", (e) => {
 });
 
 // The toolbar and the table's header stay in view as the table scrolls; the header sits under the
-// toolbar, whose height changes as it wraps. Where the pane would leave the table under 680px, it
-// lies over the table instead.
+// toolbar, whose height changes as it wraps. Where the pane would leave the table under 760px, it
+// lies over the table instead. Branch is as wide as the widest branch shown, up to a cap, so
+// Working on has the rest. A row's tags give way before its other text is cut short.
 function fleetFit() {
   const split = root.querySelector(".fx-split");
   if (!split) return;
   const pane = split.querySelector(".fx-pane");
-  split.classList.toggle("overlay", !!pane && split.clientWidth - pane.offsetWidth < 680);
+  split.classList.toggle("overlay", !!pane && split.clientWidth - pane.offsetWidth < 760);
   const bar = split.querySelector(".fx-toolbar");
   if (bar) split.style.setProperty("--fx-tb", bar.offsetHeight + "px");
+  const table = split.querySelector(".fx-table");
+  if (!table) return;
+  let widest = 0;
+  for (const cell of table.querySelectorAll(".fx-tbody .fx-c-branch")) {
+    const kids = [...cell.children];
+    const w = kids.reduce((n, k) => n + (k.classList.contains("mono") ? k.scrollWidth : k.offsetWidth), 0) + Math.max(0, kids.length - 1) * 6;
+    widest = Math.max(widest, w);
+  }
+  table.style.setProperty("--fx-branch-w", Math.min(Math.max(widest + 2, 40), 240) + "px"); // scrollWidth rounds down
+  for (const line of table.querySelectorAll(".fx-subline")) {
+    line.classList.remove("no-tags");
+    const parts = line.querySelector(".fx-parts-in");
+    if (line.querySelector(".stags") && parts && parts.scrollWidth > parts.clientWidth + 1) line.classList.add("no-tags");
+  }
 }
 window.addEventListener("resize", () => fleetFit());
 
@@ -2523,19 +2540,20 @@ function fleetInspector(name) {
     h(
       "div",
       { class: "fx-actions" },
-      h("button", { class: "fx-btn fx-btn-primary", "data-key": "fx-msg", onclick: () => startChat(name) }, icon("message"), "Message " + name),
+      h("button", { class: "fx-btn fx-btn-primary", "data-key": "fx-msg", "aria-label": "Message " + name, onclick: () => startChat(name) }, icon("message"), "Message"),
       h(
         "button",
         {
           class: "fx-btn",
           "data-key": "fx-convs",
+          "aria-label": "Open " + name + "’s conversations",
           onclick: () => {
             ui.filter = s.addr || s.name;
             ui.conversation = null;
             go("messages");
           },
         },
-        "Open " + name + "’s conversations",
+        "Conversations",
       ),
       s.addr &&
         h(
@@ -2544,6 +2562,7 @@ function fleetInspector(name) {
             class: "fx-btn fx-btn-ghost",
             "data-key": "fx-hide",
             title: hidden ? "Show " + name + " again" : "Hide " + name + " until you show it again",
+            "aria-label": hidden ? "Show " + name : "Hide " + name,
             onclick: () => setHidden(s, !hidden),
           },
           icon(hidden ? "eye" : "eyeOff"),

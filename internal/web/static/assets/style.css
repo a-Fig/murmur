@@ -4307,7 +4307,7 @@ div.menu-button.update:hover {
 }
 .fx-pr.draft {
   background: rgb(255 255 255 / 6%);
-  color: var(--fx-text-2);
+  color: #b0b0b0; /* 4.5:1 on the chip, over the pane's grey too */
 }
 a.fx-pr {
   transition: background-color 120ms var(--fx-ease);
@@ -4333,9 +4333,10 @@ a.fx-pr:hover {
 .fx-table {
   container-type: inline-size;
 }
+/* Working on takes the spare width; Branch is as wide as the widest branch shown (fleetFit). */
 .fx-tr {
   display: grid;
-  grid-template-columns: minmax(13rem, 1.25fr) 8rem minmax(12rem, 2fr) minmax(10rem, 1fr) 6rem 1.75rem;
+  grid-template-columns: minmax(13rem, 15rem) 8rem minmax(12rem, 1fr) var(--fx-branch-w, 10rem) 6rem 1.75rem;
   column-gap: 1.25rem;
   align-items: center;
   padding: 0 0.75rem;
@@ -4539,6 +4540,10 @@ a.fx-pr:hover {
   flex-wrap: nowrap;
   max-width: 60%;
 }
+/* Where the line under the name would be cut short, its tags go first (fleetFit). */
+.fx-subline.no-tags > .stags {
+  display: none;
+}
 /* One line here: <wbr> would wrap it even under nowrap. */
 .fx-subline wbr {
   display: none;
@@ -4741,7 +4746,7 @@ button.fx-group:hover {
 /* Four columns: Branch goes, to the line under the name. */
 @container (max-width: 1000px) {
   .fx-tr {
-    grid-template-columns: minmax(12rem, 1.3fr) 7.5rem minmax(10rem, 2fr) 5rem 1.75rem;
+    grid-template-columns: minmax(12rem, 15rem) 7.5rem minmax(10rem, 1fr) 5rem 1.75rem;
     column-gap: 1rem;
   }
   .fx-c-branch {
