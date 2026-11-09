@@ -3,7 +3,16 @@
 //
 // The fixtures change while it runs: a message arrives every 10 to 40 seconds and sessions go on
 // being active, so the page's polling has something to show. Most messages answer the one before,
-// so a conversation goes back and forth as a real one does.
+// so a conversation goes back and forth as a real one does. A few messages are from yesterday and
+// days before, so Recent's day labels show every kind.
+//
+// Flags show the page's other states:
+//
+//	-taken          an account whose name the person on another device chose first
+//	-update STATE   a newer release: auto (installing), manual (updates off) or ready (restart)
+//	-empty          no messages at all, and none arriving; the sessions are as usual
+//	-slow           the first state and the first messages answer after about 3 seconds, so the
+//	                page's loading states show
 package main
 
 import (
@@ -21,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
@@ -33,6 +43,8 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
 	taken := flag.Bool("taken", false, "start with an account named maya, a name the person on maya-mbp chose first (#268)")
 	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
+	empty := flag.Bool("empty", false, "start with no messages, and send none")
+	slow := flag.Bool("slow", false, "answer the first state and the first messages after about 3 seconds")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || (host != "127.0.0.1" && host != "localhost") {
@@ -59,7 +71,16 @@ func main() {
 	if *taken {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0", Suggested: "tyler"}
 	}
-	go src.run()
+	if *empty {
+		src.messages = nil
+	}
+	if *slow {
+		src.slowState.Store(true)
+		src.slowMessages.Store(true)
+	}
+	if !*empty {
+		go src.run()
+	}
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
 	srv := &http.Server{Handler: web.NewWithPRs(src, token, fixturePRs), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
@@ -103,6 +124,19 @@ type fixtures struct {
 	version  web.Version
 	downTill time.Time // a restart in progress: State fails until then
 	account  web.Account
+
+	slowState, slowMessages atomic.Bool // -slow: the first answer of each waits (wait)
+}
+
+// wait holds the first answer of a kind for about 3 seconds, once, when -slow asked for it.
+func wait(ctx context.Context, first *atomic.Bool) {
+	if !first.Swap(false) {
+		return
+	}
+	select {
+	case <-time.After(3 * time.Second):
+	case <-ctx.Done():
+	}
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -181,6 +215,17 @@ func newFixtures(now time.Time) *fixtures {
 			ID: randomHex(6), From: from, To: to, ToKind: kind, Subject: subject, Body: body, At: ago(d),
 		})
 	}
+	// Older messages, so Recent shows Yesterday, a weekday and a date over them.
+	msg(9*24*time.Hour, "solar-wren", "*", web.ToAll, "Starting on the web page",
+		"I'll sketch the sessions table first. Agents and people get the same view of who is running.")
+	msg(3*24*time.Hour+2*time.Hour, "lucid-badger", "*", web.ToAll, "Word pairs for session names",
+		"Two lists, adjectives and animals, about 600 words each. Plenty of pairs before any collide.")
+	msg(3*24*time.Hour+90*time.Minute, "rapid-ibis", "lucid-badger", web.ToSession, "Re: Word pairs for session names",
+		"Good. I'll keep receipts keyed by address, so a rename doesn't matter to them.")
+	msg(27*time.Hour, "brave-heron", "*", web.ToAll, "Removing claims",
+		"Claims never caught on. #24 takes them out of the daemon and the MCP tools.")
+	msg(26*time.Hour, "mellow-yak", "brave-heron", web.ToSession, "Re: Removing claims",
+		"Fine by me. Receipts never read them.")
 	msg(3*time.Hour, "solar-wren", "*", web.ToAll, "Taking wake-ups (#25)",
 		"I'm on #25. Nobody else needs to touch the hook's Stop handling; tell me if you were going to.")
 	msg(170*time.Minute, "brave-heron", "solar-wren", web.ToSession, "Claims are going away under you",
@@ -297,6 +342,7 @@ func (f *fixtures) run() {
 }
 
 func (f *fixtures) State(ctx context.Context) (web.State, error) {
+	wait(ctx, &f.slowState)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if time.Now().Before(f.downTill) {
@@ -312,6 +358,7 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 
 // Messages uses the count of messages seen as its cursor.
 func (f *fixtures) Messages(ctx context.Context, cursor string) ([]web.Message, string, error) {
+	wait(ctx, &f.slowMessages)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	from := 0
