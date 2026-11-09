@@ -2090,7 +2090,8 @@ function fleetPane(name) {
     onpointerdown: (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      const right = root.querySelector(".fx-split").getBoundingClientRect().right;
+      // From the pane's own right edge: over the table it sits at the window's, past the scrollbar.
+      const right = root.querySelector(".fx-pane").getBoundingClientRect().right;
       grip.setPointerCapture(e.pointerId);
       grip.classList.add("drag");
       ui.fxDragging = true;
