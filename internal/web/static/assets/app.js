@@ -1321,7 +1321,7 @@ function waitingQuestions() {
 }
 
 // Who owes an answer among rows ({ d, s }), by name: the oldest question first, with the rest. With
-// all, questions marked "Not waiting" count too (for the details' Undo lines).
+// all, questions marked answered count too (for the details' Undo lines).
 function fleetNeeds(rows, all = false) {
   const names = new Set(rows.map((r) => r.s.name));
   const dismissed = fleetDismissed();
@@ -1832,7 +1832,10 @@ function fleetCollapsed(F) {
 // they are left out of their own group, so no session is listed twice.
 function fleetPinned(rows, needs, F) {
   const S = F.sort || {};
-  return rows.filter((r) => needs.has(r.s.name)).sort(S.key ? fleetCompare(S) : (a, b) => needs.get(a.s.name).at - needs.get(b.s.name).at);
+  // Unsorted: questions a session can answer now, oldest first, then those waiting on a session
+  // that is offline or on do not disturb, oldest first.
+  const later = (r) => (waitNote(r.d, r.s) ? 1 : 0);
+  return rows.filter((r) => needs.has(r.s.name)).sort(S.key ? fleetCompare(S) : (a, b) => later(a) - later(b) || needs.get(a.s.name).at - needs.get(b.s.name).at);
 }
 
 function visibleRows(rows, needs, F) {
@@ -2561,14 +2564,14 @@ function fleetInspector(name) {
     ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr)] : "–"],
     groupOf(s) && ["Job", groupOf(s)],
     s.addr && ["Tags", tagsLine(s)],
-    ["Running for", started ? lasted(started) + ", since " + sinceWhen(started) : "–"],
+    ["Started", started ? agoEl("span", "", started) : "–"],
     ["Last active", t ? agoEl("span", "", t) : "–"],
   ].filter(Boolean);
   const owed = need?.msgs || [];
   const unanswered = new Set(waitingQuestions());
   // One row per conversation (the other side and the subject, a reply's "Re:" aside), since a
   // message and its reply open the same one. Conversations holding a question it owes come first,
-  // oldest first; then ones marked "Not waiting"; then its own questions still waiting, oldest
+  // oldest first; then ones marked answered; then its own questions still waiting, oldest
   // first; then the rest, newest first.
   const rank = (m) => (owed.includes(m) ? 0 : fromName(m) === name && unanswered.has(m) ? 1 : 2);
   const convMap = new Map();
@@ -2580,7 +2583,7 @@ function fleetInspector(name) {
     if (!convMap.has(k)) convMap.set(k, { other, subj, msgs: [] });
     convMap.get(k).msgs.push(m);
   }
-  // Conversations marked "Not waiting" whose question would still be waiting: each can be undone.
+  // Conversations marked answered whose question would still be waiting: each can be undone.
   const ck = (other, subj) => other + " " + subj.toLowerCase();
   const marked = new Map();
   for (const x of fleetNeeds([{ d, s }], true).get(name)?.msgs || []) {
@@ -2600,7 +2603,7 @@ function fleetInspector(name) {
     })
     .sort((a, b) => a.rank - b.rank || (a.rank < 2 ? (a.waiting?.sortAt ?? a.markedAt) - (b.waiting?.sortAt ?? b.markedAt) : b.latest.sortAt - a.latest.sortAt));
   const owing = direct.filter((c) => c.rank === 0);
-  // "Not waiting" is for a flag that's wrong: the reply was misread, or the answer came some other
+  // "Mark answered" is for a flag that's wrong: the reply was misread, or the answer came some other
   // way. It clears that one conversation, in this browser, and can be undone in place.
   const dismiss = (c) => () => {
     fleetDismiss(c.msgs.filter((x) => owed.includes(x)));
@@ -2689,11 +2692,15 @@ function fleetInspector(name) {
                 : c.rank === 1
                   ? ["To ", h("b", null, c.other), " · no answer yet"]
                   : c.isMarked
-                    ? ["From ", h("b", null, c.other), " · marked not waiting"]
+                    ? ["From ", h("b", null, c.other), " · marked answered"]
                     : c.msgs.length === 1
                       ? [out ? "To " : "From ", h("b", null, c.other)]
                       : ["With ", h("b", null, c.other), " · " + c.msgs.length + " messages"];
             const k = ck(c.other, c.subj);
+            // The subject once: not over a question that starts with it.
+            const q = c.rank < 2 ? questionIn(m) : "";
+            const bare = (c.subj || "").replace(/…$/, "").trim();
+            const inQ = !!q && !!bare && q.replace(/…$/, "").startsWith(bare);
             return h(
               "li",
               { class: "fx-dm-item" + (c.rank === 0 ? " wait" : c.isMarked ? " marked" : "") },
@@ -2701,10 +2708,10 @@ function fleetInspector(name) {
                 "button",
                 { class: "fx-dm", "data-key": "fd-" + c.other + ":" + c.subj.toLowerCase(), onclick: openMessage(m) },
                 h("span", { class: "fx-dm-head" }, h("span", null, head), agoEl("span", "fx-dm-time", m.sortAt)),
-                h("span", { class: "fx-dm-subj", title: c.subj }, c.subj || "(no subject)"),
-                c.rank < 2 && questionIn(m) !== c.subj && h("span", { class: "fx-dm-q" }, "“" + questionIn(m) + "”"),
+                !inQ && h("span", { class: "fx-dm-subj", title: c.subj }, c.subj || "(no subject)"),
+                !!q && q !== c.subj && h("span", { class: "fx-dm-q" }, "“" + q + "”"),
               ),
-              c.rank === 0 && h("button", { class: "fx-dm-act", "data-key": "fx-nw-" + k, title: "Stop counting this question as waiting, in this browser", onclick: dismiss(c) }, "Not waiting"),
+              c.rank === 0 && h("button", { class: "fx-dm-act", "data-key": "fx-nw-" + k, title: "Count this question as answered, in this browser", onclick: dismiss(c) }, "Mark answered"),
               c.isMarked && h("button", { class: "fx-dm-act", "data-key": "fx-undo-" + k, onclick: undo(c) }, "Undo"),
             );
           }),
