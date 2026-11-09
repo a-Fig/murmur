@@ -1666,6 +1666,13 @@ const FX_COLS = [
   ["branch", "Branch", "branch"],
   ["last", "Last active", "active"],
 ];
+// Settled sessions are known from their messages: what they last talked about, and when. No branch.
+const FX_SETTLED_COLS = [
+  ["who", "Session", "name"],
+  ["state", "State", null],
+  ["doing", "Last conversation", null],
+  ["last", "Last message", "active"],
+];
 const FX_STATE_ORDER = { on: 0, idle: 1, dnd: 2, off: 3 };
 
 function fleetSortVal(k, r) {
@@ -1729,12 +1736,12 @@ function visibleRows(rows, needs, F) {
 }
 
 // The table's header row, sortable, shared by every tab.
-function fleetHead(F) {
+function fleetHead(F, cols = FX_COLS, actions = true) {
   const S = F.sort || {};
   return h(
     "div",
     { class: "fx-tr fx-th", role: "row" },
-    FX_COLS.map(([c, name, k]) => {
+    cols.map(([c, name, k]) => {
       const on = k && S.key === k;
       // Last active's first order is the latest first: descending by time.
       const order = on ? ((k === "active") === S.dir > 0 ? "descending" : "ascending") : null;
@@ -1758,7 +1765,7 @@ function fleetHead(F) {
           : name,
       );
     }),
-    h("div", { class: "fx-c fx-c-act", role: "columnheader" }, h("span", { class: "sr-only" }, "Actions")),
+    actions && h("div", { class: "fx-c fx-c-act", role: "columnheader" }, h("span", { class: "sr-only" }, "Actions")),
   );
 }
 
@@ -2095,8 +2102,8 @@ function rowMenu() {
 }
 
 // Settled sessions, in the same table under their devices: the page knows them only from their
-// messages, so a row's state is Ended, what it was working on is the subject it last wrote or was
-// sent, and its branch isn't known. One opens its conversations.
+// messages, so a row's state is Ended, its last conversation is the subject it last wrote or was
+// sent, and it has no branch column. One opens its conversations.
 function settledTable(q, F) {
   if (ui.tagFilter) return h("div", { class: "fx-table" }, h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No settled session is tagged " + ui.tagFilter)));
   const S = F.sort || {};
@@ -2120,8 +2127,8 @@ function settledTable(q, F) {
   const collapsed = fleetCollapsed(F);
   return h(
     "div",
-    { class: "fx-table", role: "table", "aria-label": "Settled sessions" },
-    settledSessions().length > 0 && h("div", { class: "fx-thead", role: "rowgroup" }, fleetHead(F)),
+    { class: "fx-table fx-settled", role: "table", "aria-label": "Settled sessions" },
+    settledSessions().length > 0 && h("div", { class: "fx-thead", role: "rowgroup" }, fleetHead(F, FX_SETTLED_COLS, false)),
     h(
       "div",
       { class: "fx-tbody", role: "rowgroup" },
@@ -2165,9 +2172,7 @@ function settledTable(q, F) {
                 ),
                 h("div", { class: "fx-c fx-c-state", role: "cell" }, fxDot("off"), "Ended"),
                 h("div", { class: "fx-c fx-c-doing", role: "cell" }, r.lastMsg?.subject ? h("span", { class: "fx-status", title: r.lastMsg.subject }, r.lastMsg.subject) : fxDash()),
-                h("div", { class: "fx-c fx-c-branch", role: "cell" }, fxDash()),
                 h("div", { class: "fx-c fx-c-last", role: "cell" }, r.last ? agoEl("span", "", r.last) : fxDash()),
-                h("div", { class: "fx-c fx-c-act", role: "cell" }),
               ),
             ),
         ];

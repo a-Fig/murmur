@@ -4757,12 +4757,29 @@ button.fx-group:hover {
     display: inline;
   }
 }
+/* Settled has no Branch column, and no actions: a row opens its conversations. */
+@container (min-width: 1001px) {
+  .fx-settled .fx-tr {
+    grid-template-columns: minmax(13rem, 15rem) 8rem minmax(12rem, 1fr) 7rem; /* "Last message" is longer */
+  }
+  .fx-settled .fx-c-last {
+    grid-column: 4;
+  }
+}
+@container (min-width: 601px) and (max-width: 1000px) {
+  .fx-settled .fx-tr {
+    grid-template-columns: minmax(12rem, 15rem) 7.5rem minmax(10rem, 1fr) 7rem;
+  }
+}
 /* Narrow: the name, its state and when; what it's working on takes the line under the name. */
 @container (max-width: 600px) {
   .fx-tr {
     grid-template-columns: minmax(0, 1fr) auto 4.75rem 1.75rem;
     column-gap: 0.75rem;
     padding: 0 0.5rem;
+  }
+  .fx-settled .fx-tr {
+    grid-template-columns: minmax(0, 1fr) auto 4.75rem;
   }
   .fx-c-doing {
     display: none;
