@@ -6002,3 +6002,10 @@ a.fx-pr:focus-visible,
   align-items: center;
   gap: 0.75rem;
 }
+/* A session that needs a look, in its own group: a dot after its name; its reason is in the summary. */
+.fx-owes {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.375rem;
+  vertical-align: middle;
+}

@@ -1847,8 +1847,8 @@ function fleetCollapsed(F) {
   return filtering ? (ui.fxCollapsedFiltered ||= new Set()) : fleetShut();
 }
 
-// Sessions that owe an answer lead the table, in a group of their own, the longest wait first;
-// they are left out of their own group, so no session is listed twice.
+// Sessions that owe an answer lead the table, in a summary of their own, the longest wait first.
+// They stay in their own groups too, so each group is whole and its count true.
 function fleetPinned(rows, needs, F) {
   const S = F.sort || {};
   // Unsorted: questions a session can answer now, oldest first, then those waiting on a session
@@ -1859,7 +1859,7 @@ function fleetPinned(rows, needs, F) {
 
 function visibleRows(rows, needs, F) {
   const shut = fleetCollapsed(F);
-  const rest = [...fleetGroups(rows.filter((r) => !needs.has(r.s.name)), F)].flatMap(([k, list]) => (shut.has(F.by + ":" + k) ? [] : list));
+  const rest = [...fleetGroups(rows, F)].flatMap(([k, list]) => (shut.has(F.by + ":" + k) ? [] : list));
   return [...fleetPinned(rows, needs, F), ...rest];
 }
 
@@ -1930,10 +1930,7 @@ function fxGroupHead(gk, shut, collapsed, filtering, label, n) {
 function fleetTable(rows, needs, sel, empty) {
   const F = fleetFilter();
   const pinned = fleetPinned(rows, needs, F);
-  const groups = fleetGroups(
-    rows.filter((r) => !needs.has(r.s.name)),
-    F,
-  );
+  const groups = fleetGroups(rows, F);
   // Which heading each session is under, so closing one whose group is shut can focus the heading.
   ui.fxGroupOf = {};
   for (const [k, list] of groups) for (const r of list) ui.fxGroupOf[r.s.name] = "fg-" + F.by + ":" + k;
@@ -1991,7 +1988,7 @@ function fleetTable(rows, needs, sel, empty) {
           fxGroupHead(gk, shut, collapsed, filtering, label(k, list), list.length),
           !shut &&
             list.map(({ d, s }) => {
-              const row = fleetRow(d, s, null, sel === s.name, F, false);
+              const row = fleetRow(d, s, null, sel === s.name, F, false, needs.has(s.name));
               if (ui.fxUnfolded === gk) row.classList.add("enter");
               return row;
             }),
@@ -2045,7 +2042,10 @@ function togglePick(s, range) {
   render();
 }
 
-function fleetRow(d, s, need, on, F, pinned) {
+// A session is in the table twice when it needs a look: in the summary at the top (pinned), with its
+// reason, and in its own group with a dot (owes). The summary's copy has keys of its own, "fp-" and
+// "fx-morp-", so a key finds one control.
+function fleetRow(d, s, need, on, F, pinned, owes = false) {
   const pr = prOf(s);
   const t = when(s.lastActive);
   const state = sessionState(d, s);
@@ -2075,14 +2075,14 @@ function fleetRow(d, s, need, on, F, pinned) {
         avatar(s.name),
         h(
           "div",
-          { class: "fx-who-text" },
+          { class: "fx-who-text" + (owes ? " owes" : "") },
           // The name is the row's one control. It covers the whole row, so a click anywhere opens
           // the details, and the keyboard has one stop per row.
           h(
             "button",
             {
               class: "fx-open",
-              "data-key": "fl-" + s.name,
+              "data-key": (pinned ? "fp-" : "fl-") + s.name,
               "aria-expanded": picking ? null : on ? "true" : "false",
               "aria-pressed": picking ? (picked ? "true" : "false") : null,
               "aria-controls": on ? "fx-pane" : null,
@@ -2095,6 +2095,7 @@ function fleetRow(d, s, need, on, F, pinned) {
               onclick: (e) => (picking ? togglePick(s, e.shiftKey) : on ? fleetCloseAsked() : fleetOpen(s.name)),
             },
             s.name,
+            owes && h("span", { class: "fx-owes" }, h("span", { class: "fx-flag", "aria-hidden": "true" }), h("span", { class: "sr-only" }, ", needs a look")),
           ),
           h("span", { class: "fx-subline" }, parts.length > 0 && h("span", { class: "fx-muted fx-parts", title: titled }, fxParts(parts)), tagChips(s, 2, true)),
           // Where the table is too narrow for Working on, it takes this line instead.
@@ -2120,7 +2121,7 @@ function fleetRow(d, s, need, on, F, pinned) {
           "aria-label": "Actions for " + s.name,
           "aria-haspopup": "menu",
           "aria-expanded": ui.rowMenu?.name === s.name ? "true" : "false",
-          "data-key": "fx-more-" + s.name,
+          "data-key": (pinned ? "fx-morp-" : "fx-more-") + s.name,
           onclick: (e) => openRowMenu(s.name, e.currentTarget),
         },
         icon("more"),
@@ -2338,7 +2339,7 @@ function fleetOpen(name) {
   ui.fleetSel = name;
   render();
   // Opening the pane narrows the table, so its rows grow or shrink; keep this one in view.
-  root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`)?.closest(".fx-row")?.scrollIntoView({ block: "nearest" });
+  root.querySelector(`[data-key="fl-${CSS.escape(name)}"], [data-key="fp-${CSS.escape(name)}"]`)?.closest(".fx-row")?.scrollIntoView({ block: "nearest" });
 }
 
 // Closing gives the keyboard back to the row, or to its group's heading if the group is shut.
@@ -2347,7 +2348,7 @@ function fleetClose() {
   const name = ui.fleetSel;
   ui.fleetSel = null;
   render();
-  const to = name && (root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`) || (ui.fxGroupOf?.[name] && root.querySelector(`[data-key="${CSS.escape(ui.fxGroupOf[name])}"]`)));
+  const to = name && (root.querySelector(`[data-key="fl-${CSS.escape(name)}"]`) || root.querySelector(`[data-key="fp-${CSS.escape(name)}"]`) || (ui.fxGroupOf?.[name] && root.querySelector(`[data-key="${CSS.escape(ui.fxGroupOf[name])}"]`)));
   to?.focus({ preventScroll: true });
 }
 
@@ -2369,7 +2370,7 @@ function fleetFocusBack() {
   ui.fleetFocusPending = false;
   if (ui.view !== "sessions" || !ui.fleetSel) return;
   if (document.activeElement && document.activeElement !== document.body) return;
-  const back = root.querySelector(`[data-key="fl-${CSS.escape(ui.fleetSel)}"]`) || root.querySelector(".fx-pane .fx-icon-btn");
+  const back = root.querySelector(`[data-key="fl-${CSS.escape(ui.fleetSel)}"]`) || root.querySelector(`[data-key="fp-${CSS.escape(ui.fleetSel)}"]`) || root.querySelector(".fx-pane .fx-icon-btn");
   if (back) back.focus({ preventScroll: true });
   else ui.fleetFocusPending = true;
 }
@@ -2610,7 +2611,7 @@ document.addEventListener("keydown", (e) => {
       next.focus();
       (next.closest(".fx-row") || next).scrollIntoView({ block: "nearest" });
       // With the details open, they follow the row, as a mail client's reading pane does.
-      if (ui.fleetSel && next.dataset.key.startsWith("fl-") && !ui.selecting) fleetOpen(next.dataset.key.slice(3));
+      if (ui.fleetSel && /^f[lp]-/.test(next.dataset.key) && !ui.selecting) fleetOpen(next.dataset.key.slice(3));
     }
     return;
   }
