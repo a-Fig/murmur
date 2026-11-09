@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -177,6 +178,8 @@ func (d *device) start() {
 	logger := testLog()
 	if d.logTo != nil {
 		logger = log.New(d.logTo, "", 0)
+	} else if os.Getenv("DEBUG217") != "" {
+		logger = log.New(debugLog(d, filepath.Base(filepath.Dir(filepath.Dir(d.gitDir)))), "", log.Lmicroseconds)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -213,8 +216,10 @@ func (d *device) do(req proto.Request) proto.Response {
 	d.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	start := time.Now()
 	resp, err := d.c.Do(ctx, req)
 	if err != nil {
+		debugDump(d.t, fmt.Sprintf("%s failed after %v", req.Op, time.Since(start)))
 		d.t.Fatalf("%s: %v", req.Op, err)
 	}
 	return resp
@@ -250,6 +255,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	deadline := time.Now().Add(60 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
+			debugDump(t, "timed out waiting for "+what)
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(100 * time.Millisecond)

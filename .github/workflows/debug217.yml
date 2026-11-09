@@ -1,0 +1,55 @@
+# DEBUG for #217, not to be merged: the two tests that timed out on macOS, in a loop, with a
+# goroutine dump and the daemons' logs on a failure.
+name: debug217
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  loop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-latest, shard: 1, load: false}
+          - {os: macos-latest, shard: 2, load: false}
+          - {os: macos-latest, shard: 3, load: false}
+          - {os: macos-latest, shard: 4, load: true}
+          - {os: macos-latest, shard: 5, load: true}
+          - {os: ubuntu-latest, shard: 6, load: true}
+          - {os: windows-latest, shard: 7, load: true}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBUG217: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -race -c -o daemon.test ./internal/daemon
+      - name: loop
+        run: |
+          if [ "${{ matrix.load }}" = true ]; then
+            ( cd internal/daemon && while true; do ../../daemon.test -test.count=1 -test.skip 'TestSwitchFollowsTheHooksClaudeID|TestDaemonWithAThreadToWakeStaysUpAndHandsOver' > /dev/null 2>&1; done ) &
+          fi
+          cd internal/daemon
+          ../../daemon.test -test.count=100 -test.timeout 52m -test.v \
+            -test.run 'TestSwitchFollowsTheHooksClaudeID|TestDaemonWithAThreadToWakeStaysUpAndHandsOver' > ../../out.txt 2>&1
+          status=$?
+          grep -E '^(--- |=== RUN|ok|FAIL|PASS)' ../../out.txt | grep -E -- '--- (FAIL|PASS)' | awk '{print $2, $3}' | sort | uniq -c
+          grep -E -- '--- (PASS|FAIL)' ../../out.txt | sed -E 's/.*\((.*)s\)/\1/' | sort -n | tail -5
+          exit $status
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: out-${{ matrix.shard }}
+          path: out.txt

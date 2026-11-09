@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   test-macos:
+    if: false # DEBUG217
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -39,6 +40,7 @@ jobs:
 
   # gofmt runs on the other two: a Windows checkout turns line endings into CRLF, which gofmt reports.
   test-windows:
+    if: false # DEBUG217
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -55,6 +57,7 @@ jobs:
       - run: go test -race -count=1 -timeout 50m ./...
 
   test-linux:
+    if: false # DEBUG217
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
