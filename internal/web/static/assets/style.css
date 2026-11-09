@@ -1018,42 +1018,6 @@ code {
 .tf.on .tf-n {
   color: #ededed;
 }
-.side-tag {
-  position: absolute;
-  top: 0.375rem;
-  right: 3.625rem;
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-muted-foreground);
-  opacity: 0;
-}
-.side-li:hover .side-tag,
-.side-li:focus-within .side-tag {
-  opacity: 1;
-}
-.side-tag:hover {
-  background: rgb(255 255 255 / 8%);
-  color: var(--sidebar-foreground);
-}
-.side-tag:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-.side-tag .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
-.quiet-item .side-tag {
-  position: static;
-  flex-shrink: 0;
-}
-.quiet-item:hover .side-tag,
-.quiet-item:focus-within .side-tag {
-  opacity: 1;
-}
 .settled-row .stags {
   flex: 0 1 auto;
   height: 1rem;
@@ -3201,31 +3165,7 @@ code {
 .side-li {
   position: relative;
 }
-.side-hide {
-  position: absolute;
-  top: 0.375rem;
-  right: 0.375rem;
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-muted-foreground);
-  opacity: 0;
-}
 /* see-through rather than display: none, so a keyboard can still reach it */
-.side-li:hover .side-hide,
-.side-li:focus-within .side-hide {
-  opacity: 1;
-}
-.side-hide:hover {
-  background: rgb(255 255 255 / 8%);
-  color: var(--sidebar-foreground);
-}
-.side-hide .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
 .quiet-item {
   position: relative;
   display: flex;
@@ -3234,11 +3174,6 @@ code {
 .quiet-item .settled-row {
   flex: 1;
   min-width: 0;
-}
-.quiet-item .side-hide {
-  position: static;
-  flex-shrink: 0;
-  opacity: 1;
 }
 .quiet-item .pres-wrap .avatar {
   width: 1.25rem;
@@ -3468,8 +3403,7 @@ div.menu-button.update:hover {
 }
 .icon-btn:focus-visible,
 .foot-settings:focus-visible,
-.account-chip:focus-visible,
-.side-msg:focus-visible {
+.account-chip:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
@@ -3480,30 +3414,6 @@ div.menu-button.update:hover {
 }
 
 /* Message a session: on hover in the sidebar and on its card, always where there's no hover. */
-.side-msg {
-  position: absolute;
-  top: 0.375rem;
-  right: 2rem;
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-muted-foreground);
-  opacity: 0;
-}
-.side-li:hover .side-msg,
-.side-li:focus-within .side-msg {
-  opacity: 1;
-}
-.side-msg:hover {
-  background: rgb(255 255 255 / 8%);
-  color: var(--sidebar-foreground);
-}
-.side-msg .icon {
-  width: 0.875rem;
-  height: 0.875rem;
-}
 .g-head-msg {
   margin-left: auto;
 }
@@ -4248,16 +4158,14 @@ div.menu-button.update:hover {
 }
 /* Where search, the state filter and the rest can't share a line, they wrap rather than each
    taking one. */
+/* Where they can't share a line, the state filter takes the second line whole, words and all, and
+   Group by and Select keep to the right of the search. */
 @container (max-width: 1100px) {
-  .fx-spacer {
-    display: none;
+  .fx-toolbar > .fx-seg {
+    order: 1;
   }
-}
-/* Narrower, the state filter keeps its dots and counts, with the words in their tooltips. */
-@container (max-width: 760px) {
-  .fx-seg .fx-seg-word,
-  .fx-label {
-    display: none;
+  .fx-select-bar {
+    order: 2;
   }
 }
 
@@ -4322,8 +4230,10 @@ div.menu-button.update:hover {
   background: rgb(255 255 255 / 15%);
 }
 .fx-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--fx-border);
+  color: var(--fx-text-2);
+  cursor: not-allowed;
 }
 .fx-btn .icon {
   width: 0.875rem;
@@ -4445,7 +4355,7 @@ a.fx-pr:hover {
 }
 .fx-tr {
   display: grid;
-  grid-template-columns: minmax(13rem, 1.25fr) 8rem minmax(12rem, 2fr) minmax(10rem, 1fr) 6rem;
+  grid-template-columns: minmax(13rem, 1.25fr) 8rem minmax(12rem, 2fr) minmax(10rem, 1fr) 6rem 1.75rem;
   column-gap: 1.25rem;
   align-items: center;
   padding: 0 0.75rem;
@@ -4468,6 +4378,46 @@ a.fx-pr:hover {
   justify-self: end;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  color: var(--fx-text-2);
+  white-space: nowrap;
+}
+.fx-c-act {
+  grid-column: 6;
+  justify-self: end;
+}
+/* A row's "…": shown on hover and while anything in the row has focus; always there for a keyboard. */
+.fx-more {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 6px;
+  color: var(--fx-text-2);
+  opacity: 0;
+  transition: opacity 120ms var(--fx-ease);
+}
+.fx-more .icon {
+  width: 1rem;
+  height: 1rem;
+}
+.fx-row:hover .fx-more,
+.fx-row:focus-within .fx-more,
+.fx-more[aria-expanded="true"] {
+  opacity: 1;
+}
+.fx-more:hover,
+.fx-more[aria-expanded="true"] {
+  background: rgb(255 255 255 / 10%);
+  color: var(--fx-text);
+}
+.fx-more:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--fx-ring);
+  outline-offset: -2px;
+}
+.fx-dash {
   color: var(--fx-text-2);
 }
 .fx-thead {
@@ -4524,7 +4474,7 @@ a.fx-pr:hover {
 
 .fx-row {
   position: relative;
-  min-height: 2.75rem;
+  min-height: 3.25rem;
   padding-block: 0.375rem;
   row-gap: 0.125rem;
   border-bottom: 1px solid var(--fx-border);
@@ -4537,9 +4487,14 @@ a.fx-pr:hover {
 .fx-row:hover {
   background: var(--fx-hover);
 }
-.fx-row.on,
-.fx-row.picked {
+.fx-row.on {
   background: var(--fx-pressed);
+}
+.fx-row.picked {
+  background: rgb(255 255 255 / 11%);
+}
+.fx-row.picked:hover {
+  background: rgb(255 255 255 / 13%);
 }
 .fx-row.on {
   box-shadow: inset 2px 0 0 var(--fx-text);
@@ -4623,11 +4578,12 @@ a.fx-pr:hover {
 .fx-c-doing {
   color: var(--fx-text-2);
 }
+/* One line, so rows keep one height; the whole of it is in the title. */
 .fx-status {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  display: block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1.25rem;
 }
 .fx-c-branch {
@@ -4648,10 +4604,6 @@ a.fx-pr:hover {
 }
 .fx-part-branch .fx-pr {
   margin-left: 0.375rem;
-}
-/* With the details open, Working on keeps to one line, so rows stay one height to scan. */
-.has-pane .fx-status {
-  -webkit-line-clamp: 1;
 }
 /* While picking, a box at the start of each row. */
 .fx-pick {
@@ -4699,9 +4651,15 @@ a.fx-pr:hover {
   column-gap: 0.625rem;
   align-items: baseline;
   margin: 0;
-  color: var(--fx-text-2);
+  color: var(--fx-text);
   font-size: 0.8125rem;
   line-height: 1.25rem;
+}
+/* How long a question has waited: the value to act on. */
+.fx-wait {
+  color: var(--fx-warning-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .fx-reason .fx-flag {
   justify-self: center;
@@ -4774,15 +4732,13 @@ button.fx-group:hover {
 .fx-group .fx-pr {
   margin-left: 0.25rem;
 }
-.fx-group-need {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  margin-left: 0.25rem;
+/* "Needs a look" leads the table; its dot stands where the other headings have a chevron. */
+.fx-group-need .fx-group-name {
   color: var(--fx-warning-text);
-  font-size: 0.75rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+}
+.fx-need-dot {
+  display: inline-grid;
+  place-items: center;
 }
 
 /* Empty */
@@ -4802,28 +4758,10 @@ button.fx-group:hover {
   margin: 0 auto;
 }
 
-/* Settled sessions: the page knows them from their messages, so fewer columns. */
-.fx-tr.fx-settled {
-  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 2fr) 7rem 6rem;
-}
-.fx-settled > .fx-c:nth-child(2) {
-  grid-column: 2;
-}
-.fx-settled > .fx-c:nth-child(3) {
-  grid-column: 3;
-}
-.fx-settled > .fx-c:nth-child(4) {
-  grid-column: 4;
-}
-.fx-c-chats {
-  color: var(--fx-text-2);
-  white-space: nowrap;
-}
-
 /* Four columns: Branch goes, to the line under the name. */
 @container (max-width: 1000px) {
   .fx-tr {
-    grid-template-columns: minmax(12rem, 1.3fr) 7.5rem minmax(10rem, 2fr) 5rem;
+    grid-template-columns: minmax(12rem, 1.3fr) 7.5rem minmax(10rem, 2fr) 5rem 1.75rem;
     column-gap: 1rem;
   }
   .fx-c-branch {
@@ -4832,17 +4770,17 @@ button.fx-group:hover {
   .fx-c-last {
     grid-column: 4;
   }
+  .fx-c-act {
+    grid-column: 5;
+  }
   .fx-part-branch {
     display: inline;
-  }
-  .fx-tr.fx-settled {
-    grid-template-columns: minmax(10rem, 1fr) minmax(10rem, 2fr) 6.5rem 5rem;
   }
 }
 /* Narrow: the name, its state and when; what it's working on takes the line under the name. */
 @container (max-width: 600px) {
   .fx-tr {
-    grid-template-columns: minmax(0, 1fr) auto 4.75rem;
+    grid-template-columns: minmax(0, 1fr) auto 4.75rem 1.75rem;
     column-gap: 0.75rem;
     padding: 0 0.5rem;
   }
@@ -4851,6 +4789,9 @@ button.fx-group:hover {
   }
   .fx-c-last {
     grid-column: 3;
+  }
+  .fx-c-act {
+    grid-column: 4;
   }
   .fx-who-text:has(.fx-sub-doing) > .fx-subline {
     display: none;
@@ -5123,6 +5064,61 @@ a.fx-pr:focus-visible,
   }
 }
 
+/* A row's menu of actions, over the page like the tag menu. */
+.row-menu {
+  position: fixed;
+  z-index: 50;
+  width: 14rem;
+  padding: 0.25rem;
+  border-radius: 0.625rem;
+  background: #262626;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 10%), 0 12px 32px -8px rgb(0 0 0 / 60%);
+}
+.row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border-radius: 0.375rem;
+  color: #ededed;
+  font-size: 0.8125rem;
+  text-align: left;
+}
+.row-menu-item .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: #9e9e9e;
+}
+.row-menu-item:hover,
+.row-menu-item:focus {
+  background: rgb(255 255 255 / 9%);
+  outline: none;
+}
+.row-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+/* "Skip to content": first for Tab, out of sight until it has focus. */
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+  background: #ededed;
+  color: #141414;
+  font-weight: 600;
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+  outline: 2px solid #fafafa;
+  outline-offset: 2px;
+}
+
 /* The sidebar as navigation (#183): your messages and the three pages with their counts, then each
    device's sessions, one line each, named as All sessions' headings name them. All sessions has the
    rest. It scrolls under a fade while there is more below, with its foot held in place. */
@@ -5261,17 +5257,6 @@ a.fx-pr:focus-visible,
   height: 0.375rem;
   border-radius: 999px;
   background: #ffce2f;
-}
-/* A one-line row's Tag, Message and Hide, on hover, over the end of its name. */
-.side-li .side-tag,
-.side-li .side-msg,
-.side-li .side-hide {
-  top: 0.25rem;
-  background: #262626;
-}
-.side-li:hover .side-flag,
-.side-li:focus-within .side-flag {
-  visibility: hidden;
 }
 .settled-toggle {
   font-weight: 500;
