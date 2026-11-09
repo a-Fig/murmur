@@ -5804,3 +5804,58 @@ a.fx-pr:focus-visible,
     grid-template-columns: 18rem minmax(0, 1fr);
   }
 }
+/* Hierarchy. In a thread the sender is bold and the subject a quieter line over the body; in the
+   list an unread conversation's title is bold, and the open one is plainly stronger than a hover. */
+.dark .chat-msg-from {
+  font-weight: 700;
+}
+.dark .chat-msg-subject {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #b0b0b0;
+}
+.dark .chat-row-title {
+  font-weight: 500;
+}
+.dark .chat-row-unread .chat-row-title {
+  font-weight: 700;
+  color: #fafafa;
+}
+.dark .chat-row:hover {
+  background: #262626;
+}
+.dark .chat-row[aria-current="true"] {
+  background: #2e2e2e;
+  box-shadow: inset 2px 0 0 #d4d4d4;
+}
+/* Presence in a conversation's head: the shaped dot and its word, as everywhere else. */
+.chat-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  color: #d4d4d4;
+  white-space: nowrap;
+}
+.chat-state-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+}
+/* The list's "N new": white on a dark chip, with a shadow, at the list's top edge. */
+.list-pill {
+  background: #3a3a3a;
+  color: #fff;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 60%), 0 0 0 1px rgb(255 255 255 / 10%);
+}
+.list-pill:hover {
+  background: #474747;
+}
+.chat-state-dot.sdot-on {
+  background: #64af4c;
+}
+.chat-state-dot.sdot-dnd {
+  position: relative;
+  background: #ff705d;
+}

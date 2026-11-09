@@ -4138,7 +4138,7 @@ function conversationPane(c) {
         about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
         c.kind === "dm" && !o && c.pair.length > 1 && pairStates(c),
       ),
-      of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
+      of && h("span", { class: "chat-state" }, stateDot(sessionState(of.device, of.session), "chat-state-dot"), stateWord(of.device, of.session)),
       c.kind !== "dm" && membersButton(c),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
@@ -4147,13 +4147,10 @@ function conversationPane(c) {
   );
 }
 
-// An empty conversation: the header above says who it is with and how they are; this adds what
-// they run on.
+// An empty conversation: the header above says who it is with and how they are.
 function chatIntro(name) {
   if (!name) return null;
-  const f = findSession(name);
-  const details = f ? [f.session.doing && f.session.agent, modelOf(f.session), f.session.branch].filter(Boolean).join(" · ") : ""; // the header has the agent when it has nothing else
-  return h("div", { class: "chat-intro" }, h("p", { class: "chat-intro-meta" }, details ? "No messages yet · " + details : "No messages yet"));
+  return h("div", { class: "chat-intro" }, h("p", { class: "chat-intro-meta" }, "No messages yet. Write below to start."));
 }
 
 // A sender's messages run together under one header, as long as they come close together.
