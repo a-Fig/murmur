@@ -240,6 +240,7 @@ function render() {
   fleetFit();
   fleetRoving();
   recentRoving();
+  fitPreviews();
   const pane = root.querySelector(".fx-pane-in");
   if (pane) pane.scrollTop = paneScroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
@@ -464,7 +465,7 @@ function sidebar() {
                 render();
               },
             },
-            h("span", { class: "label" }, deviceDot(d), deviceLabel(d)),
+            h("span", { class: "label", title: deviceLabel(d) }, deviceDot(d), deviceLabel(d)),
             !d.reachable && h("span", { class: "dev-you" }, "offline"),
             !open && owing && h("span", { class: "side-flag", "aria-label": "a session here needs a look" }),
             h("span", { class: "menu-count" }, live.length),
@@ -2434,7 +2435,34 @@ function fleetFit() {
     if (chip && over()) line.classList.add("no-pr");
   }
 }
-window.addEventListener("resize", () => fleetFit());
+window.addEventListener("resize", () => {
+  fleetFit();
+  fitPreviews();
+});
+
+// A conversation's preview that is too long for its row ends at a word, with an ellipsis, rather
+// than in the middle of one; the whole of it is in the title.
+function fitPreviews() {
+  for (const el of root.querySelectorAll(".chat-row-preview")) {
+    const full = el.dataset.full || el.textContent;
+    el.dataset.full = full;
+    el.title = full;
+    if (el.textContent !== full) el.textContent = full;
+    if (el.scrollWidth <= el.clientWidth + 1) continue;
+    const words = full.split(/(?<=\s)/);
+    let lo = 1;
+    let hi = words.length - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      el.textContent = words.slice(0, mid).join("").trimEnd() + "…";
+      if (el.scrollWidth <= el.clientWidth + 1) lo = mid;
+      else hi = mid - 1;
+    }
+    el.textContent = words.slice(0, lo).join("").trimEnd() + "…";
+    // One long word: let the line's own ellipsis cut it.
+    if (lo <= 1 && el.scrollWidth > el.clientWidth + 1) el.textContent = full;
+  }
+}
 
 // The pane's width is the reader's: drag its edge, or use ←/→ on it, and it stays that width.
 const FLEET_PANE_KEY = NAME + ":fleet-pane-w";
@@ -2510,6 +2538,17 @@ function fleetPane(name) {
   ui.fxEnter = false;
   return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name)), ui.paneMsg === name && paneCompose(name));
 }
+
+// On Conversations, "/" goes to its search, as on All sessions.
+document.addEventListener("keydown", (e) => {
+  if (ui.view !== "messages" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.picker || ui.tagMenu) return;
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target?.tagName) || e.target?.isContentEditable) return;
+  const box = root.querySelector('[data-key="cq"]');
+  if (!box) return;
+  e.preventDefault();
+  box.focus();
+  box.select();
+});
 
 // "/" goes to the search box, and ↑/↓ move between rows, as in most lists people use daily; Escape
 // closes the details. A menu or a dialog that is open keeps the keys.
@@ -3704,9 +3743,9 @@ function conversationsPage() {
   const shown = [...view.rows, ...view.older];
   const narrowed = !!view.q.trim() || view.kind !== "all";
   let open = list.find((c) => c.key === ui.conversation);
-  if (narrowed && !NARROW.matches && !shown.includes(open)) {
+  if (narrowed && !NARROW.matches && !shown.includes(open) && shown.length) {
     open = shown[0];
-    if (open) ui.conversation = open.key;
+    ui.conversation = open.key;
   }
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
@@ -3720,7 +3759,7 @@ function conversationsPage() {
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
           conversationList(list, view),
-          open ? conversationPane(open) : NARROW.matches ? null : narrowed && !shown.length ? noMatchPane(view) : isMyFilter() && startPane(),
+          open ? conversationPane(open) : NARROW.matches ? null : isMyFilter() && startPane(),
         ),
   );
 }
@@ -3748,7 +3787,6 @@ function listView(list, all = list) {
     rows: shown.filter((c) => !old(c)),
     older: shown.filter(old),
     total: counted.length,
-    found: counted.filter(hit).length,
     count: (k) => counted.filter((c) => hit(c) && ofKind(c, k)).length,
     // Tabs only where there are both kinds to tell apart.
     tabs: kinds("dm") > 0 && kinds("group") > 0,
@@ -3811,33 +3849,28 @@ function isCounted(c) {
 }
 
 function countLine(view) {
-  return view.q.trim() ? "Showing " + view.found + " of " + plural(view.total, "conversation") : plural(view.total, "conversation");
+  return view.q.trim() ? "Showing " + view.count(view.kind) + " of " + plural(view.total, "conversation") : plural(view.total, "conversation");
 }
 
-// With a search or a tab that shows nothing, the pane says so, and how to get back.
-function noMatchPane(view) {
-  const q = view.q.trim();
+// A search that finds nothing in the list's tab says so in the list, with a way back.
+function noMatch(view) {
+  const what = view.kind === "dm" ? "No direct conversations" : view.kind === "group" ? "No group conversations" : "No conversations";
   return h(
-    "section",
-    { class: "chat-pane none-pane", "aria-label": "No conversations" },
+    "div",
+    { class: "g-nomatch" },
+    h("p", null, what + " match \u201c" + view.q.trim() + "\u201d"),
     h(
-      "div",
-      { class: "none-inner" },
-      h("p", { class: "none-title" }, q ? "No conversations match \u201c" + q + "\u201d" : view.kind === "dm" ? "No direct messages" : "No group chats"),
-      q &&
-        h(
-          "button",
-          {
-            class: "btn btn-outline",
-            "data-key": "clear-cq",
-            onclick: () => {
-              ui.cq = "";
-              render();
-              root.querySelector('[data-key="cq"]')?.focus();
-            },
-          },
-          "Clear search",
-        ),
+      "button",
+      {
+        class: "btn btn-outline btn-xs",
+        "data-key": "clear-cq",
+        onclick: () => {
+          ui.cq = "";
+          render();
+          root.querySelector('[data-key="cq"]')?.focus();
+        },
+      },
+      "Clear search",
     ),
   );
 }
@@ -3910,6 +3943,7 @@ function conversationList(list, view) {
           render();
         },
       }),
+      !ui.cq && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
     ),
     view.tabs &&
     h(
@@ -3975,8 +4009,8 @@ function conversationList(list, view) {
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),
-    // A search or a tab with nothing in it is said in the pane beside the list, where there is one.
-    !rows.length && !older.length && (NARROW.matches || (!q && kind === "all")) && !(isMyFilter() && !view.total) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
+    // A search or a tab with nothing in it is said in the list, where the rows would be.
+    !rows.length && !older.length && !(isMyFilter() && !view.total) && (q ? noMatch(view) : h("p", { class: "g-none" }, kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations")),
   );
 }
 
