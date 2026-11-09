@@ -1559,6 +1559,7 @@ function sessionsPage() {
   const live = fleetRows("running");
   const quiet = fleetRows("quiet");
   const settledN = ui.tagFilter ? 0 : settledSessions().length;
+  const settledShown = ui.tagFilter ? 0 : settledSessions().filter((r) => !F.q.trim() || settledText(r).includes(F.q.trim().toLowerCase())).length;
   const all = tab === "quiet" ? quiet : live;
   const q = F.q.trim().toLowerCase();
   // Search covers what a row shows: the asker and question it waits on, its tags and its PR too.
@@ -1671,6 +1672,22 @@ function sessionsPage() {
           }),
           !F.q && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
         ),
+        tab === "settled" && [
+          fxSeg("State", [["", "All", settledShown]], "", () => {}),
+          h("span", { class: "fx-spacer" }),
+          h(
+            "span",
+            { class: "fx-group-by" },
+            h("span", { class: "fx-label" }, "Group by"),
+            fxSeg(
+              "Group by",
+              [["device", "Device", null, "Settled sessions are known by their device only"]],
+              "device",
+              () => {},
+            ),
+          ),
+          h("button", { class: "fx-btn fx-btn-line", "data-key": "select", disabled: true, title: "Settled sessions can't be tagged" }, "Select"),
+        ],
         tab !== "settled" && [
           fxSeg(
             "State",
@@ -2215,10 +2232,15 @@ function rowMenu() {
 // Settled sessions, in the same table under their devices: the page knows them only from their
 // messages, so a row's state is Ended, its last conversation is the subject it last wrote or was
 // sent, and it has no branch column. One opens its conversations.
+// What a search looks in for a settled session.
+function settledText(r) {
+  return [r.name, r.lastMsg?.subject, r.device && host(r.device)].map((x) => (x || "").toLowerCase()).join(" ");
+}
+
 function settledTable(q, F) {
   if (ui.tagFilter) return h("div", { class: "fx-table" }, h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No settled session is tagged " + ui.tagFilter)));
   const S = F.sort || {};
-  const all = settledSessions().filter((r) => !q || [r.name, r.lastMsg?.subject, r.device && host(r.device)].some((x) => (x || "").toLowerCase().includes(q)));
+  const all = settledSessions().filter((r) => !q || settledText(r).includes(q));
   const val = (r) => (S.key === "name" ? r.name : S.key === "active" ? -r.last : 0);
   const within = (a, b) => {
     const x = val(a);
