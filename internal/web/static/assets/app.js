@@ -2394,10 +2394,13 @@ function fleetFit() {
     widest = Math.max(widest, w);
   }
   table.style.setProperty("--fx-branch-w", Math.min(Math.max(widest + 2, 40), 240) + "px"); // scrollWidth rounds down
+  // Then its PR chip, whole, rather than cut part way through its words.
   for (const line of table.querySelectorAll(".fx-subline")) {
-    line.classList.remove("no-tags");
+    line.classList.remove("no-tags", "no-pr");
     const parts = line.querySelector(".fx-parts-in");
-    if (line.querySelector(".stags") && parts && parts.scrollWidth > parts.clientWidth + 1) line.classList.add("no-tags");
+    const over = () => parts && parts.scrollWidth > parts.clientWidth + 1;
+    if (line.querySelector(".stags") && over()) line.classList.add("no-tags");
+    if (line.querySelector(".fx-part-branch .fx-pr") && over()) line.classList.add("no-pr");
   }
 }
 window.addEventListener("resize", () => fleetFit());

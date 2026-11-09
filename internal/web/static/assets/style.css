@@ -4743,8 +4743,16 @@ button.fx-group:hover {
   margin: 0 auto;
 }
 
-/* Four columns: Branch goes, to the line under the name. */
+/* A laptop's table (a 1180px screen gives it about 850px): Working on gives way first, down to 8rem,
+   then Session to 13rem; Branch keeps room for its PR chip. */
 @container (max-width: 1000px) {
+  .fx-tr {
+    grid-template-columns: minmax(13rem, 14rem) 7.5rem minmax(8rem, 1fr) minmax(min(var(--fx-branch-w, 10rem), 5.5rem), var(--fx-branch-w, 10rem)) 5rem 1.75rem;
+    column-gap: 1rem;
+  }
+}
+/* Four columns: Branch goes, to the line under the name. */
+@container (max-width: 840px) {
   .fx-tr {
     grid-template-columns: minmax(12rem, 15rem) 7.5rem minmax(10rem, 1fr) 5rem 1.75rem;
     column-gap: 1rem;
@@ -5588,6 +5596,14 @@ a.fx-pr:focus-visible,
     order: 1;
     justify-content: flex-start;
   }
+}
+/* A PR chip is whole or gone: in the Branch column it never shrinks, and
+   on the line under a name it goes before it would be cut (fleetFit). */
+.fx-c-branch .fx-pr {
+  flex: none;
+}
+.fx-subline.no-pr .fx-part-branch .fx-pr {
+  display: none;
 }
 /* A device's heading in the sidebar folds its sessions. */
 .device-link.dev-fold {
