@@ -248,6 +248,7 @@ function render() {
     el?.focus({ preventScroll: true });
     restoreCaret(el, caret);
   }
+  chatRoving(); // after focus is back where it was
   fitComposers();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
   queueMicrotask(markOpenRead);
@@ -998,7 +999,7 @@ function host(id) {
 // Every conversation, between the sidebar's other two top rows.
 function allButton() {
   const all = ui.view === "messages" && !ui.filter;
-  const count = allConversations().length;
+  const count = allConversations().filter(isCounted).length;
   return h(
     "button",
     {
@@ -3335,7 +3336,16 @@ function conversationsPage() {
     chatMoved = ui.conversation != null;
   }
   if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
-  const open = list.find((c) => c.key === ui.conversation);
+  // A search or a tab keeps what is open among what the list shows: the first of them, if the open
+  // one isn't, and nothing if nothing is. On a phone the list is all there is meanwhile.
+  const view = listView(list);
+  const shown = [...view.rows, ...view.older];
+  const narrowed = !!view.q.trim() || view.kind !== "all";
+  let open = list.find((c) => c.key === ui.conversation);
+  if (narrowed && !NARROW.matches && !shown.includes(open)) {
+    open = shown[0];
+    if (open) ui.conversation = open.key;
+  }
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
   return h(
@@ -3347,9 +3357,70 @@ function conversationsPage() {
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
-          conversationList(list),
-          open ? conversationPane(open) : isMyFilter() && !NARROW.matches && startPane(),
+          conversationList(list, view),
+          open ? conversationPane(open) : NARROW.matches ? null : narrowed && !shown.length ? noMatchPane(view) : isMyFilter() && startPane(),
         ),
+  );
+}
+
+// What the list shows, and the counts that describe it. A conversation counts once it has a
+// message, or one on its way; settled sessions' conversations count, folded or not, so the header,
+// the tabs and the sidebar all count the same list. A search counts what it finds.
+function listView(list) {
+  const name = ui.filter && !isMyFilter() ? nameOf(ui.filter, ui.filter) : "";
+  const q = (ui.cq || "").trim().toLowerCase();
+  const kind = ui.convKind || "all";
+  const hit = (c) => !q || (otherIn(c) || (c.kind === "dm" ? c.title : groupName(c))).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
+  const ofKind = (c, k) => k === "all" || (k === "dm") === (c.kind === "dm");
+  // Direct messages with a settled session fold away at the end, unless searching or on one session.
+  const old = (c) => !q && !name && c.kind === "dm" && c.pair.some((n) => isSettled(n));
+  const shown = list.filter((c) => hit(c) && ofKind(c, kind));
+  const counted = list.filter(isCounted);
+  return {
+    q: ui.cq || "",
+    kind,
+    name,
+    rows: shown.filter((c) => !old(c)),
+    older: shown.filter(old),
+    total: counted.length,
+    found: counted.filter(hit).length,
+    count: (k) => counted.filter((c) => hit(c) && ofKind(c, k)).length,
+  };
+}
+
+function isCounted(c) {
+  return c.messages.length > 0 || pendingIn(c).length > 0;
+}
+
+function countLine(view) {
+  return view.q.trim() ? "Showing " + view.found + " of " + plural(view.total, "conversation") : plural(view.total, "conversation");
+}
+
+// With a search or a tab that shows nothing, the pane says so, and how to get back.
+function noMatchPane(view) {
+  const q = view.q.trim();
+  return h(
+    "section",
+    { class: "chat-pane none-pane", "aria-label": "No conversations" },
+    h(
+      "div",
+      { class: "none-inner" },
+      h("p", { class: "none-title" }, q ? "No conversations match \u201c" + q + "\u201d" : view.kind === "dm" ? "No direct messages" : "No group chats"),
+      q &&
+        h(
+          "button",
+          {
+            class: "btn btn-outline",
+            "data-key": "clear-cq",
+            onclick: () => {
+              ui.cq = "";
+              render();
+              root.querySelector('[data-key="cq"]')?.focus();
+            },
+          },
+          "Clear search",
+        ),
+    ),
   );
 }
 
@@ -3362,22 +3433,16 @@ function otherIn(c) {
 
 // The middle column: whose conversations they are, a search, then direct messages and group chats
 // in one list. Direct messages with a settled session fold away at the end.
-function conversationList(list) {
-  const name = ui.filter && nameOf(ui.filter, ui.filter);
+// One list, newest first, so a busy group chat is never below every quiet DM. The tabs narrow it to
+// direct messages or group chats. The rows are one stop for Tab, and the arrow keys, Home and End
+// move between them.
+function conversationList(list, view) {
+  const { name, rows, older, kind, count } = view;
+  const q = view.q.trim();
   const f = name && findSession(name);
-  const q = (ui.cq || "").toLowerCase();
-  const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
-  // One list, newest first, so a busy group chat is never below every quiet DM. The switch
-  // narrows it to direct messages or group chats.
-  const kind = ui.convKind || "all";
-  const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
-  const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
-  const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
-  const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
-  const count = (k) => list.filter((c) => (k === "all" || (k === "dm") === (c.kind === "dm")) && hit(c) && (q || name || !old(c))).length;
   return h(
     "nav",
-    { class: "chat-list g-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
+    { class: "chat-list g-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop), onkeydown: chatListKey },
     h(
       "div",
       { class: "g-head" },
@@ -3385,7 +3450,7 @@ function conversationList(list) {
         ? h(
             "div",
             { class: "g-head-row" },
-            h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), list.some((c) => c.messages.length) && h("p", { class: "g-head-doing" }, plural(list.filter((c) => c.messages.length).length, "conversation"))),
+            h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), view.total > 0 && h("p", { class: "g-head-doing" }, countLine(view))),
             newMessageButton(),
           )
         : name
@@ -3401,7 +3466,7 @@ function conversationList(list) {
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
-        : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, plural(list.length, "conversation"))],
+        : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, countLine(view))],
     ),
     h(
       "label",
@@ -3459,8 +3524,33 @@ function conversationList(list) {
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),
-    !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
+    // A search or a tab with nothing in it is said in the pane beside the list, where there is one.
+    !rows.length && !older.length && (NARROW.matches || (!q && kind === "all")) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
   );
+}
+
+function chatItems() {
+  return [...root.querySelectorAll(".chat-list .chat-row, .chat-list .g-sec-toggle")];
+}
+
+// The list's one tabbable row: the focused one, else the open conversation's, else the first.
+function chatRoving() {
+  const items = chatItems();
+  if (!items.length) return;
+  const want = items.find((el) => el === document.activeElement) || items.find((el) => el.getAttribute("aria-current") === "true") || items[0];
+  for (const el of items) el.tabIndex = el === want ? 0 : -1;
+}
+
+function chatListKey(e) {
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) || e.altKey || e.ctrlKey || e.metaKey) return;
+  const items = chatItems();
+  const i = items.indexOf(e.target);
+  if (i < 0) return;
+  e.preventDefault();
+  const next = items[Math.max(0, Math.min(items.length - 1, { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key]))];
+  for (const el of items) el.tabIndex = el === next ? 0 : -1;
+  next.focus();
+  next.scrollIntoView({ block: "nearest" });
 }
 
 function conversationRow(c) {
