@@ -690,7 +690,8 @@ function versionSection() {
   } else if (v.latest) {
     description = v.latest + " is out. Updates are off or failing here; this installs it:";
   }
-  const row = settingsRow("version", NAME + " " + v.running, description, control);
+  const current = !ui.restarting && !v.ready && !v.latest;
+  const row = settingsRow("version", [NAME + " " + v.running, current && h("span", { class: "set-uptodate" }, "· Up to date")], description, control);
   if (v.latest && !v.auto && !v.ready && !ui.restarting && v.install) {
     row.append(
       h(
@@ -5226,8 +5227,8 @@ function saveNote(key) {
   return el;
 }
 
-// A row: its title and what it means, its control, and under them what went wrong with it. A row
-// that can be saved (saves) keeps a place beside its control for how the save went.
+// A row: its title and what it means, its control, and under the control what went wrong with it.
+// A row that can be saved (saves) keeps a place beside its control for how the save went.
 function settingsRow(key, title, description, control, extraClass = "", saves = false) {
   return h(
     "div",
@@ -5235,10 +5236,14 @@ function settingsRow(key, title, description, control, extraClass = "", saves = 
     h(
       "div",
       { class: "row-grid " + extraClass + (description ? " has-desc" : "") },
-      h("div", null, h("div", { class: "row-title" }, title), description && h("p", { class: "row-description" }, description)),
-      h("div", { class: "row-control" }, saves && saveNote(key), control),
+      h("div", { class: "row-text" }, h("div", { class: "row-title" }, title), description && h("p", { class: "row-description" }, description)),
+      h(
+        "div",
+        { class: "row-side" },
+        h("div", { class: "row-control" }, saves && saveNote(key), control),
+        ui.rowErrors[key] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors[key]),
+      ),
     ),
-    ui.rowErrors[key] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors[key]),
   );
 }
 
@@ -5366,11 +5371,55 @@ async function saveAccount(name) {
   render();
 }
 
+// The products, by the names people know them by.
+const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex", t3: "T3 Code" };
+
+// Under a session's name in Settings: what runs it, how it is, and its branch where there's room.
+function sessionLine(d, s) {
+  const text = [AGENT_NAMES[s.agent] || s.agent, d && stateWord(d, s), s.branch].filter(Boolean).join(" · ");
+  return h("span", { class: "set-sess-line", title: text }, text);
+}
+
 function settingsPage() {
   const sections = [ui.state ? accountSection() : null];
+  const self = devices().find((d) => d.self);
+  // Until the settings have come, and if they couldn't, their sections say so rather than vanish.
+  if (!ui.settings) {
+    const waiting = (title) =>
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title)),
+        h(
+          "div",
+          { class: "group" },
+          ui.settingsError
+            ? h(
+                "div",
+                { class: "row-empty set-load" },
+                h("span", { role: "alert" }, "Couldn't load these settings."),
+                h(
+                  "button",
+                  {
+                    class: "btn btn-outline btn-xs",
+                    "data-key": "settings-retry-" + title,
+                    onclick: () => {
+                      ui.settingsError = "";
+                      render();
+                      loadSettings();
+                    },
+                  },
+                  "Retry",
+                ),
+              )
+            : h("div", { class: "row-empty", role: "status" }, "Loading…"),
+        ),
+      );
+    sections.push(waiting("Wake-ups"), waiting("Busy sessions"));
+  }
   if (ui.settings) {
     const set = ui.settings;
-    const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
+    const local = self?.sessions || [];
     const overrides = set.sessionWake || {};
     const rows = [
       settingsRow(
@@ -5386,8 +5435,8 @@ function settingsPage() {
         .map((s) =>
           settingsRow(
             "wake-" + s.name,
-            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
-            null,
+            s.name,
+            sessionLine(self, s),
             wakeControl(
               "wake-" + s.name,
               overrides[s.name] || null,
@@ -5424,8 +5473,8 @@ function settingsPage() {
         .map((s) =>
           settingsRow(
             "busy-" + s.name,
-            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
-            null,
+            s.name,
+            sessionLine(self, s),
             busyControl(
               "busy-" + s.name,
               busyOverrides[s.name] || null,
@@ -5503,7 +5552,6 @@ function settingsPage() {
   );
 
   sections.push(versionSection());
-  const self = devices().find((d) => d.self);
   return h(
     "div",
     { class: "page set-page" },

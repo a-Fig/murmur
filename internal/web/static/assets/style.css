@@ -5923,6 +5923,34 @@ a.fx-pr:focus-visible,
     box-shadow: inset 2px 0 0 #d4d4d4;
   }
 }
+/* Settings. A row's error sits under its control, in the control's column. */
+.row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.row-side > .row-error {
+  max-width: 24rem;
+  margin: 0;
+  text-align: right;
+}
+@container (max-width: 46rem) {
+  .row-grid.has-desc .row-side {
+    align-items: flex-start;
+  }
+  .row-grid.has-desc .row-side > .row-error {
+    text-align: left;
+  }
+}
+/* Under a session's name: what runs it, how it is, its branch where there's room. */
+.set-sess-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The name: its field and button on a line, a suggestion under them. */
 .account-ctl {
   display: flex;
