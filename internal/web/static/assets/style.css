@@ -5280,6 +5280,11 @@ a.fx-pr:focus-visible,
 .chat-pane > .composer-wrap {
   max-width: 48rem; /* 720px of text, with the rows' padding */
 }
+/* The dividers have margins where the rest has padding: the same 720px from the same left edge. */
+.dark .chat-thread > .chat-day,
+.dark .chat-thread > .chat-new {
+  max-width: 45rem;
+}
 .dark .chat-row:focus-visible,
 .g-sec-toggle:focus-visible {
   box-shadow: none;
@@ -5424,4 +5429,38 @@ a.fx-pr:focus-visible,
 }
 .name-ask .btn-ghost {
   height: 2rem;
+}
+/* New conversations while the list holds still: a pill over its top. */
+.list-pill-wrap {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  height: 0;
+  overflow: visible;
+}
+.list-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 1.625rem;
+  padding: 0 0.625rem;
+  border-radius: 999px;
+  background: #ededed;
+  color: #141414;
+  font-size: 0.75rem;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+}
+.list-pill:hover {
+  background: #fff;
+}
+.list-pill:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.list-pill .icon {
+  width: 0.75rem;
+  height: 0.75rem;
 }
