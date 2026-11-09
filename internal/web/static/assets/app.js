@@ -2884,7 +2884,8 @@ function recentPage() {
   const list = shown.slice(0, max);
   ui.recentShownAt = list[0]?.sortAt ?? null;
   // Where the reader left off: what came since their last visit to Recent sits above a line, which
-  // stays until they leave the page, as a conversation's "New" does.
+  // stays until they leave the page, as a conversation's "New" does. Muted, since what is above it
+  // asks nothing of anyone.
   if (ui.recentMark === undefined) ui.recentMark = recentSeen();
   if (list.length && !document.hidden) recentSaw(list[0].sortAt);
   const mark = ui.recentMark;
@@ -2894,7 +2895,7 @@ function recentPage() {
   for (const m of list) {
     if (mark != null && m.sortAt > mark) newer = true;
     else if (newer && mark != null) {
-      out.push(h("div", { class: "chat-new g-new" }, h("span", null, "New above")));
+      out.push(h("div", { class: "chat-new g-new" }, h("span", null, "Since your last visit")));
       newer = false;
     }
     const at = when(m.at);
@@ -2980,6 +2981,8 @@ function recentKey(e) {
 function recentRoving() {
   const items = [...root.querySelectorAll(".g-feed .g-item")];
   if (!items.length) return;
+  // A body cut at three lines fades out over its last one.
+  for (const b of root.querySelectorAll(".g-feed .g-body")) b.classList.toggle("clamped", b.scrollHeight > b.clientHeight + 2);
   const on = items.find((el) => el.dataset.id === ui.recentFocus) || items[0];
   for (const el of items) el.tabIndex = el === on ? 0 : -1;
 }
@@ -2990,12 +2993,13 @@ function recentItem(m, at) {
   const who = m.toKind === "all" ? "Everyone" : toName(m);
   const to = m.toKind === "all" ? [icon("broadcast"), who] : m.toKind === "device" ? [icon("laptop"), who] : who;
   const body = m.fromPerson ? personText(m) : m.body;
-  const gist = ((m.fromPerson ? "" : m.subject) || body || "").trim().split("\n")[0];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
     ui.conversationAnchor = m.id;
+    ui.flash = { id: m.id, at: Date.now() };
     go("messages");
+    requestAnimationFrame(() => root.querySelector(`.chat-thread [data-id="${CSS.escape(m.id)}"]`)?.scrollIntoView({ block: "center" }));
   };
   return h(
     "button",
@@ -3005,7 +3009,6 @@ function recentItem(m, at) {
       "data-id": m.id,
       "data-key": "rc-" + m.id,
       tabindex: "-1",
-      "aria-label": from + " to " + who + ": " + gist,
       onfocus: () => (ui.recentFocus = m.id),
       onclick: open,
     },
@@ -3025,6 +3028,7 @@ function recentItem(m, at) {
       // Links show as text: the whole row is the button.
       body && h("span", { class: "chat-msg-body rich g-body" }, rich(body, true)),
     ),
+    h("span", { class: "g-hint", "aria-hidden": "true" }, "Open conversation"),
   );
 }
 
@@ -4234,13 +4238,17 @@ function dayLabel(t) {
   return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 
+const FLASH_MS = 1600;
+
 function chatMessage(m, from, at, head, before) {
   const sender = findSession(from);
   const mine = from === myName();
   const copy = m.fromPerson ? personText(m) : (m.subject ? m.subject + "\n\n" : "") + (m.body || "");
-  return h(
+  const since = ui.flash?.id === m.id ? Date.now() - ui.flash.at : -1;
+  if (since >= FLASH_MS) ui.flash = null;
+  const el = h(
     "article",
-    { class: "chat-msg" + (head ? " chat-msg-first" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
+    { class: "chat-msg" + (head ? " chat-msg-first" : "") + (since >= 0 && since < FLASH_MS ? " chat-msg-flash" : ""), "data-id": m.id, title: head ? null : messageDetail(m) },
     head ? avatar(from) : h("span", { class: "avatar-gap" }),
     h(
       "div",
@@ -4271,6 +4279,8 @@ function chatMessage(m, from, at, head, before) {
       ),
     ),
   );
+  if (since >= 0 && since < FLASH_MS) el.style.setProperty("animation-delay", -since + "ms");
+  return el;
 }
 
 // Message bodies are Markdown-ish text from agents. A small subset becomes structure: paragraphs,

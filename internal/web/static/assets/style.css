@@ -5862,3 +5862,64 @@ a.fx-pr:focus-visible,
   position: relative;
   background: #ff705d;
 }
+/* Recent's rows: one padding for every row, subject or not; a hover as plain as the table's; a hint
+   at the right on hover and focus; a body cut at three lines fades over its last. */
+.dark .g-item {
+  position: relative;
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+}
+.dark .g-item:hover {
+  background: rgb(255 255 255 / 5%);
+}
+.g-hint {
+  position: absolute;
+  top: 0.5rem;
+  right: 1rem;
+  font-size: 0.75rem;
+  color: #b0b0b0;
+  opacity: 0;
+}
+.g-item:hover .g-hint,
+.g-item:focus-visible .g-hint {
+  opacity: 1;
+}
+.g-body.clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent);
+}
+/* Where the reader left off, in the feed's muted colour: nothing above it waits on anyone. */
+.chat-new.g-new {
+  color: #9e9e9e;
+}
+.chat-new.g-new::after {
+  background: #3a3a3a;
+}
+/* A day's label stays at the top while its messages scroll under it. */
+.g-recent .g-feed > .chat-day {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 1.5rem;
+  padding: 0.5rem 0;
+  background: var(--background);
+}
+/* A message opened from Recent lights up for a moment in its conversation. */
+.chat-msg.chat-msg-flash {
+  animation: msg-flash 1.6s ease-out both;
+}
+@keyframes msg-flash {
+  0%,
+  35% {
+    background: rgb(255 255 255 / 10%);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg.chat-msg-flash {
+    animation: none;
+    box-shadow: inset 2px 0 0 #d4d4d4;
+  }
+}
