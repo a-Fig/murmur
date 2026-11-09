@@ -5597,6 +5597,7 @@ a.fx-pr:focus-visible,
     justify-content: flex-start;
   }
 }
+
 /* A PR chip is whole or gone: in the Branch column it never shrinks, and
    on the line under a name it goes before it would be cut (fleetFit). */
 .fx-c-branch .fx-pr {
@@ -5604,6 +5605,15 @@ a.fx-pr:focus-visible,
 }
 .fx-subline.no-pr .fx-part-branch .fx-pr {
   display: none;
+}
+/* Yellow means a person is waiting, and nothing else: idle is a neutral grey, filled, which its
+   shape tells from offline's hollow ring. */
+.sdot.sdot-idle {
+  background: #9e9e9e;
+}
+.g-state-idle {
+  background: rgb(255 255 255 / 8%) !important;
+  color: #c8c8c8 !important;
 }
 /* A device's heading in the sidebar folds its sessions. */
 .device-link.dev-fold {
