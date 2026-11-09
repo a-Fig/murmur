@@ -235,7 +235,7 @@ function render() {
   const skip = h("a", { class: "skip-link", href: "#", "data-key": "skip", onclick: skipToContent }, "Skip to content");
   // replaceChildren, unlike h(), writes null and false out as text: only what is there goes in.
   const layers = [ui.setup && !ui.setup.inline && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu()];
-  root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, ui.view === "settings" || NARROW.matches ? topbar() : null, content)), ...layers.filter((x) => x instanceof Node));
+  root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, NARROW.matches ? topbar() : null, content)), ...layers.filter((x) => x instanceof Node));
   content.scrollTop = scroll;
   fleetFit();
   fleetRoving();
@@ -524,13 +524,13 @@ function yourRow() {
   const a = me();
   const n = unreadCount();
   const count = a ? yourConversationCount() : 0;
-  const title = !ui.state ? null : !a ? "Talk to your agents" : a.taken ? "Choose a new name" : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
+  const title = !ui.state ? null : !a ? "Talk to your agents" : a.taken ? takenLine(a) : n ? n + " unread" : count ? plural(count, "conversation") : "No messages yet";
   return h(
     "button",
     { class: "all-convs top-you", "aria-current": isMyFilter() ? "page" : null, "data-key": "top-you", title, onclick: openYours },
     h("span", { class: "all-ico ico-you" }, icon("user")),
     h("span", { class: "all-title" }, "Your messages"),
-    a?.taken ? h("span", { class: "all-warn" }, "New name") : n > 0 ? h("span", { class: "unread-badge", "aria-label": n + " unread" }, n) : count > 0 && h("span", { class: "all-n" }, count),
+    n > 0 ? h("span", { class: "unread-badge", "aria-label": n + " unread" }, n) : count > 0 && h("span", { class: "all-n" }, count),
   );
 }
 
@@ -661,8 +661,23 @@ function versionSection() {
         h("code", null, v.install),
         h(
           "button",
-          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => navigator.clipboard?.writeText(v.install) },
-          icon("copy"),
+          {
+            class: "btn btn-ghost btn-xs",
+            title: "Copy",
+            "aria-label": "Copy the command",
+            "data-key": "copy-install",
+            onclick: async () => {
+              try {
+                await navigator.clipboard.writeText(v.install);
+              } catch {
+                return;
+              }
+              ui.copiedAt = Date.now();
+              render();
+              setTimeout(render, SAVED_MS);
+            },
+          },
+          Date.now() - (ui.copiedAt || 0) < SAVED_MS ? [icon("check"), h("span", { role: "status" }, "Copied")] : icon("copy"),
         ),
       ),
     );
@@ -1412,6 +1427,17 @@ function fxDot(st) {
 
 // A segmented control is one stop for Tab, as a radio group is: ←/→, Home and End move along it and
 // pick as they go. An option may carry a tooltip saying what it means.
+function segKeys(e) {
+  const btns = [...e.currentTarget.querySelectorAll("button")];
+  const i = btns.indexOf(document.activeElement);
+  const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: btns.length - 1 }[e.key];
+  if (to == null || i < 0) return;
+  e.preventDefault();
+  const next = btns[Math.max(0, Math.min(btns.length - 1, to))];
+  next.focus();
+  if (next !== btns[i]) next.click();
+}
+
 function fxSeg(label, options, value, onPick) {
   const current = options.some(([v]) => v === value) ? value : options[0][0];
   return h(
@@ -1420,16 +1446,7 @@ function fxSeg(label, options, value, onPick) {
       class: "fx-seg",
       role: "group",
       "aria-label": label,
-      onkeydown: (e) => {
-        const btns = [...e.currentTarget.querySelectorAll("button")];
-        const i = btns.indexOf(document.activeElement);
-        const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: btns.length - 1 }[e.key];
-        if (to == null || i < 0) return;
-        e.preventDefault();
-        const next = btns[Math.max(0, Math.min(btns.length - 1, to))];
-        next.focus();
-        if (next !== btns[i]) next.click();
-      },
+      onkeydown: segKeys,
     },
     options.map(([v, text, n, tip]) =>
       h(
@@ -4164,7 +4181,7 @@ function startChat(name) {
 // is sending it (inline: that composer's textarea), so nothing covers what is being read.
 function askForName(then, inline = null) {
   const a = ui.state?.account;
-  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then, inline };
+  ui.setup = { name: a?.suggested || "", error: "", busy: false, then, inline };
   render();
   const field = root.querySelector('[data-key="setup-name"]');
   field?.focus();
@@ -4229,9 +4246,7 @@ function setupDialog() {
     h(
       "p",
       { class: "dialog-line" },
-      taken
-        ? "The person on " + taken + " chose " + me().name + " first, so messages to that name go to them. Pick another; what was sent to you before still reaches you."
-        : "Agents see it, and send to it.",
+      taken ? takenLine(me()) : "Agents see it, and send to it.",
     ),
     h(
       "form",
@@ -4310,7 +4325,9 @@ function nameAsk() {
         close();
       },
     },
-    h("p", { class: "name-ask-title" }, "Choose your name to send", h("span", { class: "name-ask-line" }, "Agents see it, and send to it.")),
+    me()?.taken
+      ? h("p", { class: "name-ask-title" }, "Choose a new name to send", h("span", { class: "name-ask-line" }, takenLine(me())))
+      : h("p", { class: "name-ask-title" }, "Choose your name to send", h("span", { class: "name-ask-line" }, "Agents see it, and send to it.")),
     h(
       "div",
       { class: "name-ask-row" },
@@ -4547,7 +4564,7 @@ function composer(c, target) {
 // Sending with no name yet asks for one in the composer; once it is saved, the send button that
 // asked is pressed again, in a page that now has the name.
 function needName(el) {
-  if (me()) return false;
+  if (me() && !me().taken) return false;
   askForName(() => {
     render();
     root.querySelector(`button[data-for="${CSS.escape(el.dataset.composer)}"]`)?.click();
@@ -4734,68 +4751,93 @@ const WAKE_CHOICES = [
   ["never", "Never"],
 ];
 
-// Minutes being typed are saved once the typing pauses. A choice made meanwhile, such as Never,
-// cancels them: they belong to the Within it replaced.
-const minuteEdits = new Map(); // a control's key → its timer
+// Minutes being typed, by control, until the field is left: a render meanwhile (another row's save
+// coming back) keeps them.
+const minuteDrafts = new Map();
 
-function cancelMinutes(key) {
-  clearTimeout(minuteEdits.get(key));
-  minuteEdits.delete(key);
+// What a wake choice comes to, in words: "Within 3 min".
+function wakeWords(w) {
+  const def = ui.settings?.defaultMinutes || 3;
+  if (!w || w.when === "within") return "Within " + (w?.minutes || def) + " min";
+  return w.when === "always" ? "Always" : "Never";
+}
+
+// A segmented control, one stop for Tab with the arrow keys moving along it, as in All sessions.
+// Default says what it comes to, muted after it.
+function segmented(key, choices, current, pick, resolved) {
+  return h(
+    "div",
+    { class: "segmented", role: "group", onkeydown: segKeys },
+    choices.map(([v, label]) =>
+      h(
+        "button",
+        {
+          "aria-pressed": current === v ? "true" : "false",
+          tabindex: current === v ? "0" : "-1",
+          "data-key": key + "-" + v,
+          onclick: () => {
+            if (v !== current) pick(v);
+          },
+        },
+        label,
+        v === "default" && resolved && h("span", { class: "seg-resolved" }, " · " + resolved),
+      ),
+    ),
+  );
 }
 
 function wakeControl(key, wake, onChange, withDefault) {
   const def = ui.settings.defaultMinutes || 3;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
   const current = wake ? wake.when : "default";
-  const seg = h(
-    "div",
-    { class: "segmented", role: "group" },
-    choices.map(([v, label]) =>
-      h(
-        "button",
-        {
-          "aria-pressed": current === v ? "true" : "false",
-          "data-key": key + "-" + v,
-          onclick: () => {
-            if (v === current) return;
-            cancelMinutes(key);
-            delete ui.rowErrors[key];
-            onChange(v === "default" ? null : { when: v, minutes: v === "within" ? wake?.minutes || 0 : 0 });
-          },
-        },
-        label,
-      ),
-    ),
+  const seg = segmented(
+    key,
+    choices,
+    current,
+    (v) => {
+      minuteDrafts.delete(key);
+      delete ui.rowErrors[key];
+      onChange(v === "default" ? null : { when: v, minutes: v === "within" ? wake?.minutes || 0 : 0 });
+    },
+    withDefault && wakeWords(ui.settings.wake),
   );
   if (current !== "within") return [seg];
+  // Checked and saved when the field is left (or on Enter), not while it is being typed in. Empty
+  // is the device's default.
+  const commit = (e) => {
+    if (!e.target.isConnected) return; // taken out by a render, not left
+    const raw = e.target.value.trim();
+    const n = raw === "" ? 0 : Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > 1440 || (raw !== "" && n === 0)) {
+      ui.rowErrors[key] = "Minutes must be a whole number from 1 to 1440, or empty for the default (" + def + ").";
+      render(); // the draft stays in the field, to be put right
+      return;
+    }
+    minuteDrafts.delete(key);
+    const had = ui.rowErrors[key];
+    delete ui.rowErrors[key];
+    if (n !== (wake.minutes || 0)) onChange({ when: "within", minutes: n });
+    else if (had) render();
+  };
   const input = h("input", {
-    type: "number",
-    min: 1,
-    max: 1440,
-    step: 1,
+    type: "text",
     inputmode: "numeric",
-    placeholder: String(def),
-    "aria-label": "Minutes idle",
+    maxlength: 4,
+    placeholder: "default " + def,
+    "aria-label": "Minutes idle, empty for the default of " + def,
+    "aria-invalid": ui.rowErrors[key] ? "true" : null,
     "data-key": key + "-minutes",
-    value: wake.minutes ? String(wake.minutes) : null,
-    oninput: (e) => {
-      cancelMinutes(key);
-      const raw = e.target.value.trim();
-      const timer = setTimeout(() => {
-        minuteEdits.delete(key);
-        const n = raw === "" ? 0 : Number(raw);
-        if (!Number.isInteger(n) || n < 0 || n > 1440) {
-          ui.rowErrors[key] = "Minutes must be a whole number from 1 to 1440.";
-          render();
-          return;
-        }
-        delete ui.rowErrors[key];
-        onChange({ when: "within", minutes: n });
-      }, 600);
-      minuteEdits.set(key, timer);
+    value: minuteDrafts.get(key) ?? (wake.minutes ? String(wake.minutes) : null),
+    oninput: (e) => minuteDrafts.set(key, e.target.value),
+    onblur: commit,
+    onkeydown: (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit(e);
+      }
     },
   });
-  return [seg, h("span", { class: "field" }, input), h("span", { class: "field-suffix" }, "min")];
+  return [seg, h("label", { class: "field min-field" + (ui.rowErrors[key] ? " field-bad" : "") }, input, h("span", { class: "field-unit", "aria-hidden": "true" }, "min"))];
 }
 
 const BUSY_CHOICES = [
@@ -4806,23 +4848,8 @@ const BUSY_CHOICES = [
 function busyControl(key, busy, onChange, withDefault) {
   const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
   const current = busy || "default";
-  return h(
-    "div",
-    { class: "segmented", role: "group" },
-    choices.map(([v, label]) =>
-      h(
-        "button",
-        {
-          "aria-pressed": current === v ? "true" : "false",
-          "data-key": key + "-" + v,
-          onclick: () => {
-            if (v !== current) onChange(v === "default" ? null : v);
-          },
-        },
-        label,
-      ),
-    ),
-  );
+  const resolved = withDefault && Object.fromEntries(BUSY_CHOICES)[ui.settings.busy || "subject"];
+  return segmented(key, choices, current, (v) => onChange(v === "default" ? null : v), resolved);
 }
 
 // Settings go to the daemon one request at a time, in order: each PUT is the whole settings, so
@@ -4840,11 +4867,27 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next) {
+// Each save says how it went beside the control that made it (key): "Saving…" once it has taken
+// 300ms, "Saved" for a moment once the daemon has it, or why it failed, under that row.
+const saveNotes = new Map(); // a row's key → { seq, state: "pending" | "saving" | "saved", at }
+
+function saveSettings(next, key) {
   const seq = ++settingsSeq;
   ui.settings = next;
+  if (key) {
+    delete ui.rowErrors[key];
+    saveNotes.set(key, { seq, state: "pending" });
+    setTimeout(() => {
+      const n = saveNotes.get(key);
+      if (n?.seq === seq && n.state === "pending") {
+        n.state = "saving";
+        render();
+      }
+    }, 300);
+  }
   render();
   queueSettings(async () => {
+    const note = key && saveNotes.get(key);
     try {
       const saved = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
       confirmed = saved;
@@ -4852,34 +4895,64 @@ function saveSettings(next) {
         ui.settings = saved;
         ui.settingsError = "";
       }
+      if (note?.seq === seq) {
+        note.state = "saved";
+        note.at = Date.now();
+        setTimeout(() => {
+          if (saveNotes.get(key) === note) saveNotes.delete(key);
+          render();
+        }, SAVED_MS);
+      }
     } catch (e) {
       if (e instanceof AuthError) return deny(e.token);
-      if (seq === settingsSeq) {
-        ui.settings = confirmed || ui.settings;
-        ui.settingsError = e.message;
-      }
+      if (seq === settingsSeq) ui.settings = confirmed || ui.settings;
+      if (note?.seq === seq) saveNotes.delete(key);
+      if (key) ui.rowErrors[key] = "Not saved: " + e.message;
+      else if (seq === settingsSeq) ui.settingsError = e.message;
     }
     render();
   });
 }
 
-function settingsRow(key, title, description, control, extraClass = "") {
+const SAVED_MS = 1500;
+
+function saveNote(key) {
+  const n = saveNotes.get(key);
+  if (!n || n.state === "pending") return h("span", { class: "save-note", "aria-live": "polite" });
+  if (n.state === "saving") return h("span", { class: "save-note", "aria-live": "polite" }, "Saving…");
+  // A render partway through keeps the fade where it had got to.
+  const el = h("span", { class: "save-note saved", "aria-live": "polite" }, icon("check"), "Saved");
+  el.style.setProperty("animation-delay", -(Date.now() - n.at) + "ms");
+  return el;
+}
+
+// A row: its title and what it means, its control, and under them what went wrong with it. A row
+// that can be saved (saves) keeps a place beside its control for how the save went.
+function settingsRow(key, title, description, control, extraClass = "", saves = false) {
   return h(
     "div",
     { class: "row" },
     h(
       "div",
-      { class: "row-grid " + extraClass },
+      { class: "row-grid " + extraClass + (description ? " has-desc" : "") },
       h("div", null, h("div", { class: "row-title" }, title), description && h("p", { class: "row-description" }, description)),
-      h("div", { class: "row-control" }, control),
+      h("div", { class: "row-control" }, saves && saveNote(key), control),
     ),
-    ui.rowErrors[key] && h("p", { class: "row-error" }, ui.rowErrors[key]),
+    ui.rowErrors[key] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors[key]),
   );
+}
+
+// One wording, wherever a name someone else chose first is asked about again.
+function takenLine(a) {
+  return "The person on " + host(a.taken) + " chose \u201c" + a.name + "\u201d first. Choose another name; until you do, you can't send.";
 }
 
 function accountSection() {
   const a = me();
-  const value = ui.accountDraft ?? (a?.name || ui.state?.account?.suggested || "");
+  const suggested = ui.state?.account?.suggested || "";
+  // A taken name isn't offered back: the field starts from the suggestion, or empty.
+  const value = ui.accountDraft ?? (a?.taken ? suggested : a?.name || suggested);
+  const unchanged = (v) => !v.trim() || (!!a && !a.taken && v.trim() === a.name);
   return h(
     "section",
     { class: "section" },
@@ -4887,7 +4960,7 @@ function accountSection() {
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Agents see it, and send to it.", [
+      settingsRow("account", "Your name", a?.taken ? h("span", { class: "taken-line" }, takenLine(a)) : "Agents see it, and send to it.", [
         h(
           "span",
           { class: "field account-field" },
@@ -4899,18 +4972,25 @@ function accountSection() {
             spellcheck: "false",
             "aria-label": "Your name",
             "data-key": "account-name",
+            placeholder: "ada-lovelace",
             oninput: (e) => {
               ui.accountDraft = e.target.value;
+              const btn = root.querySelector('[data-key="account-save"]');
+              if (btn) btn.disabled = unchanged(e.target.value);
             },
             onkeydown: (e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !unchanged(e.target.value)) {
                 e.preventDefault();
                 saveAccount(e.target.value.trim());
               }
             },
           }),
         ),
-        h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
+        h(
+          "button",
+          { class: "btn btn-outline btn-xs", "data-key": "account-save", disabled: unchanged(value) || ui.accountSaving, onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) },
+          ui.accountSaving ? "Saving…" : !a ? "Choose" : a.taken ? "Save" : "Rename",
+        ),
       ]),
     ),
   );
@@ -4947,6 +5027,8 @@ function moveToName(was, name) {
 
 async function saveAccount(name) {
   delete ui.rowErrors.account;
+  ui.accountSaving = true;
+  render();
   try {
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name }) });
     const was = myName();
@@ -4958,6 +5040,7 @@ async function saveAccount(name) {
     if (e instanceof AuthError) return deny(e.token);
     ui.rowErrors.account = e.message;
   }
+  ui.accountSaving = false;
   render();
 }
 
@@ -4972,7 +5055,9 @@ function settingsPage() {
         "wake",
         "Device default",
         "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
-        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
+        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, "wake"), false),
+        "",
+        true,
       ),
       ...[...local]
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -4985,15 +5070,17 @@ function settingsPage() {
               "wake-" + s.name,
               overrides[s.name] || null,
               (w) => {
-                // From the settings as they are now: a pause in typing minutes can end after
-                // another choice was made.
+                // From the settings as they are now: minutes are saved on leaving the field, which
+                // can come after another row's choice.
                 const next = { ...(ui.settings.sessionWake || {}) };
                 if (w) next[s.name] = w;
                 else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionWake: next });
+                saveSettings({ ...ui.settings, sessionWake: next }, "wake-" + s.name);
               },
               true,
             ),
+            "",
+            true,
           ),
         ),
     ];
@@ -5003,9 +5090,14 @@ function settingsPage() {
         "busy",
         "Device default",
         "What a busy Claude Code session sees when a message arrives.",
-        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
+        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }, "busy"), false),
+        "",
+        true,
       ),
+      // Only Claude Code sessions: the busy notice comes from Murmur's hook, which only Claude Code
+      // runs (internal/daemon/serve.go).
       ...[...local]
+        .filter((s) => s.agent === "claude-code")
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((s) =>
           settingsRow(
@@ -5019,10 +5111,12 @@ function settingsPage() {
                 const next = { ...(ui.settings.sessionBusy || {}) };
                 if (b) next[s.name] = b;
                 else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionBusy: next });
+                saveSettings({ ...ui.settings, sessionBusy: next }, "busy-" + s.name);
               },
               true,
             ),
+            "",
+            true,
           ),
         ),
     ];
@@ -5038,7 +5132,7 @@ function settingsPage() {
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
         h("div", { class: "group" }, busyRows),
-        ui.settingsError && h("p", { class: "row-error section-head" }, ui.settingsError),
+        ui.settingsError && h("p", { class: "row-error section-head", role: "alert" }, ui.settingsError),
       ),
     );
   }
@@ -5087,7 +5181,13 @@ function settingsPage() {
   );
 
   sections.push(versionSection());
-  return h("div", { class: "page" }, sections);
+  const self = devices().find((d) => d.self);
+  return h(
+    "div",
+    { class: "page set-page" },
+    h("header", { class: "set-head" }, h("h1", null, "Settings"), self && h("p", null, "For " + (self.host || host(self.id)) + ", this device")),
+    sections,
+  );
 }
 
 async function unmute(m, key) {
@@ -5249,12 +5349,6 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
-    // Someone else claimed this name first (#268): ask for another, once per page, unless something
-    // is already being asked.
-    if (state.account?.taken && !ui.takenAsked && !ui.setup && !ui.picker && !ui.tagMenu) {
-      ui.takenAsked = true;
-      setTimeout(() => askForName(null), 0);
-    }
     trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
@@ -5301,7 +5395,7 @@ function start() {
     composers.clear();
     personNames.clear();
     named.clear();
-    for (const key of [...minuteEdits.keys()]) cancelMinutes(key);
+    minuteDrafts.clear();
     confirmed = null;
     arrivedAt = 0;
     last = "";
