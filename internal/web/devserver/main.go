@@ -222,6 +222,10 @@ func newFixtures(now time.Time) *fixtures {
 	f.messages = append(f.messages, web.Message{ID: randomHex(6), From: "maya", FromAddr: "maya-mbp-91c0/human", FromPerson: true,
 		To: "velvet-moth", ToKind: web.ToSession, Subject: "Are the word lists final? I'd like to print a few names for the demo.",
 		At: ago(26 * time.Minute)})
+	// A session that has ended: the page knows it only from its messages, as a settled one.
+	f.messages = append(f.messages, web.Message{ID: randomHex(6), From: "frosty-newt", FromAddr: "tyler-laptop-3f2a/9d1e", To: "quiet-otter",
+		ToAddr: f.devices[0].Sessions[0].Addr, ToKind: web.ToSession, Subject: "Handing the docs over",
+		Body: "I'm done for today; docs/testing.md is yours.", At: ago(5 * time.Hour)})
 	msg(90*time.Second, "solar-wren", "mellow-yak", web.ToSession, "Re: Receipts can say \"idle 12 min\"",
 		"I'll hand it over: the daemon will keep lastTurnEnded per session.")
 	f.mutes = []web.Mute{
