@@ -4416,9 +4416,16 @@ function relayBar(c, running) {
   let to = ui.relayTo.get(c.key);
   if (!running.includes(to)) to = last ? fromName(last) : running[0];
   const send = () => relaySend(c, to, el);
-  const el = composerFor(key, send, () => composerChange(key, el));
-  el.placeholder = "Message " + to + "…";
-  el.setAttribute("aria-label", "Message " + to);
+  const el = composerFor(key, send, () => {
+    composerChange(key, el);
+    // Writing the next message: the line goes back to saying where this one will go.
+    if (el.value.trim() && root.querySelector(".relay-sent")) {
+      ui.relayed.delete(c.key);
+      render();
+    }
+  });
+  el.placeholder = "Message " + to + " in your conversation…";
+  el.setAttribute("aria-label", "Message " + to + " in your conversation with it");
   const pick =
     running.length > 1 &&
     h(
@@ -4441,7 +4448,7 @@ function relayBar(c, running) {
     "div",
     { class: "composer-wrap" },
     ui.setup?.inline === el && nameAsk(),
-    relayLine(c),
+    relayLine(c, to, el),
     h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }
@@ -4460,12 +4467,13 @@ function relaySend(c, to, el) {
   el.focus({ preventScroll: true });
 }
 
-// Where the last message written under this conversation went, as long as it is open.
-function relayLine(c) {
+// Over the bar: where a message written here goes, before it is sent, and where it went after.
+function relayLine(c, to, el) {
   const sent = ui.relayed.get(c.key);
-  if (!sent) return null;
-  const item = ui.outbox.find((x) => x.cid === sent.cid);
+  const item = sent && ui.outbox.find((x) => x.cid === sent.cid);
   const open = () => startChat(sent.to);
+  const pending = item && item.status !== "sent"; // sending, or failed and waiting to be tried again
+  if (!sent || (!pending && (sent.to !== to || el.value.trim()))) return h("p", { class: "relay-line" }, "Goes to your conversation with " + to + ", not this thread");
   if (item?.status === "failed") {
     return h(
       "p",
@@ -4477,7 +4485,7 @@ function relayLine(c) {
   if (item?.status === "sending") return h("p", { class: "relay-line", role: "status" }, "Sending to " + sent.to + "…");
   return h(
     "p",
-    { class: "relay-line", role: "status" },
+    { class: "relay-line relay-sent", role: "status" },
     icon("check"),
     "Sent to your conversation with " + sent.to,
     h("span", { class: "relay-sep", "aria-hidden": "true" }, "·"),
