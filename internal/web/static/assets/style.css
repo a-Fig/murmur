@@ -5630,3 +5630,56 @@ a.fx-pr:focus-visible,
   margin-right: 0.125rem;
 }
 
+/* Recent: a feed about 44rem wide, left-aligned under its head like Settings. Each row is a button
+   whose body stops at three lines; the page opens the whole conversation. */
+.g-page.g-recent {
+  max-width: 48rem;
+  margin: 0;
+}
+.g-recent > .g-none {
+  padding: 0;
+}
+.g-item {
+  display: flex;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.g-item .chat-msg-main,
+.g-item .chat-msg-subject {
+  display: block;
+  min-width: 0;
+}
+.g-item .chat-msg-head {
+  display: flex;
+}
+.g-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.dark .g-item {
+  border-radius: 0.5rem;
+}
+.dark .g-item:focus-visible {
+  box-shadow: none;
+  outline: 2px solid rgb(255 255 255 / 55%);
+  outline-offset: -2px;
+}
+.g-older {
+  margin-top: 1rem;
+}
+.g-pill-wrap {
+  top: 0.75rem;
+}
+/* The pill above the feed must not let the gap under the head change when it comes and goes. */
+.g-recent .g-feed {
+  display: flow-root;
+}
+.g-recent .g-feed > .chat-day:first-child {
+  margin-top: 0;
+}

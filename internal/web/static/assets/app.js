@@ -239,6 +239,7 @@ function render() {
   content.scrollTop = scroll;
   fleetFit();
   fleetRoving();
+  recentRoving();
   const pane = root.querySelector(".fx-pane-in");
   if (pane) pane.scrollTop = paneScroll;
   const sideNow = root.querySelector(".sidebar-content, .mini-scroll");
@@ -2745,14 +2746,38 @@ function fleetInspector(name) {
   ];
 }
 
-// Recent: the newest messages first, as many as a render can build quickly. One opens its
-// conversation.
-const RECENT_MAX = 300;
+// Recent: the newest messages first, a page at a time; one opens its conversation.
+const RECENT_PAGE = 300;
+const RECENT_SEEN_KEY = NAME + ":recent-seen";
+
 function recentPage() {
-  const list = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt).slice(0, RECENT_MAX);
+  if (!ui.state) return recentShell(null, h("p", { class: "g-none" }, "Loading messages…"));
+  const all = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt);
+  // Scrolled down, the feed holds what it shows: newer messages wait behind a pill instead of
+  // pushing what the reader is on down the page. Back at the top, they come in.
+  const top = (content?.scrollTop || 0) <= 8;
+  if (top) ui.recentHeldAt = null;
+  else if (ui.recentHeldAt == null) ui.recentHeldAt = ui.recentShownAt ?? Infinity;
+  const held = ui.recentHeldAt;
+  const fresh = held == null ? 0 : all.filter((m) => m.sortAt > held).length;
+  const shown = held == null ? all : all.filter((m) => m.sortAt <= held);
+  const max = ui.recentMax || RECENT_PAGE;
+  const list = shown.slice(0, max);
+  ui.recentShownAt = list[0]?.sortAt ?? null;
+  // Where the reader left off: what came since their last visit to Recent sits above a line, which
+  // stays until they leave the page, as a conversation's "New" does.
+  if (ui.recentMark === undefined) ui.recentMark = recentSeen();
+  if (list.length && !document.hidden) recentSaw(list[0].sortAt);
+  const mark = ui.recentMark;
   const out = [];
   let day = null;
+  let newer = false;
   for (const m of list) {
+    if (mark != null && m.sortAt > mark) newer = true;
+    else if (newer && mark != null) {
+      out.push(h("div", { class: "chat-new g-new" }, h("span", null, "New above")));
+      newer = false;
+    }
     const at = when(m.at);
     const d = at && new Date(at).toDateString();
     if (d && d !== day) {
@@ -2761,23 +2786,92 @@ function recentPage() {
     }
     out.push(recentItem(m, at));
   }
-  return h(
-    "div",
-    { class: "g-page g-recent" },
-    h(
-      "header",
-      { class: "g-page-head" },
-      h("h1", null, "Recent messages"),
-      h("p", null, ui.messages.length > RECENT_MAX ? "Newest " + RECENT_MAX + " of " + ui.messages.length : plural(ui.messages.length, "message")),
-    ),
-    list.length ? h("div", { class: "g-feed" }, out) : h("p", { class: "g-none" }, "No messages yet"),
+  const more = shown.length - list.length;
+  return recentShell(
+    !all.length ? null : all.length > list.length + fresh ? "Newest " + list.length + " of " + all.length : plural(all.length, "message"),
+    list.length
+      ? [
+          fresh > 0 &&
+            h(
+              "div",
+              { class: "list-pill-wrap g-pill-wrap" },
+              h("button", { class: "list-pill", "data-key": "recent-pill", onclick: recentToTop }, icon("arrowUp"), plural(fresh, "new message")),
+            ),
+          h("div", { class: "g-feed", onkeydown: recentKey }, out),
+          more > 0 &&
+            h(
+              "button",
+              {
+                class: "btn g-older",
+                "data-key": "recent-older",
+                onclick: () => {
+                  ui.recentMax = max + RECENT_PAGE;
+                  render();
+                },
+              },
+              "Show older messages",
+            ),
+        ]
+      : h("p", { class: "g-none" }, "No messages yet. Messages between sessions appear here as they're sent."),
   );
+}
+
+function recentShell(count, body) {
+  return h("div", { class: "g-page g-recent" }, h("header", { class: "g-page-head" }, h("h1", null, "Recent messages"), count && h("p", null, count)), body);
+}
+
+// The newest message the reader has had in front of them on Recent, kept across visits.
+function recentSeen() {
+  try {
+    const n = Number(localStorage.getItem(RECENT_SEEN_KEY));
+    return n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function recentSaw(at) {
+  if (!(at > (recentSeen() || 0))) return;
+  try {
+    localStorage.setItem(RECENT_SEEN_KEY, String(at));
+  } catch {}
+}
+
+function recentToTop() {
+  content?.scrollTo({ top: 0 });
+  ui.recentHeldAt = null;
+  render();
+  root.querySelector(".g-item")?.focus({ preventScroll: true });
+}
+
+// The rows are one Tab stop: arrows, Home and End move between them, as in the conversation list.
+function recentKey(e) {
+  const items = [...e.currentTarget.querySelectorAll(".g-item")];
+  const i = items.indexOf(document.activeElement);
+  if (i < 0) return;
+  const j = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (j == null || !items[j]) return;
+  e.preventDefault();
+  items[i].tabIndex = -1;
+  items[j].tabIndex = 0;
+  ui.recentFocus = items[j].dataset.id;
+  items[j].focus();
+}
+
+function recentRoving() {
+  const items = [...root.querySelectorAll(".g-feed .g-item")];
+  if (!items.length) return;
+  const on = items.find((el) => el.dataset.id === ui.recentFocus) || items[0];
+  for (const el of items) el.tabIndex = el === on ? 0 : -1;
 }
 
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "device" ? [icon("laptop"), m.to] : [avatar(toName(m)), toName(m)];
+  const who = m.toKind === "all" ? "Everyone" : toName(m);
+  const to = m.toKind === "all" ? [icon("broadcast"), who] : m.toKind === "device" ? [icon("laptop"), who] : who;
+  const body = m.fromPerson ? personText(m) : m.body;
+  const gist = ((m.fromPerson ? "" : m.subject) || body || "").trim().split("\n")[0];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -2785,21 +2879,32 @@ function recentItem(m, at) {
     go("messages");
   };
   return h(
-    "article",
-    { class: "chat-msg chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    "button",
+    {
+      type: "button",
+      class: "chat-msg chat-msg-first g-item",
+      "data-id": m.id,
+      "data-key": "rc-" + m.id,
+      tabindex: "-1",
+      "aria-label": from + " to " + who + ": " + gist,
+      onfocus: () => (ui.recentFocus = m.id),
+      onclick: open,
+    },
     avatar(from),
     h(
-      "div",
+      "span",
       { class: "chat-msg-main" },
       h(
-        "div",
+        "span",
         { class: "chat-msg-head" },
         h("span", { class: "chat-msg-from truncate" }, from),
         m.fromPerson && humanTag(),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
       ),
-      messageText(m),
+      !m.fromPerson && m.subject && h("span", { class: "chat-msg-subject" }, m.subject),
+      // Links show as text: the whole row is the button.
+      body && h("span", { class: "chat-msg-body rich g-body" }, rich(body, true)),
     ),
   );
 }
@@ -4058,7 +4163,7 @@ function chatMessage(m, from, at, head, before) {
 
 // Message bodies are Markdown-ish text from agents. A small subset becomes structure: paragraphs,
 // lists, fenced code, inline code, bold and https links. All of it reaches the page as text nodes.
-function rich(text) {
+function rich(text, plain = false) {
   const out = [];
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   let i = 0;
@@ -4083,7 +4188,7 @@ function rich(text) {
         else break;
         i++;
       }
-      out.push(h(re === bullet ? "ul" : "ol", null, items.map((t) => h("li", null, inline(t)))));
+      out.push(h(re === bullet ? "ul" : "ol", null, items.map((t) => h("li", null, inline(t, plain)))));
       continue;
     }
     if (!line.trim()) {
@@ -4092,12 +4197,12 @@ function rich(text) {
     }
     const para = [];
     while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !bullet.test(lines[i]) && !num.test(lines[i])) para.push(lines[i++]);
-    out.push(h("p", null, para.map((l, k) => [k ? h("br") : null, inline(l)])));
+    out.push(h("p", null, para.map((l, k) => [k ? h("br") : null, inline(l, plain)])));
   }
   return out;
 }
 
-function inline(t) {
+function inline(t, plain = false) {
   const out = [];
   const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https:\/\/[^\s)<>]+[^\s)<>.,;:!?'"])/g;
   let last = 0;
@@ -4105,7 +4210,7 @@ function inline(t) {
     if (m.index > last) out.push(t.slice(last, m.index));
     if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
     else if (m[2]) out.push(h("strong", null, m[2].slice(2, -2)));
-    else out.push(h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
+    else out.push(plain ? m[3] : h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
     last = re.lastIndex;
   }
   if (last < t.length) out.push(t.slice(last));
@@ -5287,6 +5392,8 @@ function setView(view) {
   // Leaving All sessions (to a conversation, say) remembers where the table and the details were,
   // so Back to the same session finds them as they were.
   if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, page: content?.scrollTop || 0, pane: root.querySelector(".fx-pane-in")?.scrollTop || 0 };
+  if (ui.view === "recent" && next !== "recent") ui.recentMark = undefined;
+  if (next === "recent" && ui.view !== "recent") ui.recentHeldAt = ui.recentShownAt = null;
   ui.view = next;
   if (ui.view === "settings") loadSettings();
   if (ui.view !== "sessions") return render();
@@ -5491,6 +5598,14 @@ window.addEventListener("focus", () => {
 });
 window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
+// Recent lets in what it held once the reader is back at the top.
+document.addEventListener(
+  "scroll",
+  (e) => {
+    if (ui.view === "recent" && ui.recentHeldAt != null && e.target === content && content.scrollTop <= 8) render();
+  },
+  { capture: true, passive: true },
+);
 NARROW.addEventListener("change", render);
 setInterval(tick, 10000);
 start();
