@@ -4563,12 +4563,13 @@ a.fx-pr:hover {
 .fx-c-doing {
   color: var(--fx-text-2);
 }
-/* One line, so rows keep one height; the whole of it is in the title. */
+/* Two lines at most; the whole of it is in the title. */
 .fx-status {
-  display: block;
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   line-height: 1.25rem;
 }
 .fx-c-branch {
@@ -4649,14 +4650,15 @@ a.fx-pr:hover {
   justify-self: center;
   transform: translateY(-0.0625rem);
 }
-/* Two lines at most, the whole of it in the title. Who waits, and how long, come first. */
+/* One line, the whole of it in the title and in the details. Who waits, how long, and why it can't
+   answer yet come first, so the question is what gets cut. */
 .fx-reason-text {
   display: -webkit-box;
   min-width: 0;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 .fx-reason-note {
   color: var(--fx-text-3);
@@ -4743,18 +4745,27 @@ button.fx-group:hover {
   margin: 0 auto;
 }
 
-/* A laptop's table (a 1180px screen gives it about 850px): Working on gives way first, down to 8rem,
-   then Session to 13rem; Branch keeps room for its PR chip. */
-@container (max-width: 1000px) {
+/* A tight table (the details open, or a laptop): Working on is what's protected. State becomes its
+   dot, the word in the cell's title and read out by screen readers, and Session gives way, down to
+   10rem, before Working on goes under 14rem. Branch keeps room for its PR chip. */
+@container (max-width: 1100px) {
   .fx-tr {
-    grid-template-columns: minmax(13rem, 14rem) 7.5rem minmax(8rem, 1fr) minmax(min(var(--fx-branch-w, 10rem), 5.5rem), var(--fx-branch-w, 10rem)) 5rem 1.75rem;
+    grid-template-columns: minmax(10rem, 14rem) 3.25rem minmax(14rem, 1fr) minmax(min(var(--fx-branch-w, 10rem), 5.5rem), var(--fx-branch-w, 10rem)) 5rem 1.75rem;
     column-gap: 1rem;
+  }
+  .fx-row .fx-state-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 /* Four columns: Branch goes, to the line under the name. */
 @container (max-width: 840px) {
   .fx-tr {
-    grid-template-columns: minmax(12rem, 15rem) 7.5rem minmax(10rem, 1fr) 5rem 1.75rem;
+    grid-template-columns: minmax(10rem, 14rem) 3.25rem minmax(14rem, 1fr) 5rem 1.75rem;
     column-gap: 1rem;
   }
   .fx-c-branch {
@@ -4787,7 +4798,7 @@ button.fx-group:hover {
 /* Narrow: the name, its state and when; what it's working on takes the line under the name. */
 @container (max-width: 600px) {
   .fx-tr {
-    grid-template-columns: minmax(0, 1fr) auto 4.75rem 1.75rem;
+    grid-template-columns: minmax(0, 1fr) 3.25rem 4.75rem 1.75rem;
     column-gap: 0.75rem;
     padding: 0 0.5rem;
   }

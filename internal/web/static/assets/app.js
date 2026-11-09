@@ -2102,7 +2102,7 @@ function fleetRow(d, s, need, on, F, pinned) {
       ),
       need && fxReason(need, waitNote(d, s)),
     ),
-    h("div", { class: "fx-c fx-c-state", role: "cell" }, fxDot(state), FX_STATE[state]),
+    h("div", { class: "fx-c fx-c-state", role: "cell", title: FX_STATE[state] }, fxDot(state), h("span", { class: "fx-state-word" }, FX_STATE[state])),
     h("div", { class: "fx-c fx-c-doing", role: "cell" }, s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : fxDash()),
     !pinned && F.by === "branch"
       ? h("div", { class: "fx-c fx-c-branch", role: "cell" }, pr && fxPr(pr))
