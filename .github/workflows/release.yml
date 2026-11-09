@@ -1,43 +1,53 @@
 # Pushing a tag like v0.1.0 publishes a release: mur built for macOS, Linux and Windows (amd64 and
 # arm64), with a SHA256SUMS file that install.sh and install.ps1 check their download against (#58).
 #
-# It runs on GitHub's own Linux runner, which cross-compiles every target (CGO_ENABLED=0). Only a
-# tag push starts it, only people with write access can push a tag here, and a tag pushed to a fork
-# runs in the fork. docs/releasing.md says how to cut a release.
+# It runs on GitHub's own Linux runner, which cross-compiles every target (CGO_ENABLED=0). A tag
+# push starts it, only people with write access can push a tag here, and a tag pushed to a fork
+# runs in the fork. nightly.yml also calls it with a tag it created: a tag created with GITHUB_TOKEN
+# starts no workflow (#244). docs/releasing.md says how to cut a release.
 name: release
 
 on:
   push:
     tags: ['v*']
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to publish, already pushed
+        required: true
+        type: string
 
 permissions:
   contents: write
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # A called workflow's github.ref is its caller's (main), so the tag comes from the input.
+      TAG: ${{ inputs.tag || github.ref_name }}
+    concurrency:
+      group: release-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Check the tag
         run: |
-          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::The tag $GITHUB_REF_NAME is not a version like v1.2.3 or v1.2.3-pre.1, so nothing was released."
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::The tag $TAG is not a version like v1.2.3 or v1.2.3-pre.1, so nothing was released."
             exit 1
           fi
           go version
       - name: Build every platform
         run: |
-          version=${GITHUB_REF_NAME#v}
+          version=${TAG#v}
           mkdir dist
           for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             os=${target%/*}
@@ -60,6 +70,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           flags=''
-          case "$GITHUB_REF_NAME" in *-*) flags=--prerelease ;; esac
+          case "$TAG" in *-*) flags=--prerelease ;; esac
           # shellcheck disable=SC2086
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --generate-notes $flags
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes $flags

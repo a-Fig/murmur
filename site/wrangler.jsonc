@@ -7,7 +7,7 @@
   "main": "src/worker.js",
   // The Worker answers these before the assets do: `/` to serve markdown to an agent that asks for
   // it, the agent pages (no asset has their paths), the videos (src/worker.js says why), and the
-  // check-ins and the page that counts them (src/usage.js).
+  // public repos' reports and the page that counts them (src/usage.js).
   "assets": {
     "directory": ".",
     "binding": "ASSETS",
@@ -17,9 +17,12 @@
   // src/worker.js imports docs/agents/*.md as text, its copy for when GitHub can't be reached, and
   // src/usage.js imports the stats page.
   "rules": [{ "type": "Text", "globs": ["**/*.md", "src/*.html"], "fallthrough": true }],
-  // The daily check-ins (#148). `npx wrangler d1 migrations apply murmur-usage --remote` applies
-  // migrations/ to it. The stats page's keys, one per reader separated by spaces or commas, are the
-  // STATS_KEY secret (`npx wrangler secret put`).
+  // The public repos that use Murmur (#199), the census's counts of them (#259), and the daily
+  // check-ins of earlier versions (#148), kept as history. `npx wrangler d1 migrations apply
+  // murmur-usage --remote` applies migrations/ to it. The stats page's keys, one per reader separated
+  // by spaces or commas, are the STATS_KEY secret (`npx wrangler secret put`). CENSUS_KEY is the
+  // census's, the same as the repo's Actions secret of that name. GITHUB_TOKEN, optional, raises the
+  // rate limit of the check that a reported repo is public.
   "d1_databases": [
     { "binding": "DB", "database_name": "murmur-usage", "database_id": "178820d5-4536-4e57-90bc-4591131e3e0a" }
   ],

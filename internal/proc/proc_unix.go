@@ -38,12 +38,28 @@ func unlock(f *os.File) {
 	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
 
+// adopt takes up an inherited descriptor. An inherited descriptor isn't close-on-exec, so every
+// process this one starts (git, gh, and what they start) would get it too, and one that outlived
+// the daemon would keep the page's port bound, with the power to accept the page's requests.
+func adopt(fd uintptr, name string) *os.File {
+	syscall.CloseOnExec(int(fd))
+	return os.NewFile(fd, name)
+}
+
+// Unpoll is for Windows, where a socket stays tied to the completion port of the process that
+// first served it. A descriptor here takes no such tie with it.
+func Unpoll(*os.File) error { return nil }
+
 // StartDetached starts a program in its own session, so it outlives the process that started
-// it and has no terminal to prompt on.
-func StartDetached(path string, args []string, dir string, out *os.File) (*os.Process, error) {
+// it and has no terminal to prompt on. A hand, if not nil, is passed on as descriptor 3.
+func StartDetached(path string, args []string, dir string, out *os.File, hand *Handover) (*os.Process, error) {
 	cmd := exec.Command(path, args...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = dir, out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if hand != nil {
+		cmd.ExtraFiles = []*os.File{hand.File}
+		cmd.Env = withEnv(os.Environ(), hand.Env, "3")
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

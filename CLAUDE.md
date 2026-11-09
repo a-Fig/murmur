@@ -61,6 +61,11 @@ Tyler's rules:
   agent opening a PR through `gh` writes those sections itself.
 - Every code PR gets an Opus or sol review before it is handed over; the PR body says which
   commits it covered. Doc-only PRs need none.
+- A PR that changes something a person sees (the `mur ui` page, the site, terminal output) shows
+  it in its body: before and after screenshots, and a GIF when it moves or is interactive.
+  `gh` can't upload images; `scripts/pr-media.sh` can (`docs/pr-media.md`).
+- Before a release is tagged, a Codex (Sol) agent reviews `main` for bugs and security holes
+  (`docs/releasing.md`).
 - Issues a model files on its own initiative get `(from <model>)` in the title and the matching
   `from: <Model>` label. An issue Tyler asks for is `from: Tyler`, even though a model typed it.
 

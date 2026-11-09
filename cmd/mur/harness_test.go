@@ -14,6 +14,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/join/jointest"
+	"github.com/a-Fig/murmur/internal/testgit"
 )
 
 // These tests run mur as a user would: a copy of the test binary named mur behaves as the mur
@@ -27,6 +28,7 @@ func TestMain(m *testing.M) {
 		main()
 		return
 	}
+	testgit.Isolate()
 	code := m.Run()
 	if binDir != "" {
 		os.RemoveAll(binDir)

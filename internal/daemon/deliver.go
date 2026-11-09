@@ -186,7 +186,7 @@ func viaOf(r proto.Route, live bool) string {
 // failed, or that is too old, is passed over, and so is every message of a session that may not be
 // woken now (see wakesLocked). A session with a message and no way in is logged, once. Caller holds mu.
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
-	var next *inMsg
+	var next, person *inMsg
 	for _, m := range d.st.Inbox[id] {
 		if m.Pushing {
 			// One at a time, so they arrive in order. A message on its way in that isn't this
@@ -197,12 +197,21 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 		if next == nil && pushable(m) {
 			next = m
 		}
+		if person == nil && pushable(m) && personAsks(m) {
+			person = m
+		}
 	}
-	if next == nil {
+	if next == nil || d.hookBusyLocked(id) {
 		return nil, "", proto.Route{}
 	}
-	if !d.wakesLocked(id, wake) || d.hookBusyLocked(id) {
-		return nil, "", proto.Route{}
+	if !d.wakesLocked(id, wake) {
+		// A person asked this session something, and an answer that waits for its next prompt is no
+		// answer: their message goes in past how long it has been idle, ahead of what from other
+		// agents is left waiting for that (#242).
+		if person == nil || !d.personWakesLocked(id, wake) {
+			return nil, "", proto.Route{}
+		}
+		next = person
 	}
 	s := d.sessions[id]
 	route := d.routeOfLocked(id)
@@ -513,7 +522,7 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	// handoff.
 	wake := d.wakeSnapshot()
 	d.mu.Lock()
-	ok := d.wakesLocked(j.id, wake) && !d.hookBusyLocked(j.id)
+	ok := (d.wakesLocked(j.id, wake) || personAsks(j.msg) && d.personWakesLocked(j.id, wake)) && !d.hookBusyLocked(j.id)
 	d.mu.Unlock()
 	if !ok {
 		return errNotNow

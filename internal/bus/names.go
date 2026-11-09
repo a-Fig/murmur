@@ -18,6 +18,10 @@ import (
 // A reader that predates reservations takes one for a name in use by a session it doesn't know
 // (Claims gives it no address), which is what keeps it from handing the name out.
 //
+// A person's name is claimed here too (#268), as an assignment to device/human. It can't have a
+// session name's form, so a reader from before passes over it as a name names.Generate couldn't
+// make, and gives it to no session.
+//
 // The client's own session ID is never written here: Session is the ID Murmur gave the session.
 type NameRecord struct {
 	V       int       `json:"v"`
@@ -56,13 +60,19 @@ func (r NameRecord) Claims() map[string]string {
 			addr = ""
 		}
 		claims[r.Name] = addr
+	} else if addr := Addr(r.Device, r.Session); ValidPerson(r.Name) && IsPerson(addr) && validAddr(addr) {
+		claims[r.Name] = addr
 	}
 	for name, addr := range r.Used {
-		if !names.Valid(name) {
+		switch {
+		case names.Valid(name):
+			if addr != "" && !validAddr(addr) {
+				addr = ""
+			}
+		case ValidPerson(name) && IsPerson(addr) && validAddr(addr):
+			// A person's, in a snapshot: always with the address, as nothing sets one aside.
+		default:
 			continue
-		}
-		if addr != "" && !validAddr(addr) {
-			addr = ""
 		}
 		if _, ok := claims[name]; !ok {
 			claims[name] = addr

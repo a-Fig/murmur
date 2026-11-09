@@ -213,12 +213,14 @@ func (c *Client) start() error {
 	// A running MCP server can outlive an update. Start the installed path rather
 	// than the renamed Windows backup (or Linux's deleted executable name).
 	exe = installedExecutable(exe)
-	return StartDaemon(exe, c.GitDir)
+	return StartDaemon(exe, c.GitDir, nil)
 }
 
 // StartDaemon starts the installed executable after a self-update has released the clone lock.
-// Forwarded flags use --name=value, as recorded from the daemon's parsed FlagSet.
-func StartDaemon(exe, gitDir string, flags ...string) error {
+// Forwarded flags use --name=value, as recorded from the daemon's parsed FlagSet. page, if not nil,
+// is the page's listening socket, which the new daemon inherits so that the port is never free
+// between the two (#255).
+func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 	dir := StateDir(gitDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -249,7 +251,11 @@ func StartDaemon(exe, gitDir string, flags ...string) error {
 	// The launcher's cwd may differ from the original daemon's. The resolved
 	// clone directory wins over a forwarded relative --git-dir.
 	args = append(args, "--git-dir", gitDir)
-	p, err := proc.StartDetached(exe, args, cwd, logf)
+	var hand *proc.Handover
+	if page != nil {
+		hand = &proc.Handover{File: page, Env: brand.PageListenerEnv}
+	}
+	p, err := proc.StartDetached(exe, args, cwd, logf, hand)
 	if err != nil {
 		return err
 	}

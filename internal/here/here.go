@@ -52,7 +52,7 @@ type Move struct {
 	At            time.Time `json:"at"`
 }
 
-// DefaultDir is the user's: in their config directory, beside the check-in's ID, unless
+// DefaultDir is the user's: in their config directory, unless
 // brand.SessionsDirEnv names another.
 func DefaultDir() (string, error) {
 	if dir := os.Getenv(brand.SessionsDirEnv); dir != "" {

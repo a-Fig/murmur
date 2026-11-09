@@ -28,6 +28,9 @@ type fakeSource struct {
 	unmuted  [][2]string
 	tagged   []string // each SetTags: addr +added -removed
 	watched  []bool   // what Watched said of each State call
+	restarts int
+	sends    []string // each Send: to: text
+	read     []string // the IDs given to MarkRead
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
@@ -70,6 +73,43 @@ func (f *fakeSource) SetTags(ctx context.Context, addr string, add, remove []str
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tagged = append(f.tagged, addr+" +"+strings.Join(add, ",")+" -"+strings.Join(remove, ","))
+	return nil
+}
+
+func (f *fakeSource) Restart(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.state.Version.Ready {
+		return ErrNoUpdate
+	}
+	f.restarts++
+	return nil
+}
+
+func (f *fakeSource) SetAccount(ctx context.Context, name string) (Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if name == "taken" {
+		return Account{}, errors.New("taken is taken")
+	}
+	f.state.Account = Account{Name: name, Addr: "tyler-laptop-3f2a/human"}
+	return f.state.Account, nil
+}
+
+func (f *fakeSource) Send(ctx context.Context, to, text string) (Sent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sends = append(f.sends, to+": "+text)
+	if strings.Contains(text, "secret") {
+		return Sent{}, errors.New("not sent: it looks like a secret")
+	}
+	return Sent{ID: "abc123", Note: "a note"}, nil
+}
+
+func (f *fakeSource) MarkRead(ctx context.Context, ids []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.read = append(f.read, ids...)
 	return nil
 }
 
@@ -180,6 +220,9 @@ func TestTokenRequired(t *testing.T) {
 	}
 	if resp := h.do("POST", "/api/unmute", host, "", `{"by":"a-b","muted":"c-d"}`); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("POST /api/unmute without token: %d, want 401", resp.StatusCode)
+	}
+	if resp := h.do("POST", "/api/restart", host, "", ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("POST /api/restart without token: %d, want 401", resp.StatusCode)
 	}
 	// The token goes in the header only: not as a query parameter, not without "Bearer".
 	if resp := h.do("GET", "/api/state?token="+testToken, host, "", ""); resp.StatusCode != http.StatusUnauthorized {
@@ -499,5 +542,142 @@ func TestHiddenPageIsNotWatched(t *testing.T) {
 	defer src.mu.Unlock()
 	if !reflect.DeepEqual(src.watched, []bool{true, false}) {
 		t.Errorf("watched = %v, want [true false]: a visible page's call, then a hidden one's", src.watched)
+	}
+}
+
+// The page learns the daemon's version and any newer release from the state, and asks for the
+// restart onto an installed one (#240).
+func TestVersionAndRestart(t *testing.T) {
+	src := newFake()
+	src.state.Version = Version{Running: "0.3.0", Latest: "0.3.1", Install: "curl -fsSL https://example.test/install.sh | sh"}
+	h := start(t, src, noPRs)
+	got := decode[stateResponse](t, h.ok("GET", "/api/state", ""))
+	if got.Version != src.state.Version {
+		t.Errorf("version %+v, want %+v", got.Version, src.state.Version)
+	}
+
+	host := "127.0.0.1:" + h.port
+	if resp := h.do("POST", "/api/restart", host, testToken, ""); resp.StatusCode != http.StatusConflict {
+		t.Errorf("restart with nothing installed: %d, want 409", resp.StatusCode)
+	}
+	src.mu.Lock()
+	src.state.Version.Ready = true
+	src.mu.Unlock()
+	h.ok("POST", "/api/restart", "")
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if src.restarts != 1 {
+		t.Errorf("restarts %d, want 1", src.restarts)
+	}
+	if resp := h.do("GET", "/api/restart", host, testToken, ""); resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET /api/restart: %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestSplitText(t *testing.T) {
+	long := strings.Repeat("word ", 40) // 200 runes
+	for _, c := range []struct{ in, subject, body string }{
+		{"one line", "one line", ""},
+		{"  trimmed  \n", "trimmed", ""},
+		{"first\nsecond\n\nthird", "first", "second\n\nthird"},
+		{"first\r\nsecond", "first", "second"},
+		{long, strings.TrimSpace(long[:115]) + "…", strings.TrimSpace(long)},
+		{long + "\nmore", strings.TrimSpace(long[:115]) + "…", long + "\nmore"},
+		{strings.Repeat("é", 200), strings.Repeat("é", 119) + "…", strings.Repeat("é", 200)},
+	} {
+		subject, body := SplitText(c.in)
+		if subject != c.subject || body != c.body {
+			t.Errorf("SplitText(%q) = %q, %q; want %q, %q", c.in, subject, body, c.subject, c.body)
+		}
+		if n := len([]rune(subject)); n > maxSubject {
+			t.Errorf("SplitText(%q): a subject of %d runes", c.in, n)
+		}
+	}
+}
+
+// The account's calls go through to the source, and what it refuses comes back in its own words,
+// for the page to show.
+func TestAccountAndSendCalls(t *testing.T) {
+	f := newFake()
+	h := start(t, f, noPRs)
+	send := func(body string) (int, string) {
+		t.Helper()
+		resp := h.do("POST", "/api/send", "127.0.0.1:"+h.port, testToken, body)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	resp := h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"taken"}`)
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "taken is taken") {
+		t.Errorf("a refused name: %d %s", resp.StatusCode, b)
+	}
+	resp = h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"ada"}`)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var a Account
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &a) != nil || a.Name != "ada" {
+		t.Errorf("a name: %d %s", resp.StatusCode, b)
+	}
+
+	code, body := send(`{"to":"quiet-otter","text":"hello there"}`)
+	var sent Sent
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &sent) != nil || sent.ID != "abc123" || sent.Note != "a note" {
+		t.Errorf("a send: %d %s", code, body)
+	}
+	if code, body := send(`{"to":"quiet-otter","text":"my secret"}`); code != http.StatusBadRequest || !strings.Contains(body, "looks like a secret") {
+		t.Errorf("a refused send: %d %s", code, body)
+	}
+	for _, bad := range []string{`{"to":"","text":"x"}`, `{"to":"x","text":"  "}`, `{"to":"x"}`, `{"to":"x","text":"y","extra":1}`, `not json`} {
+		if code, _ := send(bad); code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want a refusal", bad, code)
+		}
+	}
+	f.mu.Lock()
+	sends := append([]string(nil), f.sends...)
+	f.mu.Unlock()
+	if !reflect.DeepEqual(sends, []string{"quiet-otter: hello there", "quiet-otter: my secret"}) {
+		t.Errorf("the source was sent: %q", sends)
+	}
+
+	resp = h.do("POST", "/api/read", "127.0.0.1:"+h.port, testToken, `{"ids":["m1","m2"]}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("marking read: %d", resp.StatusCode)
+	}
+	f.mu.Lock()
+	read := append([]string(nil), f.read...)
+	f.mu.Unlock()
+	if !reflect.DeepEqual(read, []string{"m1", "m2"}) {
+		t.Errorf("marked read: %q", read)
+	}
+}
+
+// Sending as the person is the page's most dangerous call: every new one needs the token.
+func TestAccountCallsNeedTheToken(t *testing.T) {
+	f := newFake()
+	h := start(t, f, noPRs)
+	for _, c := range []struct{ method, path, body string }{
+		{"PUT", "/api/account", `{"name":"ada"}`},
+		{"POST", "/api/send", `{"to":"*","text":"hi"}`},
+		{"POST", "/api/read", `{"ids":["m1"]}`},
+	} {
+		resp := h.do(c.method, c.path, "127.0.0.1:"+h.port, "", c.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s %s with no token: %d", c.method, c.path, resp.StatusCode)
+		}
+		resp = h.do(c.method, c.path, "evil.example:"+h.port, testToken, c.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMisdirectedRequest {
+			t.Errorf("%s %s with another Host: %d", c.method, c.path, resp.StatusCode)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.sends)+len(f.read) != 0 || f.state.Account.Name != "" {
+		t.Errorf("a refused call reached the source: %q %q %+v", f.sends, f.read, f.state.Account)
 	}
 }

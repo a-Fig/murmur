@@ -7,16 +7,19 @@
 // One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
 // messages queued in its inbox. None is handed over as a turn or delivered by the hook until the
 // session reads its inbox or the tag comes off. A tag under model: names the model the session runs, and a
-// session has at most one.
+// session has at most one. One is Murmur's alone: human, on a person's account (#267).
 package tags
 
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/brand"
 )
 
 const (
@@ -25,6 +28,11 @@ const (
 	// delivered when the session reads its inbox, or by whichever route applies once the tag comes
 	// off.
 	DoNotDisturb = "do-not-disturb"
+	// Human marks a person's account on the page (#242), at a device's address device/human, and
+	// nothing else: an agent at a glance can tell who it is talking to (#267). It is worked out from
+	// the address, never kept or read off the bus, so no session can take it and nobody can take it
+	// off. Clean refuses it, CleanRead and Effective drop it, and Person gives it.
+	Human = "human"
 	// ModelPrefix starts the tag naming the session's model. A session has at most one.
 	ModelPrefix = "model:"
 	// MaxLen caps a tag's length, and MaxPerSession how many a session has.
@@ -119,15 +127,126 @@ type Mark struct {
 
 // State is what a session's device keeps about its tags: those the session set, and a human's
 // marks. Derived tags are worked out afresh each time and never kept.
+//
+// The last two decide nothing about the session's tags, and are kept only so a change from before
+// them, read late, is known to be out of date (see SetHuman). Cleared is when a human last removed a
+// tag leaving no mark. Picked is when a human last gave the session a tag of a family with several,
+// by the family: it outlasts that tag being replaced or removed.
 type State struct {
-	Self  []string        `json:"self,omitempty"`
-	Human map[string]Mark `json:"human,omitempty"`
+	Self    []string             `json:"self,omitempty"`
+	Human   map[string]Mark      `json:"human,omitempty"`
+	Cleared map[string]time.Time `json:"cleared,omitempty"`
+	Picked  map[string]time.Time `json:"picked,omitempty"`
+}
+
+// dropHuman takes away a Human tag kept from before it was Murmur's alone (#267): it isn't shown, and
+// can't be removed by hand, so it would take a place under MaxPerSession for good.
+//
+// It copies what it changes: a caller's copy of a State shares its slice and maps with the one kept,
+// and a change that then fails mustn't have touched that.
+func (st *State) dropHuman() {
+	if slices.Contains(st.Self, Human) {
+		st.Self = slices.DeleteFunc(slices.Clone(st.Self), func(t string) bool { return t == Human })
+	}
+	if _, ok := st.Human[Human]; ok {
+		st.Human = maps.Clone(st.Human)
+		delete(st.Human, Human)
+	}
+	if _, ok := st.Cleared[Human]; ok {
+		st.Cleared = maps.Clone(st.Cleared)
+		delete(st.Cleared, Human)
+	}
 }
 
 // Empty says there is nothing to keep.
-func (st *State) Empty() bool { return st == nil || len(st.Self) == 0 && len(st.Human) == 0 }
+func (st *State) Empty() bool {
+	return st == nil || len(st.Self) == 0 && len(st.Human) == 0 && len(st.Cleared) == 0 && len(st.Picked) == 0
+}
 
-// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag.
+// Clone is a copy to change, leaving st as it is. A nil st gives an empty State.
+func (st *State) Clone() *State {
+	if st == nil {
+		return &State{}
+	}
+	return &State{Self: st.Self, Human: maps.Clone(st.Human), Cleared: maps.Clone(st.Cleared), Picked: maps.Clone(st.Picked)}
+}
+
+// SameChoices says st and o hold the same choices by a human.
+func (st *State) SameChoices(o *State) bool {
+	return maps.Equal(st.Human, o.Human) && maps.Equal(st.Cleared, o.Cleared) && maps.Equal(st.Picked, o.Picked)
+}
+
+// clockAllowance is how much older than a human's last choice a change can be and still go by the
+// order the two were read in, as they come from different machines' clocks.
+const clockAllowance = time.Minute
+
+// CapTimes brings any time later than now back to now. Such a time, from a clock since corrected or
+// kept from before changes were capped on reading, would otherwise hold off every change until it
+// came.
+func (st *State) CapTimes(now time.Time) {
+	for t, m := range st.Human {
+		if m.At.After(now) {
+			m.At = now
+			st.Human[t] = m
+		}
+	}
+	for _, times := range []map[string]time.Time{st.Cleared, st.Picked} {
+		for k, at := range times {
+			if at.After(now) {
+				times[k] = now
+			}
+		}
+	}
+}
+
+// chosenAt is when a human last chose anything about tag t, zero if never.
+func (st *State) chosenAt(t string) time.Time {
+	at := st.Human[t].At
+	if c := st.Cleared[t]; c.After(at) {
+		return c
+	}
+	return at
+}
+
+// chosenSince says a human made a choice about tag t that a change made at at is too old to undo.
+func (st *State) chosenSince(t string, at time.Time) bool {
+	return st.chosenAt(t).After(at.Add(clockAllowance))
+}
+
+// familyPickedSince says a human gave the session a tag of t's family since at: a session has at
+// most one of a family, so an add from before then is out of date, even if that tag has since gone.
+// A removal says nothing about the rest of the family, so it doesn't count. The marks are looked at
+// for those kept from before Picked.
+func (st *State) familyPickedSince(t string, at time.Time) bool {
+	limit := at.Add(clockAllowance)
+	if st.Picked[family(t)].After(limit) {
+		return true
+	}
+	for o, m := range st.Human {
+		if o != t && family(o) == family(t) && m.On && m.At.After(limit) {
+			return true
+		}
+	}
+	return false
+}
+
+// pick records that a human gave the session a tag of family f at at, if f has several tags and
+// nothing later is recorded.
+func (st *State) pick(f, t string, at time.Time) {
+	if f == t || !at.After(st.Picked[f]) {
+		return
+	}
+	if st.Picked == nil {
+		st.Picked = map[string]time.Time{}
+	}
+	st.Picked[f] = at
+}
+
+// Person is the tags of a person's account: human, worked out from the address.
+func Person() []Tag { return []Tag{{Name: Human, Src: SrcDerived}} }
+
+// Clean reads a list of tags as typed, each normalized. It fails on the first that isn't a tag, or
+// that is Murmur's to give (Human).
 func Clean(in []string) (names []string, err error) {
 	for _, raw := range in {
 		t := Normalize(raw)
@@ -136,6 +255,9 @@ func Clean(in []string) (names []string, err error) {
 		}
 		if !Valid(t) {
 			return nil, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)
+		}
+		if t == Human {
+			return nil, fmt.Errorf("%s is %s's to give: it marks a person's account, and nobody sets or removes it", Human, brand.Product)
 		}
 		if !slices.Contains(names, t) {
 			names = append(names, t)
@@ -148,6 +270,7 @@ func Clean(in []string) (names []string, err error) {
 // its family (a second model: tag replaces the first). It fails, and changes nothing, if the
 // session would have more than MaxPerSession.
 func (st *State) SetSelf(add, remove []string) error {
+	st.dropHuman()
 	add, err := Clean(add)
 	if err != nil {
 		return err
@@ -177,7 +300,13 @@ func (st *State) SetSelf(add, remove []string) error {
 // session doesn't have (a page that was behind) leaves no mark either: the human turned off nothing,
 // and a mark there would stop the session from ever setting the tag, until a human cleared a mark
 // the page can't show.
+//
+// A change can be read long after it was made, and two can be read in either order, so each tag goes
+// by the human's latest choice about it (#251): a change older than that, by more than clockAllowance,
+// leaves the tag as it is. The session's own changes carry no time, and a human's beat them anyway.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
+	st.dropHuman()
+	base = slices.DeleteFunc(slices.Clone(base), func(t string) bool { return t == Human })
 	add, err := Clean(add)
 	if err != nil {
 		return err
@@ -192,24 +321,48 @@ func (st *State) SetHuman(base []string, add, remove []string, by string, at tim
 	if st.Human == nil {
 		st.Human = map[string]Mark{}
 	}
+	// A change allowed in though up to clockAllowance older keeps the later time, or a run of them
+	// could bring in one much older than the latest choice.
+	latest := func(t string) time.Time {
+		if c := st.chosenAt(t); c.After(at) {
+			return c
+		}
+		return at
+	}
+	mark := func(t string, on bool) {
+		st.Human[t] = Mark{On: on, By: by, At: latest(t)}
+		delete(st.Cleared, t)
+	}
 	for _, t := range add {
+		if st.chosenSince(t, at) || st.familyPickedSince(t, at) {
+			continue
+		}
 		for o, m := range st.Human {
 			if o != t && family(o) == family(t) && m.On {
+				st.pick(family(t), t, m.At)
 				delete(st.Human, o)
 			}
 		}
+		st.pick(family(t), t, at)
 		for _, o := range base {
-			if o != t && family(o) == family(t) {
-				st.Human[o] = Mark{On: false, By: by, At: at}
+			if o != t && family(o) == family(t) && !st.chosenSince(o, at) {
+				mark(o, false)
 			}
 		}
-		st.Human[t] = Mark{On: true, By: by, At: at}
+		mark(t, true)
 	}
 	for _, t := range remove {
-		if slices.Contains(base, t) {
-			st.Human[t] = Mark{On: false, By: by, At: at}
-		} else {
+		switch {
+		case st.chosenSince(t, at):
+		case slices.Contains(base, t):
+			mark(t, false)
+		default:
+			when := latest(t)
 			delete(st.Human, t)
+			if st.Cleared == nil {
+				st.Cleared = map[string]time.Time{}
+			}
+			st.Cleared[t] = when
 		}
 	}
 	return nil
@@ -255,6 +408,7 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 			delete(src, t)
 		}
 	}
+	delete(src, Human) // a session's, or a human's mark, kept from before it was Murmur's (see Human)
 	out := make([]Tag, 0, len(src))
 	for t, s := range src {
 		out = append(out, Tag{Name: t, Src: s})
@@ -280,11 +434,12 @@ func Sort(ts []Tag) {
 }
 
 // CleanRead holds tags read from the bus to what Murmur writes: valid names from a known source,
-// none repeated, at most MaxPerSession. Anyone who can push can write the bus.
+// none repeated, at most MaxPerSession, and never Human, which a reader works out from the address.
+// Anyone who can push can write the bus.
 func CleanRead(in []Tag) []Tag {
 	var out []Tag
 	for _, t := range in {
-		if !Valid(t.Name) || Has(out, t.Name) || len(out) >= MaxPerSession {
+		if !Valid(t.Name) || t.Name == Human || Has(out, t.Name) || len(out) >= MaxPerSession {
 			continue
 		}
 		switch t.Src {

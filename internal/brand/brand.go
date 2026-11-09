@@ -45,14 +45,17 @@ const (
 	InstallSh  = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh"
 	InstallPs1 = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1"
 
-	// CheckInURL is where a daemon checks in once a day, which is how active users are counted, and
-	// learns the latest release (internal/checkin). ConfigUsage set to false in git config, or
-	// NoUsageEnv or DO_NOT_TRACK set in the environment, turns that off.
-	CheckInURL  = "https://murmur.afig.dev/v1/checkin"
-	ConfigUsage = Name + ".usage"
-	NoUsageEnv  = "MURMUR_NO_USAGE"
+	// ReportURL is where a public repo's address is sent, once, so the repos using Murmur can be
+	// counted: the only thing Murmur sends us (internal/publicrepo). ReportedRef, on the bus, says
+	// the repo has been reported, so its other clones don't send it again.
+	ReportURL   = "https://murmur.afig.dev/v1/repo"
+	ReportedRef = RefRoot + "reported"
 
 	// SessionsDirEnv, if set, is where MCP servers publish their records and find moves, in place
 	// of the user's config directory (internal/here). Tests set it.
 	SessionsDirEnv = "MURMUR_SESSIONS_DIR"
+
+	// PageListenerEnv names, to a daemon started by one restarting onto an update, the descriptor
+	// (a handle on Windows) of the page's listening socket it inherited (#255).
+	PageListenerEnv = "MURMUR_PAGE_LISTENER"
 )

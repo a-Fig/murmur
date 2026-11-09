@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -108,7 +110,7 @@ func writeResp(conn net.Conn, resp proto.Response) {
 // when the grace runs out is the session stopped. Its inbox is then kept for StoppedInbox, for a
 // session that comes back.
 func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *proto.Hello) {
-	if h == nil || !validName(h.ID) || h.ID == proto.CLISession {
+	if h == nil || !validName(h.ID) || h.ID == proto.CLISession || h.ID == bus.PersonSession {
 		writeResp(conn, fail("hello needs a session ID of lowercase letters, digits and dashes"))
 		return
 	}
@@ -602,6 +604,17 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 			d.mu.Unlock()
 			return fail(why)
 		}
+	} else if bus.ValidPerson(to) {
+		// A person's name is an address too. A device with that ID stands first: it was there before
+		// the name, which takes no device's ID when it is chosen.
+		d.mu.Lock()
+		addr, ok := d.resolvePersonLocked(to)
+		_, isDevice := d.peers[to]
+		isDevice = isDevice || to == d.device
+		d.mu.Unlock()
+		if ok && !isDevice {
+			to, toName = addr, to
+		}
 	}
 	var note string
 	if to != "*" {
@@ -625,12 +638,19 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		case known:
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
+		case bus.IsPerson(at):
+			note = nameOr(toName, at) + " isn't on " + brand.Product + " right now. They will see this when they next open it."
 		default:
 			note = to + " isn't in any device's presence right now, so nobody may read this. Check `who` for addresses."
 		}
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: req.Body}
+	if bus.IsPerson(from) {
+		d.mu.Lock()
+		e.Person = d.st.Person
+		d.mu.Unlock()
+	}
 	if err := d.appendEvent(ctx, e); err != nil {
 		return fail("not sent: " + err.Error())
 	}
@@ -641,7 +661,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 
 func (d *Daemon) addressKnownLocked(dev, sess string) bool {
 	if dev == d.device {
-		return sess == "" || sess == proto.CLISession || d.sessions[sess] != nil
+		return sess == "" || sess == proto.CLISession || sess == bus.PersonSession && d.st.Person != "" || d.sessions[sess] != nil
 	}
 	p := d.peers[dev]
 	if p == nil || d.staleLocked(p) {
@@ -665,6 +685,9 @@ func (d *Daemon) sessionInfoLocked(addr string) (name, agent, branch string) {
 	if dev == d.device {
 		if s := d.sessions[sess]; s != nil {
 			return s.name, s.agent, s.branch
+		}
+		if sess == bus.PersonSession && d.st.Person != "" {
+			return d.st.Person, bus.AgentPerson, ""
 		}
 		return "", "", ""
 	}
@@ -703,6 +726,10 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			}
 			name = byAddr[e.From]
 		}
+		if bus.IsPerson(e.From) {
+			// A person's device may be gone from presence: the message says who sent it.
+			agent, name = bus.AgentPerson, cmp.Or(e.Person, name, d.personNameOfLocked(e.From))
+		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), To: e.To, Subject: e.Subject, At: e.At}
 		if withBody {
@@ -728,6 +755,9 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, s.id), Name: s.name,
 			Pending: s.name == "", Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(), Started: s.started, LastActive: s.lastActive,
 			You: s.id == you, Tags: ts})
+	}
+	if d.st.Person != "" && filter.Match(tags.Person()) {
+		self.Sessions = append(self.Sessions, d.personViewLocked())
 	}
 	if you == proto.CLISession && filter.Empty() {
 		self.Sessions = append(self.Sessions, proto.SessionView{Addr: bus.Addr(d.device, proto.CLISession),

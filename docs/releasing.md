@@ -6,7 +6,11 @@ A release is a pushed tag. `.github/workflows/release.yml` builds `mur` for macO
 
 ## Cutting one
 
-From a commit on `main` whose checks passed:
+From a commit on `main` whose checks passed, and which a Codex (Sol) agent has reviewed whole for
+bugs, security holes and anything else that shouldn't ship. That review is Tyler's rule
+(2026-11-08): a release reaches every installed daemon within the hour (self-update), so a PR's
+review isn't enough on its own; it never sees how the merged PRs fit together. Each finding is
+fixed before the tag, filed as an issue if it can wait, or dropped if it isn't worth acting on.
 
 ```sh
 git tag v0.1.0
@@ -26,8 +30,46 @@ git push origin v0.1.0
   amd64 and arm64, and `SHA256SUMS` listing them. The installers rely on those names.
 - **To undo a release** (a bad build, or a test tag): `gh release delete <tag> --cleanup-tag --yes`.
   Re-running a tag's workflow needs its release deleted first, since the run creates the release.
-  Installed daemons update to the latest stable release hourly and never go back, so deleting stops
-  further updates but doesn't undo the ones taken. Try a build as a prerelease first: updates skip it.
+  Installed daemons update hourly and never go back, so deleting stops further updates but doesn't
+  undo the ones taken.
+
+## Channels
+
+A stable tag reaches every installed daemon within the hour, so a release runs on the prerelease
+channel first (#244).
+
+- **Stable**, the default: a daemon takes GitHub's latest release, which is never a prerelease.
+- **Prerelease**: `git config --global murmur.channel prerelease` (or a repo's own config) makes a
+  daemon take the highest version among all published releases, prerelease or stable, compared as
+  versions rather than by date. Tyler's machines run it. Unsetting it doesn't go back: a daemon on
+  a nightly stays there until a stable release is higher.
+
+Daemons from before the channel (v0.2.3 and earlier) don't read `murmur.channel` and keep taking
+stable releases, so a machine joins the channel at the first stable release that has it. The key is
+separate from `murmur.update` because those daemons read that one as a bool, and an unknown value
+there reads as "updates on".
+
+## Nightlies
+
+`.github/workflows/nightly.yml` runs at 07:23 UTC. It takes the newest commit on `main` whose `test`
+run passed and, if `main` has changed since the last nightly and the latest stable release, tags it
+`vX.Y.Z-nightly.YYYYMMDD`, where X.Y.Z is the latest stable release with its patch raised by one: it
+sorts above that release and below the next. It publishes the tag by calling `release.yml`, since a
+tag created with `GITHUB_TOKEN` starts no workflow, and then deletes all but the newest seven
+nightly releases and tags. A nightly tag with no published release (a failed build) doesn't count
+as out, so the next night tags its commit again; pruning removes the dead tag later. A rerun the
+same day finds the date's tag taken: delete it by hand first. Running the workflow with `dry_run`
+prints what it would tag and delete. Nightlies get no pre-release review (Cutting one, above): they
+reach only daemons on the prerelease channel.
+
+## Cutting a release through the channel
+
+1. Tag a release candidate from `main`: `git tag v0.3.0-rc.1 && git push origin v0.3.0-rc.1`. The
+   prerelease channel takes it within the hour.
+2. Fix what turns up on `main` and tag `-rc.2`, and so on. Nightlies are still numbered from the
+   last stable release (`v0.2.4-nightly.*` after `v0.2.3`) and sort below the candidate, so the
+   channel stays on the candidate until the next one.
+3. Once a candidate has run for a while without trouble, tag the same commit `v0.3.0`.
 
 ## Installing from a release
 

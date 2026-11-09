@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/testgit"
 )
 
 // Tests of handing a message over to a session as a turn (#57). `t3` is a stand-in: the test
@@ -42,6 +43,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("HOME", home)
 	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)

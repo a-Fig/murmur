@@ -27,6 +27,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Options configure a daemon. Zero values take the defaults in docs/VISION.md.
@@ -79,6 +80,9 @@ type Options struct {
 	// A host other than 127.0.0.1 is refused: off loopback anyone on the network could reach the
 	// page, and on another loopback address the page's Host check would refuse every request.
 	PageAddr string
+	// PageListener is the page's listening socket, inherited from a daemon that restarted onto an
+	// update (#255). Run takes it, and closes it if it doesn't serve the page on it.
+	PageListener *os.File
 	// PageOpen is how recently a page someone can see must have called its API to count as open,
 	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
 	PageOpen time.Duration
@@ -101,12 +105,19 @@ type Options struct {
 	Consent     func() bool
 	ConsentPoll time.Duration // how often to look; 1 s
 	Log         *log.Logger
-	// CheckIn, if set, runs in the background for as long as the daemon serves: the daily
-	// check-in that counts active users (internal/checkin). Tests leave it unset.
-	CheckIn func(context.Context)
-	// Update installs releases independently of check-ins, then requests a safe restart.
+	// Report, if set, runs in the background for as long as the daemon serves: it tells
+	// murmur.afig.dev the repo's address if the repo is public and nobody has yet
+	// (internal/publicrepo). Tests leave it unset.
+	Report func(context.Context)
+	// Update installs releases, then requests a safe restart.
 	Update func(context.Context, func())
+	// Version, if set, is this binary's version and what is known of a newer release, for the
+	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
+	// it every few seconds, so it must not reach the network.
+	Version func() web.Version
 }
+
+const defaultPageAddr = "127.0.0.1:0"
 
 func (o *Options) defaults() {
 	if o.Poll == 0 {
@@ -158,7 +169,7 @@ func (o *Options) defaults() {
 		o.ContinueHold = 2 * time.Minute
 	}
 	if o.PageAddr == "" {
-		o.PageAddr = "127.0.0.1:0"
+		o.PageAddr = defaultPageAddr
 	}
 	if o.PageOpen == 0 {
 		o.PageOpen = 2 * time.Minute
@@ -182,6 +193,15 @@ func (o *Options) defaults() {
 
 // ErrUpdated means a verified binary is installed and Run released the clone lock; the caller can restart it.
 var ErrUpdated = errors.New("daemon binary updated")
+
+// Updated is the ErrUpdated Run returns when it served the page: Page holds the page's listening
+// socket open, for the new daemon to inherit, and the caller closes it once that has started. The
+// port stays bound from one daemon to the next, so nothing else can take it in between and be sent
+// what an open tab sends there (#255).
+type Updated struct{ Page *os.File }
+
+func (*Updated) Error() string { return ErrUpdated.Error() }
+func (*Updated) Unwrap() error { return ErrUpdated }
 
 // ErrRunning means another daemon already holds this clone's lock.
 var ErrRunning = errors.New("a daemon is already running for this clone")
@@ -283,6 +303,9 @@ type Daemon struct {
 	msgs     []pageMsg
 	msgSeq   uint64
 	msgIDs   map[string]bool
+	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
+	// count (see keepMessageLocked).
+	ownMsgs int
 	// brackets holds the tool calls in flight whose start was snapshotted, by Claude session and
 	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
 	brackets   map[string]*bracket
@@ -295,9 +318,12 @@ type Daemon struct {
 	// pushing is the sessions a handoff goroutine is working for, and pushWarned those whose last
 	// handoff failed or that have no way to be handed a message, so that is logged once, not for every
 	// message (see deliver.go).
-	updating   bool // under mu: no new handoffs after the safe restart point
-	pushing    map[string]bool
-	pushWarned map[string]bool
+	updating bool // under mu: no new handoffs after the safe restart point
+	// updateReady says an update is installed and restartWhenIdle is waiting to restart onto it;
+	// restartAsked, that the page asked for the restart, so an open page no longer holds it back.
+	updateReady, restartAsked bool
+	pushing                   map[string]bool
+	pushWarned                map[string]bool
 	// introduced is, for each conversation, the senders it has had a message from as a turn, so
 	// later turns from them can say less (#216). It is keyed by the session's key, not its ID: a
 	// Claude Code session that /clears keeps its ID but starts a conversation that has seen nothing,
@@ -482,12 +508,32 @@ type state struct {
 	// Junked holds the logs that were junk when this device first looked, with nothing read from
 	// them yet, and when that look was: what was sent before it is history, not to be queued.
 	Junked map[string]time.Time `json:"junked,omitempty"`
-	Inbox  map[string][]*inMsg  `json:"inbox"` // session → unread messages
+	// TagsFrom holds the logs whose backlog was given up on before it could be fetched, each with
+	// the last SHA read from it, or "" for none. Processed has moved past their messages, which are
+	// history by then, but tags don't expire, so the tags events from here on are still to be read.
+	TagsFrom map[string]string   `json:"tagsFrom,omitempty"`
+	Inbox    map[string][]*inMsg `json:"inbox"` // session → unread messages
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
+
+	// Person is the name this device's human chose on the page, "" until they do, and PersonSince
+	// is when (#242). People is the address of every person's name this daemon has seen, in presence
+	// or on a message. It only grows, so a person's earlier name still reaches them.
+	Person      string            `json:"person,omitempty"`
+	PersonSince time.Time         `json:"personSince,omitzero"`
+	People      map[string]string `json:"people,omitempty"`
+	// PersonClaims is every person's name in the names registry, to the address that claimed it
+	// first (#268). It only grows, as Used does, and a name in it is that person's: a name chosen
+	// elsewhere at the same time is refused, and one held from before the registry had people is
+	// asked to change.
+	PersonClaims map[string]string `json:"personClaims,omitempty"`
+	// PersonLogged is the last message in the person's log when this was saved. Anything after it
+	// in the log was written by a daemon that stopped before it could save, so their inbox doesn't
+	// have it yet.
+	PersonLogged string `json:"personLogged,omitempty"`
 
 	// Used is every session name this daemon has ever seen, in the registry's history or in
 	// another device's presence, with the session's address where known. It only grows.
@@ -507,6 +553,11 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
+	// (#268). One from before read their claims and passed over them, so reading on from its
+	// NamesGood would leave them unread for good: without this, the next read starts from the
+	// beginning. NamesGood stays as it was, as it also shows whether the registry was rewritten.
+	NamesPeople bool `json:"namesPeople,omitempty"`
 	// NamePool is the names the registry has set aside for this device that no session has taken
 	// yet, oldest first. NameBinds is each name a session took from the pool whose assignment to it
 	// isn't in the registry yet, with the session's ID. Reserved is each name the registry has set
@@ -542,6 +593,13 @@ type t3Route struct {
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.
 func Run(ctx context.Context, opt Options) error {
 	opt.defaults()
+	inherited := opt.PageListener
+	opt.PageListener = nil
+	defer func() {
+		if inherited != nil {
+			inherited.Close()
+		}
+	}()
 	dir := filepath.Join(opt.GitDir, brand.StateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -580,14 +638,24 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer ln.Close()
+	// A daemon that restarted onto an update handed this one the page's socket, and left the page's
+	// address and token beside it. The handoff is taken whether or not it is used: one left lying
+	// about would be no good to a later daemon, which has no socket to go with it.
+	h, handed := takePageHandoff(dir)
 	// A page that can't be served costs the page, not the daemon: sessions don't need it.
-	pageLn, err := d.listenPage()
+	pageLn, keep, err := d.listenPage(inherited, h, handed)
+	inherited = nil
 	if err != nil {
 		d.log.Printf("the page for humans isn't served: %v", err)
 	}
 	if pageLn != nil {
 		defer pageLn.Close()
 	}
+	defer func() {
+		if keep != nil {
+			keep.Close()
+		}
+	}()
 	infoPath := filepath.Join(dir, "daemon.json")
 	info := proto.Info{Addr: ln.Addr().String(), Token: d.token, PID: os.Getpid(), Device: d.device}
 	if pageLn != nil {
@@ -651,8 +719,8 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
-	if opt.CheckIn != nil {
-		go opt.CheckIn(ctx)
+	if opt.Report != nil {
+		go opt.Report(ctx)
 	}
 	if opt.Update != nil {
 		d.bg.Add(1)
@@ -676,9 +744,49 @@ func Run(ctx context.Context, opt Options) error {
 	updated := d.updating
 	d.mu.Unlock()
 	if updated {
+		// The page's server has stopped, but keep still holds its socket, which the next daemon
+		// inherits: a tab's requests wait in the socket's queue until that daemon answers them.
+		if keep != nil {
+			if err := writeJSON(filepath.Join(dir, pageHandoffFile), pageHandoff{Web: info.Web, Token: info.PageToken}); err != nil {
+				d.log.Printf("the page won't carry over the restart: %v", err)
+				return ErrUpdated
+			}
+			page := keep
+			keep = nil
+			return &Updated{Page: page}
+		}
 		return ErrUpdated
 	}
 	return nil
+}
+
+// pageHandoffFile is where a daemon restarting onto an update leaves the page's address and token
+// for the daemon that replaces it, so a tab open on the page reconnects to the new one (#240). The
+// new daemon takes them only with the page's socket, inherited (#255).
+const pageHandoffFile = "page.json"
+
+// pageHandoffAge is how old a handoff may be and still be taken up: a restart takes seconds.
+const pageHandoffAge = 2 * time.Minute
+
+type pageHandoff struct {
+	Web   string `json:"web"`
+	Token string `json:"token"`
+}
+
+// takePageHandoff reads and removes the handoff a restarting daemon left, if it is recent.
+func takePageHandoff(dir string) (pageHandoff, bool) {
+	path := filepath.Join(dir, pageHandoffFile)
+	st, err := os.Stat(path)
+	if err != nil {
+		return pageHandoff{}, false
+	}
+	b, err := os.ReadFile(path)
+	os.Remove(path)
+	var h pageHandoff
+	if err != nil || time.Since(st.ModTime()) > pageHandoffAge || json.Unmarshal(b, &h) != nil || h.Web == "" || h.Token == "" {
+		return pageHandoff{}, false
+	}
+	return h, true
 }
 
 func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
@@ -708,6 +816,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.loadSettings()
+	d.loadPersonLog()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {
 		d.mode = modeSkip
@@ -904,10 +1013,10 @@ func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") 
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
-		Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
+		TagsFrom: map[string]string{}, Stopped: map[string]time.Time{}, Used: map[string]string{}, NameKeys: map[string]string{},
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
-		Tags: map[string]*tags.State{}}
+		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -924,6 +1033,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Junked == nil {
 		d.st.Junked = map[string]time.Time{}
+	}
+	if d.st.TagsFrom == nil {
+		d.st.TagsFrom = map[string]string{}
 	}
 	if d.st.Inbox == nil {
 		d.st.Inbox = map[string][]*inMsg{}
@@ -957,6 +1069,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.PersonClaims == nil {
+		d.st.PersonClaims = map[string]string{}
+	}
+	if d.st.People == nil {
+		d.st.People = map[string]string{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.
@@ -1018,7 +1136,8 @@ func (d *Daemon) restartWhenIdle(ctx context.Context) {
 			d.mu.Unlock()
 			return
 		}
-		if len(d.pushing) == 0 && !d.pageOpenLocked(time.Now()) {
+		d.updateReady = true
+		if len(d.pushing) == 0 && (d.restartAsked || !d.pageOpenLocked(time.Now())) {
 			d.updating = true
 			d.mu.Unlock()
 			d.stop()

@@ -1,0 +1,31 @@
+# Each day, the census (#259) reads what every public repo that uses Murmur shows anyone, its bus
+# and its commit history, and sends the counts to murmur.afig.dev for the stats page.
+# site/census/census.mjs says what it counts. It needs the CENSUS_KEY secret, which is also the
+# site's CENSUS_KEY (`npx wrangler secret put CENSUS_KEY` in site/).
+name: census
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: census
+  cancel-in-progress: false
+
+jobs:
+  count:
+    if: github.repository == 'a-Fig/murmur'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: site/census
+      - name: Count
+        env:
+          CENSUS_KEY: ${{ secrets.CENSUS_KEY }}
+        run: node site/census/census.mjs

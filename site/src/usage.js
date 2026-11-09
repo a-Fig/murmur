@@ -1,49 +1,116 @@
-// Counting active users (#148): the daily check-in every daemon sends (internal/checkin says what
-// it sends and how a user turns it off), and the private page that shows Tyler the counts, with
-// the same numbers as markdown and JSON for an agent he gives a key to (#150).
-// Check-ins are kept in D1 (migrations/), one row per user, team and UTC day.
+// Counting Murmur's use, and the private page that shows Tyler the counts, with the same numbers as
+// markdown and JSON for an agent he gives a key to (#150).
+//
+// Since 2026-11-08 (#199) the only thing Murmur sends us is a public repo's address, once per repo
+// (internal/publicrepo), kept in D1's repos table (migrations/). The daily check-ins of earlier
+// versions (#148) are no longer stored; the rows they left in the checkins table are kept as
+// history, shown at /stats/archive. What the stats page shows of those repos, the census reads
+// from what they show anyone (src/repos.js, #259).
 
 import statsHtml from './stats.html';
+import archiveHtml from './stats-archive.html';
+import { archiveNumbers, archiveReport } from './archive.js';
+import { repoNumbers, repoReport } from './repos.js';
 import { prefersMarkdown } from './accept.js';
 
 const RELEASES = 'https://api.github.com/repos/a-Fig/murmur/releases/latest';
 const LATEST_KEY = 'https://murmur.afig.dev/_cache/latest-release';
-const HEX32 = /^[0-9a-f]{32}$/;
 const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9A-Za-z.]{1,20})?$/;
-const WORD = /^[a-z0-9]{1,16}$/;
 const COOKIE = 'murmur_stats';
-// "Active" is a check-in in the last ACTIVE_DAYS days; the goal is Tyler's.
-const ACTIVE_DAYS = 7;
-const GOAL = 100;
 
-// POST /v1/checkin: store today's check-in and answer with the latest release.
+// POST /v1/checkin: the daily check-in that daemons from before #199 send. None is stored any more
+// (Tyler, 2026-11-08), and the body isn't even read. It still answers with the latest release, which
+// those daemons show in `mur version`, so they hear of the release that stops them sending it.
 export async function checkIn(request, env, ctx) {
   if (request.method !== 'POST') {
     return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
   }
-  const text = await readUpTo(request, 1024);
-  if (text === null) return new Response('Too long for a check-in.\n', { status: 413 });
-  let c;
+  return Response.json({ latest: await latestRelease(ctx) }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+// github.com/<owner>/<name>, as GitHub allows them to be spelled.
+const REPO = /^github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
+
+// POST /v1/repo: a public repo that uses Murmur, sent once per repo by internal/publicrepo. Its
+// address is the whole request, and all that is kept, with the day it first came. A repo GitHub
+// doesn't show to someone signed out is refused, so nothing private or made up is stored.
+export async function reportRepo(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
+  }
+  const text = await readUpTo(request, 512);
+  if (text === null) return new Response('Too long.\n', { status: 413 });
+  let r;
   try {
-    c = JSON.parse(text);
+    r = JSON.parse(text);
   } catch {
-    return new Response('Not a check-in.\n', { status: 400 });
+    return new Response('Not a repo.\n', { status: 400 });
   }
-  if (!HEX32.test(c?.user) || !HEX32.test(c?.team) || !VERSION.test(c?.version) || !WORD.test(c?.os) || !WORD.test(c?.arch)) {
-    return new Response('Not a check-in.\n', { status: 400 });
-  }
+  const m = typeof r?.repo === 'string' ? REPO.exec(r.repo) : null;
+  if (!m || m[2] === '.' || m[2] === '..') return new Response('Not a repo.\n', { status: 400 });
+  // Stored only once GitHub confirms it public. When GitHub can't say, nothing is stored and the
+  // daemon, told to try again, sends it again at its next look.
+  const shown = await isPublic(m[1], m[2], env);
+  if (shown === false) return new Response('Not a public repo on GitHub.\n', { status: 422 });
+  if (shown === null) return new Response("GitHub couldn't confirm it is public; try again later.\n", { status: 503 });
   const day = new Date().toISOString().slice(0, 10);
-  // Stored before the answer, so a check-in that isn't kept fails and the daemon tries again.
+  // Stored before the answer, so a report that isn't kept fails and the daemon tries again.
   try {
     await env.DB.prepare(
-      `INSERT INTO checkins (day, user, team, version, os, arch) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-       ON CONFLICT (day, user, team) DO UPDATE SET version = excluded.version, os = excluded.os, arch = excluded.arch`,
-    ).bind(day, c.user, c.team, c.version, c.os, c.arch).run();
+      `INSERT INTO repos (repo, name, first) VALUES (?1, ?2, ?3)
+       ON CONFLICT (repo) DO UPDATE SET name = excluded.name`,
+    ).bind(r.repo.toLowerCase(), r.repo, day).run();
   } catch (err) {
-    console.log(`storing a check-in: ${err}`);
+    console.log(`storing a repo: ${err}`);
     return new Response('Not stored; try again later.\n', { status: 503 });
   }
-  return Response.json({ latest: await latestRelease(ctx) }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+// Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say.
+// The API answers first. A Worker shares Cloudflare's egress addresses, and others have usually
+// spent the API's rate limit for them (#253), so when the API can't say, git's own endpoint on github.com does.
+async function isPublic(owner, name, env) {
+  return (await publicOnApi(owner, name, env)) ?? (await publicByGit(owner, name));
+}
+
+// The API's answer, or null when it can't give one (a rate limit, an outage). GITHUB_TOKEN, if that
+// secret is set, only raises the rate limit: a private repo it can see answers private: true, and
+// is refused.
+async function publicOnApi(owner, name, env) {
+  const headers = { 'User-Agent': 'murmur-site', Accept: 'application/vnd.github+json' };
+  if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${name}`, { headers, signal: AbortSignal.timeout(5000) });
+    if (res.status === 404) return false;
+    if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+    return (await res.json()).private === false;
+  } catch (err) {
+    console.log(`is ${owner}/${name} public, by the API: ${err}`);
+    return null;
+  }
+}
+
+// What git itself is told, signed out, by github.com/owner/name/info/refs: 200 for a public repo, 401
+// for a private or missing one. The repo's own page would do, but the same address is also a topic,
+// a product page and more (github.com/topics/javascript answers 200), so it can't say a repo is
+// there. A renamed repo redirects to its new name and is followed; the address stored is still the
+// one reported, since it leads to a public repo. Anything else is no answer.
+async function publicByGit(owner, name) {
+  try {
+    // Protocol 2, so a big repo answers with its capabilities and not every ref.
+    const res = await fetch(`https://github.com/${owner}/${name}/info/refs?service=git-upload-pack`, {
+      headers: { 'User-Agent': 'git/murmur-site', 'Git-Protocol': 'version=2' }, signal: AbortSignal.timeout(5000),
+    });
+    res.body?.cancel();
+    if (res.status === 401 || res.status === 404) return false;
+    if (res.status !== 200) throw new Error(`GitHub answered ${res.status}`);
+    if (res.headers.get('Content-Type') !== 'application/x-git-upload-pack-advertisement') throw new Error('not git');
+    return true;
+  } catch (err) {
+    console.log(`is ${owner}/${name} public, by git: ${err}`);
+    return null;
+  }
 }
 
 // The body as text, or null if it is longer than max bytes, without reading past max.
@@ -93,12 +160,16 @@ async function latestRelease(ctx) {
   }
 }
 
-// The stats, for whoever holds a key: Tyler in a browser, and agents he gives one to (#150).
+// The stats, for whoever holds a key: Tyler in a browser, and agents he gives one to (#150). Two
+// views, each a page, the same numbers as markdown, and as JSON, which the page draws:
 //
-// - /stats: the page in a browser; the report below for anything else, or a browser whose Accept
-//   asks for markdown.
-// - /stats/report.md: the numbers as markdown, for an agent.
-// - /stats/data?days=N: the numbers as JSON, which the page draws.
+// - /stats, /stats/report.md, /stats/data?days=N: the public repos that use Murmur, and what the
+//   census reads from them (#259, src/repos.js).
+// - /stats/archive, /stats/archive/report.md, /stats/archive/data?days=N: the check-ins of earlier
+//   versions, which are no longer stored (src/archive.js).
+//
+// A page's own address answers with the markdown report for anything but a browser, or a browser
+// whose Accept asks for markdown.
 //
 // The keys are the STATS_KEY secret: one or more, separated by spaces or commas, so each reader has
 // its own and one can be revoked by putting the secret again without it. A key is taken from a
@@ -106,6 +177,11 @@ async function latestRelease(ctx) {
 // browser that opens /stats?key=... is sent to /stats with the key in a cookie, so it leaves the
 // address bar at once. Anything else is answered in place, since a fetch tool may follow a redirect
 // without keeping the cookie. Without a key, as without the secret, none of it exists.
+const VIEWS = {
+  '/stats': { html: statsHtml, numbers: repoNumbers, report: repoReport, days: 90 },
+  '/stats/archive': { html: archiveHtml, numbers: archiveNumbers, report: archiveReport, days: 14 },
+};
+
 export async function stats(request, env) {
   const url = new URL(request.url);
   const notFound = () => new Response('Not found.\n', { status: 404, headers: { 'X-Robots-Tag': 'noindex' } });
@@ -118,31 +194,34 @@ export async function stats(request, env) {
   const key = given ?? bearer ?? inCookie;
   if (key === null || !(await anyOf(key, keys))) return notFound();
 
-  const page = url.pathname === '/stats' || url.pathname === '/stats/';
+  const path = url.pathname.replace(/\/$/, '');
+  const base = path.replace(/\/(report\.md|data)$/, '');
+  const view = VIEWS[base];
+  if (!view) return notFound();
+  const page = path === base;
   if (page && given !== null && request.headers.get('Sec-Fetch-Mode') === 'navigate') {
     return new Response(null, {
       status: 303,
       headers: {
-        Location: '/stats',
+        Location: base,
         'Set-Cookie': `${COOKIE}=${encodeURIComponent(key)}; Path=/stats; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax`,
         'Cache-Control': 'no-store',
       },
     });
   }
   const headers = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' };
-  const days = Math.min(730, Math.max(14, parseInt(url.searchParams.get('days'), 10) || 90));
+  const days = Math.min(730, Math.max(14, parseInt(url.searchParams.get('days'), 10) || view.days));
   const fromCookie = given === null && bearer === undefined;
   if (page && fromCookie && !prefersMarkdown(request.headers.get('Accept'))) {
-    return new Response(statsHtml, {
-      headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8', Link: '</stats/report.md>; rel="alternate"; type="text/markdown"' },
+    return new Response(view.html, {
+      headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8', Link: `<${base}/report.md>; rel="alternate"; type="text/markdown"` },
     });
   }
-  if (page || url.pathname === '/stats/report.md') {
-    const text = report(await numbers(env.DB, days), url.origin);
+  if (page || path === base + '/report.md') {
+    const text = view.report(await view.numbers(env.DB, days), url.origin);
     return new Response(text, { headers: { ...headers, 'Content-Type': 'text/markdown; charset=utf-8' } });
   }
-  if (url.pathname === '/stats/data') return Response.json(await numbers(env.DB, days), { headers });
-  return notFound();
+  return Response.json(await view.numbers(env.DB, days), { headers });
 }
 
 function safeDecode(s) {
@@ -166,139 +245,3 @@ async function same(a, b) {
   return x.byteLength === y.byteLength && crypto.subtle.timingSafeEqual(x, y);
 }
 
-const addDays = (day, n) => new Date(Date.parse(day + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
-
-// Everything the page shows, for the last `days` days ending today (UTC).
-export async function numbers(db, days) {
-  const today = new Date().toISOString().slice(0, 10);
-  const from = addDays(today, -(days - 1));
-  const weekFrom = addDays(today, -(ACTIVE_DAYS - 1));
-  const prevFrom = addDays(today, -(2 * ACTIVE_DAYS - 1)), prevTo = addDays(today, -ACTIVE_DAYS);
-  const [series, firsts, current, teams, prev] = await db.batch([
-    // Per day: users that day, and users in the ACTIVE_DAYS ending that day.
-    db.prepare(
-      `WITH RECURSIVE days(d) AS (SELECT ?1 UNION ALL SELECT date(d, '+1 day') FROM days WHERE d < ?2)
-       SELECT d AS day,
-         (SELECT COUNT(DISTINCT user) FROM checkins WHERE day = d) AS dau,
-         (SELECT COUNT(DISTINCT user) FROM checkins WHERE day BETWEEN date(d, '-${ACTIVE_DAYS - 1} days') AND d) AS wau,
-         (SELECT COUNT(DISTINCT team) FROM checkins WHERE day BETWEEN date(d, '-${ACTIVE_DAYS - 1} days') AND d) AS teams
-       FROM days`,
-    ).bind(from, today),
-    // How many users first checked in on each day.
-    db.prepare(`SELECT first AS day, COUNT(*) AS n FROM (SELECT MIN(day) AS first FROM checkins GROUP BY user) GROUP BY first`),
-    // Each active user's latest check-in.
-    db.prepare(`SELECT user, version, os, arch, MAX(day) AS last FROM checkins WHERE day >= ?1 GROUP BY user`).bind(weekFrom),
-    db.prepare(
-      `SELECT team, COUNT(DISTINCT CASE WHEN day >= ?1 THEN user END) AS active, COUNT(DISTINCT user) AS users,
-         MIN(day) AS first, MAX(day) AS last
-       FROM checkins GROUP BY team ORDER BY active DESC, users DESC, last DESC`,
-    ).bind(weekFrom),
-    db.prepare(`SELECT COUNT(DISTINCT user) AS n FROM checkins WHERE day BETWEEN ?1 AND ?2`).bind(prevFrom, prevTo),
-  ]);
-
-  const firstRows = firsts.results;
-  const newSince = since => firstRows.filter(r => r.day >= since).reduce((s, r) => s + r.n, 0);
-  // New users per ACTIVE_DAYS-long week, the last ending today.
-  const weeks = [];
-  for (let end = today; end >= from; end = addDays(end, -ACTIVE_DAYS)) {
-    const start = addDays(end, -(ACTIVE_DAYS - 1));
-    weeks.unshift({ start, end, n: firstRows.filter(r => r.day >= start && r.day <= end).reduce((s, r) => s + r.n, 0) });
-  }
-  const tally = (rows, f) => {
-    const m = new Map();
-    for (const r of rows) m.set(f(r), (m.get(f(r)) || 0) + 1);
-    return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k)));
-  };
-  const active = current.results;
-  const activeTeams = teams.results.filter(t => t.active > 0);
-  const sizeOf = n => (n >= 6 ? '6+' : n >= 3 ? '3–5' : String(n));
-  const sizes = ['1', '2', '3–5', '6+'].map(k => ({ k, n: activeTeams.filter(t => sizeOf(t.active) === k).length }));
-  const last = series.results[series.results.length - 1] || { dau: 0, wau: 0, teams: 0 };
-
-  return {
-    today, goal: GOAL, activeDays: ACTIVE_DAYS, days,
-    active: active.length,
-    activeBefore: prev.results[0]?.n ?? 0,
-    activeToday: last.dau,
-    teams: activeTeams.length,
-    newUsers: newSince(weekFrom),
-    allUsers: firstRows.reduce((s, r) => s + r.n, 0),
-    allTeams: teams.results.length,
-    series: series.results,
-    newByWeek: weeks,
-    versions: tally(active, r => r.version),
-    systems: tally(active, r => `${r.os}/${r.arch}`),
-    teamSizes: sizes,
-    teamList: teams.results.slice(0, 50).map(t => ({ ...t, team: t.team.slice(0, 8) })),
-  };
-}
-
-// The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.
-export function report(n, origin) {
-  const pct = Math.round((100 * n.active) / n.goal);
-  const diff = n.active - n.activeBefore;
-  const change = diff === 0 ? 'the same as' : `${diff > 0 ? 'up' : 'down'} ${Math.abs(diff)} from`;
-  const table = (head, rows) =>
-    [head, head.map(() => '---'), ...rows].map(r => `| ${r.join(' | ')} |`).join('\n');
-  const byDay = new Map(n.series.map(s => [s.day, s]));
-  const weeks = [...n.newByWeek].reverse().map(w => {
-    const s = byDay.get(w.end) || { wau: 0, teams: 0 };
-    return [w.end, s.wau, s.teams, w.n];
-  });
-  const recent = n.series.slice(-14).reverse().map(s => [s.day, s.dau, s.wau]);
-  const tally = (rows, what) => (rows.length ? table([what, 'Active users'], rows.map(r => [r.k, r.n])) : 'None yet.');
-  const teams = n.teamList.length
-    ? table(['Team', 'Active users', 'Users ever', 'First check-in', 'Last check-in'], n.teamList.map(t => [t.team, t.active, t.users, t.first, t.last]))
-    : 'None yet.';
-  return `# Murmur's active users, ${n.today}
-
-**${n.active} active users**, ${pct}% of the goal of ${n.goal} (${Math.max(0, n.goal - n.active)} to go), ${change} the ${n.activeDays} days before (${n.activeBefore}).
-
-${table(['Measure', 'Count'], [
-    ['Active users (a check-in in the last 7 days)', n.active],
-    ['Users today', n.activeToday],
-    ['Active teams', n.teams],
-    [`New users (first check-in in the last ${n.activeDays} days)`, n.newUsers],
-    ['Returning active users', Math.max(0, n.active - n.newUsers)],
-    ['Users ever', n.allUsers],
-    ['Teams ever', n.allTeams],
-  ])}
-
-## By week
-
-Each week is the ${n.activeDays} days ending on the date shown, back over the last ${n.days} days; the newest first.
-
-${table(['Week ending', 'Active users', 'Active teams', 'New users'], weeks)}
-
-## The last 14 days
-
-${table(['Day', 'Users that day', `Active users (${n.activeDays} days ending that day)`], recent)}
-
-## Active users' versions
-
-${tally(n.versions, 'Version')}
-
-## Active users' systems
-
-${tally(n.systems, 'OS/arch')}
-
-## Active teams by size
-
-${table(['Active users', 'Teams'], n.teamSizes.map(s => [s.k, s.n]))}
-
-## Teams
-
-Most active first, at most 50. A team is shown by the first 8 characters of its hash.
-
-${teams}
-
-## What the numbers mean
-
-- A **user** is one user account on one machine, known by a random ID, so one person on two machines counts twice.
-- A **team** is one repo, known by a hash of its remote's address. No names, repos, messages or paths are sent.
-- A daemon checks in at most once a UTC day, and only while one of its sessions is open or for 10 minutes after, so a check-in means someone used Murmur that day. Days are UTC.
-- Check-ins began with Murmur 0.2.3 (2026-11-03); older versions never send one, and a user can turn them off.
-
-The same numbers as JSON: ${origin}/stats/data?days=N (N from 14 to 730, default 90), with the same key. This page takes \`?days=N\` too.
-`;
-}

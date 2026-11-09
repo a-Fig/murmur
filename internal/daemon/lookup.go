@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // lookup (#21) gathers what the daemon knows about one session: what presence shows of anyone's,
@@ -61,6 +63,11 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 			return "", errors.New(d.noSuchNameLocked(target))
 		}
 		return addr, nil
+	case bus.ValidPerson(target):
+		if addr, ok := d.resolvePersonLocked(target); ok {
+			return addr, nil
+		}
+		return "", fmt.Errorf("nobody is named %q. who shows the names in use.", target)
 	}
 	return "", fmt.Errorf("%q isn't a session's name or address; lookup takes a name like quiet-otter, or device/session", target)
 }
@@ -69,6 +76,9 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 // is running there, it stopped here, or the registry has its address. Caller holds mu.
 func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 	addr := bus.Addr(dev, sess)
+	if d.personNameOfLocked(addr) != "" {
+		return true
+	}
 	if dev == d.device {
 		_, stopped := d.st.Stopped[sess]
 		if d.sessions[sess] != nil || stopped {
@@ -105,6 +115,10 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			det.Tags = d.tagsOfLocked(s)
 			det.Running, det.Reachable, det.Dropped = true, s.dropped.IsZero(), !s.dropped.IsZero()
 			det.LastActive, det.Worktree, det.ClientSession = s.lastActive, s.worktree, s.claudeSession
+		} else if sess == bus.PersonSession && d.st.Person != "" {
+			det.Name, det.Agent, det.Started, det.LastActive = d.st.Person, bus.AgentPerson, d.st.PersonSince, d.lastPage
+			det.Tags = tags.Person()
+			det.Running, det.Reachable = true, true
 		} else {
 			det.Name = d.st.SessionNames[sess]
 			det.StoppedAt = d.st.Stopped[sess]
@@ -134,7 +148,11 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		det.Offline = d.offlineLocked(dev, sess)
 	}
 	if det.Name == "" {
-		det.Name = byAddr[addr]
+		det.Name = cmp.Or(byAddr[addr], d.personNameOfLocked(addr))
+	}
+	if bus.IsPerson(addr) {
+		// From the address, so a person whose daemon has gone, known only by name, has it too.
+		det.Agent, det.Tags = cmp.Or(det.Agent, bus.AgentPerson), tags.Person()
 	}
 	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, limit)
 	return det

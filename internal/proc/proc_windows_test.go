@@ -85,7 +85,7 @@ func helperStartMain(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	p, err := StartDetached(exe, []string{helperSleep}, filepath.Dir(logPath), logf)
+	p, err := StartDetached(exe, []string{helperSleep}, filepath.Dir(logPath), logf, nil)
 	if err != nil {
 		fail(err)
 	}
@@ -221,7 +221,7 @@ func TestWMIPassesArgumentsDirectoryAndEnvironmentUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid, err := startThroughWMI(exe, args, dir, f)
+	pid, err := startThroughWMI(exe, args, dir, f, os.Environ())
 	f.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +297,7 @@ func TestStartDetachedWithoutJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := StartDetached(exe, []string{helperSleep}, filepath.Dir(logPath), logf)
+	p, err := StartDetached(exe, []string{helperSleep}, filepath.Dir(logPath), logf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,10 +4,11 @@ You are reading this because your user asked you to set Murmur up in a repo that
 yet. This page is yours to follow, step by step.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
-and message each other. It runs through the repo's own git remote; the one thing it sends anywhere
-else is a small daily check-in to murmur.afig.dev, which counts its users (join.md says exactly what
-it holds). Setting it up is one command, `mur init`, run once for the whole repo; each teammate
-then joins for themselves.
+and message each other. It runs through the repo's own git remote. The only thing it ever sends us,
+at murmur.afig.dev, is the repo's address, once, and only if the repo is public, so we can count
+how many repos and people use Murmur; a private repo sends nothing (join.md says exactly how).
+Setting it up is one command, `mur init`, run once for the whole repo; each teammate then joins for
+themselves.
 
 First look at AGENTS.md and CLAUDE.md at the top of the repo. If either has a section that starts
 with `<!-- murmur:start -->`, the repo is already set up: follow
@@ -30,11 +31,12 @@ does:
 - If the remote refuses the push (a protected branch, say), the commit goes to a new branch,
   murmur-init, for a pull request that someone allowed to merge into the default branch has to
   merge. Nothing else happens until then.
+- If the repo is public, `mur init` sends its address to murmur.afig.dev: the only thing Murmur
+  ever sends us, once for the whole repo. A private repo sends nothing.
 - Nothing is installed on teammates' machines, and Murmur does nothing for anyone until they join.
   A teammate's agent that reads the section asks its user whether to join.
 - Then you join for your user. Say what joining does, from the list in step 1 of join.md, and
-  what the daily check-in sends to murmur.afig.dev and why, from "What murmur.afig.dev receives"
-  there.
+  what murmur.afig.dev receives and why, from "What murmur.afig.dev receives" there.
 
 If your user says no, or doesn't answer, leave Murmur alone and carry on with what they asked for.
 Go on only after a clear yes.

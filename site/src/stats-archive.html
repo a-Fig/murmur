@@ -1,0 +1,478 @@
+<!doctype html>
+<!-- The archive of the private stats page (#148, #259): the check-ins of earlier versions, which
+     are no longer stored. src/usage.js serves it at /stats/archive, to a browser holding the key,
+     and it draws /stats/archive/data. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Murmur · Archive</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="text/markdown" href="/stats/archive/report.md" title="These numbers as markdown, for an agent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f4f3ee;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7c7b76;
+    --grid: #e6e5df;
+    --border: #e3e2db;
+    --series-1: #2a78d6;
+    --series-1-track: #cde2fb;
+    --series-2: #eb6834;
+    --brand: #225BFF;
+    --good: #0ca30c;
+    --good-text: #006300;
+    --bad-text: #b42323;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #111110;
+      --surface-1: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e86;
+      --grid: #2c2c2a;
+      --border: #2c2c2a;
+      --series-1: #3987e5;
+      --series-1-track: #184f95;
+      --series-2: #d95926;
+      --good-text: #5fd35f;
+      --bad-text: #f08a8a;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--text-primary);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; font-size: 14px; line-height: 1.45;
+  }
+  main { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  header .mark { width: 28px; height: 28px; border-radius: 8px; background: var(--brand); display: grid; place-items: center; }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  header .asof { color: var(--text-muted); }
+  .ranges { margin-left: auto; display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+  .ranges button {
+    font: inherit; font-weight: 500; color: var(--text-secondary); background: none; border: 0;
+    border-radius: 7px; padding: 5px 12px; cursor: pointer;
+  }
+  .ranges button[aria-pressed="true"] { background: var(--page); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(12, 1fr); }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-width: 0; }
+  .card h2 { font-size: 14px; font-weight: 600; }
+  .card .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  .hero { grid-column: span 5; display: flex; flex-direction: column; justify-content: space-between; gap: 18px; }
+  .hero .label { color: var(--text-secondary); font-weight: 500; }
+  .hero .value { font-size: 72px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; margin-top: 10px; }
+  .hero .value small { font-size: 22px; font-weight: 500; color: var(--text-muted); letter-spacing: 0; margin-left: 6px; }
+  .delta { font-weight: 600; font-size: 13px; margin-top: 8px; }
+  .delta.up { color: var(--good-text); } .delta.down { color: var(--bad-text); } .delta.flat { color: var(--text-muted); }
+  .delta span { color: var(--text-muted); font-weight: 400; }
+  .meter { height: 10px; border-radius: 5px; background: var(--series-1-track); overflow: hidden; }
+  .meter > div { height: 100%; background: var(--series-1); border-radius: 5px; transition: width .6s cubic-bezier(.2,.7,.2,1); }
+  .meter-labels { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 12px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .tiles { grid-column: span 7; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .tile .label { color: var(--text-secondary); font-weight: 500; }
+  .tile .value { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; margin-top: 6px; line-height: 1.1; }
+  .tile .note { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+  .wide { grid-column: span 12; }
+  .half { grid-column: span 6; }
+  .third { grid-column: span 4; }
+  .chart { position: relative; margin-top: 14px; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-secondary); font-size: 13px; margin-top: 10px; }
+  .legend span { white-space: nowrap; }
+  .legend i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
+  .axis { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .goal { stroke: var(--text-muted); stroke-width: 1; }
+  .goal-label { fill: var(--text-secondary); font-size: 11px; font-weight: 500; }
+  .bar-label { fill: var(--text-secondary); font-size: 12px; }
+  .bar-value { fill: var(--text-primary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .datum:hover { opacity: .8; }
+  .tip {
+    position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,.12); font-size: 12px;
+    white-space: nowrap; opacity: 0; transition: opacity .12s; z-index: 2;
+  }
+  .tip .when { color: var(--text-muted); margin-bottom: 4px; }
+  .tip .row { display: flex; align-items: center; gap: 8px; }
+  .tip .row b { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 24px; }
+  .tip .row i { width: 12px; height: 2px; border-radius: 1px; }
+  .tip .row span { color: var(--text-secondary); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-weight: 500; color: var(--text-muted); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { white-space: nowrap; padding: 9px 10px; border-bottom: 1px solid var(--grid); }
+  td.num, th.num { text-align: right; }
+  td code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--text-secondary); }
+  tr:last-child td { border-bottom: 0; }
+  .empty { color: var(--text-muted); padding: 24px 0 8px; text-align: center; }
+  .notice { grid-column: span 12; color: var(--text-secondary); }
+  .banner { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 12px 16px; margin-bottom: 16px; color: var(--text-secondary); }
+  a { color: var(--brand); }
+  .loading main { opacity: .55; transition: opacity .2s; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; }
+  @media (max-width: 900px) {
+    .hero, .tiles, .half, .third { grid-column: span 12; }
+    .hero .value { font-size: 60px; }
+  }
+</style>
+</head>
+<body class="loading">
+<main>
+  <header>
+    <div class="mark" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="5" cy="8" r="2.4" fill="#FFFBEA"/><circle cx="11" cy="8" r="2.4" fill="#FDEE8C"/></svg>
+    </div>
+    <h1>Murmur · Archive: check-ins</h1>
+    <span class="asof" id="asof"></span>
+    <div class="ranges" role="group" aria-label="Range">
+      <button data-days="14">14 days</button>
+      <button data-days="30">30 days</button>
+    </div>
+  </header>
+
+  <div class="banner">History: the daily check-ins of Murmur 0.2.3 onward, which the site no longer stores. Every “today” here is the last day with a check-in, <span id="ended">…</span>. <a href="/stats">Back to the public repos</a></div>
+  <div class="grid">
+    <section class="card hero">
+      <div>
+        <div class="label">Active users</div>
+        <div class="value" id="active">–</div>
+        <div class="delta flat" id="delta"></div>
+      </div>
+      <div>
+        <div class="meter" role="img" id="meter-wrap"><div id="meter" style="width:0"></div></div>
+        <div class="meter-labels"><span id="meter-left"></span><span id="meter-right"></span></div>
+      </div>
+    </section>
+
+    <section class="tiles">
+      <div class="card tile"><div class="label">Active that day</div><div class="value" id="t-today">–</div><div class="note">users who checked in on the last day (UTC)</div></div>
+      <div class="card tile"><div class="label">Active teams</div><div class="value" id="t-teams">–</div><div class="note" id="t-teams-note"></div></div>
+      <div class="card tile"><div class="label">New users</div><div class="value" id="t-new">–</div><div class="note" id="t-new-note"></div></div>
+      <div class="card tile"><div class="label">All-time users</div><div class="value" id="t-all">–</div><div class="note" id="t-all-note"></div></div>
+    </section>
+
+    <section class="card wide">
+      <h2>Active users over time</h2>
+      <div class="sub" id="trend-sub"></div>
+      <div class="chart" id="trend"></div>
+      <div class="legend" id="trend-legend"></div>
+    </section>
+
+    <section class="card half">
+      <h2>New users per week</h2>
+      <div class="sub">users whose first check-in fell in that week</div>
+      <div class="chart" id="new"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Team sizes</h2>
+      <div class="sub">active teams, by how many active users each has</div>
+      <div class="chart" id="sizes"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Versions</h2>
+      <div class="sub">active users, by the mur they ran last</div>
+      <div class="chart" id="versions"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Systems</h2>
+      <div class="sub">active users, by OS and architecture</div>
+      <div class="chart" id="systems"></div>
+    </section>
+
+    <section class="card wide">
+      <h2>Teams</h2>
+      <div class="sub">a team is one repo, shown by the start of its hash; most active first</div>
+      <div id="teams"></div>
+    </section>
+  </div>
+  <footer id="footer"></footer>
+</main>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+const HTML_TAGS = new Set(['div', 'span', 'b', 'i', 'small']);
+const el = (tag, attrs = {}, text) => {
+  const e = HTML_TAGS.has(tag) ? document.createElement(tag) : document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const fmt = n => n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'K' : n.toLocaleString('en-US');
+const date = (d, opts = { month: 'short', day: 'numeric' }) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { ...opts, timeZone: 'UTC' });
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// Clean y-axis ticks from 0 to at least max.
+function ticks(max, count = 4) {
+  if (max <= 0) return [0, 1];
+  const raw = max / count, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw && (s >= 1 || mag < 1)) || mag * 10;
+  const st = Math.max(1, step);
+  const out = [];
+  for (let v = 0; v < max + st * 0.999; v += st) out.push(v);
+  if (out[out.length - 1] < max) out.push(out[out.length - 1] + st);
+  return out;
+}
+
+// One tooltip per chart, positioned inside the chart's box.
+function tooltip(box) {
+  const tip = el('div', { class: 'tip', role: 'status' });
+  box.appendChild(tip);
+  return {
+    show(x, y, when, rows) {
+      tip.replaceChildren();
+      if (when) tip.appendChild(el('div', { class: 'when' }, when));
+      for (const [color, value, name] of rows) {
+        const row = el('div', { class: 'row' });
+        const key = el('i'); key.style.background = color;
+        row.append(key, el('b', {}, value), el('span', {}, name));
+        tip.appendChild(row);
+      }
+      tip.style.opacity = 1;
+      const w = tip.offsetWidth, bw = box.clientWidth;
+      tip.style.left = Math.min(Math.max(0, x + 14), bw - w) + 'px';
+      if (x + 14 + w > bw) tip.style.left = Math.max(0, x - w - 14) + 'px';
+      tip.style.top = Math.max(0, y - tip.offsetHeight - 10) + 'px';
+    },
+    hide() { tip.style.opacity = 0; },
+  };
+}
+
+function trendChart(box, data) {
+  box.replaceChildren();
+  const W = box.clientWidth, H = 260, m = { t: 12, r: 16, b: 26, l: 36 };
+  const s = data.series, n = s.length;
+  const max = Math.max(1, ...s.map(d => Math.max(d.wau, d.dau)));
+  const showGoal = data.goal <= max * 1.6;
+  const ys = ticks(showGoal ? Math.max(max, data.goal) : max);
+  const top = ys[ys.length - 1];
+  const x = i => m.l + (n <= 1 ? 0 : (i / (n - 1)) * (W - m.l - m.r));
+  const y = v => m.t + (1 - v / top) * (H - m.t - m.b);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'Weekly and daily active users over time' });
+  for (const v of ys) {
+    svg.append(el('line', { class: 'gridline', x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+    svg.append(el('text', { class: 'axis', x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, fmt(v)));
+  }
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - m.l - m.r) / 90))));
+  for (let i = n - 1; i >= 0; i -= every) {
+    svg.append(el('text', { class: 'axis', x: x(i), y: H - 6, 'text-anchor': i === n - 1 ? 'end' : 'middle' }, date(s[i].day)));
+  }
+  if (showGoal) {
+    svg.append(el('line', { class: 'goal', x1: m.l, x2: W - m.r, y1: y(data.goal), y2: y(data.goal) }));
+    svg.append(el('text', { class: 'goal-label', x: m.l + 6, y: y(data.goal) - 6 }, `Goal: ${data.goal} active users`));
+  }
+  const c1 = css('--series-1'), c2 = css('--series-2'), surface = css('--surface-1');
+  const path = key => s.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join('');
+  const area = `${path('wau')}L${x(n - 1)},${y(0)}L${x(0)},${y(0)}Z`;
+  const wash = el('path', { d: area, fill: c1, opacity: 0.1 });
+  svg.append(wash);
+  svg.append(el('path', { d: path('dau'), fill: 'none', stroke: c2, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  svg.append(el('path', { d: path('wau'), fill: 'none', stroke: c1, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  const end = s[n - 1];
+  svg.append(el('circle', { cx: x(n - 1), cy: y(end.wau), r: 4, fill: c1, stroke: surface, 'stroke-width': 2 }));
+  // The crosshair and its dots.
+  const cross = el('line', { x1: 0, x2: 0, y1: m.t, y2: H - m.b, stroke: css('--text-muted'), 'stroke-width': 1, opacity: 0 });
+  const d1 = el('circle', { r: 4, fill: c1, stroke: surface, 'stroke-width': 2, opacity: 0 });
+  const d2 = el('circle', { r: 4, fill: c2, stroke: surface, 'stroke-width': 2, opacity: 0 });
+  svg.append(cross, d2, d1);
+  const hit = el('rect', { x: m.l, y: m.t, width: Math.max(0, W - m.l - m.r), height: H - m.t - m.b, fill: 'transparent', tabindex: 0 });
+  svg.append(hit);
+  box.append(svg);
+  const tip = tooltip(box);
+  const at = i => {
+    const d = s[i], cx = x(i);
+    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('opacity', 1);
+    d1.setAttribute('cx', cx); d1.setAttribute('cy', y(d.wau)); d1.setAttribute('opacity', 1);
+    d2.setAttribute('cx', cx); d2.setAttribute('cy', y(d.dau)); d2.setAttribute('opacity', 1);
+    tip.show(cx, y(Math.max(d.wau, d.dau)), date(d.day, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }),
+      [[c1, fmt(d.wau), `active users (${data.activeDays} days)`], [c2, fmt(d.dau), 'active that day'], ['transparent', fmt(d.teams), 'active teams']]);
+  };
+  let focusI = n - 1;
+  hit.addEventListener('pointermove', e => {
+    const r = svg.getBoundingClientRect();
+    const px = (e.clientX - r.left) * (W / r.width);
+    focusI = Math.round(((px - m.l) / (W - m.l - m.r)) * (n - 1));
+    at(Math.min(n - 1, Math.max(0, focusI)));
+  });
+  const off = () => { tip.hide(); for (const e of [cross, d1, d2]) e.setAttribute('opacity', 0); };
+  hit.addEventListener('pointerleave', off);
+  hit.addEventListener('blur', off);
+  hit.addEventListener('focus', () => at(focusI));
+  hit.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      focusI = Math.min(n - 1, Math.max(0, focusI + (e.key === 'ArrowLeft' ? -1 : 1)));
+      at(focusI); e.preventDefault();
+    }
+  });
+  const legend = $('trend-legend');
+  legend.replaceChildren();
+  for (const [c, label] of [[c1, `Active users (any check-in in the ${data.activeDays} days to that day)`], [c2, 'Active that day']]) {
+    const item = el('span'); const key = el('i'); key.style.background = c;
+    item.append(key, document.createTextNode(label)); legend.append(item);
+  }
+}
+
+// Vertical columns, one series.
+function columnChart(box, rows, label, when) {
+  box.replaceChildren();
+  const W = box.clientWidth, H = 200, m = { t: 18, r: 8, b: 26, l: 32 };
+  const max = Math.max(1, ...rows.map(r => r.n));
+  const ys = ticks(max, 3), top = ys[ys.length - 1];
+  const y = v => m.t + (1 - v / top) * (H - m.t - m.b);
+  const band = (W - m.l - m.r) / rows.length, bw = Math.min(24, band - 2);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': label });
+  for (const v of ys) {
+    svg.append(el('line', { class: 'gridline', x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+    svg.append(el('text', { class: 'axis', x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, fmt(v)));
+  }
+  const c = css('--series-1');
+  const tip = tooltip(box);
+  const every = Math.max(1, Math.ceil(rows.length / Math.max(2, Math.floor((W - m.l - m.r) / 70))));
+  rows.forEach((r, i) => {
+    const cx = m.l + band * i + band / 2, h = y(0) - y(r.n);
+    if (r.n > 0) svg.append(el('path', { d: roundedTop(cx - bw / 2, y(r.n), bw, h, Math.min(4, h)), fill: c, class: 'datum' }));
+    const hit = el('rect', { x: cx - band / 2, y: m.t, width: band, height: H - m.t - m.b, fill: 'transparent', tabindex: 0 });
+    const show = () => tip.show(cx, y(r.n), when(r), [[c, fmt(r.n), 'new users']]);
+    hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
+    hit.addEventListener('pointerleave', () => tip.hide()); hit.addEventListener('blur', () => tip.hide());
+    svg.append(hit);
+    if ((rows.length - 1 - i) % every === 0) svg.append(el('text', { class: 'axis', x: cx, y: H - 6, 'text-anchor': 'middle' }, date(r.start)));
+  });
+  const last = rows[rows.length - 1];
+  if (last) svg.append(el('text', { class: 'bar-value', x: m.l + band * (rows.length - 0.5), y: y(last.n) - 6, 'text-anchor': 'middle' }, fmt(last.n)));
+  box.append(svg);
+}
+
+function roundedTop(x, y, w, h, r) {
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function roundedRight(x, y, w, h, r) {
+  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`;
+}
+
+// Horizontal bars, one series; past `cap` rows the rest fold into "Other".
+function barChart(box, rows, what, cap = 6) {
+  box.replaceChildren();
+  if (rows.length > cap) rows = [...rows.slice(0, cap - 1), { k: 'Other', n: rows.slice(cap - 1).reduce((s, r) => s + r.n, 0) }];
+  if (!rows.length || rows.every(r => r.n === 0)) { box.append(el('div', { class: 'empty' }, 'No active users yet.')); return; }
+  const W = box.clientWidth, row = 30, H = rows.length * row, lw = Math.min(140, W * 0.32), vw = 44;
+  const max = Math.max(1, ...rows.map(r => r.n)), total = rows.reduce((s, r) => s + r.n, 0);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': what });
+  const c = css('--series-1');
+  const tip = tooltip(box);
+  rows.forEach((r, i) => {
+    const y0 = i * row, bh = 18, by = y0 + (row - bh) / 2, w = ((W - lw - vw) * r.n) / max;
+    svg.append(el('text', { class: 'bar-label', x: 0, y: y0 + row / 2 + 4 }, String(r.k)));
+    if (r.n > 0) svg.append(el('path', { d: roundedRight(lw, by, Math.max(w, 4), bh, Math.min(4, w / 2)), fill: c, class: 'datum' }));
+    svg.append(el('text', { class: 'bar-value', x: lw + w + 8, y: y0 + row / 2 + 4 }, fmt(r.n)));
+    const hit = el('rect', { x: 0, y: y0, width: W, height: row, fill: 'transparent', tabindex: 0 });
+    const show = () => tip.show(lw + w, by, String(r.k), [[c, fmt(r.n), `${what} · ${Math.round((100 * r.n) / total)}%`]]);
+    hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
+    hit.addEventListener('pointerleave', () => tip.hide()); hit.addEventListener('blur', () => tip.hide());
+    svg.append(hit);
+  });
+  box.append(svg);
+}
+
+function teamTable(box, teams) {
+  box.replaceChildren();
+  if (!teams.length) { box.append(el('div', { class: 'empty' }, 'No teams yet.')); return; }
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const [t, num] of [['Team', false], ['Active users', true], ['All-time users', true], ['First seen', false], ['Last seen', false]]) {
+    const th = document.createElement('th'); th.textContent = t; if (num) th.className = 'num'; head.append(th);
+  }
+  table.append(head);
+  for (const t of teams) {
+    const tr = document.createElement('tr');
+    const id = document.createElement('td'); const code = document.createElement('code'); code.textContent = t.team; id.append(code);
+    tr.append(id);
+    for (const [v, num] of [[fmt(t.active), true], [fmt(t.users), true], [date(t.first, { month: 'short', day: 'numeric', year: 'numeric' }), false], [date(t.last, { month: 'short', day: 'numeric', year: 'numeric' }), false]]) {
+      const td = document.createElement('td'); td.textContent = v; if (num) td.className = 'num'; tr.append(td);
+    }
+    table.append(tr);
+  }
+  const wrap = el('div', { class: 'table-wrap' });
+  wrap.append(table);
+  box.append(wrap);
+}
+
+let data, days = Number(new URLSearchParams(location.search).get('days')) || 14;
+
+function render() {
+  if (!data) return;
+  const d = data;
+  $('asof').textContent = `as of ${date(d.today, { month: 'long', day: 'numeric', year: 'numeric' })}, UTC`;
+  $('ended').textContent = date(d.today, { month: 'long', day: 'numeric', year: 'numeric' });
+  $('active').replaceChildren(document.createTextNode(fmt(d.active)), el('small', {}, `/ ${d.goal}`));
+  const diff = d.active - d.activeBefore;
+  const delta = $('delta');
+  delta.className = 'delta ' + (diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat');
+  delta.replaceChildren(document.createTextNode(diff > 0 ? `▲ ${fmt(diff)}` : diff < 0 ? `▼ ${fmt(-diff)}` : '■ no change'),
+    el('span', {}, ` vs the ${d.activeDays} days before (${fmt(d.activeBefore)})`));
+  const pct = Math.min(100, (100 * d.active) / d.goal);
+  $('meter').style.width = pct + '%';
+  $('meter-wrap').setAttribute('aria-label', `${d.active} of ${d.goal} active users`);
+  $('meter-left').textContent = `${Math.round((100 * d.active) / d.goal)}% of the goal`;
+  $('meter-right').textContent = d.active >= d.goal ? 'Goal reached' : `${fmt(d.goal - d.active)} to go`;
+  $('t-today').textContent = fmt(d.activeToday);
+  $('t-teams').textContent = fmt(d.teams);
+  $('t-teams-note').textContent = `repos with an active user, of ${fmt(d.allTeams)} ever`;
+  $('t-new').textContent = fmt(d.newUsers);
+  $('t-new-note').textContent = `first check-in in the last ${d.activeDays} days; ${fmt(Math.max(0, d.active - d.newUsers))} returning`;
+  $('t-all').textContent = fmt(d.allUsers);
+  $('t-all-note').textContent = 'everyone who has ever checked in';
+  $('trend-sub').textContent = `last ${d.days} days · an active user checked in at least once in the ${d.activeDays} days before`;
+  trendChart($('trend'), d);
+  columnChart($('new'), d.newByWeek.slice(-Math.min(d.newByWeek.length, 26)), 'New users per week',
+    r => `${date(r.start)} – ${date(r.end)}`);
+  barChart($('sizes'), d.teamSizes.map(r => ({ k: `${r.k} user${r.k === '1' ? '' : 's'}`, n: r.n })), 'teams', 4);
+  barChart($('versions'), d.versions, 'active users');
+  barChart($('systems'), d.systems, 'active users');
+  teamTable($('teams'), d.teamList);
+  $('footer').textContent = 'A user was one machine’s user account, by a random ID; a team, one repo, by a hash of its remote. ' +
+    'For an agent, the same numbers are at /stats/archive/report.md (markdown) and /stats/archive/data (JSON).';
+}
+
+async function load() {
+  document.body.classList.add('loading');
+  for (const b of document.querySelectorAll('.ranges button')) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days));
+  try {
+    const res = await fetch(`/stats/archive/data?days=${days}`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`the numbers didn't load (${res.status})`);
+    data = await res.json();
+    render();
+  } catch (err) {
+    $('footer').textContent = String(err.message || err);
+  }
+  document.body.classList.remove('loading');
+}
+
+for (const b of document.querySelectorAll('.ranges button')) {
+  b.addEventListener('click', () => {
+    days = Number(b.dataset.days);
+    history.replaceState(null, '', `?days=${days}`);
+    load();
+  });
+}
+let resize;
+addEventListener('resize', () => { clearTimeout(resize); resize = setTimeout(render, 120); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+load();
+</script>
+</body>
+</html>

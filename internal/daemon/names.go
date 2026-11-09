@@ -81,6 +81,18 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 	return true
 }
 
+// notePersonClaimLocked records that a person's name is claimed by addr. The first claim read
+// stands: a later one, here or from a registry rewritten since, changes nothing. It reports whether
+// anything changed. Caller holds mu.
+func (d *Daemon) notePersonClaimLocked(name, addr string) bool {
+	if d.st.PersonClaims[name] != "" || addr == "" {
+		return false
+	}
+	d.st.PersonClaims[name] = addr
+	d.st.People[name] = addr
+	return true
+}
+
 // processNames reads the registry's tip into the set of used names. sha is the tip on the remote
 // and already fetched, "" if the listing didn't show the ref (which it checks again, if this
 // daemon has read the registry before). Caller holds advMu.
@@ -92,7 +104,7 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 // waiting for a session to need a name, if the registry is missing any.
 func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.mu.Lock()
-	tip, good, checked := d.st.NamesTip, d.st.NamesGood, d.namesChecked
+	tip, good, checked, peopleRead := d.st.NamesTip, d.st.NamesGood, d.namesChecked, d.st.NamesPeople
 	d.mu.Unlock()
 	if checked && tip == sha {
 		return
@@ -157,10 +169,14 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 				fail(err)
 				return
 			}
-			if desc {
-				from = good
-			} else {
+			switch {
+			case !desc:
 				disturbed = true
+			case peopleRead:
+				from = good
+			default:
+				// Not damaged, but read by a daemon that passed over people's claims (see
+				// NamesPeople): read again from the start, for them.
 			}
 		}
 		var err error
@@ -215,7 +231,11 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	wasRepair := d.st.NamesRepair
 	changed := d.st.NamesTip != sha
 	for name, addr := range read {
-		if d.noteNameLocked(name, addr) {
+		if bus.ValidPerson(name) {
+			if d.notePersonClaimLocked(name, addr) {
+				changed = true
+			}
+		} else if d.noteNameLocked(name, addr) {
 			changed = true
 		}
 	}
@@ -227,21 +247,29 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.st.NamesTip = sha
 	if isCommit {
 		d.st.NamesGood = sha
+		// Read in full here, or from what was: either way, by a daemon that keeps people's claims.
+		changed = changed || !d.st.NamesPeople
+		d.st.NamesPeople = true
 	}
 	if disturbed {
 		// Only a history read from its start shows whether the registry holds every name. A
 		// read of what was added on top of a damaged one can't, so a repair still to be made
 		// stays to be made.
 		d.st.NamesRepair = false
-		for name := range d.st.Used {
-			if _, ok := read[name]; !ok {
-				d.st.NamesRepair = true
-				break
+		for _, known := range []map[string]string{d.st.Used, d.st.PersonClaims} {
+			for name := range known {
+				if _, ok := read[name]; !ok {
+					d.st.NamesRepair = true
+					break
+				}
 			}
 		}
 	}
 	repair := d.st.NamesRepair
 	changed = changed || repair != wasRepair
+	// The claim of a name from before people were in the registry waits for this first read (see
+	// nextNames), and nothing else would wake the assigner for it.
+	claim := !checked && d.st.Person != "" && d.st.PersonClaims[d.st.Person] == ""
 	d.namesChecked = true
 	if changed {
 		d.saveLocked()
@@ -250,7 +278,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 	if repair && !wasRepair {
 		d.log.Printf("the names registry lost names; writing a snapshot of every name in use")
 	}
-	if repair {
+	if repair || claim {
 		d.kickNames()
 	}
 }
@@ -368,10 +396,11 @@ type nameWork struct {
 	wants   []wanted
 	reserve int
 	repair  bool
+	person  string // this device's person's name, to claim for them (#268)
 }
 
 func (w nameWork) empty() bool {
-	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair
+	return len(w.binds) == 0 && len(w.wants) == 0 && w.reserve == 0 && !w.repair && w.person == ""
 }
 
 // nameForKeyLocked is the name for a session of key, id: the name the key has, else the oldest in
@@ -429,6 +458,11 @@ func (d *Daemon) nextNames() nameWork {
 		w.reserve = d.opt.NamePool - len(d.st.NamePool)
 	}
 	w.repair = d.st.NamesRepair
+	if d.st.Person != "" && d.st.PersonClaims[d.st.Person] == "" && d.namesChecked {
+		// A name from before people were in the registry. Only once the registry is read: until
+		// then, a claim made before this one isn't known to be there.
+		w.person = d.st.Person
+	}
 	return w
 }
 
@@ -488,6 +522,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	d.mu.Lock()
 	tip, repair := d.st.NamesTip, d.st.NamesRepair
 	used := maps.Clone(d.st.Used)
+	people := maps.Clone(d.st.PersonClaims)
 	aside := map[string]string{} // names set aside that no session is known to have, to their device
 	for name, dev := range d.st.Reserved {
 		if used[name] == "" {
@@ -528,6 +563,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		reserved = append(reserved, name)
 		recs = append(recs, rec(name, ""))
 	}
+	person := w.person
+	if people[person] != "" {
+		person = "" // claimed already: by this person, or first by someone else, who keeps it
+	}
+	if person != "" {
+		recs = append(recs, rec(person, bus.PersonSession))
+	}
 	parent := tip
 	if parent != "" {
 		ok, err := d.repo.IsCommit(ctx, parent)
@@ -549,6 +591,9 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		recs = append(again, recs...)
 		if len(recs) == 0 {
 			recs = append(recs, bus.NameRecord{V: bus.Version, At: at}) // a repair on its own
+		}
+		for name, addr := range people {
+			used[name] = addr // a person's claim survives a repair, as a session's name does
 		}
 		parent, recs[0].Used = "", used
 	}
@@ -578,8 +623,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	defer d.mu.Unlock()
 	d.known[brand.NamesRef] = sha
 	if d.st.NamesTip == tip {
-		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read.
-		d.st.NamesTip, d.st.NamesGood, d.st.NamesRepair = sha, sha, false
+		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
+		// tip not yet read by a daemon that keeps people's claims isn't (see NamesPeople), unless
+		// this chain is a new root, which holds every name itself.
+		d.st.NamesTip, d.st.NamesRepair = sha, false
+		if d.st.NamesPeople || parent == "" {
+			d.st.NamesGood, d.st.NamesPeople = sha, true
+		}
 	}
 	for _, b := range w.binds {
 		d.noteNameLocked(b.name, bus.Addr(d.device, b.id))
@@ -604,6 +654,10 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			}
 		}
 		d.log.Printf("session %s is named %s", addr, name)
+	}
+	if person != "" {
+		d.notePersonClaimLocked(person, d.personAddr())
+		d.noteLocked(at, rec(person, bus.PersonSession).Subject())
 	}
 	for _, name := range reserved {
 		d.noteNameLocked(name, "")

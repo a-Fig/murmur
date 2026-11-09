@@ -6,6 +6,11 @@ The `daemon` package is most of the time. Under `-race` it took 10–16 minutes 
 with other agents' test runs, and about 12 on the first CI runner (2026-10-29; #39 is about making it
 faster).
 
+A package whose tests can reach Murmur's `murmur.*` git config calls `testgit.Isolate` in `TestMain`,
+so a developer's own settings don't change what they see (#262). As of 2026-11-09 those are `update`,
+`publicrepo`, `setup`, `daemon` and `cmd/mur`; the others that reach it passed with all three keys
+set.
+
 ## On every pull request
 
 `.github/workflows/test.yml` runs those checks on every pull request, on a push to `main`, and by

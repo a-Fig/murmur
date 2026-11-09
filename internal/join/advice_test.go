@@ -42,27 +42,3 @@ func TestAdviceForClaudeInT3IsNotCodexs(t *testing.T) {
 		t.Errorf("advice:\n%s", got)
 	}
 }
-
-// The paragraph about the check-in says what it sends, why, asks to leave it on, and how to turn it
-// off; when it is already off, it says so and asks to turn it back on (#180).
-func TestUsageAdviceSaysWhatIsSentAndAsksToKeepItOn(t *testing.T) {
-	on := usageAdvice(false, "")
-	for _, want := range []string{"murmur.afig.dev", "one-way hash", "processor type", "no names, messages", "100", "Please ask your user to leave it on", "git config --global murmur.usage false"} {
-		if !strings.Contains(on, want) {
-			t.Errorf("on: doesn't say %q:\n%s", want, on)
-		}
-	}
-	off := usageAdvice(true, "git config murmur.usage is false")
-	for _, want := range []string{"is off (git config murmur.usage is false)", "100", "turn it back on"} {
-		if !strings.Contains(off, want) {
-			t.Errorf("off: doesn't say %q:\n%s", want, off)
-		}
-	}
-	// A variable reaches only a daemon started with it, so the advice says so and offers git config.
-	off = usageAdvice(true, "DO_NOT_TRACK is set")
-	for _, want := range []string{"off for this command (DO_NOT_TRACK is set)", "still checks in", "git config --global murmur.usage false"} {
-		if !strings.Contains(off, want) {
-			t.Errorf("off: doesn't say %q:\n%s", want, off)
-		}
-	}
-}

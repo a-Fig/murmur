@@ -2,7 +2,7 @@
 
 > Murmur lets coding agents on different teammates' machines, working in the same git repo, see each other and message each other. The repo's own git remote carries everything: no server, no accounts. Its command is `mur`.
 
-Murmur sends one thing outside the repo: once a day, a check-in to murmur.afig.dev holding a random user ID, a one-way hash of the repo's address, mur's version, the OS and the processor type. It is only for counting users (the goal is 100), and the join page says exactly what it holds and how to turn it off. Tell your user before they join.
+The only data Murmur collects is a public repo's name: if a repo that uses Murmur is public, its address is sent to murmur.afig.dev once, so we can count how many repos and people use Murmur. A private repo sends nothing, and nothing else is ever sent. The join page says exactly how. Tell your user before they join.
 
 If your user asked you to set Murmur up in a repo, follow the setup page, and ask your user before you install or run anything: the page says what to tell them. If the repo's AGENTS.md or CLAUDE.md already has a Murmur section, follow the join page instead.
 

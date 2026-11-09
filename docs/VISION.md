@@ -47,8 +47,8 @@ don't want it. This is not part of scope." Daemons still running V1 keep writing
 ### Git is the transport, GitHub the hub
 
 Every teammate already has credentials and push access to the repo, so the repo carries the
-messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and sends a daily check-in that counts active
-users; see Updating and Counting active users.)
+messages. No server, no accounts, no extra auth: whoever can push is in. (Outside the repo it checks GitHub for updates and, for a public repo only, sends us the repo's
+address once; see Updating and Counting use.)
 
 - Each device appends events to **its own ref**, `refs/murmur/mesh/<deviceId>`: one empty commit per
   event, the payload in the commit message (a readable subject, a JSON body). One writer per ref
@@ -463,7 +463,16 @@ call.
   So a running session idle for a day, or one a person hid (the `hidden` tag, set from the page
   through #211's `/api/tags`), folds under its device as quiet. An idle one comes back once it
   does anything; a hidden one stays hidden until someone shows it again, because a tag a person
-  sets stays until a person takes it off. An open session's tags show under its name, where a person can add one or take one off. The page is always dark: the design was only ever drawn dark, and a light one would be a
+  sets stays until a person takes it off. An open session's tags show under its name, where a person can add one or take one off.
+  Since #270 (2026-11-09) tags also organize the lists: each sidebar row and card shows its session's
+  tags, the sidebar's Tags group filters every list of sessions to one tag, and a tag menu, from a
+  row's tag button or from sessions picked together on All sessions, puts a tag on them or takes it
+  off, and makes new ones. It sends one `/api/tags` change per session, so it is the same human
+  tag as before, travelling the same way; until a session's device has applied it, the chip shows
+  as waiting, for two minutes at most. Tags with a meaning of their own show as that meaning rather
+  than as chips: `model:` beside the agent, `do-not-disturb` as the red dot, `hidden` as the quiet
+  fold, `human` on a person. There is no grouping by tag: a session can carry several, so groups
+  would repeat it, and a filter shows one group at a time. The page is always dark: the design was only ever drawn dark, and a light one would be a
   second design. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
@@ -476,6 +485,57 @@ call.
   tab, a minimized window, a locked screen). A hidden page marks its calls, so a tab forgotten in
   the background doesn't keep the daemon, and its polling of GitHub, up for good (Opus review,
   2026-10-29). A request without the token doesn't count.
+
+### A person on the page
+
+Added 2026-11-08 (#242). Someone with the page open can talk to agents, and agents answer them the
+way they answer each other. Before this, a person could only watch, and reached an agent by typing
+in its own session.
+
+- **An account is a name** a person picks for this clone, offered from `git config user.name`. It
+  has no password and proves nothing: whoever can open the page is already at that keyboard, and
+  anyone who can push to the repo can write anything on the bus. A person's message gets no more
+  authority than an agent's. Verified identity is left out, and so is one person on two devices,
+  which is two accounts for now.
+- **The address is `device/human`.** Presence lists the person as a session whose agent is
+  `person`, so a daemon on an older version still shows them in `who`. The only new field on the bus
+  is `Event.Person`, the name on a person's own messages. Everywhere sessions are listed, and in the
+  header of every message from a person, they carry the `human` tag (see "Session tags").
+- **A name is claimed in the names ref**, by the same compare-and-swap that gives sessions their
+  names (#268, Tyler, 2026-11-09). #249 kept people out of it to avoid that push. That let two
+  people who chose one name before either daemon saw the other both keep it, and a message to it
+  could reach the wrong one. Choosing a name now waits for the claim to land, so of two people
+  choosing at once only one gets it, and the page tells the other it is taken. A claim is an
+  assignment to `device/human`. A person's name can't have the form of a session's (an adjective and
+  a noun from the lists), so an address never reads as both, and a daemon from before passes over
+  the claim as a name it couldn't have made. The first claim in the registry stands, and like a
+  session's name it is never forgotten. So a message to an old name still reaches its owner, and a
+  registry rewritten by an older daemon, which drops people's claims, is repaired with them. A name
+  held from before the claims has the first daemon to claim it keep it. The other person's page asks
+  them for another, and until they choose one they can't send, as their messages would carry a name
+  that reaches someone else. The cost: choosing a name needs the remote, as sending does.
+- **A person's direct message wakes a session past the "Within" window**, because they are waiting
+  for an answer. It doesn't wake past Never or do not disturb, which a person also chose. A broadcast
+  from a person wakes nothing extra: one sentence shouldn't wake every idle session on the mesh. The
+  turn says who it is from, that they see only what the agent sends, and how to answer.
+- **What the person keeps.** Messages to and from them go to `.git/murmur/person-messages.jsonl`,
+  the last 2,000, apart from the page's 500, so a conversation outlasts a daemon restart. Unread is
+  the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit
+  in a busy repo. Their inbox also takes what was sent while the daemon was down, since a person's
+  daemon exits soon after their page closes and an agent may answer hours later.
+- **On the page**, "Your messages" holds the person's own conversations, each with a composer.
+  Others' conversations are read-only, with a way to message either side. A message shows at once as
+  sending, and if it fails it stays on screen with its text. Enter sends, except on a phone, where
+  Enter is a new line and the button sends. The first Enter in the Everyone chat only arms it, and
+  says how many sessions it reaches. The line above the composer says working, do not disturb,
+  offline or waiting. "Working" is a guess from the session's last activity: nothing on the bus says
+  a session is answering.
+- **The draft survives a rebuild.** The page rebuilds its DOM on every state change, so each
+  conversation's textarea is kept and reused, which keeps its text, caret and focus when a reply
+  arrives.
+
+Desktop notifications aren't built: the page's port is random, so a browser would ask permission
+again after each daemon restart. The tab's title carries the unread count instead.
 
 ### What a session has done
 
@@ -630,11 +690,24 @@ tag with behaviour, below.
   restarts and the session finding its T3 thread (its key changes then, its name doesn't), until the
   session or a human takes it off. A change from another device for a session that hasn't
   registered again yet, after its daemon restarted, is kept for it the same way, however long the
-  daemon was down: a skip of the backlog still reads its `tags` events (#230). At the cap of 12, a
+  daemon was down: a skip of the backlog still reads its `tags` events (#230), and so does a backlog
+  given up on after its fetch failed for 10 minutes, once the fetch lands (#237). Since such a change
+  can be read long after it was made, each tag goes by a human's latest choice about it: a change more
+  than a minute older than that leaves the tag as it is, whichever was read first (#251). The times are
+  the senders' clocks. A clock over a minute behind can lose a change made soon after another human's
+  on the same tag, which seemed better than an old change undoing a new one. At the cap of 12, a
   human's tags are kept first, then the session's, then derived ones. Nothing expires.
 - **Search.** `who` takes tags and lists only the sessions with all of them; `-tag` leaves out those
   with it, and a `*` at the end matches any tag that starts so (`model:opus*`). The CLI has no `who`,
   so this is the MCP tool's.
+- **`human`** marks a person's account (#267, Tyler, 2026-11-09), so an agent reading `who`,
+  `lookup` or a message's header, and a person on the page, can tell a human from an agent at a
+  glance. It is the one tag Murmur alone gives. It isn't kept, and isn't read from the bus: every
+  daemon works it out from the address, since only `device/human` is a person and no session can
+  take that address. A session can't set it, a human on the page can't add or remove it, and a
+  daemon drops it from anything else's tags in presence or in `state.json`. A person's presence
+  still carries it, for daemons from before it, which show presence's tags as they are. `who human`
+  lists the people and `who -human` the agents.
 
 ### When a session stays the same session
 
@@ -1141,8 +1214,7 @@ A body past the limit is cut, as in `inbox`.
 
 Murmur updates itself by default (#192, Tyler, 2026-11-07), so fixes reach an installed daemon
 without a person reinstalling it. `internal/update` checks GitHub's `a-Fig/murmur` releases/latest
-at daemon startup and hourly, independently of the daily usage check-in. No check-in IDs or repo
-information go in these GET requests. Network failures are quiet and wait for the next hour.
+at daemon startup and hourly. No repo information goes in these GET requests. Network failures are quiet and wait for the next hour.
 A development build (`-dev`) never updates itself. Versions before this updater need one manual
 install to acquire it.
 
@@ -1157,17 +1229,48 @@ An unwritable install (for example, a package manager's) is logged once and left
 restart. Successful updates log the old and new versions in the daemon log.
 
 After installation, the daemon waits until no message handoff is in flight and no page counts as
-open, so an open tab keeps its port and token. It then blocks new handoffs and shuts down normally,
-saving state and releasing the clone lock. It starts the installed binary with the same detached
+open, or until the page asks for the restart (#240). It then blocks new handoffs and shuts down
+normally, saving state and releasing the clone lock. It starts the installed binary with the same detached
 process helper clients use, forwarding its own flags (including poll and idle settings). Sessions
 reconnect through the existing grace and inbox restoration. Running MCP servers keep their loaded binary until their sessions
 restart; if they need to launch a daemon they use the installed path. The protocol number above
 still handles incompatible clients and daemons; release versions do not become a second protocol.
 
+On restart the daemon hands the page's listening socket to the new daemon, which inherits it
+(descriptor 3 on Unix, the same handle on Windows, named to it by `MURMUR_PAGE_LISTENER`), and
+leaves the page's address and token beside it in `page.json` in its state directory. The port is
+bound from the old daemon's last answer to the new one's first, so a tab's requests in between wait
+in the socket's queue, and the new daemon answers them; the tab sees a new daemon and reloads onto
+the new version. The reload waits while a person has text in a composer or a message that failed,
+since those live only in the page (#242); the tab works with the new daemon until then. Each daemon serves the page from a listener made from a second hold on the socket,
+which keeps it bound after the page's server closes its listener.
+
+Decided 2026-11-09 (#255, from Sol's pre-release review). Before, the new daemon bound the old port
+again and kept the token. In the gap, another user's process could take the port, be sent one of the
+tab's requests with its token, and let the port go before the new daemon bound it, and the new
+daemon then answered that token. Checking that the port is free can't prove it stayed free, so the
+token now goes only with the socket: a daemon that gets `page.json` without a socket at that address
+(a start through WMI, which can't hand handles over, or a socket it can't take up) serves the page
+on a new port with a new token, and the tab needs `mur ui` again. Rotating the token on every
+restart, with the tab fetching the new one, was set aside: whatever the tab holds, a page served on
+its port in the gap could read (a reload there runs that page in the tab's origin), and the tab
+can't tell who is listening. On Windows a socket stays tied to the I/O completion port of the
+process that served it, so the new daemon detaches it before taking it up.
+
+The page shows a newer release above Settings in its sidebar (a dot on Settings on a phone), with
+the version in Settings: "Restart to update" while an installed update waits on the open page,
+"Updating to X" while the daemon will install it, and "X is out" with the install command when
+updates are off or the last check failed. It learns the latest release from the updater's last
+check, else from the `latest.json` a daemon in this clone last recorded, and never asks GitHub
+itself. With updates off nothing checks, so "X is out" shows only a release an earlier check
+recorded. Builds from source (`-dev`) show no notice.
+
 `git config --global murmur.update false` opts out; a repo's own git config overrides the global
 value. `MURMUR_NO_UPDATE=1` opts out for a daemon started with that environment. The config is read
-on each check. `DO_NOT_TRACK`, `MURMUR_NO_USAGE` and `murmur.usage false` affect only usage check-ins.
-Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`). A binary
+on each check. Agents explain updates and this separate opt-out before joining (`docs/agents/join.md`).
+`git config murmur.channel prerelease` opts into prereleases and nightlies as well (#244, Tyler,
+2026-11-08), so a release runs on our own machines before a stable tag sends it to everyone;
+`docs/releasing.md` has the channels. A binary
 shared across clones is shared across their update settings too: to prevent every clone from
 updating it, use the global setting without local overrides.
 
@@ -1175,32 +1278,65 @@ The checksum catches corruption or a download inconsistent with the release. It 
 who published it or protect against a compromised GitHub account or release with a replaced
 checksum file. Release signing is separate work (#193).
 
-### Counting active users
+### Counting use
 
 Tyler's goal for the project is 100 active users (2026-11-02), and the transport hides them: every
-team's traffic stays in its own repo, and release downloads count installs, not use. So each
-daemon checks in (#148, `internal/checkin`): when it starts and every hour after, if this clone
-hasn't checked in this UTC day, it posts to `https://murmur.afig.dev/v1/checkin`:
+team's traffic stays in its own repo, and release downloads count installs, not use.
 
-- `user`: 16 random bytes in hex, made once per user account on the machine and kept in the user
-  config dir (`murmur/id`), so every clone of that account is one user;
-- `team`: the first 16 bytes of a SHA-256 of the bus remote's address, reduced to host and path
-  (https and ssh clones of one repo agree). It isn't salted, so whoever holds the stats can confirm
-  a repo they can name; nobody can list the repos from it;
-- `version`, `os`, `arch`.
+Tyler's rule (2026-11-08, #199): **the only thing Murmur sends us is a public repo's address.** A
+public repo's bus is readable by anyone, so once we know the address, its repos, messages and
+people can be counted from the bus itself, and the address is already public, so there is no
+opt-out. A private repo sends nothing and isn't counted. Weighed and turned down: a GitHub topic on
+each repo as the marker (it changes how the user's repo looks), and an ID for private repos (a
+hash of the address can't be salted for real, since the salt would ship in the public binary, and
+a random ID is still data from a private repo).
 
-The answer is the latest release, kept in the state dir's `checkin.json`; `mur version` says so on
-stderr when it is newer. A daemon runs only while a joined clone has a session or an open page,
-for 10 minutes after, or while a T3 thread it could wake is idle (up to a day), so a check-in
-means someone used Murmur that day or the day before. "Active" is a check-in in the last
-7 days. The site keeps one row per user, team and day in D1 (`site/migrations`), no IP addresses,
-and shows the counts on a page at `/stats` that only a key opens (`site/src/usage.js`): Tyler's, or one
-he gives an agent, which reads them as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
-`DO_NOT_TRACK` or `MURMUR_NO_USAGE` in the daemon's environment, or `murmur.usage` false in git
-config, turns check-ins off; a development build (`-dev`) never sends one. join.md tells the user
-before they agree.
+`internal/publicrepo` does it, from `mur init`, `mur join` and daemon start:
 
-What it can't see: a person with two machines is two users, and one who turned check-ins off is none.
+1. If `refs/murmur/reported` is on the remote, stop: some clone has reported the repo. A daemon's
+   sync doesn't fetch it (it reads only mesh, presence and names), so the remote is asked with one
+   `ls-remote`, and once the ref is found or pushed, `publicrepo.json` in the state dir keeps the
+   address it belongs to, so this clone doesn't ask again unless its remote changes.
+2. Reduce the bus remote's URL to `github.com/<owner>/<name>`; anything else is not reported.
+3. Ask GitHub `GET api.github.com/repos/<owner>/<name>` with no credentials. A private repo answers
+   404 to that, so no token is involved. Private, or not on GitHub: look again the next UTC day
+   (`publicrepo.json` again), so a repo made public later is reported within a day.
+4. POST `{"repo": "github.com/<owner>/<name>"}` to `https://murmur.afig.dev/v1/repo`, spelled as
+   GitHub spells it, with no version in the User-Agent. The site stores it only once GitHub
+   confirms the repo public (when GitHub can't say, it answers 503 and the daemon sends it again
+   later): one row per repo, its address and first day, no IP addresses (`site/src/usage.js`,
+   `site/migrations`).
+5. Once the site has answered 200, note in `publicrepo.json` that this address was sent, then push
+   `refs/murmur/reported`, a root commit whose body is `{"v":1,"at":...}`, leased so it is created
+   only if absent. A push that fails is retried at every later look, without sending the address
+   again, and a daemon keeps looking until the ref is there. Two clones racing both send; the site
+   keeps one row. Deleting the ref makes the repo report again from a clone that hasn't seen it.
+
+So each public repo reaches us once in its life. A development build (`-dev`) never reports.
+Daemons older than this ignore the new ref: their sync reads only mesh, presence and names.
+
+Earlier versions (#148) sent a daily check-in to `/v1/checkin` (a random user ID, a hash of the
+remote, the version, OS and architecture). Since 2026-11-08 the site stores none, but still answers
+with the latest release; the rows already stored are kept as history at `/stats/archive`.
+`mur version` now hears of newer releases from the updater, which keeps the latest release it saw
+in the state dir's `latest.json`; with updates off it hears of none.
+
+The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
+day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
+each repo's `refs/murmur/*` and its default branch's commits without their files, and sends the
+site counts and hashes, never content: per UTC day, the sessions started (each once, though a
+daemon that restarts announces its sessions again), the messages and all records, and a hash of
+each device that wrote anything, presence included; a hash of each device's owner, the git user name
+its presence shows; and for each contributor, a hash of their GitHub login or email and the day of
+their first commit, so one person in two repos counts once. The site only ever raises a count and
+keeps every device and owner it has seen, since a bus log can be rewritten and a daemon deletes its
+presence when it stops. It runs from GitHub,
+not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
+the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
+public reader, so messages stop being told from other records, and only records are counted.
+
+`/stats` shows those repos and the counts over time; it needs a key: Tyler's, or one he gives an
+agent, which reads it as markdown at `/stats/report.md` or JSON at `/stats/data` (#150).
 
 ## Risks and how the design meets them
 

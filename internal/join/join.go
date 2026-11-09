@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/checkin"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/publicrepo"
 )
 
 // Env is the user's machine as join sees it: where it writes, which of the agent programs are
@@ -34,6 +34,9 @@ type Env struct {
 	T3Settings  string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
 	Getenv      func(string) string
 	LookPath    func(string) (string, error)
+	// Version is mur's, for reporting a public repo (internal/publicrepo); "", as tests leave it,
+	// reports nothing.
+	Version string
 }
 
 // EnvFromProcess is the environment of the running process.
@@ -215,11 +218,15 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 
 	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
 	if consentErr == nil {
-		// Even when something else failed: with consent recorded, a daemon may check in. Before
-		// the last paragraph, which is about the page and leaving, or about the problems.
-		off, why := checkin.Off(ctx, e.getenv, p.GitDir)
+		// Even when something else failed: with consent recorded, a daemon may report the repo.
+		// Before the last paragraph, which is about the page and leaving, or about the problems.
 		last := len(r.Tell) - 1
-		r.Tell = append(r.Tell[:last], usageAdvice(off, why), r.Tell[last])
+		r.Tell = append(r.Tell[:last], publicrepo.Statement, r.Tell[last])
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if res, _ := publicrepo.Once(rctx, publicrepo.Options{Version: e.Version, GitDir: p.GitDir}); res == publicrepo.Reported {
+			r.Did = append(r.Did, publicrepo.Told)
+		}
+		cancel()
 	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
@@ -289,30 +296,6 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("not everything worked; see above")
 	}
 	return r, nil
-}
-
-// usageAdvice is what to tell about the daily check-in to murmur.afig.dev, the one thing Murmur sends
-// outside the repo (#148), which joining has just started. join.md asks the agent to describe it
-// before the user agrees; this says it again for anyone who ran join without reading join.md (#180).
-// The plea to leave it on is Tyler's (2026-11-07): it is the only way the project can count its users.
-// An environment variable is seen only by a daemon started with it, and a daemon is often started by
-// an agent's session rather than by join, so the git setting is the one offered (Sol's review, #181).
-func usageAdvice(off bool, why string) string {
-	what := "a random ID for this user, a one-way hash of this repo's address, " + brand.Command + "'s version, the OS and the processor type, " +
-		"and nothing else: no names, messages, branches or paths"
-	if off {
-		s := "The daily check-in to murmur.afig.dev is off (" + why + "). "
-		if !strings.HasPrefix(why, "git config") {
-			s = "The daily check-in to murmur.afig.dev is off for this command (" + why + "), but a daemon started without that variable, " +
-				"as an agent's session may start one, still checks in; `git config --global " + brand.ConfigUsage + " false` turns it off for every daemon. "
-		}
-		return s + "It sends " + what + ". It is the only way we can count " + brand.Product + "'s users, and we are trying to reach 100: " +
-			"if your user is willing, please ask them to turn it back on."
-	}
-	return "Once a day, " + brand.Product + " checks in with murmur.afig.dev, sending " + what + ". " +
-		"We use it only to count " + brand.Product + "'s users: " + brand.Product + " is new, we are trying to reach 100, " +
-		"and this is the only way we can tell how many people use it. Please ask your user to leave it on. " +
-		"If they want it off anyway, `git config --global " + brand.ConfigUsage + " false` turns it off."
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was

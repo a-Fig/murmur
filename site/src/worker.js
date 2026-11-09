@@ -3,15 +3,17 @@
 // - serves the agent pages, docs/agents/*.md, pulled from the repo (#140);
 // - answers `/` with the setup page instead of the HTML when the request prefers markdown;
 // - slices the videos for Range requests;
-// - takes the daemons' daily check-ins and serves the page that counts them, and the same numbers
-//   as markdown and JSON for an agent (src/usage.js).
+// - takes the address of a public repo that uses Murmur, the only thing Murmur sends us, and serves
+//   the page that counts use, with the same numbers as markdown and JSON for an agent (src/usage.js);
+// - takes the daily census of those repos (src/repos.js).
 
 // Bundled at deploy (the Text rule in wrangler.jsonc), as the copy of last resort when GitHub can't
 // be reached and this data center has no cached copy.
 import setupMd from '../../docs/agents/setup.md';
 import joinMd from '../../docs/agents/join.md';
 import useMd from '../../docs/agents/use.md';
-import { checkIn, stats } from './usage.js';
+import { checkIn, reportRepo, stats } from './usage.js';
+import { census } from './repos.js';
 import { prefersMarkdown } from './accept.js';
 
 const RAW = 'https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/';
@@ -27,7 +29,9 @@ const MARKDOWN = 'text/markdown; charset=utf-8';
 export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
+    if (pathname === '/v1/repo') return reportRepo(request, env);
     if (pathname === '/v1/checkin') return checkIn(request, env, ctx);
+    if (pathname === '/v1/census') return census(request, env);
     if (pathname === '/stats' || pathname.startsWith('/stats/')) return stats(request, env);
     const page = /^\/(setup|join|use)(?:\.md)?\/?$/.exec(pathname)?.[1];
     if (page) return agentPage(request, ctx, page, false);

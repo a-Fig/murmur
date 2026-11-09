@@ -3,3 +3,5 @@ wrangler.jsonc
 .wrangler
 src
 migrations
+census
+.dev.vars

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf16"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -36,6 +38,58 @@ func Lock(path string) (*Held, error) {
 		return nil, err
 	}
 	return &Held{f}, nil
+}
+
+// adopted keeps the wrappers adopt made from inherited handles. A wrapper's close would be
+// CloseHandle, and a socket must be closed with closesocket, which adopt does itself; kept here,
+// the wrapper is never finalized, so it never closes the handle again after its number is reused.
+var adopted []*os.File
+
+// adopt takes up an inherited socket. The only way to wrap a raw handle in a File is os.NewFile,
+// which closes it with CloseHandle, so adopt makes a listener from it, asks that listener for a
+// File of net's own, which is closed with closesocket, and closes the raw handle with closesocket.
+// Handle inheritance on Windows passes only the handles named to it, so this process's children
+// never get the socket.
+func adopt(fd uintptr, name string) *os.File {
+	raw := os.NewFile(fd, name)
+	adopted = append(adopted, raw)
+	defer windows.Closesocket(windows.Handle(fd))
+	if Unpoll(raw) != nil {
+		return nil
+	}
+	ln, err := net.FileListener(raw)
+	if err != nil {
+		return nil
+	}
+	defer ln.Close()
+	tl, ok := ln.(*net.TCPListener)
+	if !ok {
+		return nil
+	}
+	f, err := tl.File()
+	if err != nil {
+		return nil
+	}
+	return f
+}
+
+// Unpoll detaches a socket from the I/O completion port it is tied to, so that this process's
+// runtime can take it up. A socket is tied to one port for good, and an inherited one was served by
+// the process before. Nothing may be waiting on the socket: that process stopped serving it before
+// it handed it on. A socket tied to no port is refused with STATUS_INVALID_PARAMETER, which is
+// success here; if that meant something else, taking the socket up fails next, and says so.
+func Unpoll(f *os.File) error {
+	var info struct {
+		Port windows.Handle
+		Key  uintptr
+	}
+	var iosb windows.IO_STATUS_BLOCK
+	err := windows.NtSetInformationFile(windows.Handle(f.Fd()), &iosb, (*byte)(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)), windows.FileReplaceCompletionInformation)
+	if errors.Is(err, windows.STATUS_INVALID_PARAMETER) {
+		return nil
+	}
+	return err
 }
 
 const (
@@ -80,10 +134,19 @@ if ($r.ReturnValue -ne 0) { throw ('Win32_Process.Create returned ' + $r.ReturnV
 //
 // If WMI created the process and it had already exited by the time it was looked up, StartDetached
 // returns a nil process and no error: the start worked, and there is nothing to hold.
-func StartDetached(path string, args []string, dir string, out *os.File) (*os.Process, error) {
+//
+// A hand, if not nil, is inherited by the process on the first and last ways, as the same handle.
+// WMI can't hand it over, so a process started that way goes without it, and isn't told of it.
+func StartDetached(path string, args []string, dir string, out *os.File, hand *Handover) (*os.Process, error) {
 	logger := log.New(out, "", log.LstdFlags)
+	if hand != nil {
+		if err := windows.SetHandleInformation(windows.Handle(hand.File.Fd()), windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
+			logger.Printf("can't hand %s over to the daemon: %v", hand.File.Name(), err)
+			hand = nil
+		}
+	}
 	flags := uint32(createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP)
-	p, err := startWith(path, args, dir, out, flags|createBreakawayFromJob)
+	p, err := startWith(path, args, dir, out, flags|createBreakawayFromJob, hand)
 	if err == nil {
 		logger.Printf("daemon started outside the job, by breakaway (pid %d)", p.Pid)
 		return p, nil
@@ -91,7 +154,12 @@ func StartDetached(path string, args []string, dir string, out *os.File) (*os.Pr
 	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		return nil, err
 	}
-	pid, wmiErr := startThroughWMI(path, args, dir, out)
+	env := os.Environ()
+	if hand != nil {
+		env = withEnv(env, hand.Env, "")
+		logger.Printf("WMI can't hand %s over, so the daemon starts without it", hand.File.Name())
+	}
+	pid, wmiErr := startThroughWMI(path, args, dir, out, env)
 	if wmiErr == nil {
 		p, err := findProcess(pid)
 		if err != nil {
@@ -102,17 +170,22 @@ func StartDetached(path string, args []string, dir string, out *os.File) (*os.Pr
 		return p, nil
 	}
 	logger.Printf("breakaway denied and WMI failed (%v); starting the daemon inside the job", wmiErr)
-	p, err = startWith(path, args, dir, out, flags)
+	p, err = startWith(path, args, dir, out, flags, hand)
 	if err == nil {
 		logger.Printf("daemon started inside the job (pid %d)", p.Pid)
 	}
 	return p, err
 }
 
-func startWith(path string, args []string, dir string, out *os.File, flags uint32) (*os.Process, error) {
+func startWith(path string, args []string, dir string, out *os.File, flags uint32, hand *Handover) (*os.Process, error) {
 	cmd := exec.Command(path, args...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = dir, out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags}
+	if hand != nil {
+		h := hand.File.Fd()
+		cmd.SysProcAttr.AdditionalInheritedHandles = []syscall.Handle{syscall.Handle(h)}
+		cmd.Env = withEnv(os.Environ(), hand.Env, strconv.FormatUint(uint64(h), 10))
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -123,7 +196,7 @@ func startWith(path string, args []string, dir string, out *os.File, flags uint3
 // named to the program as --log, since WMI can't hand over out's handle. WMI resolves a relative
 // path or directory against its own working directory, not the caller's, so both are made absolute
 // here.
-func startThroughWMI(path string, args []string, dir string, out *os.File) (int, error) {
+func startThroughWMI(path string, args []string, dir string, out *os.File, env []string) (int, error) {
 	exe, err := wmiProgram(path)
 	if err != nil {
 		return 0, err
@@ -137,7 +210,7 @@ func startThroughWMI(path string, args []string, dir string, out *os.File) (int,
 		return 0, err
 	}
 	withLog := append(append([]string{}, args...), "--log", logPath)
-	return createThroughWMI(windowsCommandLine(exe, withLog), cwd, os.Environ())
+	return createThroughWMI(windowsCommandLine(exe, withLog), cwd, env)
 }
 
 // wmiProgram returns the absolute path of the program. A bare name is looked up on PATH, as

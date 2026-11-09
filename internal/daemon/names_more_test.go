@@ -660,3 +660,25 @@ func TestNameMovesToTheLiveSessionInTheGrace(t *testing.T) {
 		t.Fatalf("the live session's inbox: %q", got)
 	}
 }
+
+// A registry rewound while its daemon was stopped is repaired when it starts, even when that is the
+// first start since the daemon kept people's claims (#268), which reads the registry again from its
+// start: that read mustn't hide the damage.
+func TestAnUpgradedDaemonStillRepairsARewoundRegistry(t *testing.T) {
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.names, d.grace = seededNames(53), 300*time.Millisecond })
+	var taken []string
+	for i := range 3 {
+		addr, _ := a.session("aaaaa"+string(rune('1'+i)), "claude-upgrade-"+string(rune('1'+i)))
+		taken = append(taken, a.named(addr))
+	}
+	a.stop()
+	work, shas := registryCommits(t, remote)
+	if len(shas) != 3 {
+		t.Fatalf("the registry has %d commits, want 3", len(shas))
+	}
+	git(t, work, "push", "-q", "--force", remote, shas[0]+":refs/murmur/names")
+	setState(t, a, "namesPeople", false) // as a daemon from before left it
+	a.start()
+	eventually(t, "a root snapshot of every name", func() bool { return tipIsSnapshot(t, remote, taken...) })
+}

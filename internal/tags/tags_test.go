@@ -181,3 +181,176 @@ func TestTheCapKeepsAHumansTags(t *testing.T) {
 		t.Fatalf("Effective = %v: the human's tags should survive the cap, before the session's and the derived", got)
 	}
 }
+
+// A change read late doesn't overwrite a human's newer choice about the same tag (#251), whichever
+// order the two were read in. Times come from different machines' clocks, so a change up to a minute
+// older still goes by the order it was read in.
+func TestALateChangeLeavesANewerChoice(t *testing.T) {
+	const opus, haiku, sonnet = "model:opus-5.5", "model:haiku-5.5", "model:sonnet-5.5"
+	at := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	later := at.Add(30 * time.Minute)
+	type change struct {
+		add, remove []string
+		at          time.Time
+	}
+	for _, c := range []struct {
+		name    string
+		base    []string
+		changes []change
+		want    []string
+	}{
+		{name: "a late removal doesn't take a newer add off",
+			changes: []change{{add: []string{"release"}, at: later}, {remove: []string{"release"}, at: at}},
+			want:    []string{"release"}},
+		{name: "a late add doesn't put a newer removal back on",
+			base:    []string{"reviewing"},
+			changes: []change{{remove: []string{"reviewing"}, at: later}, {add: []string{"reviewing"}, at: at}}},
+		{name: "a late add doesn't bring back a tag a human took away, leaving no mark",
+			changes: []change{{add: []string{"release"}, at: at.Add(10 * time.Minute)}, {remove: []string{"release"}, at: later},
+				{add: []string{"release"}, at: at}}},
+		{name: "a removal read before the older add it came after",
+			changes: []change{{remove: []string{"release"}, at: later}, {add: []string{"release"}, at: at}}},
+		{name: "a late add doesn't replace a newer one of its family",
+			changes: []change{{add: []string{haiku}, at: later}, {add: []string{sonnet}, at: at}},
+			want:    []string{haiku}},
+		{name: "a late add doesn't bring back a model that was replaced, once the replacement is gone",
+			changes: []change{{add: []string{haiku}, at: at}, {add: []string{sonnet}, at: at.Add(10 * time.Minute)},
+				{remove: []string{sonnet}, at: later}, {add: []string{haiku}, at: at.Add(5 * time.Minute)}}},
+		{name: "nor another model from before the last choice about the family",
+			changes: []change{{add: []string{sonnet}, at: at.Add(10 * time.Minute)}, {remove: []string{sonnet}, at: later},
+				{add: []string{opus}, at: at}}},
+		{name: "changes within the allowance don't wear the latest time down",
+			changes: []change{{add: []string{"release"}, at: at.Add(100 * time.Second)}, {add: []string{"release"}, at: at.Add(50 * time.Second)},
+				{remove: []string{"release"}, at: at}},
+			want: []string{"release"}},
+		{name: "nor does a removal within the allowance, over a mark",
+			changes: []change{{add: []string{"release"}, at: at.Add(100 * time.Second)}, {remove: []string{"release"}, at: at.Add(50 * time.Second)},
+				{add: []string{"release"}, at: at}}},
+		{name: "an add, then the removal of another of its family, read in that order",
+			base: []string{opus},
+			changes: []change{{add: []string{haiku}, at: at.Add(-time.Hour)}, {add: []string{sonnet}, at: at},
+				{remove: []string{haiku}, at: later}},
+			want: []string{sonnet}},
+		{name: "the same two read the other way round",
+			base: []string{opus},
+			changes: []change{{add: []string{haiku}, at: at.Add(-time.Hour)}, {remove: []string{haiku}, at: later},
+				{add: []string{sonnet}, at: at}},
+			want: []string{sonnet}},
+		{name: "a replacement within the allowance doesn't wear the family's latest time down",
+			base: []string{opus},
+			changes: []change{{add: []string{opus}, at: at.Add(100 * time.Second)}, {add: []string{haiku}, at: at.Add(50 * time.Second)},
+				{add: []string{sonnet}, at: at}},
+			want: []string{haiku}},
+		{name: "a late add leaves a newer removal in its family",
+			base:    []string{opus},
+			changes: []change{{remove: []string{opus}, at: later}, {add: []string{sonnet}, at: at}},
+			want:    []string{sonnet}},
+		{name: "one late tag of a change leaves the rest to apply",
+			changes: []change{{add: []string{"release"}, at: later}, {remove: []string{"release"}, add: []string{"urgent"}, at: at}},
+			want:    []string{"release", "urgent"}},
+		{name: "a newer change applies, over a mark",
+			changes: []change{{add: []string{"release"}, at: at}, {remove: []string{"release"}, at: later}}},
+		{name: "a newer change applies, over a removal that left no mark",
+			changes: []change{{remove: []string{"release"}, at: at}, {add: []string{"release"}, at: later}},
+			want:    []string{"release"}},
+		{name: "within a minute, the order they were read in stands",
+			changes: []change{{add: []string{"release"}, at: at.Add(time.Minute)}, {remove: []string{"release"}, at: at}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var st State
+			for _, ch := range c.changes {
+				if err := st.SetHuman(c.base, ch.add, ch.remove, "tyler", ch.at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := Names(Effective(c.base, nil, st.Human))
+			if !slices.Equal(got, append([]string{}, c.want...)) {
+				t.Errorf("tags = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A removal that left no mark is still kept, or a late add could bring the tag back.
+func TestARemovalLeavingNoMarkIsKept(t *testing.T) {
+	var st State
+	if err := st.SetHuman(nil, nil, []string{"release"}, "tyler", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if st.Empty() {
+		t.Error("the state counts as empty, so it wouldn't be kept")
+	}
+	if got := Effective(nil, nil, st.Human); len(got) != 0 {
+		t.Errorf("tags = %v, want none", got)
+	}
+}
+
+// human is Murmur's to give, from a person's address (#267): nobody types it on or off, and nothing
+// read off the bus or kept from before carries it.
+func TestHumanIsMurmursToGive(t *testing.T) {
+	if _, err := Clean([]string{"reviewing", " Human "}); err == nil {
+		t.Error("Clean took human")
+	}
+	var st State
+	if err := st.SetSelf([]string{"human"}, nil); err == nil || len(st.Self) != 0 {
+		t.Errorf("a session set human: %v %v", err, st.Self)
+	}
+	if err := st.SetHuman(nil, nil, []string{"human"}, "ada", time.Now()); err == nil {
+		t.Error("a human removed human")
+	}
+	if got := CleanRead([]Tag{{Name: Human, Src: SrcDerived}, {Name: "reviewing"}}); Has(got, Human) || !Has(got, "reviewing") {
+		t.Errorf("CleanRead: %+v", got)
+	}
+	kept := Effective([]string{"human", "reviewing"}, nil, map[string]Mark{Human: {On: true}})
+	if Has(kept, Human) || !Has(kept, "reviewing") {
+		t.Errorf("Effective: %+v", kept)
+	}
+	if got := Person(); len(got) != 1 || got[0] != (Tag{Name: Human, Src: SrcDerived}) {
+		t.Errorf("Person: %+v", got)
+	}
+	f, _ := ParseFilter([]string{"human"})
+	if !f.Match(Person()) || f.Match(nil) {
+		t.Error("who human doesn't find people")
+	}
+}
+
+// A human tag a session set before #267 takes no place: the session can still have twelve it can
+// see, and the old one goes with its next change.
+func TestAnOldHumanTagTakesNoPlace(t *testing.T) {
+	st := State{Self: []string{"human"}}
+	for i := range MaxPerSession - 1 {
+		st.Self = append(st.Self, "t"+string(rune('a'+i)))
+	}
+	if err := st.SetSelf([]string{"twelfth"}, nil); err != nil {
+		t.Fatalf("the twelfth tag: %v", err)
+	}
+	if slices.Contains(st.Self, Human) || len(st.Self) != MaxPerSession {
+		t.Errorf("Self: %v", st.Self)
+	}
+	st = State{Human: map[string]Mark{Human: {On: true}}}
+	if err := st.SetHuman(nil, []string{"reviewing"}, nil, "ada", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Human[Human]; ok {
+		t.Errorf("a human's old mark is kept: %v", st.Human)
+	}
+}
+
+// A change that fails leaves the state it was copied from as it was, old human tag and all.
+func TestAFailedChangeLeavesTheKeptStateAlone(t *testing.T) {
+	kept := State{Self: []string{"human", "reviewing"}, Human: map[string]Mark{Human: {On: true}}}
+	next := kept // a shallow copy, sharing the slice and the map
+	if err := next.SetSelf([]string{"Not A Tag!"}, nil); err == nil {
+		t.Fatal("an invalid tag was taken")
+	}
+	if !slices.Equal(kept.Self, []string{"human", "reviewing"}) {
+		t.Errorf("the kept Self changed: %q", kept.Self)
+	}
+	next = kept
+	if err := next.SetHuman(nil, []string{"Not A Tag!"}, nil, "ada", time.Now()); err == nil {
+		t.Fatal("an invalid tag was taken")
+	}
+	if _, ok := kept.Human[Human]; !ok {
+		t.Errorf("the kept marks changed: %v", kept.Human)
+	}
+}

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/tags"
@@ -25,13 +26,77 @@ type Source interface {
 	// SetTags is a human's change to the tags of the session at addr, its device/session: add, then
 	// remove. On another device, the change takes effect when that device reads it.
 	SetTags(ctx context.Context, addr string, add, remove []string) error
+	// Restart restarts the daemon onto a newer binary that is installed and waiting
+	// (Version.Ready), without waiting for the page to close. It returns ErrNoUpdate if none is.
+	Restart(ctx context.Context) error
+	// SetAccount gives this device's person a name, or a new one, and returns the account. An
+	// error says why the name won't do, in words to show them.
+	SetAccount(ctx context.Context, name string) (Account, error)
+	// Send sends text as this device's person to a name, a device/session address, a device or "*".
+	// It returns once the message is on the remote; an error means it wasn't sent, and says why.
+	Send(ctx context.Context, to, text string) (Sent, error)
+	// MarkRead takes these messages out of the person's unread.
+	MarkRead(ctx context.Context, ids []string) error
 }
+
+// ErrNoUpdate is Restart's answer when no installed update is waiting.
+var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
 // State is what the page's sessions view and mute list show.
 type State struct {
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
+	Version Version  `json:"version"`
+	Account Account  `json:"account"`
+}
+
+// Version is this daemon's version, and what is known of a newer one (#240).
+type Version struct {
+	Running string `json:"running"`
+	// Latest is the newest release, when it is newer than Running; else "". When Ready, it is the
+	// version installed, which a later release doesn't change: that is what a restart starts.
+	Latest string `json:"latest,omitempty"`
+	// Ready says a newer binary is installed, and the daemon restarts onto it once no page has
+	// been open for a while, or when Restart asks it to.
+	Ready bool `json:"ready,omitempty"`
+	// Auto says Latest is being installed without the user: updates are on and the last check
+	// went through.
+	Auto bool `json:"auto,omitempty"`
+	// Install is the command that installs the latest release by hand, for this OS.
+	Install string `json:"install,omitempty"`
+	// Daemon tells this daemon from the one that replaces it, even at the same version (a
+	// reinstall by hand): the page reloads when it changes.
+	Daemon string `json:"daemon,omitempty"`
+}
+
+// Account is this device's person (#242).
+type Account struct {
+	Name string `json:"name,omitempty"` // "" until they choose one
+	Addr string `json:"addr,omitempty"`
+	// Suggested is the name to offer someone who has none, from their git user name. "" if that
+	// makes no name, or one already taken.
+	Suggested string `json:"suggested,omitempty"`
+	// Unread is the IDs of the messages sent to them that they haven't opened.
+	Unread []string `json:"unread,omitempty"`
+	// Taken is the device whose person claimed this name first, "" if nobody else did (#268): a
+	// name chosen before people's names were claimed. They are asked to choose another.
+	Taken string `json:"taken,omitempty"`
+}
+
+// Person is a person on a device.
+type Person struct {
+	Name       string     `json:"name"`
+	Addr       string     `json:"addr"`
+	LastActive time.Time  `json:"lastActive,omitzero"` // when a page someone could see last called its daemon
+	Tags       []tags.Tag `json:"tags,omitempty"`      // human, always (#267)
+}
+
+// Sent is what became of a message a person sent.
+type Sent struct {
+	ID string `json:"id"`
+	// Note says something the sender should know, such as that the recipient is on do not disturb.
+	Note string `json:"note,omitempty"`
 }
 
 // Device is one device: one clone's daemon.
@@ -44,6 +109,8 @@ type Device struct {
 	Reachable bool      `json:"reachable"`
 	LastSeen  time.Time `json:"lastSeen"` // when this daemon last saw the device's presence change
 	Sessions  []Session `json:"sessions"`
+	// Person is the person on this device, nil if they have no account.
+	Person *Person `json:"person,omitempty"`
 }
 
 // Session is one agent session.
@@ -81,6 +148,9 @@ type Message struct {
 	// message the page already holds.
 	FromAddr string `json:"fromAddr,omitempty"`
 	ToAddr   string `json:"toAddr,omitempty"`
+	// FromPerson and ToPerson say that end is a person, not an agent's session.
+	FromPerson bool `json:"fromPerson,omitempty"`
+	ToPerson   bool `json:"toPerson,omitempty"`
 }
 
 // Message.ToKind values.

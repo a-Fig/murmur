@@ -33,6 +33,27 @@ const (
 	Tags = "tags"
 )
 
+// PersonSession is the session ID of a device's person (#242), so a person's address is
+// device/human. It is one ID per device, like the CLI's, and no agent's session can register it.
+// AgentPerson is what presence gives as such a session's agent, so a daemon from before people
+// lists them in who with their address.
+const (
+	PersonSession = "human"
+	AgentPerson   = "person"
+)
+
+// IsPerson says addr is a person's address.
+func IsPerson(addr string) bool {
+	_, sess := SplitAddr(addr)
+	return sess == PersonSession
+}
+
+// ValidPerson accepts a person's name: one names.ValidPerson takes, and that send can take as a
+// recipient, which a name no filesystem can hold as a device's ref can't be.
+func ValidPerson(name string) bool {
+	return names.ValidPerson(name) && ValidDevice(name)
+}
+
 // Event is one entry in a device's log. Fields beyond the first five depend on Type.
 type Event struct {
 	V    int       `json:"v"`
@@ -47,6 +68,9 @@ type Event struct {
 	To      string `json:"to,omitempty"` // message: device/session, device, or "*"
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
+	// Person is a person's name on a message they sent, so that a daemon that never saw their
+	// presence still calls them by it.
+	Person string `json:"person,omitempty"`
 
 	// tags: the tags the human added and removed. To is the session.
 	Add    []string `json:"add,omitempty"`
@@ -105,6 +129,9 @@ func (e *Event) Clean() {
 	e.Agent = OneLine(e.Agent, 40)
 	e.Branch = OneLine(e.Branch, 100)
 	e.Body = Text(e.Body, MaxBody)
+	if e.Type != Message || !IsPerson(e.From) || !ValidPerson(e.Person) {
+		e.Person = ""
+	}
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
@@ -115,7 +142,12 @@ func (p *Presence) Clean() {
 	var keep []SessionInfo
 	for _, s := range p.Sessions {
 		if ValidName(s.ID) {
-			if !names.Valid(s.Name) {
+			if s.ID == PersonSession {
+				if !ValidPerson(s.Name) {
+					continue // no name, no way to tell them from a stray session
+				}
+				s.Agent = AgentPerson
+			} else if !names.Valid(s.Name) {
 				s.Name = ""
 			}
 			s.Agent = OneLine(s.Agent, 40)
@@ -123,6 +155,9 @@ func (p *Presence) Clean() {
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
+			if s.ID == PersonSession {
+				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
+			}
 			keep = append(keep, s)
 		}
 	}

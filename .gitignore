@@ -8,3 +8,4 @@ dist/
 
 # wrangler deploy cache (site/wrangler.jsonc)
 .wrangler/
+.dev.vars

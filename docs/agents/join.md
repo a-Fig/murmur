@@ -5,7 +5,8 @@ Murmur's tools. This page is yours to follow, step by step.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
 and message each other. It runs through the repo's own git remote. It also checks GitHub for updates
-and sends a small daily check-in to murmur.afig.dev, set out in full in step 1.
+and, if this repo is public, sends us its address once. That address is the only thing Murmur ever
+sends us, as step 1 sets out.
 
 ## 1. Ask your user, and wait for the answer
 
@@ -23,8 +24,8 @@ joining does:
   the installed program. Tell your user this and the opt-out: `git config --global murmur.update false`
   disables updates everywhere; a repo's `murmur.update` config overrides the global value.
   `MURMUR_NO_UPDATE=1` also disables updates for a daemon started with that environment variable.
-  Usage check-in opt-outs do not disable updates. If the user wants updates off, set the git
-  config before joining. Checksums detect corruption; release signing is still planned (#193).
+  If the user wants updates off, set the git config before joining. Checksums detect corruption;
+  release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
   Codex, OpenCode, Muse Code, Pi, Grok), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
@@ -41,42 +42,36 @@ joining does:
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
   your last agent session does, except that it stays (for up to a day) while a T3 thread that has
   gone idle could be woken by a message.
-- Once a day, while that process runs, it checks in with murmur.afig.dev. What the check-in sends
-  is in full below; update requests also reach GitHub, without the check-in identifiers. Tell your
-  user this in so many words, not as a passing mention.
+- If this repo is public, Murmur sends its address to murmur.afig.dev, once for the whole repo.
+  That is the only thing Murmur ever sends us, and a private repo sends nothing at all; the section
+  below says exactly how. Tell your user this in so many words, not as a passing mention.
 - Joining can be undone in this repo with `mur join --leave`. It removes the hooks, stops the
   background process and forgets that your user joined; Murmur stays registered, and its tools
   approved, in the agents, doing nothing here (what it prints says how to remove each).
 
 ### What murmur.afig.dev receives, and why
 
-The check-in is a JSON POST to `https://murmur.afig.dev/v1/checkin`, at most once a UTC day per
-clone, and only while the background process above is running. It holds
-exactly these fields:
+**The only thing Murmur ever sends us is a public repo's address**, such as
+`github.com/a-Fig/murmur`. Nothing is sent from a private repo, or from a repo that isn't on GitHub.
+Nothing else is sent from any repo: no IDs, names, email addresses, messages, statuses, branches,
+file paths, versions or anything about this machine.
 
-- `user`: a random ID, made once for this user account on this machine and kept in its config
-  folder (`murmur/id`). It is not derived from anything about your user.
-- `team`: a one-way hash of the repo remote's address (host and path), so users of one repo count
-  as one team. It isn't salted: someone who holds the stats and already knows a repo's address can
-  check whether it is among them, but nobody can read the addresses back out.
-- `version`, `os` and `arch`: mur's version, and the operating system and processor type.
+How: when `mur init`, `mur join` or the background process starts, Murmur asks GitHub whether the
+repo is public, signed out, the way anyone could. If it is, Murmur sends the address in a JSON POST
+to `https://murmur.afig.dev/v1/repo` (`{"repo": "github.com/<owner>/<name>"}`), then puts a marker
+on the repo's own remote, `refs/murmur/reported`, so no other clone of the repo sends it again. Each
+public repo is sent once in its life, however many people use it. While a repo is private, the
+background process asks GitHub again once a day, so a repo made public later is sent then.
 
-It sends nothing else: no names, email addresses, messages, statuses, branches, file paths or repo
-contents. The site keeps one row per user, team and day, and no IP addresses. The answer is the
-latest release number, so `mur version` can say when there is a newer one.
+Why: to count how many repos and people use Murmur, nothing more. Murmur is new, our goal is 100
+active users (written 2026-11-07), and Murmur's messages travel through each team's own repo, so
+they never reach us. The address tells us where to look; the rest of the count is read from the
+public repo's own `refs/murmur/` refs, which anyone can read. The site keeps one row per repo (its
+address and the day it came) and no IP addresses. Only Murmur's maintainer sees the counts. The
+code is `internal/publicrepo`, and `docs/VISION.md` has the design.
 
-We collect this only to count how many people use Murmur. Murmur is new, and our goal is 100
-active users (written 2026-11-07); the check-in is the only way we can tell how close we are,
-because everything else travels through each team's own repo and never reaches us. Only Murmur's
-maintainer sees the counts, on a page that needs a key. The code is `internal/checkin`, and
-`docs/VISION.md` has the design.
-
-Please ask your user to leave it on. It costs them nothing, and without it we have no way to know
-whether anyone uses Murmur. If they still want it off, they can turn it off and keep using Murmur:
-`git config --global murmur.usage false` turns it off for every clone (a `murmur.usage` set in one
-repo's own git config wins over it). If they ask for that, run it before `mur join`.
-`DO_NOT_TRACK=1` or `MURMUR_NO_USAGE=1` works too, but only for a background process started with
-that variable set, and agents' sessions start it as well.
+There is no setting to turn it off: the address is already public. Murmur versions before this one
+sent a daily check-in instead; the site stopped storing those on 2026-11-08.
 
 ### Then wait for the answer
 
