@@ -1,5 +1,4 @@
-# DEBUG for #217, not to be merged: the whole daemon package, run over and over on macOS, with a
-# goroutine dump and the daemons' logs on a failure, and each test's time.
+# DEBUG for #217, not to be merged: does starting `git` hang on macOS, with and without -race?
 name: debug217
 
 on:
@@ -9,15 +8,21 @@ permissions:
   contents: read
 
 jobs:
-  full:
+  fork:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        include:
+          - {name: race-1, flags: '-race', cgo: '1'}
+          - {name: race-2, flags: '-race', cgo: '1'}
+          - {name: plain-cgo0-1, flags: '', cgo: '0'}
+          - {name: plain-cgo0-2, flags: '', cgo: '0'}
+          - {name: plain-cgo1, flags: '', cgo: '1'}
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
-      DEBUG217: '1'
+      FORKSTRESS: 30m
+      CGO_ENABLED: ${{ matrix.cgo }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -25,23 +30,10 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: go test -race -c -o daemon.test ./internal/daemon
-      - name: loop
-        run: |
-          cd internal/daemon
-          end=$(( $(date +%s) + 50*60 ))
-          i=0; failed=0
-          while [ $(( $(date +%s) + 700 )) -lt $end ]; do
-            i=$((i+1)); s=$(date +%s)
-            if ../../daemon.test -test.count=1 -test.v -test.timeout 15m > ../../out-$i.txt 2>&1; then r=ok; else r=FAIL; failed=1; fi
-            echo "run $i: $r in $(( $(date +%s) - s ))s"
-            grep -E -- '^--- FAIL' ../../out-$i.txt || true
-            grep -E -- '--- (PASS|FAIL)' ../../out-$i.txt | sed -E 's/.*--- (PASS|FAIL): ([^ ]+) \((.*)s\)/\3 \2/' | sort -rn | head -4
-            grep 'DEBUG217 goroutines' ../../out-$i.txt | tail -1
-          done
-          exit $failed
+      - run: go version && sw_vers && which -a git && git --version
+      - run: go test ${{ matrix.flags }} -count=1 -v -timeout 40m -run TestForkStress ./internal/gitx 2>&1 | tee out.txt | grep -v '^\s' | grep -E 'FORKSTRESS|---|ok|FAIL|git is'
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: out-${{ matrix.shard }}
-          path: out-*.txt
+          name: fork-${{ matrix.name }}
+          path: out.txt
