@@ -732,6 +732,12 @@ function versionSection() {
 const STATE_WORDS = { on: "Active", idle: "Idle", dnd: "Do not disturb", off: "Offline" };
 const PERSON_TIPS = { on: "On " + NAME + " now", off: "Not on " + NAME + " now" };
 
+// The products, by the names people know them by, wherever an agent is named.
+const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex", t3: "T3 Code" };
+function agentName(a) {
+  return (a && AGENT_NAMES[a]) || a || "";
+}
+
 // A model: tag (#211, derived for T3 sessions), shown beside the agent.
 function modelOf(s) {
   const t = (s.tags || []).find((x) => x && typeof x.name === "string" && x.name.startsWith("model:"));
@@ -2060,8 +2066,8 @@ function fleetRow(d, s, need, on, F, pinned, owes = false) {
   const showBranch = (pinned || F.by !== "branch") && s.branch;
   const job = pinned && F.by === "group" && groupOf(s) && "job " + groupOf(s);
   const branch = showBranch && { cls: "fx-part-branch", kids: [h("span", { class: "mono" }, s.branch), pr && fxPr(pr)] };
-  const parts = [dev, s.agent, job, branch].filter(Boolean);
-  const titled = [dev, s.agent, job, showBranch].filter(Boolean).join(" · ");
+  const parts = [dev, agentName(s.agent), job, branch].filter(Boolean);
+  const titled = [dev, agentName(s.agent), job, showBranch].filter(Boolean).join(" · ");
   return h(
     "div",
     { class: "fx-tr fx-row" + (on ? " on" : "") + (need ? " need" : "") + (picked ? " picked" : "") + (d.reachable ? "" : " stale"), role: "row" },
@@ -2643,7 +2649,7 @@ function fleetInspector(name) {
   const t = when(s.lastActive);
   const started = when(s.started);
   const seenAt = when(d.lastSeen);
-  const agentParts = [s.agent, modelOf(s)].filter(Boolean);
+  const agentParts = [agentName(s.agent), modelOf(s)].filter(Boolean);
   const need = fleetNeeds([{ d, s }]).get(name);
   const note = need && waitNote(d, s);
   const hidden = isHidden(s);
@@ -2653,12 +2659,12 @@ function fleetInspector(name) {
     // "last seen 47m ago" keeps together, so a narrow line breaks after "offline,".
     ["Device", h("span", null, deviceLabel(d) + (d.reachable ? "" : ", offline" + (seenAt ? ", " : "")), !d.reachable && seenAt && agoEl("span", "fx-nowrap", seenAt, "last seen "))],
     // Each part keeps together, so a narrow pane breaks the line at the "·", not inside a model name.
-    ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : "–"],
-    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr)] : "–"],
+    ["Agent", agentParts.length ? h("span", { class: "fx-parts", title: agentParts.join(" · ") }, fxParts(agentParts)) : fxDash()],
+    ["Branch", s.branch ? [h("span", { class: "mono" }, s.branch), pr && fxPr(pr)] : fxDash()],
     groupOf(s) && ["Job", groupOf(s)],
-    s.addr && ["Tags", tagsLine(s)],
-    ["Started", started ? agoEl("span", "", started) : "–"],
-    ["Last active", t ? agoEl("span", "", t) : "–"],
+    s.addr && ["Tags", tagsLine(s, true)],
+    ["Started", started ? agoEl("span", "", started) : fxDash()],
+    ["Last active", t ? agoEl("span", "", t) : fxDash()],
   ].filter(Boolean);
   const owed = need?.msgs || [];
   const unanswered = new Set(waitingQuestions());
@@ -3117,7 +3123,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || agentName(r.s.agent) : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -3189,8 +3195,9 @@ function page() {
 // the session set, so on another device it shows once that device has read it.
 const TAG_SOURCES = { human: "Set by a human", derived: "Worked out by its daemon" };
 
-function tagsLine(s) {
-  const tags = Array.isArray(s.tags) ? s.tags : [];
+// In the details (inDetails), a model: tag is left out: the Agent row shows the model.
+function tagsLine(s, inDetails = false) {
+  const tags = (Array.isArray(s.tags) ? s.tags : []).filter((t) => !(inDetails && typeof t?.name === "string" && t.name.startsWith("model:")));
   const addr = s.addr || s.name;
   const key = "t-" + addr;
   const busy = ui.tagging.has(key);
@@ -3635,7 +3642,7 @@ function noMessages() {
 function messageDetail(m) {
   const at = when(m.at);
   const sender = findSession(fromName(m));
-  return [sender && [sender.session.agent, sender.device.id].filter(Boolean).join(" on "), at && stamp(at)]
+  return [sender && [agentName(sender.session.agent), sender.device.id].filter(Boolean).join(" on "), at && stamp(at)]
     .filter(Boolean)
     .join(" · ");
 }
@@ -4124,7 +4131,7 @@ function conversationPane(c) {
             : deviceLabel(op.device)
           : ""
         : of
-          ? of.session.doing || of.session.agent || ""
+          ? of.session.doing || agentName(of.session.agent)
           : "Not running"
       : "";
   return h(
@@ -4273,7 +4280,7 @@ function chatMessage(m, from, at, head, before) {
           h("span", { class: "chat-msg-from truncate" + (mine ? " chat-msg-you" : "") }, from),
           mine && h("span", { class: "chat-msg-via" }, "you"),
           !mine && m.fromPerson && humanTag(),
-          sender && h("span", { class: "chat-msg-via truncate" }, [sender.session.agent, sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
+          sender && h("span", { class: "chat-msg-via truncate" }, [agentName(sender.session.agent), sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
           h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
         ),
       messageText(m, before),
@@ -5383,12 +5390,10 @@ async function saveAccount(name) {
   render();
 }
 
-// The products, by the names people know them by.
-const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex", t3: "T3 Code" };
 
 // Under a session's name in Settings: what runs it, how it is, and its branch where there's room.
 function sessionLine(d, s) {
-  const text = [AGENT_NAMES[s.agent] || s.agent, d && stateWord(d, s), s.branch].filter(Boolean).join(" · ");
+  const text = [agentName(s.agent), d && stateWord(d, s), s.branch].filter(Boolean).join(" · ");
   return h("span", { class: "set-sess-line", title: text }, text);
 }
 
