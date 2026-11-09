@@ -4290,3 +4290,1142 @@ div.menu-button.update:hover {
   background: rgb(255 255 255 / 6%);
   color: #d4d4d4;
 }
+
+/* All sessions (#183): a table of every session, after Astryx's neutral dark theme
+   (astryx.atmeta.com/docs/tokens). Colour only where it means something: state, and what waits on
+   a person. Its names for the page's tokens: */
+.fx,
+.fx-split {
+  --fx-page: var(--background);
+  --fx-pane: #1f1f1f;
+  --fx-surface: var(--card);
+  --fx-border: var(--border);
+  --fx-border-strong: #525252;
+  --fx-hover: rgb(255 255 255 / 4%);
+  --fx-pressed: rgb(255 255 255 / 8%);
+  --fx-text: #fafafa;
+  --fx-text-2: var(--muted-foreground);
+  --fx-text-3: #8f8f8f;
+  --fx-success: #64af4c;
+  --fx-warning: #ffce2f;
+  --fx-warning-text: #eec448;
+  --fx-error: #ff705d;
+  --fx-ring: var(--ring);
+  --fx-radius-inner: 8px;
+  --fx-ease: cubic-bezier(0.24, 1, 0.4, 1);
+  color: var(--fx-text);
+  font-size: 0.875rem;
+  line-height: 1.4286;
+}
+.fx {
+  max-width: 90rem;
+  margin: 0 auto;
+  padding: 1.75rem 2rem 3rem;
+}
+:is(.fx, .fx-pane) .mono {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.fx-muted {
+  color: var(--fx-text-2);
+  font-size: 0.75rem;
+  line-height: 1.6667;
+}
+.fx-none {
+  color: var(--fx-text-3);
+}
+.fx-nowrap {
+  white-space: nowrap;
+}
+
+/* The page beside its details pane. The pane is as tall as the window and stays put while the
+   table scrolls; it scrolls on its own, with its header held at the top. */
+.fx-split {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  min-height: 100%;
+}
+.fx-split.has-pane {
+  grid-template-columns: minmax(0, 1fr) var(--fx-pane-w, 26rem);
+}
+.fx-split > .fx {
+  width: 100%;
+}
+.fx-split.has-pane > .fx {
+  max-width: none;
+  padding-inline: 1.5rem;
+}
+.fx-pane {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  border-left: 1px solid var(--fx-border);
+  background: var(--fx-pane);
+}
+.fx-pane-in {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 1.25rem 1.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fx-border-strong) transparent;
+}
+.fx-grip {
+  position: absolute;
+  z-index: 6;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.fx-grip::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 150ms var(--fx-ease);
+}
+.fx-grip:hover::after,
+.fx-grip.drag::after {
+  background: var(--fx-border-strong);
+}
+.fx-grip:focus-visible {
+  outline: none;
+}
+.fx-grip:focus-visible::after {
+  background: var(--fx-ring);
+}
+.fx-scrim {
+  display: none;
+}
+
+/* Over the table: where the table would be left under 680px, the pane lies over its right side
+   (fleetFit sets "overlay"), the table keeps its full width, and a light scrim sets it back. */
+.fx-split.has-pane.overlay {
+  grid-template-columns: minmax(0, 1fr);
+}
+.fx-split.has-pane.overlay > .fx {
+  padding-inline: 2rem;
+}
+.fx-split.overlay > .fx-pane {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  width: var(--fx-pane-w, 26rem);
+  box-shadow: -24px 0 48px -12px rgb(0 0 0 / 70%);
+}
+.fx-split.overlay > .fx-scrim {
+  display: block;
+  position: absolute;
+  z-index: 10;
+  inset: 0;
+  background: rgb(0 0 0 / 28%);
+  pointer-events: none;
+}
+
+/* Header and toolbar. */
+.fx-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+.fx-head-text {
+  min-width: 0;
+}
+.fx-head h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.3333;
+  letter-spacing: -0.01em;
+}
+.fx-head p {
+  margin-top: 0.125rem;
+  color: var(--fx-text-2);
+}
+.fx-clear {
+  color: var(--fx-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.fx-down {
+  color: var(--fx-warning-text);
+  font-weight: 500;
+}
+/* The toolbar stays at the top as the table scrolls under it. */
+.fx-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0 -0.25rem;
+  padding: 0.5rem 0.25rem 0.75rem;
+  background: var(--fx-page);
+  container-type: inline-size;
+}
+.fx-input {
+  display: flex;
+  flex: 0 1 15rem;
+  min-width: 10rem;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2rem;
+  padding: 0 0.375rem 0 0.625rem;
+  border: 1px solid var(--fx-border);
+  border-radius: var(--fx-radius-inner);
+  color: var(--fx-text-2);
+}
+.fx-input:focus-within {
+  border-color: var(--fx-border-strong);
+}
+.fx-input .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+.fx-input input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--fx-text);
+  font-size: 0.875rem;
+}
+.fx-input input::placeholder {
+  color: var(--fx-text-3);
+}
+/* One way to clear a search: the Clear button, not the field's own ×. */
+.fx-input input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.fx-kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3125rem;
+  border: 1px solid var(--fx-border);
+  border-radius: 5px;
+  color: var(--fx-text-3);
+  font: 500 0.6875rem/1 var(--font-sans);
+}
+.fx-spacer {
+  flex: 1;
+}
+.fx-label {
+  color: var(--fx-text-2);
+  font-size: 0.75rem;
+}
+.fx-group-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.fx-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-basis: 100%;
+  margin-top: 0.25rem;
+  padding: 0.375rem 0.375rem 0.375rem 0.75rem;
+  border-radius: var(--fx-radius-inner);
+  background: var(--fx-surface);
+}
+.fx-select-n {
+  margin-right: 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+/* Where search, the state filter and the rest can't share a line, they wrap rather than each
+   taking one. */
+@container (max-width: 1100px) {
+  .fx-spacer {
+    display: none;
+  }
+}
+/* Narrower, the state filter keeps its dots and counts, with the words in their tooltips. */
+@container (max-width: 760px) {
+  .fx-seg .fx-seg-word,
+  .fx-label {
+    display: none;
+  }
+}
+
+/* Segmented control */
+.fx-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  height: 2rem;
+  padding: 2px;
+  border-radius: var(--fx-radius-inner);
+  background: var(--fx-surface);
+}
+.fx-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 100%;
+  padding: 0 0.625rem;
+  border-radius: 6px;
+  color: var(--fx-text-2);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 175ms var(--fx-ease), color 175ms var(--fx-ease);
+}
+.fx-seg button:hover {
+  color: var(--fx-text);
+}
+.fx-seg button.on {
+  background: rgb(255 255 255 / 12%);
+  color: var(--fx-text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 30%);
+}
+.fx-seg-n {
+  color: var(--fx-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.fx-seg-n.zero {
+  opacity: 0.75;
+}
+
+/* Buttons */
+.fx-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2rem;
+  padding: 0 0.875rem;
+  border-radius: var(--fx-radius-inner);
+  background: rgb(255 255 255 / 10%);
+  color: var(--fx-text);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 175ms var(--fx-ease);
+}
+.fx-btn:hover:not(:disabled) {
+  background: rgb(255 255 255 / 15%);
+}
+.fx-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fx-btn .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.fx-btn-primary {
+  background: #ededed;
+  color: #141414;
+}
+.fx-btn-primary:hover:not(:disabled) {
+  background: #fff;
+}
+.fx-btn-ghost {
+  background: none;
+  color: var(--fx-text-2);
+}
+.fx-btn-ghost:hover:not(:disabled) {
+  background: var(--fx-hover);
+  color: var(--fx-text);
+}
+.fx-btn-line {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--fx-border);
+}
+.fx-btn-line[aria-pressed="true"] {
+  background: rgb(255 255 255 / 12%);
+  box-shadow: none;
+}
+.fx-icon-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--fx-radius-inner);
+  color: var(--fx-text-2);
+}
+.fx-icon-btn:hover {
+  background: var(--fx-hover);
+  color: var(--fx-text);
+}
+.fx-icon-btn .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* State dot, badge, PR chip, flag */
+.fx-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: #8a8a8a;
+}
+.fx-dot-on {
+  background: var(--fx-success);
+}
+.fx-dot-idle {
+  background: var(--fx-warning);
+}
+.fx-dot-dnd {
+  background: var(--fx-error);
+}
+.fx-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--fx-text-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.fx-pr {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  padding: 0 0.375rem;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--fx-text);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+.fx-pr.draft {
+  background: rgb(255 255 255 / 6%);
+  color: var(--fx-text-2);
+}
+a.fx-pr {
+  transition: background-color 120ms var(--fx-ease);
+}
+a.fx-pr:hover {
+  background: rgb(255 255 255 / 16%);
+  color: var(--fx-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.fx-flag {
+  flex: none;
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--fx-warning);
+}
+
+/* The table. No outer box: rows with hairlines between them, a header that stays under the
+   toolbar, group headings across the table. It drops columns by its own width (the container
+   queries below). */
+.fx-table {
+  container-type: inline-size;
+}
+.fx-tr {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1.25fr) 8rem minmax(12rem, 2fr) minmax(10rem, 1fr) 6rem;
+  column-gap: 1.25rem;
+  align-items: center;
+  padding: 0 0.75rem;
+  text-align: left;
+}
+.fx-c {
+  min-width: 0;
+}
+.fx-c-state {
+  grid-column: 2;
+}
+.fx-c-doing {
+  grid-column: 3;
+}
+.fx-c-branch {
+  grid-column: 4;
+}
+.fx-c-last {
+  grid-column: 5;
+  justify-self: end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--fx-text-2);
+}
+.fx-thead {
+  position: sticky;
+  top: var(--fx-tb, 3.25rem);
+  z-index: 3;
+  background: var(--fx-page);
+}
+.fx-th {
+  min-height: 2.25rem;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--fx-border);
+  background: var(--fx-page);
+  color: var(--fx-text-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.fx-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 1.5rem;
+  margin: 0 -0.375rem;
+  padding: 0 0.375rem;
+  border-radius: 6px;
+  color: inherit;
+  font-weight: 500;
+}
+.fx-sort:hover {
+  background: var(--fx-hover);
+  color: var(--fx-text);
+}
+.fx-sort.on {
+  color: var(--fx-text);
+}
+.fx-sort-ico {
+  display: inline-grid;
+  width: 0.75rem;
+  opacity: 0;
+}
+.fx-sort-ico .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.fx-sort:hover .fx-sort-ico {
+  opacity: 0.5;
+}
+.fx-sort.on .fx-sort-ico {
+  opacity: 1;
+}
+.fx-c-last .fx-sort {
+  margin-right: -0.375rem;
+}
+
+.fx-row {
+  position: relative;
+  min-height: 2.75rem;
+  padding-block: 0.375rem;
+  row-gap: 0.125rem;
+  border-bottom: 1px solid var(--fx-border);
+  scroll-margin-top: calc(var(--fx-tb, 3.25rem) + 2.5rem);
+  transition: background-color 120ms var(--fx-ease);
+}
+.fx-row > .fx-c:not(.fx-c-who) {
+  grid-row: 1;
+}
+.fx-row:hover {
+  background: var(--fx-hover);
+}
+.fx-row.on,
+.fx-row.picked {
+  background: var(--fx-pressed);
+}
+.fx-row.on {
+  box-shadow: inset 2px 0 0 var(--fx-text);
+}
+.fx-row:has(.fx-open:focus-visible) {
+  outline: 2px solid var(--fx-ring);
+  outline-offset: -2px;
+}
+.fx-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+}
+:is(.fx, .fx-pane) .fx-who > .avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.fx-who-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+/* The name is the row's button, and covers the row. */
+.fx-open {
+  display: block;
+  line-height: 1.25rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fx-text);
+  font-weight: 500;
+  text-align: left;
+}
+.fx-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.fx-open:focus-visible {
+  outline: none;
+}
+.fx-subline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.fx-subline:empty {
+  display: none;
+}
+.fx-subline > .fx-parts {
+  flex: 0 1 auto;
+  line-height: 1rem;
+}
+.fx-subline > .stags {
+  flex: none;
+  flex-wrap: nowrap;
+  max-width: 60%;
+}
+/* One line here: <wbr> would wrap it even under nowrap. */
+.fx-subline wbr {
+  display: none;
+}
+.fx-sub-doing {
+  display: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-c-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+.fx-c-doing {
+  color: var(--fx-text-2);
+}
+.fx-status {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.25rem;
+}
+.fx-c-branch {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--fx-text-2);
+}
+.fx-c-branch .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The branch on the line under the name, where its column has gone (below). */
+.fx-part-branch {
+  display: none;
+}
+.fx-part-branch .fx-pr {
+  margin-left: 0.375rem;
+}
+/* With the details open, Working on keeps to one line, so rows stay one height to scan. */
+.has-pane .fx-status {
+  -webkit-line-clamp: 1;
+}
+/* While picking, a box at the start of each row. */
+.fx-pick {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 0.3125rem;
+  box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 32%);
+}
+.fx-pick.on {
+  background: #ededed;
+  color: #141414;
+  box-shadow: none;
+}
+.fx-pick .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  stroke-width: 3;
+}
+
+/* A flagged row's reason runs under the whole row, lined up with the name, with the flag's dot
+   under the face. The name's cell spans the row on a subgrid so the reason stays in it. */
+.fx-row.need > .fx-c-who {
+  grid-column: 1 / -1;
+  grid-row: 1 / span 2;
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+  row-gap: inherit;
+}
+.fx-row.need > .fx-c-who > .fx-who {
+  grid-column: 1;
+  grid-row: 1;
+}
+.fx-row.need > .fx-c-who > .fx-reason {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.fx-reason {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, auto) auto;
+  justify-content: start;
+  column-gap: 0.625rem;
+  align-items: baseline;
+  margin: 0;
+  color: var(--fx-text-2);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.fx-reason .fx-flag {
+  justify-self: center;
+  transform: translateY(-0.0625rem);
+}
+.fx-reason-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-reason-note {
+  margin-left: -0.25rem;
+  white-space: nowrap;
+  color: var(--fx-text-3);
+}
+.fx-reason b,
+.fx-insp-wait b {
+  color: var(--fx-text);
+  font-weight: 600;
+}
+.fx-pick + .avatar {
+  margin-left: -0.125rem;
+}
+.fx-table.selecting .fx-reason {
+  padding-left: 1.625rem;
+}
+
+/* Group headings */
+.fx-grow,
+.fx-gcell {
+  display: block;
+}
+.fx-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--fx-border);
+  background: rgb(255 255 255 / 2%);
+  text-align: left;
+}
+button.fx-group:hover {
+  background: var(--fx-hover);
+}
+.fx-chev {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--fx-text-2);
+  flex-shrink: 0;
+}
+.fx-group-name {
+  flex: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fx-group-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fx-text-2);
+  font-size: 0.75rem;
+}
+.fx-group .fx-badge {
+  margin-left: auto;
+}
+.fx-group .fx-pr {
+  margin-left: 0.25rem;
+}
+.fx-group-need {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-left: 0.25rem;
+  color: var(--fx-warning-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Empty */
+.fx-empty {
+  padding: 3rem 1rem;
+  border-bottom: 1px solid var(--fx-border);
+  text-align: center;
+  color: var(--fx-text-2);
+}
+.fx-empty-title {
+  margin-bottom: 0.875rem;
+  color: var(--fx-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.fx-empty .fx-btn {
+  margin: 0 auto;
+}
+
+/* Settled sessions: the page knows them from their messages, so fewer columns. */
+.fx-tr.fx-settled {
+  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 2fr) 7rem 6rem;
+}
+.fx-settled > .fx-c:nth-child(2) {
+  grid-column: 2;
+}
+.fx-settled > .fx-c:nth-child(3) {
+  grid-column: 3;
+}
+.fx-settled > .fx-c:nth-child(4) {
+  grid-column: 4;
+}
+.fx-c-chats {
+  color: var(--fx-text-2);
+  white-space: nowrap;
+}
+
+/* Four columns: Branch goes, to the line under the name. */
+@container (max-width: 1000px) {
+  .fx-tr {
+    grid-template-columns: minmax(12rem, 1.3fr) 7.5rem minmax(10rem, 2fr) 5rem;
+    column-gap: 1rem;
+  }
+  .fx-c-branch {
+    display: none;
+  }
+  .fx-c-last {
+    grid-column: 4;
+  }
+  .fx-part-branch {
+    display: inline;
+  }
+  .fx-tr.fx-settled {
+    grid-template-columns: minmax(10rem, 1fr) minmax(10rem, 2fr) 6.5rem 5rem;
+  }
+}
+/* Narrow: the name, its state and when; what it's working on takes the line under the name. */
+@container (max-width: 600px) {
+  .fx-tr {
+    grid-template-columns: minmax(0, 1fr) auto 4.75rem;
+    column-gap: 0.75rem;
+    padding: 0 0.5rem;
+  }
+  .fx-c-doing {
+    display: none;
+  }
+  .fx-c-last {
+    grid-column: 3;
+  }
+  .fx-who-text:has(.fx-sub-doing) > .fx-subline {
+    display: none;
+  }
+  .fx-sub-doing {
+    display: block;
+  }
+  .fx-c-state {
+    font-size: 0.8125rem;
+  }
+}
+
+/* Details */
+.fx-insp-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 -1.25rem 1rem;
+  padding: 0.75rem 0.75rem 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--fx-border);
+  background: var(--fx-pane);
+}
+.fx-insp-head .avatar {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.8125rem;
+}
+.fx-insp-head .pres {
+  box-shadow: 0 0 0 2px var(--fx-pane);
+}
+.fx-insp-head h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.fx-insp-wait {
+  display: grid;
+  grid-template-columns: 0.375rem minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 0.625rem;
+  margin: 0 0 1rem;
+  color: var(--fx-text-2);
+  line-height: 1.5;
+}
+.fx-insp-wait .fx-flag {
+  transform: translateY(-0.0625rem);
+}
+.fx-insp-note {
+  color: var(--fx-text-3);
+}
+.fx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+.fx-actions .fx-btn {
+  max-width: 100%;
+}
+.fx-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.5rem 0.75rem;
+  padding: 0.875rem 0;
+  border-top: 1px solid var(--fx-border);
+  border-bottom: 1px solid var(--fx-border);
+}
+.fx-meta dt {
+  color: var(--fx-text-2);
+}
+.fx-meta dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fx-meta .mono {
+  font-size: 0.8125rem;
+}
+.fx-meta .session-tags {
+  padding-left: 0;
+}
+.fx-h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.5rem 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.fx-dms {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0 -0.5rem 1rem;
+  padding: 0;
+  list-style: none;
+}
+.fx-dms-none {
+  margin-bottom: 1rem;
+}
+.fx-dm-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border-radius: var(--fx-radius-inner);
+}
+.fx-dm-item.wait {
+  box-shadow: inset 2px 0 0 var(--fx-warning);
+  border-radius: 0 var(--fx-radius-inner) var(--fx-radius-inner) 0;
+}
+.fx-dm-item.marked {
+  box-shadow: inset 2px 0 0 var(--fx-border-strong);
+  border-radius: 0 var(--fx-radius-inner) var(--fx-radius-inner) 0;
+}
+.fx-dm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: inherit;
+  text-align: left;
+  transition: background-color 150ms var(--fx-ease);
+}
+.fx-dm:hover {
+  background: var(--fx-hover);
+}
+.fx-dm-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--fx-text-2);
+  font-size: 0.75rem;
+}
+.fx-dm-head b {
+  color: var(--fx-text);
+  font-weight: 600;
+}
+.fx-dm-time {
+  color: var(--fx-text-2);
+  white-space: nowrap;
+}
+.fx-dm-subj {
+  max-width: 100%;
+  color: var(--fx-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-dm-q {
+  color: var(--fx-text-2);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.fx-dm-act {
+  height: 1.625rem;
+  margin: 0 0 0.5rem 0.625rem;
+  padding: 0 0.625rem;
+  border: 1px solid var(--fx-border-strong);
+  border-radius: 6px;
+  color: var(--fx-text);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.fx-dm-act:hover {
+  background: var(--fx-hover);
+  border-color: #737373;
+}
+
+/* fxParts: "a · b · c" that wraps only between parts and never leaves a dot at a line's end or
+   start. Each part leads with a 0.9em "·", and every line starts 0.9em left, clipped. On one line
+   it's cut short with an ellipsis. */
+.fx-parts {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+}
+.fx-parts-in {
+  display: block;
+  margin-left: -0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-part {
+  white-space: nowrap;
+}
+.fx-sep {
+  display: inline-block;
+  width: 0.9em;
+  text-align: center;
+  white-space: pre;
+}
+.fx-sep.lead {
+  user-select: none;
+}
+.fx-meta .fx-parts-in {
+  white-space: normal;
+}
+.fx-meta .fx-part {
+  display: inline-block;
+  position: relative;
+  max-width: 100%;
+  padding-left: 0.9em;
+  white-space: normal;
+  vertical-align: top;
+}
+.fx-meta .fx-sep {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* One focus ring across the view. */
+:is(.fx, .fx-pane) :is(.fx-group, .fx-seg button, .fx-dm, .fx-btn, .fx-icon-btn, .fx-sort, .fx-dm-act):focus-visible {
+  outline: 2px solid var(--fx-ring);
+  outline-offset: -2px;
+}
+.fx-input:has(input:focus-visible) {
+  outline: 2px solid var(--fx-ring);
+  outline-offset: -1px;
+}
+a.fx-pr:focus-visible,
+.fx-clear:focus-visible {
+  outline: 2px solid var(--fx-ring);
+  outline-offset: 2px;
+}
+
+/* Motion: the pane slides in as it opens, and a group's rows fade in as it unfolds. */
+@keyframes fx-pane-in {
+  from {
+    transform: translateX(1.5rem);
+    opacity: 0;
+  }
+}
+@keyframes fx-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.25rem);
+  }
+}
+.fx-pane.enter {
+  animation: fx-pane-in 180ms var(--fx-ease);
+}
+.fx-row.enter {
+  animation: fx-row-in 160ms var(--fx-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-pane.enter,
+  .fx-row.enter {
+    animation: none;
+  }
+  .fx-seg button,
+  .fx-btn,
+  .fx-row,
+  .fx-dm,
+  .fx-grip::after,
+  a.fx-pr {
+    transition: none;
+  }
+}
