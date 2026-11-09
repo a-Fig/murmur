@@ -455,3 +455,6 @@
 .g-page-head h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
 .g-page-head p { font-size: 0.875rem; }
 [data-variant="g"] .section-head { padding: 0; }
+/* Faces are grey: the name is who it is, and colour is kept for state. */
+[data-variant="g"] .avatar, [data-variant="g"] .avatar[class*="avatar-"] { background: #333333 !important; color: #d4d4d4 !important; }
+.g-pr { background: rgb(255 255 255 / 8%); color: #d4d4d4; }

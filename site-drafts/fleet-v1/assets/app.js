@@ -403,7 +403,7 @@ function sidebar() {
               },
             },
             VARIANT === "b" || VARIANT === "f" ? icon(ui.collapsed?.has(d.id) ? "chevronRight" : "chevronDown", "sec-caret") : icon("laptop"),
-            VARIANT === "g" ? h("span", { class: "label" }, deviceDot(d), d.self ? "This device" : d.owner || d.id, h("span", { class: "dev-host" }, d.id.replace(/-[0-9a-f]{4}$/, ""))) : h("span", { class: "label" }, d.id),
+            VARIANT === "g" ? h("span", { class: "label" }, deviceDot(d), d.self ? "This device" : fleetDeviceLabel(d), d.self && h("span", { class: "dev-host" }, deviceName(d))) : h("span", { class: "label" }, d.id),
             d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
             h("span", { class: "menu-count" }, d.sessions.length),
           ),
@@ -435,7 +435,6 @@ function sidebar() {
                 );
               }),
             ),
-          VARIANT === "g" && settledFold(d.id),
         ),
       ),
     ),
@@ -2277,6 +2276,8 @@ function fleetFit() {
   if (!split) return;
   const tabs = root.querySelector(".sv-tabs");
   split.style.setProperty("--fx-top", (tabs ? tabs.offsetHeight : 0) + "px");
+  const pane = split.querySelector(".fx-pane");
+  split.classList.toggle("overlay", !!pane && split.clientWidth - pane.offsetWidth < 680);
   const bar = split.querySelector(".fx-toolbar");
   if (bar) split.style.setProperty("--fx-tb", bar.offsetHeight + "px");
 }
@@ -2710,7 +2711,7 @@ function fleetPage() {
   const shownNeeds = needs.size;
   const needNote = !n ? "" : shownNeeds === n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : " · " + (shownNeeds ? shownNeeds + " of the " : "none of the ") + n + (n === 1 ? " that needs" : " that need") + " a look";
   const sub = (q || F.state) && all.length
-    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + needNote + " ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]
+    ? ["Showing " + rows.length + " of " + plural(all.length, "session") + needNote, rows.length > 0 && [" ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]]
     : all.length
       ? plural(all.length, "session") + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look")
       : "No sessions running · " + plural(ui.state.devices?.length || 0, "device");
@@ -2752,6 +2753,13 @@ function fleetPage() {
     ),
     sel && fleetPane(sel, selNeed),
   );
+}
+
+// A device as people say it: its name, with its owner's when the name doesn't already carry it
+// ("jun-desktop", "tyler's mac-mini").
+function fleetDeviceLabel(d) {
+  const dev = deviceName(d);
+  return (d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) ? d.owner + "'s " : "") + dev;
 }
 
 // The table's columns and what each sorts by. A column sorts on its first click in the order a
@@ -2805,9 +2813,7 @@ function fleetTable(rows, needs, sel, empty) {
   const label = (k, list) => {
     if (F.by === "device") {
       const d = list[0].d;
-      const dev = deviceName(d);
-      const owner = d.owner && !dev.toLowerCase().includes(d.owner.toLowerCase()) ? d.owner + "'s " : "";
-      return [h("span", { class: "fx-group-name" }, d.self ? "This device" : owner + dev), h("span", { class: "fx-group-sub" }, d.self ? deviceName(d) : d.reachable ? "" : "offline · seen " + ago(when(d.lastSeen) || 0))];
+      return [h("span", { class: "fx-group-name" }, d.self ? "This device" : fleetDeviceLabel(d)), h("span", { class: "fx-group-sub" }, d.self ? deviceName(d) : d.reachable ? "" : "offline · seen " + ago(when(d.lastSeen) || 0))];
     }
     if (F.by === "branch") {
       const pr = k && Object.hasOwn(ui.state.prs || {}, k) ? ui.state.prs[k] : null;
@@ -2888,7 +2894,7 @@ function fleetTable(rows, needs, sel, empty) {
               icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
               label(k, list),
               list.some((r) => needs.has(r.s.name)) && h("span", { class: "fx-group-sub" }, list.length - shown.length + " more in Needs a look"),
-              h("span", { class: "fx-badge" }, list.length),
+              h("span", { class: "fx-badge" }, shown.length),
             ),
           ),
           !shut && shown.map(({ d, s }) => {
@@ -2903,7 +2909,7 @@ function fleetTable(rows, needs, sel, empty) {
   return h(
     "div",
     { class: "fx-table", role: "table", "aria-label": "Sessions" },
-    h("div", { class: "fx-thead", role: "rowgroup" }, head),
+    rows.length > 0 && h("div", { class: "fx-thead", role: "rowgroup" }, head),
     h("div", { class: "fx-tbody", role: "rowgroup" }, body),
   );
 }
@@ -2971,13 +2977,13 @@ function fleetRow(d, s, need, on) {
           h("button", { class: "fx-open", "data-key": "fl-" + s.name, "aria-expanded": on ? "true" : "false", "aria-controls": ui.fleetSel ? "fx-pane" : null, title: s.name, onclick: () => (on ? fleetCloseAsked() : fleetOpen(s.name)) }, s.name),
           h("span", { class: "fx-muted fx-parts", title: subParts.join(" · ") }, fxParts(subParts)),
           // Where the table is too narrow for Working on, it takes this line instead (fleet.css).
-          h("span", { class: "fx-muted fx-sub-doing" + (s.doing ? "" : " fx-none"), title: s.doing || null }, s.doing || "No status"),
+          s.doing && h("span", { class: "fx-muted fx-sub-doing", title: s.doing }, s.doing),
         ),
       ),
       need && fxReason(need),
     ),
     h("div", { class: "fx-c fx-c-state", role: "cell" }, fxDot(state), FX_STATE[state]),
-    h("div", { class: "fx-c fx-c-doing", role: "cell" }, s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : h("span", { class: "fx-status fx-none" }, "No status")),
+    h("div", { class: "fx-c fx-c-doing", role: "cell" }, s.doing && h("span", { class: "fx-status", title: s.doing }, s.doing)),
     h("div", { class: "fx-c fx-c-branch", role: "cell" }, s.branch && h("span", { class: "mono", title: s.branch }, s.branch), pr && fxPr(pr)),
     h("div", { class: "fx-c fx-c-last", role: "cell" }, t ? agoEl("span", "", t) : "–"),
   );
@@ -3038,8 +3044,8 @@ function fleetFocusBack() {
 const FLEET_PANE_KEY = NAME + ":fleet-pane-w";
 const FLEET_PANE_DEFAULT = 416;
 function fleetPaneFit(px) {
-  // The table keeps at least 22.5rem beside it, and the pane at least 20rem.
-  const room = (content?.clientWidth || innerWidth) - 360;
+  // At least 20rem, and never over more than the content less a strip of the table.
+  const room = (content?.clientWidth || innerWidth) - 280;
   return Math.round(Math.max(320, Math.min(px, 720, room)));
 }
 function fleetPaneWidth() {
@@ -3054,6 +3060,7 @@ function fleetPane(name, need) {
     const v = fleetPaneFit(px);
     root.querySelector(".fx-split")?.style.setProperty("--fx-pane-w", v + "px");
     grip.setAttribute("aria-valuenow", v);
+    fleetFit();
     if (save) {
       try {
         localStorage.setItem(FLEET_PANE_KEY, String(v));
@@ -3168,7 +3175,7 @@ function fleetInspector(name, need) {
   const agentParts = [s.agent, modelOf(s)].filter(Boolean);
   const meta = [
     ["State", [fxDot(state), FX_STATE[state]]],
-    ["Working on", s.doing || h("span", { class: "fx-none" }, "No status")],
+    s.doing && ["Working on", s.doing],
     d.owner && ["Person", d.owner],
     // "last seen 47m ago" keeps together, so a narrow line breaks after "offline,".
     ["Device", h("span", null, deviceName(d) + (d.self ? " (this one)" : "") + (d.reachable ? "" : ", offline" + (seenAt ? ", " : "")), !d.reachable && seenAt && h("span", { class: "fx-nowrap" }, "last seen " + ago(seenAt)))],
@@ -3294,7 +3301,7 @@ function fleetInspector(name, need) {
           },
         },
         icon("message"),
-        "Open its conversations",
+        "Open " + name + "’s conversations",
       ),
   ];
 }
