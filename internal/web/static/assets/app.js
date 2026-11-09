@@ -1562,6 +1562,9 @@ function sessionsPage() {
   const settledN = ui.tagFilter ? 0 : settledSessions().length;
   const settledShown = ui.tagFilter ? 0 : settledSessions().filter((r) => !F.q.trim() || settledText(r).includes(F.q.trim().toLowerCase())).length;
   const all = tab === "quiet" ? quiet : live;
+  // Job is offered only once a session has one (a group: tag); until then it would group nothing.
+  const jobs = [...live, ...quiet].some((r) => groupOf(r.s));
+  if (!jobs && F.by === "group") F.by = "device";
   const q = F.q.trim().toLowerCase();
   // Search covers what a row shows: the asker and question it waits on, its tags and its PR too.
   const allNeeds = fleetNeeds(all);
@@ -1639,7 +1642,7 @@ function sessionsPage() {
         fxSeg(
           "Which sessions",
           [
-            ["running", "Running", live.length, "Running, and active in the last day"],
+            ["running", "Running", null, "Running, and active in the last day"],
             ["quiet", "Quiet", quiet.length, "Idle for more than a day, or hidden"],
             ["settled", "Settled", settledN, "Ended; kept while their messages are"],
           ],
@@ -1708,11 +1711,7 @@ function sessionsPage() {
             h("span", { class: "fx-label" }, "Group by"),
             fxSeg(
               "Group by",
-              [
-                ["device", "Device"],
-                ["branch", "Branch"],
-                ["group", "Job"],
-              ],
+              [["device", "Device"], ["branch", "Branch"], jobs && ["group", "Job"]].filter(Boolean),
               F.by,
               set("by"),
             ),
