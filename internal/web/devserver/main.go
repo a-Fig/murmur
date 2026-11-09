@@ -200,6 +200,12 @@ func newFixtures(now time.Time) *fixtures {
 	msg(43*time.Minute, "quiet-otter", "lucid-badger", web.ToSession, "Re: And the name can change once",
 		"The page goes by address and looks the name up each time, so that's covered.")
 	msg(30*time.Minute, "velvet-moth", "maya-mbp-91c0", web.ToDevice, "Word lists are in", "")
+	// Questions nobody has answered yet, so All sessions has sessions that need a look (#183): one
+	// waits on an offline device, one on a session on do not disturb.
+	msg(40*time.Minute, "quiet-otter", "dusty-lynx", web.ToSession, "macOS restart test",
+		"Is TestRestart still red on macOS after the process-group fix, or can I take it off the release list?")
+	msg(22*time.Minute, "rapid-ibis", "brave-heron", web.ToSession, "Can I rebase receipts on remove-claims yet?",
+		"Your branch touches proto.SessionView too, so I'd rather wait than fight the merge.")
 	msg(18*time.Minute, "rapid-ibis", "*", web.ToAll, "No rate limit hit at 6 ls-remote/min/device",
 		"Ran 4 devices for 30 minutes at the 10 s poll. No 429s, no secondary limits. Numbers in #15's thread.")
 	msg(9*time.Minute, "brave-heron", "quiet-otter", web.ToSession, "Session view types",
@@ -213,6 +219,9 @@ func newFixtures(now time.Time) *fixtures {
 		web.Message{ID: randomHex(6), From: "solar-wren", To: "maya", ToAddr: "maya-mbp-91c0/human", ToPerson: true,
 			ToKind: web.ToSession, Subject: "Re: Can you look at the flaky wake-up test before you go?",
 			Body: "Yes. It's the 50 ms idle check racing the heartbeat; I'll send you the fix.", At: ago(2 * time.Minute)})
+	f.messages = append(f.messages, web.Message{ID: randomHex(6), From: "maya", FromAddr: "maya-mbp-91c0/human", FromPerson: true,
+		To: "velvet-moth", ToKind: web.ToSession, Subject: "Are the word lists final? I'd like to print a few names for the demo.",
+		At: ago(26 * time.Minute)})
 	msg(90*time.Second, "solar-wren", "mellow-yak", web.ToSession, "Re: Receipts can say \"idle 12 min\"",
 		"I'll hand it over: the daemon will keep lastTurnEnded per session.")
 	f.mutes = []web.Mute{
