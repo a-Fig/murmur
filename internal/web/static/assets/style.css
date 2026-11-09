@@ -5589,3 +5589,18 @@ a.fx-pr:focus-visible,
     justify-content: flex-start;
   }
 }
+/* A device's heading in the sidebar folds its sessions. */
+.device-link.dev-fold {
+  cursor: pointer;
+}
+.dark .dev-group .device-link .dev-chev {
+  display: block;
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-left: 0.375rem;
+}
+.device-link.dev-fold .side-flag {
+  margin-right: 0.125rem;
+}
+

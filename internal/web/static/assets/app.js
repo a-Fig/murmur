@@ -446,19 +446,30 @@ function sidebar() {
       devs.map((d) => {
         const live = shownSessions(liveSessions(d));
         if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
+        const open = sideOpen(d);
+        const owing = live.some((s) => needs.has(s.name));
         return h(
           "div",
           { class: "sidebar-group dev-group" },
           h(
-            "div",
+            "button",
             {
-              class: "device-link" + (d.reachable ? "" : " stale"),
-              title: d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0),
+              class: "device-link dev-fold" + (d.reachable ? "" : " stale"),
+              "aria-expanded": open ? "true" : "false",
+              "data-key": "dev-" + d.id,
+              title: (d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0)) + (open ? "" : owing ? " · a session here needs a look" : ""),
+              onclick: () => {
+                sideOpenSet(d, !open);
+                render();
+              },
             },
             h("span", { class: "label" }, deviceDot(d), deviceLabel(d)),
             !d.reachable && h("span", { class: "dev-you" }, "offline"),
+            !open && owing && h("span", { class: "side-flag", "aria-label": "a session here needs a look" }),
             h("span", { class: "menu-count" }, live.length),
+            icon(open ? "chevronDown" : "chevronRight", "dev-chev"),
           ),
+          open &&
           live.length > 0 &&
             h(
               "ul",
@@ -486,13 +497,38 @@ function sidebar() {
                 );
               }),
             ),
-          quietFold(d),
-          !ui.tagFilter && settledFold(d.id),
+          open && quietFold(d),
+          open && !ui.tagFilter && settledFold(d.id),
         );
       }),
     ),
     sidebarFoot(),
   );
+}
+
+// Which device sections of the sidebar are open, remembered across reloads: this device's starts
+// open, the others folded, so the sidebar holds a whole team without scrolling past each session.
+const SIDE_OPEN_KEY = NAME + ":side-open";
+
+function sideOpenAll() {
+  try {
+    return JSON.parse(localStorage.getItem(SIDE_OPEN_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function sideOpen(d) {
+  const all = ui.sideOpen || (ui.sideOpen = sideOpenAll());
+  return Object.hasOwn(all, d.id) ? !!all[d.id] : !!d.self;
+}
+
+function sideOpenSet(d, open) {
+  const all = { ...sideOpenAll(), [d.id]: open };
+  ui.sideOpen = all;
+  try {
+    localStorage.setItem(SIDE_OPEN_KEY, JSON.stringify(all));
+  } catch {}
 }
 
 // The foot says who you are here, once you are someone.
@@ -1044,7 +1080,7 @@ function sideStops() {
   const out = [];
   for (const g of root.querySelectorAll(".sidebar-content .dev-group")) {
     const tags = [...g.querySelectorAll(".tag-filter .tf")];
-    const rows = [...g.querySelectorAll("button.side-session, button.settled-toggle, button.settled-row")];
+    const rows = [...g.querySelectorAll("button.dev-fold, button.side-session, button.settled-toggle, button.settled-row")];
     if (tags.length) out.push({ items: tags, across: true });
     else if (rows.length) out.push({ items: rows, across: false });
   }
