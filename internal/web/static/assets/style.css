@@ -5694,3 +5694,17 @@ a.fx-pr:focus-visible,
 .g-recent .g-feed > .chat-day:first-child {
   margin-top: 0;
 }
+/* The branch under a name: its name is cut short, then dropped, before its PR chip (fleetFit). */
+.fx-part-branch > .mono {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.fx-subline.no-branch .fx-part-branch > .mono {
+  display: none;
+}
+.fx-subline.no-branch .fx-part-branch .fx-pr {
+  margin-left: 0;
+}

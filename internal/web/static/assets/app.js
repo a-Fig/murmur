@@ -2417,13 +2417,22 @@ function fleetFit() {
     widest = Math.max(widest, w);
   }
   table.style.setProperty("--fx-branch-w", Math.min(Math.max(widest + 2, 40), 240) + "px"); // scrollWidth rounds down
-  // Then its PR chip, whole, rather than cut part way through its words.
+  // Then the branch's name, cut short and then dropped, before its PR chip, which is never cut part
+  // way through its words: it goes whole, last.
   for (const line of table.querySelectorAll(".fx-subline")) {
-    line.classList.remove("no-tags", "no-pr");
+    line.classList.remove("no-tags", "no-branch", "no-pr");
     const parts = line.querySelector(".fx-parts-in");
+    const name = line.querySelector(".fx-part-branch > .mono");
+    name?.style.removeProperty("max-width");
     const over = () => parts && parts.scrollWidth > parts.clientWidth + 1;
     if (line.querySelector(".stags") && over()) line.classList.add("no-tags");
-    if (line.querySelector(".fx-part-branch .fx-pr") && over()) line.classList.add("no-pr");
+    const chip = line.querySelector(".fx-part-branch .fx-pr");
+    if (chip && name?.offsetWidth && over()) {
+      const w = name.offsetWidth - (parts.scrollWidth - parts.clientWidth) - 2;
+      if (w >= 48) name.style.setProperty("max-width", w + "px");
+      else line.classList.add("no-branch");
+    }
+    if (chip && over()) line.classList.add("no-pr");
   }
 }
 window.addEventListener("resize", () => fleetFit());
