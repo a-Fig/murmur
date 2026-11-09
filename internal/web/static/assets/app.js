@@ -4846,32 +4846,33 @@ function relayBar(c, running) {
       render();
     }
   });
-  el.placeholder = "Message " + to + " in your conversation…";
-  el.setAttribute("aria-label", "Message " + to + " in your conversation with it");
+  el.placeholder = "Write to " + to + "…";
+  el.setAttribute("aria-label", "Message " + to + " privately, in your conversation with it");
   const pick =
-    running.length > 1 &&
-    h(
-      "select",
-      {
-        class: "composer-to",
-        title: "Who to message",
-        "aria-label": "Who to message",
-        "data-key": "relay-to-" + c.key,
-        onchange: (e) => {
-          ui.relayTo.set(c.key, e.target.value);
-          render();
-          el.focus({ preventScroll: true });
-        },
-      },
-      running.map((n) => h("option", { value: n }, n)),
-    );
-  if (pick) pick.value = to;
+    running.length > 1
+      ? segmented(
+          "relay-to-" + c.key,
+          running.map((n) => [n, n]),
+          to,
+          (v) => {
+            ui.relayTo.set(c.key, v);
+            render();
+          },
+        )
+      : h("span", { class: "relay-who" }, to);
+  pick.setAttribute("aria-label", "Who to message");
   return h(
     "div",
-    { class: "composer-wrap" },
+    { class: "composer-wrap relay-wrap" },
+    h("div", { class: "relay-head" }, h("span", { class: "relay-title" }, "Message privately"), pick),
     ui.setup?.inline === el && nameAsk(),
     relayLine(c, to, el),
-    h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
+    h(
+      "div",
+      { class: "composer composer-relay" },
+      el,
+      h("button", { class: "composer-send relay-send", disabled: !el.value.trim(), "data-key": "send-" + key, "data-for": key, onclick: send }, "Send to " + to),
+    ),
   );
 }
 

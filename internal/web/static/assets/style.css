@@ -5744,3 +5744,43 @@ a.fx-pr:focus-visible,
   width: 0.875rem;
   height: 0.875rem;
 }
+/* Conversations. The bar under a conversation between two others is its own thing: a strip says it
+   writes privately, with who to as a choice, and its button names who it sends to. */
+.dark .relay-wrap {
+  margin: 0 1.5rem 1rem;
+  padding: 0.625rem 0.75rem 0.75rem;
+  border: 1px solid #333;
+  border-radius: 0.75rem;
+  background: #222;
+}
+.relay-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.relay-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #ededed;
+}
+.relay-who {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #d4d4d4;
+}
+.relay-wrap .relay-line {
+  font-size: 0.8125rem;
+  color: #b0b0b0;
+}
+.composer-send.relay-send {
+  width: auto;
+  padding: 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.relay-wrap .composer {
+  background: #1b1b1b;
+}
