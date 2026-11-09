@@ -5708,3 +5708,39 @@ a.fx-pr:focus-visible,
 .fx-subline.no-branch .fx-part-branch .fx-pr {
   margin-left: 0;
 }
+/* The details' composer, at the pane's foot under what scrolls. */
+.fx-compose {
+  flex: none;
+  padding: 0.75rem 1.25rem 1rem;
+  border-top: 1px solid var(--fx-border);
+  background: var(--fx-pane);
+}
+.fx-compose .wait-line {
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+.fx-compose .composer-wrap {
+  padding: 0;
+}
+/* Back to All sessions, over a conversation opened from it. */
+.g-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0 0 0.5rem -0.25rem;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.3125rem;
+  font-size: 0.8125rem;
+  color: #bdbdbd;
+}
+.g-back:hover {
+  color: #f1f1f1;
+}
+.g-back:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.g-back .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}

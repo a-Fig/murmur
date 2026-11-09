@@ -2508,7 +2508,7 @@ function fleetPane(name) {
   });
   const enter = ui.fxEnter;
   ui.fxEnter = false;
-  return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name)));
+  return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name)), ui.paneMsg === name && paneCompose(name));
 }
 
 // "/" goes to the search box, and ↑/↓ move between rows, as in most lists people use daily; Escape
@@ -2520,6 +2520,13 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape" && ui.rowMenu && !e.defaultPrevented) return closeRowMenu();
+  if (e.key === "Escape" && !e.defaultPrevented && !ui.setup && e.target?.closest?.(".fx-compose")) {
+    e.preventDefault();
+    ui.paneMsg = null;
+    render();
+    root.querySelector('[data-key="fx-msg"]')?.focus();
+    return;
+  }
   if (ui.view !== "sessions" || ui.tagMenu || ui.rowMenu || ui.setup || ui.picker || e.ctrlKey || e.metaKey || e.altKey) return;
   if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && e.target?.classList?.contains("fx-open")) {
     const more = e.target.closest(".fx-row")?.querySelector(".fx-more");
@@ -2653,6 +2660,7 @@ function fleetInspector(name) {
     ui.filter = null;
     ui.conversation = conversationOf(m).key;
     ui.conversationAnchor = m.id;
+    ui.backTo = true;
     go("messages");
   };
   // The wait, said once: who has waited longest and for how long. Each question is in the list.
@@ -2682,7 +2690,22 @@ function fleetInspector(name) {
     h(
       "div",
       { class: "fx-actions" },
-      h("button", { class: "fx-btn fx-btn-primary", "data-key": "fx-msg", "aria-label": "Message " + name, onclick: () => startChat(name) }, icon("message"), "Message"),
+      h(
+        "button",
+        {
+          class: "fx-btn fx-btn-primary",
+          "data-key": "fx-msg",
+          "aria-label": "Message " + name,
+          "aria-expanded": ui.paneMsg === name ? "true" : "false",
+          onclick: () => {
+            ui.paneMsg = name;
+            render();
+            root.querySelector(".fx-compose .composer-input")?.focus();
+          },
+        },
+        icon("message"),
+        "Message",
+      ),
       h(
         "button",
         {
@@ -2692,6 +2715,7 @@ function fleetInspector(name) {
           onclick: () => {
             ui.filter = s.addr || s.name;
             ui.conversation = null;
+            ui.backTo = true;
             go("messages");
           },
         },
@@ -2752,6 +2776,54 @@ function fleetInspector(name) {
         )
       : h("p", { class: "fx-none fx-dms-none" }, "No direct messages"),
   ];
+}
+
+// The pane's Message: the composer Your messages has (its wake hint, its name asked in place, its
+// way of sending), at the foot of the pane under what scrolls, so a session can be written to without leaving the
+// table. After sending, a line says so and opens the conversation.
+function paneCompose(name) {
+  const key = dmKey(selfName(), name);
+  const pair = [...new Set([selfName(), name])].sort();
+  const messages = ui.messages.filter((m) => conversationOf(m).key === key).sort((a, b) => a.sortAt - b.sortAt);
+  const c = { key, kind: "dm", title: pair.join(" & "), pair, messages };
+  const target = targetOf(c);
+  if (!target) return null;
+  const sent = ui.paneSent?.name === name ? ui.paneSent : null;
+  const item = sent && ui.outbox.find((x) => x.cid === sent.cid);
+  const open = () => {
+    ui.backTo = true;
+    startChat(name);
+  };
+  let line = null;
+  if (item?.status === "failed") {
+    line = h(
+      "p",
+      { class: "relay-line relay-failed", role: "alert" },
+      "Not sent: " + item.error,
+      h("button", { class: "msg-action", "data-key": "pane-retry", onclick: () => deliver(item) }, icon("retry"), "Try again"),
+    );
+  } else if (item?.status === "sending") {
+    line = h("p", { class: "relay-line", role: "status" }, "Sending…");
+  } else if (sent) {
+    line = h(
+      "p",
+      { class: "relay-line relay-sent", role: "status" },
+      icon("check"),
+      "Sent",
+      h("span", { class: "relay-sep", "aria-hidden": "true" }, "·"),
+      h("button", { class: "relay-open", "data-key": "pane-open", onclick: open }, "Open conversation"),
+    );
+  }
+  return h(
+    "div",
+    { class: "fx-compose" },
+    line,
+    waitLine(c),
+    composer(c, target, (x) => {
+      ui.paneSent = { name, cid: x.cid };
+      render();
+    }),
+  );
 }
 
 // Recent: the newest messages first, a page at a time; one opens its conversation.
@@ -3800,6 +3872,7 @@ function conversationList(list, view) {
     h(
       "div",
       { class: "g-head" },
+      ui.backTo && h("button", { class: "g-back", "data-key": "g-back", onclick: () => history.back() }, icon("arrowLeft"), "All sessions"),
       isMyFilter()
         ? h(
             "div",
@@ -4726,10 +4799,13 @@ function composerChange(key, el) {
   if (btn) btn.disabled = !el.value.trim();
 }
 
-function composer(c, target) {
+function composer(c, target, onSent) {
   const key = c.key;
   const big = target.to === "*" || (c.kind === "device" && target.count > 1);
-  const trySend = () => sendFrom(c, target, el, big);
+  const trySend = () => {
+    const item = sendFrom(c, target, el, big);
+    if (item && onSent) onSent(item);
+  };
   const el = composerFor(key, trySend, () => composerChange(key, el));
   el.placeholder = "Message " + target.label;
   el.setAttribute("aria-label", "Message " + target.label);
@@ -4856,6 +4932,7 @@ function sendFrom(c, target, el, big) {
   toEnd = true;
   deliver(item);
   if (!NARROW.matches) el.focus({ preventScroll: true });
+  return item;
 }
 
 async function deliver(item) {
@@ -5401,6 +5478,7 @@ function setView(view) {
   // so Back to the same session finds them as they were.
   if (ui.view === "sessions" && next !== "sessions") ui.fleetMemo = { sel: ui.fleetSel || null, page: content?.scrollTop || 0, pane: root.querySelector(".fx-pane-in")?.scrollTop || 0 };
   if (ui.view === "recent" && next !== "recent") ui.recentMark = undefined;
+  if (next !== "messages") ui.backTo = false;
   if (next === "recent" && ui.view !== "recent") ui.recentHeldAt = ui.recentShownAt = null;
   ui.view = next;
   if (ui.view === "settings") loadSettings();
