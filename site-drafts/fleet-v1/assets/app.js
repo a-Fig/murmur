@@ -255,7 +255,7 @@ function render() {
   const inner = page(); // before the top bar, which counts what this settles
   content.className = "content" + (inner.classList.contains("chat-page") ? " content-chat" : "");
   content.replaceChildren(inner);
-  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" && ui.view !== "settings" ? null : topbar(), content)));
+  root.replaceChildren(h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, VARIANT === "g" ? null : topbar(), content)));
   content.scrollTop = scroll;
   fleetFit();
   const pane = root.querySelector(".fx-pane-in");
@@ -374,7 +374,7 @@ function sidebar() {
       "div",
       { class: "sidebar-content" },
       VARIANT === "g"
-        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", ui.state ? sessionCount() : null), allButton(), topRow("recent", "clock", "Recent messages", ui.messages.length))
+        ? h("div", { class: "sidebar-group g-top" }, topRow("sessions", "users", "All sessions", ui.state ? sessionCount() : null, ui.state ? fleetNeeds(fleetRows()).size : 0), allButton(), topRow("recent", "clock", "Recent messages", ui.messages.length))
         : h(
             "div",
             { class: "sidebar-group" },
@@ -599,7 +599,7 @@ function topSession() {
   );
 }
 
-function topRow(view, iconName, title, n) {
+function topRow(view, iconName, title, n, need) {
   return h(
     "button",
     {
@@ -613,7 +613,8 @@ function topRow(view, iconName, title, n) {
     },
     h("span", { class: "all-ico" }, icon(iconName)),
     h("span", { class: "all-title" }, title),
-    n != null && h("span", { class: "all-n" }, n),
+    // Waiting questions take the count's place, as unread mail does: the number to act on.
+    need ? h("span", { class: "all-need", title: need + (need === 1 ? " needs" : " need") + " a look", "aria-label": need + (need === 1 ? " needs" : " need") + " a look" }, h("span", { class: "side-flag", "aria-hidden": "true" }), need) : n != null && h("span", { class: "all-n" }, n),
   );
 }
 
@@ -2024,7 +2025,7 @@ function settingsPage() {
   );
 
   const theme = window.appearance.get();
-  sections.push(
+  if (VARIANT !== "g") sections.push(
     h(
       "section",
       { class: "section" },
@@ -2063,6 +2064,10 @@ function settingsPage() {
       ),
     ),
   );
+  if (VARIANT === "g") {
+    const self = (ui.state?.devices || []).find((d) => d.self);
+    sections.unshift(h("header", { class: "g-page-head g-settings-head" }, h("h1", null, "Settings"), h("p", null, self ? "For this device, " + deviceName(self) : "For this device")));
+  }
   return h("div", { class: "page" }, sections);
 }
 
@@ -2858,7 +2863,7 @@ function fleetTable(rows, needs, sel, empty) {
       : wide("fx-empty", h("p", { class: "fx-empty-title" }, "No sessions running"));
   } else {
     body = [
-      pinned.length > 0 && [wide("fx-group fx-group-need", h("span", { class: "fx-group-name" }, "Needs a look"), h("span", { class: "fx-badge" }, pinned.length)), pinned.map(({ d, s }) => fleetRow(d, s, needs.get(s.name), sel === s.name))],
+      pinned.length > 0 && [wide("fx-group fx-group-need", h("span", { class: "fx-chev fx-need-dot", "aria-hidden": "true" }, h("span", { class: "fx-flag" })), h("span", { class: "fx-group-name" }, "Needs a look"), h("span", { class: "fx-badge" }, pinned.length)), pinned.map(({ d, s }) => fleetRow(d, s, needs.get(s.name), sel === s.name))],
       [...buckets].map(([k, list]) => {
         const shown = list.filter((r) => !needs.has(r.s.name));
         if (!shown.length) return null;
@@ -2875,7 +2880,9 @@ function fleetTable(rows, needs, sel, empty) {
                 onclick: () => {
                   if (filtering) shut ? collapsed.delete(F.by + ":" + k) : collapsed.add(F.by + ":" + k);
                   else fleetShutSet(F.by + ":" + k, !shut);
+                  ui.fxUnfolded = shut ? F.by + ":" + k : null;
                   render();
+                  ui.fxUnfolded = null;
                 },
               },
               icon(shut ? "chevronRight" : "chevronDown", "fx-chev"),
@@ -2884,7 +2891,11 @@ function fleetTable(rows, needs, sel, empty) {
               h("span", { class: "fx-badge" }, list.length),
             ),
           ),
-          !shut && shown.map(({ d, s }) => fleetRow(d, s, null, sel === s.name)),
+          !shut && shown.map(({ d, s }) => {
+            const row = fleetRow(d, s, null, sel === s.name);
+            if (ui.fxUnfolded === F.by + ":" + k) row.classList.add("enter");
+            return row;
+          }),
         ];
       }),
     ];
@@ -2986,6 +2997,7 @@ function fleetFromHash(part) {
   }
 }
 function fleetOpen(name) {
+  if (!ui.fleetSel) ui.fxEnter = true;
   history.replaceState(history.state, "", fleetHash(name));
   ui.fleetSel = name;
   render();
@@ -3087,7 +3099,9 @@ function fleetPane(name, need) {
     },
     ondblclick: () => setW(FLEET_PANE_DEFAULT, true),
   });
-  return h("aside", { class: "fx-pane", id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name, need)));
+  const enter = ui.fxEnter;
+  ui.fxEnter = false;
+  return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name, need)));
 }
 
 document.addEventListener("keydown", (e) => {

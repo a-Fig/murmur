@@ -449,3 +449,9 @@
 .mini-btn.current { background: rgb(255 255 255 / 12%); color: #fafafa; }
 .g-sec, .g-mp-sec { font-size: 0.75rem; font-weight: 600; letter-spacing: 0; text-transform: none; }
 .g-page { padding-top: 1.75rem; }
+.all-need { display: inline-flex; align-items: center; gap: 0.375rem; flex-shrink: 0; font-size: 0.75rem; font-weight: 600; color: #eec448; font-variant-numeric: tabular-nums; }
+[data-variant="g"] .page { padding-top: 1.75rem; }
+.g-settings-head { margin-bottom: -0.5rem; }
+.g-page-head h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
+.g-page-head p { font-size: 0.875rem; }
+[data-variant="g"] .section-head { padding: 0; }
