@@ -2937,19 +2937,21 @@ function recentPage() {
               h("button", { class: "list-pill", "data-key": "recent-pill", onclick: recentToTop }, icon("arrowUp"), plural(fresh, "new message")),
             ),
           h("div", { class: "g-feed", onkeydown: recentKey }, out),
-          more > 0 &&
-            h(
-              "button",
-              {
-                class: "btn g-older",
-                "data-key": "recent-older",
-                onclick: () => {
-                  ui.recentMax = max + RECENT_PAGE;
-                  render();
+          // After the feed, a control for Tab to land on: the next page, or the way back up.
+          more > 0
+            ? h(
+                "button",
+                {
+                  class: "btn g-older",
+                  "data-key": "recent-older",
+                  onclick: () => {
+                    ui.recentMax = max + RECENT_PAGE;
+                    render();
+                  },
                 },
-              },
-              "Show older messages",
-            ),
+                "Show older messages",
+              )
+            : h("button", { class: "btn g-older", "data-key": "recent-top", onclick: recentToTop }, icon("arrowUp"), "Back to top"),
         ]
       : h("p", { class: "g-none" }, "No messages yet. Messages between sessions appear here as they're sent."),
   );
@@ -4255,6 +4257,10 @@ function dayLabel(t) {
   if (new Date(t).toDateString() === today.toDateString()) return "Today";
   today.setDate(today.getDate() - 1);
   if (new Date(t).toDateString() === today.toDateString()) return "Yesterday";
+  // Within the week, its day's name; before that, the date.
+  today.setDate(today.getDate() - 5);
+  today.setHours(0, 0, 0, 0);
+  if (t >= today.getTime()) return new Date(t).toLocaleDateString(undefined, { weekday: "long" });
   return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 

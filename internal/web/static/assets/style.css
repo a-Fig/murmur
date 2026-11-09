@@ -5676,10 +5676,10 @@ a.fx-pr:focus-visible,
 .g-item .chat-msg-head {
   display: flex;
 }
+/* Three lines at most, cut without an ellipsis: the fade over the last line says there is more. */
 .g-body {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  display: block;
+  max-height: 4.5em; /* three of its 1.5 lines */
   overflow: hidden;
 }
 .dark .g-item {
@@ -5693,8 +5693,9 @@ a.fx-pr:focus-visible,
 .g-older {
   margin-top: 1rem;
 }
+/* Under the sticky day label, never over it. */
 .g-pill-wrap {
-  top: 0.75rem;
+  top: 2.75rem;
 }
 /* The pill above the feed must not let the gap under the head change when it comes and goes. */
 .g-recent .g-feed {
@@ -5897,7 +5898,15 @@ a.fx-pr:focus-visible,
 }
 /* Where the reader left off, in the feed's muted colour: nothing above it waits on anyone. */
 .chat-new.g-new {
+  justify-content: center;
+  font-weight: 500;
   color: #9e9e9e;
+}
+.chat-new.g-new::before {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #3a3a3a;
 }
 .chat-new.g-new::after {
   background: #3a3a3a;
