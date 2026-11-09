@@ -2386,10 +2386,21 @@ function fleetRoving() {
   const items = fleetItems();
   if (!items.length) return;
   const find = (key) => key && items.find((el) => el.dataset.key === key);
-  const want = find(ui.fleetSel && "fl-" + ui.fleetSel) || find(ui.fxFocus) || items[0];
+  const sel = ui.fleetSel && [ui.fxFocus, "fl-" + ui.fleetSel, "fp-" + ui.fleetSel].find((k) => k && k.slice(3) === ui.fleetSel && find(k));
+  const want = find(sel) || find(ui.fxFocus) || items[0];
   for (const el of root.querySelectorAll(".fx-tbody a, .fx-tbody button")) el.tabIndex = -1;
   want.tabIndex = 0;
-  for (const el of want.closest(".fx-row")?.querySelectorAll("a, button") || []) el.tabIndex = 0;
+  // The row's own controls follow it with Tab: what is shown of them, and one PR link, though the
+  // row may hold its chip twice (in the Branch cell and on the line under the name).
+  let pr = false;
+  for (const el of want.closest(".fx-row")?.querySelectorAll("a, button") || []) {
+    if (el === want || !el.getClientRects().length) continue;
+    if (el.matches(".fx-pr")) {
+      if (pr) continue;
+      pr = true;
+    }
+    el.tabIndex = 0;
+  }
 }
 
 document.addEventListener("focusin", (e) => {
