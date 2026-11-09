@@ -5748,6 +5748,7 @@ a.fx-pr:focus-visible,
 /* Conversations. The bar under a conversation between two others is its own thing: a strip says it
    writes privately, with who to as a choice, and its button names who it sends to. */
 .dark .relay-wrap {
+  max-width: 45rem; /* the thread's measure: a composer's 48rem less its padding */
   margin: 0 1.5rem 1rem;
   padding: 0.625rem 0.75rem 0.75rem;
   border: 1px solid #333;
