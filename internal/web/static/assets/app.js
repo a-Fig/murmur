@@ -5250,9 +5250,18 @@ function takenLine(a) {
 function accountSection() {
   const a = me();
   const suggested = ui.state?.account?.suggested || "";
-  // A taken name isn't offered back: the field starts from the suggestion, or empty.
-  const value = ui.accountDraft ?? (a?.taken ? suggested : a?.name || suggested);
+  // A saved name is the field's value. Without one, or with one taken, the field starts empty, and
+  // the suggestion is its placeholder and a line under it, until it is used.
+  const value = ui.accountDraft ?? (a && !a.taken ? a.name : "");
   const unchanged = (v) => !v.trim() || (!!a && !a.taken && v.trim() === a.name);
+  const offer = (!a || a.taken) && suggested && value.trim() !== suggested;
+  const use = () => {
+    ui.accountDraft = suggested;
+    render();
+    const f = root.querySelector('[data-key="account-name"]');
+    f?.focus();
+    f?.select();
+  };
   return h(
     "section",
     { class: "section" },
@@ -5260,38 +5269,51 @@ function accountSection() {
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", a?.taken ? h("span", { class: "taken-line" }, takenLine(a)) : "Agents see it, and send to it.", [
+      settingsRow(
+        "account",
+        "Your name",
+        a?.taken ? h("span", { class: "taken-line" }, takenLine(a)) : "Agents see it, and send to it.",
+        // The field and its button on a line, and the suggestion under them.
         h(
-          "span",
-          { class: "field account-field" },
-          h("input", {
-            type: "text",
-            value,
-            maxlength: 32,
-            autocomplete: "off",
-            spellcheck: "false",
-            "aria-label": "Your name",
-            "data-key": "account-name",
-            placeholder: "ada-lovelace",
-            oninput: (e) => {
-              ui.accountDraft = e.target.value;
-              const btn = root.querySelector('[data-key="account-save"]');
-              if (btn) btn.disabled = unchanged(e.target.value);
-            },
-            onkeydown: (e) => {
-              if (e.key === "Enter" && !unchanged(e.target.value)) {
-                e.preventDefault();
-                saveAccount(e.target.value.trim());
-              }
-            },
-          }),
+          "div",
+          { class: "account-ctl" },
+          h(
+            "span",
+            { class: "account-line" },
+            h(
+              "span",
+              { class: "field account-field" },
+              h("input", {
+                type: "text",
+                value,
+                maxlength: 32,
+                autocomplete: "off",
+                spellcheck: "false",
+                "aria-label": "Your name",
+                "data-key": "account-name",
+                placeholder: suggested || "ada-lovelace",
+                oninput: (e) => {
+                  ui.accountDraft = e.target.value;
+                  const btn = root.querySelector('[data-key="account-save"]');
+                  if (btn) btn.disabled = unchanged(e.target.value);
+                },
+                onkeydown: (e) => {
+                  if (e.key === "Enter" && !unchanged(e.target.value)) {
+                    e.preventDefault();
+                    saveAccount(e.target.value.trim());
+                  }
+                },
+              }),
+            ),
+            h(
+              "button",
+              { class: "btn btn-outline btn-xs", "data-key": "account-save", disabled: unchanged(value) || ui.accountSaving, onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) },
+              ui.accountSaving ? "Saving…" : !a ? "Choose" : a.taken ? "Save" : "Rename",
+            ),
+          ),
+          offer && h("p", { class: "account-suggest" }, "Suggested: ", h("b", null, suggested), h("button", { class: "btn btn-ghost btn-xs", "data-key": "account-use", onclick: use }, "Use it")),
         ),
-        h(
-          "button",
-          { class: "btn btn-outline btn-xs", "data-key": "account-save", disabled: unchanged(value) || ui.accountSaving, onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) },
-          ui.accountSaving ? "Saving…" : !a ? "Choose" : a.taken ? "Save" : "Rename",
-        ),
-      ]),
+      ),
     ),
   );
 }
