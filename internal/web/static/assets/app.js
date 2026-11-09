@@ -1569,11 +1569,12 @@ function sessionsPage() {
         tab !== "settled" && [
           fxSeg(
             "State",
+            // A state none of the sessions is in isn't offered, unless it is the one picked.
             [
               ["", "All", searched.length],
               ["need", [h("span", { class: "fx-flag" }), h("span", { class: "fx-seg-word" }, "Needs a look")], searchedNeeds.size],
               ...["on", "idle", "dnd", "off"].map((st) => [st, [fxDot(st), h("span", { class: "fx-seg-word" }, FX_STATE[st])], count(st)]),
-            ],
+            ].filter(([v, , n]) => v === "" || n > 0 || v === F.state),
             F.state,
             set("state"),
           ),
@@ -2361,17 +2362,6 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape" && ui.rowMenu && !e.defaultPrevented) return closeRowMenu();
   if (ui.view !== "sessions" || ui.tagMenu || ui.rowMenu || ui.setup || ui.picker || e.ctrlKey || e.metaKey || e.altKey) return;
-  // Tab from the search box goes straight to the table; Shift+Tab from there walks back through
-  // the filters.
-  if (e.key === "Tab" && !e.shiftKey && e.target?.dataset?.key === "fx-q") {
-    const to = fleetItems().find((el) => el.tabIndex === 0);
-    if (to) {
-      e.preventDefault();
-      to.focus();
-      to.closest(".fx-row")?.scrollIntoView({ block: "nearest" });
-    }
-    return;
-  }
   if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && e.target?.classList?.contains("fx-open")) {
     const more = e.target.closest(".fx-row")?.querySelector(".fx-more");
     if (more) {
