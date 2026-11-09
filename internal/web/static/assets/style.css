@@ -4626,8 +4626,7 @@ a.fx-pr:hover {
 }
 .fx-reason {
   display: grid;
-  grid-template-columns: 1.75rem minmax(0, auto) auto;
-  justify-content: start;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
   column-gap: 0.625rem;
   align-items: baseline;
   margin: 0;
@@ -4645,15 +4644,16 @@ a.fx-pr:hover {
   justify-self: center;
   transform: translateY(-0.0625rem);
 }
+/* Two lines at most, the whole of it in the title. Who waits, and how long, come first. */
 .fx-reason-text {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 .fx-reason-note {
-  margin-left: -0.25rem;
-  white-space: nowrap;
   color: var(--fx-text-3);
 }
 .fx-reason b,

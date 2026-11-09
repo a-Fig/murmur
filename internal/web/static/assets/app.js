@@ -1244,8 +1244,21 @@ function fleetNeeds(rows, all = false) {
     // and says so. A person never ends.
     const ended = findSession(asker) || isPerson(asker) ? "" : " (ended)";
     // text is a function: a row and the pane each need their own copy of its nodes. Read from the
-    // waiting side, and the wait ticks with the page's other times.
-    out.set(to, { at: when(m.at), m, msgs: list, text: () => [h("b", null, asker), ended, " has waited ", agoEl("span", "fx-wait", when(m.at), "", true), about + ": “" + questionIn(m) + "”" + more] });
+    // waiting side, and the wait ticks with the page's other times. A note on why it can't answer
+    // yet goes after the wait, before the question, so it is never what gets cut short.
+    const quote = "“" + questionIn(m) + "”" + more;
+    out.set(to, {
+      at: when(m.at),
+      m,
+      msgs: list,
+      text: (note) => [
+        h("b", null, asker),
+        ended,
+        " has waited ",
+        agoEl("span", "fx-wait", when(m.at), "", true),
+        note ? [h("span", { class: "fx-reason-note" }, " · " + note), " · " + (about ? about.trim() + ": " : "") + quote] : about + ": " + quote,
+      ],
+    });
   }
   return out;
 }
@@ -1876,17 +1889,11 @@ function fxParts(parts) {
   );
 }
 
-// A row's reason: one line, with all of it in the title; the details list each question the
-// session owes. Why it can't answer yet stays in view at the end.
+// A row's reason: two lines at most, with all of it in the title; the details list each question
+// the session owes. Who waits and how long lead it, and why it can't answer yet follows them.
 function fxReason(need, note) {
-  const el = h(
-    "p",
-    { class: "fx-reason" },
-    h("span", { class: "fx-flag", "aria-hidden": "true" }),
-    h("span", { class: "fx-reason-text" }, need.text()),
-    note && h("span", { class: "fx-reason-note" }, "· " + note),
-  );
-  el.title = el.querySelector(".fx-reason-text").textContent + (note ? " · " + note : "");
+  const el = h("p", { class: "fx-reason" }, h("span", { class: "fx-flag", "aria-hidden": "true" }), h("span", { class: "fx-reason-text" }, need.text(note)));
+  el.title = el.querySelector(".fx-reason-text").textContent;
   return el;
 }
 
