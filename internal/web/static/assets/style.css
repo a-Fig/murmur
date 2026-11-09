@@ -5502,10 +5502,12 @@ a.fx-pr:focus-visible,
   height: 0.75rem;
 }
 
-/* Settings: a head like the other pages', and a column of about 760px under it, left-aligned. */
+/* Settings: a head like the other pages', and a column of about 760px under it. Settings and Recent
+   are pages to read, so they centre where the window is wider than them; tables and conversations
+   stay full width. */
 .page.set-page {
   max-width: 51.5rem;
-  margin: 0;
+  margin: 0 auto;
   padding: 1.75rem 2rem 4rem;
 }
 .set-head h1 {
@@ -5641,11 +5643,11 @@ a.fx-pr:focus-visible,
   margin-right: 0.125rem;
 }
 
-/* Recent: a feed about 44rem wide, left-aligned under its head like Settings. Each row is a button
-   whose body stops at three lines; the page opens the whole conversation. */
+/* Recent: a feed about 44rem wide under its head. Each row is a button whose body stops at three
+   lines; the page opens the whole conversation. */
 .g-page.g-recent {
   max-width: 48rem;
-  margin: 0;
+  margin: 0 auto;
 }
 .g-recent > .g-none {
   padding: 0;
