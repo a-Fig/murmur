@@ -579,12 +579,6 @@ function yourRow() {
   );
 }
 
-// The human tag (#267): a person's account has it, worked out from the address, and nothing else
-// does. It looks like the session tags it sits among, and can't be taken off.
-function humanTag() {
-  return h("span", { class: "badge tag badge-outline tag-human", title: "A person, not an agent. " + NAME + " gives this tag to every person's account, and only to one." }, "human");
-}
-
 function peopleGroup() {
   const others = people().filter((p) => p.name !== myName());
   if (!others.length) return null;
@@ -1540,9 +1534,10 @@ function menuButton(key, label, items, value, onPick) {
       "aria-haspopup": "menu",
       "aria-expanded": ui.pickMenu?.key === key ? "true" : "false",
       disabled: items.length < 2 || null,
+      "aria-label": label + ": " + cur[1],
       onclick: (e) => openPickMenu(key, e.currentTarget, label, items, cur[0], onPick),
     },
-    h("span", null, label),
+    h("span", { class: "bar-menu-label" }, label),
     h("b", null, cur[1]),
   );
 }
@@ -2792,7 +2787,6 @@ function fleetInspector(name) {
     h(
       "p",
       { class: "fx-insp-wait" },
-      h("span", { class: "fx-flag", "aria-hidden": "true" }),
       h(
         "span",
         null,
@@ -2858,7 +2852,7 @@ function fleetInspector(name) {
         ),
     ),
     h("dl", { class: "fx-meta" }, meta.map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
-    h("h3", { class: "fx-h3" }, "Direct conversations", direct.length > 0 && h("span", { class: "fx-badge" }, direct.length)),
+    h("h3", { class: "fx-h3" }, "Direct conversations", direct.length > 0 && h("span", { class: "fx-h3-n" }, direct.length)),
     direct.length
       ? h(
           "ul",
@@ -2877,19 +2871,21 @@ function fleetInspector(name) {
                       ? [out ? "To " : "From ", h("b", null, c.other)]
                       : ["With ", h("b", null, c.other), " · " + c.msgs.length + " messages"];
             const k = ck(c.other, c.subj);
-            // The subject once: not over a question that starts with it.
+            // One line, as in the conversation list: who, the question it waits on or the subject,
+            // and when; a wait's time is the yellow. Where it stands is in the title and read out.
             const q = c.rank < 2 ? questionIn(m) : "";
-            const bare = (c.subj || "").replace(/…$/, "").trim();
-            const inQ = !!q && !!bare && q.replace(/…$/, "").startsWith(bare);
+            const text = q ? "“" + q + "”" : c.subj || "(no subject)";
+            const said = h("span", null, head).textContent;
             return h(
               "li",
               { class: "fx-dm-item" + (c.rank === 0 ? " wait" : c.isMarked ? " marked" : "") },
               h(
                 "button",
-                { class: "fx-dm", "data-key": "fd-" + c.other + ":" + c.subj.toLowerCase(), onclick: openMessage(m) },
-                h("span", { class: "fx-dm-head" }, h("span", null, head), agoEl("span", "fx-dm-time", m.sortAt)),
-                !inQ && h("span", { class: "fx-dm-subj", title: c.subj }, c.subj || "(no subject)"),
-                !!q && q !== c.subj && h("span", { class: "fx-dm-q" }, "“" + q + "”"),
+                { class: "fx-dm", "data-key": "fd-" + c.other + ":" + c.subj.toLowerCase(), title: said + (c.subj ? "\n" + c.subj : "") + (q && q !== c.subj ? "\n“" + q + "”" : ""), "aria-label": said + ". " + text + ". " + ago(m.sortAt), onclick: openMessage(m) },
+                avatar(c.other),
+                h("span", { class: "fx-dm-name" }, c.other),
+                h("span", { class: "fx-dm-text" }, text),
+                agoEl("span", "fx-dm-time" + (c.rank === 0 ? " fx-wait" : ""), m.sortAt, "", c.rank === 0),
               ),
               c.rank === 0 && h("button", { class: "fx-dm-act", "data-key": "fx-nw-" + k, title: "Count this question as answered, in this browser", onclick: dismiss(c) }, "Mark answered"),
               c.isMarked && h("button", { class: "fx-dm-act", "data-key": "fx-undo-" + k, onclick: undo(c) }, "Undo"),
@@ -3105,7 +3101,6 @@ function recentItem(m, at) {
         "span",
         { class: "chat-msg-head" },
         h("span", { class: "chat-msg-from truncate" }, from),
-        m.fromPerson && humanTag(),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
       ),
@@ -3189,7 +3184,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || agentName(r.s.agent) : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "g-mp-name truncate" }, r.name), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || agentName(r.s.agent) : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -4164,11 +4159,7 @@ function conversationPane(c) {
     ? [groupHost(c), plural(gs.rows.length, "member"), gs.on + " active"].filter(Boolean).join(" · ")
     : o
       ? isPerson(o)
-        ? op
-          ? personOnline(op)
-            ? "On " + NAME + " now"
-            : deviceLabel(op.device)
-          : ""
+        ? [o + " · person", op && (personOnline(op) ? "On " + NAME + " now" : deviceLabel(op.device))].filter(Boolean).join(" · ")
         : of
           ? of.session.doing || agentName(of.session.agent)
           : "Not running"
@@ -4197,7 +4188,7 @@ function conversationPane(c) {
       h(
         "div",
         { class: "chat-head-text" },
-        h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : dmTitle(c) || o || c.title), o && isPerson(o) && humanTag()),
+        h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : dmTitle(c) || o || c.title)),
         about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
         c.kind === "dm" && !o && c.pair.length > 1 && pairStates(c),
       ),
@@ -4322,7 +4313,6 @@ function chatMessage(m, from, at, head, before) {
           { class: "chat-msg-head" },
           h("span", { class: "chat-msg-from truncate" + (mine ? " chat-msg-you" : "") }, from),
           mine && h("span", { class: "chat-msg-via" }, "you"),
-          !mine && m.fromPerson && humanTag(),
           sender && h("span", { class: "chat-msg-via truncate" }, [agentName(sender.session.agent), sender.device.self ? null : sender.device.id].filter(Boolean).join(" · ")),
           h("span", { class: "chat-msg-time", title: messageDetail(m) }, at && new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
         ),
@@ -4734,7 +4724,7 @@ function personRow(r, cur, onclick, id) {
     h(
       "span",
       { class: "pick-text" },
-      h("span", { class: "name-line" }, h("span", { class: "pick-name truncate" }, r.name), r.person && humanTag()),
+      h("span", { class: "name-line" }, h("span", { class: "pick-name truncate" }, r.name)),
       h("span", { class: "pick-line truncate" }, r.line),
     ),
   );

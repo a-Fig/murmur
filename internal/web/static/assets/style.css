@@ -7406,3 +7406,246 @@ a.fx-pr:focus-visible,
   height: var(--control);
   border-radius: var(--r-control);
 }
+/* The details pane on the system (#183): raised, on the 24px gutter. A 44px head; the wait with
+   only its time in yellow; 28px buttons (Message primary, the rest quiet); facts as 28px label and
+   value rows; and its direct conversations as 36px rows like the conversation list's, a waiting
+   one told by its yellow time, Mark answered beside it, Undo on hover or focus. */
+.dark .fx-pane-in {
+  padding: 0 var(--gutter) 24px;
+}
+.dark .fx-insp-head {
+  height: 44px;
+  margin: 0 calc(-1 * var(--gutter)) 12px;
+  padding: 0 12px 0 var(--gutter);
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.dark .fx-insp-head .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 0.625rem;
+}
+.dark .fx-insp-head h2 {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .fx-insp-head .fx-icon-btn {
+  width: var(--control);
+  height: var(--control);
+  border-radius: var(--r-control);
+}
+.dark .fx-insp-wait {
+  display: block;
+  margin: 0 0 12px;
+  padding: 0;
+  color: var(--text-2);
+}
+.dark .fx-insp-wait b {
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .fx-actions {
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.dark .fx-actions .fx-btn {
+  height: var(--control);
+  padding: 0 10px;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.dark .fx-actions .fx-btn:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+.dark .fx-actions .fx-btn.fx-btn-primary {
+  border-color: transparent;
+  background: #ededed;
+  color: #141414;
+}
+.dark .fx-actions .fx-btn.fx-btn-primary:hover {
+  background: #fff;
+  color: #141414;
+}
+.dark .fx-actions .fx-btn-ghost {
+  border-color: transparent;
+}
+.dark .fx-actions .fx-btn .icon {
+  width: 14px;
+  height: 14px;
+}
+.dark .fx-meta {
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 0 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.dark .fx-meta dt,
+.dark .fx-meta dd {
+  display: flex;
+  align-items: center;
+  min-height: var(--control);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.dark .fx-meta dt {
+  color: var(--text-3);
+}
+.dark .fx-meta dd {
+  color: var(--text-1);
+}
+.dark .fx-meta .mono {
+  font-size: 0.75rem;
+}
+.dark .fx-h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--row);
+  margin: 12px 0 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.fx-h3-n {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.dark .fx-dms {
+  gap: 0;
+  margin: 0 -10px;
+}
+.dark .fx-dm-item,
+.dark .fx-dm-item.wait,
+.dark .fx-dm-item.marked {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  box-shadow: none;
+}
+.dark .fx-dm-item:hover {
+  background: var(--hover);
+}
+.dark .fx-dm {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  text-align: left;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: var(--row);
+  padding: 0 10px;
+  border-radius: var(--r-control);
+  background: none;
+}
+.dark .fx-dm:hover {
+  background: none;
+}
+.dark .fx-dm > .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 0.625rem;
+}
+.fx-dm-name {
+  flex: none;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.fx-dm-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dark .fx-dm-time {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.dark .fx-dm-time.fx-wait {
+  color: #eec448;
+  font-weight: 400;
+}
+.dark .fx-dm-act {
+  flex: none;
+  height: 24px;
+  margin-right: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--raised);
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+.dark .fx-dm-act:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+.dark .fx-dm-item.marked .fx-dm-act {
+  opacity: 0;
+}
+.dark .fx-dm-item.marked:is(:hover, :focus-within) .fx-dm-act {
+  opacity: 1;
+}
+.dark .fx-dms-none {
+  color: var(--text-3);
+}
+/* The bar at its tightest: the search folds to its icon, opening over the bar on a click or "/",
+   and the menus show only their value (their name stays in their label for screen readers). */
+@container fx (max-width: 860px) {
+  .fx > .bar .bar-search {
+    justify-content: center;
+    width: var(--control);
+    padding: 0;
+    cursor: pointer;
+  }
+  .fx > .bar .bar-search input {
+    flex: 0 0 0;
+    width: 0;
+  }
+  .fx > .bar .bar-search .fx-kbd {
+    display: none;
+  }
+  .fx > .bar .bar-search:has(input:not(:placeholder-shown)) {
+    background: var(--selected);
+    color: var(--text-1);
+  }
+  .fx > .bar .bar-search:focus-within {
+    position: absolute;
+    right: var(--gutter);
+    z-index: 6;
+    justify-content: flex-start;
+    width: 220px;
+    padding: 0 6px 0 10px;
+    background: var(--raised);
+  }
+  .fx > .bar .bar-search:focus-within input {
+    flex: 1;
+    width: auto;
+  }
+}
+@container fx (max-width: 760px) {
+  .fx > .bar .bar-menu-label {
+    display: none;
+  }
+}
+/* Inline code in a message is meta-sized. */
+.dark .rich code {
+  font-size: 0.75rem;
+}
