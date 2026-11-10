@@ -453,8 +453,7 @@ function sidebar() {
         topRow("recent", "clock", "Recent messages", ui.messages.length),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
-      peopleGroup(),
-      tagsGroup(),
+      devs.length > 0 && h("div", { class: "side-head" }, "Devices"),
       devs.map((d) => {
         const live = shownSessions(liveSessions(d));
         if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
@@ -469,17 +468,14 @@ function sidebar() {
               class: "device-link dev-fold" + (d.reachable ? "" : " stale"),
               "aria-expanded": open ? "true" : "false",
               "data-key": "dev-" + d.id,
-              title: (d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0)) + (open ? "" : owing ? " · a session here needs a look" : ""),
+              title: (d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0)) + (open ? "" : owing ? " · a session here needs a look" : "") + " · " + plural(live.length, "session"),
               onclick: () => {
                 sideOpenSet(d, !open);
                 render();
               },
             },
             h("span", { class: "label", title: deviceLabel(d) }, deviceDot(d), deviceLabel(d)),
-            !d.reachable && h("span", { class: "dev-you" }, "offline"),
-            !open && owing && h("span", { class: "side-flag", "aria-label": "a session here needs a look" }),
-            h("span", { class: "menu-count" }, live.length),
-            icon(open ? "chevronDown" : "chevronRight", "dev-chev"),
+            d.reachable ? h("span", { class: "menu-count" }, live.length) : h("span", { class: "menu-count" }, "offline"),
           ),
           open &&
           live.length > 0 &&
@@ -513,6 +509,7 @@ function sidebar() {
           open && !ui.tagFilter && settledFold(d.id),
         );
       }),
+      peopleGroup(),
     ),
     sidebarFoot(),
   );
@@ -593,8 +590,8 @@ function peopleGroup() {
   if (!others.length) return null;
   return h(
     "div",
-    { class: "sidebar-group dev-group" },
-    h("div", { class: "device-link" }, h("span", { class: "label" }, "People"), h("span", { class: "menu-count" }, others.length)),
+    { class: "sidebar-group dev-group people-group" },
+    h("div", { class: "side-head" }, "People"),
     h(
       "ul",
       { class: "sidebar-menu side-sessions" },
@@ -605,8 +602,8 @@ function peopleGroup() {
           h(
             "button",
             { class: "side-session", "data-key": "person-" + p.name, title: "Message " + p.name + " · " + (personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)), onclick: () => startChat(p.name) },
-            presence(p.name, p.device),
-            h("span", { class: "name-line side-session-name" }, h("span", { class: "truncate" }, p.name), humanTag()),
+            stateDot(personOnline(p) ? "on" : "off", "side-dot"),
+            h("span", { class: "side-session-name truncate" }, p.name),
           ),
         ),
       ),
@@ -869,9 +866,7 @@ function quietFold(d) {
                   go("messages");
                 },
               },
-              presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
-              tagChips(s, Infinity, true),
               h("span", { class: "settled-when", title: t ? stamp(t) : null }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
             ),
           );
@@ -961,9 +956,7 @@ function topRow(view, iconName, title, n, need = 0) {
     },
     h("span", { class: "all-ico" }, icon(iconName)),
     h("span", { class: "all-title" }, title),
-    need
-      ? h("span", { class: "all-need", title: need + (need === 1 ? " needs" : " need") + " a look" }, h("span", { class: "side-flag", "aria-hidden": "true" }), need)
-      : n != null && h("span", { class: "all-n" }, n),
+    need ? h("span", { class: "all-need", title: need + (need === 1 ? " needs" : " need") + " a look" }, need + " waiting") : n != null && h("span", { class: "all-n" }, n),
   );
 }
 
@@ -1074,7 +1067,6 @@ function settledRow(r) {
         go("messages");
       },
     },
-    avatar(r.name),
     h("span", { class: "settled-name truncate" }, r.name),
     h("span", { class: "settled-when", title: stamp(r.last) }, ago(r.last).replace(" ago", "")),
   );
@@ -1164,11 +1156,7 @@ function allConversations() {
 // face and state, its name, and the yellow dot that marks it in All sessions when it owes an answer.
 // All sessions has the rest.
 function sideSessionBody(d, s, owes) {
-  return [
-    presence(s.name, d),
-    h("span", { class: "side-session-name truncate" }, s.name),
-    owes && h("span", { class: "side-flag", title: "Waiting on an answer from " + s.name, "aria-label": "waiting on an answer" }),
-  ];
+  return [h("span", { class: "side-session-name truncate" }, s.name), owes && h("span", { class: "sr-only" }, ", needs a look")];
 }
 
 function stateWord(d, s) {
@@ -3467,42 +3455,6 @@ function tagMenuButton() {
     ui.tagFilter = v || null;
     render();
   });
-}
-
-// The sidebar's Tags: one chip per tag in use, which filters the lists to it.
-function tagsGroup() {
-  const counts = tagCounts();
-  if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
-  if (!counts.size) return null;
-  return h(
-    "div",
-    { class: "sidebar-group dev-group" },
-    h("div", { class: "device-link" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
-    h(
-      "div",
-      { class: "tag-filter" },
-      [...counts]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([n, c]) => {
-          const on = ui.tagFilter === n;
-          return h(
-            "button",
-            {
-              class: "tf" + (on ? " on" : ""),
-              "aria-pressed": on ? "true" : "false",
-              title: on ? "Show every session" : "Show only sessions tagged " + n,
-              "data-key": "tf-" + n,
-              onclick: () => {
-                ui.tagFilter = on ? null : n;
-                render();
-              },
-            },
-            h("span", { class: "tf-name" }, n),
-            h("span", { class: "tf-n" }, c),
-          );
-        }),
-    ),
-  );
 }
 
 function openTagMenu(addrs, anchor) {

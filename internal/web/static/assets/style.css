@@ -6919,3 +6919,259 @@ a.fx-pr:focus-visible,
     width: 90px;
   }
 }
+/* The sidebar (#183): 240px on the canvas, and three kinds of 28px row: a page (an icon, its name
+   and a count in meta), a device (its dot, its name and its count), and a session under its device
+   (its name, indented). People are a dot and a name. Yellow only says "3 waiting" on All sessions. */
+.dark .sidebar.sidebar {
+  width: 240px;
+  border-right: 1px solid var(--line);
+  background: var(--canvas);
+}
+.dark .sidebar .sidebar-header {
+  height: 44px;
+  padding: 0 8px 0 16px;
+}
+.dark .sidebar .brand {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.dark .sidebar .sidebar-content {
+  padding: 0 8px 8px;
+}
+.dark .sidebar.sidebar .sidebar-group,
+.dark .sidebar.sidebar .sidebar-group + .sidebar-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.dark .sidebar .g-top {
+  gap: 0;
+}
+.dark .sidebar :is(.all-convs, .device-link, .side-session, .settled-toggle, .settled-row, .menu-button) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--control);
+  min-height: 0;
+  margin: 0;
+  padding: 0 8px;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+  text-align: left;
+}
+.dark .sidebar :is(.all-convs, .device-link.dev-fold, .side-session, .settled-toggle, .settled-row, .menu-button):hover {
+  background: var(--hover);
+}
+.dark .sidebar :is(.all-convs, .side-session, .menu-button)[aria-current="page"],
+.dark .sidebar .settled-row.current {
+  background: var(--selected);
+  color: var(--text-1);
+  font-weight: 500;
+}
+.dark .sidebar .all-ico {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+}
+.dark .sidebar .all-ico .icon,
+.dark .sidebar .menu-button .icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.8;
+}
+.dark .sidebar .all-title {
+  flex: 1;
+  min-width: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+.dark .sidebar :is(.all-n, .menu-count) {
+  margin-left: auto;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.dark .sidebar .all-need {
+  margin-left: auto;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  color: #ffce2f;
+}
+.dark .sidebar .unread-badge {
+  margin-left: auto;
+}
+.side-head {
+  margin: 20px 8px 4px;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+}
+.dark .sidebar .device-link .label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dark .sidebar .device-link .dev-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 3.5px;
+}
+.dark .sidebar .side-sessions,
+.dark .sidebar .settled,
+.dark .sidebar .settled-list {
+  margin: 0;
+  padding: 0;
+  gap: 0;
+}
+.dark .sidebar .side-li {
+  margin: 0;
+}
+.dark .sidebar .dev-group .side-session,
+.dark .sidebar .dev-group .settled-toggle,
+.dark .sidebar .dev-group .settled-row {
+  padding-left: 30px;
+}
+.dark .sidebar .side-session-name,
+.dark .sidebar .settled-name {
+  min-width: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+}
+.dark .sidebar .settled-toggle,
+.dark .sidebar .settled-when {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.dark .sidebar .settled-when {
+  margin-left: auto;
+}
+.dark .sidebar .settled-caret {
+  width: 12px;
+  height: 12px;
+}
+.dark .sidebar .side-dot {
+  position: static;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 3.5px;
+  box-shadow: none;
+}
+.dark .sidebar .sidebar-foot {
+  padding: 8px;
+  border-top: 0;
+}
+.dark .sidebar .account-chip {
+  height: var(--control);
+  padding: 0 8px;
+  gap: 8px;
+  border-radius: var(--r-control);
+  color: var(--text-2);
+}
+.dark .sidebar .account-chip .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 0.625rem;
+}
+.dark .sidebar .foot-settings {
+  width: var(--control);
+  height: var(--control);
+  border-radius: var(--r-control);
+}
+.dark .sidebar .side-notice {
+  margin: 8px 0 0;
+}
+.dark .sidebar .side-dot.sdot-on {
+  background: #64af4c;
+}
+.dark .sidebar .side-dot.sdot-off {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px #8a8a8a;
+}
+.dark .sidebar.sidebar .dev-group {
+  padding: 0 !important; /* over the old sections' !important spacing */
+}
+.dark .sidebar .side-dot {
+  border-radius: 999px;
+}
+/* The picker's rows are the same 36px line: a face, the name, and its state and work in meta. */
+.dark .lp .pick-row {
+  height: var(--row);
+  padding: 0 10px;
+  gap: 10px;
+  border-radius: var(--r-control);
+}
+.dark .lp .pick-row .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 0.625rem;
+}
+.dark .lp .pick-text {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+.dark .lp .name-line {
+  flex: none;
+  max-width: 60%;
+}
+.dark .lp .pick-name {
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .lp .pick-line {
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.dark .lp .pick-row .tag-human {
+  display: none;
+}
+.dark .lp .pick-row:hover,
+.dark .lp .pick-row.current {
+  background: var(--hover);
+}
+.dark .lp .pick-row.current {
+  background: var(--selected);
+}
+.dark .lp-head {
+  height: var(--row);
+  margin: 0;
+  padding: 0 4px 0 10px;
+}
+.dark .lp-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .lp .g-search {
+  height: var(--control);
+  margin: 0 0 4px;
+}
+.dark .sidebar .people-group .side-session {
+  padding-left: 8px;
+}
