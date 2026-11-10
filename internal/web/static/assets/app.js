@@ -5090,11 +5090,14 @@ function wakeWords(w) {
 }
 
 // A segmented control, one stop for Tab with the arrow keys moving along it, as in All sessions.
-// Default says what it comes to, muted after it.
+// A setting that follows the device's (resolved: what that comes to) fills no segment: Default has
+// only an outline, and what it comes to follows the control in plain words. Only a setting of the
+// session's own is filled.
 function segmented(key, choices, current, pick, resolved) {
-  return h(
+  const inherited = current === "default" && !!resolved;
+  const seg = h(
     "div",
-    { class: "segmented", role: "group", onkeydown: segKeys },
+    { class: "segmented" + (inherited ? " inherited" : ""), role: "group", onkeydown: segKeys },
     choices.map(([v, label]) =>
       h(
         "button",
@@ -5107,10 +5110,10 @@ function segmented(key, choices, current, pick, resolved) {
           },
         },
         label,
-        v === "default" && resolved && h("span", { class: "seg-resolved" }, " · " + resolved),
       ),
     ),
   );
+  return inherited ? [seg, h("span", { class: "seg-from" }, resolved + ", from the device default")] : seg;
 }
 
 function wakeControl(key, wake, onChange, withDefault) {
@@ -5136,7 +5139,7 @@ function wakeControl(key, wake, onChange, withDefault) {
     const raw = e.target.value.trim();
     const n = raw === "" ? 0 : Number(raw);
     if (!Number.isInteger(n) || n < 0 || n > 1440 || (raw !== "" && n === 0)) {
-      ui.rowErrors[key] = "Minutes must be a whole number from 1 to 1440, or empty for the default (" + def + ").";
+      ui.rowErrors[key] = "Whole number from 1 to 1440, or empty for " + def + ".";
       render(); // the draft stays in the field, to be put right
       return;
     }
@@ -5164,7 +5167,7 @@ function wakeControl(key, wake, onChange, withDefault) {
       }
     },
   });
-  return [seg, h("label", { class: "field min-field" + (ui.rowErrors[key] ? " field-bad" : "") }, input, h("span", { class: "field-unit", "aria-hidden": "true" }, "min"))];
+  return [seg, h("label", { class: "min-wrap" }, h("span", { class: "field min-field" + (ui.rowErrors[key] ? " field-bad" : "") }, input), h("span", { class: "field-unit", "aria-hidden": "true" }, "min"))];
 }
 
 const BUSY_CHOICES = [
