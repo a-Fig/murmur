@@ -14,12 +14,14 @@ const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recen
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
 // The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
-// a chat app, or light. style.css keys each one on <html data-theme>.
+// a chat app, light, or the blue and cream of the Murmur website's hero. style.css keys each one on
+// <html data-theme>.
 const THEME_KEY = NAME + ":theme";
 const THEMES = [
   ["dark", "Dark"],
   ["dim", "Dim"],
   ["light", "Light"],
+  ["murmur", "Murmur"],
 ];
 let theme = "dark";
 try {

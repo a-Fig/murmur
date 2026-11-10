@@ -219,6 +219,75 @@
   --secondary-label: oklch(48% 0.016 285.938);
 }
 
+/*
+ * The Murmur theme: the hero of https://murmur.afig.dev, taken from the site's own :root and
+ * rules (site/index.html), not matched by eye. Page --blue #225BFF; text --cream #FFFBEA; the
+ * primary button is --butter #FDEE8C with --ink #0E1B45 on it; the code blocks (.cmd) are --ink
+ * with cream text. The site's type is Inter, and Inter Variable is already this page's face.
+ * Sidebar is the site's --blue-deep (blue 78%, ink), and the popover is its code-block ink.
+ * Every derived color is written out in hex so that web_test.go can measure it.
+ *
+ * Where the site's own value fails WCAG 2.2 AA on this page's surfaces, this takes the nearest
+ * one that passes: the site's body copy, cream 90% over blue, is 4.38:1 on the blue (#383), and
+ * butter as small text on the blue is 4.44:1.
+ * Rows darken (ink over the blue) where Dark's lighten, so text keeps its contrast when picked.
+ */
+:root[data-theme="murmur"] {
+  color-scheme: dark;
+  --background: #225bff; /* --blue */
+  --foreground: #fffbea; /* --cream */
+  --card: #1b3fb8; /* ink 40% over blue */
+  --popover: #0e1b45; /* --ink, as the site's code blocks */
+  --primary: #fdee8c; /* --butter */
+  --primary-foreground: #0e1b45; /* --ink: 14.1:1 on butter */
+  --primary-text: #fef3b2; /* butter lifted to 4.5:1 as small text on the blue */
+  --secondary: rgb(14 27 69 / 22%);
+  --secondary-foreground: #fffbea;
+  --muted: rgb(14 27 69 / 22%);
+  --muted-foreground: #f6f5eb; /* cream 96% over blue; the site's 90% is 4.38:1 */
+  --secondary-label: #f6f5eb;
+  --placeholder: #f6f5eb;
+  --message-surface: #1e4dd6; /* --blue-deep */
+  --accent: rgb(14 27 69 / 22%);
+  --accent-foreground: #fffbea;
+  --destructive: #ffb4b4;
+  --destructive-foreground: #ffeeee;
+  --border: rgb(255 251 234 / 22%);
+  --input: rgb(255 251 234 / 38%);
+  --ring: #fdee8c;
+  --info: #a9c4ff;
+  --info-foreground: #e6f0ff;
+  --success: #7be3a6;
+  --success-foreground: #d1fadf;
+  --warning: #fdee8c;
+  --warning-foreground: #fef3b2;
+  --pr-open: #d1fadf;
+  --pr-draft: #f6f5eb;
+  --row-hover: rgb(14 27 69 / 16%);
+  --row-selected: rgb(14 27 69 / 28%);
+  --composer: #1b3fb8;
+  --composer-edge: rgb(255 251 234 / 24%);
+  --list: #1e4dd6;
+  --scrollbar-thumb: rgb(255 251 234 / 30%);
+  --scrollbar-thumb-hover: rgb(255 251 234 / 45%);
+  --scrim: rgb(14 27 69 / 70%);
+  --shadow-popover: 0 16px 40px -18px rgb(14 27 69 / 70%);
+  --shadow-dialog: 0 24px 64px -24px rgb(14 27 69 / 75%);
+  /* 3:1 on the blue, the sidebar and the card (WCAG 1.4.11). */
+  --edge: #c1cef0; /* cream 72% over blue */
+  --dot-off: #c1cef0;
+}
+[data-theme="murmur"] [data-app-sidebar] {
+  --sidebar: #1e4dd6; /* --blue-deep */
+  --sidebar-foreground: #fffbea;
+  --sidebar-muted-foreground: #f6f5eb;
+  --sidebar-row-hover: rgb(14 27 69 / 18%);
+  --sidebar-row-active: rgb(14 27 69 / 30%);
+  --sidebar-row-selected: rgb(14 27 69 / 30%);
+  --sidebar-border: rgb(255 251 234 / 22%);
+  --secondary-label: #f6f5eb;
+}
+
 /* Base. */
 *,
 ::before,
@@ -432,7 +501,7 @@ kbd {
   color: var(--foreground);
 }
 .btn-ghost.copied {
-  color: var(--primary);
+  color: var(--primary-text, var(--primary));
 }
 .icon-btn {
   display: inline-flex;
@@ -2526,7 +2595,7 @@ a.g-pr:hover {
   padding: 0.25rem 0.5rem;
 }
 .chat-new {
-  color: var(--primary);
+  color: var(--primary-text, var(--primary));
 }
 .chat-new::before,
 .chat-new::after {
@@ -3480,7 +3549,8 @@ a.g-pr:hover {
 }
 
 /* Dim's three tones: the conversation list sits between the sidebar and the conversation. */
-[data-theme="dim"] .chat-list {
+[data-theme="dim"] .chat-list,
+[data-theme="murmur"] .chat-list {
   --dot-ring: var(--list);
   background: var(--list);
   border-right: 0;
