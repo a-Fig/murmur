@@ -473,6 +473,8 @@ function sidebar() {
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       devs.length > 0 && h("div", { class: "side-head" }, "Devices"),
+      // Before the state, Devices and People keep their place.
+      !ui.state && [h("div", { class: "side-head" }, "Devices"), skeleton("side", 4), h("div", { class: "side-head" }, "People"), skeleton("side", 1)],
       devs.map((d) => {
         const live = shownSessions(liveSessions(d));
         if (ui.tagFilter && !live.length && !shownSessions(quietSessions(d)).length) return null;
@@ -1695,13 +1697,14 @@ function pickMenu() {
 }
 
 // The bar's search: a field with its "/" hint.
-function barSearch(key, label, value, onInput) {
+// Off while there is nothing to search, but there, so the bar keeps its shape.
+function barSearch(key, label, value, onInput, off = false) {
   return h(
     "label",
-    { class: "bar-search" },
+    { class: "bar-search" + (off ? " off" : "") },
     icon("search"),
-    h("input", { type: "search", placeholder: "Search", "aria-label": label, value: value || null, "data-key": key, oninput: (e) => onInput(e.target.value) }),
-    !value && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
+    h("input", { type: "search", placeholder: "Search", "aria-label": label, value: value || null, "data-key": key, disabled: off || null, oninput: (e) => onInput(e.target.value) }),
+    !value && !off && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
   );
 }
 
@@ -1811,7 +1814,7 @@ function runningNeeds() {
 
 function sessionsPage() {
   const tab = ui.sessTab || "running";
-  if (!ui.state) return h("div", { class: "fx" }, pageBar({ title: "All sessions", meta: "Connecting…" }));
+  if (!ui.state) return h("div", { class: "fx" }, pageBar({ title: "All sessions" }), h("div", { class: "skel-sessions" }, skeleton("table", 10)));
   const F = fleetFilter();
   const devs = devices();
   const live = fleetRows("running");
@@ -3116,7 +3119,7 @@ const RECENT_PAGE = 300;
 const RECENT_SEEN_KEY = NAME + ":recent-seen";
 
 function recentPage() {
-  if (!ui.state || !ui.messagesLoaded) return recentShell(null, h("p", { class: "g-none g-loading", role: "status" }, "Loading…"));
+  if (!ui.state || !ui.messagesLoaded) return recentShell(null, h("div", { class: "g-feed" }, skeleton("feed", 6)));
   const every = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt);
   const q = (ui.rq || "").trim().toLowerCase();
   const all = q ? every.filter((m) => [fromName(m), m.toKind === "all" ? "Everyone" : toName(m), m.subject, m.fromPerson ? personText(m) : m.body].join(" ").toLowerCase().includes(q)) : every;
@@ -3209,13 +3212,17 @@ function recentPage() {
 }
 
 function recentShell(count, body, searchable = false) {
-  const search =
-    searchable &&
-    barSearch("rq", "Search messages", ui.rq, (v) => {
+  const search = barSearch(
+    "rq",
+    "Search messages",
+    ui.rq,
+    (v) => {
       ui.rq = v;
       ui.recentMax = null;
       render();
-    });
+    },
+    !searchable,
+  );
   return h("div", { class: "framed" }, pageBar({ title: "Recent messages", meta: count, right: search }), h("div", { class: "g-page g-recent" }, body));
 }
 
@@ -3902,8 +3909,17 @@ function myMessages() {
   return ui.messages.filter((m) => (m.toKind === "session" ? fromName(m) === mine || toName(m) === mine : groups.has(conversationOf(m).key)));
 }
 
-function noMessages() {
-  return ui.filter ? "No messages with " + nameOf(ui.filter, ui.filter) : "No messages";
+// Until the first answers, grey bars where the rows will be, so nothing jumps when they come:
+// "table" 36px, "side" 28px (the sidebar), "conv" 52px (a conversation), "feed" (a message).
+function skeleton(kind, n) {
+  return h(
+    "div",
+    { class: "skel skel-" + kind, role: "status", "aria-label": "Loading" },
+    Array.from({ length: n }, () => {
+      const lines = kind === "conv" ? 2 : kind === "feed" ? 3 : 1;
+      return h("div", { class: "skel-row", "aria-hidden": "true" }, lines > 1 && h("span", { class: "skel-face" }), h("span", { class: "skel-lines" }, Array.from({ length: lines }, () => h("span", { class: "skel-bar" }))));
+    }),
+  );
 }
 
 // Who sent a message and when, as far as the page knows.
@@ -4024,7 +4040,7 @@ function conversationsPage() {
       "div",
       { class: "page chat-page" },
       pageBar({ title: isMyFilter() ? "Your messages" : ui.filter ? nameOf(ui.filter, ui.filter) : "All conversations" }),
-      h("div", { class: "chat" }, h("nav", { class: "chat-list g-list", "aria-label": "Conversations" }, h("p", { class: "g-none g-loading", role: "status" }, "Loading…")), NARROW.matches ? null : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" })),
+      h("div", { class: "chat" }, h("nav", { class: "chat-list g-list", "aria-label": "Conversations" }, skeleton("conv", 8)), NARROW.matches ? null : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" })),
     );
   const list = conversations();
   // On a wide page a conversation is always open, and stays open while others get newer. On a
@@ -4057,20 +4073,18 @@ function conversationsPage() {
     { class: "page chat-page" },
     // A picked session keeps its header, and so its tags, before it has any messages.
     conversationsBar(view),
-    list.length === 0 && !ui.filter
-      ? h("div", { class: "blank" }, noMessages())
-      : h(
-          "div",
-          { class: "chat" + (open || picking ? " chat-open" : "") },
-          conversationList(list, view),
-          picking
-            ? h("section", { class: "chat-pane chat-pane-pick" }, listPicker(list.length > 0))
-            : open
-              ? conversationPane(open)
-              : NARROW.matches
-                ? null
-                : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" }),
-        ),
+    h(
+      "div",
+      { class: "chat" + (open || picking ? " chat-open" : "") },
+      conversationList(list, view),
+      picking
+        ? h("section", { class: "chat-pane chat-pane-pick" }, listPicker(list.length > 0))
+        : open
+          ? conversationPane(open)
+          : NARROW.matches
+            ? null
+            : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" }),
+    ),
   );
 }
 
@@ -4102,11 +4116,16 @@ function conversationsBar(view) {
       ),
     right: [
       f && h("button", { class: "bar-menu", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
-      (view.total > 0 || view.q.trim()) &&
-        barSearch("cq", "Search conversations", ui.cq, (v) => {
+      barSearch(
+        "cq",
+        "Search conversations",
+        ui.cq,
+        (v) => {
           ui.cq = v;
           render();
-        }),
+        },
+        !(view.total > 0 || view.q.trim()),
+      ),
     ],
   });
 }
@@ -4289,7 +4308,27 @@ function conversationList(list, view) {
           h("p", null, "You haven’t written to anyone yet."),
           h("button", { class: "btn btn-outline btn-xs", "data-key": "new-first", onclick: () => root.querySelector('[data-key="lp-q"]')?.focus() }, icon("compose"), "New message"),
         )
-      : listRows(view, rows, older, kind, count, q),
+      : !ui.filter && !list.length && !q
+        ? h(
+            "div",
+            { class: "g-nomatch" },
+            h("p", null, "No conversations yet. Conversations between sessions appear here as they’re sent."),
+            h(
+              "button",
+              {
+                class: "btn btn-outline btn-xs",
+                "data-key": "new-first",
+                onclick: () => {
+                  ui.lp = { q: "", index: 0 };
+                  openYours();
+                  root.querySelector('[data-key="lp-q"]')?.focus();
+                },
+              },
+              icon("compose"),
+              "New message",
+            ),
+          )
+        : listRows(view, rows, older, kind, count, q),
   );
 }
 

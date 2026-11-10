@@ -6578,12 +6578,6 @@ a.fx-pr:focus-visible,
 .pick-menu .fx-dot-dnd {
   background: #ff705d;
 }
-/* Before the first answer: a quiet line where the rows will be. */
-.dark .g-loading {
-  padding: 8px 10px;
-  font-size: 0.8125rem;
-  color: var(--text-3);
-}
 /* Recent: each row a button with a faint chevron at its right, always there, stronger on hover. */
 .g-chev {
   position: absolute;
@@ -6807,4 +6801,67 @@ a.fx-pr:focus-visible,
   font-size: 0.75rem;
   line-height: 1rem;
   color: var(--text-3);
+}
+.bar-search.off {
+  opacity: 0.5;
+}
+.bar-search.off input {
+  cursor: default;
+}
+/* Skeletons: flat bars at 4% white, no motion. */
+.skel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 12px;
+}
+.skel-conv .skel-row {
+  height: 52px;
+  padding: 0 10px;
+}
+.skel-feed .skel-row {
+  align-items: flex-start;
+  height: auto;
+  padding: 14px 12px;
+}
+.skel-side .skel-row {
+  height: 28px;
+  padding: 0 8px;
+}
+.skel-face {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 4%);
+}
+.skel-lines {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+}
+.skel-bar {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 4%);
+}
+.skel-row:nth-child(3n + 1) .skel-bar:first-child {
+  width: 46%;
+}
+.skel-row:nth-child(3n + 2) .skel-bar:first-child {
+  width: 62%;
+}
+.skel-row:nth-child(3n) .skel-bar:first-child {
+  width: 38%;
+}
+.skel-bar + .skel-bar {
+  width: 80%;
+}
+.skel-sessions {
+  padding: 32px 0 0;
+}
+.skel-sessions .skel-row {
+  border-bottom: 1px solid var(--line-soft);
 }
