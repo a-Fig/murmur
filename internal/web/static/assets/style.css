@@ -6421,3 +6421,18 @@ a.fx-pr:focus-visible,
   border-color: transparent;
   box-shadow: inset 0 0 0 2px var(--ring);
 }
+/* Recent's hierarchy: who sent it and its subject at 500 in the names' white, where it went and
+   when in the meta grey, the body in the secondary grey. */
+.dark .g-item .chat-msg-subject {
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .g-item :is(.g-to, .g-to-arrow, .chat-msg-time) {
+  color: var(--text-3);
+}
+.dark .g-item .g-to-who {
+  font-weight: 400;
+}
+.dark .g-item .g-body {
+  color: var(--text-2);
+}
