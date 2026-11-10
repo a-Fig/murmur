@@ -4162,50 +4162,36 @@ a.fx-pr:focus-visible,
 .relay-open:hover {
   text-decoration-color: currentColor;
 }
-.name-ask {
-  margin-bottom: 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid rgb(255 255 255 / 7%);
-  border-radius: 10px;
-  background: #1c1c1c;
+/* The composer asking for a name before the first send: a line, then the field and Save. */
+.dark .composer.composer-name {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
 }
-.name-ask-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.5rem;
-  margin-bottom: 0.625rem;
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
-  font-weight: 500;
-  color: #ededed;
-}
-.name-ask-line {
+.composer-name-line {
   font-size: 0.75rem;
   line-height: 1rem;
-  font-weight: 400;
-  color: #a3a3a3;
+  color: var(--text-2);
 }
-.name-ask-row {
+.composer-name-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 8px;
 }
-.name-ask .setup-row {
+.composer-name .setup-row {
   flex: 1;
   min-width: 0;
-  gap: 0.5rem;
+  gap: 8px;
 }
-.name-ask .setup-face .avatar {
-  width: 2rem;
-  height: 2rem;
-  font-size: 0.8125rem;
+.composer-name .setup-face .avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 0.75rem;
 }
-.name-ask .field.setup-field input {
-  height: 2rem;
-}
-.name-ask .btn-ghost {
-  height: 2rem;
+.composer-name .field.setup-field input,
+.composer-name .btn {
+  height: var(--control);
 }
 
 /* State dots, everywhere (stateDot): a shape for each state as well as a colour. Active and idle

@@ -245,6 +245,7 @@ function render() {
     content = null;
     return;
   }
+  if (ui.setup && !ui.setup.busy && me() && !me().taken) ui.setup = null;
   const keep = document.activeElement?.dataset?.key;
   const caret = caretOf(document.activeElement);
   const scroll = content ? content.scrollTop : 0;
@@ -4841,7 +4842,8 @@ async function submitName() {
   try {
     const was = selfName();
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
-    ui.state.account = { ...ui.state.account, ...account };
+    // The answer leaves out what is empty: a name that was taken, and its suggestion, are over.
+    ui.state.account = { ...ui.state.account, taken: "", suggested: "", ...account };
     moveToName(was, account.name); // asked for a new name, they may have drafts under the old one
     if (ui.filter === YOU) ui.filter = account.addr;
     ui.setup = null;
@@ -4913,7 +4915,7 @@ function setupDialog() {
   );
 }
 
-function nameField(s) {
+function nameField(s, placeholder = "ada-lovelace") {
   return h(
     "div",
     { class: "setup-row" },
@@ -4925,7 +4927,7 @@ function nameField(s) {
         type: "text",
         value: s.name,
         maxlength: 32,
-        placeholder: "ada-lovelace",
+        placeholder,
         autocomplete: "off",
         autocapitalize: "none",
         spellcheck: "false",
@@ -4945,9 +4947,10 @@ function nameField(s) {
   );
 }
 
-// Sending before there is a name: the name is asked for over the composer, the draft stays where
-// it is, and Send sends it once the name is saved.
-function nameAsk() {
+// Sending before there is a name: the composer itself asks for it, in place of the draft, which
+// waits meanwhile. Save keeps the name, and the draft comes back and sends; Cancel or Escape go
+// back to the draft unsent.
+function nameStep() {
   const s = ui.setup;
   const close = () => {
     ui.setup = null;
@@ -4957,8 +4960,8 @@ function nameAsk() {
   return h(
     "form",
     {
-      class: "name-ask",
-      "aria-label": "Choose your name to send",
+      class: "composer composer-name",
+      "aria-label": "Your name, to send",
       onsubmit: (e) => {
         e.preventDefault();
         submitName();
@@ -4969,14 +4972,12 @@ function nameAsk() {
         close();
       },
     },
-    me()?.taken
-      ? h("p", { class: "name-ask-title" }, "Choose a new name to send", h("span", { class: "name-ask-line" }, takenLine(me())))
-      : h("p", { class: "name-ask-title" }, "Choose your name to send", h("span", { class: "name-ask-line" }, "Agents see it, and send to it.")),
+    h("p", { class: "composer-name-line" }, me()?.taken ? takenLine(me()) : "Your name, to send this. Agents see it, and send to it."),
     h(
       "div",
-      { class: "name-ask-row" },
-      nameField(s),
-      h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-send", disabled: s.busy }, s.busy ? "Saving…" : "Send"),
+      { class: "composer-name-row" },
+      nameField(s, "Your name"),
+      h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-send", disabled: s.busy }, s.busy ? "Saving\u2026" : "Save"),
       h("button", { type: "button", class: "btn btn-ghost", "data-key": "setup-cancel", onclick: close }, "Cancel"),
     ),
     s.error && h("p", { class: "dialog-error", role: "alert" }, s.error),
@@ -5204,10 +5205,9 @@ function composer(c, target, onSent) {
   return h(
     "div",
     { class: "composer-wrap" },
-    ui.setup?.inline === el && nameAsk(),
     downNote(),
     ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
-    h("div", { class: "composer" }, el, sendButton(key, el, trySend)),
+    ui.setup?.inline === el ? nameStep() : h("div", { class: "composer" }, el, sendButton(key, el, trySend)),
   );
 }
 
@@ -5217,7 +5217,14 @@ function needName(el) {
   if (me() && !me().taken) return false;
   askForName(() => {
     render();
-    root.querySelector(`button[data-for="${CSS.escape(el.dataset.composer)}"]`)?.click();
+    const button = () => root.querySelector(`button[data-for="${CSS.escape(el.dataset.composer)}"]`);
+    // A new name (one taken before, say) moves a draft between two to the conversation under it,
+    // which may not be the one on screen: open it, and send there.
+    if (!button() && el.dataset.composer.startsWith("dm:")) {
+      const pair = JSON.parse(el.dataset.composer.slice(3));
+      startChat(pair.find((n) => n !== myName()) || myName());
+    }
+    button()?.click();
   }, el);
   return true;
 }
@@ -5293,9 +5300,8 @@ function relayBar(c, running) {
   return h(
     "div",
     { class: "composer-wrap" },
-    ui.setup?.inline === el && nameAsk(),
     downNote() || relayLine(c),
-    h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
+    ui.setup?.inline === el ? nameStep() : h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }
 
@@ -5756,7 +5762,7 @@ async function saveAccount(name) {
   try {
     const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name }) });
     const was = myName();
-    if (ui.state) ui.state.account = { ...ui.state.account, ...account };
+    if (ui.state) ui.state.account = { ...ui.state.account, taken: "", suggested: "", ...account };
     moveToName(was, account.name);
     ui.accountDraft = null;
     poll();
