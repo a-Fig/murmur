@@ -4119,6 +4119,7 @@ function conversationRow(c) {
 }
 
 function conversationPane(c) {
+  if (ui.relayFor && ui.relayFor !== c.key) ui.relayFor = null;
   const senders = new Set(c.messages.map(fromName));
   const o = otherIn(c);
   const of = o && findSession(o);
@@ -4875,8 +4876,8 @@ function composer(c, target, onSent) {
     if (item && onSent) onSent(item);
   };
   const el = composerFor(key, trySend, () => composerChange(key, el));
-  el.placeholder = "Message " + target.label;
-  el.setAttribute("aria-label", "Message " + target.label);
+  el.placeholder = "Write to " + target.label + "…";
+  el.setAttribute("aria-label", "Write to " + target.label);
   return h(
     "div",
     { class: "composer-wrap" },
@@ -4897,14 +4898,20 @@ function needName(el) {
   return true;
 }
 
-// A conversation between two sessions is theirs: a person can't write in it. The bar under it
-// writes to one of them, the last to speak unless the person picks the other, in the person's own
-// conversation with it, and then says that is where it went.
+// A conversation between two sessions is theirs: a person can't write in it. The composer under
+// it writes to one of them, privately, in the person's own conversation with it, and says so on a
+// line inside its top edge, then where the message went. Who it writes to is worked out when the
+// thread is opened, the last of the two to speak, and holds through new messages until the person
+// switches or opens another thread.
 function relayBar(c, running) {
   const key = "relay:" + c.key;
-  const last = [...c.messages].reverse().find((m) => running.includes(fromName(m)));
-  let to = ui.relayTo.get(c.key);
-  if (!running.includes(to)) to = last ? fromName(last) : running[0];
+  if (ui.relayFor !== c.key || !running.includes(ui.relayTo.get(c.key))) {
+    const last = [...c.messages].reverse().find((m) => running.includes(fromName(m)));
+    ui.relayTo.set(c.key, last ? fromName(last) : running[0]);
+    ui.relayFor = c.key;
+  }
+  const to = ui.relayTo.get(c.key);
+  const other = running.find((n) => n !== to);
   const send = () => relaySend(c, to, el);
   const el = composerFor(key, send, () => {
     composerChange(key, el);
@@ -4915,32 +4922,18 @@ function relayBar(c, running) {
     }
   });
   el.placeholder = "Write to " + to + "…";
-  el.setAttribute("aria-label", "Message " + to + " privately, in your conversation with it");
-  const pick =
-    running.length > 1
-      ? segmented(
-          "relay-to-" + c.key,
-          running.map((n) => [n, n]),
-          to,
-          (v) => {
-            ui.relayTo.set(c.key, v);
-            render();
-          },
-        )
-      : h("span", { class: "relay-who" }, to);
-  pick.setAttribute("aria-label", "Who to message");
+  el.setAttribute("aria-label", "Write to " + to + ", privately, in your conversation with it");
+  const switchTo = () => {
+    ui.relayTo.set(c.key, other);
+    ui.relayed.delete(c.key);
+    render();
+    el.focus({ preventScroll: true });
+  };
   return h(
     "div",
-    { class: "composer-wrap relay-wrap" },
-    h("div", { class: "relay-head" }, h("span", { class: "relay-title" }, "Message privately"), pick),
+    { class: "composer-wrap" },
     ui.setup?.inline === el && nameAsk(),
-    relayLine(c, to, el),
-    h(
-      "div",
-      { class: "composer composer-relay" },
-      el,
-      h("button", { class: "composer-send relay-send", disabled: !el.value.trim(), "data-key": "send-" + key, "data-for": key, onclick: send }, "Send to " + to),
-    ),
+    h("div", { class: "composer composer-relay" }, relayLine(c, to, other, el, switchTo), el, sendButton(key, el, send)),
   );
 }
 
@@ -4958,13 +4951,20 @@ function relaySend(c, to, el) {
   el.focus({ preventScroll: true });
 }
 
-// Over the bar: where a message written here goes, before it is sent, and where it went after.
-function relayLine(c, to, el) {
+// Inside the composer's top edge: who a message written here goes to, before it is sent, and where
+// it went after.
+function relayLine(c, to, other, el, switchTo) {
   const sent = ui.relayed.get(c.key);
   const item = sent && ui.outbox.find((x) => x.cid === sent.cid);
-  const open = () => startChat(sent.to);
   const pending = item && item.status !== "sent"; // sending, or failed and waiting to be tried again
-  if (!sent || (!pending && (sent.to !== to || el.value.trim()))) return h("p", { class: "relay-line" }, "Goes to your conversation with " + to + ", not this thread");
+  if (!sent || (!pending && (sent.to !== to || el.value.trim()))) {
+    return h(
+      "p",
+      { class: "relay-line" },
+      "To " + to + ", privately",
+      other && [h("span", { class: "relay-sep", "aria-hidden": "true" }, "·"), h("button", { class: "relay-open", "data-key": "relay-switch", onclick: switchTo }, "switch to " + other)],
+    );
+  }
   if (item?.status === "failed") {
     return h(
       "p",
@@ -4980,7 +4980,7 @@ function relayLine(c, to, el) {
     icon("check"),
     "Sent to your conversation with " + sent.to,
     h("span", { class: "relay-sep", "aria-hidden": "true" }, "·"),
-    h("button", { class: "relay-open", "data-key": "relay-open", onclick: open }, "Open"),
+    h("button", { class: "relay-open", "data-key": "relay-open", onclick: () => startChat(sent.to) }, "Open"),
   );
 }
 
