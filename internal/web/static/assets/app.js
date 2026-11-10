@@ -627,27 +627,39 @@ function updateInfo() {
       ? { kind: "busy", text: "Run " + COMMAND + " ui again", title: "The restarted daemon serves the page at a new address." }
       : { kind: "busy", text: "Restarting", title: "Restarting onto" + (to || " the update") + ". The page reconnects on its own." };
   }
-  if (v.ready) return { kind: "ready", text: "Restart to update", title: NAME + to + " is installed. Restart its daemon onto it now.", act: restartNow };
+  if (v.ready) return { kind: "ready", text: "Restart to update", title: NAME + to + " is installed. Settings restarts its daemon onto it.", act: toVersion };
   if (!v.latest) return null;
   if (v.auto) return { kind: "auto", text: "Updating to " + v.latest, title: NAME + " installs it on its own." };
-  return { kind: "manual", text: v.latest + " is out", title: "Updates are off or failing here. Settings has the command that installs it.", act: () => go("settings") };
+  return { kind: "manual", text: v.latest + " is out", title: "Updates are off or failing here. Settings has the command that installs it.", act: toVersion };
+}
+
+// Settings, at its Version row, with the keyboard on what it offers.
+function toVersion() {
+  go("settings");
+  // The hash changes the view a task later.
+  setTimeout(() => {
+    const row = root.querySelector("#set-version");
+    row?.scrollIntoView({ block: "nearest" });
+    row?.querySelector("button")?.focus({ preventScroll: true });
+  });
 }
 
 function updateIcon(info) {
   return info.kind === "busy" && !restartStuck() ? icon("rotateCw", "spin") : icon("download");
 }
 
+// A status line, not a page: plain words, a quiet link to Settings' Version row when there is
+// something to do there (restart, or the command to run), and no stop for Tab when there isn't.
 function updateItem() {
   const info = updateInfo();
   if (!info) return null;
-  const cls = "menu-button update update-" + info.kind;
-  // Ready is a quiet line with a green dot; Version in Settings has the Restart button too.
+  const cls = "update-line update-" + info.kind;
   const kids = [info.kind === "ready" ? h("span", { class: "update-dot", "aria-hidden": "true" }) : updateIcon(info), h("span", { class: "label" }, info.text)];
   return h(
     "li",
     null,
     info.act
-      ? h("button", { class: cls, title: info.title, "data-key": "update", onclick: info.act }, kids)
+      ? h("button", { class: cls + " update-link", title: info.title, "data-key": "update", onclick: info.act }, kids)
       : h("div", { class: cls, title: info.title, role: "status" }, kids),
   );
 }
@@ -707,8 +719,7 @@ function versionSection() {
         h(
           "button",
           {
-            class: "btn btn-ghost btn-xs",
-            title: "Copy",
+            class: "btn btn-outline btn-xs",
             "aria-label": "Copy the command",
             "data-key": "copy-install",
             onclick: async () => {
@@ -722,12 +733,12 @@ function versionSection() {
               setTimeout(render, SAVED_MS);
             },
           },
-          Date.now() - (ui.copiedAt || 0) < SAVED_MS ? [icon("check"), h("span", { role: "status" }, "Copied")] : icon("copy"),
+          Date.now() - (ui.copiedAt || 0) < SAVED_MS ? [icon("check"), h("span", { role: "status" }, "Copied")] : [icon("copy"), "Copy"],
         ),
       ),
     );
   }
-  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Version")), h("div", { class: "group" }, row));
+  return h("section", { class: "section", id: "set-version" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Version")), h("div", { class: "group" }, row));
 }
 
 // Four states, as a colored dot on the face:
@@ -5224,8 +5235,8 @@ function wakeWords(w) {
 
 // A segmented control, one stop for Tab with the arrow keys moving along it, as in All sessions.
 // A setting that follows the device's (resolved: what that comes to) fills no segment: Default is
-// selected but quiet, an outline, with what it comes to in its title. Only a setting of the
-// session's own is filled.
+// selected but quiet, an outline, and says what it comes to after its name, "Default (3 min)". Only
+// a setting of the session's own is filled.
 function segmented(key, choices, current, pick, resolved) {
   const inherited = current === "default" && !!resolved;
   const seg = h(
@@ -5244,7 +5255,7 @@ function segmented(key, choices, current, pick, resolved) {
             if (v !== current) pick(v);
           },
         },
-        label,
+        v === "default" && resolved ? [label, h("span", { class: "seg-inherit" }, "(" + resolved.replace(/^Within /, "") + ")")] : label,
       ),
     ),
   );
@@ -5411,26 +5422,22 @@ function settingsRow(key, title, description, control, extraClass = "", saves = 
   );
 }
 
-// One wording, wherever a name someone else chose first is asked about again.
-function takenLine(a) {
-  return "The person on " + host(a.taken) + " chose \u201c" + a.name + "\u201d first. Choose another name; until you do, you can't send.";
+// One wording, wherever a name someone else chose first is asked about again; as nodes (marked),
+// the name stands out.
+function takenLine(a, marked = false) {
+  const name = "\u201c" + a.name + "\u201d";
+  const parts = ["The person on " + host(a.taken) + " chose ", marked ? h("b", null, name) : name, " first. Choose another name; until you do, you can't send."];
+  return marked ? parts : parts.join("");
 }
 
 function accountSection() {
   const a = me();
   const suggested = ui.state?.account?.suggested || "";
-  // A saved name is the field's value. Without one, or with one taken, the field starts empty, and
-  // the suggestion is its placeholder and a line under it, until it is used.
-  const value = ui.accountDraft ?? (a && !a.taken ? a.name : "");
+  // A saved name is the field's value. Without one, or with one taken, the suggestion is, selected
+  // when the field is entered so typing replaces it, and Choose takes it as it is.
+  const prefilled = ui.accountDraft == null && (!a || a.taken) && !!suggested;
+  const value = ui.accountDraft ?? (a && !a.taken ? a.name : suggested);
   const unchanged = (v) => !v.trim() || (!!a && !a.taken && v.trim() === a.name);
-  const offer = (!a || a.taken) && suggested && value.trim() !== suggested;
-  const use = () => {
-    ui.accountDraft = suggested;
-    render();
-    const f = root.querySelector('[data-key="account-name"]');
-    f?.focus();
-    f?.select();
-  };
   return h(
     "section",
     { class: "section" },
@@ -5441,7 +5448,7 @@ function accountSection() {
       settingsRow(
         "account",
         "Your name",
-        a?.taken ? h("span", { class: "taken-line" }, takenLine(a)) : "Agents see it, and send to it.",
+        a?.taken ? h("span", { class: "taken-line" }, takenLine(a, true)) : "Agents see it, and send to it.",
         // The field and its button on a line, and the suggestion under them.
         h(
           "div",
@@ -5461,6 +5468,13 @@ function accountSection() {
                 "aria-label": "Your name",
                 "data-key": "account-name",
                 placeholder: suggested || "ada-lovelace",
+                // A click would put the caret where it landed; the suggestion stays selected.
+                onfocus: (e) => {
+                  if (prefilled) e.target.select();
+                },
+                onmouseup: (e) => {
+                  if (prefilled && ui.accountDraft == null) e.preventDefault();
+                },
                 oninput: (e) => {
                   ui.accountDraft = e.target.value;
                   const btn = root.querySelector('[data-key="account-save"]');
@@ -5477,10 +5491,9 @@ function accountSection() {
             h(
               "button",
               { class: "btn btn-outline btn-xs", "data-key": "account-save", disabled: unchanged(value) || ui.accountSaving, onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) },
-              ui.accountSaving ? "Saving…" : !a ? "Choose" : a.taken ? "Save" : "Rename",
+              ui.accountSaving ? "Saving…" : !a || a.taken ? "Choose" : "Rename",
             ),
           ),
-          offer && h("p", { class: "account-suggest" }, "Suggested: ", h("b", null, suggested), h("button", { class: "btn btn-ghost btn-xs", "data-key": "account-use", onclick: use }, "Use it")),
         ),
       ),
     ),
@@ -5543,7 +5556,7 @@ function sessionLine(d, s) {
 }
 
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null];
+  const sections = [ui.state ? accountSection() : null, versionSection()];
   const self = devices().find((d) => d.self);
   // Until the settings have come, and if they couldn't, their sections say so rather than vanish.
   if (!ui.settings) {
@@ -5631,18 +5644,21 @@ function settingsPage() {
         "",
         true,
       ),
-      // Only Claude Code sessions: the busy notice comes from Murmur's hook, which only Claude Code
-      // runs (internal/daemon/serve.go).
+      // The busy notice comes from Murmur's hook, which only Claude Code runs
+      // (internal/daemon/serve.go). Any other session is handed a message whole: in T3, as its next
+      // turn; elsewhere, from its inbox when it reads it (deliver.go). Its row says so, rather than
+      // leave it out.
       perSession(
         [...local]
-          .filter((s) => s.agent === "claude-code")
           .sort((a, b) => a.name.localeCompare(b.name))
           .map((s) =>
             settingsRow(
               "busy-" + s.name,
               s.name,
               sessionLine(self, s),
-              busyControl(
+              s.agent !== "claude-code"
+                ? h("span", { class: "set-whole", title: s.agent === "t3" ? "T3 hands it each message as a turn; there's no busy notice to choose." : "It reads each message from its inbox; there's no busy notice to choose." }, "Gets whole messages")
+                : busyControl(
                 "busy-" + s.name,
                 busyOverrides[s.name] || null,
                 (b) => {
@@ -5670,9 +5686,6 @@ function settingsPage() {
         "section",
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
-        // Why only some sessions are here: the notice comes from Murmur's hook (serve.go), which
-        // only Claude Code runs; the rest are handed a message as a turn, or read it from the inbox.
-        h("p", { class: "set-note set-section-note" }, "Claude Code sessions only, where Murmur's hook runs; other sessions get a message as their next turn or read it from their inbox."),
         h("div", { class: "group" }, busyRows),
         ui.settingsError && h("p", { class: "row-error section-head", role: "alert" }, ui.settingsError),
       ),
@@ -5685,6 +5698,7 @@ function settingsPage() {
       "section",
       { class: "section" },
       h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Mutes")),
+      mutes.some((m) => !m.canUnmute) && h("p", { class: "set-note set-section-note" }, "Mutes set on another device can only be lifted there."),
       h(
         "div",
         { class: "group" },
@@ -5693,8 +5707,9 @@ function settingsPage() {
           : mutes.map((m) => {
               const key = "mute-" + m.by + "-" + m.muted;
               const at = when(m.at);
-              return settingsRow(
-                key,
+              return h(
+                "div",
+                { class: "row mute-row" },
                 h(
                   "span",
                   { class: "mute-line" },
@@ -5703,8 +5718,7 @@ function settingsPage() {
                   h("span", { class: "verb" }, "muted"),
                   h("span", { class: "truncate" }, m.muted),
                 ),
-                at && agoEl("span", "", at),
-                !m.canUnmute && h("span", { class: "set-note" }, "Set on " + (findSession(m.by) ? deviceLabel(findSession(m.by).device) : "another device") + "; only it can unmute"),
+                at && agoEl("span", "mute-ago", at),
                 m.canUnmute &&
                   h(
                     "button",
@@ -5716,14 +5730,13 @@ function settingsPage() {
                     },
                     "Unmute",
                   ),
-                "keep-inline",
+                ui.rowErrors[key] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors[key]),
               );
             }),
       ),
     ),
   );
 
-  sections.push(versionSection());
   return h("div", { class: "framed" }, pageBar({ title: "Settings", meta: self && "For " + (self.host || host(self.id)) + ", this device" }), h("div", { class: "page set-page" }, sections));
 }
 

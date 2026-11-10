@@ -2402,26 +2402,6 @@ code {
 
 /* A newer release (#240): above Settings in the sidebar, at the foot of the folded sidebar, and in
    the top bar on a phone. Green when one click restarts onto it, as in Discord. */
-.menu-button.update {
-  color: var(--sidebar-foreground);
-}
-.menu-button.update-ready,
-.menu-button.update-ready > .icon,
-.menu-button.update-ready:hover > .icon {
-  color: var(--success-foreground);
-}
-.menu-button.update-ready {
-  background: color-mix(in oklab, var(--success) 10%, transparent);
-}
-.menu-button.update-ready:hover {
-  background: color-mix(in oklab, var(--success) 18%, transparent);
-}
-div.menu-button.update,
-div.menu-button.update:hover {
-  background: none;
-  color: var(--sidebar-muted-foreground);
-  cursor: default;
-}
 .mini-btn.update-ready {
   color: var(--success-foreground);
 }
@@ -4365,7 +4345,11 @@ a.fx-pr:focus-visible,
   color: #a3a3a3;
 }
 .taken-line {
-  color: #eec448;
+  color: var(--text-2);
+}
+.taken-line b {
+  font-weight: 500;
+  color: var(--text-1);
 }
 /* A row too narrow for its words and its control side by side puts the control under the words. */
 @container (max-width: 46rem) {
@@ -4676,21 +4660,6 @@ a.fx-pr:focus-visible,
   display: inline-flex;
   align-items: center;
 }
-.account-suggest {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: #a3a3a3;
-}
-.account-suggest b {
-  font-weight: 500;
-  color: #ededed;
-}
-.account-suggest .btn {
-  margin-left: 0.25rem;
-}
 @container (max-width: 46rem) {
   .row-grid.has-desc .account-ctl {
     align-items: flex-start;
@@ -4732,15 +4701,6 @@ a.fx-pr:focus-visible,
   font-size: 0.75rem;
   line-height: 1rem;
   color: #a3a3a3;
-}
-/* An update ready to restart onto, in the sidebar: a quiet line with a small green dot. */
-.dark .menu-button.update-ready,
-.dark .menu-button.update-ready:hover {
-  background: none;
-  color: var(--sidebar-muted-foreground);
-}
-.dark .menu-button.update-ready:hover {
-  color: var(--sidebar-foreground);
 }
 .update-dot {
   flex: none;
@@ -4905,6 +4865,11 @@ a.fx-pr:focus-visible,
 /* A row's main button lends its ring to the row; the grip shows focus by its own bar. */
 .dark :is(.fx-open, .fx-grip):focus-visible {
   box-shadow: none !important;
+}
+/* A text field takes the same ring, on its box. */
+.dark .field:has(input:focus-visible) {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--ring) !important;
 }
 /* The system (#183, after Fable's pass). Two surfaces: a #141414 canvas under the sidebar and the
    page, and #1c1c1c raised for popovers, menus and the details pane. Lines are 7% white, a row's
@@ -5892,7 +5857,8 @@ a.fx-pr:focus-visible,
 }
 /* Settings (#183): no cards. Each section is rows on the canvas between hairlines; a session's row
    is one 36px line, its name with what it is in meta beside it. Controls are 28px with 6px corners;
-   a setting that follows the device's is selected but quiet, an outline, its value in its title. */
+   a setting that follows the device's is selected but quiet, an outline, with its value after
+   "Default" in meta. */
 .dark .set-page .section-head {
   min-height: 36px;
   padding: 0;
@@ -6410,4 +6376,67 @@ a.fx-pr:focus-visible,
   line-height: 1rem;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+/* Settings (N): Default's inherited value; a session that gets messages whole, in words where a
+   control would be; mutes as single 36px lines. */
+.seg-inherit {
+  margin-left: 0.25em;
+  color: var(--text-3);
+}
+.set-whole {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.dark .set-page .row.mute-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  min-height: var(--row);
+  padding: 4px 0;
+}
+.mute-row .mute-line {
+  flex: 1;
+}
+.mute-ago {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mute-row > .row-error {
+  flex-basis: 100%;
+  padding-bottom: 4px;
+}
+/* The sidebar's word on a newer release: a status line in meta, a link when it leads somewhere. */
+.update-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-2);
+  text-align: left;
+}
+.update-line .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.update-line .update-dot {
+  margin: 0 4px;
+}
+.update-link:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
