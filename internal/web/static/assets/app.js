@@ -2792,7 +2792,7 @@ function fleetPane(name) {
   });
   const enter = ui.fxEnter;
   ui.fxEnter = false;
-  return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name)), ui.paneMsg === name && paneCompose(name));
+  return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name)), paneCompose(name));
 }
 
 // On Conversations, "/" goes to its search, as on All sessions.
@@ -2815,10 +2815,9 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape" && ui.rowMenu && !e.defaultPrevented) return closeRowMenu();
+  // Escape in the pane's composer leaves it (the draft stays); the next Escape closes the details.
   if (e.key === "Escape" && !e.defaultPrevented && !ui.setup && e.target?.closest?.(".fx-compose")) {
     e.preventDefault();
-    ui.paneMsg = null;
-    render();
     root.querySelector('[data-key="fx-msg"]')?.focus();
     return;
   }
@@ -2996,12 +2995,8 @@ function fleetInspector(name) {
           class: "fx-btn fx-btn-primary",
           "data-key": "fx-msg",
           "aria-label": "Message " + name,
-          "aria-expanded": ui.paneMsg === name ? "true" : "false",
-          onclick: () => {
-            ui.paneMsg = name;
-            render();
-            root.querySelector(".fx-compose .composer-input")?.focus();
-          },
+          // The composer is always at the pane's foot; this takes the keyboard there.
+          onclick: () => root.querySelector(".fx-compose .composer-input")?.focus(),
         },
         icon("message"),
         "Message",
