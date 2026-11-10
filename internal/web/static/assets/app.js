@@ -3249,7 +3249,8 @@ function recentRoving() {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const who = m.toKind === "all" ? "Everyone" : toName(m);
+  // A broadcast is named as its conversation is: "Everyone", "Everyone on maya-mbp".
+  const who = m.toKind === "session" ? toName(m) : groupName(c);
   const to = m.toKind === "all" ? [icon("broadcast"), who] : m.toKind === "device" ? [icon("laptop"), who] : who;
   const body = m.fromPerson ? personText(m) : m.body;
   const open = () => {
@@ -3287,6 +3288,8 @@ function recentItem(m, at) {
       body && h("span", { class: "chat-msg-body rich g-body" + (opened ? " open" : "") }, rich(body, true)),
     ),
     h("span", { class: "g-hint", "aria-hidden": "true" }, "Open conversation"),
+    // Always there, faintly: the row leads somewhere.
+    h("span", { class: "g-chev", "aria-hidden": "true" }, icon("chevronRight")),
   );
   return h(
     "div",

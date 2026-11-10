@@ -6602,6 +6602,29 @@ a.fx-pr:focus-visible,
   font-size: 0.8125rem;
   color: var(--text-3);
 }
+/* Recent: each row a button with a faint chevron at its right, always there, stronger on hover. */
+.g-chev {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  display: grid;
+  margin-top: -7px;
+  color: var(--text-3);
+  opacity: 0.45;
+}
+.g-chev .icon {
+  width: 14px;
+  height: 14px;
+}
+.g-item:is(:hover, :focus-visible) .g-chev {
+  opacity: 1;
+}
+.dark .g-item .g-hint {
+  right: 36px;
+}
+.dark .g-item .chat-msg-main {
+  padding-right: 24px;
+}
 /* Settings: a session's row is its name over what it is, never cut short; the sessions that
    follow the default fold into one line. */
 .dark .set-page .set-sess .row-text {
