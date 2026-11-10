@@ -6794,3 +6794,10 @@ a.fx-pr:focus-visible,
   line-height: 1rem;
   color: var(--text-2);
 }
+/* A send the daemon refused: its text is back in the composer, and this line says why. */
+.dark .composer-error {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: #ff8a7a;
+}

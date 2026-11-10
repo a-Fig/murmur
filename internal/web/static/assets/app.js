@@ -51,6 +51,7 @@ const ui = {
   draftTo: null, // who a conversation with no messages yet is with
   restored: null, // the conversation a failed message's text just went back into
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
+  sendErrors: new Map(), // composer key -> why the daemon refused what was sent from it
   navPush: false, // the next render's hash is a new history entry (a navigation), not a replacement
   pendingRoute: null, // { kind, name }: a session or person named in the address, found once the state comes
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
@@ -97,7 +98,9 @@ async function api(path, init = {}) {
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || res.status + " " + res.statusText);
+    const err = new Error(body.error || res.status + " " + res.statusText);
+    err.status = res.status; // a 4xx is the daemon refusing; a 5xx, or none, is it failing
+    throw err;
   }
   return res.status === 204 ? null : res.json();
 }
@@ -5205,7 +5208,7 @@ function composer(c, target, onSent) {
   return h(
     "div",
     { class: "composer-wrap" },
-    downNote(),
+    downNote() || sendError(el.dataset.composer),
     ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
     ui.setup?.inline === el ? nameStep() : h("div", { class: "composer" }, el, sendButton(key, el, trySend)),
   );
@@ -5300,7 +5303,7 @@ function relayBar(c, running) {
   return h(
     "div",
     { class: "composer-wrap" },
-    downNote() || relayLine(c),
+    downNote() || sendError(el.dataset.composer) || relayLine(c),
     ui.setup?.inline === el ? nameStep() : h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }
@@ -5310,7 +5313,8 @@ function relaySend(c, to, el) {
   if (!text || isDown() || needName(el)) return;
   const key = dmKey(myName(), to);
   const pair = [...new Set([myName(), to])].sort();
-  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key, conversation: { key, kind: "dm", title: pair.join(" & "), pair }, to, text, status: "sending" };
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key, conversation: { key, kind: "dm", title: pair.join(" & "), pair }, to, text, status: "sending", composer: el.dataset.composer };
+  ui.sendErrors.delete(el.dataset.composer);
   ui.outbox.push(item);
   ui.notes.delete(key);
   ui.relayed.set(c.key, { cid: item.cid, to, key });
@@ -5360,7 +5364,8 @@ function sendFrom(c, target, el, big) {
   }
   ui.armed = null;
   const { messages, ...conversation } = c; // not the messages: this can outlive them
-  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, status: "sending" };
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, status: "sending", composer: el.dataset.composer };
+  ui.sendErrors.delete(el.dataset.composer);
   ui.outbox.push(item);
   ui.notes.delete(c.key);
   el.value = "";
@@ -5384,10 +5389,33 @@ async function deliver(item) {
     timer = setTimeout(poll, 100); // what was sent is among the messages by now
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
+    const why = e.message.replace(/^not sent:\s*/i, ""); // the lines that show it say "Not sent" themselves
+    if (e.status >= 400 && e.status < 500) return refuse(item, why);
     item.status = "failed";
-    item.error = e.message.charAt(0).toUpperCase() + e.message.slice(1); // the daemon writes for agents, in lower case
+    item.error = why.charAt(0).toUpperCase() + why.slice(1); // the daemon writes for agents, in lower case
   }
   render();
+}
+
+// The daemon refused it (it holds a secret, say): it never left, so it goes back into the composer
+// it was written in, untouched, with one line over it saying why.
+function refuse(item, why) {
+  ui.outbox = ui.outbox.filter((x) => x !== item);
+  for (const [k, v] of ui.relayed) if (v.cid === item.cid) ui.relayed.delete(k);
+  if (ui.paneSent?.cid === item.cid) ui.paneSent = null;
+  const el = composers.get(item.composer);
+  if (el) el.value = el.value.trim() ? item.text + "\n" + el.value : item.text;
+  ui.sendErrors.set(item.composer, "Not sent: " + why.replace(/\.$/, "") + ". Edit it and send again.");
+  render();
+  if (el?.isConnected) {
+    fit(el);
+    el.focus({ preventScroll: true });
+  }
+}
+
+function sendError(key) {
+  const why = ui.sendErrors.get(key);
+  return why ? h("p", { class: "composer-error", role: "alert" }, why) : null;
 }
 
 function editFailed(item) {
