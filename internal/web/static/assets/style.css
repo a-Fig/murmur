@@ -6916,27 +6916,53 @@ a.fx-pr:focus-visible,
   overflow: hidden;
   white-space: normal;
 }
-/* Send waits for something to send, and looks it. While the composer has focus, a line inside its
-   foot says which key sends. */
+/* Send waits for something to send, and looks it. While the composer has focus, a meta line says
+   which key sends: at the right of the To line where there is one, else on a line of its own under
+   the field, whose room is kept while it is hidden, so focus never changes the composer's height. */
 .dark .composer-send:disabled {
   background: transparent;
   color: rgb(255 255 255 / 24%);
 }
 .composer-keys {
-  display: none;
-}
-.dark .composer:focus-within {
-  flex-wrap: wrap;
-  row-gap: 0;
-}
-.dark .composer:focus-within > .composer-keys {
-  display: block;
-  flex: 1 0 100%;
-  padding: 0 6px 4px 0;
   font-size: 0.75rem;
   line-height: 1rem;
   color: var(--text-3);
+  white-space: nowrap;
+  visibility: hidden;
+}
+.composer:focus-within .composer-keys {
+  visibility: visible;
+}
+.dark .composer:not(.composer-relay) {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.dark .composer:not(.composer-relay) > .composer-keys {
+  flex: 1 0 100%;
+  padding: 0 6px 4px 0;
   text-align: right;
+}
+.relay-who {
+  container: relay-who / inline-size;
+}
+.relay-who > .composer-keys {
+  margin-left: auto;
+  padding-right: 3px;
+}
+.relay-who > :not(.relay-where) {
+  flex-shrink: 0;
+}
+/* A To line without room for the whole hint says only "Enter to send"; one without room for that
+   leaves it out, rather than cut either short. */
+@container relay-who (max-width: 640px) {
+  .composer-keys-more {
+    display: none;
+  }
+}
+@container relay-who (max-width: 484px) {
+  .relay-who > .composer-keys {
+    display: none;
+  }
 }
 /* Recent: a day's label, held under the bar while its messages scroll, ends in a hairline, so the
    rows read as passing under it. */
