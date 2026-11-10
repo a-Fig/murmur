@@ -636,7 +636,8 @@ function updateItem() {
   const info = updateInfo();
   if (!info) return null;
   const cls = "menu-button update update-" + info.kind;
-  const kids = [updateIcon(info), h("span", { class: "label" }, info.text)];
+  // Ready is a quiet line with a green dot; Version in Settings has the Restart button too.
+  const kids = [info.kind === "ready" ? h("span", { class: "update-dot", "aria-hidden": "true" }) : updateIcon(info), h("span", { class: "label" }, info.text)];
   return h(
     "li",
     null,

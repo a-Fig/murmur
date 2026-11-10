@@ -6031,3 +6031,20 @@ a.fx-pr:focus-visible,
   -webkit-line-clamp: unset;
   line-clamp: none;
 }
+/* An update ready to restart onto, in the sidebar: a quiet line with a small green dot. */
+.dark .menu-button.update-ready,
+.dark .menu-button.update-ready:hover {
+  background: none;
+  color: var(--sidebar-muted-foreground);
+}
+.dark .menu-button.update-ready:hover {
+  color: var(--sidebar-foreground);
+}
+.update-dot {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin: 0 0.3125rem;
+  border-radius: 999px;
+  background: #64af4c;
+}
