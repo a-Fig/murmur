@@ -5097,11 +5097,12 @@ a.fx-pr:focus-visible,
   position: static;
 }
 /* One row model (#183): every row in the sessions table is one 36px line. Session 200 (or its
-   longest name), Agent 140, State 124, Working on (all the rest), Branch with its PR (as wide as
+   longest name), Agent 140, State 124, Working on (the rest, up to 560, so Branch and Last active
+   stay near the name on a wide screen), Branch with its PR (as wide as
    the widest, up to 220), Last active 72 and the faint "…". Under 1100px of table, Agent and
    Branch go: the pane has them. */
 .dark .fx-table .fx-tr {
-  grid-template-columns: max(200px, var(--fx-who, 0px)) 140px 124px minmax(0, 1fr) var(--fx-branch, 200px) 72px 28px;
+  grid-template-columns: max(200px, var(--fx-who, 0px)) 140px 124px minmax(0, 560px) var(--fx-branch, 200px) 72px 28px;
   column-gap: 16px;
   padding: 0 12px;
 }
@@ -5320,7 +5321,7 @@ a.fx-pr:focus-visible,
    keeps its width; below 1100px Branch goes too. */
 @container (max-width: 1499px) {
   .dark .fx-table .fx-tr {
-    grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 1fr) var(--fx-branch, 200px) 72px 28px;
+    grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 560px) var(--fx-branch, 200px) 72px 28px;
   }
   .dark .fx-table .fx-tr > .fx-c-agent {
     display: none;
@@ -5333,7 +5334,7 @@ a.fx-pr:focus-visible,
 }
 @container (max-width: 1099px) {
   .dark .fx-table .fx-tr {
-    grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 1fr) 72px 28px;
+    grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 560px) 72px 28px;
   }
   .dark .fx-table .fx-tr > :is(.fx-c-agent, .fx-c-branch) {
     display: none;
@@ -5346,7 +5347,7 @@ a.fx-pr:focus-visible,
 /* State gives up its word last: a 1024px window keeps it, with the details shut. */
 @container (max-width: 699px) {
   .dark .fx-table .fx-tr {
-    grid-template-columns: max(180px, var(--fx-who, 0px)) 40px minmax(0, 1fr) 64px 28px;
+    grid-template-columns: max(180px, var(--fx-who, 0px)) 40px minmax(0, 560px) 64px 28px;
   }
 }
 /* Settled: Session, State, its last conversation, and when. */
