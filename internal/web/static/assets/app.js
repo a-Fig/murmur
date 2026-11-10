@@ -234,7 +234,7 @@ function render() {
   content.replaceChildren(inner);
   const skip = h("a", { class: "skip-link", href: "#", "data-key": "skip", onclick: skipToContent }, "Skip to content");
   // replaceChildren, unlike h(), writes null and false out as text: only what is there goes in.
-  const layers = [ui.setup && !ui.setup.inline && setupDialog(), ui.picker && pickerDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu()];
+  const layers = [ui.setup && !ui.setup.inline && setupDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu()];
   root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, NARROW.matches ? topbar() : null, content)), ...layers.filter((x) => x instanceof Node));
   content.scrollTop = scroll;
   fleetFit();
@@ -2561,7 +2561,7 @@ function fleetPane(name) {
 
 // On Conversations, "/" goes to its search, as on All sessions.
 document.addEventListener("keydown", (e) => {
-  if (ui.view !== "messages" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.picker || ui.tagMenu) return;
+  if (ui.view !== "messages" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu) return;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target?.tagName) || e.target?.isContentEditable) return;
   const box = root.querySelector('[data-key="cq"]');
   if (!box) return;
@@ -2586,7 +2586,7 @@ document.addEventListener("keydown", (e) => {
     root.querySelector('[data-key="fx-msg"]')?.focus();
     return;
   }
-  if (ui.view !== "sessions" || ui.tagMenu || ui.rowMenu || ui.setup || ui.picker || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (ui.view !== "sessions" || ui.tagMenu || ui.rowMenu || ui.setup || e.ctrlKey || e.metaKey || e.altKey) return;
   if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && e.target?.classList?.contains("fx-open")) {
     const more = e.target.closest(".fx-row")?.querySelector(".fx-more");
     if (more) {
@@ -3776,6 +3776,7 @@ function conversationsPage() {
   }
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
+  if (!isMyFilter()) ui.lp = null;
   return h(
     "div",
     { class: "page chat-page" },
@@ -3786,7 +3787,7 @@ function conversationsPage() {
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
           conversationList(list, view),
-          open ? conversationPane(open) : NARROW.matches ? null : isMyFilter() && startPane(),
+          open ? conversationPane(open) : NARROW.matches ? null : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" }),
         ),
   );
 }
@@ -3938,7 +3939,6 @@ function conversationList(list, view) {
             "div",
             { class: "g-head-row" },
             h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), view.total > 0 && h("p", { class: "g-head-doing" }, countLine(view))),
-            newMessageButton(),
           )
         : name
         ? [
@@ -3955,6 +3955,29 @@ function conversationList(list, view) {
           ]
         : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, countLine(view))],
     ),
+    isMyFilter() && view.total > 0 && !ui.lp &&
+      h(
+        "button",
+        {
+          class: "g-new-row",
+          "data-key": "new-row",
+          "aria-expanded": "false",
+          onclick: () => {
+            ui.lp = { q: "", index: 0 };
+            render();
+            root.querySelector('[data-key="lp-q"]')?.focus();
+          },
+        },
+        h("span", { class: "g-new-icon", "aria-hidden": "true" }, icon("compose")),
+        "New message",
+      ),
+    isMyFilter() && (ui.lp || (!view.total && !q)) ? listPicker(view.total > 0) : listRows(view, rows, older, kind, count, q),
+  );
+}
+
+// The rows, and the search and tabs over them.
+function listRows(view, rows, older, kind, count, q) {
+  return [
     (view.total > 0 || q) &&
     h(
       "label",
@@ -4037,8 +4060,8 @@ function conversationList(list, view) {
       ),
     ui.showOlder && older.map(conversationRow),
     // A search or a tab with nothing in it is said in the list, where the rows would be.
-    !rows.length && !older.length && !(isMyFilter() && !view.total) && (q ? noMatch(view) : h("p", { class: "g-none" }, kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations")),
-  );
+    !rows.length && !older.length && (q ? noMatch(view) : h("p", { class: "g-none" }, kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations")),
+  ];
 }
 
 function chatItems() {
@@ -4491,7 +4514,7 @@ function openYours() {
 function startChat(name) {
   if (!ui.state) return;
   if (name === myName()) return openYours();
-  ui.picker = null;
+  ui.lp = null;
   ui.filter = me() ? me().addr : YOU;
   ui.draftTo = name;
   ui.conversation = dmKey(selfName(), name);
@@ -4689,10 +4712,12 @@ function matches(r, q) {
   return [r.name, r.line, r.s?.branch, r.s?.agent, r.d.owner, r.d.id].some((x) => (x || "").toLowerCase().includes(q));
 }
 
-function personRow(r, cur, onclick) {
+// One of the people and sessions in the picker: an option of its listbox, reached with the arrow
+// keys from the search over it.
+function personRow(r, cur, onclick, id) {
   return h(
     "button",
-    { class: "pick-row" + (cur ? " current" : ""), role: "option", "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick },
+    { class: "pick-row" + (cur ? " current" : ""), role: "option", id, tabindex: "-1", "aria-selected": cur ? "true" : "false", "data-pick": r.name, onclick },
     presence(r.name, r.d),
     h(
       "span",
@@ -4700,86 +4725,81 @@ function personRow(r, cur, onclick) {
       h("span", { class: "name-line" }, h("span", { class: "pick-name truncate" }, r.name), r.person && humanTag()),
       h("span", { class: "pick-line truncate" }, r.line),
     ),
-    h("span", { class: "pick-where truncate" }, r.person ? "" : r.d.self ? "This device" : r.d.owner || host(r.d.id)),
   );
 }
 
-function newMessageButton() {
-  return h("button", { class: "icon-btn", title: "New message", "aria-label": "New message", "data-key": "new-message", onclick: openPicker }, icon("compose"));
-}
-
-function openPicker() {
-  ui.picker = { q: "", index: 0 };
-  render();
-  root.querySelector('[data-key="picker-q"]')?.focus();
-}
-
-function pickerDialog() {
-  const p = ui.picker;
+// Who you can start a conversation with, in the list column: all of it while you have no
+// conversations, and under "New message" once you do (closable). Typing narrows it, the arrow keys
+// move along it, and Enter or a click opens the conversation beside it.
+function listPicker(closable) {
+  const p = (ui.lp ||= { q: "", index: 0 });
   const close = () => {
-    ui.picker = null;
+    ui.lp = null;
     render();
+    root.querySelector('[data-key="new-row"]')?.focus();
   };
-  const q = p.q.trim().toLowerCase();
-  const rows = reachable().filter((r) => matches(r, q));
-  p.index = Math.min(p.index, Math.max(rows.length - 1, 0));
-  return dialog(
-    "New message",
-    close,
-    h(
-      "label",
-      { class: "pick-search" },
-      icon("search"),
-      h("input", {
-        type: "text",
-        value: p.q,
-        placeholder: "Message a session or a person",
-        autocomplete: "off",
-        spellcheck: "false",
-        role: "combobox",
-        "aria-expanded": "true",
-        "aria-label": "Who to message",
-        "data-key": "picker-q",
-        oninput: (e) => {
-          p.q = e.target.value;
-          p.index = 0;
-          render();
-        },
-        onkeydown: (e) => {
-          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-            e.preventDefault();
-            p.index = Math.max(0, Math.min(rows.length - 1, p.index + (e.key === "ArrowDown" ? 1 : -1)));
-            render();
-            root.querySelector(".pick-row.current")?.scrollIntoView({ block: "nearest" });
-          } else if (e.key === "Enter" && rows[p.index]) {
-            e.preventDefault();
-            startChat(rows[p.index].name);
-          }
-        },
-      }),
-    ),
-    h(
-      "div",
-      { class: "pick-list", role: "listbox", "aria-label": "Sessions and people" },
-      rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name))) : h("p", { class: "pick-none" }, "Nobody matches."),
-    ),
-  );
-}
-
-// With no conversation open in your messages: who you could talk to.
-function startPane() {
   const all = reachable();
-  const rows = all.slice(0, 8);
+  const q = p.q.trim().toLowerCase();
+  const rows = all.filter((r) => matches(r, q));
+  p.index = Math.min(p.index, Math.max(rows.length - 1, 0));
+  const move = (to) => {
+    p.index = Math.max(0, Math.min(rows.length - 1, to));
+    render();
+    root.querySelector(".lp .pick-row.current")?.scrollIntoView({ block: "nearest" });
+  };
   return h(
-    "section",
-    { class: "chat-pane start-pane", "aria-label": "Start a conversation" },
+    "div",
+    { class: "lp" },
     h(
       "div",
-      { class: "start-inner" },
-      h("h2", { class: "start-title" }, rows.length ? "Who do you want to talk to?" : "Nobody is here yet."),
-      rows.length > 0 && h("div", { class: "pick-list start-list" }, rows.map((r) => personRow(r, false, () => startChat(r.name)))),
-      all.length > rows.length && h("button", { class: "btn btn-ghost", "data-key": "start-more", onclick: openPicker }, "See everyone"),
+      { class: "lp-head" },
+      h("h3", { class: "lp-title", id: "lp-title" }, all.length ? "Who do you want to talk to?" : "Nobody is here yet."),
+      closable && h("button", { class: "icon-btn", title: "Close", "aria-label": "Close", "data-key": "lp-close", onclick: close }, icon("x")),
     ),
+    all.length > 0 &&
+      h(
+        "label",
+        { class: "g-search" },
+        icon("search"),
+        h("input", {
+          type: "text",
+          value: p.q || null,
+          placeholder: "Search people and sessions",
+          autocomplete: "off",
+          spellcheck: "false",
+          role: "combobox",
+          "aria-expanded": "true",
+          "aria-controls": "lp-list",
+          "aria-autocomplete": "list",
+          "aria-activedescendant": rows.length ? "lp-o-" + p.index : null,
+          "aria-labelledby": "lp-title",
+          "data-key": "lp-q",
+          oninput: (e) => {
+            p.q = e.target.value;
+            p.index = 0;
+            render();
+          },
+          onkeydown: (e) => {
+            const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+            if (step) {
+              e.preventDefault();
+              move(p.index + step);
+            } else if (e.key === "Enter" && rows[p.index]) {
+              e.preventDefault();
+              startChat(rows[p.index].name);
+            } else if (e.key === "Escape" && closable) {
+              e.preventDefault();
+              close();
+            }
+          },
+        }),
+      ),
+    all.length > 0 &&
+      h(
+        "div",
+        { class: "pick-list lp-list", role: "listbox", id: "lp-list", "aria-labelledby": "lp-title" },
+        rows.length ? rows.map((r, i) => personRow(r, i === p.index, () => startChat(r.name), "lp-o-" + i)) : h("p", { class: "pick-none" }, "Nobody matches."),
+      ),
   );
 }
 
