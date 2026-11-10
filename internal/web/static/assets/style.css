@@ -3607,11 +3607,6 @@ button.fx-group:hover {
 .fx-group .fx-pr {
   margin-left: 0.25rem;
 }
-/* "Needs a look" leads the table; its dot stands where the other headings have a chevron. */
-.fx-need-dot {
-  display: inline-grid;
-  place-items: center;
-}
 
 /* Empty */
 .fx-empty {
@@ -3656,7 +3651,7 @@ button.fx-group:hover {
     grid-column: 5;
   }
   }
-@container (max-width: 759px) {
+@container (max-width: 699px) {
   .fx-tr {
     grid-template-columns: minmax(10rem, 14rem) 3.25rem minmax(12rem, 1fr) 5rem 1.75rem;
   }
@@ -3733,9 +3728,6 @@ button.fx-group:hover {
 }
 .fx-insp-wait .fx-flag {
   transform: translateY(-0.0625rem);
-}
-.fx-insp-note {
-  color: var(--fx-text-3);
 }
 .fx-actions {
   display: flex;
@@ -5290,7 +5282,8 @@ a.fx-pr:focus-visible,
   background: none;
   color: var(--text-1);
 }
-/* 20px faces, and in their place, on hover or focus, the box that picks the row. */
+/* 20px faces, and in their place, while the pointer or focus is anywhere in the table (and once any
+   row is picked), the box that picks the row. */
 .fx-face {
   position: relative;
   display: grid;
@@ -5312,12 +5305,10 @@ a.fx-pr:focus-visible,
   height: auto;
   opacity: 0;
 }
-.fx-row:is(:hover, :focus-within) .fx-face > .fx-pick,
-.fx-table.picking .fx-face > .fx-pick {
+.fx-table:is(:hover, :focus-within, .picking) .fx-face > .fx-pick {
   opacity: 1;
 }
-.fx-row:is(:hover, :focus-within) .fx-face > .avatar,
-.fx-table.picking .fx-face > .avatar {
+.fx-table:is(:hover, :focus-within, .picking) .fx-face > .avatar {
   opacity: 0;
 }
 .dark .fx-pick {
@@ -5349,9 +5340,6 @@ a.fx-pr:focus-visible,
 .dark .fx-group-sub {
   color: var(--text-3);
 }
-.dark .fx-group-need .fx-group-name {
-  color: var(--text-1);
-}
 .fx-grow + .fx-grow .fx-group,
 .fx-row + .fx-grow .fx-group {
   margin-top: 12px;
@@ -5381,7 +5369,8 @@ a.fx-pr:focus-visible,
   .dark .fx-table .fx-tr > .fx-c-last { grid-column: 4; }
   .dark .fx-table .fx-tr > .fx-c-act { grid-column: 5; }
 }
-@container (max-width: 759px) {
+/* State gives up its word last: a 1024px window keeps it, with the details shut. */
+@container (max-width: 699px) {
   .dark .fx-table .fx-tr {
     grid-template-columns: 180px 40px minmax(0, 1fr) 64px 28px;
   }
@@ -5510,31 +5499,20 @@ a.fx-pr:focus-visible,
   height: 28px;
   font-size: 0.75rem;
 }
-/* The bar gives way as the table's column narrows (the details open beside it): the count goes
-   first, then the search narrows. */
+/* The bar gives way as the table's column narrows (the details open beside it), in this order: the
+   search folds to its icon, then the menus show only their value. The count stays. */
 .dark .fx {
   container: fx / inline-size;
 }
-@container fx (max-width: 980px) {
+@container fx (max-width: 1060px) {
   .fx > .bar {
     gap: 8px;
-  }
-  .fx > .bar .bar-meta {
-    display: none;
-  }
-  .fx > .bar .bar-search {
-    width: 120px;
   }
   .fx > .bar .bar-tabs {
     margin-left: 4px;
   }
   .fx > .bar .bar-menu {
     padding: 0 8px;
-  }
-}
-@container fx (max-width: 800px) {
-  .fx > .bar .bar-search {
-    width: 90px;
   }
 }
 /* The sidebar (#183): 240px on the canvas, and three kinds of 28px row: a page (an icon, its name
@@ -6223,7 +6201,7 @@ a.fx-pr:focus-visible,
 }
 /* The bar at its tightest: the search folds to its icon, opening over the bar on a click or "/",
    and the menus show only their value (their name stays in their label for screen readers). */
-@container fx (max-width: 860px) {
+@container fx (max-width: 1060px) {
   .fx > .bar .bar-search {
     justify-content: center;
     width: var(--control);
@@ -6255,7 +6233,7 @@ a.fx-pr:focus-visible,
     width: auto;
   }
 }
-@container fx (max-width: 760px) {
+@container fx (max-width: 820px) {
   .fx > .bar .bar-menu-label {
     display: none;
   }
@@ -6383,4 +6361,53 @@ a.fx-pr:focus-visible,
 }
 .dark .g-recent .g-nomatch {
   padding: 8px 0;
+}
+/* What waits, in one 36px line under the column heads: the flag where a face would be, the count,
+   and each waiting session with its wait, as quiet links. */
+.dark .fx-table .fx-waitline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--row);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dark .fx-waitline > .fx-flag {
+  margin: 0 7px;
+}
+.fx-waitline-n {
+  flex: none;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.fx-waitline-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.fx-waitline-sep {
+  color: var(--text-3);
+}
+.dark .fx-waitline-go {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  height: 24px;
+  align-items: center;
+  padding: 0 4px;
+  border-radius: var(--r-control);
+  color: var(--text-2);
+}
+.dark .fx-waitline-go:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+.fx-waitline-ago {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
