@@ -34,6 +34,8 @@ const ui = {
   tagInput: null, // the row key of the session whose tag field is open
   tagFilter: null, // a tag: the session lists show only the sessions with it
   recentOpen: new Set(), // Recent's messages shown whole
+  setShown: new Set(), // Settings' sections showing the sessions that follow the default
+  setTouched: new Set(), // Settings rows changed on this visit, kept in view
   rq: "", // Recent's search
   tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
   selecting: false, // All sessions picks sessions, to tag them together
@@ -5475,6 +5477,7 @@ const saveNotes = new Map(); // a row's key → { seq, state: "pending" | "savin
 function saveSettings(next, key) {
   const seq = ++settingsSeq;
   ui.settings = next;
+  if (key) ui.setTouched.add(key);
   if (key) {
     delete ui.rowErrors[key];
     saveNotes.set(key, { seq, state: "pending" });
@@ -5515,7 +5518,7 @@ function saveSettings(next, key) {
   });
 }
 
-const SAVED_MS = 1500;
+const SAVED_MS = 3000; // style.css's saved-fade runs as long
 
 function saveNote(key) {
   const n = saveNotes.get(key);
@@ -5725,8 +5728,35 @@ function settingsPage() {
     const set = ui.settings;
     const local = self?.sessions || [];
     const overrides = set.sessionWake || {};
-    // The sessions' own rows sit under the device's, indented, after a "Per session" label.
-    const perSession = (list) => list.length > 0 && [h("div", { class: "set-per" }, "Per session"), list.map((r) => (r.classList.add("set-sess"), r))];
+    // The sessions' own rows sit under the device's, indented, after a "Per session" label. Those
+    // with a setting of their own always show; those that follow the default fold into one line,
+    // "3 sessions follow the default · Show", except one changed here, which stays where it was.
+    const perSession = (section, list) => {
+      if (!list.length) return false;
+      const open = ui.setShown.has(section);
+      const folded = list.filter(([key, follows]) => follows && !ui.setTouched.has(key));
+      const n = folded.length;
+      return [
+        h("div", { class: "set-per" }, "Per session"),
+        list.filter((x) => open || !folded.includes(x)).map(([, , r]) => (r.classList.add("set-sess"), r)),
+        n > 0 &&
+          h(
+            "button",
+            {
+              class: "set-fold",
+              "data-key": "set-fold-" + section,
+              "aria-expanded": open ? "true" : "false",
+              onclick: () => {
+                open ? ui.setShown.delete(section) : ui.setShown.add(section);
+                render();
+              },
+            },
+            plural(n, "session") + (n === 1 ? " follows" : " follow") + " the default",
+            h("span", { "aria-hidden": "true" }, "·"),
+            h("span", { class: "set-fold-act" }, open ? "Hide" : "Show"),
+          ),
+      ];
+    };
     const rows = [
       settingsRow(
         "wake",
@@ -5737,9 +5767,12 @@ function settingsPage() {
         true,
       ),
       perSession(
+        "wake",
         [...local]
           .sort((a, b) => a.name.localeCompare(b.name))
-          .map((s) =>
+          .map((s) => [
+            "wake-" + s.name,
+            !overrides[s.name],
             settingsRow(
               "wake-" + s.name,
               s.name,
@@ -5760,7 +5793,7 @@ function settingsPage() {
               "",
               true,
             ),
-          ),
+          ]),
       ),
     ];
     const busyOverrides = set.sessionBusy || {};
@@ -5778,9 +5811,12 @@ function settingsPage() {
       // turn; elsewhere, from its inbox when it reads it (deliver.go). Its row says so, rather than
       // leave it out.
       perSession(
+        "busy",
         [...local]
           .sort((a, b) => a.name.localeCompare(b.name))
-          .map((s) =>
+          .map((s) => [
+            "busy-" + s.name,
+            s.agent === "claude-code" && !busyOverrides[s.name],
             settingsRow(
               "busy-" + s.name,
               s.name,
@@ -5801,7 +5837,7 @@ function settingsPage() {
               "",
               true,
             ),
-          ),
+          ]),
       ),
     ];
     sections.push(

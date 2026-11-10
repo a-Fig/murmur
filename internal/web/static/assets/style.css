@@ -4291,11 +4291,11 @@ a.fx-pr:focus-visible,
   color: #64af4c;
 }
 .save-note.saved {
-  animation: saved-fade 1.5s ease forwards;
+  animation: saved-fade 3s ease forwards;
 }
 @keyframes saved-fade {
   0%,
-  70% {
+  80% {
     opacity: 1;
   }
   100% {
@@ -6499,12 +6499,14 @@ a.fx-pr:focus-visible,
   position: relative;
   width: 100%;
 }
+/* "Saved" sits just left of the control it is about, in room the row's text leaves for it. */
 .dark .set-page .row-control > .save-note {
   position: absolute;
-  right: calc(100% + 8px);
+  right: calc(100% + 12px);
   min-width: 0;
-  padding-left: 8px;
-  background: var(--canvas);
+}
+.dark .set-page .row-grid:has(.row-control > .save-note) .row-text {
+  padding-right: 72px;
 }
 .dark .set-page .row-control > .segmented {
   display: flex;
@@ -6602,6 +6604,43 @@ a.fx-pr:focus-visible,
   padding: 8px 10px;
   font-size: 0.8125rem;
   color: var(--text-3);
+}
+/* Settings: a session's row is its name over what it is, never cut short; the sessions that
+   follow the default fold into one line. */
+.dark .set-page .set-sess .row-text {
+  display: block;
+}
+.dark .set-page .set-sess .row-description {
+  margin-top: 2px;
+  white-space: normal;
+}
+.dark .set-page .set-sess .set-sess-line {
+  white-space: normal;
+}
+.set-fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--row);
+  padding: 0 0 0 24px;
+  border: 0;
+  background: none;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+  text-align: left;
+}
+.set-fold-act {
+  color: var(--text-2);
+}
+.set-fold:hover .set-fold-act {
+  color: var(--text-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dark .set-page .group > .set-fold {
+  border-top: 1px solid var(--line-soft);
 }
 /* One 44px bar for All sessions: State, Group and Tag fold into Filter where they'd wrap. */
 .bar-menus {
