@@ -5052,8 +5052,8 @@ function needName(el) {
 }
 
 // A conversation between two sessions is theirs: a person can't write in it. The composer under
-// it writes to one of them, privately, in the person's own conversation with it, and says so on a
-// line inside its top edge, then where the message went. Who it writes to is worked out when the
+// it writes to one of them, privately, in the person's own conversation with it: a line inside its
+// top edge says so and offers the two to choose between, and over it, after, where the message went. Who it writes to is worked out when the
 // thread is opened, the last of the two to speak, and holds through new messages until the person
 // switches or opens another thread.
 function relayBar(c, running) {
@@ -5075,23 +5075,26 @@ function relayBar(c, running) {
   });
   el.placeholder = "Message " + to + " privately…";
   el.setAttribute("aria-label", "Message " + to + " privately, in your conversation with it");
-  // Who it goes to: a small menu at the field's left edge, when there are two to choose from.
-  const pick =
+  // Who it goes to, an explicit step: both of them, the one picked filled. One that has ended is
+  // left out; with one left, it is named.
+  const pick = h(
+    "div",
+    { class: "relay-who" },
+    h("span", null, "Message privately:"),
     running.length > 1
-      ? menuButton(
+      ? segmented(
           "relay-to",
-          "To",
           running.map((n) => [n, n]),
           to,
           (n) => {
             ui.relayTo.set(c.key, n);
             ui.relayed.delete(c.key);
             render();
-            el.focus({ preventScroll: true });
+            root.querySelector(`[data-key="${CSS.escape("relay-to-" + n)}"]`)?.focus({ preventScroll: true });
           },
         )
-      : null;
-  if (pick) pick.classList.add("composer-to-menu");
+      : h("b", null, to),
+  );
   return h(
     "div",
     { class: "composer-wrap" },

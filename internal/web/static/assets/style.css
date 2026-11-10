@@ -5706,8 +5706,8 @@ a.fx-pr:focus-visible,
   padding-left: 8px;
 }
 /* One composer (#183): a single 36px field at the foot of a thread, the details pane and Your
-   messages, with one icon button that sends. In someone else's thread, who it goes to is a small
-   menu at the field's left edge; for a while after sending, a line over it says where it went. */
+   messages, with one icon button that sends. In someone else's thread, a line inside it picks who
+   it goes to; for a while after sending, a line over it says where it went. */
 .dark .composer,
 .dark .composer.composer-relay {
   flex-wrap: nowrap;
@@ -5753,15 +5753,28 @@ a.fx-pr:focus-visible,
   width: 14px;
   height: 14px;
 }
-.dark .composer .composer-to-menu {
-  align-self: flex-end;
+/* In someone else's thread, a 28px line inside the composer's top edge: who it writes to,
+   privately, of the two. */
+.dark .composer.composer-relay {
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+.relay-who {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 8px;
   height: 28px;
-  margin-bottom: 1px;
-  margin-left: -7px;
-  padding: 0 8px;
-  border: 0;
-  background: var(--hover);
   font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-2);
+}
+.relay-who b {
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .composer-relay .composer-input {
+  flex: 1;
 }
 .dark .composer-wrap > .relay-line {
   display: flex;
