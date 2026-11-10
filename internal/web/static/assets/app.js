@@ -5131,8 +5131,8 @@ function wakeWords(w) {
 }
 
 // A segmented control, one stop for Tab with the arrow keys moving along it, as in All sessions.
-// A setting that follows the device's (resolved: what that comes to) fills no segment: Default has
-// only an outline, and what it comes to follows the control in plain words. Only a setting of the
+// A setting that follows the device's (resolved: what that comes to) fills no segment: Default is
+// selected but quiet, an outline, with what it comes to in its title. Only a setting of the
 // session's own is filled.
 function segmented(key, choices, current, pick, resolved) {
   const inherited = current === "default" && !!resolved;
@@ -5146,6 +5146,8 @@ function segmented(key, choices, current, pick, resolved) {
           "aria-pressed": current === v ? "true" : "false",
           tabindex: current === v ? "0" : "-1",
           "data-key": key + "-" + v,
+          title: v === "default" && resolved ? resolved + ", from the device default" : null,
+          "aria-description": v === "default" && resolved ? resolved + ", from the device default" : null,
           onclick: () => {
             if (v !== current) pick(v);
           },
@@ -5154,7 +5156,7 @@ function segmented(key, choices, current, pick, resolved) {
       ),
     ),
   );
-  return inherited ? [seg, h("span", { class: "seg-from" }, resolved + ", from the device default")] : seg;
+  return seg;
 }
 
 function wakeControl(key, wake, onChange, withDefault) {
