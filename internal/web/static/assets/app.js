@@ -5351,18 +5351,19 @@ function wakeControl(key, wake, onChange, withDefault) {
     minuteDrafts.delete(key);
     const had = ui.rowErrors[key];
     delete ui.rowErrors[key];
-    if (n !== (wake.minutes || 0)) onChange({ when: "within", minutes: n });
+    // The default's own number, left as it is, stays the default.
+    if (n !== (wake.minutes || 0) && n !== (wake.minutes || def)) onChange({ when: "within", minutes: n });
     else if (had) render();
   };
   const input = h("input", {
     type: "text",
     inputmode: "numeric",
     maxlength: 4,
-    placeholder: "default " + def,
-    "aria-label": "Minutes idle, empty for the default of " + def,
+    placeholder: String(def),
+    "aria-label": "Minutes idle" + (wake.minutes ? "" : ", the default") + "; empty for the default of " + def,
     "aria-invalid": ui.rowErrors[key] ? "true" : null,
     "data-key": key + "-minutes",
-    value: minuteDrafts.get(key) ?? (wake.minutes ? String(wake.minutes) : null),
+    value: minuteDrafts.get(key) ?? String(wake.minutes || def),
     oninput: (e) => minuteDrafts.set(key, e.target.value),
     onblur: commit,
     onkeydown: (e) => {
@@ -5372,7 +5373,7 @@ function wakeControl(key, wake, onChange, withDefault) {
       }
     },
   });
-  return [seg, h("label", { class: "min-wrap" }, h("span", { class: "field min-field" + (ui.rowErrors[key] ? " field-bad" : "") }, input), h("span", { class: "field-unit", "aria-hidden": "true" }, "min"))];
+  return [seg, h("label", { class: "min-wrap" }, h("span", { class: "field min-field" + (ui.rowErrors[key] ? " field-bad" : "") }, input), h("span", { class: "field-unit", "aria-hidden": "true" }, wake.minutes ? "min" : "min (default)"))];
 }
 
 const BUSY_CHOICES = [
@@ -5536,6 +5537,10 @@ function accountSection() {
                 },
                 oninput: (e) => {
                   ui.accountDraft = e.target.value;
+                  if (ui.rowErrors.account) {
+                    delete ui.rowErrors.account;
+                    e.target.closest(".row-side")?.querySelector(".row-error")?.remove();
+                  }
                   const btn = root.querySelector('[data-key="account-save"]');
                   if (btn) btn.disabled = unchanged(e.target.value);
                 },
@@ -5550,7 +5555,7 @@ function accountSection() {
             h(
               "button",
               { class: "btn btn-outline btn-xs", "data-key": "account-save", disabled: unchanged(value) || ui.accountSaving, onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) },
-              ui.accountSaving ? "Saving…" : !a || a.taken ? "Choose" : "Rename",
+              ui.accountSaving ? "Saving…" : "Save",
             ),
           ),
         ),
@@ -5661,7 +5666,7 @@ function settingsPage() {
       settingsRow(
         "wake",
         h("span", { class: "set-senior" }, "Device default"),
-        "An idle session wakes for a message from another session: always, within the minutes below, or never. Your own messages always wake it unless set to Never.",
+        "When an idle session may be woken by a message from another session.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, "wake"), false),
         "",
         true,

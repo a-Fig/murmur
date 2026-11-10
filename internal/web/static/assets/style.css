@@ -6482,3 +6482,58 @@ a.fx-pr:focus-visible,
 .dark .fx-th-picked .fx-select-n {
   font-size: 0.75rem;
 }
+/* Settings (P8): every control in one column of the same width, so they all start and end at the
+   same x, device default and per session alike: a segmented control fills it, a field and its
+   button share it, a lone button sits at its right edge. How a save went shows just left of it. */
+.dark .set-page {
+  --set-ctl: 440px;
+}
+.dark .set-page .row-grid {
+  grid-template-columns: minmax(0, 1fr) var(--set-ctl);
+}
+.dark .set-page .row-side {
+  position: relative;
+  align-items: stretch;
+}
+.dark .set-page .row-control {
+  position: relative;
+  width: 100%;
+}
+.dark .set-page .row-control > .save-note {
+  position: absolute;
+  right: calc(100% + 8px);
+  min-width: 0;
+  padding-left: 8px;
+  background: var(--canvas);
+}
+.dark .set-page .row-control > .segmented {
+  display: flex;
+  flex: 1;
+}
+.dark .set-page .row-control > .segmented button {
+  flex: 1 1 auto;
+}
+.dark .set-page .account-ctl {
+  align-items: stretch;
+  width: 100%;
+}
+.dark .set-page .account-line {
+  display: flex;
+}
+.dark .set-page .account-field {
+  flex: 1;
+}
+.dark .set-page .field.account-field input {
+  width: 100%;
+}
+.dark .set-page .row-side > .row-error {
+  padding-left: 0;
+}
+@container (max-width: 34rem) {
+  .dark .set-page .row-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.dark .set-page .row-control > .set-whole {
+  margin-left: auto;
+}
