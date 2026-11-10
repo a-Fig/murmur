@@ -3342,7 +3342,6 @@ function recentItem(m, at) {
     ),
     h("span", { class: "g-hint", "aria-hidden": "true" }, "Open conversation"),
     // Always there, faintly: the row leads somewhere.
-    h("span", { class: "g-chev", "aria-hidden": "true" }, icon("chevronRight")),
   );
   return h(
     "div",
