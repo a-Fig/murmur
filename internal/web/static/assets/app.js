@@ -145,13 +145,17 @@ function stamp(t) {
 // An element whose text is a relative time, kept current by the ticker. A bare one is a duration
 // ("40m") rather than a time ("40m ago").
 function agoEl(tag, cls, t, prefix = "", bare = false) {
-  return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, "data-bare": bare ? "1" : null, title: stamp(t) }, prefix + (bare ? lasted(t) : ago(t)));
+  return h(tag, { class: cls, "data-ago": t, "data-prefix": prefix, "data-bare": bare ? (bare === "since" ? "since" : "1") : null, title: stamp(t) }, prefix + agoText(t, bare));
+}
+
+function agoText(t, bare) {
+  return bare === "since" ? since(t) : bare ? lasted(t) : ago(t);
 }
 
 function tick() {
   for (const el of document.querySelectorAll("[data-ago]")) {
     const t = Number(el.dataset.ago);
-    el.textContent = el.dataset.prefix + (el.dataset.bare ? lasted(t) : ago(t));
+    el.textContent = el.dataset.prefix + agoText(t, el.dataset.bare);
   }
 }
 
@@ -398,6 +402,7 @@ function miniSidebar() {
         ];
       }),
     ),
+    miniConn(),
     miniUpdate(),
     h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", onclick: () => go("settings") }, icon("settings")),
   );
@@ -553,12 +558,12 @@ function sidebarFoot() {
   const a = me();
   // Without a name of one's own (none yet, or one someone else chose first), Settings is a labelled
   // row: it is where the name is chosen.
-  if (!a || a.taken) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null)));
-  const update = updateItem();
+  if (!a || a.taken) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, connItem(), updateItem(), navButton("settings", "settings", null)));
+  const lines = [connItem(), updateItem()].filter(Boolean);
   return h(
     "div",
     { class: "sidebar-foot" },
-    update && h("ul", { class: "sidebar-menu" }, update),
+    lines.length > 0 && h("ul", { class: "sidebar-menu" }, lines),
     h(
       "div",
       { class: "foot-account" },
@@ -1751,11 +1756,38 @@ function sinceWhen(t) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + time;
 }
 
-// While the daemon doesn't answer, the page says so and how old what it shows is, ahead of
-// anything else, so a stopped page doesn't read as a quiet team.
-function fleetDown() {
-  if (ui.conn !== "down" || ui.restarting) return null;
-  return h("span", { class: "fx-down" }, "Can't reach the daemon", ui.okAt ? agoEl("span", null, ui.okAt, " · last updated ") : " · retrying");
+// The daemon isn't answering (and isn't restarting on purpose).
+function isDown() {
+  return ui.conn === "down" && !ui.restarting;
+}
+
+// While the daemon doesn't answer, one line says so, and how old what the page shows is, in the
+// sidebar's foot on every view, so a stopped page doesn't read as a quiet team.
+function connItem() {
+  if (!isDown()) return null;
+  return h(
+    "li",
+    null,
+    h(
+      "div",
+      { class: "update-line conn-down", role: "status" },
+      h("span", { class: "dot warn", "aria-hidden": "true" }),
+      h("span", { class: "label" }, h("span", null, "Can't reach Murmur"), ui.okAt ? agoEl("span", "conn-since", ui.okAt, "Last update ", "since") : h("span", { class: "conn-since" }, "Retrying")),
+    ),
+  );
+}
+
+function miniConn() {
+  if (!isDown()) return null;
+  const label = "Can't reach Murmur" + (ui.okAt ? " · last update " + since(ui.okAt) : "");
+  return h("span", { class: "mini-btn mini-down", role: "status", title: label, "aria-label": label }, h("span", { class: "dot warn" }));
+}
+
+// Under a minute, in seconds: a page that stopped hearing from the daemon a moment ago shouldn't
+// say "now".
+function since(t) {
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  return s < 60 ? Math.max(1, Math.round(s)) + "s ago" : ago(t);
 }
 
 // The rows a tab lists, under the tag filter.
@@ -1771,7 +1803,7 @@ function runningNeeds() {
 
 function sessionsPage() {
   const tab = ui.sessTab || "running";
-  if (!ui.state) return h("div", { class: "fx" }, pageBar({ title: "All sessions", meta: fleetDown() || "Connecting…" }));
+  if (!ui.state) return h("div", { class: "fx" }, pageBar({ title: "All sessions", meta: "Connecting…" }));
   const F = fleetFilter();
   const devs = devices();
   const live = fleetRows("running");
@@ -1828,7 +1860,6 @@ function sessionsPage() {
   else if ((q || F.state) && all.length) sub = ["Showing " + rows.length + " of " + all.length + tagged, rows.length > 0 && [" · ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]];
   else if (all.length) sub = (tab === "quiet" ? plural(all.length, "quiet session") + tagged + " · idle over a day, or hidden" : all.length + " running" + tagged + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device")) + (hiddenN && tab === "quiet" ? " · " + hiddenN + " hidden" : "");
   else sub = "No " + what + "s" + tagged;
-  const down = fleetDown();
   // What a selection can hold: the sessions in front of the person, so a filter, a tab or a shut
   // group leaves none picked out of sight.
   const pickable = tab === "settled" ? [] : visibleRows(rows, needs, F).filter((r) => r.s.addr).map((r) => r.s);
@@ -1876,7 +1907,7 @@ function sessionsPage() {
       { class: "fx" },
       pageBar({
         title: "All sessions",
-        meta: down ? [down, " · ", sub] : sub,
+        meta: sub,
         tabs: barTabs(
           "Which sessions",
           [
@@ -5145,7 +5176,12 @@ function paneFoot(c) {
 
 // A send button says which composer it sends, so a name chosen on first sending can press it again.
 function sendButton(key, el, onclick) {
-  return h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, "data-for": key, onclick }, icon("arrowUp"));
+  return h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() || isDown(), "data-key": "send-" + key, "data-for": key, onclick }, icon("arrowUp"));
+}
+
+// Over a composer while the daemon doesn't answer: Send is off until it does, and the draft stays.
+function downNote() {
+  return isDown() && h("p", { class: "composer-down", role: "status" }, "Not connected. Your draft stays here; send it once Murmur is back.");
 }
 
 function composerChange(key, el) {
@@ -5154,7 +5190,7 @@ function composerChange(key, el) {
     root.querySelector(".composer-warn")?.remove();
   }
   const btn = root.querySelector(`button[data-for="${CSS.escape(key)}"]`);
-  if (btn) btn.disabled = !el.value.trim();
+  if (btn) btn.disabled = !el.value.trim() || isDown();
 }
 
 function composer(c, target, onSent) {
@@ -5171,6 +5207,7 @@ function composer(c, target, onSent) {
     "div",
     { class: "composer-wrap" },
     ui.setup?.inline === el && nameAsk(),
+    downNote(),
     ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
     h("div", { class: "composer" }, el, sendButton(key, el, trySend)),
   );
@@ -5259,14 +5296,14 @@ function relayBar(c, running) {
     "div",
     { class: "composer-wrap" },
     ui.setup?.inline === el && nameAsk(),
-    relayLine(c),
+    downNote() || relayLine(c),
     h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }
 
 function relaySend(c, to, el) {
   const text = el.value.trim();
-  if (!text || needName(el)) return;
+  if (!text || isDown() || needName(el)) return;
   const key = dmKey(myName(), to);
   const pair = [...new Set([myName(), to])].sort();
   const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key, conversation: { key, kind: "dm", title: pair.join(" & "), pair }, to, text, status: "sending" };
@@ -5311,7 +5348,7 @@ function relayLine(c) {
 
 function sendFrom(c, target, el, big) {
   const text = el.value.trim();
-  if (!text || needName(el)) return;
+  if (!text || isDown() || needName(el)) return;
   if (big && ui.armed !== c.key) {
     ui.armed = c.key;
     render();

@@ -3048,10 +3048,6 @@ code {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.fx-down {
-  color: var(--fx-warning-text);
-  font-weight: 500;
-}
 /* The toolbar stays at the top as the table scrolls under it. */
 .fx-toolbar {
   position: sticky;
@@ -6784,4 +6780,31 @@ a.fx-pr:focus-visible,
   .dark .fx-table .fx-row:has(.fx-open:focus-visible) > .fx-full {
     grid-column: 3 / span 2;
   }
+}
+/* The daemon not answering: one line in the sidebar's foot, and a note over each composer. */
+.dark .conn-down {
+  align-items: flex-start;
+  padding-block: 6px;
+  color: var(--text-1);
+}
+.dark .conn-down .dot {
+  margin-top: 4px;
+}
+.dark .conn-down .label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.conn-since {
+  color: var(--text-3);
+}
+.mini-down {
+  display: grid;
+  place-items: center;
+}
+.dark .composer-down {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-2);
 }
