@@ -32,6 +32,8 @@ const ui = {
   tagging: new Set(), // the sessions whose tags are being changed, by their row key
   tagInput: null, // the row key of the session whose tag field is open
   tagFilter: null, // a tag: the session lists show only the sessions with it
+  recentOpen: new Set(), // Recent's messages shown whole
+  rq: "", // Recent's search
   tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
   selecting: false, // All sessions picks sessions, to tag them together
   selected: new Set(), // their addresses
@@ -2623,9 +2625,9 @@ function fleetPane(name) {
 
 // On Conversations, "/" goes to its search, as on All sessions.
 document.addEventListener("keydown", (e) => {
-  if (ui.view !== "messages" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu || ui.pickMenu) return;
+  if (!["messages", "recent"].includes(ui.view) || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu || ui.pickMenu) return;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target?.tagName) || e.target?.isContentEditable) return;
-  const box = root.querySelector('[data-key="cq"]');
+  const box = root.querySelector(ui.view === "recent" ? '[data-key="rq"]' : '[data-key="cq"]');
   if (!box) return;
   e.preventDefault();
   box.focus();
@@ -2954,7 +2956,9 @@ const RECENT_SEEN_KEY = NAME + ":recent-seen";
 
 function recentPage() {
   if (!ui.state) return recentShell(null, h("p", { class: "g-none" }, "Loading messages…"));
-  const all = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt);
+  const every = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt);
+  const q = (ui.rq || "").trim().toLowerCase();
+  const all = q ? every.filter((m) => [fromName(m), m.toKind === "all" ? "Everyone" : toName(m), m.subject, m.fromPerson ? personText(m) : m.body].join(" ").toLowerCase().includes(q)) : every;
   // Scrolled down, the feed holds what it shows: newer messages wait behind a pill instead of
   // pushing what the reader is on down the page. Back at the top, they come in.
   const top = (content?.scrollTop || 0) <= 8;
@@ -2990,8 +2994,9 @@ function recentPage() {
     out.push(recentItem(m, at));
   }
   const more = shown.length - list.length;
+  const count = q ? "Showing " + all.length + " of " + every.length : !all.length ? null : all.length > list.length + fresh ? "Newest " + list.length + " of " + all.length : plural(all.length, "message");
   return recentShell(
-    !all.length ? null : all.length > list.length + fresh ? "Newest " + list.length + " of " + all.length : plural(all.length, "message"),
+    count,
     list.length
       ? [
           fresh > 0 &&
@@ -3015,14 +3020,42 @@ function recentPage() {
                 },
                 "Show older messages",
               )
-            : h("button", { class: "btn g-older", "data-key": "recent-top", onclick: recentToTop }, icon("arrowUp"), "Back to top"),
+            : // Only where there is a top to go back to: a feed longer than the window (recentRoving).
+              h("button", { class: "g-top-btn", "data-key": "recent-top", hidden: true, onclick: recentToTop }, icon("arrowUp"), "Back to top"),
         ]
-      : h("p", { class: "g-none" }, "No messages yet. Messages between sessions appear here as they're sent."),
+      : q
+        ? h(
+            "div",
+            { class: "g-nomatch" },
+            h("p", null, "No messages match \u201c" + ui.rq.trim() + "\u201d"),
+            h(
+              "button",
+              {
+                class: "btn btn-outline btn-xs",
+                "data-key": "clear-rq",
+                onclick: () => {
+                  ui.rq = "";
+                  render();
+                  root.querySelector('[data-key="rq"]')?.focus();
+                },
+              },
+              "Clear search",
+            ),
+          )
+        : h("p", { class: "g-none" }, "No messages yet. Messages between sessions appear here as they're sent."),
+    every.length > 0,
   );
 }
 
-function recentShell(count, body) {
-  return h("div", { class: "framed" }, pageBar({ title: "Recent messages", meta: count }), h("div", { class: "g-page g-recent" }, body));
+function recentShell(count, body, searchable = false) {
+  const search =
+    searchable &&
+    barSearch("rq", "Search messages", ui.rq, (v) => {
+      ui.rq = v;
+      ui.recentMax = null;
+      render();
+    });
+  return h("div", { class: "framed" }, pageBar({ title: "Recent messages", meta: count, right: search }), h("div", { class: "g-page g-recent" }, body));
 }
 
 // The newest message the reader has had in front of them on Recent, kept across visits.
@@ -3057,19 +3090,31 @@ function recentKey(e) {
   const j = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
   if (j == null || !items[j]) return;
   e.preventDefault();
-  items[i].tabIndex = -1;
-  items[j].tabIndex = 0;
   ui.recentFocus = items[j].dataset.id;
+  recentRoving();
   items[j].focus();
 }
 
 function recentRoving() {
   const items = [...root.querySelectorAll(".g-feed .g-item")];
   if (!items.length) return;
-  // A body cut at three lines fades out over its last one.
-  for (const b of root.querySelectorAll(".g-feed .g-body")) b.classList.toggle("clamped", b.scrollHeight > b.clientHeight + 2);
+  // A body cut at three lines offers the rest in place; the button follows its row for Tab.
+  for (const b of root.querySelectorAll(".g-feed .g-body")) {
+    const row = b.closest(".g-row");
+    const more = row?.querySelector(".g-more-btn");
+    if (!more) continue;
+    const open = ui.recentOpen.has(row.dataset.id);
+    more.hidden = !open && b.scrollHeight <= b.clientHeight + 2;
+  }
   const on = items.find((el) => el.dataset.id === ui.recentFocus) || items[0];
-  for (const el of items) el.tabIndex = el === on ? 0 : -1;
+  for (const el of items) {
+    el.tabIndex = el === on ? 0 : -1;
+    const more = el.closest(".g-row")?.querySelector(".g-more-btn");
+    if (more) more.tabIndex = el === on ? 0 : -1;
+  }
+  // Back to top only where the feed is longer than the window.
+  const back = root.querySelector('[data-key="recent-top"]');
+  if (back && content) back.hidden = content.scrollHeight <= content.clientHeight + 2;
 }
 
 function recentItem(m, at) {
@@ -3082,11 +3127,11 @@ function recentItem(m, at) {
     ui.filter = null;
     ui.conversation = c.key;
     ui.conversationAnchor = m.id;
-    ui.flash = { id: m.id, at: Date.now() };
+    ui.flash = { id: m.id, at: Date.now(), center: true };
     go("messages");
-    requestAnimationFrame(() => root.querySelector(`.chat-thread [data-id="${CSS.escape(m.id)}"]`)?.scrollIntoView({ block: "center" }));
   };
-  return h(
+  const opened = ui.recentOpen.has(m.id);
+  const row = h(
     "button",
     {
       type: "button",
@@ -3110,9 +3155,30 @@ function recentItem(m, at) {
       ),
       !m.fromPerson && m.subject && h("span", { class: "chat-msg-subject" }, m.subject),
       // Links show as text: the whole row is the button.
-      body && h("span", { class: "chat-msg-body rich g-body" }, rich(body, true)),
+      body && h("span", { class: "chat-msg-body rich g-body" + (opened ? " open" : "") }, rich(body, true)),
     ),
     h("span", { class: "g-hint", "aria-hidden": "true" }, "Open conversation"),
+  );
+  return h(
+    "div",
+    { class: "g-row", "data-id": m.id },
+    row,
+    body &&
+      h(
+        "button",
+        {
+          class: "g-more-btn",
+          "data-key": "rm-more-" + m.id,
+          "aria-expanded": opened ? "true" : "false",
+          hidden: true,
+          onclick: () => {
+            opened ? ui.recentOpen.delete(m.id) : ui.recentOpen.add(m.id);
+            ui.recentFocus = m.id;
+            render();
+          },
+        },
+        opened ? "Show less" : "Show more",
+      ),
   );
 }
 
@@ -4297,11 +4363,9 @@ function dayLabel(t) {
   if (new Date(t).toDateString() === today.toDateString()) return "Today";
   today.setDate(today.getDate() - 1);
   if (new Date(t).toDateString() === today.toDateString()) return "Yesterday";
-  // Within the week, its day's name; before that, the date.
-  today.setDate(today.getDate() - 5);
-  today.setHours(0, 0, 0, 0);
-  if (t >= today.getTime()) return new Date(t).toLocaleDateString(undefined, { weekday: "long" });
-  return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  // Before that, its weekday and date ("Friday, October 31"), and its year if not this one.
+  const d = new Date(t);
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 }
 
 const FLASH_MS = 1600;
@@ -4425,6 +4489,14 @@ function restoreChatScroll(was) {
   chatMoved = false;
   if (thread) thread.scrollTop = same && !was.atEnd && !toEnd ? was.top : thread.scrollHeight;
   toEnd = false;
+  // A message opened from Recent sits in the middle of the thread, where its highlight is seen.
+  const lit = ui.flash?.center && thread?.querySelector(`[data-id="${CSS.escape(ui.flash.id)}"]`);
+  if (lit) {
+    ui.flash.center = false;
+    const t = thread.getBoundingClientRect();
+    const r = lit.getBoundingClientRect();
+    thread.scrollTop += r.top + r.height / 2 - (t.top + t.height / 2);
+  }
 }
 
 // A person's account (#242).

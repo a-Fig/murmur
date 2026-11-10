@@ -4437,12 +4437,6 @@ a.fx-pr:focus-visible,
 .g-item .chat-msg-head {
   display: flex;
 }
-/* Three lines at most, cut without an ellipsis: the fade over the last line says there is more. */
-.g-body {
-  display: block;
-  max-height: 4.5em; /* three of its 1.5 lines */
-  overflow: hidden;
-}
 .dark .g-item {
   border-radius: 6px;
 }
@@ -4573,7 +4567,7 @@ a.fx-pr:focus-visible,
   background: #ff705d;
 }
 /* Recent's rows: one padding for every row, subject or not; a hover as plain as the table's; a hint
-   at the right on hover and focus; a body cut at three lines fades over its last. */
+   at the right on hover and focus. */
 .dark .g-item {
   position: relative;
   padding-top: 0.5rem !important;
@@ -4594,10 +4588,6 @@ a.fx-pr:focus-visible,
 .g-item:hover .g-hint,
 .g-item:focus-visible .g-hint {
   opacity: 1;
-}
-.g-body.clamped {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent);
 }
 /* Where the reader left off, in the feed's muted colour: nothing above it waits on anyone. */
 .chat-new.g-new {
@@ -6323,4 +6313,74 @@ a.fx-pr:focus-visible,
 .dark .chat-thread > * {
   flex: none;
   width: 100%;
+}
+/* Recent: rows on the 8px grid with a hairline between them; a body cut hard at three lines, the
+   rest a quiet "Show more" away; a day's label held at the top under the bar while its messages
+   scroll. */
+.dark .g-recent .g-row + .g-row {
+  border-top: 1px solid var(--line-soft);
+}
+.dark .g-recent .g-item {
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+}
+.dark .g-recent .g-row:has(.g-more-btn:not([hidden])) .g-item {
+  padding-bottom: 0 !important;
+}
+.dark .g-body {
+  display: block;
+}
+.dark .g-body:not(.open) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.dark .g-more-btn {
+  display: block;
+  height: 24px;
+  margin: 0 0 4px calc(1.5rem + 28px + 1rem);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-2);
+}
+.dark .g-more-btn[hidden] {
+  display: none;
+}
+.dark .g-more-btn:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+}
+.dark .g-top-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--control);
+  margin: 24px auto 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-2);
+}
+.dark .g-top-btn[hidden] {
+  display: none;
+}
+.dark .g-top-btn:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+.dark .g-top-btn .icon {
+  width: 12px;
+  height: 12px;
+}
+.dark .g-recent .g-nomatch {
+  padding: 8px 0;
 }
