@@ -6872,10 +6872,21 @@ a.fx-pr:focus-visible,
 .dark .page.chat-page .chat.chat-solo {
   grid-template-columns: minmax(0, 1fr);
 }
-/* Over a conversation's first message: that it is the first. */
-.dark .chat-thread > .chat-start {
-  padding: 8px var(--gutter) 4px;
+/* A session's or a person's page: what it is, in one meta line after the title, cut short before
+   the tabs. */
+.bar.has-facts {
+  flex-wrap: nowrap;
+}
+.bar-facts {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.75rem;
   line-height: 1rem;
   color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.bar.has-facts > :is(.bar-tabs, .g-back) {
+  flex: none;
 }

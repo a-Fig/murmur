@@ -1522,12 +1522,13 @@ function segKeys(e) {
 
 // The page's bar (#183): one on every page, 44px high, the title with its count beside it in meta,
 // the page's tabs, and its controls at the right.
-function pageBar({ lead, title, meta, tabs, right, titleTip }) {
+function pageBar({ lead, title, facts, meta, tabs, right, titleTip }) {
   return h(
     "header",
-    { class: "bar" },
+    { class: "bar" + (facts ? " has-facts" : "") },
     lead,
     h("h1", { class: "bar-title", title: titleTip || null }, title),
+    facts && h("span", { class: "bar-facts", title: facts }, facts),
     tabs,
     meta && h("span", { class: "bar-meta" }, meta),
     right && h("div", { class: "bar-ctl" }, right),
@@ -4117,11 +4118,14 @@ function conversationsBar(view) {
   const { name, kind, count } = view;
   const f = name && findSession(name);
   const settled = name && !f && settledSessions().find((r) => r.name === name);
+  const p = name && !f && findPerson(name);
   return pageBar({
     lead: ui.backTo && h("button", { class: "g-back", "data-key": "g-back", onclick: () => history.back() }, icon("arrowLeft"), "All sessions"),
     title: isMyFilter() ? "Your messages" : name || "All conversations",
     titleTip: f ? f.session.doing : null,
-    meta: settled ? "Ended · " + ago(settled.last || 0) : view.total > 0 || view.q.trim() ? countLine(view) : null,
+    facts: f ? sessionFacts(f.device, f.session) : p ? ["Person", personOnline(p) && "On " + NAME + " now", deviceLabel(p.device)].filter(Boolean).join(" · ") : null,
+    // Beside a session's facts the count would repeat the All tab's; it shows while searching.
+    meta: settled ? "Ended · " + ago(settled.last || 0) : view.q.trim() || (view.total > 0 && !f && !p) ? countLine(view) : null,
     tabs:
       view.tabs &&
       barTabs(
@@ -4151,6 +4155,13 @@ function conversationsBar(view) {
       ),
     ],
   });
+}
+
+// A session in one line, as a thread's header and the details say it: "Claude Code · Active now ·
+// ui #36 · This device", and its tags.
+function sessionFacts(d, s) {
+  const pr = prOf(s);
+  return [agentName(s.agent), stateWord(d, s), s.branch && s.branch + (pr ? " #" + pr.number : ""), deviceLabel(d), ...tagsOf(s).names].filter(Boolean).join(" · ");
 }
 
 // What the list shows, and the counts that describe it. A conversation counts once it has a
@@ -4430,12 +4441,12 @@ function conversationRow(c) {
   const last = c.messages[c.messages.length - 1];
   const at = last && when(last.at);
   const o = otherIn(c);
-  const self = ui.filter ? nameOf(ui.filter, ui.filter) : myName();
   const unread = unreadIn(c);
   const failed = pendingIn(c).find((item) => item.status === "failed");
   // Between two others, who wrote last is a 12px face before the text, not their name again: more
   // of the message fits. A group says "sender: ".
-  const mine = last && ((o && fromName(last) === self) || fromName(last) === myName());
+  // "You" is the person reading: on a session's page its own messages carry its name.
+  const mine = last && fromName(last) === myName();
   const face = !failed && last && c.kind === "dm" && !o && !mine;
   const preview = failed ? "Not sent: " + failed.text : !last ? "New conversation" : (face || (o && fromName(last) === o) ? "" : mine ? "You: " : fromName(last) + ": ") + last.subject;
   return h(
@@ -4537,17 +4548,19 @@ function chatMessages(c) {
   const out = [];
   let prev = null;
   let prevDay = null;
-  // Over the first message, when nothing older of this conversation can have been let go.
+  // The first day's divider says the conversation starts there, when nothing older of it can have
+  // been let go: "Start of your conversation with quiet-otter · Today".
   const first = c.messages[0];
+  let start = null;
   if (first && first.sortAt > trimmedAt) {
     const mine = c.kind === "dm" && c.pair.includes(myName()) ? c.pair.find((n) => n !== myName()) || myName() : null;
-    out.push(h("p", { class: "chat-start" }, mine ? "Start of your conversation with " + mine : "Start of this conversation"));
+    start = mine ? "Start of your conversation with " + mine : "Start of this conversation";
   }
   for (const m of c.messages) {
     const at = when(m.at);
     const day = at && new Date(at).toDateString();
     if (day && day !== prevDay) {
-      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(at))));
+      out.push(h("div", { class: "chat-day" }, h("span", null, (prevDay == null && start ? start + " · " : "") + dayLabel(at))));
       prev = null;
       prevDay = day;
     }
