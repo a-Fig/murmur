@@ -4943,29 +4943,40 @@ function relayBar(c, running) {
     ui.relayFor = c.key;
   }
   const to = ui.relayTo.get(c.key);
-  const other = running.find((n) => n !== to);
   const send = () => relaySend(c, to, el);
   const el = composerFor(key, send, () => {
     composerChange(key, el);
-    // Writing the next message: the line goes back to saying where this one will go.
+    // Writing the next message: the line about the last one goes.
     if (el.value.trim() && root.querySelector(".relay-sent")) {
       ui.relayed.delete(c.key);
       render();
     }
   });
-  el.placeholder = "Write to " + to + "…";
-  el.setAttribute("aria-label", "Write to " + to + ", privately, in your conversation with it");
-  const switchTo = () => {
-    ui.relayTo.set(c.key, other);
-    ui.relayed.delete(c.key);
-    render();
-    el.focus({ preventScroll: true });
-  };
+  el.placeholder = "Message " + to + " privately…";
+  el.setAttribute("aria-label", "Message " + to + " privately, in your conversation with it");
+  // Who it goes to: a small menu at the field's left edge, when there are two to choose from.
+  const pick =
+    running.length > 1
+      ? menuButton(
+          "relay-to",
+          "To",
+          running.map((n) => [n, n]),
+          to,
+          (n) => {
+            ui.relayTo.set(c.key, n);
+            ui.relayed.delete(c.key);
+            render();
+            el.focus({ preventScroll: true });
+          },
+        )
+      : null;
+  if (pick) pick.classList.add("composer-to-menu");
   return h(
     "div",
     { class: "composer-wrap" },
     ui.setup?.inline === el && nameAsk(),
-    h("div", { class: "composer composer-relay" }, relayLine(c, to, other, el, switchTo), el, sendButton(key, el, send)),
+    relayLine(c),
+    h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }
 
@@ -4983,20 +4994,13 @@ function relaySend(c, to, el) {
   el.focus({ preventScroll: true });
 }
 
-// Inside the composer's top edge: who a message written here goes to, before it is sent, and where
-// it went after.
-function relayLine(c, to, other, el, switchTo) {
+// Over the composer, for a while after sending: where the message went, with a way there. A message
+// still sending, or one that failed, keeps its line until it is sent.
+const RELAY_LINE_MS = 10000;
+function relayLine(c) {
   const sent = ui.relayed.get(c.key);
   const item = sent && ui.outbox.find((x) => x.cid === sent.cid);
-  const pending = item && item.status !== "sent"; // sending, or failed and waiting to be tried again
-  if (!sent || (!pending && (sent.to !== to || el.value.trim()))) {
-    return h(
-      "p",
-      { class: "relay-line" },
-      "To " + to + ", privately",
-      other && [h("span", { class: "relay-sep", "aria-hidden": "true" }, "·"), h("button", { class: "relay-open", "data-key": "relay-switch", onclick: switchTo }, "switch to " + other)],
-    );
-  }
+  if (!sent) return null;
   if (item?.status === "failed") {
     return h(
       "p",
@@ -5006,6 +5010,11 @@ function relayLine(c, to, other, el, switchTo) {
     );
   }
   if (item?.status === "sending") return h("p", { class: "relay-line", role: "status" }, "Sending to " + sent.to + "…");
+  sent.at ||= Date.now();
+  if (Date.now() - sent.at > RELAY_LINE_MS) return null;
+  setTimeout(() => {
+    if (ui.relayed.get(c.key) === sent && root.querySelector(".relay-sent")) render();
+  }, RELAY_LINE_MS + 50);
   return h(
     "p",
     { class: "relay-line relay-sent", role: "status" },
