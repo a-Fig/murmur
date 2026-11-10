@@ -10,6 +10,7 @@ const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000; // the page's limit for what isn't the person's own
 const MAX_OWN_MESSAGES = 2000; // and for what is, as the daemon keeps it (maxPersonLog)
 const VIEWS = ["sessions", "messages", "recent", "settings"];
+const ROUTES = [...VIEWS, "yours", "session", "person"]; // a hash's first part: see hashOf
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
@@ -50,6 +51,8 @@ const ui = {
   draftTo: null, // who a conversation with no messages yet is with
   restored: null, // the conversation a failed message's text just went back into
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
+  navPush: false, // the next render's hash is a new history entry (a navigation), not a replacement
+  pendingRoute: null, // { kind, name }: a session or person named in the address, found once the state comes
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
   readLocal: new Set(), // messages marked read that the state doesn't know of yet
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
@@ -78,7 +81,7 @@ function takeToken() {
       value = decodeURIComponent(value);
     } catch {}
     sessionStorage.setItem(TOKEN_KEY, value);
-    const view = parts.find((p) => VIEWS.includes(p.split("/")[0])) || "messages";
+    const view = parts.find((p) => ROUTES.includes(p.split("/")[0])) || "messages";
     history.replaceState(null, "", location.pathname + location.search + "#" + view);
   }
   return sessionStorage.getItem(TOKEN_KEY);
@@ -275,6 +278,7 @@ function render() {
   chatRoving(); // after focus is back where it was
   sideRoving();
   fitComposers();
+  syncHash();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
   queueMicrotask(markOpenRead);
 }
@@ -1828,10 +1832,7 @@ function sessionsPage() {
   const needs = fleetNeeds(rows);
   // Open details stay open when their session falls out of the filter (it went idle while you
   // read, say); they close only when the session itself is gone.
-  if (ui.fleetSel && !findSession(ui.fleetSel)) {
-    ui.fleetSel = null;
-    history.replaceState(null, "", fleetHash(null));
-  }
+  if (ui.fleetSel && !findSession(ui.fleetSel)) ui.fleetSel = null;
   if (tab === "settled") ui.selected.clear();
   const sel = ui.fleetSel;
   const set = (k) => (v) => {
@@ -2542,10 +2543,6 @@ function settledTable(q, F) {
 
 // The open session is in the address, #sessions/<name>, so Back from its conversation, Forward and
 // a reload all find it.
-function fleetHash(name) {
-  return location.pathname + location.search + "#sessions" + (name ? "/" + encodeURIComponent(name) : "");
-}
-
 function fleetFromHash(part) {
   if (!part) return null;
   try {
@@ -2555,9 +2552,9 @@ function fleetFromHash(part) {
   }
 }
 
-function fleetOpen(name) {
+function fleetOpen(name, push = true) {
   if (!ui.fleetSel) ui.fxEnter = true;
-  history.replaceState(history.state, "", fleetHash(name));
+  ui.navPush = push;
   ui.fleetSel = name;
   render();
   // Opening the pane narrows the table, so its rows grow or shrink; keep this one in view.
@@ -2575,7 +2572,7 @@ function fleetClose() {
 }
 
 function fleetCloseAsked() {
-  history.replaceState(history.state, "", fleetHash(null));
+  ui.navPush = true;
   fleetClose();
 }
 
@@ -2859,7 +2856,7 @@ document.addEventListener("keydown", (e) => {
       next.focus();
       (next.closest(".fx-row") || next).scrollIntoView({ block: "nearest" });
       // With the details open, they follow the row, as a mail client's reading pane does.
-      if (ui.fleetSel && /^f[lp]-/.test(next.dataset.key)) fleetOpen(next.dataset.key.slice(3));
+      if (ui.fleetSel && /^f[lp]-/.test(next.dataset.key)) fleetOpen(next.dataset.key.slice(3), false);
     }
     return;
   }
@@ -4389,6 +4386,7 @@ function conversationRow(c) {
       "aria-current": c.key === ui.conversation ? "true" : null,
       "data-key": "c-" + c.key,
       onclick: () => {
+        ui.navPush = ui.conversation !== c.key;
         ui.conversation = c.key;
         ui.conversationAnchor = c.messages[c.messages.length - 1]?.id; // the key can be out of date
         render();
@@ -6012,9 +6010,85 @@ async function unmute(m, key) {
 
 // Navigation and polling.
 
+// A navigation: the next render adds an entry to the history, so Back returns here.
 function go(view) {
-  if (location.hash !== "#" + view) location.hash = view;
-  else setView(view);
+  ui.navPush = true;
+  setView(view);
+}
+
+// Every view, and what is open in it, has an address of its own, so Back and Forward move through
+// them and a reload comes back to the same place:
+//   #sessions[/<session>]            All sessions, with a session's details open
+//   #yours[/<conversation>]          Your messages
+//   #messages[/<conversation>]       All conversations
+//   #session/<name>[/<conversation>] a session's conversations; #person/<name> a person's
+//   #recent, #settings
+function hashOf() {
+  const enc = (x) => encodeURIComponent(x).replace(/%2B/g, "+").replace(/%3A/g, ":"); // both read back as is
+  if (ui.view === "sessions") return "sessions" + (ui.fleetSel ? "/" + enc(ui.fleetSel) : "");
+  if (ui.view !== "messages") return ui.view;
+  const conv = ui.conversation ? "/" + enc(convSlug(ui.conversation)) : "";
+  if (!ui.filter) return "messages" + conv;
+  if (isMyFilter()) return "yours" + conv;
+  const name = nameOf(ui.filter, ui.filter);
+  return (findPerson(name) ? "person/" : "session/") + enc(name) + conv;
+}
+
+function syncHash() {
+  const want = "#" + hashOf();
+  const push = ui.navPush;
+  ui.navPush = false;
+  if (location.hash === want) return;
+  const url = location.pathname + location.search + want;
+  if (push) history.pushState(null, "", url);
+  else history.replaceState(null, "", url);
+}
+
+// The page an address names. A session or person is named in it, and filtered by its address,
+// which needs the state: until that comes, the name waits in ui.pendingRoute.
+function applyHash(hash) {
+  const [head, ...rest] = hash.split("/");
+  const part = (i) => {
+    try {
+      return rest[i] ? decodeURIComponent(rest[i]) : null;
+    } catch {
+      return null;
+    }
+  };
+  if (head === "yours" || head === "messages") {
+    ui.filter = head === "yours" ? (me() ? me().addr : YOU) : null;
+    ui.conversation = convFromSlug(part(0));
+    return setView("messages");
+  }
+  if (head === "session" || head === "person") {
+    const name = part(0);
+    ui.pendingRoute = ui.state || !name ? null : { kind: head, name };
+    ui.filter = routeFilter(head, name);
+    ui.conversation = convFromSlug(part(1));
+    return setView("messages");
+  }
+  setView(hash);
+}
+
+// A conversation in an address: "all", "device:<id>", or the two names of one between two,
+// "maya+solar-wren".
+function convSlug(key) {
+  if (!key.startsWith("dm:")) return key;
+  try {
+    return JSON.parse(key.slice(3)).join("+");
+  } catch {
+    return key;
+  }
+}
+
+function convFromSlug(slug) {
+  if (!slug || slug === "all" || slug.includes(":")) return slug;
+  return "dm:" + JSON.stringify([...new Set(slug.split("+"))].sort());
+}
+
+function routeFilter(kind, name) {
+  if (!name || name.includes("/")) return name; // an address already
+  return (kind === "person" ? findPerson(name)?.addr : findSession(name)?.session.addr) || name;
 }
 
 // A view is its name, and for All sessions the open session too: sessions/<name>.
@@ -6028,7 +6102,7 @@ function setView(view) {
   if (next !== "messages") ui.backTo = false;
   if (next === "recent" && ui.view !== "recent") ui.recentHeldAt = ui.recentShownAt = null;
   ui.view = next;
-  if (ui.view === "settings") loadSettings();
+  if (ui.view === "settings" && ui.token) loadSettings();
   if (ui.view !== "sessions") return render();
   const want = fleetFromHash(open);
   const memo = ui.fleetMemo;
@@ -6186,6 +6260,10 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    if (ui.pendingRoute) {
+      ui.filter = routeFilter(ui.pendingRoute.kind, ui.pendingRoute.name);
+      ui.pendingRoute = null;
+    }
     trimMessages();
     for (const id of ui.readLocal) if (!state.account?.unread?.includes(id)) ui.readLocal.delete(id);
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
@@ -6240,19 +6318,17 @@ function start() {
     last = "";
     polled = false;
   }
-  const [v, open] = location.hash.slice(1).split("/");
-  ui.view = VIEWS.includes(v) ? v : "messages";
-  if (ui.view === "sessions") ui.fleetSel = fleetFromHash(open);
-  render();
+  applyHash(location.hash.slice(1));
   fleetFocusBack();
   if (!ui.token) return;
   loadSettings(); // the wake-up settings say which of this device's sessions show red
   poll();
 }
 
+// Back, Forward, or an address typed in: the page it names.
 window.addEventListener("hashchange", () => {
   if (location.hash.includes("token=")) start();
-  else setView(location.hash.slice(1));
+  else applyHash(location.hash.slice(1));
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && ui.token && ui.conn !== "denied") poll();
