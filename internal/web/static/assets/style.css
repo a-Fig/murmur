@@ -5798,16 +5798,20 @@ a.fx-pr:focus-visible,
   width: 12px;
   height: 12px;
 }
-/* A thread reads in a 720px column, centred in its pane, the composer under it. */
+/* A thread reads in a 720px column from the pane's 24px gutter, the composer under it: the head,
+   the messages and the composer share one left edge at every width. */
 .dark .chat-pane > .composer-wrap,
 .dark .chat-pane > .wait-line,
 .dark .chat-thread > * {
   max-width: calc(720px + 2 * var(--gutter));
-  margin-left: auto;
-  margin-right: auto;
+  margin-left: 0;
+  margin-right: 0;
 }
 .dark .chat-thread > :is(.chat-day, .chat-new) {
+  width: auto;
   max-width: 720px;
+  margin-left: var(--gutter);
+  margin-right: var(--gutter);
 }
 .dark .chat-pane > .composer-wrap {
   width: 100%;
@@ -6407,7 +6411,6 @@ a.fx-pr:focus-visible,
 .chat-pane-pick > .lp {
   width: 100%;
   max-width: 720px;
-  margin: 0 auto;
 }
 .dark .chat-pane-pick .name-line {
   max-width: none;
