@@ -5113,11 +5113,12 @@ a.fx-pr:focus-visible,
 .page.chat-page > .bar {
   position: static;
 }
-/* One row model (#183): every row in the sessions table is one 36px line. Session 200, Agent 140,
-   State 124, Working on (up to 720 at wide, the rest to Branch), Branch with its PR 200, Last
-   active 72 and the faint "…". Under 1200px of table, Agent and Branch go: the pane has them. */
+/* One row model (#183): every row in the sessions table is one 36px line. Session 200 (or its
+   longest name), Agent 140, State 124, Working on (all the rest), Branch with its PR (as wide as
+   the widest, up to 220), Last active 72 and the faint "…". Under 1100px of table, Agent and
+   Branch go: the pane has them. */
 .dark .fx-table .fx-tr {
-  grid-template-columns: max(200px, var(--fx-who, 0px)) 140px 124px minmax(0, 720px) minmax(200px, 1fr) 72px 28px;
+  grid-template-columns: max(200px, var(--fx-who, 0px)) 140px 124px minmax(0, 1fr) var(--fx-branch, 200px) 72px 28px;
   column-gap: 16px;
   padding: 0 12px;
 }
@@ -5235,8 +5236,8 @@ a.fx-pr:focus-visible,
   background: none;
   color: var(--text-1);
 }
-/* 20px faces, and in their place, while the pointer or focus is anywhere in the table (and once any
-   row is picked), the box that picks the row. */
+/* 20px faces, and in their place, on the row under the pointer or the keyboard (and on every row
+   once one is picked), the box that picks the row. */
 .fx-face {
   position: relative;
   display: grid;
@@ -5258,10 +5259,12 @@ a.fx-pr:focus-visible,
   height: auto;
   opacity: 0;
 }
-.fx-table:is(:hover, :focus-within, .picking) .fx-face > .fx-pick {
+.fx-row:is(:hover, :focus-within) .fx-face > .fx-pick,
+.fx-table.picking .fx-face > .fx-pick {
   opacity: 1;
 }
-.fx-table:is(:hover, :focus-within, .picking) .fx-face > .avatar {
+.fx-row:is(:hover, :focus-within) .fx-face > .avatar,
+.fx-table.picking .fx-face > .avatar {
   opacity: 0;
 }
 .dark .fx-pick {
@@ -6450,4 +6453,29 @@ a.fx-pr:focus-visible,
 }
 .dark .chat-list .chat-row {
   flex-shrink: 0;
+}
+/* The details pane lies over the table at every width (P4): the table keeps its width, padding and
+   columns under a light scrim. */
+.dark .fx-split.has-pane.overlay > .fx {
+  padding: 0 12px 24px;
+}
+.dark .fx-split.overlay > .fx-scrim {
+  background: rgb(0 0 0 / 20%);
+}
+/* Rows picked: the selection bar stands in the column heads' row, at its height. */
+.dark .fx-table .fx-th-picked > .fx-c-picked {
+  grid-column: 1 / -1;
+  overflow: visible;
+}
+.dark .fx-th-picked .fx-select-bar {
+  margin: 0;
+  padding: 0;
+  background: none;
+}
+.dark .fx-th-picked .bar-menu {
+  height: 24px;
+  font-size: 0.75rem;
+}
+.dark .fx-th-picked .fx-select-n {
+  font-size: 0.75rem;
 }

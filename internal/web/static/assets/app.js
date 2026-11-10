@@ -1503,8 +1503,8 @@ function pageBar({ lead, title, meta, tabs, right, titleTip }) {
     { class: "bar" },
     lead,
     h("h1", { class: "bar-title", title: titleTip || null }, title),
-    meta && h("span", { class: "bar-meta" }, meta),
     tabs,
+    meta && h("span", { class: "bar-meta" }, meta),
     right && h("div", { class: "bar-ctl" }, right),
   );
 }
@@ -1800,7 +1800,7 @@ function sessionsPage() {
   // table narrows (and drops columns) rather than going away.
   const split = h(
     "div",
-    { class: "fx-split" + (sel ? " has-pane" : "") },
+    { class: "fx-split" + (sel ? " has-pane overlay" : "") },
     h(
       "div",
       { class: "fx" },
@@ -1851,8 +1851,7 @@ function sessionsPage() {
           }),
         ],
       }),
-      ui.selected.size > 0 && tab !== "settled" && h("div", { class: "fx-toolbar" }, selectBar(pickable)),
-      tab === "settled" ? settledTable(q, F) : fleetTable(rows, needs, sel, { q: F.q.trim(), state: F.state, total: all.length, tab, clear }),
+      tab === "settled" ? settledTable(q, F) : fleetTable(rows, needs, sel, { q: F.q.trim(), state: F.state, total: all.length, tab, clear, pickable }),
     ),
     sel && h("div", { class: "fx-scrim", "aria-hidden": "true" }),
     sel && fleetPane(sel),
@@ -2136,7 +2135,14 @@ function fleetTable(rows, needs, sel, empty) {
   return h(
     "div",
     { class: "fx-table" + (ui.selected.size ? " picking" : ""), role: "table", "aria-label": "Sessions" },
-    empty.total > 0 && h("div", { class: "fx-thead", role: "rowgroup" }, fleetHead(F)),
+    // While rows are picked, what to do with them takes the column heads' place, at their height,
+    // so nothing under it moves.
+    empty.total > 0 &&
+      h(
+        "div",
+        { class: "fx-thead", role: "rowgroup" },
+        ui.selected.size > 0 ? h("div", { class: "fx-tr fx-th fx-th-picked", role: "row" }, h("div", { class: "fx-c fx-c-picked", role: "cell", "aria-colspan": "7" }, selectBar(empty.pickable))) : fleetHead(F),
+      ),
     h("div", { class: "fx-tbody", role: "rowgroup" }, body),
   );
 }
@@ -2544,13 +2550,13 @@ document.addEventListener("focusin", (e) => {
   fleetRoving();
 });
 
-// The bar and the table's header stay in view as the table scrolls; the header sits under the bar
-// and the selection bar. Where the pane would leave the table under 760px, it lies over the table.
+// The bar and the table's header stay in view as the table scrolls; the header sits under the bar.
+// The details pane lies over the table's right side at every width, so opening it moves nothing.
 function fleetFit() {
   const split = root.querySelector(".fx-split");
   if (!split) return;
   const pane = split.querySelector(".fx-pane");
-  split.classList.toggle("overlay", !!pane && split.clientWidth - pane.offsetWidth < 760);
+  split.classList.toggle("overlay", !!pane);
   // The table's head sticks under the page's bar and, while picking, the selection bar.
   const tops = [split.querySelector(".fx > .bar"), split.querySelector(".fx-toolbar")];
   split.style.setProperty("--fx-bar", (tops[0]?.offsetHeight || 44) + "px");
@@ -2567,6 +2573,15 @@ function fleetFit() {
     need = Math.max(need, text.getBoundingClientRect().right - c.getBoundingClientRect().left + 1);
   }
   split.style.setProperty("--fx-who", Math.ceil(need) + "px");
+  // Branch is as wide as its widest branch and PR, up to 220px; Working on has all the rest.
+  split.style.setProperty("--fx-branch", "220px");
+  let branch = 64;
+  for (const c of split.querySelectorAll(".fx-tbody .fx-c-branch")) {
+    if (!c.getClientRects().length) continue;
+    const kids = [...c.children];
+    branch = Math.max(branch, kids.reduce((n, k) => n + k.scrollWidth, 0) + Math.max(0, kids.length - 1) * 8 + 1);
+  }
+  split.style.setProperty("--fx-branch", Math.min(220, Math.ceil(branch)) + "px");
   for (const t of split.querySelectorAll(".fx-tbody .fx-tags")) {
     t.classList.remove("cut");
     t.classList.toggle("cut", t.scrollWidth > t.clientWidth + 1);
