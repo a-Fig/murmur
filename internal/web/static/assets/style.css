@@ -4326,12 +4326,13 @@ a.fx-pr:focus-visible,
   line-height: 1rem;
   color: #a3a3a3;
 }
-.taken-line {
-  color: var(--text-2);
+/* A name someone else chose first: the line says so in the waiting yellow. */
+.taken-line,
+.taken-line b {
+  color: #eec448;
 }
 .taken-line b {
   font-weight: 500;
-  color: var(--text-1);
 }
 /* A row too narrow for its words and its control side by side puts the control under the words. */
 @container (max-width: 46rem) {

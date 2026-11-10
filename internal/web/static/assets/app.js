@@ -5739,11 +5739,12 @@ function takenLine(a, marked = false) {
 function accountSection() {
   const a = me();
   const suggested = ui.state?.account?.suggested || "";
-  // A saved name is the field's value. Without one, or with one taken, the suggestion is, selected
-  // when the field is entered so typing replaces it, and Choose takes it as it is.
-  const prefilled = ui.accountDraft == null && (!a || a.taken) && !!suggested;
-  const value = ui.accountDraft ?? (a && !a.taken ? a.name : suggested);
-  const unchanged = (v) => !v.trim() || (!!a && !a.taken && v.trim() === a.name);
+  // The name you have is the field's value, a taken one too, so the line under it is about what
+  // the field shows; Save waits for a different one. With no name yet the suggestion is the value,
+  // selected when the field is entered so typing replaces it, and Save takes it as it is.
+  const prefilled = ui.accountDraft == null && !a && !!suggested;
+  const value = ui.accountDraft ?? (a ? a.name : suggested);
+  const unchanged = (v) => !v.trim() || (!!a && v.trim() === a.name);
   return h(
     "section",
     { class: "section" },
@@ -5773,7 +5774,7 @@ function accountSection() {
                 spellcheck: "false",
                 "aria-label": "Your name",
                 "data-key": "account-name",
-                placeholder: suggested || "ada-lovelace",
+                placeholder: a?.taken ? "" : suggested || "ada-lovelace",
                 // A click would put the caret where it landed; the suggestion stays selected.
                 onfocus: (e) => {
                   if (prefilled) e.target.select();
