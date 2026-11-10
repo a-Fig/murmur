@@ -35,6 +35,7 @@ const ui = {
   tagFilter: null, // a tag: the session lists show only the sessions with it
   recentOpen: new Set(), // Recent's messages shown whole
   setShown: new Set(), // Settings' sections showing the sessions that follow the default
+  relayChosen: new Set(), // threads whose "Message privately" choice has been made, folded to "To x"
   setTouched: new Set(), // Settings rows changed on this visit, kept in view
   rq: "", // Recent's search
   tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
@@ -4413,16 +4414,28 @@ function conversationPane(c) {
       of && h("span", { class: "chat-state" }, stateDot(sessionState(of.device, of.session), "chat-state-dot"), stateWord(of.device, of.session)),
       c.kind !== "dm" && membersButton(c),
     ),
-    h("div", { class: "chat-thread", "data-conversation": c.key, onscroll: (e) => (threadAtEnd = atEnd(e.target)) }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
+    h("div", { class: "chat-thread", "data-conversation": c.key, onscroll: (e) => (threadAtEnd = atEnd(e.target)) }, [chatIntro(c, o), c.messages.length || pendingIn(c).length ? chatMessages(c) : null]),
     waitLine(c),
     paneFoot(c),
   );
 }
 
 // An empty conversation: the header above says who it is with and how they are.
-function chatIntro(name) {
-  if (!name) return null;
-  return h("div", { class: "chat-intro" }, h("p", { class: "chat-intro-meta" }, "No messages yet. Write below to start."));
+// At the top of a conversation between two, over the empty space a short thread leaves: who is in
+// it, each with what it is and how it is, as plain lines.
+function chatIntro(c, o) {
+  const names = c.kind !== "dm" ? [] : o ? [o] : c.pair;
+  if (!names.length) return null;
+  return h(
+    "div",
+    { class: "chat-intro" },
+    names.map((n) => {
+      const f = findSession(n);
+      const facts = f ? [agentName(f.session.agent), f.session.branch, stateWord(f.device, f.session)] : [isPerson(n) ? "Person" : presenceOf(n).word];
+      return h("p", { class: "chat-intro-row" }, h("span", { class: "chat-intro-name" }, n), h("span", { class: "chat-intro-facts" }, facts.filter(Boolean).join(" \u00b7 ")));
+    }),
+    !c.messages.length && !pendingIn(c).length && h("p", { class: "chat-intro-meta" }, "No messages yet. Write below to start."),
+  );
 }
 
 // A sender's messages run together under one header, as long as they come close together.
@@ -5174,34 +5187,58 @@ function relayBar(c, running) {
   const send = () => relaySend(c, to, el);
   const el = composerFor(key, send, () => {
     composerChange(key, el);
-    // Writing the next message: the line about the last one goes.
-    if (el.value.trim() && root.querySelector(".relay-sent")) {
+    // Writing the next message: the line about the last one goes, and the choice of who folds away.
+    if (el.value.trim() && (root.querySelector(".relay-sent") || !ui.relayChosen.has(c.key))) {
       ui.relayed.delete(c.key);
+      ui.relayChosen.add(c.key);
       render();
     }
   });
   el.placeholder = "Message " + to + " privately…";
   el.setAttribute("aria-label", "Message " + to + " privately, in your conversation with it");
   // Who it goes to, an explicit step: both of them, the one picked filled. One that has ended is
-  // left out; with one left, it is named.
-  const pick = h(
-    "div",
-    { class: "relay-who" },
-    h("span", null, "Message privately:"),
-    running.length > 1
-      ? segmented(
+  // left out; with one left, it is named. Once chosen (picked, or written to), the line folds to
+  // "To solar-wren · Change".
+  const chosen = ui.relayChosen.has(c.key) || running.length < 2;
+  const pick = chosen
+    ? h(
+        "div",
+        { class: "relay-who" },
+        h("span", null, "To ", h("b", null, to)),
+        running.length > 1 && h("span", { "aria-hidden": "true" }, "\u00b7"),
+        running.length > 1 &&
+          h(
+            "button",
+            {
+              class: "relay-change",
+              "data-key": "relay-change",
+              "aria-label": "Change who it goes to",
+              onclick: () => {
+                ui.relayChosen.delete(c.key);
+                render();
+                root.querySelector(`[data-key="${CSS.escape("relay-to-" + to)}"]`)?.focus({ preventScroll: true });
+              },
+            },
+            "Change",
+          ),
+      )
+    : h(
+        "div",
+        { class: "relay-who" },
+        h("span", null, "Message privately:"),
+        segmented(
           "relay-to",
           running.map((n) => [n, n]),
           to,
           (n) => {
             ui.relayTo.set(c.key, n);
             ui.relayed.delete(c.key);
+            ui.relayChosen.add(c.key);
             render();
-            root.querySelector(`[data-key="${CSS.escape("relay-to-" + n)}"]`)?.focus({ preventScroll: true });
+            el.focus({ preventScroll: true });
           },
-        )
-      : h("b", null, to),
-  );
+        ),
+      );
   return h(
     "div",
     { class: "composer-wrap" },
