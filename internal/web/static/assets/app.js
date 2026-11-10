@@ -4033,14 +4033,17 @@ function conversationIcon(c) {
   return h("span", { class: "avatar-pair", "aria-hidden": "true" }, c.pair.map(avatar));
 }
 
-// Under a conversation between two others' name: each one's state, a dot and its word.
+// Under a conversation between two others' name: each one, what it is and how it is, a dot and
+// "amber-finch · Claude Code · main · Idle 26m".
 function pairStates(c) {
   return h(
     "div",
     { class: "chat-about pair-states" },
     c.pair.map((n) => {
       const { st, word } = presenceOf(n);
-      return h("span", { class: "pair-state" }, stateDot(st, "pres pres-" + st), h("span", { class: "truncate" }, n + " · " + word));
+      const s = findSession(n)?.session;
+      const text = [n, s && agentName(s.agent), s?.branch, word].filter(Boolean).join(" \u00b7 ");
+      return h("span", { class: "pair-state", title: text }, stateDot(st, "pres pres-" + st), h("span", { class: "truncate" }, text));
     }),
   );
 }
@@ -4515,28 +4518,16 @@ function conversationPane(c) {
       of && h("span", { class: "chat-state" }, stateDot(sessionState(of.device, of.session), "chat-state-dot"), stateWord(of.device, of.session)),
       c.kind !== "dm" && membersButton(c),
     ),
-    h("div", { class: "chat-thread", "data-conversation": c.key, onscroll: (e) => (threadAtEnd = atEnd(e.target)) }, [chatIntro(c, o), c.messages.length || pendingIn(c).length ? chatMessages(c) : null]),
+    h("div", { class: "chat-thread", "data-conversation": c.key, onscroll: (e) => (threadAtEnd = atEnd(e.target)) }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
     waitLine(c),
     paneFoot(c),
   );
 }
 
 // An empty conversation: the header above says who it is with and how they are.
-// At the top of a conversation between two, over the empty space a short thread leaves: who is in
-// it, each with what it is and how it is, as plain lines.
-function chatIntro(c, o) {
-  const names = c.kind !== "dm" ? [] : o ? [o] : c.pair;
-  if (!names.length) return null;
-  return h(
-    "div",
-    { class: "chat-intro" },
-    names.map((n) => {
-      const f = findSession(n);
-      const facts = f ? [agentName(f.session.agent), f.session.branch, stateWord(f.device, f.session)] : [isPerson(n) ? "Person" : presenceOf(n).word];
-      return h("p", { class: "chat-intro-row" }, h("span", { class: "chat-intro-name" }, n), h("span", { class: "chat-intro-facts" }, facts.filter(Boolean).join(" \u00b7 ")));
-    }),
-    !c.messages.length && !pendingIn(c).length && h("p", { class: "chat-intro-meta" }, "No messages yet. Write below to start."),
-  );
+function chatIntro(name) {
+  if (!name) return null;
+  return h("div", { class: "chat-intro" }, h("p", { class: "chat-intro-meta" }, "No messages yet. Write below to start."));
 }
 
 // A sender's messages run together under one header, as long as they come close together.

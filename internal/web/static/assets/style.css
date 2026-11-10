@@ -6688,36 +6688,6 @@ a.fx-pr:focus-visible,
 .dark .set-page .group > .set-fold {
   border-top: 1px solid var(--line-soft);
 }
-/* A conversation's intro: who is in it, plain lines at the top of the thread, the messages kept
-   at its foot. */
-.dark .chat-thread > .chat-intro {
-  margin-top: 0;
-  padding: 16px var(--gutter) 8px;
-}
-.dark .chat-thread > .chat-intro + * {
-  margin-top: auto;
-}
-.chat-intro-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-height: 24px;
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
-}
-.chat-intro-name {
-  font-weight: 500;
-  color: var(--text-1);
-}
-.chat-intro-facts {
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: var(--text-3);
-}
-.dark .chat-intro-meta {
-  margin-top: 8px;
-  color: var(--text-3);
-}
 .relay-change {
   padding: 0;
   border: 0;
