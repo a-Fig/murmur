@@ -6852,3 +6852,14 @@ a.fx-pr:focus-visible,
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* The details open over the table: Working on stops, with an ellipsis, short of the pane. */
+.dark .fx-split.overlay .fx-table .fx-row:has(.fx-open:focus-visible) > .fx-full {
+  max-width: min(560px, var(--fx-cut, 560px));
+}
+.fx-split.overlay .fx-tbody .fx-c-doing > .fx-status {
+  display: block;
+  max-width: var(--fx-cut, none);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

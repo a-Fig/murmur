@@ -1837,13 +1837,19 @@ function sessionsPage() {
   const searchedNeeds = fleetNeeds(searched);
   const rows = searched.filter((r) => !F.state || (F.state === "need" ? searchedNeeds.has(r.s.name) : sessionState(r.d, r.s) === F.state));
   const needs = fleetNeeds(rows);
-  // Open details stay open when their session falls out of the filter (it went idle while you
-  // read, say); they close only when the session itself is gone.
+  // Open details stay open when their session falls out of the list by itself (it went idle while
+  // you read, say), and close when the session is gone, or when a filter, search or tab the person
+  // changed hides it.
   if (ui.fleetSel && !findSession(ui.fleetSel)) ui.fleetSel = null;
+  if (ui.fxNarrowed) {
+    ui.fxNarrowed = false;
+    if (ui.fleetSel && (tab === "settled" || !rows.some((r) => r.s.name === ui.fleetSel))) ui.fleetSel = null;
+  }
   if (tab === "settled") ui.selected.clear();
   const sel = ui.fleetSel;
   const set = (k) => (v) => {
     F[k] = v;
+    ui.fxNarrowed = true;
     if (k === "by") {
       try {
         localStorage.setItem(FLEET_BY_KEY, v);
@@ -1854,6 +1860,7 @@ function sessionsPage() {
   const clear = () => {
     F.q = "";
     F.state = "";
+    ui.fxNarrowed = true;
     render();
     root.querySelector('[data-key="fx-q"]')?.focus();
   };
@@ -1902,6 +1909,7 @@ function sessionsPage() {
       value: ui.tagFilter || "",
       onPick: (v) => {
         ui.tagFilter = v || null;
+        ui.fxNarrowed = true;
         render();
       },
     },
@@ -1928,6 +1936,7 @@ function sessionsPage() {
             ui.sessTab = v;
             // A selection belongs to the tab it was made on.
             ui.selected.clear();
+            ui.fxNarrowed = true;
             render();
           },
         ),
@@ -1936,6 +1945,7 @@ function sessionsPage() {
           filterButton("fx-filter", menus),
           barSearch("fx-q", "Search sessions", F.q, (v) => {
             F.q = v;
+            ui.fxNarrowed = true;
             render();
           }),
         ],
@@ -2648,6 +2658,13 @@ function fleetFit() {
   const pane = split.querySelector(".fx-pane");
   split.classList.toggle("overlay", !!pane);
   // The table's head sticks under the page's bar and, while picking, the selection bar.
+  // With the details open over the table, Working on ends in an ellipsis at the pane's edge
+  // rather than running under it.
+  const paneEl = split.querySelector(".fx-pane");
+  const doingCell = split.querySelector(".fx-tbody .fx-c-doing");
+  // (The pane is fixed to the window's right; measured by its width, as it may be sliding in.)
+  if (paneEl && doingCell) split.style.setProperty("--fx-cut", Math.max(0, document.documentElement.clientWidth - paneEl.offsetWidth - doingCell.getBoundingClientRect().left - 16) + "px");
+  else split.style.removeProperty("--fx-cut");
   // One 44px bar: where State, Group and Tag would push the controls to a second row, they fold
   // into the Filter menu; narrower still, the bar stops wrapping and the count beside the tabs is cut short.
   const bar = split.querySelector(".fx > .bar");
