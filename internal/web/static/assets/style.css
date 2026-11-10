@@ -146,6 +146,47 @@
   --sidebar-row-selected: var(--muted);
 }
 
+/* Murmur website hero palette (murmur.afig.dev, checked 2026-11-10). */
+.murmur {
+  color-scheme: light;
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --background: #225bff;
+  --foreground: #fffbea;
+  --card: #fffbea;
+  --popover: #fffbea;
+  --primary: #fdee8c;
+  --primary-foreground: #0e1b45;
+  --secondary: color-mix(in srgb, #fffbea 96%, #0e1b45);
+  --secondary-foreground: #0e1b45;
+  --muted: color-mix(in srgb, #fffbea 10%, #225bff);
+  --muted-foreground: color-mix(in srgb, #fffbea 80%, #225bff);
+  --placeholder: var(--muted-foreground);
+  --secondary-label: var(--muted-foreground);
+  --accent: color-mix(in srgb, #fffbea 10%, #225bff);
+  --accent-foreground: #fffbea;
+  --border: color-mix(in srgb, #0e1b45 12%, transparent);
+  --input: color-mix(in srgb, #0e1b45 24%, transparent);
+  --ring: #fdee8c;
+  --sidebar: #225bff;
+  --sidebar-foreground: #fffbea;
+  --sidebar-muted-foreground: color-mix(in srgb, #fffbea 80%, #225bff);
+  --sidebar-row-hover: color-mix(in srgb, #fffbea 10%, #225bff);
+  --sidebar-row-active: color-mix(in srgb, #fffbea 14%, #225bff);
+  --sidebar-row-selected: color-mix(in srgb, #fffbea 10%, #225bff);
+  --sidebar-border: color-mix(in srgb, #0e1b45 12%, transparent);
+  --code-background: #fdee8c;
+}
+.murmur [data-app-sidebar] {
+  --sidebar: #225bff;
+  --sidebar-foreground: #fffbea;
+  --sidebar-muted-foreground: color-mix(in srgb, #fffbea 80%, #225bff);
+  --sidebar-row-hover: color-mix(in srgb, #fffbea 10%, #225bff);
+  --sidebar-row-active: color-mix(in srgb, #fffbea 14%, #225bff);
+  --sidebar-row-selected: color-mix(in srgb, #fffbea 10%, #225bff);
+  --sidebar-border: color-mix(in srgb, #0e1b45 12%, transparent);
+}
+
 /* The app sidebar's own hierarchy (index.css [data-app-sidebar]). */
 [data-app-sidebar] {
   --sidebar: var(--zinc-50);

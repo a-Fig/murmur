@@ -8,6 +8,7 @@
     var choice = localStorage.getItem(key) || "system";
     var dark = choice === "dark" || (choice === "system" && media.matches);
     document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.classList.toggle("murmur", choice === "murmur");
   }
   apply();
   media.addEventListener("change", apply);
