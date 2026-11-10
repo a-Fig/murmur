@@ -6900,3 +6900,11 @@ a.fx-pr:focus-visible,
 .skel-sessions .skel-row {
   border-bottom: 1px solid var(--line-soft);
 }
+/* Settings: the chosen segment stands out at a glance. */
+.dark .set-page .segmented {
+  background: var(--raised);
+}
+.dark .set-page .segmented button[aria-pressed="true"] {
+  background: #3a3a3a;
+  color: #fff;
+}
