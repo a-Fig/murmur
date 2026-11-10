@@ -867,13 +867,16 @@ function quietFold(d) {
         class: "settled-toggle",
         "aria-expanded": open ? "true" : "false",
         "data-key": "quiet-" + d.id,
+        "aria-label": plural(rows.length, "quiet session"),
         onclick: () => {
           open ? ui.openQuiet.delete(d.id) : ui.openQuiet.add(d.id);
           render();
         },
       },
       icon(open ? "chevronDown" : "chevronRight", "settled-caret"),
-      h("span", null, plural(rows.length, "quiet session")),
+      // A word and its count at the right, as the device above it has.
+      h("span", null, "Quiet"),
+      h("span", { class: "menu-count" }, rows.length),
     ),
     open &&
       h(
@@ -1014,13 +1017,15 @@ function settledFold(id) {
         class: "settled-toggle",
         "aria-expanded": open ? "true" : "false",
         "data-key": "fold-" + id,
+        "aria-label": plural(rows.length, "ended session"),
         onclick: () => {
           open ? ui.openSettled.delete(id) : ui.openSettled.add(id);
           render();
         },
       },
       icon(open ? "chevronDown" : "chevronRight", "settled-caret"),
-      h("span", null, plural(rows.length, "ended session")),
+      h("span", null, "Ended"),
+      h("span", { class: "menu-count" }, rows.length),
     ),
     open && h("div", { class: "settled-list" }, rows.map(settledRow)),
   );
