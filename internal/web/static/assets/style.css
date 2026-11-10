@@ -6916,3 +6916,25 @@ a.fx-pr:focus-visible,
   overflow: hidden;
   white-space: normal;
 }
+/* Send waits for something to send, and looks it. While the composer has focus, a line inside its
+   foot says which key sends. */
+.dark .composer-send:disabled {
+  background: transparent;
+  color: rgb(255 255 255 / 24%);
+}
+.composer-keys {
+  display: none;
+}
+.dark .composer:focus-within {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.dark .composer:focus-within > .composer-keys {
+  display: block;
+  flex: 1 0 100%;
+  padding: 0 6px 4px 0;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+  text-align: right;
+}

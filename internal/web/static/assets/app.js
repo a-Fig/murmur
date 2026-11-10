@@ -5253,6 +5253,11 @@ function sendButton(key, el, onclick) {
   return h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() || isDown(), "data-key": "send-" + key, "data-for": key, onclick }, icon("arrowUp"));
 }
 
+// Inside a composer's foot while it has focus: which key sends. A phone's Enter is a new line.
+function sendKeys() {
+  return NARROW.matches ? null : h("span", { class: "composer-keys", "aria-hidden": "true" }, "Enter to send · Shift+Enter for a new line");
+}
+
 // Over a composer while the daemon doesn't answer: Send is off until it does, and the draft stays.
 function downNote() {
   return isDown() && h("p", { class: "composer-down", role: "status" }, "Not connected. Your draft stays here; send it once Murmur is back.");
@@ -5282,7 +5287,7 @@ function composer(c, target, onSent) {
     { class: "composer-wrap" },
     downNote() || sendError(el.dataset.composer),
     ui.armed === key && h("p", { class: "composer-warn", role: "alert" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
-    ui.setup?.inline === el ? nameStep() : h("div", { class: "composer" }, el, sendButton(key, el, trySend)),
+    ui.setup?.inline === el ? nameStep() : h("div", { class: "composer" }, el, sendButton(key, el, trySend), sendKeys()),
   );
 }
 
@@ -5377,7 +5382,7 @@ function relayBar(c, running) {
     "div",
     { class: "composer-wrap" },
     downNote() || sendError(el.dataset.composer) || relayLine(c),
-    ui.setup?.inline === el ? nameStep() : h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
+    ui.setup?.inline === el ? nameStep() : h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send), sendKeys()),
   );
 }
 
