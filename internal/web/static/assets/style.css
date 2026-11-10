@@ -6541,7 +6541,381 @@ a.fx-pr:focus-visible,
   position: static;
 }
 @media (max-width: 1200px) {
+  .bar {
+    gap: 8px;
+  }
   .bar-search {
-    width: 140px;
+    width: 120px;
+  }
+  .bar-tabs {
+    margin-left: 4px;
+  }
+  .bar-menu {
+    padding: 0 8px;
+  }
+}
+/* One row model (#183): every row in the sessions table is one 36px line. Session 200, Agent 140,
+   State 124, Working on (up to 720 at wide, the rest to Branch), Branch with its PR 200, Last
+   active 72 and the faint "…". Under 1200px of table, Agent and Branch go: the pane has them. */
+.dark .fx-table .fx-tr {
+  grid-template-columns: 200px 140px 124px minmax(0, 720px) minmax(200px, 1fr) 72px 28px;
+  column-gap: 16px;
+  padding: 0 12px;
+}
+.dark .fx-table .fx-tr > .fx-c-who { grid-column: 1; }
+.dark .fx-table .fx-tr > .fx-c-agent { grid-column: 2; }
+.dark .fx-table .fx-tr > .fx-c-state { grid-column: 3; }
+.dark .fx-table .fx-tr > .fx-c-doing { grid-column: 4; }
+.dark .fx-table .fx-tr > .fx-c-branch { grid-column: 5; }
+.dark .fx-table .fx-tr > .fx-c-last { grid-column: 6; }
+.dark .fx-table .fx-tr > .fx-c-act { grid-column: 7; }
+.dark .fx-table .fx-th {
+  min-height: 32px;
+  border-bottom: 1px solid var(--line);
+}
+.dark .fx-table .fx-th,
+.dark .fx-table .fx-th .fx-sort {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.dark .fx-table .fx-row {
+  height: var(--row);
+  min-height: 0;
+  padding-block: 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.dark .fx-table .fx-row:hover {
+  background: var(--hover);
+}
+.dark .fx-table .fx-row.on,
+.dark .fx-table .fx-row.picked {
+  background: var(--selected);
+  box-shadow: none;
+}
+.dark .fx-table .fx-row:has(.fx-open:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.dark .fx-table .fx-c {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.fx-c-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dark .fx-c-who .fx-open {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.fx-tags,
+.fx-agent-dev {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+}
+.fx-tags {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-c-agent {
+  color: var(--text-2);
+}
+.dark .fx-table .fx-c-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+}
+.dark .fx-table .fx-status {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+}
+.fx-need-line {
+  color: var(--text-2);
+}
+.dark .fx-need-line b {
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .fx-table .fx-c-branch {
+  gap: 8px;
+}
+.dark .fx-table .fx-c-branch .mono {
+  color: var(--text-2);
+}
+.dark .fx-table .fx-c-last {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  text-align: right;
+  justify-content: flex-end;
+}
+/* A PR is plain meta text that links: "#36 draft". */
+.dark .fx-pr,
+.dark .fx-pr.draft {
+  padding: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-3);
+}
+.dark a.fx-pr:hover {
+  background: none;
+  color: var(--text-1);
+}
+/* 20px faces, and in their place, on hover or focus, the box that picks the row. */
+.fx-face {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+.dark .fx-face > .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 0.625rem;
+}
+.dark .fx-face > .fx-pick {
+  position: absolute;
+  inset: 2px;
+  z-index: 2;
+  width: auto;
+  height: auto;
+  opacity: 0;
+}
+.fx-row:is(:hover, :focus-within) .fx-face > .fx-pick,
+.fx-table.picking .fx-face > .fx-pick {
+  opacity: 1;
+}
+.fx-row:is(:hover, :focus-within) .fx-face > .avatar,
+.fx-table.picking .fx-face > .avatar {
+  opacity: 0;
+}
+.dark .fx-pick {
+  background: var(--canvas);
+}
+.dark .fx-pick.on {
+  background: var(--text-1);
+}
+/* Group headings: 36px, the name at 13/500 with its count beside it in meta. */
+.dark .fx-group {
+  min-height: var(--row);
+  padding: 0 12px;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--text-1);
+}
+.dark .fx-group .fx-chev {
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+}
+.fx-group-n {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.dark .fx-group-sub {
+  color: var(--text-3);
+}
+.dark .fx-group-need .fx-group-name {
+  color: var(--text-1);
+}
+.fx-grow + .fx-grow .fx-group,
+.fx-row + .fx-grow .fx-group {
+  margin-top: 12px;
+}
+.fx-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fx-select-n {
+  margin-right: 4px;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.bar-quiet {
+  border-color: transparent;
+}
+@container (max-width: 1099px) {
+  .dark .fx-table .fx-tr {
+    grid-template-columns: 200px 124px minmax(0, 1fr) 72px 28px;
+  }
+  .dark .fx-table .fx-tr > :is(.fx-c-agent, .fx-c-branch) {
+    display: none;
+  }
+  .dark .fx-table .fx-tr > .fx-c-state { grid-column: 2; }
+  .dark .fx-table .fx-tr > .fx-c-doing { grid-column: 3; }
+  .dark .fx-table .fx-tr > .fx-c-last { grid-column: 4; }
+  .dark .fx-table .fx-tr > .fx-c-act { grid-column: 5; }
+}
+@container (max-width: 759px) {
+  .dark .fx-table .fx-tr {
+    grid-template-columns: 180px 40px minmax(0, 1fr) 64px 28px;
+  }
+}
+/* Settled: Session, State, its last conversation, and when. */
+.dark .fx-table.fx-settled .fx-tr {
+  grid-template-columns: 200px 124px minmax(0, 1fr) 96px;
+}
+.dark .fx-table.fx-settled .fx-tr > .fx-c-state { grid-column: 2; }
+.dark .fx-table.fx-settled .fx-tr > .fx-c-doing { grid-column: 3; }
+.dark .fx-table.fx-settled .fx-tr > .fx-c-last { grid-column: 4; }
+.dark .fx-table.fx-settled .fx-who > .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 0.625rem;
+}
+.dark .fx-table .fx-subline {
+  display: none;
+}
+/* The summary's rows are the same one line. */
+.dark .fx-table .fx-row.need > .fx-c-who {
+  display: flex;
+  grid-column: 1;
+  grid-row: auto;
+}
+/* The conversation list on the same row model: a 36px line on the canvas, one 20px face, the title,
+   the preview taking what is left, the unread count and the time. */
+.dark .chat-list {
+  padding: 8px 8px 24px;
+  border-right: 1px solid var(--line);
+  background: var(--canvas);
+}
+.dark .chat-list .chat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--row);
+  padding: 0 10px;
+  border-radius: var(--r-control);
+}
+.dark .chat-list .chat-row > .avatar {
+  width: 20px !important;
+  height: 20px !important;
+  margin: 0;
+  font-size: 0.625rem;
+}
+.avatar-group .icon {
+  width: 12px;
+  height: 12px;
+}
+.dark .chat-list .chat-row-title {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.dark .chat-list .chat-row-preview {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+.dark .chat-list .chat-row-unread .chat-row-title {
+  font-weight: 500;
+}
+.dark .chat-list .chat-row-unread .chat-row-preview {
+  font-weight: 400;
+  color: var(--text-1);
+}
+.dark .chat-list .chat-row-time {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.dark .chat-list .chat-row:hover {
+  background: var(--hover);
+}
+.dark .chat-list .chat-row[aria-current="true"] {
+  background: var(--selected);
+  box-shadow: none;
+}
+.dark .chat-list .g-row-count {
+  flex: none;
+  padding: 0;
+  background: none;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.dark .unread-badge {
+  min-width: 18px;
+  height: 18px;
+  font-size: 0.75rem;
+}
+.dark .g-new-row {
+  height: var(--row);
+  margin: 0;
+  gap: 10px;
+  padding: 0 10px;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+.dark .g-new-icon,
+.dark .g-new-row .g-new-icon {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  background: none;
+}
+@media (max-width: 1100px) {
+  .dark .chat-list .chat-row > .avatar {
+    width: 20px !important;
+    height: 20px !important;
+  }
+}
+/* Faces in a thread or a feed are 28px. */
+.dark .chat-msg > .avatar,
+.dark .chat-msg > .avatar-gap,
+.dark .avatar-gap {
+  width: 28px;
+}
+.dark .chat-msg > .avatar {
+  height: 28px;
+  font-size: 0.75rem;
+}
+/* The bar gives way as the table's column narrows (the details open beside it): the count goes
+   first, then the search narrows. */
+.dark .fx {
+  container: fx / inline-size;
+}
+@container fx (max-width: 980px) {
+  .fx > .bar {
+    gap: 8px;
+  }
+  .fx > .bar .bar-meta {
+    display: none;
+  }
+  .fx > .bar .bar-search {
+    width: 120px;
+  }
+  .fx > .bar .bar-tabs {
+    margin-left: 4px;
+  }
+  .fx > .bar .bar-menu {
+    padding: 0 8px;
+  }
+}
+@container fx (max-width: 800px) {
+  .fx > .bar .bar-search {
+    width: 90px;
   }
 }
