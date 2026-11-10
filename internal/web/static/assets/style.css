@@ -6400,10 +6400,7 @@ a.fx-pr:focus-visible,
   top: var(--fx-bar, 44px);
 }
 /* Who to talk to, in the main pane: the thread's 720px column, the search over the list, each row
-   with its whole status line. With no conversations yet there is no list column beside it. */
-.dark .page.chat-page .chat.chat-solo {
-  grid-template-columns: minmax(0, 1fr);
-}
+   with its whole status line. */
 .chat-pane-pick {
   overflow-y: auto;
   padding: 16px var(--gutter) 24px;

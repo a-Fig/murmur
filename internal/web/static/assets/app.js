@@ -4011,10 +4011,9 @@ function conversationsPage() {
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
   if (!isMyFilter()) ui.lp = null;
-  // Who to talk to (from New message, or before there is any conversation) takes the main pane, at
-  // its full width; the list beside it keeps your conversations, and is left out while there are none.
+  // Who to talk to (from New message, or before there is any conversation) takes the main pane; the
+  // list beside it keeps your conversations, or says there are none yet.
   const picking = isMyFilter() && (!!ui.lp || (!list.length && !view.q.trim()));
-  const solo = picking && !list.length;
   return h(
     "div",
     { class: "page chat-page" },
@@ -4024,8 +4023,8 @@ function conversationsPage() {
       ? h("div", { class: "blank" }, noMessages())
       : h(
           "div",
-          { class: "chat" + (open || picking ? " chat-open" : "") + (solo ? " chat-solo" : "") },
-          !solo && conversationList(list, view),
+          { class: "chat" + (open || picking ? " chat-open" : "") },
+          conversationList(list, view),
           picking
             ? h("section", { class: "chat-pane chat-pane-pick" }, listPicker(list.length > 0))
             : open
@@ -4245,7 +4244,14 @@ function conversationList(list, view) {
         h("span", { class: "g-new-icon", "aria-hidden": "true" }, icon("compose")),
         "New message",
       ),
-    listRows(view, rows, older, kind, count, q),
+    isMyFilter() && !list.length && !q
+      ? h(
+          "div",
+          { class: "g-nomatch" },
+          h("p", null, "You haven’t written to anyone yet."),
+          h("button", { class: "btn btn-outline btn-xs", "data-key": "new-first", onclick: () => root.querySelector('[data-key="lp-q"]')?.focus() }, icon("compose"), "New message"),
+        )
+      : listRows(view, rows, older, kind, count, q),
   );
 }
 
