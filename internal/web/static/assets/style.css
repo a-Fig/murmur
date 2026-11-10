@@ -6398,3 +6398,32 @@ a.fx-pr:focus-visible,
 .dark .fx-toolbar {
   top: var(--fx-bar, 44px);
 }
+/* Who to talk to, in the main pane: the thread's 720px column, the search over the list, each row
+   with its whole status line. With no conversations yet there is no list column beside it. */
+.dark .page.chat-page .chat.chat-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+.chat-pane-pick {
+  overflow-y: auto;
+  padding: 16px var(--gutter) 24px;
+}
+.chat-pane-pick > .lp {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.dark .chat-pane-pick .name-line {
+  max-width: none;
+}
+.dark .g-new-row.on {
+  background: var(--selected);
+}
+.dark .chat-pane-pick .g-search {
+  margin-bottom: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+}
+.dark .chat-pane-pick .g-search:has(input:focus-visible) {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--ring);
+}

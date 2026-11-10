@@ -3928,6 +3928,10 @@ function conversationsPage() {
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
   if (!isMyFilter()) ui.lp = null;
+  // Who to talk to (from New message, or before there is any conversation) takes the main pane, at
+  // its full width; the list beside it keeps your conversations, and is left out while there are none.
+  const picking = isMyFilter() && (!!ui.lp || (!list.length && !view.q.trim()));
+  const solo = picking && !list.length;
   return h(
     "div",
     { class: "page chat-page" },
@@ -3937,9 +3941,15 @@ function conversationsPage() {
       ? h("div", { class: "blank" }, noMessages())
       : h(
           "div",
-          { class: "chat" + (open ? " chat-open" : "") },
-          conversationList(list, view),
-          open ? conversationPane(open) : NARROW.matches ? null : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" }),
+          { class: "chat" + (open || picking ? " chat-open" : "") + (solo ? " chat-solo" : "") },
+          !solo && conversationList(list, view),
+          picking
+            ? h("section", { class: "chat-pane chat-pane-pick" }, listPicker(list.length > 0))
+            : open
+              ? conversationPane(open)
+              : NARROW.matches
+                ? null
+                : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" }),
         ),
   );
 }
@@ -4135,13 +4145,14 @@ function conversationList(list, view) {
       },
       onkeydown: chatListKey,
     },
-    isMyFilter() && list.length > 0 && !ui.lp &&
+    isMyFilter() &&
+      list.length > 0 &&
       h(
         "button",
         {
-          class: "g-new-row",
+          class: "g-new-row" + (ui.lp ? " on" : ""),
           "data-key": "new-row",
-          "aria-expanded": "false",
+          "aria-expanded": ui.lp ? "true" : "false",
           onclick: () => {
             ui.lp = { q: "", index: 0 };
             render();
@@ -4151,7 +4162,7 @@ function conversationList(list, view) {
         h("span", { class: "g-new-icon", "aria-hidden": "true" }, icon("compose")),
         "New message",
       ),
-    isMyFilter() && (ui.lp || (!list.length && !q)) ? listPicker(list.length > 0) : listRows(view, rows, older, kind, count, q),
+    listRows(view, rows, older, kind, count, q),
   );
 }
 
@@ -4861,8 +4872,8 @@ function personRow(r, cur, onclick, id) {
   );
 }
 
-// Who you can start a conversation with, in the list column: all of it while you have no
-// conversations, and under "New message" once you do (closable). Typing narrows it, the arrow keys
+// Who you can start a conversation with, in the main pane: all of it while you have no
+// conversations, and from "New message" once you do (closable). Typing narrows it, the arrow keys
 // move along it, and Enter or a click opens the conversation beside it.
 function listPicker(closable) {
   const p = (ui.lp ||= { q: "", index: 0 });
