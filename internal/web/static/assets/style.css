@@ -6571,3 +6571,15 @@ a.fx-pr:focus-visible,
 .dark .chat-head > :is(.avatar-pair, .g-grid) > .avatar.avatar.avatar {
   font-size: 13px !important;
 }
+/* The pane lies over the table, not the bar: it starts under the bar, whatever its height (one row
+   or two), and the scrim stops there too, so the bar stays whole and usable. */
+.dark .fx-split.overlay > .fx-pane {
+  top: var(--fx-bar, 44px);
+  height: calc(100dvh - var(--fx-bar, 44px));
+}
+.dark .fx-split.overlay > .fx-scrim {
+  top: var(--fx-bar, 44px);
+}
+.dark .fx-split.overlay > .fx > .bar {
+  z-index: 21;
+}
