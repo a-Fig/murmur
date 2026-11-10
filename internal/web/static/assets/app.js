@@ -2603,7 +2603,7 @@ function fleetFocusBack() {
 }
 
 // The table is one stop for Tab: one item in it is tabbable, the open session's row, else the one
-// last focused, else the first; ↑/↓, Home and End move between rows and headings. The tabbable row's
+// last focused, else the first row; ↑/↓, Home and End move between rows and headings. The tabbable row's
 // own controls (its PR, its "…") follow it with Tab.
 function fleetItems() {
   return [...root.querySelectorAll(".fx-tbody .fx-open, .fx-tbody button.fx-group")];
@@ -2614,7 +2614,8 @@ function fleetRoving() {
   if (!items.length) return;
   const find = (key) => key && items.find((el) => el.dataset.key === key);
   const sel = ui.fleetSel && [ui.fxFocus, "fl-" + ui.fleetSel].find((k) => k && k.slice(3) === ui.fleetSel && find(k));
-  const want = find(sel) || find(ui.fxFocus) || items[0];
+  // Tab into the table lands on a session's row, not its group's heading.
+  const want = find(sel) || find(ui.fxFocus) || items.find((el) => el.matches(".fx-open")) || items[0];
   for (const el of root.querySelectorAll(".fx-tbody a, .fx-tbody button")) el.tabIndex = -1;
   // The waiting line's sessions are Tab stops of their own, before the rows.
   for (const el of root.querySelectorAll(".fx-waitline-go")) el.tabIndex = 0;
@@ -2623,7 +2624,7 @@ function fleetRoving() {
   // row may hold its chip twice (in the Branch cell and on the line under the name).
   let pr = false;
   for (const el of want.closest(".fx-row")?.querySelectorAll("a, button") || []) {
-    if (el === want || !el.getClientRects().length) continue;
+    if (el === want || el.matches(".fx-pick") || !el.getClientRects().length) continue; // Space on the row picks it
     if (el.matches(".fx-pr")) {
       if (pr) continue;
       pr = true;
