@@ -4,7 +4,8 @@
  * its app shell, sidebar, chat timeline, composer, settings, buttons, badges, inputs, segmented
  * controls, kbd, dialogs and empty states from components/ui/*.tsx, components/sidebar/*.tsx,
  * components/chat/*.tsx and components/settings/*.tsx, translated from Tailwind classes to plain
- * CSS. Colors are Tailwind CSS v4's palette (MIT).
+ * CSS. Colors are Tailwind CSS v4's palette (MIT), except the Murmur theme's four, which are the
+ * site's own (site/index.html).
  *
  * Murmur's concepts take T3 Code's places: a device is a project, a session is a thread, and a
  * conversation is a thread's timeline, with a person's own messages as T3 Code's user messages and
@@ -29,15 +30,35 @@
   --neutral-100: oklch(97% 0 0);
   --neutral-400: oklch(70.8% 0 0);
   --neutral-950: oklch(14.5% 0 0);
+  --red-50: oklch(97.1% 0.013 17.38);
+  --red-200: oklch(88.5% 0.062 18.334);
   --red-400: oklch(70.4% 0.191 22.216);
   --red-500: oklch(63.7% 0.237 25.331);
+  --red-600: oklch(57.7% 0.245 27.325);
+  --red-800: oklch(44.4% 0.177 26.899);
+  --amber-100: oklch(96.2% 0.059 95.617);
+  --amber-300: oklch(87.9% 0.169 91.605);
   --amber-400: oklch(82.8% 0.189 84.429);
   --amber-500: oklch(76.9% 0.188 70.08);
+  --amber-600: oklch(66.6% 0.179 58.318);
+  --amber-800: oklch(47.3% 0.137 46.201);
+  --emerald-100: oklch(95% 0.052 163.051);
   --emerald-300: oklch(84.5% 0.143 164.978);
   --emerald-400: oklch(76.5% 0.177 163.223);
   --emerald-500: oklch(69.6% 0.17 162.48);
+  --emerald-600: oklch(59.6% 0.145 163.225);
+  --emerald-800: oklch(43.2% 0.095 166.913);
   --blue-400: oklch(70.7% 0.165 254.624);
   --blue-500: oklch(62.3% 0.214 259.815);
+
+  /* The Murmur site's four colors and the tints it makes from them (site/index.html), so the
+   * Murmur theme below uses the hero's own values rather than approximations. */
+  --site-blue: #225bff;
+  --site-cream: #fffbea;
+  --site-butter: #fdee8c;
+  --site-ink: #0e1b45;
+  --site-blue-deep: color-mix(in srgb, var(--site-blue) 78%, var(--site-ink));
+  --site-badge-ink: #1640bf;
 }
 
 /*
@@ -129,7 +150,7 @@
 }
 
 /*
- * Two more themes, picked in Settings and set on <html data-theme>. Dim is soft greys, as the page
+ * Dim and Light, picked in Settings and set on <html data-theme>. Dim is soft greys, as the page
  * looked before it followed T3 Code (#179): a dark sidebar, a lighter list, and the conversation
  * lightest. Light is T3 Code's light theme (index.css :root).
  */
@@ -217,6 +238,86 @@
   --sidebar-row-selected: rgb(0 0 0 / 5%);
   --sidebar-border: oklch(92% 0.004 286.32);
   --secondary-label: oklch(48% 0.016 285.938);
+}
+
+/*
+ * The Murmur website's hero (site/index.html): its blue ground and cream words, butter for the one
+ * loud action, ink for code and menus, and Inter as the site sets it. It is a fourth fixed look,
+ * not a variant of Dark: the site has one face, and this is it.
+ */
+[data-theme="murmur"] {
+  color-scheme: dark;
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+
+  --background: var(--site-blue);
+  --foreground: var(--site-cream);
+  /* The site's quiet words are 80–90% cream over blue; on the flat blue (#225BFF, 5.05:1 for
+   * cream) 90% is 4.38:1, so the page's muted text is 94%, the least blue that clears 4.5:1
+   * (WCAG 1.4.3). */
+  --muted-foreground: color-mix(in srgb, var(--site-cream) 94%, var(--site-blue));
+  --secondary-label: var(--muted-foreground);
+  --placeholder: var(--muted-foreground);
+  --card: var(--site-blue-deep);
+  --popover: var(--site-ink);
+  --primary: var(--site-butter);
+  --primary-foreground: var(--site-ink);
+  --secondary: color-mix(in srgb, var(--site-ink) 45%, transparent);
+  --secondary-foreground: var(--site-cream);
+  --muted: var(--site-ink);
+  --message-surface: var(--site-butter);
+  --accent: color-mix(in srgb, var(--site-ink) 10%, transparent);
+  --accent-foreground: var(--site-cream);
+  --destructive: var(--red-200);
+  --destructive-foreground: var(--red-50);
+  --border: color-mix(in srgb, var(--site-cream) 26%, transparent);
+  --input: color-mix(in srgb, var(--site-ink) 62%, transparent);
+  --ring: var(--site-butter);
+  --info: var(--site-butter);
+  --info-foreground: var(--site-cream);
+  --success: var(--emerald-300);
+  --success-foreground: var(--emerald-100);
+  --warning: var(--amber-300);
+  --warning-foreground: var(--amber-100);
+  --pr-open: var(--emerald-100);
+  --pr-draft: var(--muted-foreground);
+  --row-hover: color-mix(in srgb, var(--site-ink) 10%, transparent);
+  --row-selected: color-mix(in srgb, var(--site-ink) 16%, transparent);
+  --composer: var(--site-cream);
+  --composer-edge: color-mix(in srgb, var(--site-ink) 12%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--site-cream) 20%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--site-cream) 32%, transparent);
+  --scrim: color-mix(in srgb, var(--site-ink) 72%, transparent);
+  --shadow-popover: 0 1px 2px rgb(14 27 69 / 10%), 0 10px 28px -10px rgb(14 27 69 / 38%);
+  --shadow-dialog: 0 1px 2px rgb(14 27 69 / 10%), 0 24px 64px -24px rgb(14 27 69 / 45%);
+  /* Edges that alone show a control, and an offline dot's ring: 3:1 on the blue (WCAG 1.4.11). */
+  --edge: color-mix(in srgb, var(--site-cream) 72%, transparent);
+  --dot-off: var(--edge);
+  /* The site's grain, baked in so it can be a background-image token; faint, as the site draws it. */
+  --surface-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.05'/%3E%3C/svg%3E");
+
+  /* A tint of a pale state color lifts a chip until its pale words fall under 4.5:1 on the blue;
+   * these chips sit on the site's ink instead, as its command blocks do. Cream surfaces (the
+   * composer, a message, a menu) put the color tints back, below. */
+  --muted-surface: color-mix(in srgb, var(--site-ink) 45%, transparent);
+  --success-surface: color-mix(in srgb, var(--site-ink) 55%, transparent);
+  --warning-surface: color-mix(in srgb, var(--site-ink) 55%, transparent);
+  --destructive-surface: color-mix(in srgb, var(--site-ink) 55%, transparent);
+  --info-surface: color-mix(in srgb, var(--site-ink) 55%, transparent);
+  --primary-surface: color-mix(in srgb, var(--site-ink) 55%, transparent);
+  --stag-surface: color-mix(in srgb, var(--site-ink) 45%, transparent);
+}
+[data-theme="murmur"] [data-app-sidebar] {
+  --sidebar: var(--site-ink);
+  --sidebar-foreground: var(--site-cream);
+  --sidebar-muted-foreground: color-mix(in srgb, var(--site-cream) 80%, transparent);
+  --sidebar-row-hover: color-mix(in srgb, var(--site-cream) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--site-cream) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--site-cream) 7%, transparent);
+  --sidebar-row-ring: transparent;
+  --sidebar-border: color-mix(in srgb, var(--site-cream) 12%, transparent);
+  --sidebar-icon: color-mix(in srgb, var(--site-cream) 80%, var(--sidebar));
+  --secondary-label: color-mix(in srgb, var(--site-cream) 80%, transparent);
 }
 
 /* Base. */
@@ -489,7 +590,7 @@ kbd {
 }
 /* "hook not running" on a session (#225). */
 .badge-warning {
-  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  background: var(--warning-surface, color-mix(in oklab, var(--warning) 16%, transparent));
   color: var(--warning-foreground);
 }
 /* A session's state, as T3 Code's tinted status badges. */
@@ -503,19 +604,19 @@ kbd {
   font-size: 0.6875rem;
   font-weight: 500;
   white-space: nowrap;
-  background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  background: var(--muted-surface, color-mix(in oklab, var(--muted-foreground) 12%, transparent));
   color: var(--muted-foreground);
 }
 .g-state-on {
-  background: color-mix(in oklab, var(--success) 16%, transparent);
+  background: var(--success-surface, color-mix(in oklab, var(--success) 16%, transparent));
   color: var(--success-foreground);
 }
 .g-state-idle {
-  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  background: var(--warning-surface, color-mix(in oklab, var(--warning) 16%, transparent));
   color: var(--warning-foreground);
 }
 .g-state-dnd {
-  background: color-mix(in oklab, var(--destructive) 16%, transparent);
+  background: var(--destructive-surface, color-mix(in oklab, var(--destructive) 16%, transparent));
   color: var(--destructive-foreground);
 }
 
@@ -2198,7 +2299,7 @@ a.g-pr:hover {
   height: 1rem;
   padding: 0 0.3125rem;
   border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  background: var(--stag-surface, color-mix(in oklab, var(--foreground) 7%, transparent));
   font-size: 0.6875rem;
   font-weight: 500;
   line-height: 1;
@@ -2206,7 +2307,7 @@ a.g-pr:hover {
   white-space: nowrap;
 }
 .stag.on {
-  background: color-mix(in oklab, var(--primary) 22%, transparent);
+  background: var(--primary-surface, color-mix(in oklab, var(--primary) 22%, transparent));
   color: var(--info-foreground);
 }
 .stag.waiting {
@@ -2224,7 +2325,7 @@ a.g-pr:hover {
   height: 1rem;
   padding: 0 0.3125rem;
   border-color: color-mix(in oklab, var(--info) 40%, transparent);
-  background: color-mix(in oklab, var(--info) 12%, transparent);
+  background: var(--info-surface, color-mix(in oklab, var(--info) 12%, transparent));
   color: var(--info-foreground);
   font-family: var(--font-sans);
   font-size: 0.6875rem;
@@ -2235,7 +2336,7 @@ a.g-pr:hover {
   height: 1.125rem;
   padding: 0 0.375rem;
   border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  background: var(--warning-surface, color-mix(in oklab, var(--warning) 16%, transparent));
   color: var(--warning-foreground);
   font-size: 0.6875rem;
   font-weight: 500;
@@ -3484,6 +3585,118 @@ a.g-pr:hover {
   --dot-ring: var(--list);
   background: var(--list);
   border-right: 0;
+}
+
+/* ======================================================================== Murmur's hero. */
+
+/* The page is the site's blue, flat so no part of it lifts the muted cream under 4.5:1, under the
+ * site's grain. */
+[data-theme="murmur"] body {
+  background-color: var(--site-blue);
+  background-image: var(--surface-grain);
+  background-size: 256px 256px;
+}
+
+/*
+ * The hero's cream cards and the site's ink command blocks are the two light surfaces over the
+ * blue. Text inside them is the site's ink, not the cream tuned for the blue, and the palette
+ * tokens inherit to their descendants: the composer, a person's own message (butter), and every
+ * menu, dialog and popover.
+ *
+ * The site's muted ink is 62% ink; on the app's tinted rows and hovers that is 4.1–4.3:1, so this
+ * takes 68%, the least that keeps 4.5:1 on them (WCAG 1.4.3).
+ */
+[data-theme="murmur"] .composer,
+[data-theme="murmur"] .skip-link,
+[data-theme="murmur"] .tag-menu,
+[data-theme="murmur"] .g-select-bar,
+[data-theme="murmur"] .g-members-panel,
+[data-theme="murmur"] .dialog,
+[data-theme="murmur"] .msg-tools {
+  --background: var(--site-cream);
+  --foreground: var(--site-ink);
+  --muted-foreground: color-mix(in srgb, var(--site-ink) 68%, var(--site-cream));
+  --secondary-label: var(--muted-foreground);
+  --placeholder: var(--muted-foreground);
+  --card: var(--site-cream);
+  --popover: var(--site-cream);
+  --composer: var(--site-cream);
+  --primary: var(--site-blue);
+  --primary-foreground: var(--site-cream);
+  --secondary: color-mix(in srgb, var(--site-ink) 7%, transparent);
+  --secondary-foreground: var(--site-ink);
+  --muted: color-mix(in srgb, var(--site-ink) 5%, transparent);
+  --accent: color-mix(in srgb, var(--site-ink) 6%, transparent);
+  --accent-foreground: var(--site-ink);
+  --border: color-mix(in srgb, var(--site-ink) 12%, transparent);
+  --input: color-mix(in srgb, var(--site-ink) 20%, transparent);
+  --ring: var(--site-blue);
+  --info: var(--site-blue);
+  --info-foreground: var(--site-badge-ink);
+  --success: var(--emerald-600);
+  --success-foreground: var(--emerald-800);
+  --warning: var(--amber-600);
+  --warning-foreground: var(--amber-800);
+  --destructive: var(--red-600);
+  --destructive-foreground: var(--red-800);
+  --pr-open: var(--emerald-800);
+  --row-hover: color-mix(in srgb, var(--site-ink) 5%, transparent);
+  --row-selected: color-mix(in srgb, var(--site-ink) 7%, transparent);
+  --composer-edge: color-mix(in srgb, var(--site-ink) 12%, transparent);
+  --edge: color-mix(in srgb, var(--site-ink) 62%, transparent);
+  --dot-off: var(--muted-foreground);
+  --muted-surface: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  --success-surface: color-mix(in oklab, var(--success) 16%, transparent);
+  --warning-surface: color-mix(in oklab, var(--warning) 16%, transparent);
+  --destructive-surface: color-mix(in oklab, var(--destructive) 16%, transparent);
+  --info-surface: color-mix(in oklab, var(--info) 12%, transparent);
+  --primary-surface: color-mix(in oklab, var(--primary) 22%, transparent);
+  --stag-surface: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+/* A person's own message is the hero's butter card rather than a cream sheet. */
+[data-theme="murmur"] .chat-bubble {
+  --background: var(--site-butter);
+  --message-surface: var(--site-butter);
+  --muted-foreground: color-mix(in srgb, var(--site-ink) 68%, var(--site-butter));
+}
+
+/* The shared 75–90% foreground mixes are tuned for a surface as dark as the words; on the blue
+ * they fall under 4.5:1, so the page's own quiet text takes the muted cream above. */
+[data-theme="murmur"] .s-doing,
+[data-theme="murmur"] .g-to-who,
+[data-theme="murmur"] .chat-intro-doing {
+  color: var(--muted-foreground);
+}
+[data-theme="murmur"] .chat-msg-body {
+  color: var(--foreground);
+}
+
+/* A keycap is a chip: ink on the blue, the faintest ink wash on a cream sheet. */
+[data-theme="murmur"] kbd {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+/* A group's overflow count is a chip too; the shared 35% muted wash over the blue is too light for
+ * its cream count. */
+[data-theme="murmur"] .avatar.g-more {
+  background: var(--secondary);
+}
+
+/* A message's code block is the site's command block: ink, cream words, its 10px corners. */
+[data-theme="murmur"] .rich pre {
+  border-color: color-mix(in srgb, var(--site-cream) 10%, transparent);
+  border-radius: 10px;
+  background: var(--site-ink);
+  color: var(--site-cream);
+}
+
+/* The site's one loud button is a butter pill with ink words; on its cream sheets the action is
+ * the blue pill, which is what the cream scope above makes --primary. */
+[data-theme="murmur"] .btn-primary {
+  border-radius: 999px;
+  font-weight: 600;
 }
 
 /* =============================================================================== Phones. */
