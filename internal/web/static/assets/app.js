@@ -5986,9 +5986,11 @@ function settingsPage() {
             settingsRow(
               "busy-" + s.name,
               s.name,
-              sessionLine(self, s),
               s.agent !== "claude-code"
-                ? h("span", { class: "set-whole", title: "There's no busy notice to choose." }, "Gets whole messages \u00b7 " + (s.agent === "t3" ? agentName(s.agent) + " gets each as a turn" : agentName(s.agent) + " reads them from its inbox"))
+                ? [sessionLine(self, s), h("span", { class: "set-why" }, "Gets whole messages \u00b7 " + (s.agent === "t3" ? agentName(s.agent) + " gets each as a turn" : agentName(s.agent) + " reads them from its inbox"))]
+                : sessionLine(self, s),
+              s.agent !== "claude-code"
+                ? null
                 : busyControl(
                 "busy-" + s.name,
                 busyOverrides[s.name] || null,

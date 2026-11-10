@@ -6341,17 +6341,10 @@ a.fx-pr:focus-visible,
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-/* Settings (N): Default's inherited value; a session that gets messages whole, in words where a
-   control would be; mutes as single 36px lines. */
+/* Settings (N): Default's inherited value; mutes as single 36px lines. */
 .seg-inherit {
   margin-left: 0.25em;
   color: var(--text-3);
-}
-.set-whole {
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: var(--text-3);
-  white-space: nowrap;
 }
 .dark .set-page .row.mute-row {
   display: flex;
@@ -6500,7 +6493,7 @@ a.fx-pr:focus-visible,
    same x, device default and per session alike: a segmented control fills it, a field and its
    button share it, a lone button sits at its right edge. How a save went shows just left of it. */
 .dark .set-page {
-  --set-ctl: 440px;
+  --set-ctl: 376px; /* of the 720px column: the text gets 320px */
 }
 .dark .set-page .row-grid {
   grid-template-columns: minmax(0, 1fr) var(--set-ctl);
@@ -6513,21 +6506,22 @@ a.fx-pr:focus-visible,
   position: relative;
   width: 100%;
 }
-/* "Saved" sits just left of the control it is about, in room the row's text leaves for it. */
+/* Controls keep their own width at the row's end; "Saved" comes in just left of the one it is
+   about, in the room the column leaves. */
+.dark .set-page .row-control {
+  justify-content: flex-end;
+}
 .dark .set-page .row-control > .save-note {
-  position: absolute;
-  right: calc(100% + 12px);
+  flex: none;
+  order: 0;
   min-width: 0;
 }
-.dark .set-page .row-grid:has(.row-control > .save-note) .row-text {
-  padding-right: 72px;
+.dark .set-page .row-control > .save-note:empty {
+  display: none;
 }
 .dark .set-page .row-control > .segmented {
   display: flex;
-  flex: 1;
-}
-.dark .set-page .row-control > .segmented button {
-  flex: 1 1 auto;
+  flex: none;
 }
 .dark .set-page .account-ctl {
   align-items: stretch;
@@ -6550,8 +6544,11 @@ a.fx-pr:focus-visible,
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.dark .set-page .row-control > .set-whole {
-  margin-left: auto;
+.dark .set-page .set-why {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
+  white-space: nowrap; /* its row has no control, so the line may run on under where one would be */
 }
 /* P10. The selected page's icon is the same 14px as the rest, so its name doesn't move. */
 .dark .sidebar .all-convs .all-ico,
