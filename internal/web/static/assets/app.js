@@ -742,6 +742,7 @@ function settingsPage() {
               ["system", "System"],
               ["light", "Light"],
               ["dark", "Dark"],
+              ["hero", "Hero"],
             ].map(([v, label]) =>
               h(
                 "button",
