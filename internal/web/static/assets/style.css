@@ -6049,6 +6049,31 @@ a.fx-pr:focus-visible,
   -webkit-line-clamp: unset;
   line-clamp: none;
 }
+/* The device's default is senior to the sessions' rows, which sit under it, indented, after a
+   hairline and a small "Per session". */
+.set-senior {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.set-per {
+  padding: 0.625rem 1rem 0.125rem 2.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #9e9e9e;
+}
+.group > .set-per + .row {
+  border-top: 0;
+}
+.row.set-sess {
+  padding-left: 2.75rem;
+}
+/* Why something isn't there, in a muted line. */
+.set-note {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #9e9e9e;
+}
 /* An update ready to restart onto, in the sidebar: a quiet line with a small green dot. */
 .dark .menu-button.update-ready,
 .dark .menu-button.update-ready:hover {
@@ -6065,4 +6090,10 @@ a.fx-pr:focus-visible,
   margin: 0 0.3125rem;
   border-radius: 999px;
   background: #64af4c;
+}
+.row-side:has(.save-note) > .row-error {
+  padding-left: 4.75rem; /* past the place kept for "Saved", to the control's own edge */
+}
+.set-section-note {
+  margin: -0.25rem 0 0.75rem;
 }

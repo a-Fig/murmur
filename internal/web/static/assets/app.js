@@ -5448,45 +5448,49 @@ function settingsPage() {
     const set = ui.settings;
     const local = self?.sessions || [];
     const overrides = set.sessionWake || {};
+    // The sessions' own rows sit under the device's, indented, after a "Per session" label.
+    const perSession = (list) => list.length > 0 && [h("div", { class: "set-per" }, "Per session"), list.map((r) => (r.classList.add("set-sess"), r))];
     const rows = [
       settingsRow(
         "wake",
-        "Device default",
+        h("span", { class: "set-senior" }, "Device default"),
         "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, "wake"), false),
         "",
         true,
       ),
-      ...[...local]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((s) =>
-          settingsRow(
-            "wake-" + s.name,
-            s.name,
-            sessionLine(self, s),
-            wakeControl(
+      perSession(
+        [...local]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((s) =>
+            settingsRow(
               "wake-" + s.name,
-              overrides[s.name] || null,
-              (w) => {
-                // From the settings as they are now: minutes are saved on leaving the field, which
-                // can come after another row's choice.
-                const next = { ...(ui.settings.sessionWake || {}) };
-                if (w) next[s.name] = w;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionWake: next }, "wake-" + s.name);
-              },
+              s.name,
+              sessionLine(self, s),
+              wakeControl(
+                "wake-" + s.name,
+                overrides[s.name] || null,
+                (w) => {
+                  // From the settings as they are now: minutes are saved on leaving the field, which
+                  // can come after another row's choice.
+                  const next = { ...(ui.settings.sessionWake || {}) };
+                  if (w) next[s.name] = w;
+                  else delete next[s.name];
+                  saveSettings({ ...ui.settings, sessionWake: next }, "wake-" + s.name);
+                },
+                true,
+              ),
+              "",
               true,
             ),
-            "",
-            true,
           ),
-        ),
+      ),
     ];
     const busyOverrides = set.sessionBusy || {};
     const busyRows = [
       settingsRow(
         "busy",
-        "Device default",
+        h("span", { class: "set-senior" }, "Device default"),
         "What a busy Claude Code session sees when a message arrives.",
         busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }, "busy"), false),
         "",
@@ -5494,29 +5498,31 @@ function settingsPage() {
       ),
       // Only Claude Code sessions: the busy notice comes from Murmur's hook, which only Claude Code
       // runs (internal/daemon/serve.go).
-      ...[...local]
-        .filter((s) => s.agent === "claude-code")
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((s) =>
-          settingsRow(
-            "busy-" + s.name,
-            s.name,
-            sessionLine(self, s),
-            busyControl(
+      perSession(
+        [...local]
+          .filter((s) => s.agent === "claude-code")
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((s) =>
+            settingsRow(
               "busy-" + s.name,
-              busyOverrides[s.name] || null,
-              (b) => {
-                const next = { ...(ui.settings.sessionBusy || {}) };
-                if (b) next[s.name] = b;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionBusy: next }, "busy-" + s.name);
-              },
+              s.name,
+              sessionLine(self, s),
+              busyControl(
+                "busy-" + s.name,
+                busyOverrides[s.name] || null,
+                (b) => {
+                  const next = { ...(ui.settings.sessionBusy || {}) };
+                  if (b) next[s.name] = b;
+                  else delete next[s.name];
+                  saveSettings({ ...ui.settings, sessionBusy: next }, "busy-" + s.name);
+                },
+                true,
+              ),
+              "",
               true,
             ),
-            "",
-            true,
           ),
-        ),
+      ),
     ];
     sections.push(
       h(
@@ -5529,6 +5535,9 @@ function settingsPage() {
         "section",
         { class: "section" },
         h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
+        // Why only some sessions are here: the notice comes from Murmur's hook (serve.go), which
+        // only Claude Code runs; the rest are handed a message as a turn, or read it from the inbox.
+        h("p", { class: "set-note set-section-note" }, "Claude Code sessions only, where Murmur's hook runs; other sessions get a message as their next turn or read it from their inbox."),
         h("div", { class: "group" }, busyRows),
         ui.settingsError && h("p", { class: "row-error section-head", role: "alert" }, ui.settingsError),
       ),
@@ -5560,6 +5569,7 @@ function settingsPage() {
                   h("span", { class: "truncate" }, m.muted),
                 ),
                 at && agoEl("span", "", at),
+                !m.canUnmute && h("span", { class: "set-note" }, "Set on " + (findSession(m.by) ? deviceLabel(findSession(m.by).device) : "another device") + "; only it can unmute"),
                 m.canUnmute &&
                   h(
                     "button",
