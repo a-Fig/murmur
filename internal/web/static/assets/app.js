@@ -3877,7 +3877,10 @@ function isCounted(c) {
 }
 
 function countLine(view) {
-  return view.q.trim() ? "Showing " + view.count(view.kind) + " of " + plural(view.total, "conversation") : plural(view.total, "conversation");
+  if (view.q.trim()) return "Showing " + view.count(view.kind) + " of " + plural(view.total, "conversation");
+  if (view.kind === "dm") return plural(view.count("dm"), "direct conversation");
+  if (view.kind === "group") return plural(view.count("group"), "group conversation");
+  return plural(view.total, "conversation");
 }
 
 // A search that finds nothing in the list's tab says so in the list, with a way back.
@@ -3901,6 +3904,20 @@ function noMatch(view) {
       "Clear search",
     ),
   );
+}
+
+// A title whose names wrap as whole names: a line may break between them, not at a hyphen in one.
+function wholeNames(text) {
+  return String(text)
+    .split(/(\s+)/)
+    .map((t) => (t.includes("-") ? h("span", { class: "nw" }, t) : t));
+}
+
+// A direct conversation you are in is "You & solar-wren", wherever it is listed or open.
+function dmTitle(c) {
+  const self = selfName();
+  if (c.kind !== "dm" || !c.pair.includes(self) || c.pair.length < 2) return null;
+  return "You & " + c.pair.find((n) => n !== self);
 }
 
 // With a session picked, a chat with it is called by the other session's name.
@@ -4125,10 +4142,10 @@ function conversationRow(c) {
         { class: "chat-row-line" },
         c.kind !== "dm"
           ? [
-              h("span", { class: "chat-row-title truncate", title: c.title }, groupName(c)),
+              h("span", { class: "chat-row-title", title: c.title }, wholeNames(groupName(c))),
               h("span", { class: "g-row-count" }, groupSummary(c).rows.length),
             ]
-          : h("span", { class: "chat-row-title truncate", title: c.title }, o || c.title),
+          : h("span", { class: "chat-row-title", title: c.title }, wholeNames(dmTitle(c) || o || c.title)),
         at && agoEl("span", "chat-row-time", at),
       ),
       h(
@@ -4185,7 +4202,7 @@ function conversationPane(c) {
       h(
         "div",
         { class: "chat-head-text" },
-        h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title), o && isPerson(o) && humanTag()),
+        h("div", { class: "name-line" }, h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : dmTitle(c) || o || c.title), o && isPerson(o) && humanTag()),
         about && h("div", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
         c.kind === "dm" && !o && c.pair.length > 1 && pairStates(c),
       ),

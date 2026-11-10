@@ -6077,3 +6077,63 @@ a.fx-pr:focus-visible,
 .chat-pane-empty {
   background: transparent;
 }
+/* Unread is bold and white; its count is neutral. Yellow is kept for a person being waited on. */
+.dark .chat-row-unread .chat-row-title {
+  font-weight: 700;
+  color: #fff;
+}
+.chat-row-unread .chat-row-preview,
+.dark .chat-row-unread .chat-row-preview {
+  font-weight: 500;
+  color: #d4d4d4;
+}
+.unread-badge,
+.m-unread {
+  background: #3a3a3a;
+  color: #fff;
+}
+.mini-unread {
+  background: #f1f1f1;
+}
+/* A title takes two lines before a name in it is cut; a name never breaks at its hyphen. */
+.dark .chat-row-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+.nw {
+  white-space: nowrap;
+}
+/* A laptop: the list's faces go first. A pair or a group shows one face, smaller. */
+@media (max-width: 1100px) {
+  .dark .g-list .chat-row > :is(.avatar, .avatar-pair, .g-grid) {
+    width: 1.75rem !important; /* over the pair's own !important size */
+    height: 1.75rem !important;
+    margin-right: 0;
+  }
+  .dark .chat-row > .avatar-pair .avatar:last-child,
+  .dark .chat-row > .g-grid > :not(:first-child) {
+    display: none;
+  }
+  .dark .chat-row > .avatar-pair .avatar:first-child {
+    width: 100% !important;
+    height: 100% !important;
+    font-size: 0.75rem;
+  }
+  .dark .chat-row > .g-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+  .dark .chat-row > .g-grid > .avatar:first-child {
+    height: 100% !important;
+    font-size: 0.75rem !important;
+  }
+  .g-new-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+    margin-right: 0;
+  }
+}
