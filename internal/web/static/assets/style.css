@@ -6549,6 +6549,9 @@ a.fx-pr:focus-visible,
   align-items: flex-start;
   padding-block: 4px;
 }
+.dark .fx-meta dd > .fx-dot {
+  align-self: center;
+}
 /* Nothing matches: said at the top left of where the rows would be, as Conversations says it. */
 .dark .fx-table .fx-empty {
   padding: 12px;
