@@ -6938,3 +6938,8 @@ a.fx-pr:focus-visible,
   color: var(--text-3);
   text-align: right;
 }
+/* Recent: a day's label, held under the bar while its messages scroll, ends in a hairline, so the
+   rows read as passing under it. */
+.dark .g-recent .g-feed > .chat-day {
+  border-bottom: 1px solid var(--line-soft);
+}
