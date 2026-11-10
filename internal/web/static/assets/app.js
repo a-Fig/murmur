@@ -4331,7 +4331,7 @@ function conversationPane(c) {
       of && h("span", { class: "chat-state" }, stateDot(sessionState(of.device, of.session), "chat-state-dot"), stateWord(of.device, of.session)),
       c.kind !== "dm" && membersButton(c),
     ),
-    h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
+    h("div", { class: "chat-thread", "data-conversation": c.key, onscroll: (e) => (threadAtEnd = atEnd(e.target)) }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
     waitLine(c),
     paneFoot(c),
   );
@@ -4539,6 +4539,15 @@ function chatScroll() {
   };
 }
 
+// A thread read at its end stays at its end when its pane changes height: the composer growing a
+// line, the line about where a message went, the window itself.
+let threadAtEnd = true;
+const atEnd = (t) => t.scrollHeight - t.scrollTop - t.clientHeight < 48;
+const threadSize = new ResizeObserver(() => {
+  const t = root.querySelector(".chat-thread");
+  if (t && threadAtEnd) t.scrollTop = t.scrollHeight;
+});
+
 function restoreChatScroll(was) {
   const list = root.querySelector(".chat-list");
   const thread = root.querySelector(".chat-thread");
@@ -4547,6 +4556,11 @@ function restoreChatScroll(was) {
   chatMoved = false;
   if (thread) thread.scrollTop = same && !was.atEnd && !toEnd ? was.top : thread.scrollHeight;
   toEnd = false;
+  threadSize.disconnect();
+  if (thread) {
+    threadAtEnd = atEnd(thread);
+    threadSize.observe(thread);
+  }
   // A message opened from Recent sits in the middle of the thread, where its highlight is seen.
   const lit = ui.flash?.center && thread?.querySelector(`[data-id="${CSS.escape(ui.flash.id)}"]`);
   if (lit) {

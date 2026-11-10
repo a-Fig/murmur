@@ -6436,3 +6436,18 @@ a.fx-pr:focus-visible,
 .dark .g-item .g-body {
   color: var(--text-2);
 }
+/* Menus and popovers (#183, P1): the raised surface, solid, so nothing under them shows through;
+   a 7% line, a soft shadow and 10px corners. */
+.dark :is(.row-menu, .tag-menu, .g-members-panel, .dialog) {
+  border: 1px solid var(--line);
+  border-radius: var(--r-pane);
+  background: var(--raised);
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 60%);
+}
+/* Rows in a scrolling list keep their height; the list scrolls instead (P2). */
+.dark :is(.chat-list, .lp-list, .g-feed, .sidebar-scroll, .sidebar nav, .sidebar ul) > * {
+  flex-shrink: 0;
+}
+.dark .chat-list .chat-row {
+  flex-shrink: 0;
+}
