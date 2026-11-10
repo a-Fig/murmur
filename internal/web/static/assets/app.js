@@ -2851,6 +2851,13 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
+  // Space on a row picks it (its checkbox); Enter or a click opens the details.
+  if (e.key === " " && e.target?.classList?.contains("fx-open")) {
+    e.preventDefault();
+    const s = findSession(e.target.dataset.key.slice(3))?.session;
+    if (s?.addr) togglePick(s, e.shiftKey);
+    return;
+  }
   const items = fleetItems();
   const i = items.indexOf(e.target);
   if (i >= 0 && ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
@@ -2872,6 +2879,11 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     fleetCloseAsked();
   }
+});
+
+// A button acts on Space's keyup: on a row's name that would open the details as well as picking.
+document.addEventListener("keyup", (e) => {
+  if (e.key === " " && e.target?.classList?.contains("fx-open")) e.preventDefault();
 });
 
 // One session: why it needs a look, what it is, what to do with it, and its direct conversations.
