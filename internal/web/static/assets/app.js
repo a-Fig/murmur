@@ -8,6 +8,7 @@ const TOKEN_KEY = NAME + ":token";
 const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000; // the page's limit for what isn't the person's own
+let trimmedAt = 0; // the newest message the page has let go of: a conversation older than it may be cut short
 const MAX_OWN_MESSAGES = 2000; // and for what is, as the daemon keeps it (maxPersonLog)
 const VIEWS = ["sessions", "messages", "recent", "settings"];
 const ROUTES = [...VIEWS, "yours", "session", "person"]; // a hash's first part: see hashOf
@@ -4536,6 +4537,12 @@ function chatMessages(c) {
   const out = [];
   let prev = null;
   let prevDay = null;
+  // Over the first message, when nothing older of this conversation can have been let go.
+  const first = c.messages[0];
+  if (first && first.sortAt > trimmedAt) {
+    const mine = c.kind === "dm" && c.pair.includes(myName()) ? c.pair.find((n) => n !== myName()) || myName() : null;
+    out.push(h("p", { class: "chat-start" }, mine ? "Start of your conversation with " + mine : "Start of this conversation"));
+  }
   for (const m of c.messages) {
     const at = when(m.at);
     const day = at && new Date(at).toDateString();
@@ -6272,6 +6279,7 @@ function trimMessages() {
     if (mine) overOwn--;
     else overRest--;
     ui.ids.delete(m.id);
+    trimmedAt = Math.max(trimmedAt, m.sortAt || 0);
     return false;
   });
 }
@@ -6399,6 +6407,7 @@ function start() {
     minuteDrafts.clear();
     confirmed = null;
     arrivedAt = 0;
+    trimmedAt = 0;
     last = "";
     polled = false;
   }
