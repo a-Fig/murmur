@@ -472,7 +472,7 @@ function sidebar() {
               "aria-expanded": open ? "true" : "false",
               "data-key": "dev-" + d.id,
               "aria-label": deviceLabel(d) + ", " + (d.reachable ? plural(live.length, "session") + ", " + DEVICE_WORDS[deviceState(d)].toLowerCase() : "offline"),
-              title: (d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0)) + (open ? "" : owing ? " · a session here needs a look" : "") + " · " + plural(live.length, "session"),
+              title: (d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0)) + (open ? "" : owing ? " · a session here has someone waiting for a reply" : "") + " · " + plural(live.length, "session"),
               onclick: () => {
                 sideOpenSet(d, !open);
                 render();
@@ -498,7 +498,7 @@ function sidebar() {
                       "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
                       "data-key": "ss-" + s.name,
                       title: s.doing ? s.name + ": " + s.doing : s.name,
-                      "aria-label": s.name + (needs.has(s.name) ? ", needs a look" : ""),
+                      "aria-label": s.name + (needs.has(s.name) ? ", someone waiting for a reply" : ""),
                       onclick: () => {
                         ui.filter = key;
                         ui.conversation = null;
@@ -900,7 +900,7 @@ function presenceOf(name, d) {
     const st = sessionState(d, null);
     return { st, word: STATE_WORDS[st] };
   }
-  return { st: "off", word: isSettled(name) ? "Settled" : "Not running" };
+  return { st: "off", word: isSettled(name) ? "Ended" : "Not running" };
 }
 
 // A face and its dot are one picture, named for who it is and what state they are in, so the dot's
@@ -1001,7 +1001,7 @@ function settledFold(id) {
         },
       },
       icon(open ? "chevronDown" : "chevronRight", "settled-caret"),
-      h("span", null, plural(rows.length, "settled session")),
+      h("span", null, plural(rows.length, "ended session")),
     ),
     open && h("div", { class: "settled-list" }, rows.map(settledRow)),
   );
@@ -1790,7 +1790,7 @@ function sessionsPage() {
   let sub;
   if (tab === "settled") sub = plural(settledN, "session") + " ended";
   else if ((q || F.state) && all.length) sub = ["Showing " + rows.length + " of " + all.length + tagged, rows.length > 0 && [" · ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]];
-  else if (all.length) sub = (tab === "quiet" ? plural(all.length, "quiet session") + tagged : all.length + " running" + tagged + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device")) + (hiddenN && tab === "quiet" ? " · " + hiddenN + " hidden" : "");
+  else if (all.length) sub = (tab === "quiet" ? plural(all.length, "quiet session") + tagged + " · idle over a day, or hidden" : all.length + " running" + tagged + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device")) + (hiddenN && tab === "quiet" ? " · " + hiddenN + " hidden" : "");
   else sub = "No " + what + "s" + tagged;
   const down = fleetDown();
   // What a selection can hold: the sessions in front of the person, so a filter, a tab or a shut
@@ -1815,7 +1815,7 @@ function sessionsPage() {
           [
             ["running", "Running", null, "fs-tab-running", "Running, and active in the last day"],
             ["quiet", "Quiet", quiet.length, "fs-tab-quiet", "Idle for more than a day, or hidden"],
-            ["settled", "Settled", settledN, "fs-tab-settled", "Ended; kept while their messages are"],
+            ["settled", "Ended", settledN, "fs-tab-settled", "Kept while their messages are"],
           ],
           tab,
           (v) => {
@@ -2092,7 +2092,7 @@ function fleetTable(rows, needs, sel, empty) {
   let body;
   if (rows.length === 0) {
     const kind = empty.tab === "quiet" ? "quiet sessions" : "sessions";
-    const what = empty.state === "need" ? kind + " that need a look" : empty.state ? FX_STATE[empty.state].toLowerCase() + " " + kind : kind;
+    const what = empty.state === "need" ? kind + " waiting for a reply" : empty.state ? FX_STATE[empty.state].toLowerCase() + " " + kind : kind;
     const tagged = ui.tagFilter ? " tagged " + ui.tagFilter : "";
     body = empty.total
       ? fxWide(
@@ -2382,7 +2382,7 @@ function settledText(r) {
 }
 
 function settledTable(q, F) {
-  if (ui.tagFilter) return h("div", { class: "fx-table" }, h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No settled session is tagged " + ui.tagFilter)));
+  if (ui.tagFilter) return h("div", { class: "fx-table" }, h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, "No ended session is tagged " + ui.tagFilter)));
   const S = F.sort || {};
   const all = settledSessions().filter((r) => !q || settledText(r).includes(q));
   const val = (r) => (S.key === "name" ? r.name : S.key === "active" ? -r.last : 0);
@@ -2404,7 +2404,7 @@ function settledTable(q, F) {
   const collapsed = fleetCollapsed(F);
   return h(
     "div",
-    { class: "fx-table fx-settled", role: "table", "aria-label": "Settled sessions" },
+    { class: "fx-table fx-settled", role: "table", "aria-label": "Ended sessions" },
     settledSessions().length > 0 && h("div", { class: "fx-thead", role: "rowgroup" }, fleetHead(F, FX_SETTLED_COLS, false)),
     h(
       "div",
@@ -2454,7 +2454,7 @@ function settledTable(q, F) {
             ),
         ];
       }),
-      all.length === 0 && h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, q ? "No settled sessions match “" + q + "”" : "No settled sessions")),
+      all.length === 0 && h("div", { class: "fx-empty" }, h("p", { class: "fx-empty-title" }, q ? "No ended sessions match “" + q + "”" : "No ended sessions")),
     ),
   );
 }
@@ -3989,7 +3989,7 @@ function conversationsBar(view) {
     lead: ui.backTo && h("button", { class: "g-back", "data-key": "g-back", onclick: () => history.back() }, icon("arrowLeft"), "All sessions"),
     title: isMyFilter() ? "Your messages" : name || "All conversations",
     titleTip: f ? f.session.doing : null,
-    meta: settled ? "Settled · " + ago(settled.last || 0) : view.total > 0 || view.q.trim() ? countLine(view) : null,
+    meta: settled ? "Ended · " + ago(settled.last || 0) : view.total > 0 || view.q.trim() ? countLine(view) : null,
     tabs:
       view.tabs &&
       barTabs(
@@ -4229,7 +4229,7 @@ function listRows(view, rows, older, kind, count, q) {
             render();
           },
         },
-        h("span", null, icon(ui.showOlder ? "chevronDown" : "chevronRight", "settled-caret"), "With settled sessions"),
+        h("span", null, icon(ui.showOlder ? "chevronDown" : "chevronRight", "settled-caret"), "With ended sessions"),
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),

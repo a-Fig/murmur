@@ -5237,7 +5237,7 @@ a.fx-pr:focus-visible,
   color: var(--text-1);
 }
 /* 20px faces, and in their place, on the row under the pointer or the keyboard (and on every row
-   once one is picked), the box that picks the row. */
+   once one is picked), the box that picks the row. A row opened by a click keeps its face. */
 .fx-face {
   position: relative;
   display: grid;
@@ -5259,11 +5259,11 @@ a.fx-pr:focus-visible,
   height: auto;
   opacity: 0;
 }
-.fx-row:is(:hover, :focus-within) .fx-face > .fx-pick,
+.fx-row:is(:hover, :has(:focus-visible)) .fx-face > .fx-pick,
 .fx-table.picking .fx-face > .fx-pick {
   opacity: 1;
 }
-.fx-row:is(:hover, :focus-within) .fx-face > .avatar,
+.fx-row:is(:hover, :has(:focus-visible)) .fx-face > .avatar,
 .fx-table.picking .fx-face > .avatar {
   opacity: 0;
 }
@@ -6582,6 +6582,20 @@ a.fx-pr:focus-visible,
 }
 .dark .fx-split.overlay > .fx > .bar {
   z-index: 21;
+}
+/* The state menu: a slot for each item's dot, so the names line up, and the dots in their colours
+   (the table's colour names don't reach a menu). */
+.pm-lead {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 10px;
+}
+.pick-menu .fx-dot-on {
+  background: #64af4c;
+}
+.pick-menu .fx-dot-dnd {
+  background: #ff705d;
 }
 /* Before the first answer: a quiet line where the rows will be. */
 .dark .g-loading {
