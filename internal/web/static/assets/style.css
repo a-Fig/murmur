@@ -6625,6 +6625,21 @@ a.fx-pr:focus-visible,
 .dark .g-item .chat-msg-main {
   padding-right: 24px;
 }
+/* Who wrote last, between two others: a 12px face before the preview. */
+.chat-row-from {
+  display: grid;
+  flex: none;
+  align-self: center;
+}
+.dark .chat-list .chat-row-from .avatar.avatar.avatar {
+  width: 12px;
+  height: 12px;
+  font-size: 8px !important;
+  line-height: 12px;
+}
+.dark .chat-list .chat-row-line:has(.chat-row-from) {
+  gap: 6px;
+}
 /* Settings: a session's row is its name over what it is, never cut short; the sessions that
    follow the default fold into one line. */
 .dark .set-page .set-sess .row-text {

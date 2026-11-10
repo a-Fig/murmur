@@ -4346,7 +4346,11 @@ function conversationRow(c) {
   const self = ui.filter ? nameOf(ui.filter, ui.filter) : myName();
   const unread = unreadIn(c);
   const failed = pendingIn(c).find((item) => item.status === "failed");
-  const preview = failed ? "Not sent: " + failed.text : !last ? "New conversation" : (o && fromName(last) === o ? "" : (o && fromName(last) === self) || fromName(last) === myName() ? "You: " : fromName(last) + ": ") + last.subject;
+  // Between two others, who wrote last is a 12px face before the text, not their name again: more
+  // of the message fits. A group says "sender: ".
+  const mine = last && ((o && fromName(last) === self) || fromName(last) === myName());
+  const face = !failed && last && c.kind === "dm" && !o && !mine;
+  const preview = failed ? "Not sent: " + failed.text : !last ? "New conversation" : (face || (o && fromName(last) === o) ? "" : mine ? "You: " : fromName(last) + ": ") + last.subject;
   return h(
     "button",
     {
@@ -4374,7 +4378,7 @@ function conversationRow(c) {
           : h("span", { class: "chat-row-title", title: c.title }, wholeNames(dmTitle(c) || o || c.title)),
         at && agoEl("span", "chat-row-time", at),
       ),
-      h("span", { class: "chat-row-line" }, h("span", { class: "chat-row-preview truncate" }, preview), unread > 0 && h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread)),
+      h("span", { class: "chat-row-line" }, face && h("span", { class: "chat-row-from", title: fromName(last) }, avatar(fromName(last))), h("span", { class: "chat-row-preview truncate" }, preview), unread > 0 && h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread)),
     ),
   );
 }
