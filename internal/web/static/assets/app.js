@@ -1101,18 +1101,21 @@ function host(id) {
   return String(id).replace(/-[0-9a-f]{4}$/, "");
 }
 
-// The sidebar is a few stops for Tab, not one a row: People and each device's sessions (with their
-// folds) are one stop each, moved through with the up and down arrows, Home and End, and the tag
-// chips are one, moved through with the arrows either way. The stop is the focused row, else the
-// current one, else the first.
+// The sidebar is a few stops for Tab, not one a row: Devices (every device's row, its sessions and
+// folds) is one stop, People another, moved through with the up and down arrows, Home and End; the
+// tag chips are one, moved through with the arrows either way. The stop is the focused row, else
+// the current one, else the first.
 function sideStops() {
   const out = [];
-  for (const g of root.querySelectorAll(".sidebar-content .dev-group")) {
+  const rows = [];
+  for (const g of root.querySelectorAll(".sidebar-content .dev-group:not(.people-group)")) {
     const tags = [...g.querySelectorAll(".tag-filter .tf")];
-    const rows = [...g.querySelectorAll("button.dev-fold, button.side-session, button.settled-toggle, button.settled-row")];
     if (tags.length) out.push({ items: tags, across: true });
-    else if (rows.length) out.push({ items: rows, across: false });
+    rows.push(...g.querySelectorAll("button.dev-fold, button.side-session, button.settled-toggle, button.settled-row"));
   }
+  if (rows.length) out.push({ items: rows, across: false });
+  const people = [...root.querySelectorAll(".sidebar-content .people-group button.side-session")];
+  if (people.length) out.push({ items: people, across: false });
   return out;
 }
 
