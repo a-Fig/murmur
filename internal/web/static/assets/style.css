@@ -6548,7 +6548,6 @@ a.fx-pr:focus-visible,
   display: block;
   margin-top: 2px;
   color: var(--text-3);
-  white-space: nowrap; /* its row has no control, so the line may run on under where one would be */
 }
 /* P10. The selected page's icon is the same 14px as the rest, so its name doesn't move. */
 .dark .sidebar .all-convs .all-ico,
@@ -6862,4 +6861,9 @@ a.fx-pr:focus-visible,
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+/* Settings: a button that can't act yet looks it. */
+.dark .set-page .btn:disabled {
+  opacity: 1;
+  color: var(--text-3);
 }

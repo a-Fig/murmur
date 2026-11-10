@@ -5805,6 +5805,8 @@ function accountSection() {
             ),
           ),
         ),
+        "",
+        true,
       ),
     ),
   );
@@ -5849,6 +5851,8 @@ async function saveAccount(name) {
     if (ui.state) ui.state.account = { ...ui.state.account, taken: "", suggested: "", ...account };
     moveToName(was, account.name);
     ui.accountDraft = null;
+    saveNotes.set("account", { seq: 0, state: "saved", at: Date.now() });
+    setTimeout(render, SAVED_MS);
     poll();
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
