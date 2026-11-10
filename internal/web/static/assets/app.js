@@ -1505,8 +1505,7 @@ function pageBar({ lead, title, meta, tabs, right, titleTip }) {
     h("h1", { class: "bar-title", title: titleTip || null }, title),
     meta && h("span", { class: "bar-meta" }, meta),
     tabs,
-    h("span", { class: "bar-spacer" }),
-    right,
+    right && h("div", { class: "bar-ctl" }, right),
   );
 }
 
@@ -2188,8 +2187,8 @@ function fleetRow(d, s, need, on, F) {
   if (need) {
     const note = waitNote(d, s);
     const full = h("span", null, need.text(note)).textContent;
-    doing = h("span", { class: "fx-status fx-need-line", title: full }, need.short());
-  } else doing = s.doing ? h("span", { class: "fx-status", title: s.doing }, s.doing) : fxDash();
+    doing = h("span", { class: "fx-status fx-need-line", id: "fx-doing-" + s.name, title: full }, need.short());
+  } else doing = s.doing ? h("span", { class: "fx-status", id: "fx-doing-" + s.name, title: s.doing }, s.doing) : fxDash();
   return h(
     "div",
     { class: "fx-tr fx-row" + (on ? " on" : "") + (need ? " need" : "") + (picked ? " picked" : "") + (d.reachable ? "" : " stale"), role: "row" },
@@ -2227,7 +2226,9 @@ function fleetRow(d, s, need, on, F) {
           "data-key": "fl-" + s.name,
           "aria-expanded": on ? "true" : "false",
           "aria-controls": on ? "fx-pane" : null,
-          title: s.name,
+          // Working on, or the wait, read whole on focus, however much of it the cell shows.
+          "aria-describedby": need || s.doing ? "fx-doing-" + s.name : null,
+          title: [s.name, ...tags].join(" · "),
           onclick: () => (on ? fleetCloseAsked() : fleetOpen(s.name)),
         },
         s.name,
@@ -2552,7 +2553,24 @@ function fleetFit() {
   split.classList.toggle("overlay", !!pane && split.clientWidth - pane.offsetWidth < 760);
   // The table's head sticks under the page's bar and, while picking, the selection bar.
   const tops = [split.querySelector(".fx > .bar"), split.querySelector(".fx-toolbar")];
+  split.style.setProperty("--fx-bar", (tops[0]?.offsetHeight || 44) + "px");
   split.style.setProperty("--fx-tb", tops.reduce((n, el) => n + (el?.offsetHeight || 0), 0) + "px");
+  // A session's name is never cut: the Session column is at least as wide as its longest name.
+  // Inline tags give way first: they show only where the cell has room for all of them (the row's
+  // title and the pane have them too).
+  let need = 0;
+  const text = document.createRange();
+  for (const c of split.querySelectorAll(".fx-tbody .fx-c-who")) {
+    const name = c.querySelector(".fx-open");
+    if (!name) continue;
+    text.selectNodeContents(name);
+    need = Math.max(need, text.getBoundingClientRect().right - c.getBoundingClientRect().left + 1);
+  }
+  split.style.setProperty("--fx-who", Math.ceil(need) + "px");
+  for (const t of split.querySelectorAll(".fx-tbody .fx-tags")) {
+    t.classList.remove("cut");
+    t.classList.toggle("cut", t.scrollWidth > t.clientWidth + 1);
+  }
 }
 window.addEventListener("resize", () => {
   fleetFit();

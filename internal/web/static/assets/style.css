@@ -4938,11 +4938,12 @@ a.fx-pr:focus-visible,
   z-index: 5;
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  height: 44px;
-  padding: 0 var(--gutter);
+  min-height: 44px;
+  padding: 8px var(--gutter) 7px;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
@@ -4967,9 +4968,6 @@ a.fx-pr:focus-visible,
 .bar-meta .fx-clear {
   font-size: inherit;
   color: var(--text-2);
-}
-.bar-spacer {
-  flex: 1;
 }
 .bar-tabs {
   display: flex;
@@ -5115,25 +5113,11 @@ a.fx-pr:focus-visible,
 .page.chat-page > .bar {
   position: static;
 }
-@media (max-width: 1200px) {
-  .bar {
-    gap: 8px;
-  }
-  .bar-search {
-    width: 120px;
-  }
-  .bar-tabs {
-    margin-left: 4px;
-  }
-  .bar-menu {
-    padding: 0 8px;
-  }
-}
 /* One row model (#183): every row in the sessions table is one 36px line. Session 200, Agent 140,
    State 124, Working on (up to 720 at wide, the rest to Branch), Branch with its PR 200, Last
    active 72 and the faint "…". Under 1200px of table, Agent and Branch go: the pane has them. */
 .dark .fx-table .fx-tr {
-  grid-template-columns: 200px 140px 124px minmax(0, 720px) minmax(200px, 1fr) 72px 28px;
+  grid-template-columns: max(200px, var(--fx-who, 0px)) 140px 124px minmax(0, 720px) minmax(200px, 1fr) 72px 28px;
   column-gap: 16px;
   padding: 0 12px;
 }
@@ -5183,8 +5167,9 @@ a.fx-pr:focus-visible,
   gap: 10px;
 }
 .dark .fx-c-who .fx-open {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
+  max-width: none;
+  overflow: visible;
   color: var(--text-1);
   font-weight: 500;
 }
@@ -5193,6 +5178,9 @@ a.fx-pr:focus-visible,
   font-size: 0.75rem;
   line-height: 1rem;
   color: var(--text-3);
+}
+.fx-tags.cut {
+  display: none;
 }
 .fx-tags {
   min-width: 0;
@@ -5324,7 +5312,7 @@ a.fx-pr:focus-visible,
 }
 @container (max-width: 1099px) {
   .dark .fx-table .fx-tr {
-    grid-template-columns: 200px 124px minmax(0, 1fr) 72px 28px;
+    grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 1fr) 72px 28px;
   }
   .dark .fx-table .fx-tr > :is(.fx-c-agent, .fx-c-branch) {
     display: none;
@@ -5337,12 +5325,12 @@ a.fx-pr:focus-visible,
 /* State gives up its word last: a 1024px window keeps it, with the details shut. */
 @container (max-width: 699px) {
   .dark .fx-table .fx-tr {
-    grid-template-columns: 180px 40px minmax(0, 1fr) 64px 28px;
+    grid-template-columns: max(180px, var(--fx-who, 0px)) 40px minmax(0, 1fr) 64px 28px;
   }
 }
 /* Settled: Session, State, its last conversation, and when. */
 .dark .fx-table.fx-settled .fx-tr {
-  grid-template-columns: 200px 124px minmax(0, 1fr) 96px;
+  grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 1fr) 96px;
 }
 .dark .fx-table.fx-settled .fx-tr > .fx-c-state { grid-column: 2; }
 .dark .fx-table.fx-settled .fx-tr > .fx-c-doing { grid-column: 3; }
@@ -5463,22 +5451,6 @@ a.fx-pr:focus-visible,
 .dark .chat-msg > .avatar {
   height: 28px;
   font-size: 0.75rem;
-}
-/* The bar gives way as the table's column narrows (the details open beside it), in this order: the
-   search folds to its icon, then the menus show only their value. The count stays. */
-.dark .fx {
-  container: fx / inline-size;
-}
-@container fx (max-width: 1060px) {
-  .fx > .bar {
-    gap: 8px;
-  }
-  .fx > .bar .bar-tabs {
-    margin-left: 4px;
-  }
-  .fx > .bar .bar-menu {
-    padding: 0 8px;
-  }
 }
 /* The sidebar (#183): 240px on the canvas, and three kinds of 28px row: a page (an icon, its name
    and a count in meta), a device (its dot, its name and its count), and a session under its device
@@ -6165,45 +6137,6 @@ a.fx-pr:focus-visible,
 .dark .fx-dms-none {
   color: var(--text-3);
 }
-/* The bar at its tightest: the search folds to its icon, opening over the bar on a click or "/",
-   and the menus show only their value (their name stays in their label for screen readers). */
-@container fx (max-width: 1060px) {
-  .fx > .bar .bar-search {
-    justify-content: center;
-    width: var(--control);
-    padding: 0;
-    cursor: pointer;
-  }
-  .fx > .bar .bar-search input {
-    flex: 0 0 0;
-    width: 0;
-  }
-  .fx > .bar .bar-search .fx-kbd {
-    display: none;
-  }
-  .fx > .bar .bar-search:has(input:not(:placeholder-shown)) {
-    background: var(--selected);
-    color: var(--text-1);
-  }
-  .fx > .bar .bar-search:focus-within {
-    position: absolute;
-    right: var(--gutter);
-    z-index: 6;
-    justify-content: flex-start;
-    width: 220px;
-    padding: 0 6px 0 10px;
-    background: var(--raised);
-  }
-  .fx > .bar .bar-search:focus-within input {
-    flex: 1;
-    width: auto;
-  }
-}
-@container fx (max-width: 820px) {
-  .fx > .bar .bar-menu-label {
-    display: none;
-  }
-}
 /* Inline code in a message is meta-sized. */
 .dark .rich code {
   font-size: 0.75rem;
@@ -6439,4 +6372,16 @@ a.fx-pr:focus-visible,
   color: var(--text-1);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+/* The bar's controls keep their words at every width. Where the title, its count and the tabs
+   leave them no room, they go together to a second 40px row, at the right, never over each other. */
+.bar-ctl {
+  display: flex;
+  flex: 1 0 auto;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.dark .fx-toolbar {
+  top: var(--fx-bar, 44px);
 }
