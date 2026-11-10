@@ -13,13 +13,14 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
-// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
-// a chat app, or light. style.css keys each one on <html data-theme>.
+// The page's look, chosen in Settings and kept in this browser. style.css keys each one on
+// <html data-theme>.
 const THEME_KEY = NAME + ":theme";
 const THEMES = [
   ["dark", "Dark"],
   ["dim", "Dim"],
   ["light", "Light"],
+  ["murmur", "Murmur"],
 ];
 let theme = "dark";
 try {

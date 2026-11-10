@@ -219,6 +219,63 @@
   --secondary-label: oklch(48% 0.016 285.938);
 }
 
+/* Murmur's hero palette from https://murmur.afig.dev/: blue, cream, butter and ink. */
+:root[data-theme="murmur"] {
+  color-scheme: light;
+  --font-sans: Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --background: #225bff;
+  --foreground: #fffbea;
+  --card: #fffbea;
+  --popover: #fffbea;
+  --primary: #fdee8c;
+  --primary-foreground: #0e1b45;
+  --secondary: #fffbea;
+  --secondary-foreground: #0e1b45;
+  --muted: #fffbea;
+  --muted-foreground: #0e1b45;
+  --secondary-label: #0e1b45;
+  --placeholder: #3a4670;
+  --message-surface: #fffbea;
+  --accent: #fdee8c;
+  --accent-foreground: #0e1b45;
+  --destructive: #b42335;
+  --destructive-foreground: #8d1728;
+  --border: rgb(14 27 69 / 16%);
+  --input: rgb(14 27 69 / 24%);
+  --ring: #fdee8c;
+  --info: #225bff;
+  --info-foreground: #0e1b45;
+  --success: #176b43;
+  --success-foreground: #145b3b;
+  --warning: #785200;
+  --warning-foreground: #694800;
+  --pr-open: #145b3b;
+  --pr-draft: #3a4670;
+  --row-hover: rgb(14 27 69 / 6%);
+  --row-selected: rgb(14 27 69 / 10%);
+  --composer: #fffbea;
+  --composer-edge: rgb(14 27 69 / 14%);
+  --list: #fffbea;
+  --scrollbar-thumb: rgb(14 27 69 / 20%);
+  --scrollbar-thumb-hover: rgb(14 27 69 / 32%);
+  --scrim: rgb(14 27 69 / 48%);
+  --shadow-popover: 0 16px 40px -18px rgb(14 27 69 / 38%);
+  --shadow-dialog: 0 24px 64px -24px rgb(14 27 69 / 45%);
+  --edge: color-mix(in oklab, var(--foreground) 55%, transparent);
+  --dot-off: #3a4670;
+}
+[data-theme="murmur"] [data-app-sidebar] {
+  --sidebar: #0e1b45;
+  --sidebar-foreground: #fffbea;
+  --sidebar-muted-foreground: #d8d5c2;
+  --sidebar-row-hover: rgb(255 251 234 / 8%);
+  --sidebar-row-active: rgb(255 251 234 / 12%);
+  --sidebar-row-selected: rgb(255 251 234 / 10%);
+  --sidebar-border: rgb(255 251 234 / 16%);
+  --secondary-label: #d8d5c2;
+}
+
 /* Base. */
 *,
 ::before,
