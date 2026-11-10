@@ -686,7 +686,8 @@ call.
   than as chips: `model:` beside the agent, `do-not-disturb` as the red dot, `hidden` as the quiet
   fold, `human` on a person. There is no grouping by tag: a session can carry several, so groups
   would repeat it, and a filter shows one group at a time. Since 2026-11-09 Settings has a theme, kept in the browser: Dark (T3 Code's), Dim (the
-  soft greys the page had before it followed T3 Code) and Light (T3 Code's light theme). Each is a
+  soft greys the page had before it followed T3 Code), Light (T3 Code's light theme) and Murmur (the
+  blue and cream of the website's hero, #398, in the site's own colors). Each is a
   set of color tokens over one design, so a theme costs only its palette. Started times, worktrees and committed branches left the page with the old
   Sessions view; `lookup` still has the branches.
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in

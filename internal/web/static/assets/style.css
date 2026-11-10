@@ -219,6 +219,119 @@
   --secondary-label: oklch(48% 0.016 285.938);
 }
 
+/*
+ * Murmur's website hero, the fourth theme (#398). Its four colors are the site's own
+ * (site/index.html, the :root there): blue for the page, cream for the text, butter for the one
+ * loud accent, ink for the code blocks. Each surface is a mix of those, as the site's tints are.
+ * Where the site's own value fails WCAG 1.4.3 on this page, the theme takes the nearest one that
+ * passes: its paragraph is 4.4:1 on the blue, and butter as text is 4.4:1. The status hues the
+ * site has none of are pale enough for 4.5:1 (text) and 3:1 (dots) on these surfaces.
+ */
+:root[data-theme="murmur"] {
+  color-scheme: dark;
+  --site-blue: #225bff;
+  --site-cream: #fffbea;
+  --site-butter: #fdee8c;
+  --site-ink: #0e1b45;
+  --background: var(--site-blue);
+  --foreground: var(--site-cream);
+  --card: color-mix(in srgb, var(--site-ink) 22%, var(--site-blue));
+  --popover: var(--card);
+  --primary: var(--site-butter);
+  --primary-foreground: var(--site-ink);
+  --secondary: var(--card);
+  --secondary-foreground: var(--site-cream);
+  --muted: var(--card);
+  /* The site's paragraph is cream at 90%: 4.4:1 on the blue. At 94% it is 4.6:1, and on the
+     cards too. */
+  --muted-foreground: color-mix(in srgb, var(--site-cream) 94%, var(--site-blue));
+  --secondary-label: var(--muted-foreground);
+  --placeholder: var(--muted-foreground);
+  --message-surface: color-mix(in srgb, var(--site-ink) 30%, var(--site-blue));
+  --accent: color-mix(in srgb, var(--site-ink) 30%, var(--site-blue));
+  --accent-foreground: var(--site-cream);
+  --destructive: #fecaca;
+  --destructive-foreground: #ffeeee;
+  /* The site's rule: ink at 12%. */
+  --border: color-mix(in srgb, var(--site-ink) 12%, transparent);
+  /* The fill of a track, an outline button and a chosen segment. Ink, not cream: a lighter fill
+     would take the cream text's contrast down (a chosen tab was 3.6:1). */
+  --input: color-mix(in srgb, var(--site-ink) 45%, transparent);
+  --info: var(--site-butter);
+  /* Links and the human tag. Butter itself is 4.4:1 as text on the blue. */
+  --info-foreground: color-mix(in srgb, var(--site-butter) 60%, var(--site-cream));
+  --success: #86efac;
+  --success-foreground: #d1fae5;
+  --warning: #fcd34d;
+  --warning-foreground: #fef3c7;
+  --pr-open: var(--success-foreground);
+  --pr-draft: var(--muted-foreground);
+  --row-hover: color-mix(in srgb, var(--site-ink) 18%, transparent);
+  --row-selected: color-mix(in srgb, var(--site-ink) 30%, transparent);
+  --composer: var(--card);
+  --composer-edge: color-mix(in srgb, var(--site-cream) 30%, transparent);
+  --scrollbar-thumb: rgb(255 251 234 / 18%);
+  --scrollbar-thumb-hover: rgb(255 251 234 / 28%);
+  --scrim: rgb(14 27 69 / 60%);
+  /* An edge that alone shows a control or its state: 3:1 on the blue and the cards (1.4.11). */
+  --edge: color-mix(in oklab, var(--site-cream) 70%, transparent);
+  --dot-off: var(--edge);
+  --shadow-popover: 0 16px 40px -18px rgb(14 27 69 / 60%);
+  --shadow-dialog: 0 24px 64px -24px rgb(14 27 69 / 70%);
+}
+[data-theme="murmur"] [data-app-sidebar] {
+  --sidebar: color-mix(in srgb, var(--site-ink) 35%, var(--site-blue));
+  --sidebar-foreground: var(--site-cream);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-row-hover: rgb(255 251 234 / 8%);
+  --sidebar-row-active: rgb(255 251 234 / 12%);
+  --sidebar-row-selected: rgb(255 251 234 / 10%);
+  --sidebar-border: var(--border);
+  --secondary-label: var(--muted-foreground);
+}
+/* Text the other themes set at 72 to 90% of the foreground: on the blue, cream at that strength is
+   3.3 to 4.4:1, so here it is the muted cream (4.6:1 or better) or the full cream. */
+[data-theme="murmur"] .stag:not(.on),
+[data-theme="murmur"] .s-doing,
+[data-theme="murmur"] .chat-intro-doing,
+[data-theme="murmur"] .g-to-who,
+[data-theme="murmur"] .composer-chip {
+  color: var(--muted-foreground);
+}
+[data-theme="murmur"] .chat-msg-body,
+[data-theme="murmur"] .chat-bubble {
+  color: var(--foreground);
+}
+/* Tints that the other themes make by lightening the surface: a lighter tint would take the text
+   under 4.5:1 here, so these sit on the picked row's ink instead. */
+[data-theme="murmur"] .g-state,
+[data-theme="murmur"] .g-state-on,
+[data-theme="murmur"] .g-state-idle,
+[data-theme="murmur"] .g-state-dnd,
+[data-theme="murmur"] .badge.tag-human,
+[data-theme="murmur"] .avatar.g-more,
+[data-theme="murmur"] .rich code {
+  background: var(--accent);
+}
+/* The site's buttons: a pill of butter with ink text, cream on hover. */
+[data-theme="murmur"] .btn-primary {
+  border-radius: 999px;
+}
+[data-theme="murmur"] .btn-primary:hover {
+  background: var(--site-cream);
+}
+/* The site's code blocks: ink, with cream text. */
+[data-theme="murmur"] .rich pre {
+  border-color: transparent;
+  background: var(--site-ink);
+  color: var(--site-cream);
+}
+/* The site's headings: Inter at 700, set tight. */
+[data-theme="murmur"] .section-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
 /* Base. */
 *,
 ::before,
