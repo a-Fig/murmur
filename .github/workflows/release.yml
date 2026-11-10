@@ -1,5 +1,6 @@
 # Pushing a tag like v0.1.0 publishes a release: mur built for macOS, Linux and Windows (amd64 and
-# arm64), with a SHA256SUMS file that install.sh and install.ps1 check their download against (#58).
+# arm64), with a SHA256SUMS file that install.sh and install.ps1 check their download against (#58),
+# and release.json and its signature, which the updater checks once mur has a release key (#193).
 #
 # It runs on GitHub's own Linux runner, which cross-compiles every target (CGO_ENABLED=0). A tag
 # push starts it, only people with write access can push a tag here, and a tag pushed to a fork
@@ -16,6 +17,9 @@ on:
         description: The tag to publish, already pushed
         required: true
         type: string
+    secrets:
+      RELEASE_SIGNING_KEY:
+        required: false
 
 permissions:
   contents: write
@@ -77,6 +81,13 @@ jobs:
             echo "govulncheck $bin"
             "$(go env GOPATH)/bin/govulncheck" -mode=binary "$bin"
           done
+      # Writes dist/release.json (the tag, its channel and every file's SHA-256) and signs it. With
+      # no secret it signs nothing while internal/update/keys.go is empty, and fails the release
+      # once it isn't. docs/releasing.md has the key.
+      - name: Sign the release
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: go run ./internal/update/signrelease -tag "$TAG" dist
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

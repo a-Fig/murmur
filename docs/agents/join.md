@@ -24,8 +24,7 @@ joining does:
   the installed program. Tell your user this and the opt-out: `git config --global murmur.update false`
   disables updates everywhere; a repo's `murmur.update` config overrides the global value.
   `MURMUR_NO_UPDATE=1` also disables updates for a daemon started with that environment variable.
-  If the user wants updates off, set the git config before joining. Checksums detect corruption;
-  release signing is still planned (#193).
+  If the user wants updates off, set the git config before joining.
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
   Codex, OpenCode, Muse Code, Pi, Grok), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are

@@ -1,10 +1,12 @@
-// Package update installs checksum-verified GitHub releases, and keeps the latest release's version
-// so `mur version` can say when there is a newer one. It talks only to GitHub, and not at all while
-// updates are off. It takes stable releases only, unless the prerelease channel is chosen.
+// Package update installs checksum-verified GitHub releases, signed ones once keys.go has a key
+// (signed.go), and keeps the latest release's version so `mur version` can say when there is a
+// newer one. It talks only to GitHub, and not at all while updates are off. It takes stable
+// releases only, unless the prerelease channel is chosen.
 package update
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -31,7 +33,10 @@ type Options struct {
 	// Running is what Identity said of the executable when the process started. A different file
 	// at that path by the time Run starts is a newer install, not this process's binary to replace.
 	// Left nil, Run takes the identity itself.
-	Running  os.FileInfo
+	Running os.FileInfo
+	// Keys are the keys a release must be signed by. Run fills in the ones built in (keys.go) when
+	// it is nil; with none, a release is checked against its SHA256SUMS only.
+	Keys     []ed25519.PublicKey
 	OS, Arch string
 	Client   *http.Client
 	Getenv   func(string) string
@@ -40,6 +45,8 @@ type Options struct {
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
+
+	refused map[string]bool // releases whose refusal is logged; Run makes it, so it's logged once
 }
 
 // Status is what the last check found.
@@ -103,6 +110,13 @@ func Run(ctx context.Context, o Options, restart func()) {
 		o.Every = time.Hour
 	}
 	var err error
+	o.refused = map[string]bool{}
+	if o.Keys == nil {
+		if o.Keys, err = Keys(); err != nil {
+			o.Log.Printf("self-update disabled: %v", err)
+			return
+		}
+	}
 	if o.Executable == "" {
 		o.Executable, err = os.Executable()
 		if err != nil {
@@ -206,14 +220,20 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
-	rel, err := pick(ctx, o, Prerelease(ctx, o.GitDir))
+	prerelease := Prerelease(ctx, o.GitDir)
+	rel, err := pick(ctx, o, prerelease)
 	if err != nil {
 		return false, latest, err
 	}
 	if rel == nil {
 		return false, "", nil
 	}
-	recordLatest(o.GitDir, rel.Tag)
+	// With keys, a newer release is recorded only once its signature checks out, so the page never
+	// names one nobody signed as the version to install.
+	signed := len(o.Keys) > 0
+	if !signed || !newer(rel.Tag, o.Version) {
+		recordLatest(o.GitDir, rel.Tag)
+	}
 	latest = strings.TrimPrefix(rel.Tag, "v")
 	if !newer(rel.Tag, o.Version) {
 		return false, latest, nil
@@ -226,18 +246,34 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	for _, a := range rel.Assets {
 		urls[a.Name] = a.URL
 	}
-	if urls[name] == "" || urls["SHA256SUMS"] == "" {
-		return false, latest, errors.New("missing release assets")
-	}
-	sums, err := get(ctx, o, urls["SHA256SUMS"], 1<<20)
-	if err != nil {
-		return false, latest, err
+	var check func([]byte) error
+	if !signed {
+		if urls[name] == "" || urls["SHA256SUMS"] == "" {
+			return false, latest, errors.New("missing release assets")
+		}
+		sums, err := get(ctx, o, urls["SHA256SUMS"], 1<<20)
+		if err != nil {
+			return false, latest, err
+		}
+		check = func(data []byte) error { return verify(data, sums, name) }
+	} else {
+		sum, err := signedSum(ctx, o, rel.Tag, urls, name, prerelease)
+		if err != nil {
+			return false, "", err
+		}
+		recordLatest(o.GitDir, rel.Tag)
+		check = func(data []byte) error {
+			if got := sha256.Sum256(data); hex.EncodeToString(got[:]) != sum {
+				return errors.New("release checksum mismatch")
+			}
+			return nil
+		}
 	}
 	data, err := get(ctx, o, urls[name], 128<<20)
 	if err != nil {
 		return false, latest, err
 	}
-	if err = verify(data, sums, name); err != nil {
+	if err = check(data); err != nil {
 		return false, latest, err
 	}
 	if ctx.Err() != nil {
@@ -257,6 +293,41 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	}
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
+}
+
+// signedSum checks a release's signed release.json before its binary is downloaded, and returns
+// the SHA-256 it lists for name. A release that fails the check is logged: it means a release went
+// out unsigned, or someone other than the release workflow published one. A failed download is
+// quiet, as other network failures are.
+func signedSum(ctx context.Context, o Options, tag string, urls map[string]string, name string, prerelease bool) (string, error) {
+	refuse := func(err error) (string, error) {
+		if !o.refused[tag] {
+			o.Log.Printf("self-update: refused release %q: %v", tag, err)
+		}
+		if o.refused != nil {
+			o.refused[tag] = true
+		}
+		return "", err
+	}
+	if urls[ManifestName] == "" || urls[SignatureName] == "" {
+		return refuse(fmt.Errorf("it has no %s and %s, so it is not signed", ManifestName, SignatureName))
+	}
+	if urls[name] == "" {
+		return refuse(fmt.Errorf("it has no %s", name))
+	}
+	manifest, err := get(ctx, o, urls[ManifestName], 1<<20)
+	if err != nil {
+		return "", err
+	}
+	sig, err := get(ctx, o, urls[SignatureName], 64<<10)
+	if err != nil {
+		return "", err
+	}
+	sum, err := checkRelease(o.Keys, manifest, sig, tag, o.Version, name, prerelease)
+	if err != nil {
+		return refuse(err)
+	}
+	return sum, nil
 }
 
 type release struct {

@@ -107,6 +107,9 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
+    # A called workflow gets only the secrets it is given; nightlies are signed like any release.
+    secrets:
+      RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
 
   # Runs on nights that tagged nothing too, so a failed prune is retried.
   prune:

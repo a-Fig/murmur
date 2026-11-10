@@ -1245,12 +1245,13 @@ at daemon startup and hourly. No repo information goes in these GET requests. Ne
 A development build (`-dev`) never updates itself. Versions before this updater need one manual
 install to acquire it.
 
-The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS`, verifies
-SHA-256, and stages a closed, synced executable beside the running binary's resolved symlink
-target. Unix renames it atomically over the old file. Windows renames the running exe to a unique
-backup, installs the staged file, and restores the backup if installation fails. Backups still
-held by processes are cleaned on a later daemon start. A lock beside the executable serializes
-clones sharing an install; a daemon whose executable has already been replaced restarts onto it.
+The daemon downloads the `mur-<os>-<arch>[.exe]` asset and that release's `SHA256SUMS` (its signed
+`release.json` once mur has a release key, below), verifies SHA-256, and stages a closed, synced
+executable beside the running binary's resolved symlink target. Unix renames it atomically over
+the old file. Windows renames the running exe to a unique backup, installs the staged file, and
+restores the backup if installation fails. Backups still held by processes are cleaned on a later
+daemon start. A lock beside the executable serializes clones sharing an install; a daemon whose
+executable has already been replaced restarts onto it.
 Identity is checked again after downloading so a manual reinstall during the download is left alone.
 An unwritable install (for example, a package manager's) is logged once and left alone until
 restart. Successful updates log the old and new versions in the daemon log.
@@ -1301,9 +1302,29 @@ on each check. Agents explain updates and this separate opt-out before joining (
 shared across clones is shared across their update settings too: to prevent every clone from
 updating it, use the global setting without local overrides.
 
-The checksum catches corruption or a download inconsistent with the release. It does not prove
-who published it or protect against a compromised GitHub account or release with a replaced
-checksum file. Release signing is separate work (#193).
+The checksum catches corruption, not a release published by whoever takes over the GitHub account, a
+token or the release workflow, and self-update would carry that release to every daemon within the
+hour. So the code to sign releases is in place (#193, 2026-11-09), and releases are signed once
+Tyler sets the key's secret. release.yml then writes `release.json`, naming the tag, its channel and
+each file's SHA-256, and signs it with an ed25519 key held in a repository secret. A mur with keys
+in `internal/update/keys.go` installs only a release whose signature verifies against one of them,
+whose `release.json` names the tag GitHub served it under, whose channel the daemon takes, and that
+is newer than itself, and it checks that before downloading the binary. Signing a manifest, not the
+bare checksums, is what keeps an old signed binary from coming back under a new tag, and a nightly
+from passing for stable by having its prerelease flag cleared. The key list takes a spare and allows
+rotation (`docs/releasing.md`). Signing doesn't stop someone with write access from holding updates
+back, by publishing nothing or a release daemons refuse; it stops them from shipping their own.
+
+- **Until a key is built in**, nothing changes: the updater checks `SHA256SUMS` alone, and a mur
+  without a key ignores the signature, so the first signed releases install everywhere. Tyler makes
+  the key and stores the secret; as of 2026-11-09 neither is done.
+- **The format is OpenSSH's signature**, written with the standard library, so `ssh-keygen -Y
+  verify` (OpenSSH 8.1 or later) checks a release by hand on any OS. minisign's current format needs
+  BLAKE2b, a new dependency. Keyless signing (Sigstore) would tie a release to release.yml on a tag
+  instead of to a secret any workflow in the repo can read, but verifying it would bring in a large
+  dependency.
+- **The installers still check only the checksum.** sh and Windows PowerShell have no ed25519, and
+  the scripts come from `main`'s tip, so they are as safe as `main` whatever they check.
 
 ### Counting use
 
