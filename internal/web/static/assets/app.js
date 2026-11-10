@@ -2323,7 +2323,8 @@ function fleetRow(d, s, need, on, F) {
           "aria-controls": on ? "fx-pane" : null,
           // Working on, or the wait, read whole on focus, and shown whole under the row.
           "aria-describedby": need || s.doing ? "fx-full-" + s.name : null,
-          title: [s.name, ...tags].join(" · "),
+          // The agent too: below 1500px the table has no Agent column.
+          title: [s.name, [agentName(s.agent), modelOf(s)].filter(Boolean).join(" "), dev, ...tags].filter(Boolean).join(" · "),
           onclick: () => (on ? fleetCloseAsked() : fleetOpen(s.name)),
         },
         s.name,

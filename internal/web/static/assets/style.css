@@ -5295,6 +5295,21 @@ a.fx-pr:focus-visible,
 .bar-quiet {
   border-color: transparent;
 }
+/* Below 1500px Agent goes (the agent is in the name's title, and in the details), so Working on
+   keeps its width; below 1100px Branch goes too. */
+@container (max-width: 1499px) {
+  .dark .fx-table .fx-tr {
+    grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 1fr) var(--fx-branch, 200px) 72px 28px;
+  }
+  .dark .fx-table .fx-tr > .fx-c-agent {
+    display: none;
+  }
+  .dark .fx-table .fx-tr > .fx-c-state { grid-column: 2; }
+  .dark .fx-table .fx-tr > .fx-c-doing { grid-column: 3; }
+  .dark .fx-table .fx-tr > .fx-c-branch { grid-column: 4; }
+  .dark .fx-table .fx-tr > .fx-c-last { grid-column: 5; }
+  .dark .fx-table .fx-tr > .fx-c-act { grid-column: 6; }
+}
 @container (max-width: 1099px) {
   .dark .fx-table .fx-tr {
     grid-template-columns: max(200px, var(--fx-who, 0px)) 124px minmax(0, 1fr) 72px 28px;
@@ -6756,7 +6771,7 @@ a.fx-pr:focus-visible,
   white-space: normal;
   color: var(--text-2);
 }
-@container (max-width: 1099px) {
+@container (max-width: 1499px) {
   .dark .fx-table .fx-row:has(.fx-open:focus-visible) > .fx-full {
     grid-column: 3 / span 2;
   }
