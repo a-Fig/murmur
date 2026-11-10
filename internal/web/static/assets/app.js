@@ -36,7 +36,7 @@ const ui = {
   tagFilter: null, // a tag: the session lists show only the sessions with it
   recentOpen: new Set(), // Recent's messages shown whole
   setShown: new Set(), // Settings' sections showing the sessions that follow the default
-  relayChosen: new Set(), // threads whose "Message privately" choice has been made, folded to "To x"
+  relayChanging: new Set(), // threads whose "To x · Change" is open to the choice of the two
   setTouched: new Set(), // Settings rows changed on this visit, kept in view
   rq: "", // Recent's search
   tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
@@ -5248,19 +5248,17 @@ function relayBar(c, running) {
   const send = () => relaySend(c, to, el);
   const el = composerFor(key, send, () => {
     composerChange(key, el);
-    // Writing the next message: the line about the last one goes, and the choice of who folds away.
-    if (el.value.trim() && (root.querySelector(".relay-sent") || !ui.relayChosen.has(c.key))) {
+    // Writing the next message: the line about the last one goes.
+    if (el.value.trim() && root.querySelector(".relay-sent")) {
       ui.relayed.delete(c.key);
-      ui.relayChosen.add(c.key);
       render();
     }
   });
-  el.placeholder = "Message " + to + " privately…";
-  el.setAttribute("aria-label", "Message " + to + " privately, in your conversation with it");
-  // Who it goes to, an explicit step: both of them, the one picked filled. One that has ended is
-  // left out; with one left, it is named. Once chosen (picked, or written to), the line folds to
-  // "To solar-wren · Change".
-  const chosen = ui.relayChosen.has(c.key) || running.length < 2;
+  el.placeholder = "Write to " + to + "…";
+  el.setAttribute("aria-label", "Write to " + to + ", in your conversation with it");
+  // Who it goes to: "To solar-wren · Change" inside the composer's top edge; Change opens the
+  // choice of the two (one that has ended is left out), and picking closes it again.
+  const chosen = !ui.relayChanging.has(c.key) || running.length < 2;
   const pick = chosen
     ? h(
         "div",
@@ -5275,7 +5273,7 @@ function relayBar(c, running) {
               "data-key": "relay-change",
               "aria-label": "Change who it goes to",
               onclick: () => {
-                ui.relayChosen.delete(c.key);
+                ui.relayChanging.add(c.key);
                 render();
                 root.querySelector(`[data-key="${CSS.escape("relay-to-" + to)}"]`)?.focus({ preventScroll: true });
               },
@@ -5294,7 +5292,7 @@ function relayBar(c, running) {
           (n) => {
             ui.relayTo.set(c.key, n);
             ui.relayed.delete(c.key);
-            ui.relayChosen.add(c.key);
+            ui.relayChanging.delete(c.key);
             render();
             el.focus({ preventScroll: true });
           },
@@ -5303,7 +5301,11 @@ function relayBar(c, running) {
   return h(
     "div",
     { class: "composer-wrap" },
-    downNote() || sendError(el.dataset.composer) || relayLine(c),
+    // Over it, at rest, whose thread this is and where what is written goes.
+    downNote() ||
+      sendError(el.dataset.composer) ||
+      relayLine(c) ||
+      h("p", { class: "relay-about" }, "Only " + c.pair.join(" and ") + " write here. What you send goes to your own conversation with " + to + "."),
     ui.setup?.inline === el ? nameStep() : h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }

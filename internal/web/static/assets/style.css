@@ -6801,3 +6801,10 @@ a.fx-pr:focus-visible,
   line-height: 1rem;
   color: #ff8a7a;
 }
+/* Over the composer in a thread between two sessions, at rest: whose it is, where yours goes. */
+.dark .relay-about {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+}
