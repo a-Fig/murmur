@@ -6274,3 +6274,53 @@ a.fx-pr:focus-visible,
 .dark .rich code {
   font-size: 0.75rem;
 }
+/* Conversations (#183, K): the list is for triage, the one list of two lines: 52px rows, the title
+   and time over "sender: preview". It is 320px wide from 1280px, 288px under. */
+.dark .page.chat-page .chat {
+  grid-template-columns: 288px minmax(0, 1fr);
+}
+@media (min-width: 1280px) {
+  .dark .page.chat-page .chat {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+}
+.dark .chat-list .chat-row {
+  height: 52px;
+}
+.dark .chat-list .chat-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dark .chat-list .chat-row-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.dark .chat-list .chat-row-line .chat-row-title {
+  flex: 1;
+}
+.dark .chat-list .chat-row-preview {
+  flex: 1;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-2);
+}
+.dark .chat-list .chat-row-line > .unread-badge {
+  align-self: center;
+}
+/* A short thread sits at the foot of its pane, just over the composer, as a chat does. */
+.dark .chat-thread {
+  display: flex;
+  flex-direction: column;
+}
+.dark .chat-thread > :first-child {
+  margin-top: auto;
+}
+.dark .chat-thread > * {
+  flex: none;
+  width: 100%;
+}

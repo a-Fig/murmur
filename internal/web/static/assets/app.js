@@ -468,6 +468,7 @@ function sidebar() {
               class: "device-link dev-fold" + (d.reachable ? "" : " stale"),
               "aria-expanded": open ? "true" : "false",
               "data-key": "dev-" + d.id,
+              "aria-label": deviceLabel(d) + ", " + (d.reachable ? plural(live.length, "session") + ", " + DEVICE_WORDS[deviceState(d)].toLowerCase() : "offline"),
               title: (d.reachable ? d.id : d.id + ", last seen " + ago(when(d.lastSeen) || 0)) + (open ? "" : owing ? " · a session here needs a look" : "") + " · " + plural(live.length, "session"),
               onclick: () => {
                 sideOpenSet(d, !open);
@@ -494,13 +495,14 @@ function sidebar() {
                       "aria-current": ui.view === "messages" && ui.filter === key ? "page" : null,
                       "data-key": "ss-" + s.name,
                       title: s.doing ? s.name + ": " + s.doing : s.name,
+                      "aria-label": s.name + (needs.has(s.name) ? ", needs a look" : ""),
                       onclick: () => {
                         ui.filter = key;
                         ui.conversation = null;
                         go("messages");
                       },
                     },
-                    ...sideSessionBody(d, s, needs.has(s.name)),
+                    ...sideSessionBody(d, s),
                   ),
                 );
               }),
@@ -836,7 +838,7 @@ function quietFold(d) {
         },
       },
       icon(open ? "chevronDown" : "chevronRight", "settled-caret"),
-      h("span", null, rows.length + " quiet"),
+      h("span", null, plural(rows.length, "quiet session")),
     ),
     open &&
       h(
@@ -942,6 +944,7 @@ function topRow(view, iconName, title, n, need = 0) {
     {
       class: "all-convs top-" + view,
       "aria-current": ui.view === view ? "page" : null,
+      "aria-label": title + (need ? ", " + need + " waiting" : n != null ? ", " + n : ""),
       "data-key": "top-" + view,
       onclick: () => {
         ui.filter = null;
@@ -1125,6 +1128,7 @@ function allButton() {
     {
       class: "all-convs",
       "aria-current": all ? "page" : null,
+      "aria-label": "All conversations, " + count,
       "data-key": "all",
       onclick: () => {
         ui.filter = null;
@@ -1149,8 +1153,8 @@ function allConversations() {
 // A session in the sidebar is one line, for getting around, as in Slack's and Discord's lists: its
 // face and state, its name, and the yellow dot that marks it in All sessions when it owes an answer.
 // All sessions has the rest.
-function sideSessionBody(d, s, owes) {
-  return [h("span", { class: "side-session-name truncate" }, s.name), owes && h("span", { class: "sr-only" }, ", needs a look")];
+function sideSessionBody(d, s) {
+  return [h("span", { class: "side-session-name truncate" }, s.name)];
 }
 
 function stateWord(d, s) {
@@ -3797,7 +3801,7 @@ function conversationsPage() {
     ui.conversation = list.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
     chatMoved = ui.conversation != null;
   }
-  if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
+  if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = (list.find((c) => unreadIn(c) > 0) || list[0]).key;
   // A search or a tab keeps what is open among what the list shows: the first of them, if the open
   // one isn't, and nothing if nothing is. On a phone the list is all there is meanwhile.
   const view = listView(holdOrder(list), list);
@@ -4018,7 +4022,7 @@ function conversationList(list, view) {
       },
       onkeydown: chatListKey,
     },
-    isMyFilter() && view.total > 0 && !ui.lp &&
+    isMyFilter() && list.length > 0 && !ui.lp &&
       h(
         "button",
         {
@@ -4034,7 +4038,7 @@ function conversationList(list, view) {
         h("span", { class: "g-new-icon", "aria-hidden": "true" }, icon("compose")),
         "New message",
       ),
-    isMyFilter() && (ui.lp || (!view.total && !q)) ? listPicker(view.total > 0) : listRows(view, rows, older, kind, count, q),
+    isMyFilter() && (ui.lp || (!list.length && !q)) ? listPicker(list.length > 0) : listRows(view, rows, older, kind, count, q),
   );
 }
 
@@ -4139,12 +4143,20 @@ function conversationRow(c) {
     },
     // One 20px face: the other party's, the first of two others', or a group's glyph.
     c.kind !== "dm" ? h("span", { class: "avatar avatar-group", "aria-hidden": "true" }, icon("users")) : avatar(o || c.pair[0]),
-    c.kind !== "dm"
-      ? [h("span", { class: "chat-row-title", title: c.title }, wholeNames(groupName(c))), h("span", { class: "g-row-count" }, groupSummary(c).rows.length)]
-      : h("span", { class: "chat-row-title", title: c.title }, wholeNames(dmTitle(c) || o || c.title)),
-    h("span", { class: "chat-row-preview truncate" }, preview),
-    unread > 0 && h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread),
-    at && agoEl("span", "chat-row-time", at),
+    // Two lines, for triage: who and when, then the last word in it.
+    h(
+      "span",
+      { class: "chat-row-text" },
+      h(
+        "span",
+        { class: "chat-row-line" },
+        c.kind !== "dm"
+          ? [h("span", { class: "chat-row-title", title: c.title }, wholeNames(groupName(c))), h("span", { class: "g-row-count" }, groupSummary(c).rows.length)]
+          : h("span", { class: "chat-row-title", title: c.title }, wholeNames(dmTitle(c) || o || c.title)),
+        at && agoEl("span", "chat-row-time", at),
+      ),
+      h("span", { class: "chat-row-line" }, h("span", { class: "chat-row-preview truncate" }, preview), unread > 0 && h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread)),
+    ),
   );
 }
 
