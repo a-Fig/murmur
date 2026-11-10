@@ -19,6 +19,7 @@ const ui = {
   conn: "connecting", // connecting, ok, down, denied
   state: null,
   messages: [], // oldest first
+  messagesLoaded: false, // the first /api/messages has answered: an empty list means none, not "not yet"
   ids: new Set(),
   cursor: "",
   settings: null,
@@ -452,7 +453,7 @@ function sidebar() {
         yourRow(),
         topRow("sessions", "users", "All sessions", ui.state ? devs.reduce((n, d) => n + liveSessions(d).length, 0) : null, needs.size),
         allButton(),
-        topRow("recent", "clock", "Recent messages", ui.messages.length),
+        topRow("recent", "clock", "Recent messages", ui.messagesLoaded ? ui.messages.length : null),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
       devs.length > 0 && h("div", { class: "side-head" }, "Devices"),
@@ -1137,13 +1138,13 @@ document.addEventListener("keydown", (e) => {
 // Every conversation, between the sidebar's other two top rows.
 function allButton() {
   const all = ui.view === "messages" && !ui.filter;
-  const count = allConversations().filter(isCounted).length;
+  const count = ui.messagesLoaded ? allConversations().filter(isCounted).length : null;
   return h(
     "button",
     {
       class: "all-convs",
       "aria-current": all ? "page" : null,
-      "aria-label": "All conversations, " + count,
+      "aria-label": "All conversations" + (count != null ? ", " + count : ""),
       "data-key": "all",
       onclick: () => {
         ui.filter = null;
@@ -1153,7 +1154,7 @@ function allButton() {
     },
     h("span", { class: "all-ico" }, icon("message")),
     h("span", { class: "all-title" }, "All conversations"),
-    h("span", { class: "all-n" }, count),
+    count != null && h("span", { class: "all-n" }, count),
   );
 }
 
@@ -3019,7 +3020,7 @@ const RECENT_PAGE = 300;
 const RECENT_SEEN_KEY = NAME + ":recent-seen";
 
 function recentPage() {
-  if (!ui.state) return recentShell(null, h("p", { class: "g-none" }, "Loading messages…"));
+  if (!ui.state || !ui.messagesLoaded) return recentShell(null, h("p", { class: "g-none g-loading", role: "status" }, "Loading…"));
   const every = [...ui.messages].sort((a, b) => b.sortAt - a.sortAt);
   const q = (ui.rq || "").trim().toLowerCase();
   const all = q ? every.filter((m) => [fromName(m), m.toKind === "all" ? "Everyone" : toName(m), m.subject, m.fromPerson ? personText(m) : m.body].join(" ").toLowerCase().includes(q)) : every;
@@ -3922,6 +3923,13 @@ function pairStates(c) {
 let chatMoved = false; // the open conversation has just changed key, and is still the one being read
 
 function conversationsPage() {
+  if (!ui.messagesLoaded)
+    return h(
+      "div",
+      { class: "page chat-page" },
+      pageBar({ title: isMyFilter() ? "Your messages" : ui.filter ? nameOf(ui.filter, ui.filter) : "All conversations" }),
+      h("div", { class: "chat" }, h("nav", { class: "chat-list g-list", "aria-label": "Conversations" }, h("p", { class: "g-none g-loading", role: "status" }, "Loading…")), NARROW.matches ? null : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" })),
+    );
   const list = conversations();
   // On a wide page a conversation is always open, and stays open while others get newer. On a
   // narrow one the list and a conversation take turns, so the list is where it starts.
@@ -5886,6 +5894,7 @@ let arrivals = []; // messages fetched since the last poll, to be announced
 async function fetchMessages() {
   for (let pages = 0; pages < 20; pages++) {
     const r = await api("/api/messages?cursor=" + encodeURIComponent(ui.cursor));
+    ui.messagesLoaded = true;
     let added = 0;
     for (const m of r.messages || []) {
       learn(m.fromAddr, m.from);
@@ -6037,7 +6046,7 @@ async function poll() {
 function start() {
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], messagesLoaded: false, cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null });
     ui.ids = new Set();
     ui.notes = new Map();
     ui.readLocal = new Set();

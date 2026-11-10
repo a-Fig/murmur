@@ -6583,3 +6583,9 @@ a.fx-pr:focus-visible,
 .dark .fx-split.overlay > .fx > .bar {
   z-index: 21;
 }
+/* Before the first answer: a quiet line where the rows will be. */
+.dark .g-loading {
+  padding: 8px 10px;
+  font-size: 0.8125rem;
+  color: var(--text-3);
+}
