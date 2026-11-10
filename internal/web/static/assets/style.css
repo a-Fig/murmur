@@ -6137,3 +6137,18 @@ a.fx-pr:focus-visible,
     margin-right: 0;
   }
 }
+/* One focus ring everywhere (#183): an inset 2px ring that follows the control's own corners, on
+   rows, tabs, segments, buttons and links alike. On a light button a dark line inside it shows it. */
+.dark :is(a, button, select, summary, [role="tab"], [tabindex="0"]):focus-visible {
+  outline: none !important;
+  box-shadow: inset 0 0 0 2px var(--ring) !important;
+}
+.dark :is(.composer-send, .btn-primary, .fx-btn-primary, .skip-link):focus-visible {
+  box-shadow:
+    inset 0 0 0 2px var(--ring),
+    inset 0 0 0 3.5px #1b1b1b !important;
+}
+/* A row's main button lends its ring to the row; the grip shows focus by its own bar. */
+.dark :is(.fx-open, .fx-grip):focus-visible {
+  box-shadow: none !important;
+}

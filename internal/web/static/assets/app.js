@@ -207,6 +207,16 @@ function plural(n, word) {
 // Shell.
 
 const root = document.getElementById("root");
+
+// Said to a screen reader, politely: new arrivals. Outside root, so a rebuild doesn't replace it
+// before it is read.
+const liveRegion = Object.assign(document.createElement("div"), { className: "sr-only" });
+liveRegion.setAttribute("aria-live", "polite");
+document.body.append(liveRegion);
+function announce(text) {
+  liveRegion.textContent = "";
+  setTimeout(() => (liveRegion.textContent = text), 50);
+}
 let content; // the scrolling pane, kept across renders so its scroll position is too
 
 function render() {
@@ -5709,6 +5719,8 @@ function deny(token) {
 
 let arrivedAt = 0; // the sort time of the message before
 
+let arrivals = []; // messages fetched since the last poll, to be announced
+
 async function fetchMessages() {
   for (let pages = 0; pages < 20; pages++) {
     const r = await api("/api/messages?cursor=" + encodeURIComponent(ui.cursor));
@@ -5725,6 +5737,7 @@ async function fetchMessages() {
       // below the replies to it.
       arrivedAt = m.sortAt = Math.min(when(m.at) || arrivedAt, Date.now());
       ui.messages.push(m);
+      arrivals.push(m);
       added++;
     }
     const moved = r.cursor !== ui.cursor;
@@ -5751,6 +5764,31 @@ function trimMessages() {
     ui.ids.delete(m.id);
     return false;
   });
+}
+
+// What came, in words, where the reader is: in the open conversation by who sent it; in the list
+// and on Recent as their pills count it while they hold it back, else by who sent it.
+function announceArrivals(ms) {
+  const news = ms.filter((m) => fromName(m) !== myName() && !(me() && m.fromAddr === me().addr));
+  const from = (list) => {
+    const names = new Set(list.map(fromName));
+    if (names.size > 1) return plural(list.length, "new message");
+    return (list.length === 1 ? "New message" : list.length + " new messages") + " from " + [...names][0];
+  };
+  if (!news.length) return;
+  if (ui.view === "recent") return announce(ui.recentHeldAt != null ? plural(news.length, "new message") : from(news));
+  if (ui.view !== "messages") return;
+  const of = new Map();
+  for (const c of conversations()) for (const m of c.messages) of.set(m.id, c.key);
+  const here = news.filter((m) => of.get(m.id) === ui.conversation);
+  const there = news.filter((m) => of.has(m.id) && of.get(m.id) !== ui.conversation);
+  const said = [];
+  if (here.length) said.push(from(here));
+  if (there.length) {
+    const n = new Set(there.map((m) => of.get(m.id))).size;
+    said.push(ui.heldNew > 0 ? plural(ui.heldNew, "new conversation") : n === 1 ? from(there) : n + " conversations with new messages");
+  }
+  if (said.length) announce(said.join(". "));
 }
 
 let last = "";
@@ -5824,6 +5862,8 @@ async function poll() {
     render();
     if (ui.fleetFocusPending) fleetFocusBack();
   }
+  if (polled && arrivals.length) announceArrivals(arrivals);
+  arrivals = [];
   // The first state starts the PR lookups; ask again soon, so their answers show without a wait.
   const first = !polled;
   polled = true;
