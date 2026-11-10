@@ -5266,14 +5266,12 @@ function wakeWords(w) {
 }
 
 // A segmented control, one stop for Tab with the arrow keys moving along it, as in All sessions.
-// A setting that follows the device's (resolved: what that comes to) fills no segment: Default is
-// selected but quiet, an outline, and says what it comes to after its name, "Default (3 min)". Only
-// a setting of the session's own is filled.
+// One way to be selected: Default, when a setting follows the device's (resolved: what that comes
+// to), is filled like any choice, and says what it comes to after its name, "Default (3 min)".
 function segmented(key, choices, current, pick, resolved) {
-  const inherited = current === "default" && !!resolved;
   const seg = h(
     "div",
-    { class: "segmented" + (inherited ? " inherited" : ""), role: "group", onkeydown: segKeys },
+    { class: "segmented", role: "group", onkeydown: segKeys },
     choices.map(([v, label]) =>
       h(
         "button",
@@ -5634,7 +5632,7 @@ function settingsPage() {
       settingsRow(
         "wake",
         h("span", { class: "set-senior" }, "Device default"),
-        "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
+        "An idle session wakes for a message from another session: always, within the minutes below, or never. Your own messages always wake it unless set to Never.",
         wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, "wake"), false),
         "",
         true,

@@ -5842,8 +5842,8 @@ a.fx-pr:focus-visible,
 }
 /* Settings (#183): no cards. Each section is rows on the canvas between hairlines; a session's row
    is one 36px line, its name with what it is in meta beside it. Controls are 28px with 6px corners;
-   a setting that follows the device's is selected but quiet, an outline, with its value after
-   "Default" in meta. */
+   a setting that follows the device's selects Default, filled like any choice, with its value
+   after it in meta. */
 .dark .set-page .section-head {
   min-height: 36px;
   padding: 0;
@@ -5922,12 +5922,6 @@ a.fx-pr:focus-visible,
   background: var(--selected);
   color: var(--text-1);
   font-weight: 500;
-}
-.dark .segmented.inherited button[aria-pressed="true"] {
-  background: none;
-  box-shadow: inset 0 0 0 1px #4a4a4a;
-  color: var(--text-1);
-  font-weight: 400;
 }
 .dark .set-page .btn {
   height: var(--control);
