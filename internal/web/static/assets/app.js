@@ -244,7 +244,7 @@ function render() {
   content.replaceChildren(inner);
   const skip = h("a", { class: "skip-link", href: "#", "data-key": "skip", onclick: skipToContent }, "Skip to content");
   // replaceChildren, unlike h(), writes null and false out as text: only what is there goes in.
-  const layers = [ui.setup && !ui.setup.inline && setupDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu()];
+  const layers = [ui.setup && !ui.setup.inline && setupDialog(), ui.tagMenu && tagMenu(), ui.rowMenu && rowMenu(), ui.pickMenu && pickMenu()];
   root.replaceChildren(skip, h("div", { class: "app" }, sidebar(), h("main", { class: "main" }, NARROW.matches ? topbar() : null, content)), ...layers.filter((x) => x instanceof Node));
   content.scrollTop = scroll;
   fleetFit();
@@ -1494,6 +1494,164 @@ function segKeys(e) {
   if (next !== btns[i]) next.click();
 }
 
+// The page's bar (#183): one on every page, 44px high, the title with its count beside it in meta,
+// the page's tabs, and its controls at the right.
+function pageBar({ lead, title, meta, tabs, right, titleTip }) {
+  return h(
+    "header",
+    { class: "bar" },
+    lead,
+    h("h1", { class: "bar-title", title: titleTip || null }, title),
+    meta && h("span", { class: "bar-meta" }, meta),
+    tabs,
+    h("span", { class: "bar-spacer" }),
+    right,
+  );
+}
+
+// The bar's tabs: text, with a count in meta. One stop for Tab; the arrow keys move along and pick.
+// options: [value, label, count, data-key, tip].
+function barTabs(label, options, value, onPick) {
+  return h(
+    "div",
+    { class: "bar-tabs", role: "tablist", "aria-label": label, onkeydown: segKeys },
+    options.map(([v, text, n, key, tip]) =>
+      h(
+        "button",
+        {
+          role: "tab",
+          class: "bar-tab",
+          "aria-selected": v === value ? "true" : "false",
+          tabindex: v === value ? "0" : "-1",
+          "data-key": key || "tab-" + label + "-" + v,
+          title: tip || null,
+          onclick: () => {
+            if (v !== value) onPick(v);
+          },
+        },
+        text,
+        n != null && h("span", { class: "bar-tab-n" }, n),
+      ),
+    ),
+  );
+}
+
+// A menu button in the bar ("State All", "Group Device"): its value shows on it, and its menu holds
+// the choices with their counts. items: [value, label, count, lead]. The menu reads them afresh on
+// each render, so its counts keep up while it is open.
+function menuButton(key, label, items, value, onPick) {
+  const cur = items.find(([v]) => v === value) || items[0];
+  if (ui.pickMenu?.key === key) Object.assign(ui.pickMenu, { items, value: cur[0], onPick, label });
+  return h(
+    "button",
+    {
+      class: "bar-menu",
+      "data-key": key,
+      "aria-haspopup": "menu",
+      "aria-expanded": ui.pickMenu?.key === key ? "true" : "false",
+      disabled: items.length < 2 || null,
+      onclick: (e) => openPickMenu(key, e.currentTarget, label, items, cur[0], onPick),
+    },
+    h("span", null, label),
+    h("b", null, cur[1]),
+  );
+}
+
+function openPickMenu(key, anchor, label, items, value, onPick) {
+  const r = anchor.getBoundingClientRect();
+  ui.pickMenu = { key, label, items, value, onPick, x: Math.max(8, Math.min(r.left, innerWidth - 248)), top: r.bottom + 4 };
+  render();
+  (root.querySelector('.pick-menu [aria-checked="true"]') || root.querySelector(".pick-menu [role=menuitemradio]"))?.focus();
+}
+
+// Closing gives the keyboard back to the menu's button.
+function closePickMenu(back = true) {
+  const key = ui.pickMenu?.key;
+  ui.pickMenu = null;
+  render();
+  if (back && key) root.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+}
+
+function pickMenu() {
+  const m = ui.pickMenu;
+  // Built after the page, so its button is looked for in the page just built.
+  if (!content?.querySelector(`[data-key="${CSS.escape(m.key)}"]`)) {
+    ui.pickMenu = null;
+    return null;
+  }
+  const menu = h(
+    "div",
+    {
+      class: "row-menu pick-menu",
+      role: "menu",
+      "aria-label": m.label,
+      onkeydown: (e) => {
+        const items = [...e.currentTarget.querySelectorAll("[role=menuitemradio]")];
+        const i = items.indexOf(document.activeElement);
+        const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+        if (to != null) {
+          e.preventDefault();
+          items[(to + items.length) % items.length]?.focus();
+        } else if (e.key === "Tab") {
+          e.preventDefault();
+          closePickMenu();
+        }
+      },
+    },
+    m.items.map(([v, label, n, lead]) =>
+      h(
+        "button",
+        {
+          class: "row-menu-item",
+          role: "menuitemradio",
+          "aria-checked": v === m.value ? "true" : "false",
+          tabindex: "-1",
+          "data-key": "pm-" + m.key + "-" + v,
+          onclick: () => {
+            const key = m.key;
+            ui.pickMenu = null;
+            m.onPick(v);
+            root.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+          },
+        },
+        h("span", { class: "pm-check", "aria-hidden": "true" }, v === m.value && icon("check")),
+        lead,
+        h("span", { class: "truncate" }, label),
+        n != null && h("span", { class: "pm-n" }, n),
+      ),
+    ),
+  );
+  menu.style.left = m.x + "px";
+  menu.style.top = m.top + "px";
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closePickMenu(false);
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closePickMenu();
+        }
+      },
+    },
+    menu,
+  );
+}
+
+// The bar's search: a field with its "/" hint.
+function barSearch(key, label, value, onInput) {
+  return h(
+    "label",
+    { class: "bar-search" },
+    icon("search"),
+    h("input", { type: "search", placeholder: "Search", "aria-label": label, value: value || null, "data-key": key, oninput: (e) => onInput(e.target.value) }),
+    !value && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
+  );
+}
+
 function fxSeg(label, options, value, onPick) {
   const current = options.some(([v]) => v === value) ? value : options[0][0];
   return h(
@@ -1573,7 +1731,7 @@ function runningNeeds() {
 
 function sessionsPage() {
   const tab = ui.sessTab || "running";
-  if (!ui.state) return h("div", { class: "fx" }, h("header", { class: "fx-head" }, h("div", null, h("h1", null, "All sessions"), h("p", null, fleetDown() || "Connecting…"))));
+  if (!ui.state) return h("div", { class: "fx" }, pageBar({ title: "All sessions", meta: fleetDown() || "Connecting…" }));
   const F = fleetFilter();
   const devs = devices();
   const live = fleetRows("running");
@@ -1624,21 +1782,12 @@ function sessionsPage() {
   const what = tab === "quiet" ? "quiet session" : "session";
   const tagged = ui.tagFilter ? " tagged " + ui.tagFilter : "";
   const hiddenN = quiet.filter((r) => isHidden(r.s)).length;
+  // Beside the title: how many, and when a search or a state narrows them, how many of how many.
   let sub;
-  if (tab === "settled") {
-    sub = plural(settledN, "session") + (settledN === 1 ? " that has ended" : " that have ended");
-  } else if (tab === "quiet" && !q && !F.state) {
-    sub = plural(all.length, "session") + tagged + " idle for more than a day" + (hiddenN ? " or hidden" : "");
-  } else if ((q || F.state) && all.length) {
-    // Filtered, the need count says how many of them are shown.
-    const shownNeeds = needs.size;
-    const needNote = !n ? "" : shownNeeds === n ? " · " + n + (n === 1 ? " needs" : " need") + " a look" : " · " + (shownNeeds ? shownNeeds + " of the " : "none of the ") + n + (n === 1 ? " that needs" : " that need") + " a look";
-    sub = ["Showing " + rows.length + " of " + plural(all.length, what) + tagged + needNote, rows.length > 0 && [" ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]];
-  } else if (all.length) {
-    sub = plural(all.length, what) + tagged + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device") + " · " + (n ? n + (n === 1 ? " needs" : " need") + " a look" : "nothing needs a look");
-  } else {
-    sub = "No " + what + "s" + tagged + " · " + plural(devs.length, "device");
-  }
+  if (tab === "settled") sub = plural(settledN, "session") + " ended";
+  else if ((q || F.state) && all.length) sub = ["Showing " + rows.length + " of " + all.length + tagged, rows.length > 0 && [" · ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]];
+  else if (all.length) sub = (tab === "quiet" ? plural(all.length, "quiet session") + tagged : all.length + " running" + tagged + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device")) + (hiddenN && tab === "quiet" ? " · " + hiddenN + " hidden" : "");
+  else sub = "No " + what + "s" + tagged;
   const down = fleetDown();
   // What a selection can hold: the sessions in front of the person, so a filter, a tab or a shut
   // group leaves none picked out of sight.
@@ -1654,16 +1803,15 @@ function sessionsPage() {
     h(
       "div",
       { class: "fx" },
-      h(
-        "header",
-        { class: "fx-head" },
-        h("div", { class: "fx-head-text" }, h("h1", null, "All sessions"), h("p", null, down ? [down, " · ", sub] : sub)),
-        fxSeg(
+      pageBar({
+        title: "All sessions",
+        meta: down ? [down, " · ", sub] : sub,
+        tabs: barTabs(
           "Which sessions",
           [
-            ["running", "Running", null, "Running, and active in the last day"],
-            ["quiet", "Quiet", quiet.length, "Idle for more than a day, or hidden"],
-            ["settled", "Settled", settledN, "Ended; kept while their messages are"],
+            ["running", "Running", null, "fs-tab-running", "Running, and active in the last day"],
+            ["quiet", "Quiet", quiet.length, "fs-tab-quiet", "Idle for more than a day, or hidden"],
+            ["settled", "Settled", settledN, "fs-tab-settled", "Ended; kept while their messages are"],
           ],
           tab,
           (v) => {
@@ -1674,85 +1822,52 @@ function sessionsPage() {
             render();
           },
         ),
-      ),
-      h(
-        "div",
-        { class: "fx-toolbar" },
-        h(
-          "label",
-          { class: "fx-input" },
-          icon("search"),
-          h("input", {
-            type: "search",
-            placeholder: "Search",
-            "aria-label": "Search sessions",
-            value: F.q,
-            "data-key": "fx-q",
-            oninput: (e) => {
-              F.q = e.target.value;
-              render();
-            },
-          }),
-          !F.q && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
-        ),
-        tab === "settled" && [
-          fxSeg("State", [["", "All", settledShown]], "", () => {}),
-          h("span", { class: "fx-spacer" }),
-          h(
-            "span",
-            { class: "fx-group-by" },
-            h("span", { class: "fx-label" }, "Group by"),
-            fxSeg(
-              "Group by",
-              [["device", "Device", null, "Settled sessions are known by their device only"]],
-              "device",
-              () => {},
-            ),
-          ),
-          h("button", { class: "fx-btn fx-btn-line", "data-key": "select", disabled: true, title: "Settled sessions can't be tagged" }, "Select"),
-        ],
-        tab !== "settled" && [
-          fxSeg(
+        right: [
+          menuButton(
+            "fx-state",
             "State",
-            // A state none of the sessions is in isn't offered, unless it is the one picked.
-            [
-              ["", "All", searched.length],
-              ["need", [h("span", { class: "fx-flag" }), h("span", { class: "fx-seg-word" }, "Needs a look")], searchedNeeds.size],
-              ...["on", "idle", "dnd", "off"].map((st) => [st, [fxDot(st), h("span", { class: "fx-seg-word" }, FX_STATE[st])], count(st)]),
-            ].filter(([v, , n]) => v === "" || n > 0 || v === F.state),
-            F.state,
+            tab === "settled"
+              ? [["", "All", settledShown]]
+              : // A state none of the sessions is in isn't offered, unless it is the one picked.
+                [
+                  ["", "All", searched.length],
+                  ["need", "Needs a look", searchedNeeds.size, h("span", { class: "fx-flag" })],
+                  ...["on", "idle", "dnd", "off"].map((st) => [st, FX_STATE[st], count(st), fxDot(st)]),
+                ].filter(([v, , n]) => v === "" || n > 0 || v === F.state),
+            tab === "settled" ? "" : F.state,
             set("state"),
           ),
-          h("span", { class: "fx-spacer" }),
-          h(
-            "span",
-            { class: "fx-group-by" },
-            h("span", { class: "fx-label" }, "Group by"),
-            fxSeg(
-              "Group by",
-              [["device", "Device"], ["branch", "Branch"], jobs && ["group", "Job"]].filter(Boolean),
-              F.by,
-              set("by"),
-            ),
+          menuButton(
+            "fx-by",
+            "Group",
+            tab === "settled" ? [["device", "Device"]] : [["device", "Device"], ["branch", "Branch"], jobs && ["group", "Job"]].filter(Boolean),
+            tab === "settled" ? "device" : F.by,
+            set("by"),
           ),
-          h(
-            "button",
-            {
-              class: "fx-btn fx-btn-line",
-              "aria-pressed": ui.selecting ? "true" : "false",
-              "data-key": "select",
-              title: ui.selecting ? null : "Pick sessions to tag together",
-              onclick: () => {
-                ui.selecting = !ui.selecting;
-                ui.selected.clear();
-                render();
+          tagMenuButton(),
+          tab !== "settled" &&
+            h(
+              "button",
+              {
+                class: "bar-menu",
+                "aria-pressed": ui.selecting ? "true" : "false",
+                "data-key": "select",
+                title: ui.selecting ? null : "Pick sessions to tag together",
+                onclick: () => {
+                  ui.selecting = !ui.selecting;
+                  ui.selected.clear();
+                  render();
+                },
               },
-            },
-            ui.selecting ? "Done" : "Select",
-          ),
-          ui.selecting && selectBar(pickable),
+              ui.selecting ? "Done" : "Select",
+            ),
+          barSearch("fx-q", "Search sessions", F.q, (v) => {
+            F.q = v;
+            render();
+          }),
         ],
-      ),
+      }),
+      ui.selecting && tab !== "settled" && h("div", { class: "fx-toolbar" }, selectBar(pickable)),
       tab === "settled" ? settledTable(q, F) : fleetTable(rows, needs, sel, { q: F.q.trim(), state: F.state, total: all.length, tab, clear }),
     ),
     sel && h("div", { class: "fx-scrim", "aria-hidden": "true" }),
@@ -2436,8 +2551,9 @@ function fleetFit() {
   if (!split) return;
   const pane = split.querySelector(".fx-pane");
   split.classList.toggle("overlay", !!pane && split.clientWidth - pane.offsetWidth < 760);
-  const bar = split.querySelector(".fx-toolbar");
-  if (bar) split.style.setProperty("--fx-tb", bar.offsetHeight + "px");
+  // The table's head sticks under the page's bar and, while picking, the selection bar.
+  const tops = [split.querySelector(".fx > .bar"), split.querySelector(".fx-toolbar")];
+  split.style.setProperty("--fx-tb", tops.reduce((n, el) => n + (el?.offsetHeight || 0), 0) + "px");
   const table = split.querySelector(".fx-table");
   if (!table) return;
   let widest = 0;
@@ -2571,7 +2687,7 @@ function fleetPane(name) {
 
 // On Conversations, "/" goes to its search, as on All sessions.
 document.addEventListener("keydown", (e) => {
-  if (ui.view !== "messages" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu) return;
+  if (ui.view !== "messages" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu || ui.pickMenu) return;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target?.tagName) || e.target?.isContentEditable) return;
   const box = root.querySelector('[data-key="cq"]');
   if (!box) return;
@@ -2596,7 +2712,7 @@ document.addEventListener("keydown", (e) => {
     root.querySelector('[data-key="fx-msg"]')?.focus();
     return;
   }
-  if (ui.view !== "sessions" || ui.tagMenu || ui.rowMenu || ui.setup || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (ui.view !== "sessions" || ui.tagMenu || ui.rowMenu || ui.pickMenu || ui.setup || e.ctrlKey || e.metaKey || e.altKey) return;
   if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && e.target?.classList?.contains("fx-open")) {
     const more = e.target.closest(".fx-row")?.querySelector(".fx-more");
     if (more) {
@@ -2969,7 +3085,7 @@ function recentPage() {
 }
 
 function recentShell(count, body) {
-  return h("div", { class: "g-page g-recent" }, h("header", { class: "g-page-head" }, h("h1", null, "Recent messages"), count && h("p", null, count)), body);
+  return h("div", { class: "framed" }, pageBar({ title: "Recent messages", meta: count }), h("div", { class: "g-page g-recent" }, body));
 }
 
 // The newest message the reader has had in front of them on Recent, kept across visits.
@@ -3392,6 +3508,18 @@ function tagChips(s, max = Infinity, line = false) {
   );
 }
 
+// The Tag menu in All sessions' bar: the tags in use, each with how many sessions have it.
+function tagMenuButton() {
+  const counts = tagCounts();
+  if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
+  if (!counts.size) return null;
+  const items = [["", "All", null], ...[...counts].sort((a, b) => a[0].localeCompare(b[0])).map(([n, c]) => [n, n, c])];
+  return menuButton("fx-tag", "Tag", items, ui.tagFilter || "", (v) => {
+    ui.tagFilter = v || null;
+    render();
+  });
+}
+
 // The sidebar's Tags: one chip per tag in use, which filters the lists to it.
 function tagsGroup() {
   const counts = tagCounts();
@@ -3791,6 +3919,7 @@ function conversationsPage() {
     "div",
     { class: "page chat-page" },
     // A picked session keeps its header, and so its tags, before it has any messages.
+    conversationsBar(view),
     list.length === 0 && !ui.filter
       ? h("div", { class: "blank" }, noMessages())
       : h(
@@ -3800,6 +3929,43 @@ function conversationsPage() {
           open ? conversationPane(open) : NARROW.matches ? null : h("section", { class: "chat-pane chat-pane-empty", "aria-hidden": "true" }),
         ),
   );
+}
+
+// Conversations' bar: whose conversations they are and how many, the tabs, and the search. On one
+// session's conversations, a way to message it; come from All sessions, a way back.
+function conversationsBar(view) {
+  const { name, kind, count } = view;
+  const f = name && findSession(name);
+  const settled = name && !f && settledSessions().find((r) => r.name === name);
+  return pageBar({
+    lead: ui.backTo && h("button", { class: "g-back", "data-key": "g-back", onclick: () => history.back() }, icon("arrowLeft"), "All sessions"),
+    title: isMyFilter() ? "Your messages" : name || "All conversations",
+    titleTip: f ? f.session.doing : null,
+    meta: settled ? "Settled · " + ago(settled.last || 0) : view.total > 0 || view.q.trim() ? countLine(view) : null,
+    tabs:
+      view.tabs &&
+      barTabs(
+        "Which conversations",
+        [
+          ["all", "All", count("all"), "kind-all"],
+          ["dm", "Direct", count("dm"), "kind-dm"],
+          ["group", "Group", count("group"), "kind-group"],
+        ],
+        kind,
+        (id) => {
+          ui.convKind = id;
+          render();
+        },
+      ),
+    right: [
+      f && h("button", { class: "bar-menu", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
+      (view.total > 0 || view.q.trim()) &&
+        barSearch("cq", "Search conversations", ui.cq, (v) => {
+          ui.cq = v;
+          render();
+        }),
+    ],
+  });
 }
 
 // What the list shows, and the counts that describe it. A conversation counts once it has a
@@ -3945,7 +4111,6 @@ function otherIn(c) {
 function conversationList(list, view) {
   const { name, rows, older, kind, count } = view;
   const q = view.q.trim();
-  const f = name && findSession(name);
   return h(
     "nav",
     {
@@ -3957,31 +4122,6 @@ function conversationList(list, view) {
       },
       onkeydown: chatListKey,
     },
-    h(
-      "div",
-      { class: "g-head" },
-      ui.backTo && h("button", { class: "g-back", "data-key": "g-back", onclick: () => history.back() }, icon("arrowLeft"), "All sessions"),
-      isMyFilter()
-        ? h(
-            "div",
-            { class: "g-head-row" },
-            h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), view.total > 0 && h("p", { class: "g-head-doing" }, countLine(view))),
-          )
-        : name
-        ? [
-            h(
-              "div",
-              { class: "g-head-who" },
-              f ? presence(name, f.device) : avatar(name),
-              h("h2", { class: "truncate" }, name),
-              f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
-            ),
-            f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
-            f && tagsLine(f.session),
-            !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
-          ]
-        : [h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, countLine(view))],
-    ),
     isMyFilter() && view.total > 0 && !ui.lp &&
       h(
         "button",
@@ -4002,51 +4142,9 @@ function conversationList(list, view) {
   );
 }
 
-// The rows, and the search and tabs over them.
+// The rows.
 function listRows(view, rows, older, kind, count, q) {
   return [
-    (view.total > 0 || q) &&
-    h(
-      "label",
-      { class: "g-search" },
-      icon("search"),
-      h("input", {
-        type: "search",
-        placeholder: "Search conversations",
-        "data-key": "cq",
-        value: ui.cq || null,
-        oninput: (e) => {
-          ui.cq = e.target.value;
-          render();
-        },
-      }),
-      !ui.cq && h("kbd", { class: "fx-kbd", "aria-hidden": "true" }, "/"),
-    ),
-    view.tabs &&
-    h(
-      "div",
-      { class: "g-tabs g-kinds", role: "tablist", "aria-label": "Which conversations" },
-      [
-        ["all", "All"],
-        ["dm", "Direct"],
-        ["group", "Group"],
-      ].map(([id, label]) =>
-        h(
-          "button",
-          {
-            role: "tab",
-            "aria-selected": kind === id ? "true" : "false",
-            "data-key": "kind-" + id,
-            onclick: () => {
-              ui.convKind = id;
-              render();
-            },
-          },
-          label,
-          h("span", { class: "g-tab-n" }, count(id)),
-        ),
-      ),
-    ),
     // Over the rows, taking no room, so it moves nothing under the pointer.
     ui.heldNew > 0 &&
       h(
@@ -5636,12 +5734,7 @@ function settingsPage() {
   );
 
   sections.push(versionSection());
-  return h(
-    "div",
-    { class: "page set-page" },
-    h("header", { class: "set-head" }, h("h1", null, "Settings"), self && h("p", null, "For " + (self.host || host(self.id)) + ", this device")),
-    sections,
-  );
+  return h("div", { class: "framed" }, pageBar({ title: "Settings", meta: self && "For " + (self.host || host(self.id)) + ", this device" }), h("div", { class: "page set-page" }, sections));
 }
 
 async function unmute(m, key) {
