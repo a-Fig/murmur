@@ -1607,7 +1607,9 @@ function filterButton(key, sections) {
       },
     },
     "Filter",
-    changed > 0 && h("b", null, "\u00b7 " + changed),
+    // One choice off its default is named ("Filter · Idle"); more are counted ("Filter · 2").
+    changed === 1 && h("b", null, "\u00b7 " + sections.map((s) => s.value !== s.items[0][0] && s.items.find(([v]) => v === s.value)?.[1]).find(Boolean)),
+    changed > 1 && h("b", null, "\u00b7 " + changed),
   );
 }
 
@@ -1874,8 +1876,12 @@ function sessionsPage() {
   // Beside the title: how many, and when a search or a state narrows them, how many of how many.
   let sub;
   if (tab === "settled") sub = plural(settledN, "session") + " ended";
-  else if ((q || F.state) && all.length) sub = ["Showing " + rows.length + " of " + all.length + tagged, rows.length > 0 && [" · ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]];
-  else if (all.length) sub = (tab === "quiet" ? plural(all.length, "quiet session") + tagged + " · idle over a day, or hidden" : all.length + " running" + tagged + " on " + plural(new Set(all.map((r) => r.d.id)).size, "device")) + (hiddenN && tab === "quiet" ? " · " + hiddenN + " hidden" : "");
+  else if ((q || F.state) && all.length) sub = [h("span", { class: "bar-meta-more" }, "Showing "), rows.length + " of " + all.length + tagged, rows.length > 0 && [" · ", h("button", { class: "fx-clear", "data-key": "fx-clear", onclick: clear }, "Clear")]];
+  else if (all.length)
+    sub =
+      tab === "quiet"
+        ? plural(all.length, "quiet session") + tagged + " · idle over a day, or hidden" + (hiddenN ? " · " + hiddenN + " hidden" : "")
+        : [all.length + " running" + tagged, h("span", { class: "bar-meta-more" }, " on " + plural(new Set(all.map((r) => r.d.id)).size, "device"))];
   else sub = "No " + what + "s" + tagged;
   // What a selection can hold: the sessions in front of the person, so a filter, a tab or a shut
   // group leaves none picked out of sight.
@@ -2668,13 +2674,17 @@ function fleetFit() {
   if (paneEl && doingCell) split.style.setProperty("--fx-cut", Math.max(0, document.documentElement.clientWidth - paneEl.offsetWidth - doingCell.getBoundingClientRect().left - 16) + "px");
   else split.style.removeProperty("--fx-cut");
   // One 44px bar: where State, Group and Tag would push the controls to a second row, they fold
-  // into the Filter menu; narrower still, the bar stops wrapping and the count beside the tabs is cut short.
+  // into the Filter menu; narrower still, the bar stops wrapping and the count beside the tabs
+  // loses its devices, and only then is cut short.
   const bar = split.querySelector(".fx > .bar");
   if (bar) {
-    bar.classList.remove("compact", "tight");
+    bar.classList.remove("compact", "tight", "short");
     if (bar.offsetHeight > 50) bar.classList.add("compact");
     if (bar.offsetHeight > 50) bar.classList.add("tight");
     const meta = bar.querySelector(".bar-meta");
+    // A count is never cut mid-word: "on 4 devices" and "Showing" go, and the search narrows, before
+    // the number would be.
+    if (meta && meta.scrollWidth > meta.clientWidth + 1) bar.classList.add("short");
     if (meta) meta.title = meta.scrollWidth > meta.clientWidth ? meta.textContent : "";
   }
   const tops = [split.querySelector(".fx > .bar"), split.querySelector(".fx-toolbar")];

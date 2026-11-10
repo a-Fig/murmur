@@ -6890,3 +6890,28 @@ a.fx-pr:focus-visible,
 .bar.has-facts > :is(.bar-tabs, .g-back) {
   flex: none;
 }
+/* All sessions' count gives up its devices (and "Showing"), and the search narrows, before the
+   count would be cut. */
+.bar.short .bar-meta-more {
+  display: none;
+}
+.bar.short .bar-search {
+  width: 168px;
+}
+/* A waiting row's question is the text that matters most: it takes two lines before it is cut, and
+   its row grows to 52px. Other rows stay one 36px line. */
+.dark .fx-table .fx-row.need {
+  height: auto;
+  min-height: var(--row);
+}
+.dark .fx-table .fx-row.need > .fx-c-doing {
+  padding-block: 6px 5px;
+}
+.dark .fx-table .fx-row.need .fx-c-doing > .fx-need-line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+}
