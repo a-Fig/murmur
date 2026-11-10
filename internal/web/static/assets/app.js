@@ -1561,6 +1561,33 @@ function menuButton(key, label, items, value, onPick) {
   );
 }
 
+// Where the bar has no room for State, Group and Tag side by side, they are one Filter menu, a
+// section each with its value checked: "Filter", or "Filter · 2" when two are not their default.
+function filterButton(key, sections) {
+  const changed = sections.filter((s) => s.value !== s.items[0][0]).length;
+  if (ui.pickMenu?.key === key) ui.pickMenu.sections = sections;
+  const said = sections.map((s) => s.title + " " + (s.items.find(([v]) => v === s.value) || s.items[0])[1]).join(", ");
+  return h(
+    "button",
+    {
+      class: "bar-menu bar-filter",
+      "data-key": key,
+      "aria-haspopup": "menu",
+      "aria-expanded": ui.pickMenu?.key === key ? "true" : "false",
+      "aria-label": "Filter: " + said,
+      title: said,
+      onclick: (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        ui.pickMenu = { key, label: "Filter", sections, x: Math.max(8, Math.min(r.right - 240, innerWidth - 248)), top: r.bottom + 4 };
+        render();
+        (root.querySelector('.pick-menu [aria-checked="true"]') || root.querySelector(".pick-menu [role=menuitemradio]"))?.focus();
+      },
+    },
+    "Filter",
+    changed > 0 && h("b", null, "\u00b7 " + changed),
+  );
+}
+
 function openPickMenu(key, anchor, label, items, value, onPick) {
   const r = anchor.getBoundingClientRect();
   ui.pickMenu = { key, label, items, value, onPick, x: Math.max(8, Math.min(r.left, innerWidth - 248)), top: r.bottom + 4 };
@@ -1602,28 +1629,31 @@ function pickMenu() {
         }
       },
     },
-    m.items.map(([v, label, n, lead]) =>
-      h(
-        "button",
-        {
-          class: "row-menu-item",
-          role: "menuitemradio",
-          "aria-checked": v === m.value ? "true" : "false",
-          tabindex: "-1",
-          "data-key": "pm-" + m.key + "-" + v,
-          onclick: () => {
-            const key = m.key;
-            ui.pickMenu = null;
-            m.onPick(v);
-            root.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+    (m.sections || [{ items: m.items, value: m.value, onPick: m.onPick }]).map((sec, si) => {
+      const items = sec.items.map(([v, label, n, lead], _, all) =>
+        h(
+          "button",
+          {
+            class: "row-menu-item",
+            role: "menuitemradio",
+            "aria-checked": v === sec.value ? "true" : "false",
+            tabindex: "-1",
+            "data-key": "pm-" + m.key + "-" + si + "-" + v,
+            onclick: () => {
+              const key = m.key;
+              ui.pickMenu = null;
+              sec.onPick(v);
+              root.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+            },
           },
-        },
-        h("span", { class: "pm-check", "aria-hidden": "true" }, v === m.value && icon("check")),
-        lead,
-        h("span", { class: "truncate" }, label),
-        n != null && h("span", { class: "pm-n" }, n),
-      ),
-    ),
+          h("span", { class: "pm-check", "aria-hidden": "true" }, v === sec.value && icon("check")),
+          all.some((x) => x[3]) && h("span", { class: "pm-lead", "aria-hidden": "true" }, lead),
+          h("span", { class: "truncate" }, label),
+          n != null && h("span", { class: "pm-n" }, n),
+        ),
+      );
+      return sec.title ? h("div", { class: "pm-sec", role: "group", "aria-label": sec.title }, h("div", { class: "pm-head", "aria-hidden": "true" }, sec.title), items) : items;
+    }),
   );
   menu.style.left = m.x + "px";
   menu.style.top = m.top + "px";
@@ -1799,8 +1829,39 @@ function sessionsPage() {
   const inView = new Set(pickable.map((s) => s.addr));
   for (const a of ui.selected) if (!inView.has(a)) ui.selected.delete(a);
 
-  // The details open in a pane beside the table at every width, as a thread does in Slack: the
-  // table narrows (and drops columns) rather than going away.
+  // State, Group and Tag: three menus, or, where they don't fit beside the title and tabs, the
+  // sections of one Filter menu (fleetFit decides).
+  const stateItems =
+    tab === "settled"
+      ? [["", "All", settledShown]]
+      : // A state none of the sessions is in isn't offered, unless it is the one picked.
+        [
+          ["", "All", searched.length],
+          ["need", "Waiting for a reply", searchedNeeds.size],
+          ...["on", "idle", "dnd", "off"].map((st) => [st, FX_STATE[st], count(st), fxDot(st)]),
+        ].filter(([v, , n]) => v === "" || n > 0 || v === F.state);
+  const tagItems = tagMenuItems();
+  const menus = [
+    { key: "fx-state", title: "State", items: stateItems, value: tab === "settled" ? "" : F.state, onPick: set("state") },
+    {
+      key: "fx-by",
+      title: "Group",
+      items: tab === "settled" ? [["device", "Device"]] : [["device", "Device"], ["branch", "Branch"], jobs && ["group", "Job"]].filter(Boolean),
+      value: tab === "settled" ? "device" : F.by,
+      onPick: set("by"),
+    },
+    tagItems && {
+      key: "fx-tag",
+      title: "Tag",
+      items: tagItems,
+      value: ui.tagFilter || "",
+      onPick: (v) => {
+        ui.tagFilter = v || null;
+        render();
+      },
+    },
+  ].filter(Boolean);
+  // The details open in a pane over the table's right side.
   const split = h(
     "div",
     { class: "fx-split" + (sel ? " has-pane overlay" : "") },
@@ -1826,28 +1887,8 @@ function sessionsPage() {
           },
         ),
         right: [
-          menuButton(
-            "fx-state",
-            "State",
-            tab === "settled"
-              ? [["", "All", settledShown]]
-              : // A state none of the sessions is in isn't offered, unless it is the one picked.
-                [
-                  ["", "All", searched.length],
-                  ["need", "Needs a look", searchedNeeds.size],
-                  ...["on", "idle", "dnd", "off"].map((st) => [st, FX_STATE[st], count(st), fxDot(st)]),
-                ].filter(([v, , n]) => v === "" || n > 0 || v === F.state),
-            tab === "settled" ? "" : F.state,
-            set("state"),
-          ),
-          menuButton(
-            "fx-by",
-            "Group",
-            tab === "settled" ? [["device", "Device"]] : [["device", "Device"], ["branch", "Branch"], jobs && ["group", "Job"]].filter(Boolean),
-            tab === "settled" ? "device" : F.by,
-            set("by"),
-          ),
-          tagMenuButton(),
+          h("span", { class: "bar-menus" }, menus.map((x) => menuButton(x.key, x.title, x.items, x.value, x.onPick))),
+          filterButton("fx-filter", menus),
           barSearch("fx-q", "Search sessions", F.q, (v) => {
             F.q = v;
             render();
@@ -2235,18 +2276,21 @@ function fleetRow(d, s, need, on, F) {
           "data-key": "fl-" + s.name,
           "aria-expanded": on ? "true" : "false",
           "aria-controls": on ? "fx-pane" : null,
-          // Working on, or the wait, read whole on focus, however much of it the cell shows.
-          "aria-describedby": need || s.doing ? "fx-doing-" + s.name : null,
+          // Working on, or the wait, read whole on focus, and shown whole under the row.
+          "aria-describedby": need || s.doing ? "fx-full-" + s.name : null,
           title: [s.name, ...tags].join(" · "),
           onclick: () => (on ? fleetCloseAsked() : fleetOpen(s.name)),
         },
         s.name,
       ),
+      // Where the table is too narrow for Branch: the PR's number, or the branch, short.
+      F.by !== "branch" && (pr || s.branch) && h("span", { class: "fx-who-branch mono", title: s.branch || null }, pr ? "#" + pr.number : s.branch.length > 14 ? s.branch.slice(0, 13) + "\u2026" : s.branch),
       tags.length > 0 && h("span", { class: "fx-tags", title: tags.join(", ") }, tags.join(", ")),
     ),
     h("div", { class: "fx-c fx-c-agent", role: "cell", title: [agentName(s.agent), modelOf(s), dev].filter(Boolean).join(" · ") }, agentName(s.agent) || fxDash(), dev && h("span", { class: "fx-agent-dev" }, " · " + dev)),
     h("div", { class: "fx-c fx-c-state", role: "cell", title: FX_STATE[state] }, fxDot(state), h("span", { class: "fx-state-word" }, FX_STATE[state])),
     h("div", { class: "fx-c fx-c-doing", role: "cell" }, doing),
+    (need || s.doing) && h("div", { class: "fx-full", id: "fx-full-" + s.name, role: "tooltip" }, need ? need.text(waitNote(d, s)) : s.doing),
     F.by === "branch"
       ? h("div", { class: "fx-c fx-c-branch", role: "cell" }, pr ? fxPr(pr) : null)
       : h("div", { class: "fx-c fx-c-branch", role: "cell" }, s.branch ? [h("span", { class: "mono", title: s.branch }, s.branch), pr && fxPr(pr)] : fxDash()),
@@ -2561,6 +2605,16 @@ function fleetFit() {
   const pane = split.querySelector(".fx-pane");
   split.classList.toggle("overlay", !!pane);
   // The table's head sticks under the page's bar and, while picking, the selection bar.
+  // One 44px bar: where State, Group and Tag would push the controls to a second row, they fold
+  // into the Filter menu; narrower still, the bar stops wrapping and the count beside the tabs is cut short.
+  const bar = split.querySelector(".fx > .bar");
+  if (bar) {
+    bar.classList.remove("compact", "tight");
+    if (bar.offsetHeight > 50) bar.classList.add("compact");
+    if (bar.offsetHeight > 50) bar.classList.add("tight");
+    const meta = bar.querySelector(".bar-meta");
+    if (meta) meta.title = meta.scrollWidth > meta.clientWidth ? meta.textContent : "";
+  }
   const tops = [split.querySelector(".fx > .bar"), split.querySelector(".fx-toolbar")];
   split.style.setProperty("--fx-bar", (tops[0]?.offsetHeight || 44) + "px");
   split.style.setProperty("--fx-tb", tops.reduce((n, el) => n + (el?.offsetHeight || 0), 0) + "px");
@@ -2573,7 +2627,11 @@ function fleetFit() {
     const name = c.querySelector(".fx-open");
     if (!name) continue;
     text.selectNodeContents(name);
-    need = Math.max(need, text.getBoundingClientRect().right - c.getBoundingClientRect().left + 1);
+    let right = text.getBoundingClientRect().right;
+    // Where Branch is gone, the short branch beside the name counts as the name does.
+    const br = c.querySelector(".fx-who-branch");
+    if (br?.getClientRects().length) right = br.getBoundingClientRect().left + br.scrollWidth;
+    need = Math.max(need, right - c.getBoundingClientRect().left + 1);
   }
   split.style.setProperty("--fx-who", Math.ceil(need) + "px");
   // Branch is as wide as its widest branch and PR, up to 220px; Working on has all the rest.
@@ -3576,15 +3634,12 @@ function tagChips(s, max = Infinity, line = false) {
 }
 
 // The Tag menu in All sessions' bar: the tags in use, each with how many sessions have it.
-function tagMenuButton() {
+// The Tag menu's choices: All and each tag in use, with its count; none while nothing is tagged.
+function tagMenuItems() {
   const counts = tagCounts();
   if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
   if (!counts.size) return null;
-  const items = [["", "All", null], ...[...counts].sort((a, b) => a[0].localeCompare(b[0])).map(([n, c]) => [n, n, c])];
-  return menuButton("fx-tag", "Tag", items, ui.tagFilter || "", (v) => {
-    ui.tagFilter = v || null;
-    render();
-  });
+  return [["", "All", null], ...[...counts].sort((a, b) => a[0].localeCompare(b[0])).map(([n, c]) => [n, n, c])];
 }
 
 function openTagMenu(addrs, anchor) {

@@ -6603,3 +6603,69 @@ a.fx-pr:focus-visible,
   font-size: 0.8125rem;
   color: var(--text-3);
 }
+/* One 44px bar for All sessions: State, Group and Tag fold into Filter where they'd wrap. */
+.bar-menus {
+  display: contents;
+}
+.bar.compact .bar-menus,
+.bar:not(.compact) .bar-filter {
+  display: none;
+}
+/* Narrower still, the bar stays one row and the count beside the tabs is cut short. */
+.bar.tight {
+  flex-wrap: nowrap;
+}
+.bar.tight > .bar-meta {
+  flex: 0 1 auto;
+}
+.pm-sec + .pm-sec {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.pm-head {
+  padding: 6px 10px 2px;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+}
+/* The short branch beside a session's name, only where the Branch column is gone. */
+.fx-who-branch {
+  display: none;
+  flex: none;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-3);
+}
+@container (max-width: 1099px) {
+  .dark .fx-table .fx-who-branch {
+    display: inline;
+  }
+}
+/* A focused row shows its Working on, or its wait, whole, in a quiet box under that cell. */
+.fx-full {
+  display: none;
+}
+.dark .fx-table .fx-row:has(.fx-open:focus-visible) > .fx-full {
+  display: block;
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 2px);
+  grid-column: 4 / span 2;
+  grid-row: 1;
+  max-width: 560px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--raised);
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 60%);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  white-space: normal;
+  color: var(--text-2);
+}
+@container (max-width: 1099px) {
+  .dark .fx-table .fx-row:has(.fx-open:focus-visible) > .fx-full {
+    grid-column: 3 / span 2;
+  }
+}
