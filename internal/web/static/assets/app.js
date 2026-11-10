@@ -2812,11 +2812,12 @@ function fleetPane(name) {
   return h("aside", { class: "fx-pane" + (enter ? " enter" : ""), id: "fx-pane", "aria-label": "Session " + name }, grip, h("div", { class: "fx-pane-in" }, fleetInspector(name)), paneCompose(name));
 }
 
-// On Conversations, "/" goes to its search, as on All sessions.
+// "/" goes to the page's search from wherever focus is, short of a text field: Your messages'
+// picker's field while it is open, else the bar's search, if it can be used.
 document.addEventListener("keydown", (e) => {
-  if (!["messages", "recent"].includes(ui.view) || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu || ui.pickMenu) return;
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || ui.setup || ui.tagMenu || ui.pickMenu || ui.rowMenu) return;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target?.tagName) || e.target?.isContentEditable) return;
-  const box = root.querySelector(ui.view === "recent" ? '[data-key="rq"]' : '[data-key="cq"]');
+  const box = ['[data-key="lp-q"]', '[data-key="fx-q"]', '[data-key="cq"]', '[data-key="rq"]'].map((s) => root.querySelector(".main " + s)).find((x) => x && !x.disabled);
   if (!box) return;
   e.preventDefault();
   box.focus();
@@ -2848,16 +2849,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape" && e.target?.dataset?.key === "fx-q" && e.target.value) return; // the box clears itself
-  const tag = e.target?.tagName;
-  if (e.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA") {
-    const box = root.querySelector('[data-key="fx-q"]');
-    if (box) {
-      e.preventDefault();
-      box.focus();
-      box.select();
-    }
-    return;
-  }
+  if (e.key === "/") return; // "/" has a handler of its own, for every page
   // From the search box, ↓ or Enter goes to the first row, and ↑ from the first row comes back.
   if ((e.key === "ArrowDown" || e.key === "Enter") && e.target?.dataset?.key === "fx-q") {
     const first = root.querySelector(".fx-open");
@@ -4096,6 +4088,8 @@ function conversationsPage() {
   // Who to talk to (from New message, or before there is any conversation) takes the main pane; the
   // list beside it keeps your conversations, or says there are none yet.
   const picking = isMyFilter() && (!!ui.lp || (!list.length && !view.q.trim()));
+  // With nothing to list, the picker is the page: one way in, not a list saying so beside it.
+  const solo = picking && !list.length;
   return h(
     "div",
     { class: "page chat-page" },
@@ -4103,8 +4097,8 @@ function conversationsPage() {
     conversationsBar(view),
     h(
       "div",
-      { class: "chat" + (open || picking ? " chat-open" : "") },
-      conversationList(list, view),
+      { class: "chat" + (open || picking ? " chat-open" : "") + (solo ? " chat-solo" : "") },
+      !solo && conversationList(list, view),
       picking
         ? h("section", { class: "chat-pane chat-pane-pick" }, listPicker(list.length > 0))
         : open
@@ -4321,7 +4315,7 @@ function conversationList(list, view) {
           "data-key": "new-row",
           "aria-expanded": ui.lp ? "true" : "false",
           onclick: () => {
-            ui.lp = { q: "", index: 0 };
+            ui.lp = { q: "", index: -1 };
             render();
             root.querySelector('[data-key="lp-q"]')?.focus();
           },
@@ -4329,14 +4323,7 @@ function conversationList(list, view) {
         h("span", { class: "g-new-icon", "aria-hidden": "true" }, icon("compose")),
         "New message",
       ),
-    isMyFilter() && !list.length && !q
-      ? h(
-          "div",
-          { class: "g-nomatch" },
-          h("p", null, "You haven’t written to anyone yet."),
-          h("button", { class: "btn btn-outline btn-xs", "data-key": "new-first", onclick: () => root.querySelector('[data-key="lp-q"]')?.focus() }, icon("compose"), "New message"),
-        )
-      : !ui.filter && !list.length && !q
+    !ui.filter && !list.length && !q
         ? h(
             "div",
             { class: "g-nomatch" },
@@ -4347,7 +4334,7 @@ function conversationList(list, view) {
                 class: "btn btn-outline btn-xs",
                 "data-key": "new-first",
                 onclick: () => {
-                  ui.lp = { q: "", index: 0 };
+                  ui.lp = { q: "", index: -1 };
                   openYours();
                   root.querySelector('[data-key="lp-q"]')?.focus();
                 },
@@ -5089,7 +5076,7 @@ function personRow(r, cur, onclick, id) {
 // conversations, and from "New message" once you do (closable). Typing narrows it, the arrow keys
 // move along it, and Enter or a click opens the conversation beside it.
 function listPicker(closable) {
-  const p = (ui.lp ||= { q: "", index: 0 });
+  const p = (ui.lp ||= { q: "", index: -1 }); // nothing highlighted until ↓ or typing
   const close = () => {
     ui.lp = null;
     render();
@@ -5098,7 +5085,7 @@ function listPicker(closable) {
   const all = reachable();
   const q = p.q.trim().toLowerCase();
   const rows = all.filter((r) => matches(r, q));
-  p.index = Math.min(p.index, Math.max(rows.length - 1, 0));
+  p.index = Math.min(p.index, rows.length - 1);
   const move = (to) => {
     p.index = Math.max(0, Math.min(rows.length - 1, to));
     render();
@@ -5128,7 +5115,7 @@ function listPicker(closable) {
           "aria-expanded": "true",
           "aria-controls": "lp-list",
           "aria-autocomplete": "list",
-          "aria-activedescendant": rows.length ? "lp-o-" + p.index : null,
+          "aria-activedescendant": rows[p.index] ? "lp-o-" + p.index : null,
           "aria-labelledby": "lp-title",
           "data-key": "lp-q",
           oninput: (e) => {

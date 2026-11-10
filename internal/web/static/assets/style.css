@@ -6868,3 +6868,7 @@ a.fx-pr:focus-visible,
   opacity: 1;
   color: var(--text-3);
 }
+/* Your messages with no conversations: the picker takes the page. */
+.dark .page.chat-page .chat.chat-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
