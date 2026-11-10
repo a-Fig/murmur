@@ -6800,13 +6800,6 @@ a.fx-pr:focus-visible,
   line-height: 1rem;
   color: #ff8a7a;
 }
-/* Over the composer in a thread between two sessions, at rest: whose it is, where yours goes. */
-.dark .relay-about {
-  margin: 0 0 6px;
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: var(--text-3);
-}
 .bar-search.off {
   opacity: 0.5;
 }
@@ -6877,4 +6870,11 @@ a.fx-pr:focus-visible,
 .dark .set-page .segmented button[aria-pressed="true"] {
   background: #3a3a3a;
   color: #fff;
+}
+.relay-where {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

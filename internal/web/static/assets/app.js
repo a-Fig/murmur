@@ -5299,14 +5299,17 @@ function relayBar(c, running) {
   });
   el.placeholder = "Write to " + to + "…";
   el.setAttribute("aria-label", "Write to " + to + ", in your conversation with it");
-  // Who it goes to: "To solar-wren · Change" inside the composer's top edge; Change opens the
-  // choice of the two (one that has ended is left out), and picking closes it again.
+  // Who it goes to, inside the composer's top edge: "To solar-wren · in your own conversation, not
+  // this thread · Change"; Change opens the choice of the two (one that has ended is left out), and
+  // picking closes it again.
   const chosen = !ui.relayChanging.has(c.key) || running.length < 2;
   const pick = chosen
     ? h(
         "div",
         { class: "relay-who" },
         h("span", null, "To ", h("b", null, to)),
+        h("span", { "aria-hidden": "true" }, "\u00b7"),
+        h("span", { class: "relay-where" }, "in your own conversation, not this thread"),
         running.length > 1 && h("span", { "aria-hidden": "true" }, "\u00b7"),
         running.length > 1 &&
           h(
@@ -5344,11 +5347,7 @@ function relayBar(c, running) {
   return h(
     "div",
     { class: "composer-wrap" },
-    // Over it, at rest, whose thread this is and where what is written goes.
-    downNote() ||
-      sendError(el.dataset.composer) ||
-      relayLine(c) ||
-      h("p", { class: "relay-about" }, "Only " + c.pair.join(" and ") + " write here. What you send goes to your own conversation with " + to + "."),
+    downNote() || sendError(el.dataset.composer) || relayLine(c),
     ui.setup?.inline === el ? nameStep() : h("div", { class: "composer composer-relay" }, pick, el, sendButton(key, el, send)),
   );
 }
