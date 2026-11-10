@@ -547,7 +547,9 @@ function sideOpenSet(d, open) {
 // The foot says who you are here, once you are someone.
 function sidebarFoot() {
   const a = me();
-  if (!a) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null)));
+  // Without a name of one's own (none yet, or one someone else chose first), Settings is a labelled
+  // row: it is where the name is chosen.
+  if (!a || a.taken) return h("div", { class: "sidebar-foot" }, h("ul", { class: "sidebar-menu" }, updateItem(), navButton("settings", "settings", null)));
   const update = updateItem();
   return h(
     "div",

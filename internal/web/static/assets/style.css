@@ -6537,3 +6537,34 @@ a.fx-pr:focus-visible,
 .dark .set-page .row-control > .set-whole {
   margin-left: auto;
 }
+/* P10. The selected page's icon is the same 14px as the rest, so its name doesn't move. */
+.dark .sidebar .all-convs .all-ico,
+.dark .sidebar .all-convs[aria-current="page"] .all-ico {
+  width: 14px;
+  height: 14px;
+}
+/* The pane's facts: a label lines up with its value's first line. */
+.dark .fx-meta dt,
+.dark .fx-meta dd {
+  align-items: flex-start;
+  padding-block: 4px;
+}
+/* Nothing matches: said at the top left of where the rows would be, as Conversations says it. */
+.dark .fx-table .fx-empty {
+  padding: 12px;
+  text-align: left;
+}
+.dark .fx-table .fx-empty .fx-btn {
+  margin: 0;
+}
+.dark .fx-table .fx-empty-title {
+  margin-bottom: 10px;
+}
+/* Faces' initials at the meta size: 12px on a 20px face, 13px on a 28px one. */
+.dark .avatar.avatar.avatar {
+  font-size: 12px !important;
+}
+.dark :is(.chat-msg, .g-item, .chat-head) > .avatar.avatar.avatar,
+.dark .chat-head > :is(.avatar-pair, .g-grid) > .avatar.avatar.avatar {
+  font-size: 13px !important;
+}
