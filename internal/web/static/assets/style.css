@@ -615,7 +615,7 @@ code {
 .segmented button:hover {
   color: var(--foreground);
 }
-.segmented button[aria-pressed="true"] {
+.segmented button[aria-checked="true"] {
   box-shadow: var(--shadow-xs-10);
 }
 .dark .segmented button:hover {
@@ -5944,7 +5944,7 @@ a.fx-pr:focus-visible,
   font-size: 0.75rem;
   color: var(--text-2);
 }
-.dark .segmented button[aria-pressed="true"] {
+.dark .segmented button[aria-checked="true"] {
   background: var(--selected);
   color: var(--text-1);
   font-weight: 500;
@@ -6842,7 +6842,7 @@ a.fx-pr:focus-visible,
 .dark .set-page .segmented {
   background: var(--raised);
 }
-.dark .set-page .segmented button[aria-pressed="true"] {
+.dark .set-page .segmented button[aria-checked="true"] {
   background: #3a3a3a;
   color: #fff;
 }

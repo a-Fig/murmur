@@ -1508,11 +1508,12 @@ function fxDot(st) {
 }
 
 // A segmented control is one stop for Tab, as a radio group is: ←/→, Home and End move along it and
-// pick as they go. An option may carry a tooltip saying what it means.
-function segKeys(e) {
+// pick as they go. An option may carry a tooltip saying what it means. A radio group's ↑/↓ do as
+// ←/→ do.
+function segKeys(e, radio = false) {
   const btns = [...e.currentTarget.querySelectorAll("button")];
   const i = btns.indexOf(document.activeElement);
-  const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: btns.length - 1 }[e.key];
+  const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: btns.length - 1, ...(radio ? { ArrowUp: i - 1, ArrowDown: i + 1 } : {}) }[e.key];
   if (to == null || i < 0) return;
   e.preventDefault();
   const next = btns[Math.max(0, Math.min(btns.length - 1, to))];
@@ -5376,6 +5377,8 @@ function relayBar(c, running) {
             render();
             el.focus({ preventScroll: true });
           },
+          null,
+          "Message privately",
         ),
       );
   return h(
@@ -5561,18 +5564,19 @@ function wakeWords(w) {
   return w.when === "always" ? "Always" : "Never";
 }
 
-// A segmented control, one stop for Tab with the arrow keys moving along it, as in All sessions.
+// A segmented control is a radio group: one stop for Tab, the arrow keys moving along it and picking.
 // One way to be selected: Default, when a setting follows the device's (resolved: what that comes
 // to), is filled like any choice, and says what it comes to after its name, "Default (3 min)".
-function segmented(key, choices, current, pick, resolved) {
+function segmented(key, choices, current, pick, resolved, name) {
   const seg = h(
     "div",
-    { class: "segmented", role: "group", onkeydown: segKeys },
+    { class: "segmented", role: "radiogroup", "aria-label": name || null, onkeydown: (e) => segKeys(e, true) },
     choices.map(([v, label]) =>
       h(
         "button",
         {
-          "aria-pressed": current === v ? "true" : "false",
+          role: "radio",
+          "aria-checked": current === v ? "true" : "false",
           tabindex: current === v ? "0" : "-1",
           "data-key": key + "-" + v,
           title: v === "default" && resolved ? resolved + ", from the device default" : null,
@@ -5588,7 +5592,7 @@ function segmented(key, choices, current, pick, resolved) {
   return seg;
 }
 
-function wakeControl(key, wake, onChange, withDefault) {
+function wakeControl(key, wake, onChange, withDefault, name) {
   const def = ui.settings.defaultMinutes || 3;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
   const current = wake ? wake.when : "default";
@@ -5602,6 +5606,7 @@ function wakeControl(key, wake, onChange, withDefault) {
       onChange(v === "default" ? null : { when: v, minutes: v === "within" ? wake?.minutes || 0 : 0 });
     },
     withDefault && wakeWords(ui.settings.wake),
+    name,
   );
   if (current !== "within") return [seg];
   // Checked and saved when the field is left (or on Enter), not while it is being typed in. Empty
@@ -5648,11 +5653,11 @@ const BUSY_CHOICES = [
   ["whole", "Whole message"],
 ];
 
-function busyControl(key, busy, onChange, withDefault) {
+function busyControl(key, busy, onChange, withDefault, name) {
   const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
   const current = busy || "default";
   const resolved = withDefault && Object.fromEntries(BUSY_CHOICES)[ui.settings.busy || "subject"];
-  return segmented(key, choices, current, (v) => onChange(v === "default" ? null : v), resolved);
+  return segmented(key, choices, current, (v) => onChange(v === "default" ? null : v), resolved, name);
 }
 
 // Settings go to the daemon one request at a time, in order: each PUT is the whole settings, so
@@ -5967,7 +5972,7 @@ function settingsPage() {
         "wake",
         h("span", { class: "set-senior" }, "Device default"),
         "When an idle session may be woken by a message from another session.",
-        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, "wake"), false),
+        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, "wake"), false, "Wake-ups, device default"),
         "",
         true,
       ),
@@ -5994,6 +5999,7 @@ function settingsPage() {
                   saveSettings({ ...ui.settings, sessionWake: next }, "wake-" + s.name);
                 },
                 true,
+                "Wake-ups, " + s.name,
               ),
               "",
               true,
@@ -6007,7 +6013,7 @@ function settingsPage() {
         "busy",
         h("span", { class: "set-senior" }, "Device default"),
         "What a busy Claude Code session sees when a message arrives.",
-        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }, "busy"), false),
+        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }, "busy"), false, "Busy sessions, device default"),
         "",
         true,
       ),
@@ -6040,6 +6046,7 @@ function settingsPage() {
                   saveSettings({ ...ui.settings, sessionBusy: next }, "busy-" + s.name);
                 },
                 true,
+                "Busy sessions, " + s.name,
               ),
               "",
               true,
