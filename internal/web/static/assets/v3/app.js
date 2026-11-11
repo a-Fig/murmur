@@ -5,7 +5,9 @@
 import { icon } from "../icons.js";
 
 const NS = "http://www.w3.org/2000/svg";
-const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+const TOKEN_KEY = "murmur.v3.token";
+const VIEWS = ["messages", "sessions", "settings"];
+let token = "";
 const root = document.getElementById("root");
 
 // ------------------------------------------------------------------------------- DOM helpers.
@@ -98,11 +100,51 @@ function avatar(who, size = "", online = false) {
 
 // ------------------------------------------------------------------------------- API.
 
+// The token arrives once, in the URL fragment, which never reaches a server or a Referer. It is
+// kept for this tab only and taken out of the address bar at once, so it isn't left in history or
+// bookmarks. The rest of the fragment (the view, the conversation) stays.
+function hashWithout(...names) {
+  return location.hash.slice(1).split("&").filter((p) => p && !names.some((n) => p.startsWith(n + "="))).join("&");
+}
+function takeToken() {
+  const tok = location.hash.slice(1).split("&").find((p) => p.startsWith("token="));
+  if (tok) {
+    let value = tok.slice(6);
+    try {
+      value = decodeURIComponent(value);
+    } catch {}
+    try {
+      sessionStorage.setItem(TOKEN_KEY, value);
+    } catch {}
+    history.replaceState(null, "", location.pathname + location.search + "#" + (hashWithout("token") || "messages"));
+    return value;
+  }
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+// A page opened from another repo's page arrives with a one-time key, not the token, and trades it
+// with its own daemon. The key is spent either way, so it leaves the address bar first.
+async function takeKey() {
+  const k = location.hash.slice(1).split("&").find((p) => p.startsWith("key="));
+  if (!k) return;
+  history.replaceState(null, "", location.pathname + location.search + "#" + (hashWithout("key", "theme") || "messages"));
+  try {
+    const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k.slice(4) }), cache: "no-store" });
+    const got = res.ok ? await res.json() : null;
+    if (got?.token) sessionStorage.setItem(TOKEN_KEY, got.token);
+  } catch {}
+}
+
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { Authorization: "Bearer " + token, ...(opts.body ? { "Content-Type": "application/json" } : {}) },
-  });
+  const headers = { Authorization: "Bearer " + token };
+  if (opts.body) headers["Content-Type"] = "application/json";
+  // A tab nobody can see still polls, but mustn't keep the daemon running for good.
+  if (document.hidden) headers["X-Page-Hidden"] = "1";
+  const res = await fetch(path, { ...opts, headers, cache: "no-store" });
   if (res.status === 401) throw Object.assign(new Error("unauthorized"), { status: 401 });
   if (!res.ok) {
     let msg = res.statusText;
@@ -140,7 +182,7 @@ const ui = {
   menu: null, // "repo" | "members"
   dialog: false,
   error: "",
-  draft: "",
+  drafts: {}, // conversation key → what is typed there
 };
 
 function load(k) {
@@ -219,6 +261,18 @@ function lastAt(c) {
 function mine(c) {
   return c.kind === "all" || (c.pair || []).includes(me());
 }
+function pairOf(key) {
+  try {
+    const pair = JSON.parse(key.slice(3));
+    return Array.isArray(pair) && pair.length && pair.every((n) => typeof n === "string") ? pair : null;
+  } catch {
+    return null;
+  }
+}
+function safeConv(key) {
+  if (key === "all" || key.startsWith("device:")) return key;
+  return key.startsWith("dm:") && pairOf(key) ? key : "all";
+}
 function dmKey(a, b) {
   return "dm:" + JSON.stringify([...new Set([a, b])].sort());
 }
@@ -226,7 +280,9 @@ function dmKey(a, b) {
 // ------------------------------------------------------------------------------- Time.
 
 function ago(iso) {
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  const t = Date.parse(iso);
+  if (!t || t < 86400000) return "a while";
+  const s = Math.max(0, (Date.now() - t) / 1000);
   if (s < 60) return "now";
   if (s < 3600) return Math.floor(s / 60) + "m";
   if (s < 86400) return Math.floor(s / 3600) + "h";
@@ -247,19 +303,19 @@ function dayLabel(iso) {
 // ------------------------------------------------------------------------------- Routing.
 
 function go(patch) {
+  if (patch.view === "settings" && ui.view !== "settings") loadSettings();
   Object.assign(ui, { menu: null }, patch);
   const parts = [ui.view];
   if (ui.view === "messages" && ui.conv !== "all") parts.push("c=" + encodeURIComponent(ui.conv));
   if (ui.profile) parts.push("p=" + ui.profile.kind + ":" + encodeURIComponent(ui.profile.name));
-  if (token) parts.push("token=" + encodeURIComponent(token));
   history.replaceState(null, "", "#" + parts.join("&"));
   render();
 }
 function readHash() {
   const q = new URLSearchParams(location.hash.slice(1));
   const first = location.hash.slice(1).split("&")[0];
-  if (["messages", "sessions", "settings"].includes(first)) ui.view = first;
-  if (q.get("c")) ui.conv = q.get("c");
+  if (VIEWS.includes(first)) ui.view = first;
+  if (q.get("c")) ui.conv = safeConv(q.get("c"));
   const p = q.get("p");
   if (p) {
     const [kind, ...rest] = p.split(":");
@@ -653,10 +709,8 @@ function convRow(c) {
 function threadCard() {
   const all = conversations();
   let c = all.find((x) => x.key === ui.conv);
-  if (!c && ui.conv.startsWith("dm:")) {
-    const pair = JSON.parse(ui.conv.slice(3));
-    c = { key: ui.conv, kind: "dm", title: pair.join(" & "), pair, messages: [] };
-  }
+  const pair = !c && ui.conv.startsWith("dm:") && pairOf(ui.conv);
+  if (pair) c = { key: ui.conv, kind: "dm", title: pair.join(" & "), pair, messages: [] };
   if (!c) c = all[0];
   const canSend = c.kind === "all" || (c.pair || []).includes(me());
 
@@ -722,7 +776,7 @@ function threadHead(c) {
 }
 
 function messageList(c) {
-  const box = h("div", { class: "messages", "aria-live": "polite" });
+  const box = h("div", { class: "messages", "aria-live": "polite", "data-key": c.key });
   if (!c.messages.length) {
     const other = (c.pair || []).find((n) => n !== me());
     const x = other && sessionNamed(other);
@@ -751,7 +805,6 @@ function messageList(c) {
     box.append(m.from === me() ? ownMessage(m) : otherMessage(m, cont));
     prev = m;
   }
-  requestAnimationFrame(() => (box.scrollTop = box.scrollHeight));
   return box;
 }
 
@@ -793,20 +846,20 @@ function composer(c) {
     rows: "1",
     placeholder: "Type here...",
     "aria-label": label,
-    value: ui.draft,
+    value: ui.drafts[c.key] || "",
     oninput: (e) => {
-      ui.draft = e.target.value;
+      ui.drafts[c.key] = e.target.value;
       grow(e.target);
-      send.disabled = !ui.draft.trim();
+      send.disabled = !ui.drafts[c.key].trim();
     },
     onkeydown: (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        submit(to, ta);
+        submit(to, c.key);
       }
     },
   });
-  const send = h("button", { class: "send", title: "Send", "aria-label": "Send", disabled: !ui.draft.trim(), onclick: () => submit(to, ta) }, icon("arrowUp"));
+  const send = h("button", { class: "send", title: "Send", "aria-label": "Send", disabled: !(ui.drafts[c.key] || "").trim(), onclick: () => submit(to, c.key) }, icon("arrowUp"));
   requestAnimationFrame(() => grow(ta));
   return h("div", { class: "pill" }, ta, send);
 }
@@ -816,8 +869,8 @@ function grow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
 }
 
-async function submit(to, ta) {
-  const text = ui.draft.trim();
+async function submit(to, key) {
+  const text = (ui.drafts[key] || "").trim();
   if (!text) return;
   const local = {
     id: "local-" + Date.now(),
@@ -830,11 +883,13 @@ async function submit(to, ta) {
     sending: true,
   };
   ui.pending.push(local);
-  ui.draft = "";
+  ui.drafts[key] = "";
   render();
   try {
-    await api("/api/send", { method: "POST", body: JSON.stringify({ to, text }) });
+    const sent = await api("/api/send", { method: "POST", body: JSON.stringify({ to, text }) });
     local.sending = false;
+    local.sentId = sent?.id || "";
+    if (sent?.note) ui.error = sent.note;
     await pollMessages();
   } catch (e) {
     local.sending = false;
@@ -845,6 +900,7 @@ async function submit(to, ta) {
 }
 
 function readonlyBar(c) {
+  if (!c.pair) return h("div", { class: "pill readonly" }, icon("eyeOff"), h("span", { class: "note" }, `A message to every session on ${c.title}. You can read it here.`));
   return h(
     "div",
     { class: "pill readonly" },
@@ -1047,18 +1103,19 @@ function wakeLabel(w) {
 
 let settingsQueue = Promise.resolve();
 let settingsSeq = 0;
+let confirmed = null; // the settings as the daemon last gave them
 function saveSettings(next) {
   const seq = ++settingsSeq;
-  const before = ui.settings;
   ui.settings = next;
   render();
   settingsQueue = settingsQueue.then(async () => {
     try {
       const saved = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
+      if (saved) confirmed = saved;
       if (seq === settingsSeq && saved) ui.settings = saved;
     } catch (e) {
       if (seq === settingsSeq) {
-        ui.settings = before;
+        ui.settings = confirmed || ui.settings;
         ui.error = "Couldn't save: " + e.message;
       }
     }
@@ -1068,7 +1125,7 @@ function saveSettings(next) {
 
 async function loadSettings() {
   try {
-    ui.settings = (await api("/api/settings")) || {};
+    ui.settings = confirmed = (await api("/api/settings")) || {};
   } catch {
     ui.settings = null;
   }
@@ -1301,7 +1358,8 @@ function dialog() {
 // ------------------------------------------------------------------------------- Render.
 
 function renderKeepFocus(el) {
-  const sel = el.tagName.toLowerCase() + (el.getAttribute("aria-label") ? `[aria-label="${el.getAttribute("aria-label")}"]` : el.type === "search" ? "[type=search]" : "");
+  const label = el.getAttribute("aria-label");
+  const sel = el.tagName.toLowerCase() + (label ? `[aria-label="${CSS.escape(label)}"]` : el.type === "search" ? "[type=search]" : "");
   const pos = el.selectionStart;
   render();
   const next = document.querySelector(sel);
@@ -1328,11 +1386,33 @@ function render() {
     ui.menu === "repo" && repoMenu(),
   );
   const scroll = document.querySelector(".conv-scroll")?.scrollTop;
+  const old = document.querySelector(".messages");
+  const sameThread = old && old.dataset.key === ui.conv;
+  const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
+  const oldTop = old?.scrollTop;
   root.replaceChildren(app, ui.dialog ? dialog() : "", ui.error ? h("div", { class: "popover toast", role: "alert" }, ui.error, h("button", { class: "icon-btn", "aria-label": "Dismiss", onclick: () => { ui.error = ""; render(); } }, xIcon())) : "");
   if (scroll != null) {
     const el = document.querySelector(".conv-scroll");
     if (el) el.scrollTop = scroll;
   }
+  const box = document.querySelector(".messages");
+  if (box) box.scrollTop = !sameThread || atBottom ? box.scrollHeight : oldTop;
+  markRead();
+}
+
+// What you open is read: the messages to you in the open conversation, while the tab is seen.
+const readSent = new Set();
+function markRead() {
+  if (document.hidden || ui.view !== "messages" || !ui.state) return;
+  const unread = new Set(ui.state.account?.unread || []);
+  if (!unread.size) return;
+  const c = conversations().find((x) => x.key === ui.conv);
+  const ids = (c?.messages || []).map((m) => m.id).filter((id) => unread.has(id) && !readSent.has(id));
+  if (!ids.length) return;
+  for (const id of ids) readSent.add(id);
+  api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch(() => {
+    for (const id of ids) readSent.delete(id);
+  });
 }
 
 function gate(text) {
@@ -1357,20 +1437,27 @@ async function pollMessages() {
   for (const m of r.messages || []) {
     if (seen.has(m.id)) continue;
     ui.messages.push(m);
-    // The bus echoes a sent message back; drop the bubble that stood in for it.
-    const i = ui.pending.findIndex((p) => !p.sending && !p.failed && p.from === m.from && p.body.trim() === (m.body || "").trim());
-    if (i >= 0) ui.pending.splice(i, 1);
   }
+  // The bus echoes a sent message back under the id the send returned; drop the bubble that stood
+  // in for it.
+  const have = new Set(ui.messages.map((m) => m.id));
+  ui.pending = ui.pending.filter((p) => !(p.sentId && have.has(p.sentId)));
   ui.cursor = r.cursor || ui.cursor;
 }
 
+function signature() {
+  return ui.messages.length + "|" + ui.pending.length + "|" + JSON.stringify(ui.state);
+}
+
 async function tick() {
-  const busy = document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
   try {
-    const before = ui.messages.length + JSON.stringify(ui.state?.devices || []).length;
+    const before = signature();
     await Promise.all([pollState(), pollMessages()]);
-    const after = ui.messages.length + JSON.stringify(ui.state?.devices || []).length;
-    if (before !== after && !busy && !ui.dialog) render();
+    if (signature() !== before && !ui.addingTag) {
+      const el = document.activeElement;
+      if (el && ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && el.getAttribute("aria-label")) renderKeepFocus(el);
+      else render();
+    }
   } catch (e) {
     if (e.status === 401) return gate("This page's key has expired. Run mur ui again to open a fresh one.");
   }
@@ -1383,6 +1470,9 @@ document.addEventListener("keydown", (e) => {
     else if (ui.menu) go({});
   }
 });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) markRead();
+});
 document.addEventListener("click", () => {
   if (ui.menu) go({});
 });
@@ -1390,6 +1480,8 @@ document.addEventListener("click", () => {
 async function start() {
   ui.theme = resolveTheme(ui.themePref);
   document.documentElement.dataset.theme = ui.theme;
+  await takeKey();
+  token = takeToken();
   if (!token) return gate("This page needs its key. Run mur ui in the repo to open it.");
   readHash();
   try {
