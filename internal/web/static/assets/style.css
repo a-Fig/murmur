@@ -414,7 +414,7 @@
   --foreground: var(--v-cream-100);
   --card: var(--v-navy-700);
   --popover: var(--v-navy-700);
-  --primary: var(--v-blue-500);
+  --primary: var(--v-blue-700); /* cream on blue/500 is 3.4:1, on blue/700 5.7:1 */
   --primary-foreground: var(--v-cream-100);
   --secondary: var(--v-navy-700);
   --secondary-foreground: var(--v-cream-100);
@@ -4053,9 +4053,15 @@ a.g-pr:hover {
     backdrop-filter: blur(24px) saturate(1.2);
     pointer-events: none;
   }
-  [data-theme="cream"] .main:not(:has(.content-chat)) > *,
-  [data-theme="night"] .main:not(:has(.content-chat)) > * {
+  [data-theme="cream"] .main:not(:has(.content-chat)) > .topbar,
+  [data-theme="night"] .main:not(:has(.content-chat)) > .topbar {
     position: relative;
+    z-index: 2;
+  }
+  [data-theme="cream"] .main:not(:has(.content-chat)) > .content,
+  [data-theme="night"] .main:not(:has(.content-chat)) > .content {
+    position: relative;
+    z-index: 1;
   }
   [data-theme="cream"] .main:not(:has(.content-chat)) > .topbar,
   [data-theme="night"] .main:not(:has(.content-chat)) > .topbar {
@@ -4101,7 +4107,20 @@ a.g-pr:hover {
   color: inherit;
   text-decoration: underline;
 }
+[data-theme="cream"] .chat-msg-own > .chat-bubble strong,
+[data-theme="night"] .chat-msg-own > .chat-bubble strong {
+  color: inherit;
+}
+[data-theme="cream"] .chat-msg-own > .chat-bubble :is(pre, code),
+[data-theme="night"] .chat-msg-own > .chat-bubble :is(pre, code) {
+  background: rgb(5 34 77 / 28%);
+  color: inherit;
+}
 /* On navy, the navy cats would vanish into the page: a faint cream ring keeps every circle whole. */
+/* Cats that overlap (a pile of members, a pair) keep a ring of the ground between them. */
+.g-pile .avatar.avatar-cat > img {
+  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
+}
 [data-theme="night"] .avatar-cat > img {
   outline: 1px solid rgb(255 253 244 / 22%);
   outline-offset: -1px;

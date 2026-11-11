@@ -2447,8 +2447,6 @@ function draftConversation() {
   return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
-// The same name always gets the same color. The classes are in style.css: the page's content
-// policy doesn't allow an inline style.
 // A person's face is their initial in a circle. An agent's is one of the 189 cats in assets/cats
 // (7 tones × 9 faces × 3 coats, cut from the Figma file "murmur"), picked from its name so it is
 // the same on every screen and every machine. The pick is the Figma gallery's: FNV-1a with a mix
