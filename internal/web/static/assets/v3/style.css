@@ -1917,8 +1917,16 @@ p {
   gap: 2px;
 }
 .profile .who h2 {
+  display: block;
+  overflow: hidden;
   font-size: 20px;
   line-height: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile .who h2 .chip {
+  margin-left: 6px;
+  vertical-align: 3px;
 }
 .chip.human {
   padding: 2px 8px;
@@ -2058,6 +2066,16 @@ p {
   flex-wrap: nowrap;
   white-space: nowrap;
   overflow: hidden;
+}
+/* On one line as drawn: a long branch name gives way, the PR chip doesn't. */
+.profile .meta > * {
+  flex-shrink: 0;
+}
+.profile .meta > .branch-name {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Rail ("v3 · Collapsed left panel"). */

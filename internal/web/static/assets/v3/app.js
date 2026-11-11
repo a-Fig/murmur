@@ -639,7 +639,7 @@ function profileHead(p) {
         { class: "meta" },
         [x.agent, modelOf(x)].filter(Boolean).join(" · ") + " ·",
         icon("branch"),
-        x.branch || "no branch",
+        h("span", { class: "branch-name" }, x.branch || "no branch"),
         pr && h("span", { class: "pr-chip" }, "#" + pr.number + (pr.draft ? " draft" : "")),
       ),
     x &&
