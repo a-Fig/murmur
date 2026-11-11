@@ -1854,21 +1854,6 @@ p {
   max-width: 420px;
   color: var(--text-2);
 }
-@media (max-width: 900px) {
-  .app,
-  .app.collapsed {
-    grid-template-columns: 72px minmax(0, 1fr);
-  }
-  .app:not(.full) .convs {
-    display: none;
-  }
-  .app.picking .thread {
-    display: none;
-  }
-  .app.picking .convs {
-    display: flex;
-  }
-}
 
 .toast {
   position: fixed;
@@ -2379,4 +2364,199 @@ p {
 }
 [data-theme="dark"] .tag-add {
   border-color: rgb(255 253 244 / 20%);
+}
+
+/* =========================================================================== Smaller screens.
+ * The frames are drawn at 1440x900. Narrower, the page keeps their look and gives way in steps:
+ * under 1200px a session card puts its branch under its name; under 900px the sidebar is the
+ * rail, opening over the page as a drawer, and Messages shows the list or the thread; under
+ * 600px the gutters and corners shrink, and rows stack. */
+
+@media (max-width: 1199px) {
+  .scard {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "av who pr state"
+      "av branch chats state";
+    column-gap: 16px;
+    row-gap: 4px;
+  }
+  .scard > :first-child {
+    grid-area: av;
+  }
+  .scard .who {
+    grid-area: who;
+    min-width: 0;
+  }
+  .scard .branch {
+    grid-area: branch;
+    width: auto;
+  }
+  .scard .pr {
+    grid-area: pr;
+    width: auto;
+    justify-self: end;
+  }
+  .scard .chats {
+    grid-area: chats;
+    width: auto;
+    justify-self: end;
+  }
+  .scard .state {
+    grid-area: state;
+  }
+  .thread-head .sub,
+  .msg .head {
+    flex-wrap: wrap;
+    row-gap: 0;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 899px) {
+  .app,
+  .app.collapsed,
+  .app.full,
+  .app.collapsed.full {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+  .app.pane-list .thread,
+  .app.pane-thread .convs {
+    display: none;
+  }
+  .app.narrow.full .convs {
+    display: none;
+  }
+  .drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: var(--scrim);
+  }
+  .app.narrow > .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 41;
+    width: min(268px, 86vw);
+    box-shadow: 8px 0 32px rgb(0 0 0 / 25%);
+  }
+  .back-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    margin-left: -8px;
+    border-radius: 10px;
+    color: var(--text);
+  }
+  .back-btn:hover {
+    background: var(--chip);
+  }
+  .back-btn .icon {
+    width: 18px;
+    height: 18px;
+    transform: scaleX(-1);
+  }
+  .sessions-head {
+    flex-wrap: wrap;
+  }
+  .sessions-head > :first-child {
+    flex: 1 0 100%;
+  }
+  .sessions-head .filter {
+    flex: 1 1 220px;
+  }
+  .srow {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .srow > :first-child {
+    flex: 1 1 260px;
+  }
+}
+
+@media (max-width: 599px) {
+  :root {
+    --gap: 8px;
+    --edge-gap: 8px;
+    --card-radius: 24px;
+  }
+  .app,
+  .app.collapsed,
+  .app.full,
+  .app.collapsed.full {
+    grid-template-columns: 60px minmax(0, 1fr);
+    padding-right: 8px;
+  }
+  .rail .rail-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .rail-mark img {
+    width: 44px;
+  }
+  .page,
+  .settings-page {
+    padding: 20px 16px 24px;
+  }
+  .thread-head {
+    padding-left: 16px;
+    padding-right: 14px;
+  }
+  .messages {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .composer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .scard {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "av who state"
+      "av branch branch";
+    column-gap: 12px;
+    padding: 12px;
+  }
+  .scard .pr,
+  .scard .chats {
+    display: none;
+  }
+  .srow .seg {
+    flex-wrap: wrap;
+  }
+  /* A card: the name and the state on top, then what it is doing, then its branch. */
+  .scard {
+    grid-template-areas:
+      "av top top"
+      "av doing doing"
+      "av branch state";
+  }
+  .scard .who {
+    display: contents;
+  }
+  .scard .top {
+    grid-area: top;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .scard .top .agent {
+    display: none;
+  }
+  .scard .doing {
+    grid-area: doing;
+    min-width: 0;
+  }
+  .pill.readonly {
+    flex-wrap: wrap;
+    padding: 12px;
+    border-radius: 20px;
+  }
+  .pill.readonly .note {
+    flex: 1 1 calc(100% - 40px);
+  }
 }

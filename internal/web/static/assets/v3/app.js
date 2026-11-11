@@ -6,6 +6,7 @@ import { icon } from "../icons.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const TOKEN_KEY = "murmur.v3.token";
+const NARROW = matchMedia("(max-width: 899px)");
 const VIEWS = ["messages", "sessions", "settings"];
 let token = "";
 const root = document.getElementById("root");
@@ -170,6 +171,11 @@ const ui = {
   tab: "all", // all | direct | mine
   query: "",
   collapsed: load("v3.collapsed") === "1",
+  // Under 900px the sidebar folds to the rail and opens over the page as a drawer, and Messages
+  // shows the list or the thread, not both.
+  narrow: NARROW.matches,
+  pane: "list", // "list" | "thread", on narrow screens
+  drawer: false,
   themePref: load("v3.theme") || "system", // light | dark | system
   theme: "light", // what themePref comes to now
   settings: undefined, // the daemon's settings, once loaded
@@ -304,7 +310,7 @@ function dayLabel(iso) {
 
 function go(patch) {
   if (patch.view === "settings" && ui.view !== "settings") loadSettings();
-  Object.assign(ui, { menu: null }, patch);
+  Object.assign(ui, { menu: null, drawer: false }, patch);
   const parts = [ui.view];
   if (ui.view === "messages" && ui.conv !== "all") parts.push("c=" + encodeURIComponent(ui.conv));
   if (ui.profile) parts.push("p=" + ui.profile.kind + ":" + encodeURIComponent(ui.profile.name));
@@ -326,7 +332,12 @@ function readHash() {
 // ------------------------------------------------------------------------------- Sidebar.
 
 function sidebar() {
+  if (ui.narrow) return [rail(), ui.drawer && h("div", { class: "drawer-scrim", onclick: () => go({}) }), ui.drawer && fullSidebar()];
   if (ui.collapsed) return rail();
+  return fullSidebar();
+}
+
+function fullSidebar() {
   const s = ui.state;
   const unread = (s.account?.unread || []).length;
   const devices = (s.devices || []).filter((d) => (d.sessions || []).length);
@@ -454,8 +465,8 @@ function rail() {
   return h(
     "aside",
     { class: "rail" },
-    h("button", { class: "rail-mark", title: "Expand sidebar", "aria-label": "Expand sidebar", onclick: () => setCollapsed(false) }, h("img", { src: `/assets/v3/mark-${ui.theme === "dark" ? "cream" : "blue"}.svg`, alt: "" })),
-    btn("Messages", ui.view === "messages" && !ui.profile, () => go({ view: "messages", profile: null }), icon("message"), unread ? h("span", { class: "badge" }, unread) : null),
+    h("button", { class: "rail-mark", title: "Expand sidebar", "aria-label": "Expand sidebar", onclick: () => (ui.narrow ? go({ drawer: true }) : setCollapsed(false)) }, h("img", { src: `/assets/v3/mark-${ui.theme === "dark" ? "cream" : "blue"}.svg`, alt: "" })),
+    btn("Messages", ui.view === "messages" && !ui.profile, () => go({ view: "messages", profile: null, pane: "list" }), icon("message"), unread ? h("span", { class: "badge" }, unread) : null),
     btn("Sessions", ui.view === "sessions", () => go({ view: "sessions", profile: null }), icon("users")),
     h("div", { class: "rule" }),
     h(
@@ -471,6 +482,7 @@ function rail() {
 }
 
 function setCollapsed(v) {
+  if (ui.narrow) return go({ drawer: false });
   ui.collapsed = v;
   save("v3.collapsed", v ? "1" : "0");
   render();
@@ -480,7 +492,7 @@ function openProfile(kind, name) {
   const latest = conversations()
     .filter((c) => (c.pair || []).includes(name))
     .sort((a, b) => lastAt(b) - lastAt(a))[0];
-  go({ view: "messages", profile: { kind, name }, conv: latest ? latest.key : dmKey(me(), name), query: "" });
+  go({ view: "messages", profile: { kind, name }, conv: latest ? latest.key : dmKey(me(), name), query: "", pane: "list" });
 }
 
 // Whose side a conversation row is told from: the open profile's, else yours.
@@ -693,7 +705,7 @@ function convRow(c) {
   const preview = last ? (last.from === me() ? "you" : last.from) + ": " + (last.subject || last.body) : "Everyone in the repo";
   return h(
     "button",
-    { class: "row conv-row" + (c.kind === "all" && !ui.profile ? " pinned" : "") + (on && (c.kind !== "all" || ui.profile) ? " on" : ""), onclick: () => go({ conv: c.key }) },
+    { class: "row conv-row" + (c.kind === "all" && !ui.profile ? " pinned" : "") + (on && (c.kind !== "all" || ui.profile) ? " on" : ""), onclick: () => go({ conv: c.key, pane: "thread" }) },
     face,
     h(
       "span",
@@ -717,11 +729,16 @@ function threadCard() {
   return h(
     "section",
     { class: "card thread" },
-    threadHead(c),
+    withBack(threadHead(c)),
     messageList(c),
     h("div", { class: "composer" }, canSend ? composer(c) : readonlyBar(c)),
     ui.menu === "members" && membersPopover(),
   );
+}
+
+function withBack(head) {
+  if (ui.narrow) head.prepend(h("button", { class: "back-btn", title: "Conversations", "aria-label": "Back to conversations", onclick: () => go({ pane: "list" }) }, icon("chevronRight")));
+  return head;
 }
 
 function threadHead(c) {
@@ -1380,7 +1397,7 @@ function render() {
   else main.push(settingsPage());
   const app = h(
     "div",
-    { class: ["app", ui.collapsed && "collapsed", ui.view !== "messages" && "full"].filter(Boolean).join(" ") },
+    { class: ["app", ui.collapsed && "collapsed", ui.view !== "messages" && "full", ui.narrow && "narrow pane-" + ui.pane].filter(Boolean).join(" ") },
     sidebar(),
     main,
     ui.menu === "repo" && repoMenu(),
@@ -1469,6 +1486,11 @@ document.addEventListener("keydown", (e) => {
     if (ui.dialog) closeDialog();
     else if (ui.menu) go({});
   }
+});
+NARROW.addEventListener("change", () => {
+  ui.narrow = NARROW.matches;
+  ui.drawer = false;
+  render();
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) markRead();
