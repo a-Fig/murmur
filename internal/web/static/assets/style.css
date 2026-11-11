@@ -313,160 +313,6 @@
   --scrollbar-thumb-hover: rgb(255 251 234 / 22%);
 }
 
-/*
- * Cream and Night: the v3 design in the Figma file "murmur" (page "mur ui"), light and dark, set in
- * Rubik with the file's palette. The sidebar sits on the page; the conversation list, the
- * conversation and the other pages are frosted cards over a soft wash of butter and blue. Cream is
- * the default theme.
- */
-@font-face {
-  font-family: "Rubik Variable";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 300 900;
-  src: url("/assets/fonts/rubik-latin-wght-normal.woff2") format("woff2-variations");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
-    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-:root[data-theme="cream"],
-:root[data-theme="night"] {
-  --v-cream-100: #fffdf4;
-  --v-cream-200: #fbf5de;
-  --v-cream-250: #f7efd2;
-  --v-cream-300: #efe7c7;
-  --v-butter-300: #fff6c2;
-  --v-butter-500: #ffef8c;
-  --v-blue-300: #9ccbf3;
-  --v-blue-500: #258ee3;
-  --v-blue-700: #1767b0;
-  --v-navy-500: #3a4f73;
-  --v-navy-700: #1a3560;
-  --v-navy-900: #05224d;
-  --font-sans: "Rubik Variable", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-  --v-card-radius: 1.75rem;
-}
-:root[data-theme="cream"] {
-  color-scheme: light;
-  --background: var(--v-cream-100);
-  --foreground: var(--v-navy-900);
-  --card: #fffef9;
-  --popover: #fffef9;
-  --primary: var(--v-blue-700);
-  --primary-foreground: var(--v-cream-100);
-  --secondary: var(--v-cream-250);
-  --secondary-foreground: var(--v-navy-900);
-  --muted: var(--v-cream-200);
-  --muted-foreground: var(--v-navy-500); /* 7.9:1 on cream */
-  --secondary-label: var(--v-navy-500);
-  --placeholder: var(--v-navy-500);
-  --message-surface: var(--v-blue-700); /* cream on it is 5.7:1; on blue/500 it would be 3.4:1 */
-  --accent: rgb(5 34 77 / 6%);
-  --accent-foreground: var(--v-navy-900);
-  --destructive: var(--red-500);
-  --destructive-foreground: oklch(48% 0.2 27.518);
-  --border: rgb(5 34 77 / 10%);
-  --input: rgb(5 34 77 / 18%);
-  --ring: var(--v-blue-500);
-  --info: var(--v-blue-500);
-  --info-foreground: var(--v-blue-700);
-  --success: oklch(57% 0.145 163.225);
-  --success-foreground: oklch(44% 0.118 165.612);
-  --warning: oklch(53% 0.163 48.998);
-  --warning-foreground: oklch(45% 0.163 48.998);
-  --pr-open: oklch(47% 0.118 165.612);
-  --pr-draft: var(--v-navy-500);
-  --row-hover: rgb(5 34 77 / 5%);
-  --row-selected: var(--v-butter-500);
-  --composer: var(--v-cream-250);
-  --composer-edge: rgb(5 34 77 / 6%);
-  --scrollbar-thumb: rgb(5 34 77 / 14%);
-  --scrollbar-thumb-hover: rgb(5 34 77 / 24%);
-  --scrim: rgb(5 34 77 / 35%);
-  --shadow-xs-5: 0 1px 2px 0 rgb(5 34 77 / 6%);
-  --shadow-xs-10: 0 1px 2px 0 rgb(5 34 77 / 12%);
-  --shadow-popover: 0 16px 40px -18px rgb(5 34 77 / 30%);
-  --shadow-dialog: 0 24px 64px -24px rgb(5 34 77 / 38%);
-  --edge: color-mix(in oklab, var(--foreground) 50%, transparent);
-  --dot-off: var(--muted-foreground);
-  --v-glass: rgb(255 255 255 / 74%);
-  --v-glass-edge: rgb(255 255 255 / 90%);
-  --v-glass-shadow: 0 18px 48px -24px rgb(5 34 77 / 28%);
-  --v-wash:
-    radial-gradient(60% 55% at 85% 0%, rgb(156 203 243 / 75%), transparent 70%),
-    radial-gradient(55% 50% at 20% 100%, rgb(255 239 140 / 85%), transparent 70%),
-    radial-gradient(45% 45% at 100% 90%, rgb(156 203 243 / 60%), transparent 70%);
-}
-[data-theme="cream"] [data-app-sidebar] {
-  --sidebar: var(--v-cream-100);
-  --sidebar-foreground: var(--v-navy-900);
-  --sidebar-muted-foreground: var(--v-navy-500);
-  --sidebar-row-hover: rgb(5 34 77 / 5%);
-  --sidebar-row-active: var(--v-butter-500);
-  --sidebar-row-selected: var(--v-butter-300);
-  --sidebar-border: transparent;
-  --sidebar-icon: var(--v-navy-500);
-  --secondary-label: var(--v-navy-500);
-}
-:root[data-theme="night"] {
-  color-scheme: dark;
-  --background: var(--v-navy-900);
-  --foreground: var(--v-cream-100);
-  --card: var(--v-navy-700);
-  --popover: var(--v-navy-700);
-  --primary: var(--v-blue-700); /* cream on blue/500 is 3.4:1, on blue/700 5.7:1 */
-  --primary-foreground: var(--v-cream-100);
-  --secondary: var(--v-navy-700);
-  --secondary-foreground: var(--v-cream-100);
-  --muted: var(--v-navy-700);
-  --muted-foreground: var(--v-blue-300); /* 8.6:1 on navy/900 */
-  --secondary-label: var(--v-blue-300);
-  --placeholder: var(--v-blue-300);
-  --message-surface: var(--v-blue-700);
-  --accent: rgb(255 253 244 / 7%);
-  --accent-foreground: var(--v-cream-100);
-  --destructive: color-mix(in srgb, var(--red-500) 90%, var(--white));
-  --destructive-foreground: var(--red-400);
-  --border: rgb(255 253 244 / 10%);
-  --input: rgb(255 253 244 / 18%);
-  --ring: var(--v-blue-500);
-  --info: var(--v-blue-500);
-  --info-foreground: var(--v-blue-300);
-  --success: var(--emerald-500);
-  --success-foreground: var(--emerald-400);
-  --warning: var(--amber-500);
-  --warning-foreground: var(--amber-400);
-  --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
-  --pr-draft: var(--v-blue-300);
-  --row-hover: rgb(255 253 244 / 6%);
-  --row-selected: var(--v-blue-700);
-  --composer: var(--v-navy-700);
-  --composer-edge: rgb(255 253 244 / 8%);
-  --scrollbar-thumb: rgb(255 253 244 / 14%);
-  --scrollbar-thumb-hover: rgb(255 253 244 / 22%);
-  --scrim: rgb(0 0 0 / 55%);
-  --edge: color-mix(in oklab, var(--foreground) 45%, transparent);
-  --dot-off: color-mix(in oklab, var(--v-blue-300) 80%, transparent);
-  --v-glass: rgb(26 53 96 / 72%);
-  --v-glass-edge: rgb(255 253 244 / 8%);
-  --v-glass-shadow: 0 18px 48px -24px rgb(0 0 0 / 60%);
-  --v-wash:
-    radial-gradient(60% 55% at 85% 0%, rgb(37 142 227 / 45%), transparent 70%),
-    radial-gradient(55% 50% at 20% 100%, rgb(23 103 176 / 55%), transparent 70%),
-    radial-gradient(45% 45% at 100% 90%, rgb(37 142 227 / 35%), transparent 70%);
-}
-[data-theme="night"] [data-app-sidebar] {
-  --sidebar: var(--v-navy-900);
-  --sidebar-foreground: var(--v-cream-100);
-  --sidebar-muted-foreground: var(--v-blue-300);
-  --sidebar-row-hover: rgb(255 253 244 / 6%);
-  --sidebar-row-active: var(--v-blue-700);
-  --sidebar-row-selected: rgb(23 103 176 / 55%);
-  --sidebar-border: transparent;
-  --sidebar-icon: var(--v-blue-300);
-  --secondary-label: var(--v-blue-300);
-}
-
 /* Base. */
 *,
 ::before,
@@ -3541,9 +3387,9 @@ a.g-pr:hover {
 
 /* ============================================================================ Faces. */
 
-/* A name's face, round, with its state as a dot on its corner (green active, amber idle, red do not
- * disturb, grey offline): an agent's cat (avatar-cat, below) or a person's initial. The cat carries
- * who is who across the sidebar, the list and the timeline. */
+/* A name's face: a round, colored initial, the color fixed by the name, with its state as a dot on
+ * its corner (green active, amber idle, red do not disturb, grey offline). The colors carry who is
+ * who across the sidebar, the list and the timeline. */
 .avatar {
   border-radius: 999px;
   box-shadow: none;
@@ -3551,30 +3397,26 @@ a.g-pr:hover {
   font-weight: 600;
 }
 /* Two classes, so a face keeps its color where a list, pile or menu sets a neutral background. */
+.avatar.avatar-0,
 .avatar.avatar-person {
   background: #5865c9;
+}
+.avatar.avatar-1 {
+  background: #2f9e6e;
+}
+.avatar.avatar-2 {
+  background: #c98a2b;
+}
+.avatar.avatar-3 {
+  background: #c4505a;
+}
+.avatar.avatar-4 {
+  background: #6b7280;
 }
 .pres-wrap > .pres,
 .avatar.dotted > .pres {
   width: 0.625rem;
   height: 0.625rem;
-}
-/* An agent's cat: the circle is in the picture, so the face itself draws nothing. */
-.avatar.avatar-cat,
-.avatar-pair > .avatar.avatar-cat {
-  background: none;
-  box-shadow: none;
-  border-radius: 999px;
-}
-.avatar-cat > img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: 999px;
-  pointer-events: none;
-}
-.avatar-pair > .avatar.avatar-cat > img {
-  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
 }
 .avatar-pair {
   width: 2.25rem;
@@ -4022,106 +3864,4 @@ a.g-pr:hover {
   .dots i {
     animation: none;
   }
-}
-
-/* =============================================================================== Cream and Night. */
-
-/* The v3 layout: the sidebar on the page, everything else on frosted cards over the wash. The cards
- * stop at the mobile width, where the panes stack and a card's margin would only cost room. */
-@media (min-width: 768px) {
-  [data-theme="cream"] .sidebar,
-  [data-theme="night"] .sidebar {
-    background-image: none;
-    border-right: 0;
-  }
-  [data-theme="cream"] .main,
-  [data-theme="night"] .main {
-    padding: 0.875rem 0.875rem 0.875rem 0;
-    background: var(--v-wash), var(--background);
-    --dot-ring: var(--card);
-  }
-  /* A page that isn't the conversations sits on one card, drawn behind its top bar and content. */
-  [data-theme="cream"] .main:not(:has(.content-chat))::before,
-  [data-theme="night"] .main:not(:has(.content-chat))::before {
-    content: "";
-    position: absolute;
-    inset: 0.875rem 0.875rem 0.875rem 0;
-    border: 1px solid var(--v-glass-edge);
-    border-radius: var(--v-card-radius);
-    background: var(--v-glass);
-    box-shadow: var(--v-glass-shadow);
-    backdrop-filter: blur(24px) saturate(1.2);
-    pointer-events: none;
-  }
-  [data-theme="cream"] .main:not(:has(.content-chat)) > .topbar,
-  [data-theme="night"] .main:not(:has(.content-chat)) > .topbar {
-    position: relative;
-    z-index: 2;
-  }
-  [data-theme="cream"] .main:not(:has(.content-chat)) > .content,
-  [data-theme="night"] .main:not(:has(.content-chat)) > .content {
-    position: relative;
-    z-index: 1;
-  }
-  [data-theme="cream"] .main:not(:has(.content-chat)) > .topbar,
-  [data-theme="night"] .main:not(:has(.content-chat)) > .topbar {
-    border-bottom-color: transparent;
-    padding: 0 1.75rem;
-  }
-  [data-theme="cream"] .chat,
-  [data-theme="night"] .chat {
-    grid-template-columns: 21rem minmax(0, 1fr);
-    gap: 1rem;
-  }
-  [data-theme="cream"] .chat-list,
-  [data-theme="night"] .chat-list,
-  [data-theme="cream"] .chat-pane,
-  [data-theme="night"] .chat-pane {
-    border: 1px solid var(--v-glass-edge);
-    border-radius: var(--v-card-radius);
-    background: var(--v-glass);
-    box-shadow: var(--v-glass-shadow);
-    backdrop-filter: blur(24px) saturate(1.2);
-  }
-  [data-theme="cream"] .chat-list,
-  [data-theme="night"] .chat-list {
-    padding: 0.5rem 0.75rem 1rem;
-  }
-  [data-theme="cream"] .chat-pane,
-  [data-theme="night"] .chat-pane {
-    overflow: hidden;
-  }
-  [data-theme="cream"] .chat-head,
-  [data-theme="night"] .chat-head {
-    padding: 0 1.75rem;
-    border-bottom: 1px solid var(--border);
-  }
-}
-/* Your own messages are blue/700 bubbles with cream text, the one place the page is loud. */
-[data-theme="cream"] .chat-msg-own > .chat-bubble,
-[data-theme="night"] .chat-msg-own > .chat-bubble {
-  color: var(--v-cream-100);
-}
-[data-theme="cream"] .chat-msg-own > .chat-bubble a,
-[data-theme="night"] .chat-msg-own > .chat-bubble a {
-  color: inherit;
-  text-decoration: underline;
-}
-[data-theme="cream"] .chat-msg-own > .chat-bubble strong,
-[data-theme="night"] .chat-msg-own > .chat-bubble strong {
-  color: inherit;
-}
-[data-theme="cream"] .chat-msg-own > .chat-bubble :is(pre, code),
-[data-theme="night"] .chat-msg-own > .chat-bubble :is(pre, code) {
-  background: rgb(5 34 77 / 28%);
-  color: inherit;
-}
-/* On navy, the navy cats would vanish into the page: a faint cream ring keeps every circle whole. */
-/* Cats that overlap (a pile of members, a pair) keep a ring of the ground between them. */
-.g-pile .avatar.avatar-cat > img {
-  box-shadow: 0 0 0 2px var(--dot-ring, var(--background));
-}
-[data-theme="night"] .avatar-cat > img {
-  outline: 1px solid rgb(255 253 244 / 22%);
-  outline-offset: -1px;
 }

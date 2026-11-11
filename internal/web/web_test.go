@@ -247,7 +247,8 @@ func TestTokenRequired(t *testing.T) {
 	// The page itself loads without the token, so it can read it from the fragment.
 	for _, path := range []string{"/", "/assets/app.js", "/assets/style.css",
 		"/assets/icons.js", "/assets/favicon.svg", "/assets/fonts/inter-latin-wght-normal.woff2",
-		"/assets/fonts/rubik-latin-wght-normal.woff2", "/assets/cats/butter-plain-solid.svg", "/assets/THIRD_PARTY_NOTICES"} {
+		"/assets/fonts/rubik-latin-wght-normal.woff2", "/assets/cats/butter-plain-solid.svg", "/assets/THIRD_PARTY_NOTICES",
+		"/assets/v3/page.html", "/assets/v3/app.js", "/assets/v3/style.css"} {
 		if resp := h.do("GET", path, host, "", ""); resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s without token: %d, want 200", path, resp.StatusCode)
 		}
