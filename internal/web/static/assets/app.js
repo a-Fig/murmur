@@ -13,16 +13,19 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
-// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
-// a chat app, light, or the website's blue, butter and cream. style.css keys each one on <html data-theme>.
+// The page's look, chosen in Settings and kept in this browser: Cream and Night are the Figma file's
+// v3 design, light and dark; then black like T3 Code, soft greys like a chat app, light, or the
+// website's blue, butter and cream. style.css keys each one on <html data-theme>.
 const THEME_KEY = NAME + ":theme";
 const THEMES = [
+  ["cream", "Cream"],
+  ["night", "Night"],
   ["dark", "Dark"],
   ["dim", "Dim"],
   ["light", "Light"],
   ["murmur", "Murmur"],
 ];
-let theme = "dark";
+let theme = "cream";
 try {
   const t = localStorage.getItem(THEME_KEY);
   if (THEMES.some(([id]) => id === t)) theme = t;
@@ -2446,10 +2449,29 @@ function draftConversation() {
 
 // The same name always gets the same color. The classes are in style.css: the page's content
 // policy doesn't allow an inline style.
+// A person's face is their initial in a circle. An agent's is one of the 189 cats in assets/cats
+// (7 tones × 9 faces × 3 coats, cut from the Figma file "murmur"), picked from its name so it is
+// the same on every screen and every machine. The pick is the Figma gallery's: FNV-1a with a mix
+// step, then tone, face and coat from the one number.
+const CAT_TONES = ["butter", "cream", "blue", "navy", "sky", "gold", "ginger"];
+const CAT_FACES = ["plain", "mustache", "glasses", "sleepy", "bow", "round-glasses", "tears", "smile", "back"];
+const CAT_COATS = ["solid", "patch", "stripes"];
+
+function catOf(name) {
+  let x = 0x811c9dc5;
+  for (const ch of name) x = Math.imul(x ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d) >>> 0;
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  const t = CAT_TONES.length, f = CAT_FACES.length;
+  return CAT_TONES[x % t] + "-" + CAT_FACES[Math.floor(x / t) % f] + "-" + CAT_COATS[Math.floor(x / (t * f)) % CAT_COATS.length];
+}
+
 function avatar(name) {
-  let n = 0;
-  for (const ch of name) n = (n * 31 + ch.codePointAt(0)) % 997;
-  return h("span", { class: isPerson(name) ? "avatar avatar-person" : "avatar avatar-" + (n % 5), "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  if (isPerson(name)) return h("span", { class: "avatar avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  return h("span", { class: "avatar avatar-cat", "aria-hidden": "true" }, h("img", { src: "/assets/cats/" + catOf(name) + ".svg", alt: "", draggable: "false" }));
 }
 
 // A group chat is named for whose it is, and its face is its members'.

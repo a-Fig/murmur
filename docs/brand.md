@@ -91,7 +91,8 @@ it already had, so this palette stayed and the logo files were colored to match.
 
 The wordmark is Fredoka One and ships as outlines, so nothing loads the font. The site is set in
 Inter, and its hero word is "murmur" in Inter behind the reeded glass, not the wordmark. The Figma
-file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
+file proposes Rubik for text and JetBrains Mono for commands. Rubik sets the `mur ui` page's Cream
+and Night themes (2026-11-11); JetBrains Mono was not adopted.
 
 ## The mur ui page
 
@@ -102,7 +103,25 @@ Its fourth theme, Murmur, is the brand: a cream page, ink text, blue for what is
 pressed, and butter for a person's own messages. The sidebar is ink, not blue. Cream on blue is
 5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
-a step darker for cream. Dark stays the default.
+a step darker for cream.
+
+Cream and Night (2026-11-11) are the Figma file's v3 design of the page, light and dark, and Cream
+is the default. They are set in Rubik with the Figma file's own palette, which is not the site's:
+blue/500 `#258EE3`, blue/700 `#1767B0`, navy/900 `#05224D`, cream/100 `#FFFDF4`, butter/500
+`#FFEF8C`. The sidebar sits on the page; the conversation list, the conversation and the other
+pages are frosted cards over a wash of butter and blue. Your own messages are blue/700 bubbles,
+since cream on blue/500 is 3.4:1.
+
+### Cat avatars
+
+Every agent's face is a cat, and a person's is their initial in a circle, so a face says which is
+which. The 189 cats in `internal/web/static/assets/cats/` are 7 tones × 9 faces × 3 coats, cut from
+the Figma file's Cat Avatar set (page "mur ui"), which was drawn from the designer's sketches; a
+file is named `<tone>-<face>-<coat>.svg`. `catOf` in `app.js` picks one from the session's name,
+the rule the Figma gallery uses, so an agent has the same cat on every screen and machine:
+FNV-1a over the name with a mix step gives `h`; tone is `h % 7`, face `⌊h/7⌋ % 9`, coat
+`⌊h/63⌋ % 3`. Adding a tone means a new set of 27 files and a longer `CAT_TONES`, and moves every
+agent to a new cat.
 
 ## Renders
 
