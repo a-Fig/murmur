@@ -454,7 +454,7 @@ function rail() {
   return h(
     "aside",
     { class: "rail" },
-    h("button", { class: "rail-mark", title: "Expand sidebar", "aria-label": "Expand sidebar", onclick: () => setCollapsed(false) }, h("img", { src: "/assets/v3/mark-blue.svg", alt: "" })),
+    h("button", { class: "rail-mark", title: "Expand sidebar", "aria-label": "Expand sidebar", onclick: () => setCollapsed(false) }, h("img", { src: `/assets/v3/mark-${ui.theme === "dark" ? "cream" : "blue"}.svg`, alt: "" })),
     btn("Messages", ui.view === "messages" && !ui.profile, () => go({ view: "messages", profile: null }), icon("message"), unread ? h("span", { class: "badge" }, unread) : null),
     btn("Sessions", ui.view === "sessions", () => go({ view: "sessions", profile: null }), icon("users")),
     h("div", { class: "rule" }),

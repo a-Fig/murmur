@@ -65,33 +65,35 @@
   --cat-ring: transparent;
 }
 
-/* Dark: the v3 dark screens. */
+/* Dark: the "· Dark" frames (83:3401 and on). The page is navy-500 under sky and blue blobs; the
+ * sidebar, the conversations and the thread set quiet text in cream-300, the pages and the
+ * profile header in blue-300 (see the end of this file). */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: var(--navy-900);
+  --page: var(--navy-500);
   --text: var(--cream-100);
-  --text-2: var(--blue-300);
+  --text-2: var(--cream-300);
   --sidebar: var(--navy-900);
   --card: rgb(26 53 96 / 74%);
-  --card-edge: rgb(255 253 244 / 8%);
-  --card-shadow: 3px 4px 21px -8px rgb(0 0 0 / 60%);
-  --border: rgb(255 253 244 / 12%);
+  --card-edge: rgb(26 53 96 / 90%);
+  --card-shadow: 3px 4px 21px -8px rgb(0 0 0 / 45%);
+  --border: var(--navy-500);
   --field: var(--navy-700);
   --pill: var(--navy-700);
-  --raised: rgb(26 53 96 / 80%);
-  --raised-edge: rgb(255 253 244 / 8%);
-  --hover: rgb(255 253 244 / 6%);
+  --raised: rgb(26 53 96 / 55%);
+  --raised-edge: rgb(26 53 96 / 80%);
+  --hover: rgb(26 53 96 / 55%);
   --selected: var(--blue-700);
   --selected-text: var(--cream-100);
   --line: rgb(255 253 244 / 10%);
-  --chip: rgb(255 253 244 / 8%);
+  --chip: rgb(255 253 244 / 6%);
   --popover: var(--navy-900);
   --bubble: var(--blue-700);
   --bubble-text: var(--cream-100);
   --accent: var(--blue-500);
   --badge: var(--blue-700);
-  --pr-bg: rgb(156 203 243 / 18%);
-  --pr-text: var(--blue-300);
+  --pr-bg: var(--blue-300);
+  --pr-text: var(--cream-100);
   --scrim: rgb(0 0 0 / 50%);
   --cat-ring: rgb(255 253 244 / 22%);
 }
@@ -189,8 +191,13 @@ p {
   width: calc(1200 / 1440 * 100vw);
   height: calc(1100 / 900 * 100vh);
 }
-[data-theme="dark"] .blob {
-  opacity: 0.22;
+/* Dark swaps the two butter blobs for blue ones; the sky pair is the same in both. */
+.blob.dark-only,
+[data-theme="dark"] .blob.light-only {
+  display: none;
+}
+[data-theme="dark"] .blob.dark-only {
+  display: block;
 }
 
 /* =============================================================================== Shell. */
@@ -574,8 +581,9 @@ p {
   text-align: left;
 }
 [data-theme="dark"] .account-card {
-  border-color: var(--raised-edge);
-  background: var(--raised);
+  border-color: rgb(26 53 96 / 85%);
+  background: rgb(26 53 96 / 60%);
+  box-shadow: 0 4px 4px rgb(0 0 0 / 45%);
 }
 .account-card.on {
   background: var(--selected);
@@ -1151,7 +1159,7 @@ p {
   color: var(--text-2);
 }
 [data-theme="dark"] .pill.readonly {
-  background: rgb(255 253 244 / 6%);
+  background: rgb(255 253 244 / 5%);
 }
 .pill.readonly .note {
   flex: 1;
@@ -1319,8 +1327,8 @@ p {
   color: var(--cream-100);
 }
 [data-theme="dark"] .tag-filter button.on {
-  background: var(--cream-100);
-  color: var(--navy-900);
+  background: var(--blue-700);
+  color: var(--cream-100);
 }
 .device-list {
   display: flex;
@@ -1454,7 +1462,7 @@ p {
 }
 [data-theme="dark"] .pr-chip {
   color: var(--blue-300);
-  background: rgb(156 203 243 / 16%);
+  background: rgb(37 142 227 / 6%);
 }
 .scard .state {
   width: 130px;
@@ -1493,15 +1501,15 @@ p {
   color: var(--text-2);
 }
 [data-theme="dark"] .state-badge {
-  background: rgb(255 253 244 / 10%);
+  background: rgb(255 253 244 / 8%);
 }
 [data-theme="dark"] .state-badge.working {
-  background: rgb(156 203 243 / 16%);
+  background: rgb(37 142 227 / 6%);
   color: var(--blue-300);
 }
 [data-theme="dark"] .state-badge.idle {
-  background: var(--butter-300);
-  color: var(--navy-900);
+  background: var(--navy-500);
+  color: var(--cream-100);
 }
 
 /* "v3 · Settings": a 24px title, then labelled boxes of rows, 22px apart. */
@@ -1630,7 +1638,7 @@ p {
 [data-theme="dark"] .field input,
 [data-theme="dark"] .select {
   border-color: rgb(255 253 244 / 14%);
-  background: var(--navy-900);
+  background: var(--navy-700);
   color: var(--cream-100);
 }
 .primary {
@@ -1937,6 +1945,7 @@ p {
   font-weight: 500;
 }
 [data-theme="dark"] .chip.human {
+  background: rgb(255 253 244 / 8%);
   color: var(--blue-300);
 }
 .status .off-dot {
@@ -1977,7 +1986,7 @@ p {
   background: rgb(5 34 77 / 6%);
 }
 [data-theme="dark"] .tag {
-  background: rgb(255 253 244 / 10%);
+  background: rgb(255 253 244 / 6%);
 }
 .tag-x {
   font-size: 13px;
@@ -2002,7 +2011,7 @@ p {
   color: var(--navy-900);
 }
 [data-theme="dark"] .conv-row.on {
-  background: var(--navy-700);
+  background: var(--navy-500);
   color: var(--cream-100);
 }
 .conv-row.on .sub,
@@ -2012,7 +2021,7 @@ p {
 }
 [data-theme="dark"] .conv-row.on .sub,
 [data-theme="dark"] .conv-row.on .time {
-  color: var(--blue-300);
+  color: var(--cream-300);
 }
 
 /* A conversation you can only read: two faces in the head, and who can write in the foot. */
@@ -2095,6 +2104,10 @@ p {
 .rail .rail-btn.on {
   background: var(--butter-500);
   color: var(--navy-900);
+}
+[data-theme="dark"] .rail .rail-btn.on {
+  background: var(--blue-700);
+  color: var(--cream-100);
 }
 .rail .rail-btn .badge {
   top: -4px;
@@ -2273,6 +2286,10 @@ p {
   background: var(--cream-250);
   color: var(--navy-900);
 }
+[data-theme="dark"] .dialog .close {
+  background: rgb(255 253 244 / 6%);
+  color: var(--cream-100);
+}
 .dialog .to {
   padding: 10px 12px;
   border-radius: 12px;
@@ -2332,10 +2349,34 @@ p {
   color: var(--navy-500);
 }
 [data-theme="dark"] .filter {
-  border-color: rgb(255 253 244 / 12%);
-  background: var(--navy-700);
+  border-color: rgb(255 253 244 / 10%);
+  background: rgb(26 53 96 / 70%);
 }
 [data-theme="dark"] .phase-tabs,
 [data-theme="dark"] .tag-filter button:not(.on) {
-  background: rgb(255 253 244 / 10%);
+  background: rgb(255 253 244 / 6%);
+}
+
+/* Dark, the rest of what the dark frames draw. */
+[data-theme="dark"] .sessions-page,
+[data-theme="dark"] .settings-page,
+[data-theme="dark"] .profile,
+[data-theme="dark"] .pill.readonly {
+  --text-2: var(--blue-300);
+}
+[data-theme="dark"] .tabs button.on,
+[data-theme="dark"] .phase-tabs button.on {
+  background: var(--navy-700);
+  color: var(--cream-100);
+}
+[data-theme="dark"] .seg button.on {
+  background: var(--navy-900);
+  color: var(--cream-100);
+}
+[data-theme="dark"] .profile .meta .pr-chip {
+  background: rgb(255 253 244 / 8%);
+  color: var(--blue-300);
+}
+[data-theme="dark"] .tag-add {
+  border-color: rgb(255 253 244 / 20%);
 }
