@@ -551,6 +551,14 @@ type session struct {
 	hookSeen   bool
 	toolCalled time.Time
 	hookNative string
+	// serverStarted is when the session's MCP server process started, as its hello said; zero for a
+	// server from before #453. nativeFromHook says the route's Native came from a Codex hook,
+	// matched by time, not from the MCP server (see codexThreadSessionLocked), and timeUnsure that
+	// such a match was found wrong, so the session isn't matched by time again.
+	serverStarted              time.Time
+	nativeFromHook, timeUnsure bool
+	// dirWarned says the log has said a Codex hook fit s by time but not by directory.
+	dirWarned bool
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its

@@ -231,6 +231,12 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	// Two live sessions of one client session (two MCP servers in it) would share a name, and
 	// a name is an address. The later one is a session of its own.
 	route := h.Route
+	keepHook := s != nil && route.Native == "" && s.nativeFromHook
+	if keepHook {
+		// A Codex server back from its grace, which never learned its thread: the thread its hook
+		// gave it still stands (#453).
+		route.Native = s.route.Native
+	}
 	if s != nil && route.T3Thread == "" && claude == s.claudeSession {
 		// The same client session, back after its server restarted without finding its T3 thread
 		// this time: it is still that thread.
@@ -247,6 +253,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
 		s.clientPID = h.ClientPID
+		if h.Started > 0 {
+			s.serverStarted = time.UnixMilli(h.Started)
+		}
+		s.nativeFromHook = keepHook
 		s.route = route
 		d.rememberRouteLocked(s)
 		s.worktree = worktree
@@ -473,6 +483,11 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		if s := d.sessions[sess]; s != nil {
+			if s.nativeFromHook && req.Route.Native == "" {
+				req.Route.Native = s.route.Native // what the hook gave stands until the server knows
+			} else {
+				s.nativeFromHook = false // the server's own, which overrides a hook's
+			}
 			d.setRouteLocked(s, *req.Route)
 		}
 		return proto.Response{OK: true, Self: from}
@@ -1036,6 +1051,9 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	now := time.Now()
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+	if h.Started > 0 {
+		s.serverStarted = time.UnixMilli(h.Started)
+	}
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {
