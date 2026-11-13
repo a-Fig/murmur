@@ -118,13 +118,7 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	// state.json is written by way of state.json.tmp: a directory there makes every save fail. A
 	// file in it keeps writeJSON's removal of a leftover tmp from taking the directory away.
-	blocker := filepath.Join(b.gitDir, brand.StateDir, "state.json.tmp")
-	if err := os.Mkdir(blocker, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(blocker, "x"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	blockSaves(t, filepath.Join(b.gitDir, brand.StateDir, "state.json"))
 
 	a.send("aaaaaa", bob, "cannot be marked", "body")
 	eventually(t, "the refusal", func() bool { return strings.Contains(out.String(), "can't be saved") })
@@ -188,4 +182,28 @@ func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
 	if n := len(calls()); n != 0 {
 		t.Errorf("the stand-in ran %d times with no command there", n)
 	}
+}
+
+// blockSaves makes every later save of path by writeJSON fail, by putting a directory where it
+// writes its tmp file. The daemon may be saving right then (#442): a Mkdir there can find a save's
+// tmp file, and a save's removal of a leftover tmp can take an empty directory away before a file
+// is put in it. So the directory is made whole, file and all, under another name, and renamed into
+// place, which fails while a save's tmp file is there and is tried again: that file lasts only as
+// long as one save.
+func blockSaves(t *testing.T, path string) {
+	t.Helper()
+	staged := path + ".blocker"
+	if err := os.Mkdir(staged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if err = os.Rename(staged, path+".tmp"); err == nil {
+			return
+		}
+	}
+	t.Fatalf("the blocker never took the tmp file's place: %v", err)
 }
