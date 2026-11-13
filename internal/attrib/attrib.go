@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -133,20 +134,47 @@ func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha 
 // files: the main worktree's in the common directory, and each linked one's under worktrees/. A
 // HEAD on a branch is left out, as for-each-ref has the branch. One that can't be read is skipped:
 // a missing tip only lets in what Head always let in before (#60).
+//
+// The files are read by up to headReaders goroutines at once. Each read is a file open, and a clone
+// can hold hundreds of worktree entries, stale ones included until `git worktree prune`: in a
+// Windows clone with 159 (2026-11-12) reading them one at a time took 22 ms of every Head, and 8 at
+// once took 5 ms (#507).
 func detachedHeadFiles(commonDir string) []string {
 	paths := []string{filepath.Join(commonDir, "HEAD")}
 	entries, _ := os.ReadDir(filepath.Join(commonDir, "worktrees"))
 	for _, e := range entries {
 		paths = append(paths, filepath.Join(commonDir, "worktrees", e.Name(), "HEAD"))
 	}
+	found := make([]string, len(paths))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(headReaders, len(paths)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				if _, sha, ok := readHEADFile(paths[i]); ok {
+					found[i] = sha
+				}
+			}
+		}()
+	}
+	for i := range paths {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 	var shas []string
-	for _, path := range paths {
-		if _, sha, ok := readHEADFile(path); ok && sha != "" {
+	for _, sha := range found {
+		if sha != "" {
 			shas = append(shas, sha)
 		}
 	}
 	return shas
 }
+
+// headReaders is how many HEAD files detachedHeadFiles reads at once. More than 8 measured no faster.
+const headReaders = 8
 
 // detachedHeadsByGit is detachedHeadFiles with git listing the worktrees: one more process.
 func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) {
