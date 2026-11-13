@@ -1976,8 +1976,15 @@ A body past the limit is cut, as in `inbox`.
     The hook names the thread but runs in the app server every terminal thread shares, so the
     daemon matches it by time: a Codex thread's ID is a UUIDv7, which holds when the thread was
     made, and Codex starts a thread's MCP servers as it makes the thread, 0.1 to 0.5 s after
-    (0.164 and 0.167, 2026-11-12). The one session of the hook's process whose server started
-    within 3 s after the thread was made is its; with two, neither is. Before its first prompt a
+    (0.164 and 0.167, 2026-11-12). The one session of the hook's process, in the hook's
+    directory, whose server started within 2 s after the thread was made is its; with two,
+    neither is. It can still go wrong: a thread made just before another thread's server
+    started, whose own server was slower than 2 s, takes the other's. So a subagent's hook is
+    never matched (Codex marks it with `agent_id`); a thread a hook gave never makes a session a
+    child, and if Codex's state says it is a subagent's the session gives it back; and a later
+    hook of another thread that fits the same server undoes the match, after which that session
+    waits for a Murmur tool call. Until then, a wrong match hands the other thread the turns.
+    Before its first prompt a
     thread is nowhere on disk (no row in `state_5.sqlite`, no rollout), so a session nobody has
     typed in yet has no way in. A resumed thread, made long before its server started, waits
     for a Murmur tool call as before. And the wake setting counts for these as
@@ -2090,10 +2097,12 @@ A body past the limit is cut, as in `inbox`.
     (one a thread spawned, a review, a guardian), and a plain word for one a person's client
     started. For a spawned thread it names the thread that spawned it, which is the parent the
     refusal points to and the commits are credited to.
-  - *The thread's ID* comes only from a call to a Murmur tool, which is where a Codex MCP server
-    learns it. Codex's hook reports an ID earlier, at the first prompt, but it is paired with a
-    session by process, and a subagent runs in its parent's process: its hook can be paired
-    with the session that spawned it. So a hook's ID marks nobody.
+  - *The thread's ID* that marks a child comes only from a call to a Murmur tool, which is where
+    a Codex MCP server learns it. Codex's hook reports an ID earlier, at the first prompt, and
+    since #453 a hook matched by time gives a session its thread for its route (see "When it is
+    a turn"). But a hook is paired with a session by process and time, never by anything the
+    session said itself, so a hook's ID marks nobody: a subagent's thread found there means the
+    match was wrong, and the session gives it back.
   - *Inside T3* nothing is read from Codex. Tyler's rule (2026-11-12, #452) is that a thread
     shown in the user's list of sessions is on the mesh, and for T3's own threads T3's database
     says which those are (#188).

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/title"
 )
 
 // A Codex session outside T3 that hasn't called a Murmur tool is found by its hook (#453): the
@@ -19,10 +20,13 @@ func codexThreadAt(t time.Time, tail string) string {
 	return fmt.Sprintf("%08x-%04x-7abc-8def-%s", ms>>16, ms&0xffff, tail)
 }
 
+// codexDirHere is the directory the Codex sessions here and their hooks run in.
+const codexDirHere = "/work/repo"
+
 // codexStarted registers a Codex session outside T3 of process pid whose server started at started.
 func (d *device) codexStarted(id string, pid int, started time.Time, r proto.Route) string {
 	d.t.Helper()
-	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "codex", ClientPID: pid,
+	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "codex", Cwd: codexDirHere, ClientPID: pid,
 		Started: started.UnixMilli(), Route: r})
 	if err != nil {
 		d.t.Fatalf("hello %s: %v", id, err)
@@ -37,7 +41,10 @@ func (d *device) codexStarted(id string, pid int, started time.Time, r proto.Rou
 func TestACodexHookFindsItsSessionByWhenItsServerStarted(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
+	codex := &fakeCodex{lin: map[string]title.Lineage{}}
+	var out syncBuf
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.codexLineage, d.logTo = codex.read, &out })
 	alice, _ := a.session("aaaaaa", "")
 	made := time.Now().Add(-time.Minute)
 	first := codexThreadAt(made, "000000000001")
@@ -46,8 +53,8 @@ func TestACodexHookFindsItsSessionByWhenItsServerStarted(t *testing.T) {
 	two := b.codexStarted("cccccc", 400, made.Add(40*time.Second), proto.Route{CodexCLI: exe})
 	eventually(t, "presence", func() bool { return a.seesSession(one) && a.seesSession(two) && b.seesSession(alice) })
 
-	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: first, Ancestors: []int{901, 400, 1}})
-	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: second, Ancestors: []int{902, 400, 1}})
+	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: first, Cwd: codexDirHere, Ancestors: []int{901, 400, 1}})
+	b.do(proto.Request{Op: proto.OpNotices, Agent: "codex", ClaudeSession: second, Cwd: codexDirHere, Ancestors: []int{902, 400, 1}})
 
 	a.send("aaaaaa", one, "auth middleware?", "Are you changing it?")
 	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
@@ -56,4 +63,19 @@ func TestACodexHookFindsItsSessionByWhenItsServerStarted(t *testing.T) {
 	}
 	a.send("aaaaaa", two, "and you?", "")
 	holds(t, "no handoff to a session no hook was matched to", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+
+	// A thread the hook gave that Codex's state says is a subagent's was a wrong match: the session
+	// gives it back and stays on the mesh, rather than becoming a child.
+	if !strings.Contains(out.String(), "took its Codex thread from its hook") {
+		t.Errorf("the log doesn't say the hook gave the session its thread:\n%s", out.String())
+	}
+	codex.set(first, title.Lineage{Subagent: true, Parent: "01a1d3fe-0000-7000-8000-000000000000"})
+	eventually(t, "the session to give the thread back", func() bool {
+		return strings.Contains(out.String(), "gave back the Codex thread its hook gave it")
+	})
+	a.send("aaaaaa", one, "still there?", "")
+	holds(t, "no handoff to a thread given back", 1500*time.Millisecond, func() bool { return len(calls()) == 1 })
+	if !a.listsSession(one) || !b.listsSession(one) {
+		t.Error("a session a hook was matched to wrongly left who")
+	}
 }

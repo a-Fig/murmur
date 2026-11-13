@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -250,10 +252,11 @@ func (d *Daemon) queuedAtLocked(to string) string {
 // whose agent hasn't called one is found by its process instead: the agent that ran the hook started
 // the session's MCP server, and is among the hook's ancestors. Where that process has one session
 // of the agent, with no ID yet, it takes the hook's. Where it has several (T3 runs every Codex
-// thread in one app server), nothing tells the hook's apart, even when only one has no ID: the hook
-// speaks for none of them, but each is marked as having its hook run, which is true of every
-// session of that process. An ID the MCP server learns overrides one taken from a hook. Caller
-// holds mu.
+// thread in one app server), a Codex hook is matched by when the thread was made and when each
+// server started (codexThreadSessionLocked, #453), which gives the session its thread for its
+// route. Where that can't tell, the hook speaks for none of them, but each is marked as having its
+// hook run, which is true of every session of that process. An ID the MCP server learns overrides
+// one taken from a hook. Caller holds mu.
 func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	var byID, byProcess []*session
 	for _, s := range d.sortedSessionsLocked() {
@@ -273,12 +276,7 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	if len(byID) > 0 {
 		return byID
 	}
-	if s := codexThreadSessionLocked(req, byProcess); s != nil {
-		r := s.route
-		r.Native = req.ClaudeSession
-		s.hookNative = r.Native
-		d.setRouteLocked(s, r)
-		d.log.Printf("session %s is the Codex thread its hook named, by when its server started", bus.Addr(d.device, s.id))
+	if s := d.codexThreadSessionLocked(req, byProcess); s != nil {
 		return []*session{s}
 	}
 	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
@@ -293,42 +291,111 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 
 // codexThreadWindow is how long after a Codex thread is made its MCP server may start and still be
 // taken for that thread's (see codexThreadSessionLocked).
-const codexThreadWindow = 3 * time.Second
+const codexThreadWindow = 2 * time.Second
 
-// codexThreadSessionLocked is the session among a Codex hook's process's whose MCP server is the
-// one Codex started for the hook's thread, where that can be told, else nil (#453). A Codex
-// thread's ID is a UUIDv7, which holds when the thread was made, to the millisecond, and Codex
-// starts a thread's MCP servers as it makes the thread: 0.1 to 0.5 s after it, on the laptop with
-// Codex 0.164 and 0.167 (2026-11-12). So the session whose server started within
-// codexThreadWindow after the thread was made is the thread's, if it is the only one of its
-// process outside T3 with no thread yet that did.
+// codexThreadSessionLocked finds the session among a Codex hook's process's whose MCP server is
+// the one Codex started for the hook's thread, where that can be told, gives it the thread, and
+// returns it; nil where it can't be told (#453). A Codex thread's ID is a UUIDv7, which holds when
+// the thread was made, to the millisecond, and Codex starts a thread's MCP servers as it makes the
+// thread: 0.1 to 0.5 s after it, on the laptop with Codex 0.164 and 0.167 (2026-11-12). So the
+// session in the hook's directory whose server started within codexThreadWindow after the thread
+// was made is the thread's, if it is the only one of its process outside T3 with no thread yet
+// that did.
 //
-// That covers what pairing by process alone can't: every terminal thread of Codex's shared app
-// server has the same parent. A hook from a subagent can't take its parent's session: a subagent
-// is made after its parent's server started, never before. A thread that was resumed, made long
-// before its server started, isn't matched. Caller holds mu.
-func codexThreadSessionLocked(req proto.Request, byProcess []*session) *session {
-	if req.Agent != "codex" {
+// Every terminal thread runs in Codex's one shared app server, so this can go wrong only by
+// time: a thread made in the window before another thread's server started, whose own server
+// started later than the window (a slow start), would take that other server. What keeps such a
+// pairing from lasting or doing harm:
+//   - A subagent's hook is never matched: Codex marks the hooks that run in one (agent_id, which
+//     the hook passes as Subagent).
+//   - A thread taken from a hook never makes a session a child: if Codex's state says it is a
+//     subagent's, the daemon drops it instead (refreshKids).
+//   - A later hook of another thread that would fit the same session's server drops what it
+//     took, and that session is matched by time no more.
+//   - A thread the session's MCP server learns from a tool call overrides one taken here.
+//
+// A resumed thread, made long before its server started, isn't matched. Caller holds mu.
+func (d *Daemon) codexThreadSessionLocked(req proto.Request, byProcess []*session) *session {
+	found, wrong := codexThreadMatch(req, byProcess)
+	for _, s := range wrong {
+		// Another thread's hook took this session by the same rule: one of the two is wrong.
+		d.dropHookThreadLocked(s, "another Codex thread was made as its server started")
+	}
+	if found == nil {
 		return nil
 	}
-	made, ok := uuidV7Time(req.ClaudeSession)
+	r := found.route
+	r.Native = req.ClaudeSession
+	d.setRouteLocked(found, r)
+	found.hookNative, found.nativeFromHook = r.Native, true
+	d.log.Printf("session %s took its Codex thread from its hook, by when its server started", bus.Addr(d.device, found.id))
+	return found
+}
+
+// codexThreadMatch is codexThreadSessionLocked's choice: the session the hook's thread is, nil if
+// none can be told, and the sessions that took another thread from a hook by the same rule though
+// this one fits them as well. It changes nothing.
+func codexThreadMatch(req proto.Request, byProcess []*session) (found *session, wrong []*session) {
+	if req.Agent != "codex" || req.Subagent || req.Cwd == "" {
+		return nil, nil
+	}
+	thread := req.ClaudeSession
+	made, ok := uuidV7Time(thread)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	var found *session
+	two := false
 	for _, s := range byProcess {
-		if s.route.Native != "" || s.route.T3CLI != "" || s.serverStarted.IsZero() {
+		if s.serverStarted.IsZero() || s.route.T3CLI != "" || s.timeUnsure || !sameDir(s.cwd, req.Cwd) {
 			continue
 		}
 		if after := s.serverStarted.Sub(made); after < 0 || after > codexThreadWindow {
 			continue
 		}
+		if s.nativeFromHook && s.route.Native != thread {
+			wrong = append(wrong, s)
+			continue
+		}
+		if s.route.Native != "" || s.hookNative != "" && s.hookNative != thread {
+			continue
+		}
 		if found != nil {
-			return nil // two threads made that close together: nothing tells them apart
+			two = true // two threads' servers started that close together: nothing tells them apart
 		}
 		found = s
 	}
-	return found
+	if two {
+		found = nil
+	}
+	return found, wrong
+}
+
+// dropHookThreadLocked takes back the thread s took from a hook (codexThreadSessionLocked), and
+// keeps s from being matched by time again: it waits for its MCP server to learn its thread from a
+// tool call, as before #453. why is for the log. Caller holds mu.
+func (d *Daemon) dropHookThreadLocked(s *session, why string) {
+	if !s.nativeFromHook {
+		return
+	}
+	r := s.route
+	r.Native = ""
+	d.setRouteLocked(s, r)
+	s.hookNative, s.nativeFromHook, s.timeUnsure = "", false, true
+	d.log.Printf("session %s gave back the Codex thread its hook gave it: %s", bus.Addr(d.device, s.id), why)
+}
+
+// sameDir says a and b are the same directory, as Codex and an MCP server it started name it:
+// Codex may give Windows' \\?\ prefix (seen in its state's cwd), and Windows paths ignore case.
+func sameDir(a, b string) bool {
+	clean := func(p string) string {
+		p = strings.TrimPrefix(p, `\\?\`)
+		p = filepath.Clean(p)
+		if runtime.GOOS == "windows" {
+			p = strings.ToLower(p)
+		}
+		return p
+	}
+	return a != "" && clean(a) == clean(b)
 }
 
 // uuidV7Time is when the UUIDv7 id was made, from its first 48 bits (RFC 9562).

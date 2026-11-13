@@ -391,7 +391,9 @@ func identify(agent string, in input) proto.Request {
 	if agent == "" {
 		r.ClientPID = claudePID()
 	} else {
-		r.Agent, r.Ancestors = agent, proc.Ancestors(os.Getppid(), maxAncestors)
+		// The directory goes too: the daemon matches a Codex hook to its session by it, among others
+		// (#453).
+		r.Agent, r.Ancestors, r.Cwd = agent, proc.Ancestors(os.Getppid(), maxAncestors), in.Cwd
 	}
 	return r
 }

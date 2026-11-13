@@ -24,9 +24,12 @@ import (
 // Codex's database records a thread Codex started for another (title.CodexLineage): one a thread
 // spawned, a review, a guardian. That needs the thread's ID, which a Codex session's MCP server
 // learns only from a call to one of Murmur's tools (the route's Native), so a subagent that never
-// calls one is on the mesh, with no way in but its inbox. The ID Codex's hook reports isn't used:
-// it is paired with a session by process, and a subagent runs in its parent's process, so its
-// hook can be paired with the session that spawned it.
+// calls one is on the mesh, with no way in but its inbox. A thread a Codex hook gave a session
+// (codexThreadSessionLocked, #453) is read too, but never makes a child: a subagent's hook is
+// never matched, so a subagent's thread there means the match was wrong, and the session gives
+// the thread back instead. Pairing a hook by process alone (hookNative) gives no thread here: a
+// subagent runs in its parent's process, so its hook can be paired with the session that spawned
+// it.
 //
 // Only a Codex session outside T3 is looked at. Inside T3, whether a thread is a delegate is
 // T3's to say (#188): Tyler's rule (2026-11-12, #452) is that a thread shown in the user's list
@@ -160,6 +163,13 @@ func (d *Daemon) refreshKids(ctx context.Context) (changed bool) {
 	for _, c := range cands {
 		used[c.thread] = true
 		if l, known := d.codexLin[c.thread]; known && l.Subagent {
+			if s := d.sessions[c.id]; s != nil && s.nativeFromHook {
+				// The thread came from a hook matched by time, and a subagent's thread is never
+				// what a session's own server would have learned: the match was wrong (#453).
+				d.dropHookThreadLocked(s, "Codex's state says that thread is a subagent's")
+				changed = true
+				continue
+			}
 			changed = d.markKidLocked(c.id, l.Parent) || changed
 		}
 		if err := failed[c.thread]; err != nil && !d.codexWarned[c.thread] {
