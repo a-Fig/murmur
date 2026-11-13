@@ -2535,8 +2535,9 @@ function repoMenu() {
 // A session's changes go one after another, in the order they were clicked: the daemon times a
 // change when it gets it, so two in flight at once could land the other way round.
 const tagQueues = new Map();
-// The adds to each group that the next message sent to it waits for: each resolves to the sessions
-// whose add failed, with why. A tag change that fails resolves its place in tagQueues all the same.
+// The adds this page made to each group, which a message sent to it waits for: each resolves to the
+// sessions whose add failed, with why. A tag change that fails resolves its place in tagQueues all
+// the same. They are kept, and a session counts as missed only while it is still out of the group.
 const groupJoins = new Map(); // a group's tag → [Promise<[{ s, msg }]>]
 
 function queueTagChange(addr, fn) {
@@ -3911,11 +3912,15 @@ async function deliver(item) {
     // those who are, and the page says who was left out; with nobody in the group, it isn't sent.
     let missed = [];
     if (isGroupTag(item.to)) {
-      if (item.missed?.length) tagSessions(item.missed.map((f) => sessionByAddr(f.s.addr) || f.s), item.to, true); // Try again tries them again
-      const joins = groupJoins.get(item.to) || [];
-      groupJoins.delete(item.to);
+      if (item.missed?.length) tagSessions(item.missed.map((f) => f.s), item.to, true); // Try again tries them again
+      const joins = [...(groupJoins.get(item.to) || [])];
       await Promise.all([...tagQueues.values()]);
-      missed = (await Promise.all(joins)).flat();
+      const seen = new Set();
+      for (const f of (await Promise.all(joins)).flat()) {
+        const s = sessionByAddr(f.s.addr) || f.s;
+        if (!seen.has(s.addr) && !inGroup(s, item.to)) missed.push({ s, msg: f.msg });
+        seen.add(s.addr);
+      }
       item.missed = missed;
       if (missed.length && !devices().some((d) => d.sessions.some((s) => inGroup(s, item.to)))) {
         throw new Error("not sent: couldn't add " + namesOf(missed) + " to " + item.to + ": " + missed[0].msg);
