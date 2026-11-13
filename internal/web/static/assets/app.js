@@ -2600,10 +2600,11 @@ function visibleMessages() {
   );
 }
 
-// Your messages: direct ones, and the group chats you have posted in, whole.
+// Your messages: direct ones, and the group chats you have posted in, whole, with the one you just
+// opened, so a group that already has a history shows it before you write in it.
 function myMessages() {
   const mine = myName();
-  const groups = new Set();
+  const groups = new Set(ui.draftGroup ? [groupConversation(ui.draftGroup).key] : []);
   for (const m of ui.messages) if (m.toKind !== "session" && fromName(m) === mine) groups.add(conversationOf(m).key);
   return ui.messages.filter((m) => (m.toKind === "session" ? fromName(m) === mine || toName(m) === mine : groups.has(conversationOf(m).key)));
 }
@@ -2878,7 +2879,7 @@ function conversationList(list) {
       ),
     ui.showOlder && older.map(conversationRow),
     !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
-    kind === "group" && !q && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
+    kind === "group" && !q && !(name && !isMyFilter()) && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
   );
 }
 
@@ -3335,12 +3336,12 @@ function groupOf(sessions) {
 // first words after that, numbered if a group already has the name.
 function newGroupTag(names) {
   const max = 40 - "group:".length;
+  const fit = (b, n) => b.toLowerCase().replace(/[^a-z0-9._:-]/g, "-").slice(0, n).replace(/-+$/, "") || "chat";
   let base = names.join("-");
   if (base.length > max) base = names.map((n) => n.split("-")[0]).join("-");
-  base = base.slice(0, max - 3).replace(/[^a-z0-9._:-]/g, "-").replace(/-+$/, "") || "chat";
   const taken = new Set(liveGroups());
-  let tag = "group:" + base;
-  for (let i = 2; taken.has(tag); i++) tag = "group:" + base + "-" + i;
+  let tag = "group:" + fit(base, max);
+  for (let i = 2; taken.has(tag); i++) tag = "group:" + fit(base, max - 1 - String(i).length) + "-" + i;
   return tag;
 }
 
@@ -3644,7 +3645,8 @@ function pickerDialog() {
       g.err = "Pick at least one session.";
       return render();
     }
-    const tag = "group:" + (g.name.trim() || newGroupTag(sessions.map((s) => s.name)).slice(6));
+    if (!g.name.trim()) return startGroup(sessions); // the group that is just them, or a new one
+    const tag = "group:" + g.name.trim();
     if (!validTag(tag) || !isGroupTag(tag)) {
       g.err = "A name is lowercase letters, digits and . _ : -, up to " + (40 - 6) + ".";
       return render();
@@ -3656,9 +3658,10 @@ function pickerDialog() {
 // Under the list while it makes a group: the group's name, and the way back to one person.
 function groupFoot(g, back, make) {
   const sessions = g.picked.map(sessionByAddr).filter(Boolean);
-  const offered = sessions.length ? newGroupTag(sessions.map((s) => s.name)).slice(6) : "";
+  const same = sessions.length ? groupOf(sessions) : null;
+  const offered = same ? same.slice(6) : sessions.length ? newGroupTag(sessions.map((s) => s.name)).slice(6) : "";
   const tag = "group:" + (g.name.trim() || offered);
-  const existing = g.named && liveGroups().includes(tag);
+  const note = g.err || (tag === same ? tag + " has just these sessions; it opens." : g.named && liveGroups().includes(tag) ? tag + " exists; these sessions join it." : "");
   return h(
     "form",
     {
@@ -3684,15 +3687,20 @@ function groupFoot(g, back, make) {
         "aria-invalid": g.err ? "true" : null,
         "data-key": "group-name",
         oninput: (e) => {
-          g.name = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
+          const el = e.target;
+          g.name = el.value.toLowerCase().replace(/\s+/g, "-");
           g.named = true;
           g.err = "";
-          if (e.target.value !== g.name) e.target.value = g.name;
+          if (el.value !== g.name) {
+            const at = el.selectionStart;
+            el.value = g.name;
+            el.setSelectionRange(at, at);
+          }
           render();
         },
       }),
     ),
-    (g.err || existing) && h("p", { class: g.err ? "dialog-error" : "pick-group-note", "data-announce": "" }, g.err || tag + " exists; these sessions join it."),
+    note && h("p", { class: g.err ? "dialog-error" : "pick-group-note", "data-announce": "" }, note),
     h(
       "div",
       { class: "pick-group-actions" },
@@ -3714,12 +3722,13 @@ function startPane() {
       { class: "start-inner" },
       h("h2", { class: "start-title" }, rows.length ? "Who do you want to talk to?" : "Nobody is here yet."),
       rows.length > 0 && h("div", { class: "pick-list start-list" }, rows.map((r) => personRow(r, false, () => startChat(r.name)))),
-      h(
-        "div",
-        { class: "start-more" },
-        all.length > rows.length && h("button", { class: "btn btn-ghost", "data-key": "start-more", onclick: () => openPicker() }, "See everyone"),
-        rows.length > 1 && h("button", { class: "btn btn-ghost", "data-key": "start-group", onclick: () => openPicker(true) }, icon("users"), "New group chat"),
-      ),
+      (all.length > rows.length || rows.length > 1) &&
+        h(
+          "div",
+          { class: "start-more" },
+          all.length > rows.length && h("button", { class: "btn btn-ghost", "data-key": "start-more", onclick: () => openPicker() }, "See everyone"),
+          rows.length > 1 && h("button", { class: "btn btn-ghost", "data-key": "start-group", onclick: () => openPicker(true) }, icon("users"), "New group chat"),
+        ),
     ),
   );
 }
