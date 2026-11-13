@@ -148,3 +148,77 @@ func TestAHookNamesItsSessionAChild(t *testing.T) {
 		t.Errorf("who lists late %v, early %v, main %v; want only main", b.listsSession(late), b.listsSession(early), b.listsSession(main))
 	}
 }
+
+// A Codex tool call that says its thread is a subagent's makes the session a child as the daemon
+// hears it (#487): in the hello, so it is never listed and its start is never logged, or in a
+// route told later, before the call that brought it. Codex's state isn't needed. Inside T3 it is
+// T3's to say.
+func TestACodexCallThatSaysSubagentMakesAChildAtOnce(t *testing.T) {
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	a := newDevice(t, remote)
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
+	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+		grace: 300 * time.Millisecond, codexLineage: (&fakeCodex{lin: map[string]title.Lineage{}}).read}
+	b.start()
+	alice, _ := a.session("aaaaaa", "")
+	main, _ := b.agentSession("bbbbbb", "codex", 300, codexIn("th-main"))
+	kid := codexIn("th-kid")
+	kid.Child, kid.ParentNative = true, "th-main"
+	sub, subConn := b.agentSession("cccccc", "codex", 300, kid)
+	mainName := b.named(main)
+	if resp := b.trySend("cccccc", alice, "from the subagent"); resp.OK || !strings.Contains(resp.Error, mainName) {
+		t.Errorf("the first send of a subagent that registered as one: ok %v, error %q", resp.OK, resp.Error)
+	}
+	late, _ := b.agentSession("dddddd", "codex", 300, proto.Route{CodexCLI: "codex"})
+	inT3 := proto.Route{T3CLI: exe, Native: "th-t3kid", Child: true, ParentNative: "th-main"}
+	t3kid, _ := b.agentSession("eeeeee", "codex in T3", 300, inT3)
+	eventually(t, "presence", func() bool {
+		return a.seesSession(main) && a.listsSession(late) && b.listsSession(t3kid)
+	})
+	if a.listsSession(sub) || b.listsSession(sub) {
+		t.Error("a subagent that registered as one was listed")
+	}
+	for _, ev := range a.do(proto.Request{Op: proto.OpLog, Limit: 100}).Events {
+		if strings.Contains(ev.Line, "cccccc") {
+			t.Errorf("the other device's log has the subagent: %q", ev.Line)
+		}
+	}
+
+	late2 := codexIn("th-late")
+	late2.Child, late2.ParentNative = true, "th-main"
+	if resp := b.do(proto.Request{Op: proto.OpRoute, Session: "dddddd", Route: &late2}); !resp.OK {
+		t.Fatalf("route: %q", resp.Error)
+	}
+	if resp := b.trySend("dddddd", alice, "from the late subagent"); resp.OK || !strings.Contains(resp.Error, mainName) {
+		t.Errorf("a send right after the route said subagent: ok %v, error %q", resp.OK, resp.Error)
+	}
+	eventually(t, "the late subagent to leave who", func() bool { return !a.listsSession(late) && !b.listsSession(late) })
+	if !b.listsSession(t3kid) {
+		t.Error("a thread in T3 left who on Codex's word, which is T3's to give")
+	}
+	if !b.listsSession(main) {
+		t.Error("the thread that spawned the subagents left who")
+	}
+
+	// Its stop is nobody's news either. A session that stops after it is logged, so by then its
+	// own stop would have been too.
+	_, otherConn := b.agentSession("ffffff", "codex", 900, proto.Route{CodexCLI: "codex"})
+	subConn.Close()
+	time.Sleep(time.Second) // past its grace
+	otherConn.Close()
+	eventually(t, "the other session's stop to reach the other device's log", func() bool {
+		for _, ev := range a.do(proto.Request{Op: proto.OpLog, Limit: 100}).Events {
+			if strings.Contains(ev.Line, "ffffff") && strings.Contains(ev.Line, "stop") {
+				return true
+			}
+		}
+		return false
+	})
+	for _, ev := range a.do(proto.Request{Op: proto.OpLog, Limit: 100}).Events {
+		if strings.Contains(ev.Line, "cccccc") {
+			t.Errorf("the other device's log has the subagent: %q", ev.Line)
+		}
+	}
+}

@@ -277,6 +277,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 			d.kickPresence() // one back from its grace, named while it was away, was listed
 		}
 	}
+	if d.routeChildLocked(s) && taken {
+		d.kickPresence()
+	}
+	_, kid := d.kids[s.id]
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
 	if h.Reconnect {
@@ -301,8 +305,14 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.log.Printf("session %s started (%s, %s)", addr, agent, branch)
 		writeResp(conn, reply)
 		d.kickPresence()
-		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
-			At: time.Now().UTC(), Agent: agent, Branch: branch})
+		if kid { // a child registers off the mesh, and its start and stop are nobody's news (#487)
+			d.mu.Lock()
+			s.unlogged = true
+			d.mu.Unlock()
+		} else {
+			d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStarted, From: addr,
+				At: time.Now().UTC(), Agent: agent, Branch: branch})
+		}
 	}
 
 	stopWatch := context.AfterFunc(ctx, func() { conn.Close() })
@@ -346,11 +356,14 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
 	d.saveLocked()
+	unlogged := s.unlogged
 	d.mu.Unlock()
 	d.log.Printf("session %s stopped", addr)
 	d.kickPresence()
-	d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
-		At: time.Now().UTC()})
+	if !unlogged {
+		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
+			At: time.Now().UTC()})
+	}
 }
 
 // liveLocked says whether session id is connected: the CLI always is, a session in its grace or

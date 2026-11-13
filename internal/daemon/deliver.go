@@ -1017,6 +1017,9 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 	}
 	s.route = r
 	d.rememberRouteLocked(s)
+	if d.routeChildLocked(s) {
+		d.kickPresence()
+	}
 	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, r.Native, s.id), s.id); key != s.key {
 		d.rekeyLocked(s, key)
 	}

@@ -89,7 +89,9 @@ const (
 //	18: OpMute (#27): a session's MCP server from this version on asks it of the daemon.
 //	19: a hook's Child and ParentNative: the session is one another session started, and goes
 //	    through it (#452)
-const Protocol = 19
+//	20: the route's Child and ParentNative: a Codex tool call says its thread is a subagent's, and
+//	    the session is a child from that call on (#487)
+const Protocol = 20
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
@@ -268,6 +270,12 @@ type Route struct {
 	// client. At most one of the two is set.
 	CodexCLI    string `json:"codexCli,omitempty"`
 	OpenCodeCLI string `json:"openCodeCli,omitempty"`
+	// Child says the client started the conversation Native names for another of its own: Codex
+	// marks a tool call of a thread it spawned as a subagent's (thread_source "subagent" in
+	// x-codex-turn-metadata), and ParentNative is the thread that spawned it, as the call names
+	// it. The daemon takes it only outside T3, as it takes Codex's state (#454, #487).
+	Child        bool   `json:"child,omitempty"`
+	ParentNative string `json:"parentNative,omitempty"`
 }
 
 // Hello registers a session.

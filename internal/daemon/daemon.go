@@ -555,6 +555,9 @@ type session struct {
 	hookSeen   bool
 	toolCalled time.Time
 	hookNative string
+	// unlogged says the session was a child when it registered, so neither its start nor its stop
+	// goes on the bus (#487).
+	unlogged bool
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
