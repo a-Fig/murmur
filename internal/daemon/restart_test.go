@@ -307,7 +307,7 @@ func TestFirstSyncFailedStillQueues(t *testing.T) {
 	// Pushes go out, so presence is seen, but listing and fetching fail.
 	git(t, dir, "config", "remote.origin.pushurl", remote)
 	git(t, dir, "config", "remote.origin.url", filepath.Join(filepath.Dir(remote), "nowhere.git"))
-	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
 	// a sees b's device, not bob: b, never having read the team ref, encrypts its presence for

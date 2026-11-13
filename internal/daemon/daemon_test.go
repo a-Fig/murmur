@@ -136,11 +136,24 @@ type device struct {
 
 // newDevice clones remote and starts a daemon for the clone. stale, if given, overrides the
 // tests' short stale limit.
+// testStale is how long a test device's presence may go unchanged before others call it stale,
+// unless a test sets its own. A device counts as fresh (whoShows) for half of it. On a loaded
+// Windows runner a presence takes about 1.4 s to write and another second to be read, and up to
+// 8 s (#513: a push's longest was 6.2 s, a fetch's 5.5 s, in one daemon shard on 2026-11-13), so
+// 3 s there let devices flicker stale and a wait that needed several fresh at once gave up after
+// a minute. Elsewhere it stays 3 s, which keeps the tests that wait for a device to go stale fast.
+var testStale = func() time.Duration {
+	if runtime.GOOS == "windows" {
+		return 10 * time.Second
+	}
+	return 3 * time.Second
+}()
+
 func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
 	if len(stale) > 0 {
 		d.stale = stale[0]
 	}
@@ -153,7 +166,7 @@ func newTimedDevice(t *testing.T, remote string, grace, keep time.Duration) *dev
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond,
 		grace: grace, keep: keep}
 	d.start()
 	return d
