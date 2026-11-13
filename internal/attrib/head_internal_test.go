@@ -2,11 +2,13 @@ package attrib
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -204,5 +206,44 @@ func TestAddTipsSkipsTheZeroID(t *testing.T) {
 	addTips(&ref, []string{strings.Repeat("0", 40), strings.Repeat("a", 40)})
 	if len(ref.tips) != 1 || ref.tips[0] != strings.Repeat("a", 40) {
 		t.Fatalf("tips = %v, want only the real one", ref.tips)
+	}
+}
+
+// detachedHeadFiles reads its HEAD files several at a time, so give it more entries than readers,
+// on and off branches, and some it can't read, and check it finds exactly the detached ones.
+func TestDetachedHeadFilesReadsEveryEntry(t *testing.T) {
+	common := t.TempDir()
+	write := func(path, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	main := strings.Repeat("a", 40)
+	write(filepath.Join(common, "HEAD"), main+"\n")
+	want := []string{main}
+	for i := range 3*headReaders + 1 {
+		dir := filepath.Join(common, "worktrees", "w"+strconv.Itoa(i))
+		switch i % 4 {
+		case 0:
+			sha := fmt.Sprintf("%040x", i+1)
+			write(filepath.Join(dir, "HEAD"), sha+"\n")
+			want = append(want, sha)
+		case 1:
+			write(filepath.Join(dir, "HEAD"), "ref: refs/heads/b"+strconv.Itoa(i)+"\n")
+		case 2:
+			write(filepath.Join(dir, "gitdir"), "gone\n") // no HEAD file
+		case 3:
+			write(filepath.Join(dir, "HEAD"), "not a head\n")
+		}
+	}
+	got := detachedHeadFiles(common)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("detachedHeadFiles = %v, want %v", got, want)
 	}
 }
