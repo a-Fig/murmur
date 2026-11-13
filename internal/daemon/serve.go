@@ -247,6 +247,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
 		s.clientPID = h.ClientPID
+		if h.Started > 0 {
+			s.serverStarted = time.UnixMilli(h.Started)
+		}
 		s.route = route
 		d.rememberRouteLocked(s)
 		s.worktree = worktree
@@ -1036,6 +1039,9 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	now := time.Now()
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+	if h.Started > 0 {
+		s.serverStarted = time.UnixMilli(h.Started)
+	}
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		delete(d.st.Stopped, h.ID)
 		if time.Since(at) > d.opt.StoppedInbox {

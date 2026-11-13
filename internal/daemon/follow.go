@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -272,6 +273,14 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	if len(byID) > 0 {
 		return byID
 	}
+	if s := codexThreadSessionLocked(req, byProcess); s != nil {
+		r := s.route
+		r.Native = req.ClaudeSession
+		s.hookNative = r.Native
+		d.setRouteLocked(s, r)
+		d.log.Printf("session %s is the Codex thread its hook named, by when its server started", bus.Addr(d.device, s.id))
+		return []*session{s}
+	}
 	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
 		byProcess[0].hookNative = req.ClaudeSession
 		return byProcess
@@ -280,6 +289,59 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 		s.hookSeen = true
 	}
 	return nil
+}
+
+// codexThreadWindow is how long after a Codex thread is made its MCP server may start and still be
+// taken for that thread's (see codexThreadSessionLocked).
+const codexThreadWindow = 3 * time.Second
+
+// codexThreadSessionLocked is the session among a Codex hook's process's whose MCP server is the
+// one Codex started for the hook's thread, where that can be told, else nil (#453). A Codex
+// thread's ID is a UUIDv7, which holds when the thread was made, to the millisecond, and Codex
+// starts a thread's MCP servers as it makes the thread: 0.1 to 0.5 s after it, on the laptop with
+// Codex 0.164 and 0.167 (2026-11-12). So the session whose server started within
+// codexThreadWindow after the thread was made is the thread's, if it is the only one of its
+// process outside T3 with no thread yet that did.
+//
+// That covers what pairing by process alone can't: every terminal thread of Codex's shared app
+// server has the same parent. A hook from a subagent can't take its parent's session: a subagent
+// is made after its parent's server started, never before. A thread that was resumed, made long
+// before its server started, isn't matched. Caller holds mu.
+func codexThreadSessionLocked(req proto.Request, byProcess []*session) *session {
+	if req.Agent != "codex" {
+		return nil
+	}
+	made, ok := uuidV7Time(req.ClaudeSession)
+	if !ok {
+		return nil
+	}
+	var found *session
+	for _, s := range byProcess {
+		if s.route.Native != "" || s.route.T3CLI != "" || s.serverStarted.IsZero() {
+			continue
+		}
+		if after := s.serverStarted.Sub(made); after < 0 || after > codexThreadWindow {
+			continue
+		}
+		if found != nil {
+			return nil // two threads made that close together: nothing tells them apart
+		}
+		found = s
+	}
+	return found
+}
+
+// uuidV7Time is when the UUIDv7 id was made, from its first 48 bits (RFC 9562).
+func uuidV7Time(id string) (time.Time, bool) {
+	hexOnly := strings.ReplaceAll(id, "-", "")
+	if len(hexOnly) != 32 || hexOnly[12] != '7' {
+		return time.Time{}, false
+	}
+	ms, err := strconv.ParseInt(hexOnly[:12], 16, 64)
+	if err != nil || ms <= 0 {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(ms), true
 }
 
 // isAgent says a session's agent, as its MCP server named it ("codex", or "codex in T3"), is agent.

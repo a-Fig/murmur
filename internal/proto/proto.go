@@ -282,6 +282,10 @@ type Hello struct {
 	// Reconnect says the session was registered with a daemon that went away, so it should get
 	// what that daemon would have queued for it.
 	Reconnect bool `json:"reconnect,omitempty"`
+	// Started is when the MCP server's process started, in Unix milliseconds: the same in every
+	// hello of the process. A Codex thread's server starts just after the thread does, which is how
+	// a hook's thread is matched to its session (#453).
+	Started int64 `json:"started,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route
 }

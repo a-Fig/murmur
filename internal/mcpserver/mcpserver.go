@@ -258,13 +258,16 @@ func (s *server) sync(ctx context.Context) {
 // a Claude Code session has that session's CLAUDE_CODE_SESSION_ID, which isn't theirs (seen
 // 2026-11-01). The agents that give their session's ID in the environment (Muse, Pi, Grok; see
 // nativeEnv) are registered with it, and an ID made from it.
+// processStarted is when this process started, near enough: when the package was loaded.
+var processStarted = time.Now()
+
 func helloFor(agent, cwd string) proto.Hello {
 	var claude string
 	if isClaude(agent) {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
 	h := proto.Hello{ID: sessionID(claude), Agent: agentName(agent), Cwd: cwd, ClaudeSession: claude,
-		ClientPID: os.Getppid(), Route: routeFromEnv(agent)}
+		ClientPID: os.Getppid(), Started: processStarted.UnixMilli(), Route: routeFromEnv(agent)}
 	if v := nativeEnv[agent]; v != "" {
 		if native := os.Getenv(v); native != "" {
 			h.ID, h.Native = nativeID(native), native

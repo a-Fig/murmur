@@ -551,6 +551,9 @@ type session struct {
 	hookSeen   bool
 	toolCalled time.Time
 	hookNative string
+	// serverStarted is when the session's MCP server process started, as its hello said; zero for a
+	// server from before #453.
+	serverStarted time.Time
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its

@@ -1971,8 +1971,16 @@ A body past the limit is cut, as in `inbox`.
   - *A failure* is handled as `t3 thread send`'s is: tried once more only if the command never
     started, and otherwise left to the inbox and the hook's notice. A Codex from before `queue`
     fails every time, and the daemon's log says so once per session.
-  - *When it is a turn.* A Codex session has no way in until it has called one of Murmur's
-    tools, which is how its server learns the thread. And the wake setting counts for these as
+  - *When it is a turn.* A Codex session has no way in until the daemon knows its thread: from
+    its first call to one of Murmur's tools, or, since #453, from its hook at its first prompt.
+    The hook names the thread but runs in the app server every terminal thread shares, so the
+    daemon matches it by time: a Codex thread's ID is a UUIDv7, which holds when the thread was
+    made, and Codex starts a thread's MCP servers as it makes the thread, 0.1 to 0.5 s after
+    (0.164 and 0.167, 2026-11-12). The one session of the hook's process whose server started
+    within 3 s after the thread was made is its; with two, neither is. Before its first prompt a
+    thread is nowhere on disk (no row in `state_5.sqlite`, no rollout), so a session nobody has
+    typed in yet has no way in. A resumed thread, made long before its server started, waits
+    for a Murmur tool call as before. And the wake setting counts for these as
     for every session: by default one idle more than a few minutes isn't woken. For OpenCode,
     with no hook, "last at work" is its last call to a Murmur tool, and with no hook there is no
     notice either, so a message that comes after that waits in the inbox unannounced.
