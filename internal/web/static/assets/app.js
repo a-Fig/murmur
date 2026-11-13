@@ -4275,12 +4275,12 @@ function deny(token) {
 
 let arrivedAt = 0; // the sort time of the message before
 
-// token is the one the poll started with: an answer that comes after the page has taken another is
-// the old daemon's, and is dropped (#523).
-async function fetchMessages(token) {
+// era is the tokenEra the poll started in: an answer that comes after the page has taken a token
+// since is an old daemon's, and is dropped (#523).
+async function fetchMessages(era) {
   for (let pages = 0; pages < 20; pages++) {
     const r = await api("/api/messages?cursor=" + encodeURIComponent(ui.cursor));
-    if (token !== ui.token) return;
+    if (era !== tokenEra) return;
     let added = 0;
     for (const m of r.messages || []) {
       learn(m.fromAddr, m.from);
@@ -4324,11 +4324,11 @@ function trimMessages() {
 
 // What sessions did, from the daemon, and what GitHub says of pull requests and issues. A daemon
 // from before the feed has no such call, and a failure here leaves the page its messages.
-async function fetchActivity(token) {
+async function fetchActivity(era) {
   try {
     for (let pages = 0; pages < 20; pages++) {
       const r = await api("/api/activity?cursor=" + encodeURIComponent(ui.actCursor));
-      if (token !== ui.token) return; // as in fetchMessages
+      if (era !== tokenEra) return; // as in fetchMessages
       let added = 0;
       for (const a of r.activity || []) {
         learn(a.addr, a.who);
@@ -4355,6 +4355,10 @@ const MAX_ACTS = 1000;
 let last = "";
 let timer;
 let inflight = false;
+// tokenEra counts the tokens the page has taken. A poll compares it, not the token: a page given
+// another token and then its first again, all within one answer, would otherwise take a poll from
+// before both as current.
+let tokenEra = 0;
 let polled = false;
 let loaded = false; // the messages have been fetched once, so what comes after is new
 let loadedAt = 0; // when that first fetch came
@@ -4376,11 +4380,11 @@ async function poll() {
   if (!heldIds) heldIds = new Set(ui.messages.map((m) => m.id));
   // A poll that the page took a new token during (start) belongs to the old daemon: it ends without
   // touching the page, and leaves inflight and the timer to the poll start began (#523).
-  const token = ui.token;
+  const era = tokenEra;
   try {
     const asked = Date.now();
-    const [state] = await Promise.all([api("/api/state"), fetchMessages(token), fetchActivity(token)]);
-    if (token !== ui.token) return;
+    const [state] = await Promise.all([api("/api/state"), fetchMessages(era), fetchActivity(era)]);
+    if (era !== tokenEra) return;
     const arrived = loaded ? ui.messages.filter((m) => !heldIds.has(m.id)) : []; // the first fetch brings the history
     heldIds = null;
     if (!loaded) loadedAt = Date.now();
@@ -4423,7 +4427,7 @@ async function poll() {
     announceArrivals(arrived);
     if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
-    if (token !== ui.token) return;
+    if (era !== tokenEra) return;
     inflight = false;
     if (e instanceof AuthError) return deny(e.token);
     ui.conn = "down";
@@ -4491,6 +4495,7 @@ async function start() {
     // new daemon is asked now rather than once that answer, or its failure, comes (#523).
     inflight = false;
     clearTimeout(timer);
+    tokenEra++;
   }
   ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "messages";
   render();
