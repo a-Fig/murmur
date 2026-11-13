@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // Group chats (#184): a group is a group: tag, the tag is its address, a session joins by setting
@@ -236,4 +237,57 @@ func TestAGroupExplainsItselfOnce(t *testing.T) {
 	if got[0].GroupKnown || !got[1].GroupKnown {
 		t.Errorf("carol's messages say the group is known %v, then %v; want false, then true", got[0].GroupKnown, got[1].GroupKnown)
 	}
+}
+
+// #539. A person starts a group on the page, which adds each member through /api/tags, a human's
+// mark. Each member is told that removing the tag leaves the group, and it does, for a member on
+// the page's device and one on another; a human's other marks still stand over the session.
+func TestASessionLeavesAGroupAPersonStarted(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	carol, _ := b.session("cccccc", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(carol) && b.seesSession(alice) })
+
+	pg := a.page()
+	for _, addr := range []string{alice, bob} {
+		if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+addr+`","add":["group:a-b","reviewing"]}`); code != 200 && code != 204 {
+			t.Fatalf("adding %s on the page: %d %s", addr, code, body)
+		}
+	}
+	eventually(t, "both in the group", func() bool { return b.inGroup("cccccc", alice, "group:a-b") && b.inGroup("cccccc", bob, "group:a-b") })
+
+	for _, m := range []struct {
+		d    *device
+		sess string
+	}{{a, "aaaaaa"}, {b, "bbbbbb"}} {
+		r := m.d.do(proto.Request{Op: proto.OpTags, Session: m.sess, Remove: []string{"group:a-b", "reviewing"}})
+		if r.Error != "" {
+			t.Fatalf("%s leaving: %s", m.sess, r.Error)
+		}
+		if strings.Contains(r.Note, "group:a-b") || !strings.Contains(r.Note, "reviewing") {
+			t.Errorf("%s was told %q; want a human's choice to stand over reviewing only", m.sess, r.Note)
+		}
+		if slices.ContainsFunc(r.Tags, func(tg tags.Tag) bool { return tg.Name == "group:a-b" }) {
+			t.Errorf("%s still has the group's tag: %+v", m.sess, r.Tags)
+		}
+	}
+	eventually(t, "both out of the group", func() bool {
+		return !b.inGroup("cccccc", alice, "group:a-b") && !b.inGroup("cccccc", bob, "group:a-b")
+	})
+	b.send("cccccc", "group:a-b", "after they left", "")
+	holds(t, "nothing for alice or bob, who left", time.Second, func() bool {
+		return len(a.do(proto.Request{Op: proto.OpInbox, Session: "aaaaaa"}).Messages) == 0 &&
+			len(b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages) == 0
+	})
+	if !b.inGroup("cccccc", bob, "reviewing") {
+		t.Error("bob took off a tag a human gave him that isn't a group")
+	}
+
+	// The person can still put a member back.
+	if code, body := pg.call("POST", "/api/tags", pg.token, `{"addr":"`+bob+`","add":["group:a-b"]}`); code != 200 && code != 204 {
+		t.Fatalf("adding bob again: %d %s", code, body)
+	}
+	eventually(t, "bob back in the group", func() bool { return a.inGroup("aaaaaa", bob, "group:a-b") })
 }
