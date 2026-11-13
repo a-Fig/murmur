@@ -643,8 +643,11 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 	}
 }
 
-// maxRecipients is the most recipients one send can name: as many sessions as who lists.
-const maxRecipients = view.WhoLimit
+// maxRecipients is the most recipients one send can name. Each is a push of its own, one after
+// another, and a client that stops waiting for the tool call partway leaves the sender with no
+// result and some recipients with the message, so a send that tried again would repeat it. Ten
+// pushes fit inside the minute Codex waits for a tool call (2026-11-13).
+const maxRecipients = 10
 
 // recipients splits send's to into the recipients it names (#520): one, or several separated by
 // commas, or a JSON array of them written into the string, which is how a model may pass a list
@@ -670,7 +673,10 @@ func recipients(to string) []string {
 //
 // Names go first, and addresses after, so that an address of a session already sent to by its name
 // is known for one and skipped: the daemon says which address a name reached. Two names for the
-// same session (one it had before a move, #36) would each send.
+// same session (one it had before a move, #36) would each send, as would a device and one of its
+// sessions. A refusal that doesn't name the recipient is about the message or this session (no
+// subject, a key in the body, not registered, no daemon) and would be the same for the rest, so the
+// rest aren't tried: a session waiting to register would otherwise wait once per recipient.
 func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string) (*mcp.CallToolResult, any, error) {
 	if len(to) > maxRecipients {
 		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
@@ -688,9 +694,14 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 	rs := make([]view.SentTo, len(to))
 	reached := map[string]string{} // address → the recipient as named that reached it
 	sent := false
+	stopped := ""
 	for _, i := range order {
 		r := to[i]
 		rs[i].To = r
+		if stopped != "" {
+			rs[i].Err = "not tried, as " + stopped
+			continue
+		}
 		if r == "*" || bus.IsGroup(tags.Normalize(r)) {
 			rs[i].Err = "a list is for sessions and people, each of whom gets a message of their own; send to " + r + " on its own"
 			continue
@@ -702,6 +713,9 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body})
 		if err != nil {
 			rs[i].Err = err.Error()
+			if !strings.Contains(rs[i].Err, r) {
+				stopped = "the send to " + r + " failed for a reason that isn't about " + r
+			}
 			continue
 		}
 		rs[i].Resp, sent = resp, true

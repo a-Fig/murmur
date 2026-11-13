@@ -65,7 +65,11 @@ func (f *fakeDaemon) sends() []proto.Request {
 
 func callSend(t *testing.T, to string) (*fakeDaemon, *mcp.CallToolResult) {
 	t.Helper()
-	f := listDaemon()
+	return callSendTo(t, listDaemon(), to)
+}
+
+func callSendTo(t *testing.T, f *fakeDaemon, to string) (*fakeDaemon, *mcp.CallToolResult) {
+	t.Helper()
 	p := repo(t, true, f)
 	if _, err := p.RecordConsent(); err != nil {
 		t.Fatal(err)
@@ -100,7 +104,7 @@ func TestSendToAListSendsToEachOnce(t *testing.T) {
 		t.Errorf("the daemon was asked to send to %q, want %q", got, want)
 	}
 	text := res.Content[0].(*mcp.TextContent).Text
-	want := "Sent to 2 of 6, each as a message of its own:\n" +
+	want := "Sent to 2 of 5, each as a message of its own:\n" +
 		"- dev/aaaaaa is quiet-otter, so it got the message once.\n" +
 		"- Sent id-aaaaaa to quiet-otter (dev/aaaaaa).\n" +
 		"- Not sent to group:ui: a list is for sessions and people, each of whom gets a message of their own; send to group:ui on its own\n" +
@@ -140,5 +144,30 @@ func TestSendToTooManyIsRefused(t *testing.T) {
 	f, res := callSend(t, strings.Join(many, ","))
 	if !res.IsError || len(f.sends()) != 0 {
 		t.Errorf("a send to %d: error %v, %d sends", len(many), res.IsError, len(f.sends()))
+	}
+}
+
+// A refusal that doesn't name the recipient is about the message or the sender, and would be the
+// same for every recipient, so the rest aren't tried. One that names it is that recipient's alone,
+// and the daemon's "not sent: " isn't said twice.
+func TestSendToAListStopsOnARefusalOfTheMessage(t *testing.T) {
+	f := &fakeDaemon{sendReply: func(req proto.Request) proto.Response {
+		if req.To == "quiet-otter" {
+			return proto.Response{Error: "not sent: quiet-otter is offline and takes no messages."}
+		}
+		return proto.Response{Error: "not sent: the body holds what looks like a key"}
+	}}
+	f, res := callSendTo(t, f, "quiet-otter, brisk-finch, calm-heron, dev/aaaaaa")
+	if got := f.sends(); len(got) != 2 {
+		t.Errorf("the daemon was asked %d times, want 2: once for the offline one, once for the key", len(got))
+	}
+	text := res.Content[0].(*mcp.TextContent).Text
+	want := "Sent to 0 of 4, each as a message of its own:\n" +
+		"- Not sent to quiet-otter: quiet-otter is offline and takes no messages\n" +
+		"- Not sent to brisk-finch: the body holds what looks like a key\n" +
+		"- Not sent to calm-heron: not tried, as the send to brisk-finch failed for a reason that isn't about brisk-finch\n" +
+		"- Not sent to dev/aaaaaa: not tried, as the send to brisk-finch failed for a reason that isn't about brisk-finch\n"
+	if text != want || !res.IsError {
+		t.Errorf("result (error %v):\n%s\nwant:\n%s", res.IsError, text, want)
 	}
 }
