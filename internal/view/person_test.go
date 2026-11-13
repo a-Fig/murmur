@@ -16,7 +16,7 @@ func TestTurnFromAPerson(t *testing.T) {
 	name := brand.Product
 	m := proto.MessageView{From: "dev-0001/" + bus.PersonSession, FromName: "ada", FromAgent: bus.AgentPerson, FromOwner: "smash", To: "x", Subject: "look at this", Body: "please"}
 	last := "ada sees only what you `send`, not this conversation. Answer with " + name + "'s `send` to ada.\n"
-	want := "Message from ada [human] (on " + name + "'s page, on smash's machine) via " + name + ":\n\nlook at this\n\nplease\n\n" + last
+	want := "Message from ada [human] (on smash's machine) via " + name + ":\n\nlook at this\n\nplease\n\n" + last
 	if got := Turn(m); got != want {
 		t.Errorf("first turn:\n%s\nwant:\n%s", got, want)
 	}
@@ -33,7 +33,7 @@ func TestTurnFromAPerson(t *testing.T) {
 		t.Errorf("a later turn from a name on two devices:\n%s\nwant:\n%s", got, want)
 	}
 	m.Introduced = false
-	if got := Turn(m); !strings.Contains(got, "(on "+name+"'s page, on smash's machine, from device dev-0001)") {
+	if got := Turn(m); !strings.Contains(got, "(on smash's machine, from device dev-0001)") {
 		t.Errorf("a first turn from a name on two devices:\n%s", got)
 	}
 }

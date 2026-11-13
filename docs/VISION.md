@@ -1425,9 +1425,11 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   group or the sender to answer and says that removing the tag leaves. That long line comes once: a
   session's later messages from the same group end "Reply with Murmur's `send` to group:ui or
   quiet-otter, if a reply is needed" (Tyler, 2026-11-12), kept as a person's explanation is (#345).
-  When a person's message is the session's first from them, their explanation is a sentence inside
-  the group's line (#484), not a line in its place. Alone, it said to answer the person, and the
-  rest of the group never saw the answer.
+  A person writing in a group gets the group's line too, not their own (#484): theirs said to
+  answer them, and the rest of the group never saw the answer. The group's line says to answer
+  with `send` as well. Tyler shortened it (2026-11-13) to "Reply with Murmur's `send` to group:ui,
+  or to quiet-otter alone, if a reply is needed. Remove the tag group:ui from yourself to leave the
+  group."
   A session added to a group nobody writes to sees it only in its own tags.
 - **No loop guard**, as for any message (Tyler, 2026-10-29), though an answer to a group gives
   every member a turn. The instructions ask agents to answer the group only with what the others

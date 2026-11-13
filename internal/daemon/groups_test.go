@@ -203,7 +203,7 @@ func TestAGroupExplainsItselfOnce(t *testing.T) {
 	b.tagSelf("cccccc", []string{"group:ui"}, nil)
 
 	long := func(g string) string {
-		return "You are in " + g + ". Reply with Murmur's `send` to " + g + " for the whole group, or to " + aliceName + " alone, if a reply is needed. Removing the tag " + g + " from yourself leaves the group."
+		return "You are in " + g + ". Reply with Murmur's `send` to " + g + ", or to " + aliceName + " alone, if a reply is needed. Remove the tag " + g + " from yourself to leave the group."
 	}
 	short := func(g string) string {
 		return "Reply with Murmur's `send` to " + g + " or " + aliceName + ", if a reply is needed."
