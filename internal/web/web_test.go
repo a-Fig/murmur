@@ -673,7 +673,6 @@ func TestAccountAndSendCalls(t *testing.T) {
 	}
 }
 
-// Sending as the person is the page's most dangerous call: every new one needs the token.
 // The page sets and clears this device's nickname (#533); a refused one says why.
 func TestNickCall(t *testing.T) {
 	f := newFake()
@@ -698,6 +697,7 @@ func TestNickCall(t *testing.T) {
 	}
 }
 
+// Sending as the person is the page's most dangerous call: every new one needs the token.
 func TestAccountCallsNeedTheToken(t *testing.T) {
 	f := newFake()
 	h := start(t, f, noPRs)

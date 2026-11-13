@@ -4153,7 +4153,7 @@ function nickRow() {
         type: "text",
         value,
         maxlength: 32,
-        placeholder: acct?.name || "tyler-laptop",
+        placeholder: "None",
         autocomplete: "off",
         autocapitalize: "none",
         spellcheck: "false",
@@ -4178,6 +4178,10 @@ function nickRow() {
 
 async function saveNick(nick) {
   delete ui.rowErrors.nick;
+  if (nick === (ui.state?.account?.nick || "")) {
+    ui.nickDraft = null;
+    return render(); // nothing to change
+  }
   try {
     const account = await api("/api/nick", { method: "PUT", body: JSON.stringify({ nick }) });
     if (ui.state) ui.state.account = { ...ui.state.account, ...account, nick: account.nick || "" };
@@ -4186,7 +4190,7 @@ async function saveNick(nick) {
     poll();
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
-    ui.rowErrors.nick = e.message.charAt(0).toUpperCase() + e.message.slice(1);
+    ui.rowErrors.nick = e.message; // it starts with a nickname, ID or name, all lowercase
   }
   render();
 }
