@@ -1605,13 +1605,10 @@ function sessionOnBranch(branch) {
 function recentEntries() {
   const out = [];
   // A group's message is each of its members' as well as its sender's, so a member's filter shows
-  // it (#485). Members are the sessions in the group now, as the conversation's list has them.
+  // it (#485). Members are the sessions in the group now, by inGroup, as the filter has them.
   const members = new Map();
-  for (const d of devices()) {
-    for (const s of d.sessions) {
-      for (const t of s.tags || []) if (isGroupTag(t.name)) members.set(t.name, [...(members.get(t.name) || []), s.name]);
-    }
-  }
+  const sessions = devices().flatMap((d) => d.sessions);
+  for (const g of liveGroups()) members.set(g, sessions.filter((s) => inGroup(s, g)).map((s) => s.name));
   for (const m of ui.messages) {
     const to = m.toKind === "session" ? [toName(m)] : m.toKind === "group" ? members.get(m.to) || [] : [];
     out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), ...to] });
