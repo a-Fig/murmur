@@ -1941,6 +1941,9 @@ a.g-pr:hover {
   font-size: 0.8125rem;
   color: var(--muted-foreground);
 }
+.g-none-action {
+  padding: 0.25rem 1rem 0.75rem;
+}
 
 /* A view with nothing to show (components/ui/empty.tsx, compact). */
 .empty {
@@ -2194,8 +2197,13 @@ a.g-pr:hover {
   flex: 1;
   min-width: 0;
 }
-.g-head-row .icon-btn {
+.g-head-row .icon-btn:last-child {
   margin-right: -0.25rem;
+}
+.g-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.125rem;
 }
 .g-head-who {
   display: flex;
@@ -3194,8 +3202,11 @@ a.g-pr:hover {
   border-radius: var(--radius-xl);
   background: color-mix(in oklab, var(--card) 40%, transparent);
 }
-.start-inner > .btn {
-  align-self: center;
+.start-more {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
 }
 
 /* A group chat's members, in a popover (components/ui/menu.tsx). */
@@ -3480,6 +3491,53 @@ a.g-pr:hover {
   font-size: 0.8125rem;
   text-align: center;
   color: var(--muted-foreground);
+}
+/* Under the list: a way to make a group chat, and while making one, its name. */
+.pick-foot {
+  display: flex;
+  padding: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.pick-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 72%, transparent);
+}
+.pick-group-name {
+  display: flex;
+  gap: 0;
+}
+.pick-group-prefix {
+  flex-shrink: 0;
+  padding-left: calc(0.6875rem - 1px);
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+.pick-group-name input {
+  flex: 1;
+  height: 2rem;
+  padding-left: 0;
+  text-align: left;
+}
+.pick-group .dialog-error,
+.pick-group-note {
+  padding: 0;
+  font-size: 0.75rem;
+}
+.pick-group-note {
+  color: var(--muted-foreground);
+}
+.pick-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.pick-row .g-pick {
+  margin-left: 0.125rem;
 }
 .start-list .pick-row:hover {
   --dot-ring: var(--background);
