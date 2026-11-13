@@ -324,7 +324,9 @@ func senders(msgs []proto.MessageView) string {
 // A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so the first
 // message a session has from one ends by saying that what the agent writes here doesn't reach them:
 // an agent that answers in its conversation, as it would to its user, has answered nobody. Their
-// later messages (m.Explained, #345) end as an agent's do: the agent has been told.
+// later messages (m.Explained, #345) end as an agent's do: the agent has been told. In a group a
+// person's message ends with the group's line instead (#484), and the daemon leaves them to be
+// explained in their first direct message.
 func Turn(m proto.MessageView) string {
 	who := m.From
 	if m.FromName != "" {
@@ -374,8 +376,6 @@ func Turn(m proto.MessageView) string {
 	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
 	}
-	// A person not yet explained to the session is explained before how to answer. In a group the
-	// answer still goes to the group, or the other members never see it (#484).
 	if bus.IsGroup(m.To) && m.GroupKnown {
 		// The session has had the long line below from this group (Tyler, 2026-11-12).
 		fmt.Fprintf(&b, "\nReply with %s's `send` to %s or %s, if a reply is needed.\n", brand.Product, m.To, who)

@@ -27,6 +27,9 @@ import (
 // one whose handoff failed told never. It is rare: a handoff goes to a session that was idle when
 // it began, and typically takes seconds, though T3's can take up to 30.
 //
+// In a group, a person's message ends with the group's line, not their own (#484), so it doesn't
+// count as explaining them: their first direct message still does.
+//
 // A group's messages are explained the same way (#184, Tyler, 2026-11-12): the first a session is
 // given from a group says in full that it is in the group, how to answer the group or the sender,
 // and how to leave; later ones end with one short line. What is kept is the group's tag, beside the
@@ -139,7 +142,9 @@ func (d *Daemon) explainViewsLocked(views []proto.MessageView, to func(i int) []
 		return all
 	}
 	for i := range views {
-		if bus.IsPerson(views[i].From) { // an agent's line is the short one already
+		// An agent's line is the short one already, and in a group the group's line stands in for
+		// a person's (#484): the person is still to be explained in their first direct message.
+		if bus.IsPerson(views[i].From) && !bus.IsGroup(views[i].To) {
 			views[i].Explained = known(to(i), views[i].From)
 		}
 		if bus.IsGroup(views[i].To) {
