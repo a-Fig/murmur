@@ -26,8 +26,8 @@ func (d *device) seesDevices(n int) bool {
 
 // seesSession says whether d's who lists the session at addr on a device that is fresh, which is
 // what a send needs to count it as known. A device stays listed when it goes stale, and the tests'
-// load can hold its heartbeats back past their 3 s stale limit: a send then says its sessions
-// aren't in any device's presence (#387).
+// load can hold its heartbeats back past their stale limit (testStale): a send then says its
+// sessions aren't in any device's presence (#387).
 func (d *device) seesSession(addr string) bool {
 	_, listed, fresh := d.whoShows(addr)
 	return listed && fresh
@@ -156,7 +156,7 @@ func (d *device) offline(remote string, off bool) {
 // gone: it judges staleness only up to its own last successful sync.
 func TestOfflineReaderCallsNobodyStale(t *testing.T) {
 	// Not parallel: b must stay fresh on a for seconds, and other tests' load can hold one of its
-	// heartbeats back for the 3 seconds that make it stale.
+	// heartbeats back for the stale limit (testStale) that makes it stale.
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bdev := b.self()

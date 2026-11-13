@@ -25,10 +25,13 @@ type gitCall struct {
 type gitRecorder struct {
 	mu    sync.Mutex
 	calls []gitCall
+	// dropped is how many of the earliest calls were let go to keep calls bounded.
+	dropped int
 }
 
-// keepCalls bounds what is kept: a busy test process runs a few hundred git a second at most.
-const keepCalls = 50000
+// keepCalls bounds what is kept: a busy test process runs a few hundred git a second at most,
+// and a daemon shard about 45,000 in all (macOS, 2026-11-13).
+const keepCalls = 200000
 
 func (r *gitRecorder) add(sub string, start time.Time, took time.Duration) {
 	r.mu.Lock()
@@ -36,6 +39,7 @@ func (r *gitRecorder) add(sub string, start time.Time, took time.Duration) {
 	r.calls = append(r.calls, gitCall{sub, start, start.Add(took)})
 	if over := len(r.calls) - keepCalls; over > keepCalls/10 {
 		r.calls = append([]gitCall(nil), r.calls[over:]...)
+		r.dropped += over
 	}
 }
 
@@ -50,6 +54,7 @@ func (r *gitRecorder) summary(span time.Duration) string {
 			recent = append(recent, c)
 		}
 	}
+	dropped := r.dropped
 	r.mu.Unlock()
 	if len(recent) == 0 {
 		return "no git ended in that time"
@@ -91,6 +96,9 @@ func (r *gitRecorder) summary(span time.Duration) string {
 	sort.Slice(subs, func(i, j int) bool { return by[subs[i]].total > by[subs[j]].total })
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d git ended in the last %v, at most %d at once:", len(recent), span, peak)
+	if dropped > 0 {
+		fmt.Fprintf(&b, " (and %d earlier ones, no longer kept)", dropped)
+	}
 	for _, s := range subs {
 		a := by[s]
 		sort.Slice(a.all, func(i, j int) bool { return a.all[i] < a.all[j] })
@@ -99,4 +107,11 @@ func (r *gitRecorder) summary(span time.Duration) string {
 			p95.Round(time.Millisecond), a.max.Round(time.Millisecond))
 	}
 	return b.String()
+}
+
+// ran says whether any git was recorded.
+func (r *gitRecorder) ran() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls) > 0 || r.dropped > 0
 }
