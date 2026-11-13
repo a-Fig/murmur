@@ -21,7 +21,9 @@ import (
 // has the reasons.
 
 // nickOfLocked is what device dev is called: the nickname its user gave it, else its person's
-// name. "" if it has neither. Caller holds mu.
+// name. "" if it has neither. Another device's person's name counts only if it reaches them
+// (listedPersonNameLocked), so a presence that says its person is someone else's ada doesn't get
+// its device called ada either (#350). Caller holds mu.
 func (d *Daemon) nickOfLocked(dev string) string {
 	if dev == d.device {
 		return cmp.Or(d.st.Nick, d.st.Person)
@@ -35,7 +37,7 @@ func (d *Daemon) nickOfLocked(dev string) string {
 	}
 	for _, s := range p.pres.Sessions {
 		if s.ID == bus.PersonSession {
-			return s.Name
+			return d.listedPersonNameLocked(bus.Addr(dev, s.ID), s.Name)
 		}
 	}
 	return ""

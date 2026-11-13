@@ -233,7 +233,8 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 			}
 			addr := bus.Addr(id, ps.ID)
 			if ps.ID == bus.PersonSession {
-				dv.Person = &web.Person{Name: ps.Name, Addr: addr, LastActive: peerActive(p, ps), Tags: ps.Tags}
+				dv.Person = &web.Person{Name: nameOr(d.listedPersonNameLocked(addr, ps.Name), addr), Addr: addr,
+					LastActive: peerActive(p, ps), Tags: ps.Tags}
 				continue
 			}
 			dv.Sessions = append(dv.Sessions, web.Session{
