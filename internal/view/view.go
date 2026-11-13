@@ -281,12 +281,18 @@ func Inbox(r proto.Response) string {
 		if m.FromName != "" {
 			reply = m.FromName // a name is an address
 		}
+		// A person not yet explained is explained first; in a group the reply still goes to the
+		// group (#484).
+		person := ""
 		if isPerson(m) && !m.Explained {
-			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
-		} else if bus.IsGroup(m.To) && m.GroupKnown {
-			fmt.Fprintf(&b, "(Reply to %s or %s.)\n", m.To, reply)
+			person = fmt.Sprintf("%s is a person, and sees only what you send them. ", reply)
+		}
+		if bus.IsGroup(m.To) && m.GroupKnown {
+			fmt.Fprintf(&b, "(%sReply to %s or %s.)\n", person, m.To, reply)
 		} else if bus.IsGroup(m.To) {
-			fmt.Fprintf(&b, "(Reply to %s for the whole group, or to %s alone. Removing the tag %s from yourself leaves the group.)\n", m.To, reply, m.To)
+			fmt.Fprintf(&b, "(%sReply to %s for the whole group, or to %s alone. Removing the tag %s from yourself leaves the group.)\n", person, m.To, reply, m.To)
+		} else if person != "" {
+			fmt.Fprintf(&b, "(%sReply to %s.)\n", person, reply)
 		} else {
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 		}
@@ -371,21 +377,27 @@ func Turn(m proto.MessageView) string {
 	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
 	}
+	// A person not yet explained to the session is explained before how to answer. In a group the
+	// answer still goes to the group, or the other members never see it (#484).
+	person := ""
 	if isPerson(m) && !m.Explained {
-		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
-		return b.String()
+		person = fmt.Sprintf("%s sees only what you `send`, not this conversation. ", who)
 	}
 	if bus.IsGroup(m.To) && m.GroupKnown {
 		// The session has had the long line below from this group (Tyler, 2026-11-12).
-		fmt.Fprintf(&b, "\nReply with %s's `send` to %s or %s, if a reply is needed.\n", brand.Product, m.To, who)
+		fmt.Fprintf(&b, "\n%sReply with %s's `send` to %s or %s, if a reply is needed.\n", person, brand.Product, m.To, who)
 		return b.String()
 	}
 	if bus.IsGroup(m.To) {
 		// The first message a session has from a group. A group's message is answered to the
 		// group, so the others see it; the tag is how a member leaves, and a session another agent
 		// added learns here that it is in the group.
-		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
-			m.To, brand.Product, m.To, who, m.To)
+		fmt.Fprintf(&b, "\nYou are in %s. %sReply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
+			m.To, person, brand.Product, m.To, who, m.To)
+		return b.String()
+	}
+	if person != "" {
+		fmt.Fprintf(&b, "\n%sAnswer with %s's `send` to %s.\n", person, brand.Product, who)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Product, who)

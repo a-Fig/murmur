@@ -297,3 +297,39 @@ func TestWhoShowsAHookThatIsntRunning(t *testing.T) {
 		t.Errorf("who, of one whose own hook isn't running:\n%s", out)
 	}
 }
+
+// A person who writes in a group is explained the first time, and the answer still goes to the
+// group, so the other members see it (#484): the person's line used to stand alone, and send the
+// agent's reply to the person only.
+func TestAPersonInAGroup(t *testing.T) {
+	name := brand.Product
+	m := proto.MessageView{From: "dev-0001/human", FromName: "tyler", To: "group:ui", Subject: "who takes the filter?"}
+	person := "tyler sees only what you `send`, not this conversation. "
+	for _, tc := range []struct {
+		what                string
+		explained, knownGrp bool
+		turn, inbox         string
+	}{
+		{"neither told", false, false,
+			"You are in group:ui. " + person + "Reply with " + name + "'s `send` to group:ui for the whole group, or to tyler alone, if a reply is needed. Removing the tag group:ui from yourself leaves the group.\n",
+			"(tyler is a person, and sees only what you send them. Reply to group:ui for the whole group, or to tyler alone. Removing the tag group:ui from yourself leaves the group.)\n"},
+		{"the group told, the person not", false, true,
+			person + "Reply with " + name + "'s `send` to group:ui or tyler, if a reply is needed.\n",
+			"(tyler is a person, and sees only what you send them. Reply to group:ui or tyler.)\n"},
+		{"the person told, the group not", true, false,
+			"You are in group:ui. Reply with " + name + "'s `send` to group:ui for the whole group, or to tyler alone, if a reply is needed. Removing the tag group:ui from yourself leaves the group.\n",
+			"(Reply to group:ui for the whole group, or to tyler alone. Removing the tag group:ui from yourself leaves the group.)\n"},
+		{"both told", true, true,
+			"Reply with " + name + "'s `send` to group:ui or tyler, if a reply is needed.\n",
+			"(Reply to group:ui or tyler.)\n"},
+	} {
+		v := m
+		v.Explained, v.GroupKnown = tc.explained, tc.knownGrp
+		if got := Turn(v); !strings.HasSuffix(got, "\n\n"+tc.turn) {
+			t.Errorf("%s: the turn ends\n%q\nwant it to end\n%q", tc.what, got, tc.turn)
+		}
+		if got := Inbox(proto.Response{Messages: []proto.MessageView{v}}); !strings.HasSuffix(got, "\n"+tc.inbox) {
+			t.Errorf("%s: inbox ends\n%q\nwant it to end\n%q", tc.what, got, tc.inbox)
+		}
+	}
+}
