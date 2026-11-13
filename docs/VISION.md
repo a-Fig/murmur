@@ -1440,6 +1440,24 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   that has muted it, as its message to everyone is, and its `send` names that member as not
   having got it.
 
+### Sending to a list
+
+#520, built 2026-11-13. An agent can send one message to several sessions without making a group:
+`send`'s `to` takes names or addresses separated by commas.
+
+- **A list is not a group.** Each recipient gets an ordinary one-to-one message, which doesn't say
+  who else got it, and a reply goes to the sender alone (Tyler, 2026-11-13). So a group or `*`
+  can't be in a list: a message there is one conversation that all its members see.
+- **The MCP server expands it.** It sends to each recipient as a single `send` would, so the daemon
+  and the wire format are unchanged, and a daemon older than the list takes one too. The cost is a
+  push per recipient, one after another, so a list holds at most 10: twenty pushes could outlast a
+  client's wait for the tool call, which would leave the sender with no result and some recipients
+  with the message.
+- **Each recipient once.** Names are sent before addresses, and the daemon's answer gives the address
+  a name reached, so the same session named again by address is skipped. Two names for one session
+  (an old one still reaches it after a move) and a device beside one of its sessions each still send.
+  A device's ID looks like a person's name, so a list can't tell one apart to refuse it.
+
 ### When a session stays the same session
 
 A session's name (#20) lasts as long as its client treats it as the same conversation, so it

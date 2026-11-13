@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
+	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/view"
 )
@@ -35,7 +37,7 @@ import (
 // system prompt.
 var Instructions = strings.ReplaceAll(`Murmur connects you with the coding agents on your teammates' machines that work in this same repository.
 
-- You have a name of two words, like quiet-otter, that is your address, and so does every session. who shows yours, marked as you, and everyone else's; send takes a name. If yours is still pending, others reach you at your device/session until it lands.
+- You have a name of two words, like quiet-otter, that is your address, and so does every session. who shows yours, marked as you, and everyone else's; send takes a name, or several separated by commas. If yours is still pending, others reach you at your device/session until it lands.
 - Keep status set to what you are working on; who shows everyone's.
 - tags puts short labels on you that others see in who and can search by. If who shows no model: tag on you, add one for the model you are (model:opus-5.5). do-not-disturb keeps messages to you queued in your inbox, with no turn and no notice, until you read your inbox or take the tag off.
 - A tag that starts with group: is a group chat: send to group:ui reaches every session that has that tag. Join one by adding the tag to yourself and leave by removing it; start one, or bring others in, with tags and their names in for. A group's message is headed "Message sent in group:ui from quiet-otter". Answer it to the group when the others need to see it, and to its sender alone when they don't.
@@ -641,6 +643,91 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 	}
 }
 
+// maxRecipients is the most recipients one send can name. Each is a push of its own, one after
+// another, and a client that stops waiting for the tool call partway leaves the sender with no
+// result and some recipients with the message, so a send that tried again would repeat it. Ten
+// pushes fit inside the minute Codex waits for a tool call (2026-11-13).
+const maxRecipients = 10
+
+// recipients splits send's to into the recipients it names (#520): one, or several separated by
+// commas, or a JSON array of them written into the string, which is how a model may pass a list
+// to a field that takes a string. Blanks are dropped, and so is a recipient named again.
+func recipients(to string) []string {
+	var list []string
+	if t := strings.TrimSpace(to); !strings.HasPrefix(t, "[") || json.Unmarshal([]byte(t), &list) != nil {
+		list = strings.Split(t, ",")
+	}
+	var out []string
+	for _, r := range list {
+		if r = strings.TrimSpace(r); r != "" && !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// sendEach sends one message to each of several recipients, as a send to each would (#520): every
+// one gets an ordinary message of its own, and none is told who else got it. So the daemon needs
+// nothing new, and an older one takes a list too. A group or everyone can't be in a list: a message
+// there is one conversation that all of its members see, which a list is not.
+//
+// Names go first, and addresses after, so that an address of a session already sent to by its name
+// is known for one and skipped: the daemon says which address a name reached. Two names for the
+// same session (one it had before a move, #36) would each send, as would a device and one of its
+// sessions. A refusal that doesn't name the recipient is about the message or this session (no
+// subject, a key in the body, not registered, no daemon) and would be the same for the rest, so the
+// rest aren't tried: a session waiting to register would otherwise wait once per recipient.
+func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body string) (*mcp.CallToolResult, any, error) {
+	if len(to) > maxRecipients {
+		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
+		r.IsError = true
+		return r, nil, nil
+	}
+	order := make([]int, 0, len(to))
+	for pass := range 2 {
+		for i, r := range to {
+			if strings.Contains(r, "/") == (pass == 1) {
+				order = append(order, i)
+			}
+		}
+	}
+	rs := make([]view.SentTo, len(to))
+	reached := map[string]string{} // address → the recipient as named that reached it
+	sent := false
+	stopped := ""
+	for _, i := range order {
+		r := to[i]
+		rs[i].To = r
+		if stopped != "" {
+			rs[i].Err = "not tried, as " + stopped
+			continue
+		}
+		if r == "*" || bus.IsGroup(tags.Normalize(r)) {
+			rs[i].Err = "a list is for sessions and people, each of whom gets a message of their own; send to " + r + " on its own"
+			continue
+		}
+		if first, ok := reached[r]; ok {
+			rs[i].Same = first
+			continue
+		}
+		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body})
+		if err != nil {
+			rs[i].Err = err.Error()
+			if !strings.Contains(rs[i].Err, r) {
+				stopped = "the send to " + r + " failed for a reason that isn't about " + r
+			}
+			continue
+		}
+		rs[i].Resp, sent = resp, true
+		if len(resp.Messages) > 0 {
+			reached[resp.Messages[0].To] = r
+		}
+	}
+	res := text(view.SentEach(rs))
+	res.IsError = !sent
+	return res, nil, nil
+}
+
 func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
@@ -681,7 +768,7 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone"`
+		To      string `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
 		Subject string `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
 		Body    string `json:"body,omitempty" jsonschema:"the rest of the message"`
 	}
@@ -730,8 +817,16 @@ func (s *server) tools(srv *mcp.Server) {
 		"every session with that tag), to all sessions on a device, or to everyone. It usually reaches the recipient as a turn of its own, headed \"Message from <your name> (...) via " + brand.Product + "\", " +
 		"with your subject and then your body. A recipient that is at work, or that " + brand.Product + " can't start a turn in, gets a one-line notice with " +
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
-		"Message to coordinate, not to chat."},
+		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
+		"not told who else got it, and the result says what became of each. Message to coordinate, not to chat."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
+			to := recipients(in.To)
+			if len(to) > 1 {
+				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body)
+			}
+			if len(to) == 1 {
+				in.To = to[0]
+			}
 			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body})
 			return result(view.Sent, resp, err)
 		})
