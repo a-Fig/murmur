@@ -415,7 +415,7 @@ func TestASessionLeavesAGroupAHumanPutItIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Human["group:old"] = Mark{On: false, By: "tyler", At: added}
-	kept := st.Clone()
+	kept := *st // shares its maps, as the daemon's copy of the kept State does
 
 	left := time.Now()
 	if got := st.Left([]string{"group:ui", "reviewing", "group:old", "group:none"}, left); !slices.Equal(got, []string{"group:ui"}) {

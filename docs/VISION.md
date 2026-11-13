@@ -1405,8 +1405,8 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   several groups. That holds for a group a person put it in on the page too, though the page's
   add is a human's pin (#539): every group message tells the member that removing the tag leaves,
   and a member that couldn't leave would get a turn for every message. The session's removal takes
-  the human's pin off and counts as a choice made then, so a human's add from before it, read late,
-  doesn't put the session back; one made after it does. A human's pin taking a session out of a
+  the human's pin off and counts as a choice made then, so a human's add made more than a minute
+  before it, read late, doesn't put the session back; one made after it does. A human's pin taking a session out of a
   group still stands. The page's adds could have become the session's own tags instead, as an
   agent's are, but that needs a new event for another device's sessions, and leaves the groups
   people had already started stuck. So a group can stand for a topic: sessions that want to hear
@@ -1417,7 +1417,8 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   another, or change its `model:`. It can't take a session out. The add goes to each session's
   device as a `group.add` event on the adder's log, and that device makes the tag the session's
   own, so the session can remove it and a human's mark stands over it. It is a type of its own
-  because every daemon applies a `tags` event as a human's choice, which the session can't undo.
+  because every daemon applies a `tags` event as a human's choice, which the session can't undo
+  but for leaving a group.
   An add more than an hour old when it is read isn't applied, nor one from history a daemon passes
   over unless it was sent since the session started: an add carries no order against the session's
   own changes, so an old one read late (its log waited for a team key, or a daemon restarted) could

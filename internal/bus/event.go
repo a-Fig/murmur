@@ -33,7 +33,8 @@ const (
 	Tags = "tags"
 	// GroupAdd is an agent adding another session to groups (#184): Add is the groups' tags and To
 	// the session, whose device applies it as the session's own tags. It is a type of its own
-	// because every daemon applies Tags as a human's choice, which the session can't undo. A daemon
+	// because every daemon applies Tags as a human's choice, which the session can't undo, but for
+	// leaving a group (#539). A daemon
 	// from before groups doesn't know the type and passes over it.
 	GroupAdd = "group.add"
 	// Boxed is an event encrypted for the team's devices (#156): it holds another event whole, and
