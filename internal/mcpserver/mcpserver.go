@@ -1164,13 +1164,19 @@ func (l *link) run(ctx context.Context) {
 		stale, route := l.hello.Route != h.Route, l.hello.Route
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
+		told := h.Route
 		if stale && route.Child {
 			// A subagent's call came while the hello was on its way: the daemon hears that the
 			// session is a child before the call, which waits for this registration, goes on.
 			l.sendRoute(ctx, h.ID, route)
-			stale = false
+			told = route
 		}
 		l.set(true, nil)
+		// Anything learned since, up to the moment the link was up, when tellRoute could still
+		// find it down, is sent now.
+		l.mu.Lock()
+		stale = l.hello.Route != told
+		l.mu.Unlock()
 		if stale {
 			l.spawn(func() { l.tellRoute(ctx) })
 		}
