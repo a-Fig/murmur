@@ -34,10 +34,10 @@ func TestCodexThreadMatch(t *testing.T) {
 	}
 	req := proto.Request{Agent: "codex", ClaudeSession: thread, Cwd: dir}
 	soon, late := at("a", 300*time.Millisecond, proto.Route{}), at("b", time.Minute, proto.Route{})
-	if got, _ := codexThreadMatch(req, []*session{late, soon}); got != soon {
+	if got, _, _ := codexThreadMatch(req, []*session{late, soon}); got != soon {
 		t.Errorf("got %v, want the session whose server started just after the thread", got)
 	}
-	if got, _ := codexThreadMatch(req, []*session{soon, at("c", time.Second, proto.Route{})}); got != nil {
+	if got, _, _ := codexThreadMatch(req, []*session{soon, at("c", time.Second, proto.Route{})}); got != nil {
 		t.Errorf("two servers started just after the thread: got %v, want none", got.id)
 	}
 	elsewhere := at("h", 300*time.Millisecond, proto.Route{})
@@ -52,7 +52,7 @@ func TestCodexThreadMatch(t *testing.T) {
 		"is in another directory":   elsewhere,
 		"was matched wrong once":    unsure,
 	} {
-		if got, _ := codexThreadMatch(req, []*session{s}); got != nil {
+		if got, _, _ := codexThreadMatch(req, []*session{s}); got != nil {
 			t.Errorf("a session that %s was matched", name)
 		}
 	}
@@ -61,15 +61,18 @@ func TestCodexThreadMatch(t *testing.T) {
 		"a subagent's hook":    {Agent: "codex", ClaudeSession: thread, Cwd: dir, Subagent: true},
 		"a hook with no cwd":   {Agent: "codex", ClaudeSession: thread},
 	} {
-		if got, _ := codexThreadMatch(r, []*session{soon}); got != nil {
+		if got, _, _ := codexThreadMatch(r, []*session{soon}); got != nil {
 			t.Errorf("%s was matched", name)
 		}
+	}
+	if _, _, out := codexThreadMatch(req, []*session{elsewhere}); len(out) != 1 || out[0] != elsewhere {
+		t.Errorf("a session in another directory that fits by time wasn't reported: %v", out)
 	}
 	// A thread made just before another thread's server, whose hook took that server: the second
 	// hook finds the first match wrong.
 	taken := at("j", 300*time.Millisecond, proto.Route{Native: "01a1d3fe-bb00-7000-8000-000000000000"})
 	taken.nativeFromHook = true
-	if got, wrong := codexThreadMatch(req, []*session{taken}); got != nil || len(wrong) != 1 || wrong[0] != taken {
+	if got, wrong, _ := codexThreadMatch(req, []*session{taken}); got != nil || len(wrong) != 1 || wrong[0] != taken {
 		t.Errorf("got %v and wrong %v; want none and the session the other hook took", got, wrong)
 	}
 }

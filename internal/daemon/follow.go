@@ -316,7 +316,15 @@ const codexThreadWindow = 2 * time.Second
 //
 // A resumed thread, made long before its server started, isn't matched. Caller holds mu.
 func (d *Daemon) codexThreadSessionLocked(req proto.Request, byProcess []*session) *session {
-	found, wrong := codexThreadMatch(req, byProcess)
+	found, wrong, elsewhere := codexThreadMatch(req, byProcess)
+	for _, s := range elsewhere {
+		if !s.dirWarned {
+			// Logged, since a hook's directory and its server's differing in form (a symlink, a
+			// short name) would quietly turn #453 off for every session.
+			s.dirWarned = true
+			d.log.Printf("session %s fits a Codex hook's thread by time but not by directory, so it wasn't given the thread", bus.Addr(d.device, s.id))
+		}
+	}
 	for _, s := range wrong {
 		// Another thread's hook took this session by the same rule: one of the two is wrong.
 		d.dropHookThreadLocked(s, "another Codex thread was made as its server started")
@@ -333,23 +341,30 @@ func (d *Daemon) codexThreadSessionLocked(req proto.Request, byProcess []*sessio
 }
 
 // codexThreadMatch is codexThreadSessionLocked's choice: the session the hook's thread is, nil if
-// none can be told, and the sessions that took another thread from a hook by the same rule though
-// this one fits them as well. It changes nothing.
-func codexThreadMatch(req proto.Request, byProcess []*session) (found *session, wrong []*session) {
+// none can be told; the sessions that took another thread from a hook by the same rule though this
+// one fits them as well; and those with no thread yet that fit by time but are in another
+// directory. It changes nothing.
+func codexThreadMatch(req proto.Request, byProcess []*session) (found *session, wrong, elsewhere []*session) {
 	if req.Agent != "codex" || req.Subagent || req.Cwd == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	thread := req.ClaudeSession
 	made, ok := uuidV7Time(thread)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	two := false
 	for _, s := range byProcess {
-		if s.serverStarted.IsZero() || s.route.T3CLI != "" || s.timeUnsure || !sameDir(s.cwd, req.Cwd) {
+		if s.serverStarted.IsZero() || s.route.T3CLI != "" || s.timeUnsure {
 			continue
 		}
 		if after := s.serverStarted.Sub(made); after < 0 || after > codexThreadWindow {
+			continue
+		}
+		if !sameDir(s.cwd, req.Cwd) {
+			if s.route.Native == "" {
+				elsewhere = append(elsewhere, s)
+			}
 			continue
 		}
 		if s.nativeFromHook && s.route.Native != thread {
@@ -367,7 +382,7 @@ func codexThreadMatch(req proto.Request, byProcess []*session) (found *session, 
 	if two {
 		found = nil
 	}
-	return found, wrong
+	return found, wrong, elsewhere
 }
 
 // dropHookThreadLocked takes back the thread s took from a hook (codexThreadSessionLocked), and

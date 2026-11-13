@@ -557,6 +557,8 @@ type session struct {
 	// such a match was found wrong, so the session isn't matched by time again.
 	serverStarted              time.Time
 	nativeFromHook, timeUnsure bool
+	// dirWarned says the log has said a Codex hook fit s by time but not by directory.
+	dirWarned bool
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
