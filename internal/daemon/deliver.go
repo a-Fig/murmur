@@ -674,7 +674,9 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		d.noteHandedLocked(j.route, j.msg.Event.ID)
 	}
 	d.introduceLocked(j.key, j.msg.Event.From)
-	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
+	if !bus.IsGroup(j.msg.Event.To) { // a group's line stands in for a person's (#484), so they are still to be explained
+		d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
+	}
 	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.To)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)

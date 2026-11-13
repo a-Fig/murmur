@@ -123,3 +123,50 @@ func readInbox(t *testing.T, d *device, sess string, n int) []proto.MessageView 
 	}
 	return got
 }
+
+// A person's message in a group ends with the group's line, not theirs (#484), so it doesn't count
+// as explaining them: their first direct message to the same session still carries the long line,
+// by a turn and by inbox.
+func TestAPersonsGroupMessageLeavesThemToBeExplained(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	carol, _ := b.session("cccccc", "")
+	bobName, carolName := b.named(bob), b.named(carol)
+	b.tagSelf("bbbbbb", []string{"group:ui"}, nil)
+	b.tagSelf("cccccc", []string{"group:ui"}, nil)
+	pa := a.page()
+	pa.choose("ada")
+	eventually(t, "presence", func() bool {
+		_, ada := b.whoEntry(a.self() + "/" + bus.PersonSession)
+		return ada && a.seesSession(bob) && a.seesSession(carol)
+	})
+
+	pa.sendText("group:ui", "to the group")
+	eventually(t, "the group's handoff", func() bool { return len(calls()) >= 1 })
+	if got := calls()[0].Stdin; strings.Contains(got, longLine("ada")) || !strings.Contains(got, "You are in group:ui.") {
+		t.Errorf("the group's turn:\n%s", got)
+	}
+	pa.sendText(bobName, "just to bob")
+	eventually(t, "the direct handoff", func() bool { return len(calls()) >= 2 })
+	if got := calls()[1].Stdin; !strings.Contains(got, longLine("ada")) {
+		t.Errorf("the first direct turn after the group's doesn't explain ada:\n%s", got)
+	}
+
+	// Carol has no turns: she reads both with inbox, and the direct one is still the first to explain.
+	var got []proto.MessageView
+	eventually(t, "carol's group message", func() bool {
+		got = append(got, b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
+		return len(got) >= 1
+	})
+	pa.sendText(carolName, "just to carol")
+	eventually(t, "carol's direct message", func() bool {
+		got = append(got, b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages...)
+		return len(got) >= 2
+	})
+	if got[1].Explained {
+		t.Errorf("carol's first direct message from ada counts her as explained already: %+v", got[1])
+	}
+}

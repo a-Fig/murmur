@@ -37,7 +37,7 @@ func TestTurn(t *testing.T) {
 		{"to a group",
 			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "group:ui", Subject: "who has the nav?"},
 			"Message sent in group:ui from quiet-otter (Codex) via " + name + ":\n\nwho has the nav?\n\nYou are in group:ui. Reply with " + name +
-				"'s `send` to group:ui for the whole group, or to quiet-otter alone, if a reply is needed. Removing the tag group:ui from yourself leaves the group.\n"},
+				"'s `send` to group:ui, or to quiet-otter alone, if a reply is needed. Remove the tag group:ui from yourself to leave the group.\n"},
 		{"to a group the session has heard from",
 			proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "group:ui", Subject: "nav is merged", GroupKnown: true},
 			"Message sent in group:ui from quiet-otter (Codex) via " + name + ":\n\nnav is merged\n\nReply with " + name +
@@ -295,5 +295,44 @@ func TestWhoShowsAHookThatIsntRunning(t *testing.T) {
 	r.Devices[0].Sessions[0].HookOff = true
 	if out := Who(r); !strings.Contains(out, "Your hook isn't running") || !strings.Contains(out, "join` again") {
 		t.Errorf("who, of one whose own hook isn't running:\n%s", out)
+	}
+}
+
+// A person who writes in a group gets the group's line, as an agent does, so the answer goes to the
+// group and the other members see it (#484): the person's own line used to stand alone, and send
+// the reply to the person only. How to leave comes only with the first message from the group.
+func TestAPersonInAGroup(t *testing.T) {
+	name := brand.Product
+	m := proto.MessageView{From: "dev-0001/human", FromName: "tyler", To: "group:ui", Subject: "who takes the filter?"}
+	first := "You are in group:ui. Reply with " + name + "'s `send` to group:ui, or to tyler alone, if a reply is needed. Remove the tag group:ui from yourself to leave the group.\n"
+	later := "Reply with " + name + "'s `send` to group:ui or tyler, if a reply is needed.\n"
+	firstInbox := "(Reply to group:ui, or to tyler alone. Remove the tag group:ui from yourself to leave the group.)\n"
+	laterInbox := "(Reply to group:ui or tyler.)\n"
+	for _, tc := range []struct {
+		what                string
+		explained, knownGrp bool
+		turn, inbox         string
+	}{
+		{"neither told", false, false, first, firstInbox},
+		{"the group told, the person not", false, true, later, laterInbox},
+		{"the person told, the group not", true, false, first, firstInbox},
+		{"both told", true, true, later, laterInbox},
+	} {
+		v := m
+		v.Explained, v.GroupKnown = tc.explained, tc.knownGrp
+		got := Turn(v)
+		if !strings.HasSuffix(got, "\n\n"+tc.turn) {
+			t.Errorf("%s: the turn ends\n%q\nwant it to end\n%q", tc.what, got, tc.turn)
+		}
+		if !strings.HasPrefix(got, "Message sent in group:ui from tyler [human] via "+name+":\n") {
+			t.Errorf("%s: the turn's first line: %q", tc.what, got)
+		}
+		got = Inbox(proto.Response{Messages: []proto.MessageView{v}})
+		if !strings.HasSuffix(got, "\n"+tc.inbox) {
+			t.Errorf("%s: inbox ends\n%q\nwant it to end\n%q", tc.what, got, tc.inbox)
+		}
+		if !strings.Contains(got, "\nTo: group:ui\nSubject: ") { // being in it is a given (Tyler, 2026-11-13)
+			t.Errorf("%s: inbox's To line: %q", tc.what, got)
+		}
 	}
 }

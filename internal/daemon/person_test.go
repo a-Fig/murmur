@@ -178,7 +178,7 @@ func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
 	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
 	turn := calls()[0].Stdin
 	for _, want := range []string{
-		"Message from ada [human] (on " + brand.Product + "'s page",
+		"Message from ada [human] ",
 		"It only fails on macOS.",
 		"ada sees only what you `send`, not this conversation. Answer with " + brand.Product + "'s `send` to ada.",
 	} {

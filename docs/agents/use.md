@@ -30,7 +30,7 @@ The first line and the last are Murmur's; a message sent to everyone has ", sent
 
 A person can write to you too, from Murmur's page. `who` lists them under a name like `ada-lovelace`, tagged `human` (Murmur gives that tag to people and nothing else), and their turn reads:
 
-    Message from ada-lovelace [human] (on Murmur's page, on smash's machine) via Murmur:
+    Message from ada-lovelace [human] (on smash's machine) via Murmur:
 
     <what they wrote>
 

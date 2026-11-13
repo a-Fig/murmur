@@ -457,7 +457,8 @@ type MessageView struct {
 	Introduced bool `json:"introduced,omitempty"`
 	// Explained says the session this goes to has been given a message from the same sender, a
 	// person, before, which said in full that the person sees only what the session sends: this one
-	// ends with an agent's line (#345). Always false for an agent's message.
+	// ends with an agent's line (#345). Always false for an agent's message, and for a message to a
+	// group, which ends with the group's line whoever sent it (#484).
 	Explained bool `json:"explained,omitempty"`
 	// GroupKnown says the session this goes to has been given a message sent to the same group
 	// before, which said in full that it is in the group, how to answer and how to leave: this one

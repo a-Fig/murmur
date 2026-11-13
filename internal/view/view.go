@@ -265,10 +265,9 @@ func Inbox(r proto.Response) string {
 		fmt.Fprintf(&b, "\n[%s message from %s, %s]\n", brand.Product, from(m), Ago(m.At))
 		if m.To == "*" {
 			b.WriteString("To: everyone\n")
-		} else if bus.IsGroup(m.To) && m.GroupKnown {
-			fmt.Fprintf(&b, "To: %s\n", m.To)
 		} else if bus.IsGroup(m.To) {
-			fmt.Fprintf(&b, "To: %s, a group you are in\n", m.To)
+			// Being in it is a given (Tyler, 2026-11-13); the line after the subject says how to leave.
+			fmt.Fprintf(&b, "To: %s\n", m.To)
 		}
 		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
 		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
@@ -281,13 +280,16 @@ func Inbox(r proto.Response) string {
 		if m.FromName != "" {
 			reply = m.FromName // a name is an address
 		}
-		if isPerson(m) && !m.Explained {
-			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
-		} else if bus.IsGroup(m.To) && m.GroupKnown {
+		// In a group, the group's line, whoever wrote: a person's own line would send the reply
+		// to them alone (#484).
+		switch {
+		case bus.IsGroup(m.To) && m.GroupKnown:
 			fmt.Fprintf(&b, "(Reply to %s or %s.)\n", m.To, reply)
-		} else if bus.IsGroup(m.To) {
-			fmt.Fprintf(&b, "(Reply to %s for the whole group, or to %s alone. Removing the tag %s from yourself leaves the group.)\n", m.To, reply, m.To)
-		} else {
+		case bus.IsGroup(m.To):
+			fmt.Fprintf(&b, "(Reply to %s, or to %s alone. Remove the tag %s from yourself to leave the group.)\n", m.To, reply, m.To)
+		case isPerson(m) && !m.Explained:
+			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
+		default:
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 		}
 	}
@@ -321,7 +323,9 @@ func senders(msgs []proto.MessageView) string {
 // A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so the first
 // message a session has from one ends by saying that what the agent writes here doesn't reach them:
 // an agent that answers in its conversation, as it would to its user, has answered nobody. Their
-// later messages (m.Explained, #345) end as an agent's do: the agent has been told.
+// later messages (m.Explained, #345) end as an agent's do: the agent has been told. In a group a
+// person's message ends with the group's line instead (#484), and the daemon leaves them to be
+// explained in their first direct message.
 func Turn(m proto.MessageView) string {
 	who := m.From
 	if m.FromName != "" {
@@ -332,7 +336,7 @@ func Turn(m proto.MessageView) string {
 		agent = "the command line"
 	}
 	if isPerson(m) {
-		agent = "on " + brand.Product + "'s page"
+		agent = "" // [human] says it; where they wrote from tells the agent nothing (Tyler, 2026-11-13)
 	}
 	var about []string
 	if agent != "" && !m.Introduced {
@@ -371,10 +375,6 @@ func Turn(m proto.MessageView) string {
 	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
 	}
-	if isPerson(m) && !m.Explained {
-		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
-		return b.String()
-	}
 	if bus.IsGroup(m.To) && m.GroupKnown {
 		// The session has had the long line below from this group (Tyler, 2026-11-12).
 		fmt.Fprintf(&b, "\nReply with %s's `send` to %s or %s, if a reply is needed.\n", brand.Product, m.To, who)
@@ -383,9 +383,15 @@ func Turn(m proto.MessageView) string {
 	if bus.IsGroup(m.To) {
 		// The first message a session has from a group. A group's message is answered to the
 		// group, so the others see it; the tag is how a member leaves, and a session another agent
-		// added learns here that it is in the group.
-		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s's `send` to %s for the whole group, or to %s alone, if a reply is needed. Removing the tag %s from yourself leaves the group.\n",
+		// added learns here that it is in the group. A person writing in a group gets this line, not
+		// their own (#484): theirs said to answer them, and the rest of the group never saw the
+		// answer. This one says to answer with send too, and is short (Tyler, 2026-11-13).
+		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s's `send` to %s, or to %s alone, if a reply is needed. Remove the tag %s from yourself to leave the group.\n",
 			m.To, brand.Product, m.To, who, m.To)
+		return b.String()
+	}
+	if isPerson(m) && !m.Explained {
+		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Product, who)
