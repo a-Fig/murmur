@@ -3,13 +3,16 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // A device's nickname (#190). A device's ID is its hostname and four hex digits, which says which
@@ -99,4 +102,19 @@ func (d *Daemon) nick(ctx context.Context, req proto.Request) proto.Response {
 		note = fmt.Sprintf("This device, %s, has no nickname.", d.device)
 	}
 	return proto.Response{OK: true, Self: bus.Addr(d.device, proto.CLISession), Note: note}
+}
+
+// SetNick is OpNick from the page (#533): the same checks and the same state as `mur nickname`,
+// with "" for --clear.
+func (s pageSource) SetNick(ctx context.Context, nick string) (web.Account, error) {
+	d := s.d
+	d.mu.Lock()
+	d.pageSeenLocked(ctx, time.Now())
+	d.mu.Unlock()
+	if r := d.nick(ctx, proto.Request{Nick: nick, Clear: nick == ""}); r.Error != "" {
+		return web.Account{}, errors.New(r.Error)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.accountLocked(), nil
 }

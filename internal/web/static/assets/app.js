@@ -4146,8 +4146,68 @@ function accountSection() {
         ),
         h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
       ]),
+      nickRow(),
     ),
   );
+}
+
+// This device's nickname (#533), as `mur nickname` sets it: a label teammates see beside the
+// device's ID, and no address. This page calls its own device "This device", so the row says the
+// nickname is what the others see.
+function nickRow() {
+  const acct = ui.state?.account;
+  const nick = acct?.nick || "";
+  const id = ui.state?.device || "";
+  const value = ui.nickDraft ?? nick;
+  const without = acct?.name ? "Without one, they see your name, " + acct.name + "." : "";
+  return settingsRow("nick", "Device nickname", ["What teammates call this device, shown beside its ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without].filter(Boolean).join(" "), [
+    h(
+      "span",
+      { class: "field account-field" },
+      h("input", {
+        type: "text",
+        value,
+        maxlength: 32,
+        placeholder: "None",
+        autocomplete: "off",
+        autocapitalize: "none",
+        spellcheck: "false",
+        "aria-label": "Device nickname",
+        "aria-invalid": ui.rowErrors.nick ? "true" : null,
+        "data-key": "nick-name",
+        oninput: (e) => {
+          ui.nickDraft = e.target.value;
+        },
+        onkeydown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            saveNick(e.target.value.trim());
+          }
+        },
+      }),
+    ),
+    h("button", { class: "btn btn-outline btn-xs", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
+    nick && h("button", { class: "btn btn-ghost btn-xs", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
+  ]);
+}
+
+async function saveNick(nick) {
+  delete ui.rowErrors.nick;
+  if (nick === (ui.state?.account?.nick || "")) {
+    ui.nickDraft = null;
+    return render(); // nothing to change
+  }
+  try {
+    const account = await api("/api/nick", { method: "PUT", body: JSON.stringify({ nick }) });
+    if (ui.state) ui.state.account = { ...ui.state.account, ...account, nick: account.nick || "" };
+    ui.nickDraft = null;
+    announce(nick ? "This device is now called " + nick + "." : "Nickname cleared.");
+    poll();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.rowErrors.nick = e.message; // it starts with a nickname, ID or name, all lowercase
+  }
+  render();
 }
 
 // A direct conversation's key has the person's name in it, so a new name moves what is unsent to the

@@ -7,6 +7,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -402,6 +403,25 @@ func (f *fixtures) Messages(ctx context.Context, cursor string) ([]web.Message, 
 		from = n
 	}
 	return append([]web.Message(nil), f.messages[from:]...), strconv.Itoa(len(f.messages)), nil
+}
+
+// SetNick takes a nickname the way the daemon does, refusing another device's ID or person.
+func (f *fixtures) SetNick(ctx context.Context, nick string) (web.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if nick != "" && !bus.ValidNick(nick) {
+		return web.Account{}, fmt.Errorf("%q can't be a nickname. Use 2 to %d lowercase letters and digits, with single dashes between words, and not a session's name.", nick, names.MaxPerson)
+	}
+	if nick == "maya" {
+		return web.Account{}, errors.New("maya is the name of the person on maya-mbp-91c0.")
+	}
+	f.account.Nick = nick
+	for i := range f.devices {
+		if f.devices[i].Self {
+			f.devices[i].Nick = cmp.Or(nick, f.account.Name)
+		}
+	}
+	return f.account, nil
 }
 
 // SetAccount takes a name the way the daemon does, refusing the other person's.

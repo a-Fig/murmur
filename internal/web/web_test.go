@@ -104,6 +104,16 @@ func (f *fakeSource) SetAccount(ctx context.Context, name string) (Account, erro
 	return f.state.Account, nil
 }
 
+func (f *fakeSource) SetNick(ctx context.Context, nick string) (Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if nick == "x" {
+		return Account{}, errors.New(`"x" can't be a nickname`)
+	}
+	f.state.Account.Nick = nick
+	return f.state.Account, nil
+}
+
 func (f *fakeSource) Send(ctx context.Context, to, text string) (Sent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -663,12 +673,37 @@ func TestAccountAndSendCalls(t *testing.T) {
 	}
 }
 
+// The page sets and clears this device's nickname (#533); a refused one says why.
+func TestNickCall(t *testing.T) {
+	f := newFake()
+	h := start(t, f, noPRs)
+	put := func(body string) (int, Account, string) {
+		t.Helper()
+		resp := h.do("PUT", "/api/nick", "127.0.0.1:"+h.port, testToken, body)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		var a Account
+		json.Unmarshal(b, &a)
+		return resp.StatusCode, a, string(b)
+	}
+	if code, a, b := put(`{"nick":" tyler "}`); code != http.StatusOK || a.Nick != "tyler" {
+		t.Errorf("setting it: %d %s", code, b)
+	}
+	if code, _, b := put(`{"nick":"x"}`); code != http.StatusBadRequest || !strings.Contains(b, "can't be a nickname") {
+		t.Errorf("a refused one: %d %s", code, b)
+	}
+	if code, a, b := put(`{"nick":""}`); code != http.StatusOK || a.Nick != "" {
+		t.Errorf("clearing it: %d %s", code, b)
+	}
+}
+
 // Sending as the person is the page's most dangerous call: every new one needs the token.
 func TestAccountCallsNeedTheToken(t *testing.T) {
 	f := newFake()
 	h := start(t, f, noPRs)
 	for _, c := range []struct{ method, path, body string }{
 		{"PUT", "/api/account", `{"name":"ada"}`},
+		{"PUT", "/api/nick", `{"nick":"ada"}`},
 		{"POST", "/api/send", `{"to":"*","text":"hi"}`},
 		{"POST", "/api/read", `{"ids":["m1"]}`},
 	} {

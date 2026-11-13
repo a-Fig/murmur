@@ -1134,7 +1134,8 @@ are the answers built, and what each cost.
   `send` and `lookup` take `tyler/bd0102`; Sol's review of it sent a message to the wrong device,
   by a nickname that was the ID of a device whose presence had gone. Agents address each other by
   session name anyway, so the address was cut (Tyler, 2026-11-11) rather than guarded.
-- **Shared, and set by the device's own user**, with `mur nickname <name>`. It is kept in
+- **Shared, and set by the device's own user**, with `mur nickname <name>`, or on the page's
+  Settings, under "Your account" (#533). It is kept in
   `state.json` and travels in presence, inside the box, so every teammate sees the same name
   without labelling each other's devices. Labels of one's own for other people's devices were left
   out: nobody has asked for two names for one device.

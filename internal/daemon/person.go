@@ -329,9 +329,9 @@ func (d *Daemon) suggestedNameLocked() string {
 // accountLocked is this device's person as the page sees them. Caller holds mu.
 func (d *Daemon) accountLocked() web.Account {
 	if d.st.Person == "" {
-		return web.Account{Suggested: d.suggestedNameLocked()}
+		return web.Account{Suggested: d.suggestedNameLocked(), Nick: d.st.Nick}
 	}
-	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked()}
+	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
 		a.Unread = append(a.Unread, m.Event.ID)
 	}

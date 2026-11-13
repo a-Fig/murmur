@@ -35,6 +35,9 @@ type Source interface {
 	// SetAccount gives this device's person a name, or a new one, and returns the account. An
 	// error says why the name won't do, in words to show them.
 	SetAccount(ctx context.Context, name string) (Account, error)
+	// SetNick gives this device a nickname (#190, #533), as `mur nickname` does, or with "" takes
+	// it off, and returns the account. An error says why the nickname won't do, in words to show.
+	SetNick(ctx context.Context, nick string) (Account, error)
 	// Send sends text as this device's person to a name, a device/session address, a device or "*".
 	// It returns once the message is on the remote; an error means it wasn't sent, and says why.
 	Send(ctx context.Context, to, text string) (Sent, error)
@@ -89,6 +92,9 @@ type Account struct {
 	// Taken is the device whose person claimed this name first, "" if nobody else did (#268): a
 	// name chosen before people's names were claimed. They are asked to choose another.
 	Taken string `json:"taken,omitempty"`
+	// Nick is the nickname this device's person gave it (#190), "" if none: not the name it is
+	// called by without one, which Device.Nick gives.
+	Nick string `json:"nick,omitempty"`
 }
 
 // Person is a person on a device.
