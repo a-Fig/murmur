@@ -291,10 +291,8 @@ func Inbox(r proto.Response) string {
 			fmt.Fprintf(&b, "(%sReply to %s or %s.)\n", person, m.To, reply)
 		} else if bus.IsGroup(m.To) {
 			fmt.Fprintf(&b, "(%sReply to %s for the whole group, or to %s alone. Removing the tag %s from yourself leaves the group.)\n", person, m.To, reply, m.To)
-		} else if person != "" {
-			fmt.Fprintf(&b, "(%sReply to %s.)\n", person, reply)
 		} else {
-			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
+			fmt.Fprintf(&b, "(%sReply to %s.)\n", person, reply)
 		}
 	}
 	return b.String()
