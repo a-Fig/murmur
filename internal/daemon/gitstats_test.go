@@ -57,6 +57,7 @@ func (r *gitRecorder) summary(span time.Duration) string {
 	type agg struct {
 		n          int
 		total, max time.Duration
+		all        []time.Duration
 	}
 	by := map[string]*agg{}
 	type edge struct {
@@ -74,6 +75,7 @@ func (r *gitRecorder) summary(span time.Duration) string {
 		a.n++
 		a.total += took
 		a.max = max(a.max, took)
+		a.all = append(a.all, took)
 		edges = append(edges, edge{c.start, 1}, edge{c.end, -1})
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].at.Before(edges[j].at) })
@@ -91,7 +93,10 @@ func (r *gitRecorder) summary(span time.Duration) string {
 	fmt.Fprintf(&b, "%d git ended in the last %v, at most %d at once:", len(recent), span, peak)
 	for _, s := range subs {
 		a := by[s]
-		fmt.Fprintf(&b, "\n  %-14s %5d  mean %-10v longest %v", s, a.n, (a.total / time.Duration(a.n)).Round(time.Millisecond), a.max.Round(time.Millisecond))
+		sort.Slice(a.all, func(i, j int) bool { return a.all[i] < a.all[j] })
+		p95 := a.all[len(a.all)*95/100]
+		fmt.Fprintf(&b, "\n  %-14s %6d  mean %-9v p95 %-9v longest %v", s, a.n, (a.total / time.Duration(a.n)).Round(time.Millisecond),
+			p95.Round(time.Millisecond), a.max.Round(time.Millisecond))
 	}
 	return b.String()
 }
