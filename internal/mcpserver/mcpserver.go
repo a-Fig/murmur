@@ -828,7 +828,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"you queued in your inbox: none comes as a turn or a notice until you read your inbox or take the tag off, " +
 		"when they come the usual way. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
 		"session that has it, so add it to join a group and remove it to leave. To start a group or bring others into one, give their names in for: " +
-		"they are added, and can leave the same way. A tag a human set on the page stands over yours."},
+		"they are added, and can leave the same way. A tag a human set on the page stands over yours, but you can always leave a group."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in tagsIn) (*mcp.CallToolResult, any, error) {
 			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpTags, Add: in.Add, Remove: in.Remove, For: in.For})
 			return result(view.Tags, resp, err)

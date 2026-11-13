@@ -154,8 +154,9 @@ type Mark struct {
 //
 // The last two decide nothing about the session's tags, and are kept only so a change from before
 // them, read late, is known to be out of date (see SetHuman). Cleared is when a human last removed a
-// tag leaving no mark. Picked is when a human last gave the session a tag of a family with several,
-// by the family: it outlasts that tag being replaced or removed.
+// tag leaving no mark, or the session left a group a human had put it in (see Left). Picked is
+// when a human last gave the session a tag of a family with several, by the family: it outlasts
+// that tag being replaced or removed.
 type State struct {
 	Self    []string             `json:"self,omitempty"`
 	Human   map[string]Mark      `json:"human,omitempty"`
@@ -326,6 +327,35 @@ func (st *State) Given(groups []string) error {
 		return err
 	}
 	return st.SetSelf(groups, nil)
+}
+
+// Left applies the session's own removal of group tags (see Groups) at at: a human's mark putting
+// the session in one of them gives way, so a session a person put in a group can leave it, as one
+// an agent added can (#539). The removal counts as a human's choice made at at, so a human's add
+// made more than clockAllowance before it, read late, doesn't put the session back. Other tags,
+// and a human's mark taking a session out of a group, stand over the session as ever. It returns
+// the groups it took a mark off.
+func (st *State) Left(remove []string, at time.Time) (left []string) {
+	for _, t := range remove {
+		if !IsGroup(t) || !st.Human[t].On {
+			continue
+		}
+		if len(left) == 0 {
+			// A caller's copy of a State shares its maps with the one kept (see dropHuman).
+			st.Human, st.Cleared = maps.Clone(st.Human), maps.Clone(st.Cleared)
+			if st.Cleared == nil {
+				st.Cleared = map[string]time.Time{}
+			}
+		}
+		when := at
+		if c := st.chosenAt(t); c.After(when) {
+			when = c
+		}
+		delete(st.Human, t)
+		st.Cleared[t] = when
+		left = append(left, t)
+	}
+	return left
 }
 
 // SetHuman applies a human's change, given the tags the session has without the human's marks

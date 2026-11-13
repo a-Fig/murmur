@@ -1300,7 +1300,9 @@ tag with behaviour, below.
   tool), or the daemon. The daemon derives the model of a session in T3 from the thread's
   `modelSelection.model` in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session
   outside T3 sets its own, as the MCP instructions ask. A human adding a tag pins it on and removing
-  one pins it off, and the session can't undo either; it is told so. `who` shows the names,
+  one pins it off, and the session can't undo either; it is told so. The one exception is a group:
+  a session can always leave one, so a human's pin putting it in gives way to the session removing
+  the tag (#539; see "Groups"). `who` shows the names,
   `lookup` and the page where each came from.
 - **The session's own device decides its tags** and publishes them in presence, each with its
   source. #198 first had tags set by a session or a human on one shared ref with a lease, as names
@@ -1400,15 +1402,25 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   doesn't promise (Tyler, 2026-11-11). `send` takes one tag, not `who`'s filter, because a filter
   has no name to answer to.
 - **A session joins by setting the tag and leaves by removing it**, as with any tag, and can be in
-  several groups. So a group can stand for a topic: sessions that want to hear of changes to `main`
-  join `group:main-changes`, and whoever lands one sends to it (Tyler, 2026-11-11). That is #178's
-  ping done by hand.
+  several groups. That holds for a group a person put it in on the page too, though the page's
+  add is a human's pin (#539): every group message tells the member that removing the tag leaves,
+  and a member that couldn't leave would get a turn for every message. The session's removal takes
+  the human's pin off and counts as a choice made then, so a human's add made more than a minute
+  before it, read late, doesn't put the session back; one made after it does, and so does one made
+  in the minute before it, as clocks differ. A human's pin taking a session out of a group still
+  stands. A session whose own daemon is from before #539 still can't leave such a group. The page's
+  adds could have become the session's own tags instead, as an agent's are, but that needs a new
+  event for another device's sessions, and leaves the groups people had already started stuck. So
+  a group can stand for a topic: sessions that want to hear of changes to `main` join
+  `group:main-changes`, and whoever lands one sends to it (Tyler, 2026-11-11). That is #178's ping
+  done by hand.
 - **An agent can add other sessions to a group**, with `tags` and their names in `for`. It is the
   only tag one agent can give another: without that limit any agent could put `do-not-disturb` on
   another, or change its `model:`. It can't take a session out. The add goes to each session's
   device as a `group.add` event on the adder's log, and that device makes the tag the session's
   own, so the session can remove it and a human's mark stands over it. It is a type of its own
-  because every daemon applies a `tags` event as a human's choice, which the session can't undo.
+  because every daemon applies a `tags` event as a human's choice, which outranks the session's own
+  tags and, on a daemon from before #539, can't be undone by the session even for a group.
   An add more than an hour old when it is read isn't applied, nor one from history a daemon passes
   over unless it was sent since the session started: an add carries no order against the session's
   own changes, so an old one read late (its log waited for a team key, or a daemon restarted) could

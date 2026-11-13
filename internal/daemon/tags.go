@@ -141,7 +141,8 @@ func peerTagsLocked(p *peer, sess string) []tags.Tag {
 }
 
 // setOwnTags is OpTags: session id adds and removes its own tags. A human's mark on a tag stands
-// over the session's change, and the reply says so.
+// over the session's change, and the reply says so, except that a session can always leave a
+// group (see tags.State.Left).
 func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	from := bus.Addr(d.device, id)
 	d.mu.Lock()
@@ -162,6 +163,9 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	var held []string
 	added, _ := tags.Clean(req.Add)
 	removed, _ := tags.Clean(req.Remove)
+	// A session leaves a group a human put it in (#539): the line every group message ends with
+	// says removing the tag leaves, and only a person on the page could take it out otherwise.
+	next.Left(removed, time.Now().UTC())
 	for _, t := range append(added, removed...) {
 		if m, ok := next.Human[t]; ok {
 			held = append(held, fmt.Sprintf("%s (a human set it %s)", t, map[bool]string{true: "on", false: "off"}[m.On]))

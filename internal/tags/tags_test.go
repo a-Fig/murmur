@@ -404,3 +404,50 @@ func TestOnlyGroupsAreGiven(t *testing.T) {
 		t.Errorf("the session has %v; want group:ui kept off, as a human took it off", got)
 	}
 }
+
+// #539. A session leaves a group a human put it in; a human's add from before then, read late,
+// doesn't put it back, and one made after does. A human's other marks, and one taking the session
+// out of a group, still stand.
+func TestASessionLeavesAGroupAHumanPutItIn(t *testing.T) {
+	added := time.Now().Add(-time.Hour)
+	st := &State{}
+	if err := st.SetHuman(nil, []string{"group:ui", "reviewing"}, nil, "tyler", added); err != nil {
+		t.Fatal(err)
+	}
+	st.Human["group:old"] = Mark{On: false, By: "tyler", At: added}
+	// A mark dated ahead, on a group left first, sets that group's time and no other's.
+	ahead := time.Now().Add(time.Hour)
+	st.Human["group:a"] = Mark{On: true, By: "tyler", At: ahead}
+	st.Cleared = map[string]time.Time{"other": added}
+	kept := *st // shares its maps, as the daemon's copy of the kept State does
+
+	left := time.Now()
+	if got := st.Left([]string{"group:a", "group:ui", "reviewing", "group:old", "group:none"}, left); !slices.Equal(got, []string{"group:a", "group:ui"}) {
+		t.Errorf("Left took marks off %q; want group:a and group:ui", got)
+	}
+	if !kept.Human["group:ui"].On || len(kept.Cleared) != 1 {
+		t.Error("Left changed the State it was copied from")
+	}
+	if !st.Cleared["group:a"].Equal(ahead) || !st.Cleared["group:ui"].Equal(left) {
+		t.Errorf("the leaves are dated %v; want group:a at its mark's time and group:ui at the leave", st.Cleared)
+	}
+	if got := Names(Effective(nil, nil, st.Human)); !slices.Equal(got, []string{"reviewing"}) {
+		t.Errorf("the tags are %q; want reviewing alone", got)
+	}
+	if st.Human["group:old"].On || st.Human["group:old"].At.IsZero() {
+		t.Error("the human's mark taking the session out of group:old went")
+	}
+
+	if err := st.SetHuman(nil, []string{"group:ui"}, nil, "maya", left.Add(-10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if Has(Effective(nil, nil, st.Human), "group:ui") {
+		t.Error("a human's add from before the session left, read late, put it back")
+	}
+	if err := st.SetHuman(nil, []string{"group:ui"}, nil, "maya", left.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if !Has(Effective(nil, nil, st.Human), "group:ui") {
+		t.Error("a human's add after the session left didn't put it back")
+	}
+}
