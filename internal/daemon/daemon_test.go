@@ -120,6 +120,8 @@ type device struct {
 	pageMsgs       int
 	pageAddr       string
 	logTo          io.Writer
+	// tail keeps the last lines of the daemon's log, across restarts, for a test that fails.
+	tail *logTail
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
 	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
@@ -190,9 +192,21 @@ func (d *device) start() {
 	if snapshot == 0 {
 		snapshot = time.Minute
 	}
-	logger := testLog()
+	if d.tail == nil {
+		d.tail = &logTail{}
+		d.t.Cleanup(func() {
+			if d.t.Failed() {
+				d.t.Logf("the last of the daemon's log in %s:\n%s", d.gitDir, d.tail.String())
+			}
+		})
+	}
+	var w io.Writer = d.tail
 	if d.logTo != nil {
-		logger = log.New(d.logTo, "", 0)
+		w = io.MultiWriter(d.logTo, d.tail)
+	}
+	logger := log.New(w, "", 0)
+	if os.Getenv("MURMUR_TEST_LOG") != "" {
+		logger = log.New(io.MultiWriter(w, os.Stderr), "daemon: ", log.Lmicroseconds)
 	}
 	muteGrace := d.muteGrace
 	if muteGrace == 0 {
@@ -328,6 +342,39 @@ func (d *device) self() string {
 }
 
 // testLog discards daemon logs unless MURMUR_TEST_LOG is set.
+// logTail keeps the last tailLines lines written to it, each with when it was written, to print
+// when a test fails: a test daemon logs nowhere else, and a wait that gave up says only what it
+// waited for, not what the daemon was doing meanwhile (#513).
+type logTail struct {
+	mu      sync.Mutex
+	lines   []string
+	partial string
+}
+
+const tailLines = 300
+
+func (l *logTail) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now().Format("15:04:05.000")
+	text := l.partial + string(p)
+	parts := strings.Split(text, "\n")
+	l.partial = parts[len(parts)-1]
+	for _, line := range parts[:len(parts)-1] {
+		l.lines = append(l.lines, now+" "+line)
+	}
+	if over := len(l.lines) - tailLines; over > 0 {
+		l.lines = append([]string(nil), l.lines[over:]...)
+	}
+	return len(p), nil
+}
+
+func (l *logTail) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.lines, "\n")
+}
+
 func testLog() *log.Logger {
 	if os.Getenv("MURMUR_TEST_LOG") != "" {
 		return log.New(os.Stderr, "daemon: ", log.Lmicroseconds)
@@ -343,6 +390,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	for !cond() {
 		if time.Now().After(deadline) {
 			dumpGoroutines(t)
+			t.Logf("git in this test process: %s", gitStats.summary(time.Minute))
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(100 * time.Millisecond)
