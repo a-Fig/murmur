@@ -144,6 +144,9 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 				continue
 			}
 			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.Name, s.Agent, s.Branch, s.Doing, peerStarted(p, s)
+			if sess == bus.PersonSession {
+				det.Name = d.listedPersonNameLocked(addr, s.Name) // only a name that reaches them (#350)
+			}
 			det.Committed, det.LastActive, det.Tags, det.Muted = s.Committed, peerActive(p, s), s.Tags, s.Muted
 			det.Running, det.Reachable = true, !det.Stale
 		}

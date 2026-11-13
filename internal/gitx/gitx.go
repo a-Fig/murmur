@@ -84,7 +84,16 @@ func subcommand(args []string) string {
 	return ""
 }
 
+// Observe, if set, is told of every git that ran: its command, when it started and how long it
+// took. Nil outside tests; the daemon's tests set it to say, when a wait gives up, whether git was
+// slow (#513).
+var Observe func(subcommand string, start time.Time, took time.Duration)
+
 func run(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
+	if Observe != nil {
+		began := time.Now()
+		defer func() { Observe(subcommand(args), began, time.Since(began)) }()
+	}
 	out, err := runOnce(ctx, dir, stdin, env, args...)
 	if errors.Is(err, proc.ErrStartHung) && ctx.Err() == nil {
 		out, err = runOnce(ctx, dir, stdin, env, args...)

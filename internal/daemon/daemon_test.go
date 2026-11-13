@@ -120,6 +120,8 @@ type device struct {
 	pageMsgs       int
 	pageAddr       string
 	logTo          io.Writer
+	// tail keeps the last lines of the daemon's log, across restarts, for a test that fails.
+	tail *logTail
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
 	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
@@ -132,13 +134,26 @@ type device struct {
 	done  chan struct{} // closed when the daemon's Run has returned
 }
 
+// testStale is how long a test device's presence may go unchanged before others call it stale,
+// unless a test sets its own. A device counts as fresh (whoShows) for half of it. On a loaded
+// Windows runner a presence takes about 1.4 s to write and another second to be read, and up to
+// 8 s (#513: a push's longest was 6.2 s, a fetch's 5.5 s, in one daemon shard on 2026-11-13), so
+// 3 s there let devices flicker stale and a wait that needed several fresh at once gave up after
+// a minute. Elsewhere it stays 3 s, which keeps the tests that wait for a device to go stale fast.
+var testStale = func() time.Duration {
+	if runtime.GOOS == "windows" {
+		return 10 * time.Second
+	}
+	return 3 * time.Second
+}()
+
 // newDevice clones remote and starts a daemon for the clone. stale, if given, overrides the
 // tests' short stale limit.
 func newDevice(t *testing.T, remote string, stale ...time.Duration) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
 	if len(stale) > 0 {
 		d.stale = stale[0]
 	}
@@ -151,7 +166,7 @@ func newTimedDevice(t *testing.T, remote string, grace, keep time.Duration) *dev
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond,
 		grace: grace, keep: keep}
 	d.start()
 	return d
@@ -190,10 +205,22 @@ func (d *device) start() {
 	if snapshot == 0 {
 		snapshot = time.Minute
 	}
-	logger := testLog()
-	if d.logTo != nil {
-		logger = log.New(d.logTo, "", 0)
+	if d.tail == nil {
+		d.tail = &logTail{}
+		d.t.Cleanup(func() {
+			if d.t.Failed() {
+				d.t.Logf("the last of the daemon's log in %s:\n%s", d.gitDir, d.tail.String())
+			}
+		})
 	}
+	var w io.Writer = d.tail
+	if d.logTo != nil {
+		w = io.MultiWriter(d.logTo, d.tail)
+	}
+	if os.Getenv("MURMUR_TEST_LOG") != "" {
+		w = io.MultiWriter(w, stderrLog{})
+	}
+	logger := log.New(w, "", 0)
 	muteGrace := d.muteGrace
 	if muteGrace == 0 {
 		muteGrace = -1
@@ -327,6 +354,48 @@ func (d *device) self() string {
 	return strings.TrimSuffix(d.do(proto.Request{Op: proto.OpPing}).Self, "/"+proto.CLISession)
 }
 
+// logTail keeps the last tailLines lines written to it, each with when it was written, to print
+// when a test fails: a test daemon logs nowhere else, and a wait that gave up says only what it
+// waited for, not what the daemon was doing meanwhile (#513).
+type logTail struct {
+	mu      sync.Mutex
+	lines   []string
+	partial string
+}
+
+const tailLines = 300
+
+func (l *logTail) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now().Format("15:04:05.000")
+	text := l.partial + string(p)
+	parts := strings.Split(text, "\n")
+	l.partial = parts[len(parts)-1]
+	for _, line := range parts[:len(parts)-1] {
+		l.lines = append(l.lines, now+" "+line)
+	}
+	if over := len(l.lines) - tailLines; over > 0 {
+		l.lines = append([]string(nil), l.lines[over:]...)
+	}
+	return len(p), nil
+}
+
+func (l *logTail) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.lines, "\n")
+}
+
+// stderrLog writes the daemon's lines to standard error, each marked as the daemon's and timed, as
+// MURMUR_TEST_LOG asks; the log package writes one line per Write.
+type stderrLog struct{}
+
+func (stderrLog) Write(p []byte) (int, error) {
+	fmt.Fprintf(os.Stderr, "daemon: %s %s", time.Now().Format("15:04:05.000000"), p)
+	return len(p), nil
+}
+
 // testLog discards daemon logs unless MURMUR_TEST_LOG is set.
 func testLog() *log.Logger {
 	if os.Getenv("MURMUR_TEST_LOG") != "" {
@@ -343,6 +412,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	for !cond() {
 		if time.Now().After(deadline) {
 			dumpGoroutines(t)
+			t.Logf("git in this test process: %s", gitStats.summary(time.Minute))
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -902,9 +972,10 @@ func (d *device) fresh(dev string) bool {
 // shows its device alive while the listing shows it moving, and stale once it stops.
 func TestUnfetchablePresenceStillCounts(t *testing.T) {
 	// Not parallel: b must stay fresh on a for seconds, and other tests' load can hold one of its
-	// heartbeats back for the 3 seconds that make it stale.
+	// heartbeats back for the 3 seconds that make it stale. 3 s on every platform, not testStale:
+	// the hold below is longer than the stale limit, which is what shows the listing keeps b alive.
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
+	a, b := newDevice(t, remote, 3*time.Second), newDevice(t, remote, 3*time.Second)
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "a sees bob", func() bool { return a.seesSession(bob) })
 

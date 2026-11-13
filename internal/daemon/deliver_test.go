@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -62,8 +63,17 @@ func TestMain(m *testing.M) {
 	// here, so it finds its clone from its working directory, and never a real session's.
 	os.Setenv(brand.SessionsDirEnv, filepath.Join(home, "sessions"))
 	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
+	started := time.Now()
 	code := m.Run()
 	os.RemoveAll(home)
+	if path := os.Getenv("MURMUR_GIT_STATS"); path != "" && gitStats.ran() { // not for `go test -list`
+		// How git did over the whole run, failing or not, added to the file it names (#513). go test
+		// shows a passing package's output only with -v, so CI prints the file in a step of its own.
+		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			fmt.Fprintf(f, "git in a test run of %s: %s\n", time.Since(started).Round(time.Second), gitStats.summary(24*time.Hour))
+			f.Close()
+		}
+	}
 	os.Exit(code)
 }
 
