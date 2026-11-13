@@ -188,8 +188,11 @@ func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
 // writes its tmp file. The daemon may be saving right then (#442): a Mkdir there can find a save's
 // tmp file, and a save's removal of a leftover tmp can take an empty directory away before a file
 // is put in it. So the directory is made whole, file and all, under another name, and renamed into
-// place, which fails while a save's tmp file is there and is tried again: that file lasts only as
-// long as one save.
+// place, tried again while a save's tmp file is in the way: on Unix while it is there at all, on
+// Windows while it is open. On Windows the rename can replace a tmp file a save has closed but not
+// yet renamed; that save then carries the directory onto path itself, and every later save fails
+// at its rename instead of at writing the tmp file. Either way nothing is saved from then on
+// (Fable's review found the second, 2026-11-13).
 func blockSaves(t *testing.T, path string) {
 	t.Helper()
 	staged := path + ".blocker"
