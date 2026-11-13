@@ -1605,7 +1605,15 @@ function sessionOnBranch(branch) {
 // Everything Recent can show, as { t, who, group, ... }, in no order.
 function recentEntries() {
   const out = [];
-  for (const m of ui.messages) out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), m.toKind === "session" ? toName(m) : ""] });
+  // A group's message is each of its members' as well as its sender's, so a member's filter shows
+  // it (#485). Members are the sessions in the group now, by inGroup, as the filter has them.
+  const members = new Map();
+  const sessions = devices().flatMap((d) => d.sessions);
+  for (const g of liveGroups()) members.set(g, sessions.filter((s) => inGroup(s, g)).map((s) => s.name));
+  for (const m of ui.messages) {
+    const to = m.toKind === "session" ? [toName(m)] : m.toKind === "group" ? members.get(m.to) || [] : [];
+    out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), ...to] });
+  }
   // A session's status changes, and its commits to a branch, that follow each other closely are one entry.
   const runs = new Map();
   const acts = [...ui.acts].sort((a, b) => a.t - b.t);
@@ -2589,13 +2597,16 @@ function visibleMessages() {
   if (isMyFilter()) return myMessages();
   const name = nameOf(f, f);
   const slash = f.indexOf("/");
-  const device = slash > 0 ? f.slice(0, slash) : findSession(name)?.device.id;
+  const found = findSession(name);
+  const device = slash > 0 ? f.slice(0, slash) : found?.device.id;
   const is = (addr, shown) => (addr ? addr === f : shown === name) || (name !== f && nameOf(addr, shown) === name);
+  // A group the session is in now is its conversation too, others' messages in it included (#485).
   return ui.messages.filter(
     (m) =>
       is(m.fromAddr, m.from) ||
       (m.toKind === "session" && is(m.toAddr, m.to)) ||
       (m.toKind === "device" && m.to === device) ||
+      (m.toKind === "group" && !!found && inGroup(found.session, m.to)) ||
       m.toKind === "all",
   );
 }
@@ -2705,7 +2716,11 @@ function groupHost(c) {
 
 function groupSummary(c) {
   const rows = groupMembers(c);
-  const on = rows.filter((r) => r.d && sessionState(r.d, r.s) === "on").length;
+  // A person has no session, so sessionState would call them idle; they are active while their page is open.
+  const on = rows.filter((r) => {
+    const p = r.person && findPerson(r.name);
+    return p ? personOnline(p) : r.d && sessionState(r.d, r.s) === "on";
+  }).length;
   return { rows, on };
 }
 
@@ -4622,6 +4637,9 @@ async function start() {
   const token = takeToken();
   if (token !== ui.token) {
     Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, draftGroup: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
+    // Recent's feed is the old daemon's repo's too, and its cursor means nothing to the new one (#485).
+    Object.assign(ui, { acts: [], actCursor: "", github: [], recentWho: "" });
+    ui.actIds = new Set();
     ui.ids = new Set();
     ui.notes = new Map();
     ui.readLocal = new Set();
