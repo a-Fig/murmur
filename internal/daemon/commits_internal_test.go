@@ -492,3 +492,45 @@ func TestCreditsKeepTheOrderCallsEnded(t *testing.T) {
 		t.Errorf("committed to %v, want [feat-b feat-a], most recent first", b)
 	}
 }
+
+// A panic while crediting a call's commits is logged and costs only that call's credit: it
+// doesn't leave mu held, which hung the daemon, and its tests, with nothing in the log (#467).
+func TestAPanicWhileCreditingIsLoggedAndReleasesTheLock(t *testing.T) {
+	t.Parallel()
+	d, dir := bracketDaemon(t)
+	var logged strings.Builder
+	d.log = log.New(&logged, "", 0)
+	ctx := context.Background()
+	d.toolStart(ctx, d.startReq(dir, "t1"))
+	cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "during the call")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	d.mu.Lock()
+	d.st.Commits = nil // creditLocked's write to it panics, as #451's nil map did
+	d.mu.Unlock()
+	end := d.startReq(dir, "t1")
+	end.Op = proto.OpToolEnd
+	d.toolEnd(ctx, end)
+
+	settled := make(chan struct{})
+	go func() {
+		d.settleEnds()
+		close(settled)
+	}()
+	select {
+	case <-settled:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the daemon still holds mu 30s after the call ended: the panic left it locked")
+	}
+	d.mu.Lock()
+	ending := d.ending
+	d.mu.Unlock()
+	if ending != 0 {
+		t.Errorf("ending = %d after the panicked call, want 0", ending)
+	}
+	if got := logged.String(); !strings.Contains(got, "panic while crediting") || !strings.Contains(got, "assignment to entry in nil map") {
+		t.Errorf("log = %q, want the panic and its message", got)
+	}
+}

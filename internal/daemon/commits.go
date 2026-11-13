@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -209,6 +210,14 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 			d.mu.Unlock()
 		}()
 		defer snapped()
+		// Runs first. A panic in judging a call loses only that call's credit, so it is logged
+		// and the daemon carries on; judgeEnd unlocks mu on its way out, so the deferred calls
+		// above, which take mu, don't wait on it forever (#467).
+		defer func() {
+			if p := recover(); p != nil {
+				d.log.Printf("panic while crediting a tool call's commits: %v\n%s", p, debug.Stack())
+			}
+		}()
 		d.judgeEnd(ctx, b, moved, ended, sessions, snapped)
 	}()
 	return proto.Response{OK: true}
@@ -260,10 +269,13 @@ func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, ended t
 	if !ok || len(commits) == 0 {
 		return
 	}
-	d.mu.Lock()
-	published := d.creditLocked(sessions, commits, ended)
-	d.saveLocked()
-	d.mu.Unlock()
+	published := func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock() // deferred, so a panic doesn't leave mu held
+		published := d.creditLocked(sessions, commits, ended)
+		d.saveLocked()
+		return published
+	}()
 	if published {
 		d.kickPresence()
 	}
