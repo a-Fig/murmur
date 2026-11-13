@@ -2535,6 +2535,9 @@ function repoMenu() {
 // A session's changes go one after another, in the order they were clicked: the daemon times a
 // change when it gets it, so two in flight at once could land the other way round.
 const tagQueues = new Map();
+// The adds to each group that the next message sent to it waits for: each resolves to the sessions
+// whose add failed, with why. A tag change that fails resolves its place in tagQueues all the same.
+const groupJoins = new Map(); // a group's tag → [Promise<[{ s, msg }]>]
 
 function queueTagChange(addr, fn) {
   const run = (tagQueues.get(addr) || Promise.resolve()).then(fn);
@@ -2559,7 +2562,7 @@ async function tagSessions(targets, name, on) {
   render();
   const failed = [];
   let denied = null;
-  await Promise.all(
+  const all = Promise.all(
     todo.map(async (s) => {
       try {
         await queueTagChange(s.addr, () =>
@@ -2575,6 +2578,8 @@ async function tagSessions(targets, name, on) {
       }
     }),
   );
+  if (on && isGroupTag(name) && todo.length) groupJoins.set(name, [...(groupJoins.get(name) || []), all.then(() => failed)]);
+  await all;
   if (denied) return deny(denied.token);
   if (failed.length) {
     const msg = "Couldn't " + (on ? "tag " : "untag ") + failed.map((f) => f.s.name).join(", ") + ": " + failed[0].msg;
@@ -3902,13 +3907,27 @@ async function deliver(item) {
   try {
     // A group just started here reaches its members only once they have its tag: the tag changes
     // still on their way go to the bus first, so every device reads them before the message.
-    if (isGroupTag(item.to)) await Promise.all([...tagQueues.values()]);
+    // A session whose add failed isn't in the group and won't get it (#535): the message goes to
+    // those who are, and the page says who was left out; with nobody in the group, it isn't sent.
+    let missed = [];
+    if (isGroupTag(item.to)) {
+      if (item.missed?.length) tagSessions(item.missed.map((f) => sessionByAddr(f.s.addr) || f.s), item.to, true); // Try again tries them again
+      const joins = groupJoins.get(item.to) || [];
+      groupJoins.delete(item.to);
+      await Promise.all([...tagQueues.values()]);
+      missed = (await Promise.all(joins)).flat();
+      item.missed = missed;
+      if (missed.length && !devices().some((d) => d.sessions.some((s) => inGroup(s, item.to)))) {
+        throw new Error("not sent: couldn't add " + namesOf(missed) + " to " + item.to + ": " + missed[0].msg);
+      }
+    }
     const sent = await api("/api/send", { method: "POST", body: JSON.stringify({ to: item.to, text: item.text }) });
     item.id = sent.id;
-    if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
+    if (missed.length) ui.notes.set(item.key, { id: sent.id, text: "Couldn't add " + namesOf(missed) + " to " + item.to + ", so they didn't get this: " + missed[0].msg, warn: true });
+    else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
     item.status = "sent";
-    announce("Sent.");
+    announce(missed.length ? "Sent, but not to " + namesOf(missed) + "." : "Sent.");
     clearTimeout(timer);
     timer = setTimeout(poll, 100); // what was sent is among the messages by now
   } catch (e) {
@@ -3917,6 +3936,10 @@ async function deliver(item) {
     item.error = e.message.charAt(0).toUpperCase() + e.message.slice(1); // the daemon writes for agents, in lower case
   }
   render();
+}
+
+function namesOf(failed) {
+  return [...new Set(failed.map((f) => f.s.name))].join(", ");
 }
 
 function editFailed(item) {
@@ -3933,6 +3956,12 @@ function editFailed(item) {
 // claims the agent has read it, which the daemon can't tell (#26). It lasts until a reply, or an hour.
 function waitLine(c) {
   const target = targetOf(c);
+  if (target && c.kind === "group") {
+    // Only the page's own note: the daemon's for a group lists members the page already shows.
+    const note = ui.notes.get(c.key);
+    const last = c.messages[c.messages.length - 1];
+    return note?.warn && last && fromName(last) === myName() && last.id === note.id ? h("p", { class: "wait-line wait-warn" }, note.text) : null;
+  }
   if (!target || c.kind !== "dm" || target.to === myName()) return null;
   const f = findSession(target.to);
   const last = c.messages[c.messages.length - 1];
