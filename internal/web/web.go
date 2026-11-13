@@ -104,6 +104,7 @@ func NewWithGitHub(src Source, token string, prs LookupPR, events LookupGitHub) 
 	s.mux.HandleFunc("POST /api/tags", s.postTags)
 	s.mux.HandleFunc("POST /api/restart", s.postRestart)
 	s.mux.HandleFunc("PUT /api/account", s.putAccount)
+	s.mux.HandleFunc("PUT /api/nick", s.putNick)
 	s.mux.HandleFunc("POST /api/send", s.postSend)
 	s.mux.HandleFunc("POST /api/read", s.postRead)
 	s.mux.HandleFunc("GET /api/repos", s.getRepos)
@@ -397,6 +398,27 @@ func (s *Server) putAccount(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout) // a name is claimed on the remote, as a message is sent there
 	defer cancel()
 	account, err := s.src.SetAccount(ctx, a.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, account)
+}
+
+type nickRequest struct {
+	Nick string `json:"nick"`
+}
+
+// putNick sets this device's nickname, or with "" takes it off (#533).
+func (s *Server) putNick(w http.ResponseWriter, r *http.Request) {
+	var n nickRequest
+	if err := readJSON(w, r, &n); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout) // it waits for the first sync, as a name's claim does
+	defer cancel()
+	account, err := s.src.SetNick(ctx, strings.TrimSpace(n.Nick))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -1,11 +1,14 @@
 package daemon_test
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Tests of a device's nickname (#190): its user sets it, and teammates see it beside the device's
@@ -98,4 +101,37 @@ func TestADeviceIsCalledByItsPersonsName(t *testing.T) {
 	// A nickname of its own stands before the person's name.
 	a.setNick("ada-desktop")
 	eventually(t, "b to see the nickname", func() bool { return b.nickOf(a.self()) == "ada-desktop" })
+}
+
+// The page sets the nickname as `mur nickname` does (#533): the same checks, the same state, and
+// its account says what it is.
+func TestThePageSetsTheNickname(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	p := a.page()
+	nick := func(body string) (int, web.Account, string) {
+		t.Helper()
+		code, b := p.call("PUT", "/api/nick", p.token, body)
+		var acct web.Account
+		json.Unmarshal([]byte(b), &acct)
+		return code, acct, b
+	}
+	if code, acct, b := nick(`{"nick":"tyler-desk"}`); code != http.StatusOK || acct.Nick != "tyler-desk" {
+		t.Fatalf("setting it: %d %s", code, b)
+	}
+	if got := a.nickOf(a.self()); got != "tyler-desk" {
+		t.Errorf("who calls it %q", got)
+	}
+	if got := p.state().Account.Nick; got != "tyler-desk" {
+		t.Errorf("the page's state has the nickname %q", got)
+	}
+	for _, bad := range []string{"Tyler S", a.self()} {
+		if code, _, b := nick(`{"nick":"` + bad + `"}`); code != http.StatusBadRequest {
+			t.Errorf("the nickname %q: %d %s", bad, code, b)
+		}
+	}
+	if code, acct, b := nick(`{"nick":""}`); code != http.StatusOK || acct.Nick != "" || a.nickOf(a.self()) != "" {
+		t.Errorf("clearing it: %d %s, and who says %q", code, b, a.nickOf(a.self()))
+	}
 }
