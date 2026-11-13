@@ -172,8 +172,15 @@ jobs:
         with:
           go-version-file: go.mod
       - name: go test -race (shard ${{ matrix.shard }} of ${{ matrix.of }})
+        env:
+          MURMUR_GIT_STATS: ${{ runner.temp }}/git-stats.txt
         run: |
           names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} -v n=${{ matrix.of }} 'NR % n == k')
           test -n "$names"
           echo "$names" | wc -l
           bash scripts/go-test-retry.sh -race -count=1 -timeout 50m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
+      - name: How git did (#513)
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/git-stats.txt"
+          if [ -f "$f" ]; then cat "$f"; { echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"; fi

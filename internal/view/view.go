@@ -459,6 +459,44 @@ func Sent(r proto.Response) string {
 	return b.String()
 }
 
+// SentTo is what became of one recipient of a send to a list (#520): sent, with the daemon's
+// answer; not sent, with why; or the same recipient as one named before it, by that name.
+type SentTo struct {
+	To   string // as the sender named it
+	Resp proto.Response
+	Err  string
+	Same string
+}
+
+// SentEach renders the outcome of a send to a list: a line per recipient, in the order named.
+func SentEach(rs []SentTo) string {
+	sent, named := 0, 0
+	for _, r := range rs {
+		if r.Same == "" {
+			named++ // one named twice is one recipient
+			if r.Err == "" {
+				sent++
+			}
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Sent to %d of %d, each as a message of its own:\n", sent, named)
+	for _, r := range rs {
+		switch {
+		case r.Same != "":
+			fmt.Fprintf(&b, "- %s is %s, so it got the message once.\n", r.To, r.Same)
+		case r.Err != "":
+			// The daemon's own refusals can start "not sent: " too.
+			why := strings.TrimSuffix(strings.TrimPrefix(r.Err, "not sent: "), ".")
+			fmt.Fprintf(&b, "- Not sent to %s: %s\n", r.To, why)
+		default:
+			line := strings.TrimSpace(Sent(r.Resp))
+			b.WriteString("- " + strings.Join(strings.Fields(line), " ") + "\n")
+		}
+	}
+	return b.String()
+}
+
 // TagList renders tags with where each came from, where that isn't the session itself.
 func TagList(ts []tags.Tag) string {
 	parts := make([]string, len(ts))

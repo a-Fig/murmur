@@ -67,6 +67,8 @@ type fakeDaemon struct {
 	helloGate chan struct{}
 	// routeError, if set, is the daemon's answer to a route: one that has no such request.
 	routeError string
+	// sendReply, if set, is the daemon's answer to a send.
+	sendReply func(proto.Request) proto.Response
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -171,6 +173,10 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 	f.mu.Unlock()
 	if refuse {
 		reply(proto.Response{Error: f.routeError})
+		return
+	}
+	if req.Op == proto.OpSend && f.sendReply != nil {
+		reply(f.sendReply(req))
 		return
 	}
 	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol})
