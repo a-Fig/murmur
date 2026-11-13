@@ -629,7 +629,7 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 	if l == nil || req == nil || req.Params == nil {
 		return
 	}
-	if id, _ := req.Params.GetMeta()["threadId"].(string); id != "" {
+	if c := codexCallOf(req.Params.GetMeta()); c.thread != "" {
 		// What learnNative starts outlives the call, but not the link: it can reach the daemon, and
 		// even start one, so it ends with the link and Serve waits for it.
 		if l.ctx != nil {
@@ -637,8 +637,28 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 		} else {
 			ctx = context.WithoutCancel(ctx)
 		}
-		l.learnNative(ctx, id)
+		l.learnNative(ctx, c)
 	}
+}
+
+// codexCall is what a Codex tool call's _meta says of its session: the thread (`threadId`), and,
+// in `x-codex-turn-metadata`, whether Codex started the thread for another (`thread_source`
+// "subagent") and which thread did (`parent_thread_id`). Seen on Codex 0.164 and 0.167,
+// 2026-11-12, for a thread spawn_agent made; a person's thread says "user".
+type codexCall struct {
+	thread, parent string
+	child          bool
+}
+
+func codexCallOf(meta map[string]any) codexCall {
+	c := codexCall{}
+	c.thread, _ = meta["threadId"].(string)
+	turn, _ := meta["x-codex-turn-metadata"].(map[string]any)
+	if src, _ := turn["thread_source"].(string); src == "subagent" {
+		c.child = true
+		c.parent, _ = turn["parent_thread_id"].(string)
+	}
+	return c
 }
 
 func text(s string) *mcp.CallToolResult {
@@ -772,6 +792,10 @@ type link struct {
 	// is looking for the T3 thread.
 	native  string
 	seeking bool
+	// nativeSeen is closed once a tool call has given native, which a first hello may wait for
+	// (holdFirstHello); made on first use, and nativeClosed says it is closed.
+	nativeSeen   chan struct{}
+	nativeClosed bool
 	// routeWarned says the daemon's refusal of the route has been logged, which is done once. logf
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
@@ -960,7 +984,8 @@ func (l *link) warn(format string, args ...any) {
 
 // learnNative takes the client's own ID for the session when a tool call carries one (Codex's
 // thread ID), and looks for the T3 thread with it.
-func (l *link) learnNative(ctx context.Context, id string) {
+func (l *link) learnNative(ctx context.Context, c codexCall) {
+	id := c.thread
 	if id == "" {
 		return
 	}
@@ -968,8 +993,13 @@ func (l *link) learnNative(ctx context.Context, id string) {
 	changed := l.native != id
 	l.native = id
 	l.hello.Native = id
+	l.hello.Child, l.hello.ParentNative = c.child, c.parent
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
+	}
+	if !l.nativeClosed {
+		close(l.nativeSeenLocked()) // a first hello held back for it goes now (see holdFirstHello)
+		l.nativeClosed = true
 	}
 	l.mu.Unlock()
 	if !changed {
@@ -989,6 +1019,12 @@ func (l *link) learnNative(ctx context.Context, id string) {
 			l.mu.Lock()
 			l.hello.CodexHome = home
 			l.mu.Unlock()
+		}
+		if c.child {
+			// Before the call that brought it goes on: the daemon makes the session a child as it
+			// hears this, and the call is then a child's (a send of its own is refused, #487).
+			l.tellRoute(ctx)
+			return
 		}
 		l.spawn(func() { l.tellRoute(ctx) })
 		return
@@ -1028,6 +1064,41 @@ func (l *link) wait(ctx context.Context, timeout time.Duration) (string, error) 
 	}
 }
 
+// codexFirstCallWait is how long a Codex session's server outside T3 holds its first hello for a
+// tool call's _meta (see holdFirstHello). A variable, for tests.
+var codexFirstCallWait = time.Second
+
+// nativeSeenLocked is nativeSeen, made if it isn't yet. Caller holds mu.
+func (l *link) nativeSeenLocked() chan struct{} {
+	if l.nativeSeen == nil {
+		l.nativeSeen = make(chan struct{})
+	}
+	return l.nativeSeen
+}
+
+// holdFirstHello keeps a Codex session outside T3 from registering until a tool call has said
+// which thread it is, for up to codexFirstCallWait. Codex starts a subagent's MCP server only
+// for the subagent's first call to one of its tools, and that call comes within milliseconds and
+// says the thread is a subagent's (Codex 0.164 and 0.167, 2026-11-12, #487). Held, the server
+// registers as a child, so the subagent is never listed. A person's thread gets its server when
+// the thread starts, with no call, and registers a moment later than it did.
+func (l *link) holdFirstHello(ctx context.Context) {
+	l.mu.Lock()
+	hold := l.hello.Agent == "codex" && l.hello.T3CLI == "" && l.native == ""
+	seen := l.nativeSeenLocked()
+	l.mu.Unlock()
+	if !hold {
+		return
+	}
+	t := time.NewTimer(codexFirstCallWait)
+	defer t.Stop()
+	select {
+	case <-seen:
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
 func (l *link) run(ctx context.Context) {
 	backoff := time.Second
 	inUse := 0
@@ -1035,6 +1106,7 @@ func (l *link) run(ctx context.Context) {
 	// never changes under it. The lookup takes milliseconds, and is bounded.
 	l.lookupThread(ctx, 3*time.Second)
 	l.startSeek(ctx)
+	l.holdFirstHello(ctx)
 	for ctx.Err() == nil {
 		// The user can leave while this runs, and leaving stops the daemon: the next thing this
 		// loop would do is start another. So ask before every hello, not once.

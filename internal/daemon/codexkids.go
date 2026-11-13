@@ -23,10 +23,17 @@ import (
 // Codex says so in its state (#454): no hook of Murmur's can ask Codex for a thread's parent, but
 // Codex's database records a thread Codex started for another (title.CodexLineage): one a thread
 // spawned, a review, a guardian. That needs the thread's ID, which a Codex session's MCP server
-// learns only from a call to one of Murmur's tools (the route's Native), so a subagent that never
-// calls one is on the mesh, with no way in but its inbox. The ID Codex's hook reports isn't used:
-// it is paired with a session by process, and a subagent runs in its parent's process, so its
-// hook can be paired with the session that spawned it.
+// learns only from a call to one of Murmur's tools (the route's Native). The ID Codex's hook
+// reports isn't used: it is paired with a session by process, and a subagent runs in its parent's
+// process, so its hook can be paired with the session that spawned it.
+//
+// Codex says so in the call, too (#487): a subagent's tool calls carry thread_source "subagent"
+// and the parent's thread, and its server tells the daemon before the first call goes on (the
+// route's Child, routeChildLocked). Codex starts a subagent's MCP server only for its first call
+// to that server's tools (0.164 and 0.167, 2026-11-12), and the server holds its hello for that
+// call, so the subagent registers as a child. A subagent that never calls one of Murmur's tools
+// has no server, and is never on the mesh. Codex's state still covers what the call doesn't: a
+// server from before #487, or a Codex that stops marking its calls.
 //
 // Only a Codex session outside T3 is looked at. Inside T3, whether a thread is a delegate is
 // T3's to say (#188): Tyler's rule (2026-11-12, #452) is that a thread shown in the user's list
@@ -90,6 +97,18 @@ func (d *Daemon) noteHookChildLocked(native, parentNative string) {
 		d.kickPresence()
 		d.kickPush()
 	}
+}
+
+// routeChildLocked makes s a child where its MCP server says Codex started its thread for another:
+// Codex marks the subagent's tool calls so (proto.Route's Child), and the first is what starts
+// its server, so this comes before the session is ever listed (#487). Outside T3 only, as
+// Codex's state is taken. It says whether s became one. Caller holds mu.
+func (d *Daemon) routeChildLocked(s *session) bool {
+	r := s.route
+	if !r.Child || r.Native == "" || r.T3CLI != "" || !isAgent(s.agent, "codex") {
+		return false
+	}
+	return d.markKidLocked(s.id, r.ParentNative)
 }
 
 // markKidLocked makes session id a child, and says whether it wasn't one. Caller holds mu.
