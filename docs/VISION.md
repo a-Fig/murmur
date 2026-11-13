@@ -1408,11 +1408,12 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   the human's pin off and counts as a choice made then, so a human's add made more than a minute
   before it, read late, doesn't put the session back; one made after it does, and so does one made
   in the minute before it, as clocks differ. A human's pin taking a session out of a group still
-  stands. A session whose own daemon is from before #539 still can't. The page's adds could have become the session's own tags instead, as an
-  agent's are, but that needs a new event for another device's sessions, and leaves the groups
-  people had already started stuck. So a group can stand for a topic: sessions that want to hear
-  of changes to `main` join `group:main-changes`, and whoever lands one sends to it (Tyler,
-  2026-11-11). That is #178's ping done by hand.
+  stands. A session whose own daemon is from before #539 still can't leave such a group. The page's
+  adds could have become the session's own tags instead, as an agent's are, but that needs a new
+  event for another device's sessions, and leaves the groups people had already started stuck. So
+  a group can stand for a topic: sessions that want to hear of changes to `main` join
+  `group:main-changes`, and whoever lands one sends to it (Tyler, 2026-11-11). That is #178's ping
+  done by hand.
 - **An agent can add other sessions to a group**, with `tags` and their names in `for`. It is the
   only tag one agent can give another: without that limit any agent could put `do-not-disturb` on
   another, or change its `model:`. It can't take a session out. The add goes to each session's

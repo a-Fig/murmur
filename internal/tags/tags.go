@@ -333,7 +333,8 @@ func (st *State) Given(groups []string) error {
 // the session in one of them gives way, so a session a person put in a group can leave it, as one
 // an agent added can (#539). The removal counts as a human's choice made at at, so a human's add
 // made more than clockAllowance before it, read late, doesn't put the session back. Other tags,
-// and a human's mark taking a session out of a group, stand over the session as ever. It returns the groups it took a mark off.
+// and a human's mark taking a session out of a group, stand over the session as ever. It returns
+// the groups it took a mark off.
 func (st *State) Left(remove []string, at time.Time) (left []string) {
 	for _, t := range remove {
 		if !IsGroup(t) || !st.Human[t].On {
