@@ -403,6 +403,10 @@ type Daemon struct {
 	snapLogged time.Time
 	// ending counts the calls whose end is being judged in the background (see toolEnd).
 	ending int
+	// panicLogged is when a panic in judging a call was last logged. survivePanics keeps such a
+	// panic from crashing a test binary, for the test that causes one on purpose (see toolEnd).
+	panicLogged   time.Time
+	survivePanics bool
 	// unsnapped holds a channel for each ended call whose worktree hasn't been snapshotted again
 	// yet, closed when it has; the next call's start waits for them (see toolStart).
 	unsnapped []chan struct{}
