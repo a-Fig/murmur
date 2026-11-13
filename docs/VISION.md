@@ -2087,8 +2087,12 @@ A body past the limit is cut, as in `inbox`.
     and 0.167, `codex exec` and `codex app-server`, a scratch MCP server logging what it got,
     2026-11-12.) So a Codex server outside T3 holds its first hello for up to a second for a call,
     and tells the daemon what the call said before the call goes on: a subagent registers as a
-    child, is never listed, its start is never logged, and its first `send` is refused. Codex's
-    state still covers servers from before #487.
+    child, is never listed, its start and stop are never logged, and its first `send` is refused.
+    A call that comes while the hello is on its way is held until the daemon has the route. If
+    the daemon doesn't take the route, the call goes on as an ordinary session's, and Codex's
+    state marks it later, as it still does for servers from before #487. The cost: `codex exec`
+    fires its first prompt's hook as the thread starts, before the held hello, so that one hook
+    finds no session.
   - *The thread's ID* comes only from a call to a Murmur tool, which is where a Codex MCP server
     learns it. Codex's hook reports an ID earlier, at the first prompt, but it is paired with a
     session by process, and a subagent runs in its parent's process: its hook can be paired

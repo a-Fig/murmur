@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // A subagent Codex spawned says so in its tool calls, and its server registers it as a child
@@ -97,5 +98,35 @@ func TestACodexSessionWithNoCallRegistersAfterTheWait(t *testing.T) {
 	}
 	if r := rs[len(rs)-1]; r.Native != "th-late" || !r.Child || r.ParentNative != "th-main" {
 		t.Errorf("route told: %+v", r)
+	}
+}
+
+// A subagent's call that comes while the hello is on its way, after the wait is up: the daemon
+// hears the session is a child before the call reaches it.
+func TestACodexSubagentCallDuringTheHelloWaitsForTheRoute(t *testing.T) {
+	wait := codexFirstCallWait
+	codexFirstCallWait = 20 * time.Millisecond
+	t.Cleanup(func() { codexFirstCallWait = wait })
+	f := &fakeDaemon{helloGate: make(chan struct{})}
+	s := codexLink(t, f)
+	waitFor(t, "the hello to be sent", func() bool { return f.helloCount() > 0 })
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.callFrom(context.Background(), subagentCall("th-kid", "th-main"), proto.Request{Op: proto.OpWho})
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	close(f.helloGate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ops []string
+	for _, r := range f.requests {
+		ops = append(ops, r.Op)
+	}
+	if len(f.requests) < 2 || f.requests[0].Op != proto.OpRoute || !f.requests[0].Route.Child || f.requests[len(f.requests)-1].Op != proto.OpWho {
+		t.Errorf("the daemon got %v; want the child's route before the call", ops)
 	}
 }

@@ -156,12 +156,17 @@ func TestAHookNamesItsSessionAChild(t *testing.T) {
 func TestACodexCallThatSaysSubagentMakesAChildAtOnce(t *testing.T) {
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
-	a, b := newDevice(t, remote), newCodexDevice(t, remote, &fakeCodex{lin: map[string]title.Lineage{}})
+	a := newDevice(t, remote)
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
+	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+		grace: 300 * time.Millisecond, codexLineage: (&fakeCodex{lin: map[string]title.Lineage{}}).read}
+	b.start()
 	alice, _ := a.session("aaaaaa", "")
 	main, _ := b.agentSession("bbbbbb", "codex", 300, codexIn("th-main"))
 	kid := codexIn("th-kid")
 	kid.Child, kid.ParentNative = true, "th-main"
-	sub, _ := b.agentSession("cccccc", "codex", 300, kid)
+	sub, subConn := b.agentSession("cccccc", "codex", 300, kid)
 	mainName := b.named(main)
 	if resp := b.trySend("cccccc", alice, "from the subagent"); resp.OK || !strings.Contains(resp.Error, mainName) {
 		t.Errorf("the first send of a subagent that registered as one: ok %v, error %q", resp.OK, resp.Error)
@@ -195,5 +200,25 @@ func TestACodexCallThatSaysSubagentMakesAChildAtOnce(t *testing.T) {
 	}
 	if !b.listsSession(main) {
 		t.Error("the thread that spawned the subagents left who")
+	}
+
+	// Its stop is nobody's news either. A session that stops after it is logged, so by then its
+	// own stop would have been too.
+	_, otherConn := b.agentSession("ffffff", "codex", 900, proto.Route{CodexCLI: "codex"})
+	subConn.Close()
+	time.Sleep(time.Second) // past its grace
+	otherConn.Close()
+	eventually(t, "the other session's stop to reach the other device's log", func() bool {
+		for _, ev := range a.do(proto.Request{Op: proto.OpLog, Limit: 100}).Events {
+			if strings.Contains(ev.Line, "ffffff") && strings.Contains(ev.Line, "stop") {
+				return true
+			}
+		}
+		return false
+	})
+	for _, ev := range a.do(proto.Request{Op: proto.OpLog, Limit: 100}).Events {
+		if strings.Contains(ev.Line, "cccccc") {
+			t.Errorf("the other device's log has the subagent: %q", ev.Line)
+		}
 	}
 }

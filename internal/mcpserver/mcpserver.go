@@ -796,6 +796,8 @@ type link struct {
 	// (holdFirstHello); made on first use, and nativeClosed says it is closed.
 	nativeSeen   chan struct{}
 	nativeClosed bool
+	// childMu holds a subagent's calls while the first tells the daemon it is a child.
+	childMu sync.Mutex
 	// routeWarned says the daemon's refusal of the route has been logged, which is done once. logf
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
@@ -952,6 +954,12 @@ func (l *link) tellRoute(ctx context.Context) {
 	if !up {
 		return
 	}
+	l.sendRoute(ctx, id, route)
+}
+
+// sendRoute tells the daemon route for session id. A daemon that doesn't take it leaves the session
+// as it was, a child included, which Codex's state then makes one later: it fails open.
+func (l *link) sendRoute(ctx context.Context, id string, route proto.Route) {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	resp, err := l.c.Do(cctx, proto.Request{Op: proto.OpRoute, Session: id, Route: &route})
@@ -988,6 +996,11 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 	id := c.thread
 	if id == "" {
 		return
+	}
+	if c.child {
+		// Calls that come together wait for the first to have told the daemon (see below).
+		l.childMu.Lock()
+		defer l.childMu.Unlock()
 	}
 	l.mu.Lock()
 	changed := l.native != id
@@ -1146,14 +1159,18 @@ func (l *link) run(ctx context.Context) {
 		backoff, inUse = time.Second, 0
 		l.mu.Lock()
 		l.hello.Reconnect = true // any later hello is a reconnection
-		l.mu.Unlock()
-		l.learn(resp.ClaudeSession)
-		l.set(true, nil)
 		// The thread may have been found after this hello was made, when tellRoute had no session
 		// to tell: the daemon hasn't got it.
-		l.mu.Lock()
-		stale := l.hello.Route != h.Route
+		stale, route := l.hello.Route != h.Route, l.hello.Route
 		l.mu.Unlock()
+		l.learn(resp.ClaudeSession)
+		if stale && route.Child {
+			// A subagent's call came while the hello was on its way: the daemon hears that the
+			// session is a child before the call, which waits for this registration, goes on.
+			l.sendRoute(ctx, h.ID, route)
+			stale = false
+		}
+		l.set(true, nil)
 		if stale {
 			l.spawn(func() { l.tellRoute(ctx) })
 		}
