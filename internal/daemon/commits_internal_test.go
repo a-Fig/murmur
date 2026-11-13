@@ -500,6 +500,7 @@ func TestAPanicWhileCreditingIsLoggedAndReleasesTheLock(t *testing.T) {
 	d, dir := bracketDaemon(t)
 	var logged strings.Builder
 	d.log = log.New(&logged, "", 0)
+	d.survivePanics = true
 	ctx := context.Background()
 	d.toolStart(ctx, d.startReq(dir, "t1"))
 	cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "during the call")
@@ -530,7 +531,7 @@ func TestAPanicWhileCreditingIsLoggedAndReleasesTheLock(t *testing.T) {
 	if ending != 0 {
 		t.Errorf("ending = %d after the panicked call, want 0", ending)
 	}
-	if got := logged.String(); !strings.Contains(got, "panic while crediting") || !strings.Contains(got, "assignment to entry in nil map") {
+	if got := logged.String(); !strings.Contains(got, "panic while judging") || !strings.Contains(got, "assignment to entry in nil map") {
 		t.Errorf("log = %q, want the panic and its message", got)
 	}
 }

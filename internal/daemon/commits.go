@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/attrib"
@@ -212,10 +213,15 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 		defer snapped()
 		// Runs first. A panic in judging a call loses only that call's credit, so it is logged
 		// and the daemon carries on; judgeEnd unlocks mu on its way out, so the deferred calls
-		// above, which take mu, don't wait on it forever (#467).
+		// above, which take mu, don't wait on it forever (#467). Test daemons log to nowhere, so
+		// in a test binary the panic goes on, after the deferred calls, and fails the run with its
+		// message instead of showing only as a commit nobody was credited with.
 		defer func() {
 			if p := recover(); p != nil {
-				d.log.Printf("panic while crediting a tool call's commits: %v\n%s", p, debug.Stack())
+				if testing.Testing() && !d.survivePanics {
+					panic(p)
+				}
+				d.judgePanicked(p)
 			}
 		}()
 		d.judgeEnd(ctx, b, moved, ended, sessions, snapped)
@@ -302,6 +308,20 @@ func sameWorktree(a, b string) bool {
 	ga, _, okA := gitx.Discover(a)
 	gb, _, okB := gitx.Discover(b)
 	return okA && okB && filepath.Clean(ga) == filepath.Clean(gb)
+}
+
+// judgePanicked logs a panic in judging a call's end, with its stack, at most once a minute: a bug
+// that panics on every call, like #451's nil map, would otherwise log a stack per tool call.
+func (d *Daemon) judgePanicked(p any) {
+	d.mu.Lock()
+	quiet := time.Since(d.panicLogged) < time.Minute
+	if !quiet {
+		d.panicLogged = time.Now()
+	}
+	d.mu.Unlock()
+	if !quiet {
+		d.log.Printf("panic while judging the end of a tool call (its commits are not credited): %v\n%s", p, debug.Stack())
+	}
 }
 
 // snapshotFailed logs a snapshot that couldn't be taken, at most once a minute: it would otherwise
