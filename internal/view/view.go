@@ -265,10 +265,9 @@ func Inbox(r proto.Response) string {
 		fmt.Fprintf(&b, "\n[%s message from %s, %s]\n", brand.Product, from(m), Ago(m.At))
 		if m.To == "*" {
 			b.WriteString("To: everyone\n")
-		} else if bus.IsGroup(m.To) && m.GroupKnown {
-			fmt.Fprintf(&b, "To: %s\n", m.To)
 		} else if bus.IsGroup(m.To) {
-			fmt.Fprintf(&b, "To: %s, a group you are in\n", m.To)
+			// Being in it is a given (Tyler, 2026-11-13); the line after the subject says how to leave.
+			fmt.Fprintf(&b, "To: %s\n", m.To)
 		}
 		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
 		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {

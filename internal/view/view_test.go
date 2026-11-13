@@ -327,8 +327,12 @@ func TestAPersonInAGroup(t *testing.T) {
 		if !strings.HasPrefix(got, "Message sent in group:ui from tyler [human] via "+name+":\n") {
 			t.Errorf("%s: the turn's first line: %q", tc.what, got)
 		}
-		if got := Inbox(proto.Response{Messages: []proto.MessageView{v}}); !strings.HasSuffix(got, "\n"+tc.inbox) {
+		got = Inbox(proto.Response{Messages: []proto.MessageView{v}})
+		if !strings.HasSuffix(got, "\n"+tc.inbox) {
 			t.Errorf("%s: inbox ends\n%q\nwant it to end\n%q", tc.what, got, tc.inbox)
+		}
+		if !strings.Contains(got, "\nTo: group:ui\nSubject: ") { // being in it is a given (Tyler, 2026-11-13)
+			t.Errorf("%s: inbox's To line: %q", tc.what, got)
 		}
 	}
 }
