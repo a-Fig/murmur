@@ -66,7 +66,7 @@ async function run(name, sessions, failing, then) {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(src + "\nthis.tagSessions = tagSessions; this.deliver = deliver;", ctx);
+  vm.runInContext(src + "\nthis.tagSessions = tagSessions; this.deliver = deliver; this.groupJoins = groupJoins;", ctx);
   const newItem = (text) => ({ cid: text, key: "group:x", to: "group:x", text, status: "sending" });
   const show = (label, item) => {
     const note = ctx.ui.notes.get("group:x");
@@ -75,6 +75,13 @@ async function run(name, sessions, failing, then) {
   };
   const item = newItem("hello");
   ctx.tagSessions(sessions, "group:x", true); // as startGroup does, without waiting
+  if (then === "started again") {
+    // Both adds fail with nothing sent; tags are freed, and the group is started again.
+    await Promise.all([...ctx.groupJoins.get("group:x")]);
+    failing.clear();
+    calls.length = 0;
+    ctx.tagSessions(sessions, "group:x", true);
+  }
   if (then === "two at once") {
     const second = newItem("hello2");
     await Promise.all([ctx.deliver(item), ctx.deliver(second)]);
@@ -107,6 +114,8 @@ async function run(name, sessions, failing, then) {
   await run("one fails", [s("a"), s("b")], new Set(["laptop/a"]), "added by hand");
   await run("all fail", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "edit and send");
   await run("all fail", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "try again");
+  await run("one fails, two at once", [s("a"), s("b")], new Set(["laptop/a"]), "two at once");
+  await run("all fail, started again", [s("a"), s("b")], new Set(["laptop/a", "laptop/b"]), "started again");
 })().catch((e) => { console.error(e); process.exit(1); });
 `
 
@@ -143,6 +152,8 @@ func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 		"all fail, sent anew: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | ",
 		"all fail: failed | Not sent: couldn't add a, b to group:x: a session has at most 12 tags |  | /api/tags laptop/a, /api/tags laptop/b",
 		"all fail, tried again: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, announce Sent.",
+		"one fails, two at once: sent |  | warn Couldn't add a to group:x, so they didn't get this: a session has at most 12 tags | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, /api/send group:x hello2, announce Sent, but not to a., announce Sent, but not to a.",
+		"all fail, started again: sent |  | group:x has 1 other member(s) right now. | /api/tags laptop/a, /api/tags laptop/b, /api/send group:x, announce Sent.",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("the harness printed\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
