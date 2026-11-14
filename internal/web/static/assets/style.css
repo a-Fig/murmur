@@ -2241,7 +2241,7 @@ a.g-pr:hover {
 .g-kinds button {
   flex: 1;
 }
-.g-agent-toggle {
+.g-mine-toggle {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -2252,7 +2252,7 @@ a.g-pr:hover {
   color: var(--muted-foreground);
   text-align: left;
 }
-.g-agent-toggle:hover {
+.g-mine-toggle:hover {
   color: var(--foreground);
 }
 

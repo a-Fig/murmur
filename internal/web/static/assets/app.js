@@ -549,16 +549,17 @@ function setMini(v) {
   render();
 }
 
-// Whether the conversation list shows the DMs agents send each other, remembered like the sidebar.
-const AGENT_CHATS_KEY = NAME + ":agent-chats";
-let agentChats = true;
+// Whether the conversation list shows only the conversations you are in, remembered like the
+// sidebar.
+const ONLY_MINE_KEY = NAME + ":only-mine";
+let onlyMine = false;
 try {
-  agentChats = localStorage.getItem(AGENT_CHATS_KEY) !== "0";
+  onlyMine = localStorage.getItem(ONLY_MINE_KEY) === "1";
 } catch {}
-function setAgentChats(v) {
-  agentChats = v;
+function setOnlyMine(v) {
+  onlyMine = v;
   try {
-    localStorage.setItem(AGENT_CHATS_KEY, v ? "1" : "0");
+    localStorage.setItem(ONLY_MINE_KEY, v ? "1" : "0");
   } catch {}
   render();
 }
@@ -2811,13 +2812,16 @@ function conversationList(list) {
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
   // One list, newest first, so a busy group chat is never below every quiet DM. The switch
   // narrows it to direct messages or group chats.
-  // The toggle under it hides the DMs between two agents from every tab, so a person can read only
-  // what they and the groups are saying. Your messages all have you in them, so it isn't there.
+  // The toggle under it leaves only the conversations you are in: your DMs, the group chats you
+  // have written in, and one you have just begun. It needs an account, and Your messages is that
+  // list already, so it isn't there.
   const kind = ui.convKind || "all";
   const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
-  const between = (c) => c.kind === "dm" && !c.pair.some(isPerson);
-  const agentsN = isMyFilter() ? 0 : list.filter(between).length;
-  if (agentsN && !agentChats) list = list.filter((c) => !between(c));
+  const canMine = !!me() && !isMyFilter();
+  if (canMine && onlyMine) {
+    const keys = new Set(myMessages().map((m) => conversationOf(m).key));
+    list = list.filter((c) => keys.has(c.key) || (!c.messages.length && !c.quiet));
+  }
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
   const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
   const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
@@ -2903,19 +2907,18 @@ function conversationList(list) {
         ),
       ),
     ),
-    agentsN > 0 &&
+    canMine &&
       h(
         "button",
         {
-          class: "g-agent-toggle",
+          class: "g-mine-toggle",
           role: "switch",
-          "aria-checked": agentChats ? "true" : "false",
-          "data-key": "agent-chats",
-          onclick: () => setAgentChats(!agentChats),
+          "aria-checked": onlyMine ? "true" : "false",
+          "data-key": "only-mine",
+          onclick: () => setOnlyMine(!onlyMine),
         },
-        h("span", { class: "tm-box" + (agentChats ? " on" : "") }, agentChats && icon("check")),
-        h("span", { class: "truncate" }, "Show agent-to-agent chats"),
-        h("span", { class: "g-tab-n" }, agentsN),
+        h("span", { class: "tm-box" + (onlyMine ? " on" : "") }, onlyMine && icon("check")),
+        h("span", { class: "truncate" }, "Only conversations you're in"),
       ),
     rows.map(conversationRow),
     older.length > 0 &&
