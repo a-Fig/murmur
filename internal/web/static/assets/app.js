@@ -2207,39 +2207,66 @@ function tagChips(s, max = Infinity, line = false) {
   );
 }
 
-// The sidebar's Tags: one chip per tag in use, which filters the lists to it.
+// Whether the sidebar's Tags are folded (#569), remembered like the sidebar.
+const TAGS_FOLDED_KEY = NAME + ":tags-folded";
+let tagsFolded = false;
+try {
+  tagsFolded = localStorage.getItem(TAGS_FOLDED_KEY) === "1";
+} catch {}
+function setTagsFolded(v) {
+  tagsFolded = v;
+  try {
+    localStorage.setItem(TAGS_FOLDED_KEY, v ? "1" : "0");
+  } catch {}
+  render();
+}
+
+// The sidebar's Tags: one chip per tag in use, which filters the lists to it. Folded, it keeps only
+// the chip of the filter that is on, so that filter can still be seen and turned off.
 function tagsGroup() {
   const counts = tagCounts();
   if (ui.tagFilter && !counts.has(ui.tagFilter)) ui.tagFilter = null;
   if (!counts.size) return null;
+  const chips = [...counts].filter(([n]) => !tagsFolded || n === ui.tagFilter);
   return h(
     "div",
     { class: "sidebar-group dev-group" },
-    h("div", { class: "group-label" }, h("span", { class: "label" }, "Tags"), h("span", { class: "menu-count" }, counts.size)),
     h(
-      "div",
-      { class: "tag-filter" },
-      [...counts]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([n, c]) => {
-          const on = ui.tagFilter === n;
-          return h(
-            "button",
-            {
-              class: "tf" + (on ? " on" : ""),
-              "aria-pressed": on ? "true" : "false",
-              title: on ? "Show every session" : "Show only sessions tagged " + n,
-              "data-key": "tf-" + n,
-              onclick: () => {
-                ui.tagFilter = on ? null : n;
-                render();
-              },
-            },
-            h("span", { class: "tf-name" }, n),
-            h("span", { class: "tf-n" }, c),
-          );
-        }),
+      "button",
+      {
+        class: "group-label group-fold",
+        "aria-expanded": tagsFolded ? "false" : "true",
+        "data-key": "tags-fold",
+        onclick: () => setTagsFolded(!tagsFolded),
+      },
+      h("span", { class: "label" }, "Tags", icon("chevronRight", "dev-chev")),
+      h("span", { class: "menu-count" }, counts.size),
     ),
+    chips.length > 0 &&
+      h(
+        "div",
+        { class: "tag-filter" },
+        chips
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([n, c]) => {
+            const on = ui.tagFilter === n;
+            return h(
+              "button",
+              {
+                class: "tf" + (on ? " on" : ""),
+                "aria-pressed": on ? "true" : "false",
+                title: on ? n + ": show every session" : "Show only sessions tagged " + n,
+                "data-key": "tf-" + n,
+                onclick: () => {
+                  ui.tagFilter = on ? null : n;
+                  render();
+                },
+              },
+              h("span", { class: "tf-name" }, n),
+              h("span", { class: "tf-n" }, c),
+            );
+          }),
+      ),
   );
 }
 
