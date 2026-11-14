@@ -83,7 +83,7 @@
   /* The asterisk on the users label, a superscript, and what it means on hover or focus. */
   /* The explanation hangs from the card's top, not the asterisk, so it fits a narrow screen; its
      ::before bridges the gap below the label, so the pointer can move onto it without closing it. */
-  .hero .top { position: relative; }
+  .hero .top, .tile { position: relative; }
   .star { display: inline-block; line-height: 0; }
   .star button {
     font: inherit; font-size: 12px; font-weight: 600; line-height: 1; color: var(--brand); background: none;
@@ -101,6 +101,8 @@
   .star .why .how b { min-width: 24px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .star .why .fine { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
   .star:hover .why, .star:focus-within .why { display: block; }
+  /* In a tile the label sits inside the card's padding, so the explanation starts below it. */
+  .tile .star .why { left: 16px; top: 40px; max-width: min(340px, calc(100% - 32px)); }
   .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; }
   /* What a section's figures are: exact, or estimated. */
   .section span { font-weight: 400; letter-spacing: 0; text-transform: none; margin-left: 8px; }
@@ -110,9 +112,6 @@
   .tile .label { font-size: 13px; }
   .tile .value { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
-  /* How a figure marked ≈ is made (#550); shown only when one is. */
-  .estimate { grid-column: span 12; color: var(--text-muted); font-size: 12px; max-width: 860px; margin-top: -6px; }
-  .estimate[hidden] { display: none; }
   .wide { grid-column: span 12; }
   .half { grid-column: span 6; }
   .chart { position: relative; margin-top: 14px; }
@@ -235,11 +234,9 @@
     <h2 class="section">Sessions and messages <span>what the records hold; estimated where a bus is encrypted</span></h2>
 
     <section class="tiles two">
-      <div class="card tile"><div class="label">Agent sessions</div><div class="value" id="t-sessions">–</div><div class="note" id="t-sessions-note"></div></div>
-      <div class="card tile"><div class="label">Messages between agents</div><div class="value" id="t-messages">–</div><div class="note" id="t-messages-note"></div></div>
+      <div class="card tile"><div class="label">Agent sessions<span class="star"><button type="button" aria-describedby="sessions-why" aria-label="Why estimated">*</button><span class="why" role="tooltip" id="sessions-why"></span></span></div><div class="value" id="t-sessions">–</div><div class="note" id="t-sessions-note"></div></div>
+      <div class="card tile"><div class="label">Messages between agents<span class="star"><button type="button" aria-describedby="messages-why" aria-label="Why estimated">*</button><span class="why" role="tooltip" id="messages-why"></span></span></div><div class="value" id="t-messages">–</div><div class="note" id="t-messages-note"></div></div>
     </section>
-
-    <p class="estimate" id="estimate" hidden>≈ includes an estimate. An encrypted bus hides what each record is, and nothing is decrypted to count it. A message is counted from an encrypted record’s size: that misses about 2% of them, short ones with no body, and can take a session’s start on a long branch for one. A session is counted from the repo’s name registry, which isn’t encrypted, and which also names sessions that other sessions started.</p>
 
     <section class="card half">
       <h2>Agent sessions per day</h2>
@@ -280,8 +277,9 @@ const long = d => date(d, { weekday: 'short', month: 'short', day: 'numeric', ye
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const short = name => name.replace(/^github\.com\//, '');
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
-// A count with the estimate of what encrypted buses hide added (#550), marked when there is one.
-const approx = (n, est) => (est ? '≈' : '') + fmt(n + (est || 0));
+// A count with the estimate of what encrypted buses hide added (#550). The asterisk on sessions
+// and on messages says they hold one, and how it is made.
+const withEst = (n, est) => fmt(n + (est || 0));
 // A number of bytes as people read one: 950 B, 12.3 kB, 4.56 MB. 1 kB is 1,000 bytes.
 const size = n => {
   const b = n || 0;
@@ -398,14 +396,12 @@ function totalChart(box, series, key, what, H = 220) {
 }
 
 // Columns per day, stacked by repo in the repos' fixed colors. With estKey, a column is the exact
-// count and the estimate together, and its tooltip marks a value that includes an estimate. With
-// bytes, the values are bytes, and are written as sizes.
+// count and the estimate together. With bytes, the values are bytes, and are written as sizes.
 function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, bytes = false } = {}) {
   const value = bytes ? size : fmt;
   box.replaceChildren();
   const n = days.length, H = 220;
   const cell = new Map(); // day -> Map(slot -> value)
-  const est = new Map(); // day -> Set of the slots whose value includes an estimate
   for (const r of byRepo) {
     const extra = (estKey && r[estKey]) || 0, v = (r[key] || 0) + extra;
     if (!v) continue;
@@ -413,9 +409,6 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, b
     if (!cell.has(r.day)) cell.set(r.day, new Map());
     const m = cell.get(r.day);
     m.set(slot, (m.get(slot) || 0) + v);
-    if (!extra) continue;
-    if (!est.has(r.day)) est.set(r.day, new Set());
-    est.get(r.day).add(slot);
   }
   const totals = days.map(d => [...(cell.get(d)?.values() || [])].reduce((s, v) => s + v, 0));
   const f = frame(box, n, Math.max(1, ...totals), H, `${what} per day, by repo`, bytes ? sizeTick : fmt);
@@ -440,9 +433,8 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, b
     }
     const hit = el('rect', { x: f.m.l + f.band * i, y: f.m.t, width: f.band, height: H - f.m.t - f.m.b, fill: 'transparent', tabindex: 0 });
     const show = () => {
-      const mark = slot => (est.get(d)?.has(slot) ? '≈' : '');
-      const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, mark(s.key) + value(m.get(s.key)), s.label]) : [];
-      tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${est.has(d) ? '≈' : ''}${value(totals[i])}${bytes ? '' : ' ' + what.toLowerCase()}`, rows);
+      const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, value(m.get(s.key)), s.label]) : [];
+      tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${value(totals[i])}${bytes ? '' : ' ' + what.toLowerCase()}`, rows);
     };
     hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
     hit.addEventListener('pointerleave', () => tip.hide()); hit.addEventListener('blur', () => tip.hide());
@@ -480,7 +472,7 @@ function repoTable(box, list, colors) {
     const name = el('td'); const key = el('span', { class: 'key' }); key.style.background = colors.colorOf(r.name);
     const a = el('a', { href: 'https://' + r.name, rel: 'noopener' }, short(r.name));
     name.append(key, a); tr.append(name);
-    const cells = [fmt(r.contributors), fmt(r.devices), fmt(r.people), fmt(r.records), size(r.bytes), approx(r.sessions, r.estSessions), approx(r.messages, r.estMessages), fmt(r.week)];
+    const cells = [fmt(r.contributors), fmt(r.devices), fmt(r.people), fmt(r.records), size(r.bytes), withEst(r.sessions, r.estSessions), withEst(r.messages, r.estMessages), fmt(r.week)];
     for (const v of cells) tr.append(el('td', { class: 'num' }, v));
     tr.append(el('td', {}, date(r.start, { month: 'short', day: 'numeric', year: 'numeric' })));
     tr.append(el('td', {}, r.last ? date(r.last, { month: 'short', day: 'numeric', year: 'numeric' }) : 'not counted yet'));
@@ -529,13 +521,24 @@ function render() {
   $('t-devices').textContent = fmt(d.devices);
   $('t-devices-note').textContent = 'clones that have run Murmur in these repos';
   // Sessions and messages are the exact counts and the estimates of what encrypted buses hide
-  // together, marked ≈ when any of it is estimated; the line under the tiles says how.
-  const estimated = n => (n ? `; ${fmt(n)} of the total estimated` : '');
-  $('t-sessions').textContent = approx(d.sessions, d.estSessions);
-  $('t-sessions-note').textContent = `${approx(d.weekSessions, d.weekEstSessions)} in the last ${d.week} days${estimated(d.estSessions)}`;
-  $('t-messages').textContent = approx(d.messages, d.estMessages);
-  $('t-messages-note').textContent = `${approx(d.weekMessages, d.weekEstMessages)} in the last ${d.week} days${estimated(d.estMessages)}`;
-  $('estimate').hidden = !(d.estSessions || d.estMessages);
+  // together. Their asterisks say so, how each estimate is made, and how much of the total it is.
+  $('t-sessions').textContent = withEst(d.sessions, d.estSessions);
+  $('t-sessions-note').textContent = `${withEst(d.weekSessions, d.weekEstSessions)} in the last ${d.week} days`;
+  $('t-messages').textContent = withEst(d.messages, d.estMessages);
+  $('t-messages-note').textContent = `${withEst(d.weekMessages, d.weekEstMessages)} in the last ${d.week} days`;
+  const why = (id, how, est, all) => {
+    const row = el('div', { class: 'how' });
+    row.append(el('b', {}, fmt(est || 0)), el('span', {}, `of ${fmt(all)} estimated`));
+    $(id).replaceChildren(
+      el('p', {}, 'Estimated where a repo’s bus is encrypted, which hides what each record is. ' + how),
+      row,
+      el('p', { class: 'fine' }, 'Nothing is decrypted to count it.'),
+    );
+  };
+  why('sessions-why', 'A session is counted from the repo’s name registry, which isn’t encrypted. It also names sessions that other sessions started.',
+    d.estSessions, d.sessions + (d.estSessions || 0));
+  why('messages-why', 'A message is counted from an encrypted record’s size. That misses about 2% of them, short ones with no body, and can take a session’s start on a long branch for one.',
+    d.estMessages, d.messages + (d.estMessages || 0));
   const colors = repoColors(d.repoList);
   const dayList = d.series.map(s => s.day);
   totalChart($('c-repos'), d.series, 'repos', 'public repos', 180);
@@ -559,7 +562,7 @@ function render() {
     (names.length ? `${h.late ? 'Its' : 'The census’s'} last run didn’t read ${names.join(', ')}. ` : '');
   $('footer').textContent = behind + 'A repo is listed once one of its clones reports it: Murmur sends a public repo’s address, once per repo, and nothing else. ' +
     `Everything else is read once a day from what each repo shows anyone, its bus and its commits; last read ${counted}. ` +
-    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Bus records and their data are exact, encrypted or not; data is the size of the events devices wrote, as JSON. A figure marked ≈ includes an estimate of what an encrypted bus hides. Days are UTC. ' +
+    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Bus records and their data are exact, encrypted or not; data is the size of the events devices wrote, as JSON. Sessions and messages are estimated where a bus is encrypted: hover their asterisks. Days are UTC. ' +
     'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
 }
 
