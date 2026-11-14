@@ -49,7 +49,7 @@ test('a run dispatches the census workflow on main, once, with the run token', s
     assert.equal(body.ok, true);
     assert.equal(body.runsToday, 1);
     assert.equal(body.perDay, PER_DAY);
-    assert.match(body.message, /^Census started \(1 of 10 manual runs today\)/);
+    assert.match(body.message, /^Started\.$/);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, 'https://api.github.com/repos/a-Fig/murmur/actions/workflows/census.yml/dispatches');
     assert.equal(calls[0].init.method, 'POST');
@@ -80,7 +80,7 @@ test('a second run within 15 minutes is refused and dispatches nothing', skip, a
     const body = await res.json();
     assert.equal(body.runsToday, 1);
     assert.equal(body.retryAfterSeconds, 600);
-    assert.match(body.message, /try again in 10 minutes/);
+    assert.match(body.message, /Try again in 10 min/);
     assert.equal(calls.length, 0);
   });
   assert.equal(await rows(db), 1);
@@ -102,7 +102,7 @@ test("a slot freed while a refused run is being answered doesn't make its wait N
     const res = await runCensus(post(), { DB: gone, CENSUS_RUN_TOKEN: 'run-token' }, HEADERS, { now: NOW });
     assert.equal(res.status, 429);
     assert.equal(res.headers.get('Retry-After'), '1');
-    assert.match((await res.json()).message, /try again in 1 minute/);
+    assert.match((await res.json()).message, /Try again in 1 min/);
     assert.equal(calls.length, 0);
   });
 });
@@ -127,7 +127,7 @@ test('the tenth run of a UTC day is the last: the eleventh is refused until midn
     assert.equal(res.headers.get('Retry-After'), '43200');
     const body = await res.json();
     assert.equal(body.runsToday, PER_DAY);
-    assert.match(body.message, /10 manual runs already today/);
+    assert.match(body.message, /Limit reached/);
     assert.equal(calls.length, 0);
   });
   assert.equal(await rows(db), PER_DAY);
@@ -149,7 +149,7 @@ test('a dispatch GitHub refuses frees the slot, so a retry can start a run', ski
   await withFetch(new Response('no', { status: 403 }), async calls => {
     const res = await runCensus(post(), env, HEADERS, { now: NOW });
     assert.equal(res.status, 502);
-    assert.match((await res.json()).message, /didn't start the census \(403\)/);
+    assert.match((await res.json()).message, /refused \(403\)/);
     assert.equal(calls.length, 1);
   });
   assert.equal(await rows(db), 0);

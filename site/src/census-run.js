@@ -35,7 +35,7 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
   }
   const token = String(env.CENSUS_RUN_TOKEN || '');
   if (!token) {
-    return json(503, { ok: false, message: "Not set up yet: the site has no CENSUS_RUN_TOKEN, so it can't start the census." }, headers);
+    return json(503, { ok: false, message: 'Not set up (no CENSUS_RUN_TOKEN).' }, headers);
   }
 
   const at = new Date(now).toISOString();
@@ -55,7 +55,7 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
       const retryAfterSeconds = Math.max(1, Math.ceil((Date.parse(`${at.slice(0, 10)}T24:00:00.000Z`) - now) / 1000));
       return json(429, {
         ok: false, runsToday, retryAfterSeconds,
-        message: `${PER_DAY} manual runs already today; the limit resets at midnight UTC.`,
+        message: 'Limit reached. Resets at midnight UTC.',
       }, { ...headers, 'Retry-After': String(retryAfterSeconds) });
     }
     // `last` can be gone by now: the run that blocked this one may have failed and freed its
@@ -65,7 +65,7 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
     const minutes = Math.ceil(retryAfterSeconds / 60);
     return json(429, {
       ok: false, runsToday, retryAfterSeconds,
-      message: `A manual run started just now; try again in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`,
+      message: `Try again in ${minutes} min.`,
     }, { ...headers, 'Retry-After': String(retryAfterSeconds) });
   }
 
@@ -87,19 +87,19 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
     console.log(`starting the census: ${err}`);
     await release(env.DB, id);
     // GitHub may have started the run before the answer was lost, so this doesn't claim none was.
-    return json(502, { ok: false, message: "GitHub didn't answer, so the start couldn't be confirmed; nothing was counted against the limit." }, headers);
+    return json(502, { ok: false, message: "GitHub didn't answer." }, headers);
   }
   if (!res.ok) {
     // A 204 with no body is the only success; anything else means no run, so the slot is freed.
     console.log(`starting the census: GitHub answered ${res.status}`);
     await release(env.DB, id);
-    return json(502, { ok: false, message: `GitHub didn't start the census (${res.status}), so nothing was counted against the limit.` }, headers);
+    return json(502, { ok: false, message: `GitHub refused (${res.status}).` }, headers);
   }
 
   const { runsToday } = await state(env.DB, dayStart);
   return json(202, {
     ok: true, startedAt: at, runsToday, perDay: PER_DAY, runsPage: RUNS_PAGE,
-    message: `Census started (${runsToday} of ${PER_DAY} manual runs today). The numbers here refresh once it finishes, in about a minute.`,
+    message: 'Started.',
   }, headers);
 }
 
