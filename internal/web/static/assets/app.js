@@ -3061,7 +3061,7 @@ function personText(m) {
   const subject = m.subject || "";
   const body = m.body || "";
   const end = ["…", "..."].find((e) => subject.endsWith(e));
-  if (end && body.startsWith(subject.slice(0, -end.length))) return body;
+  if (end && body && body.startsWith(subject.slice(0, -end.length))) return body;
   return body ? subject + "\n" + body : subject;
 }
 

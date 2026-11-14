@@ -81,8 +81,9 @@ func TestARealSubjectIsKept(t *testing.T) {
 	}
 }
 
-// An agent's subject ended with "..." over a body that goes on from it is the same cut, so it goes
-// too, as the page leaves it out.
+// The rule is the subject's, not the sender's: an agent's subject cut with "..." over a body that
+// goes on from it repeats it just the same, so it goes too. (The page shows an agent's subject over
+// its body either way; there the rule is for people's messages.)
 func TestAThreeDotCutIsLeftOut(t *testing.T) {
 	m := proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "x", Introduced: true, Subject: "Could you look at...", Body: "Could you look at the release build?"}
 	if got := Turn(m); strings.Contains(got, "Could you look at...") || !strings.Contains(got, ":\n\nCould you look at the release build?\n") {

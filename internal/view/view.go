@@ -302,8 +302,9 @@ func Inbox(r proto.Response) string {
 // repeatsSubject says a subject is only the start of the body, cut short and ended with "…" or
 // "...". That is what web.SplitText makes of a message a person writes on the page with no subject
 // and a first line too long for one; printing both would give the agent that line twice (#552), so
-// Turn and Inbox print the body alone. The page hides such a subject by the same rule (personText
-// in internal/web/static/assets/app.js). body is the body as the view prints it, trimmed.
+// Turn and Inbox print the body alone, whoever sent it: an agent's cut subject repeats its body
+// just the same. The page hides a person's such subject by the same rule (personText in
+// internal/web/static/assets/app.js). body is the body as the view prints it, trimmed.
 func repeatsSubject(subject, body string) bool {
 	if body == "" {
 		return false
