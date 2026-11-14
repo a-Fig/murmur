@@ -89,23 +89,30 @@
     font: inherit; font-size: 12px; font-weight: 600; line-height: 1; color: var(--brand); background: none;
     border: 0; padding: 0 2px 0 1px; cursor: help; position: relative; top: -0.5em;
   }
-  .star .why::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
-  .star .why {
+  /* A dotted label says what a figure is on hover or focus, so the line under the number keeps only
+     what changed. The asterisk stays for estimates. */
+  .def { display: inline; }
+  .def button {
+    font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; background: none; border: 0;
+    padding: 0; cursor: help; text-decoration: underline dotted var(--text-muted); text-underline-offset: 3px;
+  }
+  .def button:hover { color: var(--text-primary); }
+  :is(.star, .def) .why::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
+  :is(.star, .def) .why {
     display: none; position: absolute; left: 0; top: 28px; z-index: 3; width: max-content; max-width: min(340px, 100%);
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
     box-shadow: 0 6px 20px rgba(0,0,0,.12); color: var(--text-secondary); font-size: 13px; font-weight: 400;
-    letter-spacing: 0; line-height: 1.45;
+    letter-spacing: 0; text-transform: none; line-height: 1.45;
   }
   .star .why p { margin-bottom: 6px; }
   .star .why .how { display: flex; gap: 10px; }
   .star .why .how b { min-width: 24px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .star .why .fine { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
-  .star:hover .why, .star:focus-within .why { display: block; }
+  :is(.star, .def):hover .why, :is(.star, .def):focus-within .why { display: block; }
   /* In a tile the label sits inside the card's padding, so the explanation starts below it. */
-  .tile .star .why { left: 16px; top: 40px; max-width: min(340px, calc(100% - 32px)); }
-  .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; }
-  /* What a section's figures are: exact, or estimated. */
-  .section span { font-weight: 400; letter-spacing: 0; text-transform: none; margin-left: 8px; }
+  .tile :is(.star, .def) .why { left: 16px; top: 40px; max-width: min(340px, calc(100% - 32px)); }
+  .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; position: relative; }
+  .section .why { top: 24px; }
   .tiles { grid-column: span 12; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
   .tiles.two { grid-template-columns: repeat(2, 1fr); }
   .tiles .card { padding: 14px 16px; }
@@ -195,13 +202,13 @@
       <div class="chart" id="c-users"></div>
     </section>
 
-    <h2 class="section">Measured <span>exact, whether or not a bus is encrypted</span></h2>
+    <h2 class="section"><span class="def"><button type="button" aria-describedby="measured-def">Measured</button><span class="why" role="tooltip" id="measured-def">Exact, whether or not a bus is encrypted.</span></span></h2>
 
     <section class="tiles">
-      <div class="card tile"><div class="label">Bus records</div><div class="value" id="t-records">–</div><div class="note" id="t-records-note"></div></div>
-      <div class="card tile"><div class="label">Data in those records</div><div class="value" id="t-bytes">–</div><div class="note" id="t-bytes-note"></div></div>
-      <div class="card tile"><div class="label">Devices running Murmur</div><div class="value" id="t-devices">–</div><div class="note" id="t-devices-note"></div></div>
-      <div class="card tile"><div class="label">Contributors</div><div class="value" id="t-contributors">–</div><div class="note" id="t-contributors-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="records-def">Bus records</button><span class="why" role="tooltip" id="records-def">Everything devices wrote to their logs.</span></span></div><div class="value" id="t-records">–</div><div class="note" id="t-records-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="bytes-def">Data in those records</button><span class="why" role="tooltip" id="bytes-def">The size of their events.</span></span></div><div class="value" id="t-bytes">–</div><div class="note" id="t-bytes-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="devices-def">Devices running Murmur</button><span class="why" role="tooltip" id="devices-def">Clones that have run Murmur in these repos.</span></span></div><div class="value" id="t-devices">–</div><div class="note" id="t-devices-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="contributors-def">Contributors</button><span class="why" role="tooltip" id="contributors-def">People who have committed to these repos.</span></span></div><div class="value" id="t-contributors">–</div><div class="note" id="t-contributors-note"></div></div>
     </section>
 
     <section class="card half">
@@ -231,7 +238,7 @@
       <div class="chart" id="c-contributors"></div>
     </section>
 
-    <h2 class="section">Sessions and messages <span>what the records hold; estimated where a bus is encrypted</span></h2>
+    <h2 class="section"><span class="def"><button type="button" aria-describedby="sessions-def">Sessions and messages</button><span class="why" role="tooltip" id="sessions-def">What the records hold; estimated where a bus is encrypted.</span></span></h2>
 
     <section class="tiles two">
       <div class="card tile"><div class="label">Agent sessions<span class="star"><button type="button" aria-describedby="sessions-why" aria-label="Why estimated">*</button><span class="why" role="tooltip" id="sessions-why"></span></span></div><div class="value" id="t-sessions">–</div><div class="note" id="t-sessions-note"></div></div>
@@ -512,14 +519,13 @@ function render() {
     el('p', { class: 'fine' }, 'Private repos aren’t counted.'),
   );
   $('t-contributors').textContent = fmt(d.contributors);
-  $('t-contributors-note').textContent = `people who have committed to them; ${fmt(d.newContributors)} new in the last ${d.week} days`;
+  $('t-contributors-note').textContent = `${fmt(d.newContributors)} new in the last ${d.week} days`;
   // Measured: exact whether or not a bus is encrypted.
   $('t-records').textContent = fmt(d.records);
-  $('t-records-note').textContent = `everything devices wrote to their logs; ${fmt(d.weekRecords || 0)} in the last ${d.week} days`;
+  $('t-records-note').textContent = `${fmt(d.weekRecords || 0)} in the last ${d.week} days`;
   $('t-bytes').textContent = size(d.bytes);
-  $('t-bytes-note').textContent = `the size of their events; ${size(d.weekBytes)} in the last ${d.week} days`;
+  $('t-bytes-note').textContent = `${size(d.weekBytes)} in the last ${d.week} days`;
   $('t-devices').textContent = fmt(d.devices);
-  $('t-devices-note').textContent = 'clones that have run Murmur in these repos';
   // Sessions and messages are the exact counts and the estimates of what encrypted buses hide
   // together. Their asterisks say so, how each estimate is made, and how much of the total it is.
   $('t-sessions').textContent = withEst(d.sessions, d.estSessions);
