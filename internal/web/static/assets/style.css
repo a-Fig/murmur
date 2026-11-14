@@ -1146,6 +1146,31 @@ a.g-pr:hover {
 .group-label .label {
   flex: 1;
 }
+/* A section label that folds its section, its chevron as a device's but after the label, so the
+ * label lines up with the sections that don't fold. */
+.group-fold {
+  width: 100%;
+  border-radius: var(--control-radius);
+  text-align: left;
+  transition: background-color 0.15s var(--ease);
+}
+.group-fold:hover {
+  background: var(--sidebar-row-hover);
+}
+.group-fold .label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.group-fold .dev-chev {
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--sidebar-icon);
+  transition: rotate 0.15s var(--ease);
+}
+.group-fold[aria-expanded="true"] .dev-chev {
+  rotate: 90deg;
+}
 
 /* A device, like a project folder header (sidebar/SidebarProjectFolderHeader.tsx). */
 .device-link {
@@ -2496,6 +2521,7 @@ a.g-pr:hover {
 .tf {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   gap: 0.3125rem;
   height: 1.5rem;
   padding: 0 0.5rem;
@@ -2514,7 +2540,15 @@ a.g-pr:hover {
   box-shadow: inset 0 0 0 1px var(--primary); /* 3:1 on the sidebar, WCAG 1.4.11 */
   color: var(--sidebar-foreground);
 }
+/* A long tag stays on one line, cut short; its title has the whole name. */
+.tf-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tf-n {
+  flex-shrink: 0;
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
   color: var(--sidebar-muted-foreground);
@@ -3850,7 +3884,8 @@ a.g-pr:hover {
     animation: fade-in 0.2s var(--ease);
   }
   .menu-button,
-  .device-link {
+  .device-link,
+  .group-fold {
     height: 2.5rem;
   }
   .side-session {
