@@ -109,6 +109,8 @@
   .star .why .how b { min-width: 24px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .star .why .fine { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
   :is(.star, .def):hover .why, :is(.star, .def):focus-within .why { display: block; }
+  /* Escape closes one until the pointer or focus leaves it, since it covers the number below. */
+  :is(.star, .def).hush .why { display: none; }
   /* In a tile the label sits inside the card's padding, so the explanation starts below it. */
   .tile :is(.star, .def) .why { left: 16px; top: 40px; max-width: min(340px, calc(100% - 32px)); }
   .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; position: relative; }
@@ -592,6 +594,15 @@ for (const b of document.querySelectorAll('.ranges button')) {
     history.replaceState(null, '', `?days=${days}`);
     load();
   });
+}
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') for (const t of document.querySelectorAll(':is(.star, .def):is(:hover, :focus-within)')) t.classList.add('hush');
+});
+// It may open again once it is neither hovered nor focused; a clicked label is both.
+for (const t of document.querySelectorAll('.star, .def')) {
+  const unhush = () => setTimeout(() => { if (!t.matches(':hover, :focus-within')) t.classList.remove('hush'); });
+  t.addEventListener('mouseleave', unhush);
+  t.addEventListener('focusout', unhush);
 }
 let resize;
 addEventListener('resize', () => { clearTimeout(resize); resize = setTimeout(render, 120); });
