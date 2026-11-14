@@ -3161,9 +3161,10 @@ function chatMessage(m, from, at, head) {
 // for delivered, and two in the accent colour for read (docs/VISION.md, "Receipts"). The states in
 // between, queued and handed over, read as sent, and so does a recipient whose Murmur sends no
 // receipts. A message to several shows the lowest of them, so it reads as read only once everyone
-// has read it. Who has it, and since when, is the tick's tooltip and nothing else (Tyler,
-// 2026-11-13): on hover, on keyboard focus, and on touch, where nothing hovers, on a tap. A message
-// from before receipts, or past the newest 200, shows no mark rather than a guess.
+// has read it. The tick's tooltip says what its state means, then who has it and since when, and
+// nothing else shows them (Tyler, 2026-11-13): on hover, on keyboard focus, and on touch, where
+// nothing hovers, on a tap. A message from before receipts, or past the newest 200, shows no mark
+// rather than a guess.
 const RECEIPT_RANK = { sent: 0, delivered: 1, read: 2 };
 
 function receiptFold(state) {
@@ -3174,11 +3175,29 @@ function receiptLabel(state) {
   return state === "read" ? "Read" : state === "delivered" ? "Delivered" : "Sent";
 }
 
-// One recipient as the list shows them: their name, and read or delivered with the time, or sent.
+// What a tick's state means, the tooltip's first line, for one recipient or for several. The words
+// are VISION's (#325): delivered is knowing a message waits (the hook's notice, an unread inbox),
+// read is having it. Sent covers the steps before: on the bus, in their device's inbox, handed to
+// their client as a turn that Murmur can't see start.
+const RECEIPT_MEANS = {
+  sent: ["not picked up yet", "not everyone has picked it up yet"],
+  delivered: ["they know it's waiting", "everyone knows it's waiting, not everyone has read it"],
+  read: ["they've seen it", "everyone has seen it"],
+};
+
+function receiptMeaning(state, several) {
+  return receiptLabel(state) + ": " + RECEIPT_MEANS[state][several ? 1 : 0];
+}
+
+// One recipient as the tooltip lists them: their name, and for several their own state, with the
+// time they got there if they got past sent.
 function receiptEntry(r) {
   const state = receiptFold(r.state);
-  const t = state !== "sent" && when(r.at) ? " " + clockTime(r.at) : "";
-  return { name: r.name, state, text: receiptLabel(state) + t };
+  return { name: r.name, state, time: state !== "sent" && when(r.at) ? clockTime(r.at) : "" };
+}
+
+function receiptLine(e, several) {
+  return [e.name, several ? receiptLabel(e.state) : "", e.time].filter(Boolean).join(" · ");
 }
 
 function receiptMark(m) {
@@ -3186,10 +3205,14 @@ function receiptMark(m) {
   if (!rs) return null;
   // A message that found nobody to send to (a group with no member in presence) is sent, not read,
   // and has nobody to list: its tick is a plain one, not a button that would open nothing.
-  if (!rs.length) return h("span", { class: "receipt-mark", "data-state": "sent", role: "img", "aria-label": "Sent", "data-tip": "Sent" }, icon("check"));
+  if (!rs.length) {
+    const nobody = "Sent: nobody was there to get it";
+    return h("span", { class: "receipt-mark", "data-state": "sent", role: "img", "aria-label": nobody, "data-tip": nobody }, icon("check"));
+  }
   const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
   const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
-  const who = entries.map((e) => e.name + ": " + e.text);
+  const several = entries.length > 1;
+  const lines = [receiptMeaning(state, several), ...entries.map((e) => receiptLine(e, several))];
   // A button, so the keyboard reaches it and focus shows its tooltip. A tap shows it too: the page's
   // tips follow the mouse, and a touch has none. The next tap anywhere hides it, as any tip is.
   return h(
@@ -3198,8 +3221,8 @@ function receiptMark(m) {
       class: "receipt-mark",
       "data-state": state,
       "data-key": "receipt-" + m.id,
-      "data-tip": who.join("\n"),
-      "aria-label": receiptLabel(state) + ". " + who.join("; "),
+      "data-tip": lines.join("\n"),
+      "aria-label": lines.join(". "),
       onclick: (e) => showTipNow(e.currentTarget),
     },
     icon(state === "sent" ? "check" : "checks"),
