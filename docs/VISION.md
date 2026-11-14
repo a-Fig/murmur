@@ -2368,14 +2368,19 @@ away roughly what kind of event a record is, never what it says.
   history had nothing to measure: a start reads as a message once its agent and branch together
   pass about 55 characters (the longest seen were 47), and so does a tags or group-add event with
   some 40 characters of tags. It had no message to a group or to everyone either, which is
-  shorter and so missed more often.
+  shorter and so missed more often. Checked the same day against the truth on four buses Tyler's
+  machine could read whole (three with their team key, opened only for each event's type and
+  lengths; 868 messages and 1,598 other records, most of them not among those measured), the cut
+  missed 19 messages, 2.2%, and 0 to 5.2% by repo, and took no other record for a message. The
+  longest start came within 7 bytes of it.
 - **Sessions, from the name registry.** Size can't count them: a start announced again after a
   daemon restarts, a tags event and a group-add are all the size of a start, and start-sized
   records came to 1.3 to 3 times the sessions on the buses measured. The registry isn't encrypted
   and records each session that takes a name, by its ID: it held 445 of the 446 sessions
   that history started. A session it names that no unencrypted start shows counts as estimated,
-  on the day of its registry record. A session another session started takes a name but, since
-  #487, writes no start, so the registry counts it too.
+  on the day of its registry record. In that check it gave, with the exact count, 569 of the four
+  buses' 570 sessions. A session another session started takes a name but, since #487, writes no
+  start, so the registry counts it too.
 
 The estimates are sent and kept apart from the exact counts (`est_sessions`, `est_messages`), and
 `site/census/census.mjs` has the measurements. The site only ever raises them, as it does every

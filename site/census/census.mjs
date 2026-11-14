@@ -151,6 +151,15 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 // And lower: every message in it was to one session or device. One to a group or to everyone has
 // a shorter recipient, so more of the short ones are missed.
 //
+// Checked on 2026-11-13 against the truth, on four buses Tyler's machine could read whole: three
+// whose team key it holds, opened there to read each event's type and lengths and nothing else,
+// and one never encrypted. They held 868 messages and 1,598 other records; 154 of the messages
+// and 1,018 of the others were among the measurements above. The cut missed 19 messages (2.2%; 0
+// to 5.2% by repo), each with no body, and took no other record for a message. The longest start
+// was 173, 7 bytes short of the cut, and the 4 tags events were 139 to 173. Of 12 messages to
+// everyone it missed 1; none was to a group. Each of the 667 events opened was exactly as long as
+// its box said.
+//
 // Sessions, from the name registry, not from size. A start re-announced after its daemon
 // restarts, a tags event and a group.add are all the size of a start: start-sized records were
 // 1.35 times the sessions in murmur's unencrypted history, and 1.3 to 3 times the registry's
@@ -158,8 +167,9 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 // not encrypted, and each session that takes a name is recorded there, by its ID. It held 445
 // of the 446 sessions those two histories started, and one they didn't show. So a session the
 // registry names that no unencrypted start shows is counted as estimated, on the day of its
-// registry record. It is told from the exact ones by its ID, so none counts twice. Two things make
-// it an estimate:
+// registry record. It is told from the exact ones by its ID, so none counts twice. In the check
+// above, the exact count and this estimate together gave 569 of the four buses' 570 sessions, and
+// 61 of the 62 that only an encrypted start showed. Two things make it an estimate:
 // - since 2026-11-13 a session another session started takes a name but writes no start (#487),
 //   so the registry counts it, where the exact count no longer would;
 // - a snapshot (a registry rebuilt after it was lost) isn't read, since it would date every older
