@@ -1479,11 +1479,19 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
 ### Receipts
 
 #26, first part built 2026-11-13, for a hackathon user who asked, after writing in a group chat on
-the page, whether the agents got it. Each message a person sends from the page shows, per
-recipient, how far it got, in the words of "What 'delivered' and 'read' mean": one recipient's state
-("Read"), or for several a count ("Read by 2 of 3", or "Reached 3 of 3" when nobody has read it yet),
-with each one's state on hover and in a list a tap opens. The recipients' daemons are on other
-devices, so their marks travel back over the bus.
+the page, whether the agents got it. The recipients' daemons are on other devices, so their marks
+travel back over the bus.
+
+- **The page shows a chat app's ticks, and no more** (Tyler, 2026-11-13: a first version, with a
+  word and a count under every bubble, was too much, next to what WhatsApp or iMessage show). Each
+  of the person's messages has one small mark at the end of the line under it: one tick for sent,
+  two for delivered, and two in the accent colour for read, the only state that stands out. The
+  states between sent and delivered, queued and handed over, show as sent, and so does a recipient
+  whose Murmur sends no receipts: the mark says what the person can act on, and the bus keeps the
+  rest. A message to several shows the lowest state among them, so it reads as read only once
+  everyone has read it. Who has it, and since when, shows only on request, as WhatsApp's message
+  info does: on hover, and in a list a tap on the mark opens under the message. A message from
+  before receipts, or past the newest 200, has no mark.
 
 - **A message asks for receipts** (`Event.Receipts`), and only a person's from the page asks now. A
   recipient's daemon writes marks only for messages that ask, so agents' chatter costs the bus
@@ -1512,14 +1520,16 @@ devices, so their marks travel back over the bus.
 - **The sender's daemon keeps the furthest mark per recipient** for its person's newest 200
   messages, in `state.json`, with the recipients it expected when it sent: the one it was sent to,
   or for a group, a device or everyone, the sessions it saw there, less offline ones and those that
-  muted the sender. A mark from a session not on that list (it joined the group since) adds it.
-  Marks only go forward, so one read late, or twice, changes nothing. A receipt read after a long
+  muted the sender. A mark for any other address is dropped: a device writes marks for its own
+  sessions, and one the message wasn't for would otherwise list itself as a reader. A session that
+  joined the group after the message was sent is dropped with it. Marks only go forward, so one read late, or twice, changes nothing. A receipt read after a long
   absence, even in a backlog passed over for messages, still counts, as tags do.
-- **An older recipient says so.** A device whose presence, read when the message is sent, doesn't
-  say it writes marks (`Presence.Receipts`, inside the encrypted part) shows as "No receipt", never
-  as unread. One with no presence here (its daemon exited, as a person's does soon after their page
-  closes) or one this device can't open yet shows as sent, with no mark: it may still write one. A
-  mark that arrives anyway (it updated before reading the message) still counts.
+- **An older recipient isn't waited for.** A device whose presence, read when the message is sent,
+  doesn't say it writes marks (`Presence.Receipts`, inside the encrypted part) is marked as sending
+  none (`web.ReceiptNone`), which the page shows as sent, never as unread; it holds a group's mark at
+  sent for good. One with no presence here (its daemon exited, as a person's does soon after their
+  page closes) or one this device can't open yet has no mark: it may still write one. A mark that
+  arrives anyway (it updated before reading the message) still counts.
   `proto.Protocol` 21 lets an upgraded `mur` replace a daemon that writes none.
 - **Left for later.** An agent's `send` result, `lookup` and `who` don't show receipts yet (Tyler
   wants it queryable on demand, #26's comment of 2026-11-09). #275's delivered is marked where the

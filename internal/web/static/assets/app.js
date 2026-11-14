@@ -3138,8 +3138,8 @@ function chatMessage(m, from, at, head) {
       "article",
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
       h("div", { class: "chat-bubble rich" }, rich(personText(m))),
-      receiptLine(m),
-      h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
+      h("div", { class: "chat-msg-meta" }, time, copyButton(copy), receiptMark(m)),
+      receiptInfo(m),
     );
   }
   // Everyone else's message has its sender's face beside it, and a run of messages from one sender
@@ -3159,84 +3159,62 @@ function chatMessage(m, from, at, head) {
   );
 }
 
-// How far one of the person's messages got (#26), from the marks its recipients' devices send back
-// (docs/VISION.md, "Receipts"): one recipient's state, or, for several, how many have read it, or
-// failing that how many it reached. Hovering lists each one; a tap opens the list under it. A
-// message from before receipts, or past the newest 200, shows nothing rather than a guess.
-function receiptWord(r) {
-  switch (r.state) {
-    case "read":
-      return "Read";
-    case "delivered":
-      return "Delivered";
-    case "handed":
-      return "Handed over";
-    case "queued":
-      return "Queued";
-    case "none":
-      return "No receipt";
-  }
-  return "Sent";
+// How far one of the person's messages got (#26), as a chat app shows it: one tick for sent, two
+// for delivered, and two in the accent colour for read (docs/VISION.md, "Receipts"). The states in
+// between, queued and handed over, read as sent, and so does a recipient whose Murmur sends no
+// receipts. A message to several shows the lowest of them, so it reads as read only once everyone
+// has read it. Who has it, and since when, shows only on request: on hover, or in a list a tap
+// opens. A message from before receipts, or past the newest 200, shows no mark rather than a guess.
+const RECEIPT_RANK = { sent: 0, delivered: 1, read: 2 };
+
+function receiptFold(state) {
+  return state === "read" || state === "delivered" ? state : "sent";
 }
 
-// The words are VISION's (#325): delivered is knowing a message waits, read is having it.
-function receiptDetail(r) {
-  const t = when(r.at) ? " at " + clockTime(r.at) : "";
-  switch (r.state) {
-    case "read":
-      return r.name + (r.person ? " opened it" : " has it") + t;
-    case "delivered":
-      return (r.person ? "Unread in " + r.name + "'s inbox" : r.name + " was told it is waiting") + t;
-    case "handed":
-      return "Given to " + r.name + " as a turn" + t + ". " + NAME + " can't see the turn start";
-    case "queued":
-      return "Waiting in " + r.name + "'s inbox" + t;
-    case "none":
-      return r.name + "'s " + NAME + " is older, and sends no receipts";
-  }
-  return "Not on " + r.name + "'s device yet";
+function receiptLabel(state) {
+  return state === "read" ? "Read" : state === "delivered" ? "Delivered" : "Sent";
 }
 
-function receiptLine(m) {
+// One recipient as the list shows them: their name, and read or delivered with the time, or sent.
+function receiptEntry(r) {
+  const state = receiptFold(r.state);
+  const t = state !== "sent" && when(r.at) ? " " + clockTime(r.at) : "";
+  return { name: r.name, state, text: receiptLabel(state) + t };
+}
+
+function receiptMark(m) {
   const rs = ui.state?.receipts?.[m.id];
   if (!rs?.length) return null;
-  let text;
-  if (rs.length === 1) {
-    text = receiptWord(rs[0]);
-  } else {
-    const n = rs.length;
-    const read = rs.filter((r) => r.state === "read").length;
-    const reached = rs.filter((r) => r.state && r.state !== "none").length;
-    const none = rs.filter((r) => r.state === "none").length;
-    text = read ? "Read by " + read + " of " + n : reached ? "Reached " + reached + " of " + n : "Sent";
-    if (none) text += " · " + none + " no receipt";
-  }
+  const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
+  const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
   const open = ui.openReceipts.has(m.id);
-  const tip = rs.length === 1 ? receiptDetail(rs[0]) : rs.map((r) => r.name + ": " + receiptWord(r).toLowerCase()).join("\n");
   return h(
-    "div",
-    { class: "receipt" },
-    h(
-      "button",
-      {
-        class: "receipt-sum",
-        "data-state": rs.length === 1 ? rs[0].state || "sent" : null,
-        "data-key": "receipt-" + m.id,
-        "data-tip": tip,
-        "aria-expanded": String(open),
-        onclick: () => {
-          open ? ui.openReceipts.delete(m.id) : ui.openReceipts.add(m.id);
-          render();
-        },
+    "button",
+    {
+      class: "receipt-mark",
+      "data-state": state,
+      "data-key": "receipt-" + m.id,
+      "data-tip": entries.map((e) => e.name + ": " + e.text).join("\n"),
+      "aria-label": receiptLabel(state) + ". Show who has it",
+      "aria-expanded": String(open),
+      onclick: () => {
+        open ? ui.openReceipts.delete(m.id) : ui.openReceipts.add(m.id);
+        render();
       },
-      text,
-    ),
-    open &&
-      h(
-        "ul",
-        { class: "receipt-list" },
-        rs.map((r) => h("li", { "data-state": r.state || "sent" }, rs.length > 1 && h("span", { class: "receipt-name truncate" }, r.name), h("span", { class: "receipt-detail" }, rs.length > 1 ? receiptWord(r) : receiptDetail(r)))),
-      ),
+    },
+    icon(state === "sent" ? "check" : "checks"),
+  );
+}
+
+// The list a tap on the mark opens, under the message.
+function receiptInfo(m) {
+  const rs = ui.state?.receipts?.[m.id];
+  if (!rs?.length || !ui.openReceipts.has(m.id)) return null;
+  const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
+  return h(
+    "ul",
+    { class: "receipt-info" },
+    entries.map((e) => h("li", { "data-state": e.state }, h("span", { class: "receipt-name truncate" }, e.name), h("span", { class: "receipt-state" }, e.text))),
   );
 }
 

@@ -81,13 +81,21 @@ func TestTheSenderKeepsTheFurthestMarkAndSaysWhoSendsNone(t *testing.T) {
 		}
 	}
 	// A direct message's mark from its recipient's device is the recipient's, whichever session wrote
-	// it; one from another device isn't.
+	// it; one from another device, which the message wasn't for, is dropped.
 	dm := bus.Event{ID: bus.NewID(), Type: bus.Message, From: "here-0001/human", To: "new-0002/bbbbbb", At: time.Now(), Receipts: true}
 	d.recordSentLocked(dm)
 	d.applyMarkLocked(dm.ID, "new-0002/eeeeee", bus.MarkRead, at)
-	d.applyMarkLocked(dm.ID, "old-0003/cccccc", bus.MarkQueued, at)
-	if m := d.st.Sent[dm.ID].Marks; m["new-0002/bbbbbb"].State != bus.MarkRead || m["old-0003/cccccc"].State != bus.MarkQueued {
+	d.applyMarkLocked(dm.ID, "old-0003/cccccc", bus.MarkRead, at)
+	if m := d.st.Sent[dm.ID].Marks; len(m) != 1 || m["new-0002/bbbbbb"].State != bus.MarkRead {
 		t.Errorf("a direct message's marks: %+v", m)
+	}
+	if rs := d.receiptsLocked()[dm.ID]; len(rs) != 1 || rs[0].Addr != "new-0002/bbbbbb" {
+		t.Errorf("a direct message's receipts: %+v", rs)
+	}
+	// Nor can a device the message to everyone wasn't for, as it wasn't in presence, add itself.
+	d.applyMarkLocked(e.ID, "stranger-0006/ffffff", bus.MarkRead, at)
+	if rs := d.receiptsLocked()[e.ID]; len(rs) != 2 {
+		t.Errorf("a stranger's mark added a reader: %+v", rs)
 	}
 }
 

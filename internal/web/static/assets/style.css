@@ -1301,7 +1301,7 @@ a.g-pr:hover {
 /* The page's tooltip (app.js showTip), as T3 Code's: small, in the inverse of the page, quick to
  * show and to move. A long one wraps. */
 .tip {
-  white-space: pre-line; /* a list, as a group's receipts are, goes one to a line */
+  white-space: pre-line; /* a list, as a message's receipts are, goes one to a line */
   position: fixed;
   z-index: 100;
   top: 0;
@@ -2864,48 +2864,55 @@ a.g-pr:hover {
 .chat-msg-own > .chat-msg-meta {
   padding-right: 0.25rem;
 }
-/* How far a person's message got (#26): under the bubble, always shown, as quiet as the time. */
-.receipt {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  max-width: 80%;
-  padding-right: 0.25rem;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
+/* How far a person's message got (#26): a tick at the end of the line under the bubble, shown
+ * always while the time and copy beside it wait for hover. Read alone takes the accent colour. */
+.chat-msg-own > .chat-msg-meta:has(.receipt-mark) {
+  opacity: 1;
 }
-.receipt-sum {
-  padding: 0 0.25rem;
+.chat-msg-own > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark) {
+  opacity: 0;
+  transition: opacity 0.2s var(--ease);
+}
+.chat-msg-own:hover > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark),
+.chat-msg-own:focus-within > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark) {
+  opacity: 1;
+}
+.receipt-mark {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem;
   border: 0;
   border-radius: var(--radius-md);
   background: none;
-  color: inherit;
-  font: inherit;
+  color: var(--muted-foreground);
   cursor: pointer;
 }
-.receipt-sum:hover {
-  color: var(--foreground);
+.receipt-mark .icon {
+  width: 0.875rem;
+  height: 0.875rem;
 }
-.receipt-sum[data-state="read"] {
-  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+.receipt-mark[data-state="read"] {
+  color: var(--primary);
 }
-.receipt-list {
-  margin: 0.125rem 0 0;
-  padding: 0;
+.receipt-info {
+  max-width: 80%;
+  margin: 0;
+  padding: 0 0.25rem;
   list-style: none;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
 }
-.receipt-list li {
+.receipt-info li {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-  padding: 0 0.25rem;
   line-height: 1.25rem;
 }
 .receipt-name {
   max-width: 12rem;
 }
-.receipt-list li[data-state="read"] > .receipt-detail {
-  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+.receipt-info li[data-state="read"] > .receipt-state {
+  color: var(--primary);
 }
 .chat-msg-sending > .chat-bubble {
   opacity: 0.64;
@@ -4045,7 +4052,8 @@ a.g-pr:hover {
   .chat-msg:not(.chat-msg-own) > .chat-msg-meta {
     display: none;
   }
-  .chat-msg-own > .chat-msg-meta {
+  .chat-msg-own > .chat-msg-meta,
+  .chat-msg-own > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark) {
     opacity: 1;
   }
   .chat-bubble {

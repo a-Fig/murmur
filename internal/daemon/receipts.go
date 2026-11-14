@@ -50,8 +50,10 @@ type sentRecord struct {
 	// Direct says it was sent to one session or person: a mark from whichever session took it, as
 	// one holding the recipient's name now (forwardLocked), is that recipient's.
 	Direct bool `json:"direct,omitempty"`
-	// Marks is the furthest each recipient got, by address. A mark from a session not in To, one
-	// that joined the group after the message was sent, adds it.
+	// Marks is the furthest each recipient in To got, by address. A mark for an address not in To
+	// is dropped: any device can write marks for its own sessions, and one the message wasn't for
+	// would otherwise list itself as a reader. A session that joined a group after the message was
+	// sent is dropped with it.
 	Marks map[string]markRecord `json:"marks,omitempty"`
 }
 
@@ -199,6 +201,9 @@ func (d *Daemon) applyMarkLocked(msg, addr, state string, at time.Time) {
 			addr = rec.To[0] // the session that holds the recipient's name now (forwardLocked)
 		}
 	}
+	if !slices.Contains(rec.To, addr) {
+		return
+	}
 	if cur, ok := rec.Marks[addr]; ok && bus.MarkRank(state) <= bus.MarkRank(cur.State) {
 		return
 	}
@@ -286,14 +291,8 @@ func (d *Daemon) receiptsLocked() map[string][]web.Receipt {
 	label := d.labelerLocked()
 	out := make(map[string][]web.Receipt, len(d.st.Sent))
 	for id, rec := range d.st.Sent {
-		addrs := slices.Clone(rec.To)
-		for addr := range rec.Marks {
-			if !slices.Contains(addrs, addr) {
-				addrs = append(addrs, addr)
-			}
-		}
-		rs := make([]web.Receipt, 0, len(addrs))
-		for _, addr := range addrs {
+		rs := make([]web.Receipt, 0, len(rec.To))
+		for _, addr := range rec.To { // only whom it was sent to (see sentRecord.Marks)
 			r := web.Receipt{Addr: addr, Name: label(addr), Person: bus.IsPerson(addr)}
 			if m, ok := rec.Marks[addr]; ok {
 				r.State, r.At = m.State, m.At
