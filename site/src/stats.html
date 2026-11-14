@@ -104,6 +104,9 @@
   .tile .label { font-size: 13px; }
   .tile .value { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  /* How a figure marked ≈ is made (#550); shown only when one is. */
+  .estimate { grid-column: span 12; color: var(--text-muted); font-size: 12px; max-width: 860px; margin-top: -6px; }
+  .estimate[hidden] { display: none; }
   .wide { grid-column: span 12; }
   .half { grid-column: span 6; }
   .chart { position: relative; margin-top: 14px; }
@@ -196,6 +199,8 @@
       <div class="card tile"><div class="label">Contributors</div><div class="value" id="t-contributors">–</div><div class="note" id="t-contributors-note"></div></div>
     </section>
 
+    <p class="estimate" id="estimate" hidden>≈ includes an estimate. An encrypted bus hides what each record is, and nothing is decrypted to count it. A message is counted from an encrypted record’s size, which misses about 5% of them: short ones with no body. A session is counted from the repo’s name registry, which isn’t encrypted.</p>
+
     <section class="card half">
       <h2>Agent sessions per day</h2>
       <div class="sub">sessions that started, each once however often its daemon restarts, by repo</div>
@@ -248,6 +253,8 @@ const long = d => date(d, { weekday: 'short', month: 'short', day: 'numeric', ye
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const short = name => name.replace(/^github\.com\//, '');
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
+// A count with the estimate of what encrypted buses hide added (#550), marked when there is one.
+const approx = (n, est) => (est ? '≈' : '') + fmt(n + (est || 0));
 
 // Clean y-axis ticks from 0 to at least max.
 function ticks(max, count = 4) {
@@ -351,17 +358,23 @@ function totalChart(box, series, key, what, H = 220) {
   });
 }
 
-// Columns per day, stacked by repo in the repos' fixed colors.
-function stackChart(box, legendBox, days, byRepo, key, what, colors) {
+// Columns per day, stacked by repo in the repos' fixed colors. With estKey, a column is the exact
+// count and the estimate together, and its tooltip marks a value that includes an estimate.
+function stackChart(box, legendBox, days, byRepo, key, what, colors, estKey) {
   box.replaceChildren();
   const n = days.length, H = 220;
   const cell = new Map(); // day -> Map(slot -> value)
+  const est = new Map(); // day -> Set of the slots whose value includes an estimate
   for (const r of byRepo) {
-    if (!r[key]) continue;
+    const extra = (estKey && r[estKey]) || 0, v = r[key] + extra;
+    if (!v) continue;
     const slot = colors.slotOf(r.name);
     if (!cell.has(r.day)) cell.set(r.day, new Map());
     const m = cell.get(r.day);
-    m.set(slot, (m.get(slot) || 0) + r[key]);
+    m.set(slot, (m.get(slot) || 0) + v);
+    if (!extra) continue;
+    if (!est.has(r.day)) est.set(r.day, new Set());
+    est.get(r.day).add(slot);
   }
   const totals = days.map(d => [...(cell.get(d)?.values() || [])].reduce((s, v) => s + v, 0));
   const f = frame(box, n, Math.max(1, ...totals), H, `${what} per day, by repo`);
@@ -386,8 +399,9 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors) {
     }
     const hit = el('rect', { x: f.m.l + f.band * i, y: f.m.t, width: f.band, height: H - f.m.t - f.m.b, fill: 'transparent', tabindex: 0 });
     const show = () => {
-      const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, fmt(m.get(s.key)), s.label]) : [];
-      tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${fmt(totals[i])} ${what.toLowerCase()}`, rows);
+      const mark = slot => (est.get(d)?.has(slot) ? '≈' : '');
+      const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, mark(s.key) + fmt(m.get(s.key)), s.label]) : [];
+      tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${est.has(d) ? '≈' : ''}${fmt(totals[i])} ${what.toLowerCase()}`, rows);
     };
     hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
     hit.addEventListener('pointerleave', () => tip.hide()); hit.addEventListener('blur', () => tip.hide());
@@ -425,7 +439,8 @@ function repoTable(box, list, colors) {
     const name = el('td'); const key = el('span', { class: 'key' }); key.style.background = colors.colorOf(r.name);
     const a = el('a', { href: 'https://' + r.name, rel: 'noopener' }, short(r.name));
     name.append(key, a); tr.append(name);
-    for (const v of [r.contributors, r.devices, r.people, r.sessions, r.messages, r.records, r.week]) tr.append(el('td', { class: 'num' }, fmt(v)));
+    const cells = [fmt(r.contributors), fmt(r.devices), fmt(r.people), approx(r.sessions, r.estSessions), approx(r.messages, r.estMessages), fmt(r.records), fmt(r.week)];
+    for (const v of cells) tr.append(el('td', { class: 'num' }, v));
     tr.append(el('td', {}, date(r.start, { month: 'short', day: 'numeric', year: 'numeric' })));
     tr.append(el('td', {}, r.last ? date(r.last, { month: 'short', day: 'numeric', year: 'numeric' }) : 'not counted yet'));
     table.append(tr);
@@ -467,17 +482,21 @@ function render() {
   $('t-contributors-note').textContent = `people who have committed to them; ${fmt(d.newContributors)} new in the last ${d.week} days`;
   $('t-devices').textContent = fmt(d.devices);
   $('t-devices-note').textContent = `clones that have run Murmur, of ${plural(d.people, 'person', 'people')}`;
-  $('t-sessions').textContent = fmt(d.sessions);
-  $('t-sessions-note').textContent = `${fmt(d.weekSessions)} in the last ${d.week} days`;
-  $('t-messages').textContent = fmt(d.messages);
-  $('t-messages-note').textContent = `${fmt(d.weekMessages)} in the last ${d.week} days`;
+  // Sessions and messages are the exact counts and the estimates of what encrypted buses hide
+  // together, marked ≈ when any of it is estimated; the line under the tiles says how.
+  const estimated = n => (n ? `; ${fmt(n)} of the total estimated` : '');
+  $('t-sessions').textContent = approx(d.sessions, d.estSessions);
+  $('t-sessions-note').textContent = `${approx(d.weekSessions, d.weekEstSessions)} in the last ${d.week} days${estimated(d.estSessions)}`;
+  $('t-messages').textContent = approx(d.messages, d.estMessages);
+  $('t-messages-note').textContent = `${approx(d.weekMessages, d.weekEstMessages)} in the last ${d.week} days${estimated(d.estMessages)}`;
+  $('estimate').hidden = !(d.estSessions || d.estMessages);
   const colors = repoColors(d.repoList);
   const dayList = d.series.map(s => s.day);
   totalChart($('c-repos'), d.series, 'repos', 'public repos', 180);
   totalChart($('c-users'), d.series, 'users', 'users', 180);
   totalChart($('c-contributors'), d.series, 'contributors', 'contributors');
-  stackChart($('c-sessions'), $('l-sessions'), dayList, d.byRepo, 'sessions', 'Sessions', colors);
-  stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors);
+  stackChart($('c-sessions'), $('l-sessions'), dayList, d.byRepo, 'sessions', 'Sessions', colors, 'estSessions');
+  stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors, 'estMessages');
   stackChart($('c-devices'), $('l-devices'), dayList, d.byRepo, 'devices', 'Devices', colors);
   repoTable($('t-repos'), d.repoList, colors);
   const when = iso => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
@@ -492,7 +511,7 @@ function render() {
     (names.length ? `${h.late ? 'Its' : 'The census’s'} last run didn’t read ${names.join(', ')}. ` : '');
   $('footer').textContent = behind + 'A repo is listed once one of its clones reports it: Murmur sends a public repo’s address, once per repo, and nothing else. ' +
     `Everything else is read once a day from what each repo shows anyone, its bus and its commits; last read ${counted}. ` +
-    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Once the bus is encrypted, messages can’t be told from other records. Days are UTC. ' +
+    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. A figure marked ≈ includes an estimate of what an encrypted bus hides. Days are UTC. ' +
     'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
 }
 

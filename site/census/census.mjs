@@ -10,15 +10,20 @@
 // next scheduled run.
 //
 // For each repo it fetches two public things, as any reader could, and commits only:
-// - its bus, refs/murmur/mesh/* and refs/murmur/presence/*: each device's log of events (sessions
-//   started, messages) and its presence (which names the git user);
+// - its bus, refs/murmur/mesh/*, refs/murmur/presence/* and refs/murmur/names: each device's log of
+//   events (sessions started, messages), its presence (which names the git user), and the registry
+//   of session names;
 // - its default branch's commits, without their files: who committed, and when each first did.
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
 // there were and which devices wrote, each device by a hash with a hash of its owner and of the
 // GitHub account it is matched to (#323); and each contributor by a hash, so one person in two
 // repos counts once.
-// Once the bus is encrypted (#257) a record's kind is hidden, and only records are counted.
+//
+// Since Murmur 0.3 every event is encrypted (#156), and its kind is sealed inside with the rest.
+// The record count stays exact. The sessions and messages an encrypted log hides are estimated
+// (#550), and sent apart from the exact counts, as est_sessions and est_messages. "Estimating what
+// encryption hides", below, says how, and how far off the estimates are.
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -113,6 +118,72 @@ function identity(email, name) {
 
 const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 
+// Estimating what encryption hides (#550)
+//
+// Nothing here is decrypted: the census holds no key. It reads only public repos, as anyone can,
+// and uses two things VISION lists as visible to any reader of one: how large each record is, and
+// the name registry. A size says roughly what kind of event a record is, never what it says.
+//
+// Messages, from size. An encrypted event's box holds the event's JSON, encrypted with AES-GCM,
+// which adds 16 bytes (internal/bus/box.go), so the box's length gives the event's length exactly.
+// An event's length follows from its fields (internal/bus/event.go):
+// - a session's stop is 66 bytes plus its address and its time, so about 100 more than the length
+//   of its device's ID, which its ref shows;
+// - a start adds 23 and its agent and branch;
+// - a message adds 13 and its recipient and subject, and 10 and its body when it has one.
+// So an encrypted event at least MESSAGE_FROM bytes longer than its device's ID is counted as a
+// message.
+//
+// Measured on 2026-11-13 against the unencrypted history of two public repos, a-Fig/murmur and
+// SomeoneElseSt/aie-hack (three devices; 155 messages, 593 starts and 505 stops), in bytes beyond
+// the device's ID: stops were 98 to 101, starts 130 to 171, messages 158 to 2,574. At 180:
+// - 8 of the 155 messages (5%) were shorter and would be missed: each had no body and a subject
+//   under 40 characters;
+// - none of the 1,098 session events was as long. A start is, once its agent and branch together
+//   pass about 55 characters; the longest seen were 47. Any cut from 172 to 180 took no start for
+//   a message; 180 leaves room for a longer branch, at the cost of 3 more messages missed than 172.
+// So the estimate runs about 5% low on traffic like that history's. What that history couldn't
+// measure:
+// - every message in it was to one session. One to a group or to everyone has a shorter
+//   recipient, so more of the short ones are missed;
+// - it has no tags or group.add events (page and group actions, internal/bus/event.go). One is
+//   about the size of a start, and reads as a message only with some 40 characters of tags.
+//
+// Sessions, from the name registry, not from size. A start re-announced after its daemon
+// restarts, a tags event and a group.add are all the size of a start: start-sized records were
+// 1.35 times the sessions in murmur's unencrypted history, and 1.3 to 3 times the registry's
+// sessions on three encrypted buses. The registry (refs/murmur/names, internal/bus/names.go) is
+// not encrypted, and each session that takes a name is recorded there once, by its ID. It held 445
+// of the 446 sessions those two histories started, and one they didn't show. So a session the
+// registry names that no unencrypted start shows is counted as estimated, on the day of its
+// registry record. It is told from the exact ones by its ID, so none counts twice. Two things make
+// it an estimate:
+// - since 2026-11-13 a session another session started takes a name but writes no start (#487),
+//   so the registry counts it, where the exact count no longer would;
+// - a snapshot (a registry rebuilt after it was lost) isn't read, since it would date every older
+//   session to the day it was written. Sessions from before one are missed, unless the site
+//   already had them: it only ever raises a count.
+const MESSAGE_FROM = 180;
+const GCM_TAG = 16;
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const NAME = /^[a-z0-9-]{1,40}$/;
+
+// The length in bytes of the event inside an encrypted record, or null if r isn't one.
+export function boxedSize(r) {
+  const data = r.type === 'box' && r.box && typeof r.box === 'object' ? r.box.data : null;
+  if (typeof data !== 'string' || !BASE64.test(data)) return null;
+  const size = (data.length / 4) * 3 - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) - GCM_TAG;
+  return size > 0 ? size : null;
+}
+
+// The session a registry record gives a name to, as device/session, or null: a reservation names
+// no session, and a person (device/human, #268) isn't an agent session.
+function named(r) {
+  if (typeof r.device !== 'string' || typeof r.session !== 'string') return null;
+  if (!NAME.test(r.device) || !NAME.test(r.session) || r.session === 'human') return null;
+  return `${r.device}/${r.session}`;
+}
+
 // What one repo shows: its counts by day, its totals, and its devices.
 //
 // A device is sent as a hash of its ID, with a hash of its owner (the git user name its presence
@@ -126,6 +197,10 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 //
 // A record is dated by its `at`, or by its commit's date when `at` isn't believable, and isn't
 // counted when neither is.
+//
+// sessions and messages are exact: what unencrypted records show. est_sessions and est_messages
+// are the estimates of what encrypted ones hide, to be added to them (see "Estimating what
+// encryption hides", above).
 export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MAX_REFS } = {}) {
   const latest = latestDay(now);
   const busDay = t => {
@@ -134,18 +209,28 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
   };
   const refs = git(dir, ['for-each-ref', '--format=%(refname)', 'refs/murmur/'], deadline).split('\n').filter(Boolean);
   if (refs.length > maxRefs) throw skip(`${refs.length} refs on its bus, more than ${maxRefs}`);
-  const days = new Map(); // day -> { devices: Set, sessions, messages, records }
+  const days = new Map(); // day -> { devices: Set, sessions, messages, records, est_sessions, est_messages }
   const day = d => {
-    if (!days.has(d)) days.set(d, { devices: new Set(), sessions: 0, messages: 0, records: 0 });
+    if (!days.has(d)) days.set(d, { devices: new Set(), sessions: 0, messages: 0, records: 0, est_sessions: 0, est_messages: 0 });
     return days.get(d);
   };
   const owners = new Map(); // device -> git user name, from its newest presence that shows one
   const started = new Map(); // session -> the first day it started
+  const registered = new Map(); // session -> the first day the registry named it
   const seen = new Set();
   const devices = new Set();
-  let messages = 0, records = 0;
+  let messages = 0, records = 0, estMessages = 0;
   for (const ref of refs) {
     const [, , kind, device] = ref.split('/');
+    if (ref === 'refs/murmur/names') {
+      for (const c of log(dir, ref, deadline)) {
+        const r = record(c.msg);
+        const id = r && named(r);
+        const d = id && (busDay(r.at) || busDay(c.date));
+        if (d && (!registered.has(id) || d < registered.get(id))) registered.set(id, d);
+      }
+      continue;
+    }
     if ((kind !== 'mesh' && kind !== 'presence') || !device) continue;
     for (const c of log(dir, ref, deadline)) {
       if (seen.has(c.hash)) continue;
@@ -167,18 +252,29 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
         const id = typeof r.from === 'string' && r.from ? r.from : c.hash;
         if (!started.has(id) || d < started.get(id)) started.set(id, d);
       }
+      const size = boxedSize(r);
+      if (size !== null && size - device.length >= MESSAGE_FROM) t.est_messages++, estMessages++;
     }
   }
   for (const d of started.values()) day(d).sessions++;
+  let estSessions = 0;
+  for (const [id, d] of registered) if (!started.has(id)) day(d).est_sessions++, estSessions++;
   const sorted = [...days.keys()].sort();
   return {
     days: sorted.map(d => {
       const t = days.get(d);
-      return { day: d, sessions: t.sessions, messages: t.messages, records: t.records, devices: [...t.devices].map(v => hash('device:' + v)).sort() };
+      return {
+        day: d, sessions: t.sessions, messages: t.messages, records: t.records,
+        est_sessions: t.est_sessions, est_messages: t.est_messages,
+        devices: [...t.devices].map(v => hash('device:' + v)).sort(),
+      };
     }),
     // The owner's name stays here: census() hashes it, and matches it to an account, before sending.
     devices: [...devices].sort().map(v => ({ id: hash('device:' + v), owner: owners.get(v) ?? null })),
-    totals: { sessions: started.size, messages, records, first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null },
+    totals: {
+      sessions: started.size, messages, records, est_sessions: estSessions, est_messages: estMessages,
+      first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null,
+    },
   };
 }
 
@@ -273,6 +369,10 @@ export function apiLookup(owner, name, deadline = Infinity) {
 // Only the refs count() reads are fetched, and of them only commits: a bus commit's tree is empty
 // (VISION), and a ref elsewhere under refs/murmur/, or a commit made to look like a bus's, could
 // point at gigabytes.
+//
+// The name registry is fetched on its own, because a fetch that names a ref the remote doesn't
+// have fails whole, and a bus from before the registry has none. Without it the repo is counted as
+// before, with no estimate of its sessions; the site keeps the estimate it was last sent.
 export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, lookup = apiLookup } = {}) {
   const m = REPO.exec(name);
   if (!m) throw new Error(`not a repo: ${name}`);
@@ -283,6 +383,11 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     git(dir, ['init', '-q', '--bare'], deadline);
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url,
       '+refs/murmur/mesh/*:refs/murmur/mesh/*', '+refs/murmur/presence/*:refs/murmur/presence/*'], deadline);
+    try {
+      git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, '+refs/murmur/names:refs/murmur/names'], deadline);
+    } catch (err) {
+      if (err.skipped) throw err;
+    }
     const bus = count(dir, { deadline, maxRefs });
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
     const commits = authors(dir, { deadline });
@@ -306,12 +411,15 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
 //
 // A reason can be git's or the site's words, so it is kept to one line, and anything Markdown or
 // a table would read in it is escaped.
-const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Sessions', 'Messages', 'Records', 'Contributors', 'Days'];
+//
+// Sessions and Messages are the exact counts; the estimates of what encryption hides have their
+// own columns, and a repo's sessions or messages are the two together.
+const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Sessions', 'Estimated sessions', 'Messages', 'Estimated messages', 'Records', 'Contributors', 'Days'];
 const KINDS = ['sent', 'counted', 'skipped', 'not read', 'not sent'];
 const cells = cs => `| ${cs.join(' | ')} |\n`;
 const numbers = c => [c.devices.length, new Set(c.devices.map(v => v.person ?? v.id)).size,
-  c.devices.filter(v => v.account).length, c.totals.sessions, c.totals.messages, c.totals.records,
-  c.contributors.length, c.days.length];
+  c.devices.filter(v => v.account).length, c.totals.sessions, c.totals.est_sessions ?? 0,
+  c.totals.messages, c.totals.est_messages ?? 0, c.totals.records, c.contributors.length, c.days.length];
 const text = s => String(s).replace(/\s+/g, ' ').trim().slice(0, 300).replace(/[\\`*_[\]<>|]/g, '\\$&');
 
 export function summaryHead(listed, now) {
@@ -421,9 +529,10 @@ export async function main(args, { read = census } = {}) {
       done({ name, kind: 'not read', why });
       continue;
     }
+    const est = n => (n ? ` and about ${n} more estimated` : '');
     const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ` +
-      `${c.devices.filter(v => v.account).length} matched to an account, ${c.totals.sessions} sessions, ` +
-      `${c.totals.messages} messages, ${c.totals.records} records, ${c.contributors.length} contributors, ${c.days.length} days`;
+      `${c.devices.filter(v => v.account).length} matched to an account, ${c.totals.sessions} sessions${est(c.totals.est_sessions)}, ` +
+      `${c.totals.messages} messages${est(c.totals.est_messages)}, ${c.totals.records} records, ${c.contributors.length} contributors, ${c.days.length} days`;
     if (dry) {
       console.log(line);
       console.log(JSON.stringify(c.days));
