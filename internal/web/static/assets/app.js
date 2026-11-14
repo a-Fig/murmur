@@ -3222,7 +3222,7 @@ function receiptMark(m) {
       "data-tip": lines.join("\n"),
       "data-tip-labelled": "1",
       "aria-label": lines.join(". "),
-      onclick: (e) => showTipNow(e.currentTarget),
+      onclick: (e) => showTipNow(e.currentTarget, e.pointerType === "mouse" ? "hover" : "tap"),
     },
     icon(entries.length && state !== "sent" ? "checks" : "check"),
   );
@@ -5000,11 +5000,12 @@ function inView(el) {
   return true;
 }
 
-// showTipNow shows el's tip at once, for a tap, which the pointer's hover never brings.
-function showTipNow(el) {
+// showTipNow shows el's tip at once, for a click, which hides the tip hover brought. A mouse's click
+// then keeps it as a hover tip, for what is under the mouse; a tap or a key keeps it until the next.
+function showTipNow(el, by) {
   hideTip();
   tipFor = el;
-  tipBy = "tap";
+  tipBy = by;
   borrowTitle(el);
   showTip(el, false);
 }
