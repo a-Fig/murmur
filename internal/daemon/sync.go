@@ -792,10 +792,10 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
 		}
-		if tagsOnly && e.Type != bus.Tags {
-			continue
+		if tagsOnly && e.Type != bus.Tags && e.Type != bus.Receipt {
+			continue // a receipt, like a tag, is news however late it is read
 		}
-		if mode != modeSkip {
+		if mode != modeSkip && e.Type != bus.Receipt { // a receipt is bookkeeping, not news for the log
 			d.noteLocked(e.At, e.Line())
 		}
 		if e.Type == bus.Tags {
@@ -806,6 +806,9 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		}
 		if e.Type == bus.GroupAdd {
 			d.applyGroupAddLocked(e, mode) // unless it is old: the session may have left the group since
+		}
+		if e.Type == bus.Receipt {
+			d.applyReceiptLocked(e) // in any mode: a mark is news to its sender however late it is read
 		}
 		if e.Type == bus.Message {
 			// The name a message carries is shown only if it is its sender's (personSenderLocked),
@@ -926,6 +929,9 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 					}
 					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
 						d.applyTagsEventLocked(e)
+					}
+					if ok && e.Type == bus.Receipt {
+						d.applyReceiptLocked(e) // as readEventsLocked does
 					}
 				}
 				d.st.TagsFrom[ref] = commits[len(commits)-1].SHA
@@ -1117,6 +1123,7 @@ func (d *Daemon) addInboxLocked(id string, e bus.Event) {
 		box = box[len(box)-maxInbox:]
 	}
 	d.st.Inbox[id] = box
+	d.markLocked(id, e, bus.MarkQueued)
 	d.kickPush()
 }
 
@@ -1187,7 +1194,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
-		pres.Groups = false
+		pres.Groups, pres.Receipts = false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1561,7 +1568,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, At: d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true}
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
 	// reach the live one, not the one about to stop.

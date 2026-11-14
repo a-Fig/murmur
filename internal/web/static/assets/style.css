@@ -1301,6 +1301,7 @@ a.g-pr:hover {
 /* The page's tooltip (app.js showTip), as T3 Code's: small, in the inverse of the page, quick to
  * show and to move. A long one wraps. */
 .tip {
+  white-space: pre-line; /* a list, as a message's receipts are, goes one to a line */
   position: fixed;
   z-index: 100;
   top: 0;
@@ -2877,6 +2878,36 @@ a.g-pr:hover {
 .chat-msg-own > .chat-msg-meta {
   padding-right: 0.25rem;
 }
+/* How far a person's message got (#26): a tick at the end of the line under the bubble, shown
+ * always while the time and copy beside it wait for hover. Read alone takes the accent colour. */
+.chat-msg-own > .chat-msg-meta:has(.receipt-mark) {
+  opacity: 1;
+}
+.chat-msg-own > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark) {
+  opacity: 0;
+  transition: opacity 0.2s var(--ease);
+}
+.chat-msg-own:hover > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark),
+.chat-msg-own:focus-within > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark) {
+  opacity: 1;
+}
+.receipt-mark {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem; /* a target to tap on a phone, as the copy button beside it is */
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.receipt-mark .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.receipt-mark[data-state="read"] {
+  color: var(--primary);
+}
 .chat-msg-sending > .chat-bubble {
   opacity: 0.64;
 }
@@ -4015,7 +4046,8 @@ a.g-pr:hover {
   .chat-msg:not(.chat-msg-own) > .chat-msg-meta {
     display: none;
   }
-  .chat-msg-own > .chat-msg-meta {
+  .chat-msg-own > .chat-msg-meta,
+  .chat-msg-own > .chat-msg-meta:has(.receipt-mark) > :not(.receipt-mark) {
     opacity: 1;
   }
   .chat-bubble {

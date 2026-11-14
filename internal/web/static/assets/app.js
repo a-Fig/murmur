@@ -504,6 +504,7 @@ function render() {
   placeLive();
   announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  refreshTip();
   queueMicrotask(markOpenRead);
 }
 
@@ -3176,7 +3177,7 @@ function chatMessage(m, from, at, head) {
       "article",
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
       h("div", { class: "chat-bubble rich" }, rich(personText(m))),
-      h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
+      h("div", { class: "chat-msg-meta" }, time, copyButton(copy), receiptMark(m)),
     );
   }
   // Everyone else's message has its sender's face beside it, and a run of messages from one sender
@@ -3193,6 +3194,76 @@ function chatMessage(m, from, at, head) {
       messageText(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
+  );
+}
+
+// How far one of the person's messages got (#26), as a chat app shows it: one tick for sent, two
+// for delivered, and two in the accent colour for read (docs/VISION.md, "Receipts"). The states in
+// between, queued and handed over, read as sent, and so does a recipient whose Murmur sends no
+// receipts. A message to several shows the lowest of them, so it reads as read only once everyone
+// has read it. The tick's tooltip says what its state means, then who has it and since when, and
+// nothing else shows them (Tyler, 2026-11-13): on hover, on keyboard focus, and on touch, where
+// nothing hovers, on a tap. A message from before receipts, or past the newest 200, shows no mark
+// rather than a guess.
+const RECEIPT_RANK = { sent: 0, delivered: 1, read: 2 };
+
+function receiptFold(state) {
+  return state === "read" || state === "delivered" ? state : "sent";
+}
+
+function receiptLabel(state) {
+  return state === "read" ? "Read" : state === "delivered" ? "Delivered" : "Sent";
+}
+
+// The tooltip's first line: the state, and in a few words what it leaves out, for one recipient or
+// for several (Tyler, 2026-11-13: a few words, no sentences). Delivered is knowing a message waits,
+// read is having it (#325); sent covers every step before.
+const RECEIPT_MEANS = {
+  sent: ["Sent", "Sent"],
+  delivered: ["Delivered: not read yet", "Delivered: not all read yet"],
+  read: ["Read", "Read"],
+};
+
+function receiptMeaning(state, several) {
+  return RECEIPT_MEANS[state][several ? 1 : 0];
+}
+
+// One recipient as the tooltip lists them: their name, and for several their own state, with the
+// time they got there if they got past sent.
+function receiptEntry(r) {
+  const state = receiptFold(r.state);
+  const at = state !== "sent" && when(r.at);
+  const today = at && new Date(at).toDateString() === new Date().toDateString();
+  return { name: r.name, state, time: !at ? "" : today ? clockTime(at) : new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) };
+}
+
+function receiptLine(e, several) {
+  return [e.name, several ? receiptLabel(e.state) : "", e.time].filter(Boolean).join(" · ");
+}
+
+function receiptMark(m) {
+  const rs = ui.state?.receipts?.[m.id];
+  if (!rs) return null;
+  const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
+  const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
+  const several = entries.length > 1;
+  // A message that found nobody in presence to count (a group with no member online) is sent.
+  const lines = entries.length ? [receiptMeaning(state, several), ...entries.map((e) => receiptLine(e, several))] : ["Sent: nobody online"];
+  // A button, so the keyboard reaches it and focus shows its tooltip. A tap shows it too: the page's
+  // tips follow the mouse, and a touch has none. A tap elsewhere hides it, as any tip is. Its label is
+  // the tip's text, so the tip doesn't describe it again (data-tip-labelled).
+  return h(
+    "button",
+    {
+      class: "receipt-mark",
+      "data-state": entries.length ? state : "sent",
+      "data-key": "receipt-" + m.id,
+      "data-tip": lines.join("\n"),
+      "data-tip-labelled": "1",
+      "aria-label": lines.join(". "),
+      onclick: (e) => showTipNow(e.currentTarget, e.pointerType === "mouse" ? "hover" : "tap"),
+    },
+    icon(entries.length && state !== "sent" ? "checks" : "check"),
   );
 }
 
@@ -4862,7 +4933,9 @@ let tipFor = null; // the element whose tip shows, or is about to
 let tipTimer = 0;
 let tipHiddenAt = 0;
 let tipShown = false;
+let tipBy = ""; // what opened the tip: "hover", "focus" or "tap"
 let pointerX = 0;
+let pointerY = 0;
 
 function tipText(el) {
   return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
@@ -4876,7 +4949,7 @@ function borrowTitle(el) {
     el.removeAttribute("title");
   }
   tip.textContent = tipText(el);
-  if (!el.hasAttribute("aria-describedby")) {
+  if (!el.hasAttribute("aria-describedby") && !el.dataset.tipLabelled) {
     el.setAttribute("aria-describedby", tip.id);
     el.dataset.tipDescribed = "1";
   }
@@ -4917,14 +4990,70 @@ function hideTip() {
   tipShown = false;
   returnTitle(tipFor);
   tipFor = null;
+  tipBy = "";
   tip.classList.remove("on");
   tip.removeAttribute("role");
 }
 
-function queueTip(el, atPointer) {
+// refreshTip runs after each render. A tip that shows was for an element the render may have
+// replaced, and whose text may have changed (a tick that moved on to read): it moves to the element
+// with the same data-key and reads its text again, or goes if there is none. A hover tip is for what
+// is under the mouse now, which a render may have scrolled something else under.
+let renderedAt = 0;
+function refreshTip() {
+  renderedAt = Date.now();
+  if (!tipShown || !tipFor) return;
+  const key = tipFor.dataset.key;
+  if (tipBy === "hover") {
+    const el = tipTarget(document.elementFromPoint(pointerX, pointerY));
+    if (!el) return hideTip();
+    if (el !== tipFor && !(key && el.dataset.key === key)) return queueTip(el, true, "hover");
+    tipFor = el;
+    borrowTitle(el);
+    return showTip(el, true);
+  }
+  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
+  if (!el) return hideTip();
+  tipFor = el;
+  borrowTitle(el); // a render takes off what borrowing put on an element it kept
+  placeTip();
+}
+
+// placeTip shows the tip again where its element is now, or hides it if that has scrolled out of view.
+function placeTip() {
+  if (!tipShown || !tipFor) return;
+  if (!inView(tipFor)) return hideTip();
+  showTip(tipFor, false);
+}
+
+// inView says el is on screen: in the window, and in each scrolling element it sits in.
+function inView(el) {
+  if (!el.isConnected) return false;
+  const r = el.getBoundingClientRect();
+  if (r.bottom <= 0 || r.top >= window.innerHeight) return false;
+  for (let a = el.parentElement; a; a = a.parentElement) {
+    if (!/auto|scroll/.test(getComputedStyle(a).overflowY)) continue;
+    const box = a.getBoundingClientRect();
+    if (r.bottom <= box.top || r.top >= box.bottom) return false;
+  }
+  return true;
+}
+
+// showTipNow shows el's tip at once, for a click, which hides the tip hover brought. A mouse's click
+// then keeps it as a hover tip, for what is under the mouse; a tap or a key keeps it until the next.
+function showTipNow(el, by) {
+  hideTip();
+  tipFor = el;
+  tipBy = by;
+  borrowTitle(el);
+  showTip(el, false);
+}
+
+function queueTip(el, atPointer, by) {
   if (el === tipFor) return;
   hideTip();
   tipFor = el;
+  tipBy = by;
   borrowTitle(el);
   if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
   tipTimer = setTimeout(() => showTip(el, atPointer), 150);
@@ -4949,21 +5078,28 @@ function tipTarget(node) {
 
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
+  // A render that changes what is under a still mouse brings a pointerover the mouse didn't make. It
+  // mustn't hide a tip that focus or a tap opened; refreshTip has already moved that one.
+  const still = e.clientX === pointerX && e.clientY === pointerY;
+  if (still && tipShown && tipBy !== "hover" && Date.now() - renderedAt < 250) return;
   pointerX = e.clientX;
+  pointerY = e.clientY;
   const el = tipTarget(e.target);
-  el ? queueTip(el, true) : hideTip();
+  el ? queueTip(el, true, "hover") : hideTip();
 });
-document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.addEventListener("pointermove", (e) => ((pointerX = e.clientX), (pointerY = e.clientY)), { passive: true });
 document.documentElement.addEventListener("pointerleave", hideTip);
 document.addEventListener("focusin", (e) => {
   const el = tipTarget(e.target);
-  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false, "focus");
 });
 document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
 // Escape also cancels a tip that is still waiting to show.
 document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
-document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+// A render puts the thread's scroll back, which fires a scroll; a tip outlives that unless its element
+// went out of view. Any other scroll hides it.
+document.addEventListener("scroll", () => (Date.now() - renderedAt > 250 ? hideTip() : placeTip()), { capture: true, passive: true });
 
 setInterval(tick, 10000);
 start();

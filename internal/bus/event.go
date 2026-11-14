@@ -40,7 +40,52 @@ const (
 	// Boxed is an event encrypted for the team's devices (#156): it holds another event whole, and
 	// says nothing else. A daemon from before encryption doesn't know the type and passes over it.
 	Boxed = "box"
+	// Receipt is a device's marks on messages that asked for them (#26): how far each got with
+	// each of the device's sessions it reached. A device writes its marks in batches, so one receipt
+	// carries many. A daemon from before receipts doesn't know the type and passes over it.
+	Receipt = "receipt"
 )
+
+// ReceiptFrom is the session part of a receipt's From: the marks are the device's, for any of its
+// sessions, and no session's ID is this (session IDs Murmur makes are hex or a client's own).
+const ReceiptFrom = "receipts"
+
+// What a mark says of a message, in the order a message meets them (docs/VISION.md, `What
+// "delivered" and "read" mean`): queued in the recipient's inbox, handed over to its client as a
+// turn, delivered (it knows the message is waiting), read (it has the message).
+const (
+	MarkQueued    = "queued"
+	MarkHanded    = "handed"
+	MarkDelivered = "delivered"
+	MarkRead      = "read"
+)
+
+// MarkRank orders the states a mark can say, from 1; a state this version doesn't know is 0.
+func MarkRank(state string) int {
+	switch state {
+	case MarkQueued:
+		return 1
+	case MarkHanded:
+		return 2
+	case MarkDelivered:
+		return 3
+	case MarkRead:
+		return 4
+	}
+	return 0
+}
+
+// Mark is how far one message got with one session: Msg is the message's ID, To the session's ID on
+// the receipt's device, and At the writer's clock when it got there.
+type Mark struct {
+	Msg   string    `json:"msg"`
+	To    string    `json:"to"`
+	State string    `json:"state"`
+	At    time.Time `json:"at"`
+}
+
+// MaxMarks caps the marks one receipt carries; a device with more writes a second.
+const MaxMarks = 500
 
 // PersonSession is the session ID of a device's person (#242), so a person's address is
 // device/human. It is one ID per device, like the CLI's, and no agent's session can register it.
@@ -84,6 +129,11 @@ type Event struct {
 	// Person is a person's name on a message they sent, so that a daemon that never saw their
 	// presence still calls them by it.
 	Person string `json:"person,omitempty"`
+	// Receipts, on a message, asks each recipient's device to write marks of how far it got (#26).
+	// A daemon from before receipts ignores it and writes none.
+	Receipts bool `json:"receipts,omitempty"`
+	// Marks is a receipt's marks.
+	Marks []Mark `json:"marks,omitempty"`
 
 	// tags: the tags the human added and removed. To is the session. group.add: Add is the groups
 	// an agent added the session to.
@@ -122,6 +172,8 @@ func (e Event) Line() string {
 		return fmt.Sprintf("%s tags %s: %s", e.From, e.To, strings.Join(ch, " "))
 	case GroupAdd:
 		return fmt.Sprintf("%s added %s to %s", e.From, e.To, strings.Join(e.Add, ", "))
+	case Receipt:
+		return fmt.Sprintf("%s marked %d message(s)", e.From, len(e.Marks))
 	}
 	return e.From + " " + e.Type
 }
@@ -154,6 +206,8 @@ func (e Event) Valid() bool {
 	case Tags:
 		return strings.Contains(e.To, "/") && validAddr(e.To) && len(e.Add)+len(e.Remove) > 0 &&
 			validTags(e.Add) && validTags(e.Remove)
+	case Receipt:
+		return len(e.Marks) > 0 // Clean kept only marks Murmur writes
 	}
 	return false
 }
@@ -168,6 +222,27 @@ func (e *Event) Clean() {
 	if e.Type != Message || !IsPerson(e.From) || !ValidPerson(e.Person) {
 		e.Person = ""
 	}
+	if e.Type != Message {
+		e.Receipts = false
+	}
+	e.Marks = cleanMarks(e.Type, e.Marks)
+}
+
+// cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's
+// ID, a session's ID and a state this version knows. A mark with a state from a newer version is
+// dropped, not the receipt, and so are marks past the cap, which a newer version might raise. Any
+// other event carries none.
+func cleanMarks(typ string, in []Mark) []Mark {
+	if typ != Receipt {
+		return nil
+	}
+	var out []Mark
+	for _, m := range in[:min(len(in), MaxMarks)] {
+		if validID(m.Msg) && ValidName(m.To) && MarkRank(m.State) > 0 {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
@@ -330,6 +405,9 @@ type Presence struct {
 	// Groups says the device's daemon gives its sessions what is sent to a group they are in, and
 	// takes an agent's add to one (#184). A sender is told of a member whose device doesn't.
 	Groups bool `json:"groups,omitempty"`
+	// Receipts says the device's daemon writes marks for the messages that ask for them (#26). A
+	// sender shows a recipient on a device without it as sending no receipts, not as unread.
+	Receipts bool `json:"receipts,omitempty"`
 	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
 	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
 	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
@@ -338,7 +416,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Nick, Sessions, Offline and Groups, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Sessions, Offline, Groups and Receipts, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that
