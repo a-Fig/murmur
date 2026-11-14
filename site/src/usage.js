@@ -11,6 +11,7 @@ import statsHtml from './stats.html';
 import archiveHtml from './stats-archive.html';
 import { archiveNumbers, archiveReport } from './archive.js';
 import { repoNumbers, repoReport } from './repos.js';
+import { runCensus } from './census-run.js';
 import { prefersMarkdown } from './accept.js';
 
 const RELEASES = 'https://api.github.com/repos/a-Fig/murmur/releases/latest';
@@ -186,6 +187,7 @@ async function latestRelease(ctx) {
 //
 // - /stats, /stats/report.md, /stats/data?days=N: the public repos that use Murmur, and what the
 //   census reads from them (#259, src/repos.js).
+// - POST /stats/run-census: start the census now, rate-limited (src/census-run.js, #557).
 // - /stats/archive, /stats/archive/report.md, /stats/archive/data?days=N: the check-ins of earlier
 //   versions, which are no longer stored (src/archive.js).
 //
@@ -216,9 +218,14 @@ export async function stats(request, env) {
   if (key === null || !(await anyOf(key, keys))) return notFound();
 
   const path = url.pathname.replace(/\/$/, '');
-  const base = path.replace(/\/(report\.md|data)$/, '');
+  const base = path.replace(/\/(report\.md|data|run-census)$/, '');
   const view = VIEWS[base];
   if (!view) return notFound();
+  // Only /stats can start a census: the archive is history, and its numbers no longer change.
+  if (path.endsWith('/run-census')) {
+    if (path !== '/stats/run-census') return notFound();
+    return runCensus(request, env, { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
+  }
   const page = path === base;
   if (page && given !== null && request.headers.get('Sec-Fetch-Mode') === 'navigate') {
     return new Response(null, {

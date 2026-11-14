@@ -68,6 +68,13 @@
     border-radius: 7px; padding: 5px 12px; cursor: pointer;
   }
   .ranges button[aria-pressed="true"] { background: var(--page); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border); }
+  .run { display: flex; align-items: center; gap: 8px; }
+  #run-census {
+    font: inherit; font-weight: 500; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; cursor: pointer; white-space: nowrap;
+  }
+  #run-census:disabled { opacity: .55; cursor: default; }
+  #run-census-note { color: var(--text-muted); font-size: 12px; max-width: 240px; }
   .grid { display: grid; gap: 16px; grid-template-columns: repeat(12, 1fr); }
   .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-width: 0; }
   .card h2 { font-size: 14px; font-weight: 600; }
@@ -157,6 +164,10 @@
     <h1>Murmur · Public repos</h1>
     <span class="asof" id="asof"></span>
     <div class="right">
+      <div class="run">
+        <button id="run-census" type="button">Run census now</button>
+        <span id="run-census-note" role="status" aria-live="polite"></span>
+      </div>
       <a href="/stats/archive">Archive: check-ins</a>
       <div class="ranges" role="group" aria-label="Range">
         <button data-days="30">30 days</button>
@@ -587,6 +598,23 @@ for (const b of document.querySelectorAll('.ranges button')) {
     load();
   });
 }
+$('run-census').addEventListener('click', async () => {
+  const button = $('run-census'), note = $('run-census-note');
+  button.disabled = true;
+  note.textContent = 'Starting…';
+  try {
+    const res = await fetch('/stats/run-census', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const body = await res.json().catch(() => null);
+    note.textContent = body?.message || `The census couldn't be started (${res.status}).`;
+  } catch {
+    note.textContent = "The census couldn't be started: the site didn't answer.";
+  }
+  button.disabled = false;
+});
+
 let resize;
 addEventListener('resize', () => { clearTimeout(resize); resize = setTimeout(render, 120); });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
