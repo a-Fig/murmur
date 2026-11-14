@@ -2892,29 +2892,9 @@ a.g-pr:hover {
   height: 0.875rem;
 }
 span.receipt-mark {
-  cursor: default; /* the plain tick of a message sent to nobody: nothing to open */
+  cursor: default; /* the plain tick of a message sent to nobody: nobody to show */
 }
 .receipt-mark[data-state="read"] {
-  color: var(--primary);
-}
-.receipt-info {
-  max-width: 80%;
-  margin: 0;
-  padding: 0 0.25rem;
-  list-style: none;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-}
-.receipt-info li {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  line-height: 1.25rem;
-}
-.receipt-name {
-  max-width: 12rem;
-}
-.receipt-info li[data-state="read"] > .receipt-state {
   color: var(--primary);
 }
 .chat-msg-sending > .chat-bubble {

@@ -106,7 +106,6 @@ const ui = {
   armed: null, // the group chat whose next send goes: its key
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
   drawer: false, // on a phone, whether the sidebar's drawer is open
-  openReceipts: new Set(), // the person's messages whose receipt lists are open, by ID (#26)
 };
 
 class AuthError extends Error {
@@ -3139,7 +3138,6 @@ function chatMessage(m, from, at, head) {
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
       h("div", { class: "chat-bubble rich" }, rich(personText(m))),
       h("div", { class: "chat-msg-meta" }, time, copyButton(copy), receiptMark(m)),
-      receiptInfo(m),
     );
   }
   // Everyone else's message has its sender's face beside it, and a run of messages from one sender
@@ -3163,8 +3161,9 @@ function chatMessage(m, from, at, head) {
 // for delivered, and two in the accent colour for read (docs/VISION.md, "Receipts"). The states in
 // between, queued and handed over, read as sent, and so does a recipient whose Murmur sends no
 // receipts. A message to several shows the lowest of them, so it reads as read only once everyone
-// has read it. Who has it, and since when, shows only on request: on hover, or in a list a tap
-// opens. A message from before receipts, or past the newest 200, shows no mark rather than a guess.
+// has read it. Who has it, and since when, is the tick's tooltip and nothing else (Tyler,
+// 2026-11-13): on hover, on keyboard focus, and on touch, where nothing hovers, on a tap. A message
+// from before receipts, or past the newest 200, shows no mark rather than a guess.
 const RECEIPT_RANK = { sent: 0, delivered: 1, read: 2 };
 
 function receiptFold(state) {
@@ -3190,34 +3189,20 @@ function receiptMark(m) {
   if (!rs.length) return h("span", { class: "receipt-mark", "data-state": "sent", role: "img", "aria-label": "Sent", "data-tip": "Sent" }, icon("check"));
   const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
   const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
-  const open = ui.openReceipts.has(m.id);
+  const who = entries.map((e) => e.name + ": " + e.text);
+  // A button, so the keyboard reaches it and focus shows its tooltip. A tap shows it too: the page's
+  // tips follow the mouse, and a touch has none. The next tap anywhere hides it, as any tip is.
   return h(
     "button",
     {
       class: "receipt-mark",
       "data-state": state,
       "data-key": "receipt-" + m.id,
-      "data-tip": entries.map((e) => e.name + ": " + e.text).join("\n"),
-      "aria-label": receiptLabel(state) + ". Show who has it",
-      "aria-expanded": String(open),
-      onclick: () => {
-        open ? ui.openReceipts.delete(m.id) : ui.openReceipts.add(m.id);
-        render();
-      },
+      "data-tip": who.join("\n"),
+      "aria-label": receiptLabel(state) + ". " + who.join("; "),
+      onclick: (e) => showTipNow(e.currentTarget),
     },
     icon(state === "sent" ? "check" : "checks"),
-  );
-}
-
-// The list a tap on the mark opens, under the message.
-function receiptInfo(m) {
-  const rs = ui.state?.receipts?.[m.id];
-  if (!rs?.length || !ui.openReceipts.has(m.id)) return null;
-  const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
-  return h(
-    "ul",
-    { class: "receipt-info" },
-    entries.map((e) => h("li", { "data-state": e.state }, h("span", { class: "receipt-name truncate" }, e.name), h("span", { class: "receipt-state" }, e.text))),
   );
 }
 
@@ -4944,6 +4929,14 @@ function hideTip() {
   tipFor = null;
   tip.classList.remove("on");
   tip.removeAttribute("role");
+}
+
+// showTipNow shows el's tip at once, for a tap, which the pointer's hover never brings.
+function showTipNow(el) {
+  hideTip();
+  tipFor = el;
+  borrowTitle(el);
+  showTip(el, false);
 }
 
 function queueTip(el, atPointer) {
