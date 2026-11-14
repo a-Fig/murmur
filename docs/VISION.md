@@ -1490,11 +1490,11 @@ travel back over the bus.
   whose Murmur sends no receipts: the tick says what the person can act on, and the bus keeps the
   rest. A message to several shows the lowest state among them, so it reads as read only once
   everyone has read it, and one that found nobody to send to shows as sent. The tick's tooltip says
-  what its state means ("Read: they've seen it"; for a group, "Delivered: everyone knows it's
-  waiting, not everyone has read it"), then lists who has it and since when, each member of a group
-  with their own state. Nothing else shows them (Tyler, 2026-11-13: not a list under the message).
-  It shows on hover, on keyboard focus, and on a tap where nothing hovers. A message from before receipts, or
-  past the newest 200, has no tick. In the rest of this section a *mark* is what a recipient's daemon writes on the bus, not the
+  its state in a few words ("Read", "Delivered: not read yet", "Sent: not picked up yet"), then
+  lists who has it and since when, each member of a group with their own state. Nothing else shows
+  them (Tyler, 2026-11-13: not a list under the message). It shows on hover, on keyboard focus, and
+  on a tap where nothing hovers. A message from before receipts, or past the newest 200, has no
+  tick. In the rest of this section a *mark* is what a recipient's daemon writes on the bus, not the
   tick.
 
 - **A message asks for receipts** (`Event.Receipts`), and only a person's from the page asks now. A

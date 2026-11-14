@@ -3175,18 +3175,17 @@ function receiptLabel(state) {
   return state === "read" ? "Read" : state === "delivered" ? "Delivered" : "Sent";
 }
 
-// What a tick's state means, the tooltip's first line, for one recipient or for several. The words
-// are VISION's (#325): delivered is knowing a message waits (the hook's notice, an unread inbox),
-// read is having it. Sent covers the steps before: on the bus, in their device's inbox, handed to
-// their client as a turn that Murmur can't see start.
+// The tooltip's first line: the state, and in a few words what it leaves out, for one recipient or
+// for several (Tyler, 2026-11-13: a few words, no sentences). Delivered is knowing a message waits,
+// read is having it (#325); sent covers every step before.
 const RECEIPT_MEANS = {
-  sent: ["not picked up yet", "not everyone has picked it up yet"],
-  delivered: ["they know it's waiting", "everyone knows it's waiting, not everyone has read it"],
-  read: ["they've seen it", "everyone has seen it"],
+  sent: ["Sent: not picked up yet", "Sent: not all picked up yet"],
+  delivered: ["Delivered: not read yet", "Delivered: not all read yet"],
+  read: ["Read", "Read"],
 };
 
 function receiptMeaning(state, several) {
-  return receiptLabel(state) + ": " + RECEIPT_MEANS[state][several ? 1 : 0];
+  return RECEIPT_MEANS[state][several ? 1 : 0];
 }
 
 // One recipient as the tooltip lists them: their name, and for several their own state, with the
@@ -3206,7 +3205,7 @@ function receiptMark(m) {
   // A message that found nobody to send to (a group with no member in presence) is sent, not read,
   // and has nobody to list: its tick is a plain one, not a button that would open nothing.
   if (!rs.length) {
-    const nobody = "Sent: nobody was there to get it";
+    const nobody = "Sent: no recipients";
     return h("span", { class: "receipt-mark", "data-state": "sent", role: "img", "aria-label": nobody, "data-tip": nobody }, icon("check"));
   }
   const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
