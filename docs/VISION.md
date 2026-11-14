@@ -1919,7 +1919,14 @@ A body past the limit is cut, as in `inbox`.
   The token dies with the session's process, so the socket is used only while the session's MCP
   server is connected. A session inside T3 is never written to this way: the socket there is T3's.
   Claude Code wraps what arrives on the socket in a note of its own that says the message came
-  from another Claude session, not the user (seen 2026-10-29), which suits Murmur's framing.
+  from another Claude session, not the user (seen 2026-10-29). It suits Murmur's framing, but it
+  costs: on Claude Code 2.1.316 the note is a fixed paragraph of about 540 characters (about 135
+  tokens), added to every message, after the "Reply with Murmur's `send`…" line. It repeats what
+  Murmur's own header already says, and a person writing from the page isn't a Claude session at
+  all. Murmur can't remove it: the socket is the only way to start a turn in an idle Claude Code
+  session outside T3. anthropics/claude-code#94383 asks for it to be shortened or made optional,
+  and Murmur's case is added there (Tyler, 2026-11-13). A turn delivered through T3 carries no
+  such note.
 - **Pi's extension (2026-11-09, #205).** Pi has no hooks of Claude Code's kind, so the extension
   `mur join` writes (`extensions/murmur.ts`) brings Pi #202's delivery itself, with nothing new in
   the daemon but a way for the hook to name a Pi session: by its file, `Native` in the hook's
