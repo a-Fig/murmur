@@ -2891,6 +2891,9 @@ a.g-pr:hover {
   width: 0.875rem;
   height: 0.875rem;
 }
+span.receipt-mark {
+  cursor: default; /* the plain tick of a message sent to nobody: nothing to open */
+}
 .receipt-mark[data-state="read"] {
   color: var(--primary);
 }
