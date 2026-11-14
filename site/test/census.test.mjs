@@ -484,14 +484,15 @@ test("a reason in the summary stays on its line and in its cell, whatever git or
 
 // An encrypted event as a device writes it, holding an event `size` bytes long: what is encrypted
 // is the event's JSON, and AES-GCM adds 16 bytes to it (internal/bus/box.go). The bytes here are
-// zeros: the census reads the length and nothing else.
-const boxed = (size, at) => event({ v: 1, type: 'box', at, box: { eph: 'e', keys: { team: 'k' }, nonce: 'n', data: Buffer.alloc(size + 16).toString('base64') } });
+// zeros: the census reads the length and nothing else. The record around the box says nothing,
+// not even when: Go writes its empty time as year 1, so the census dates it by its commit.
+const boxed = size => event({ v: 1, id: '', type: 'box', from: '', at: '0001-01-01T00:00:00Z', box: { eph: 'e', keys: { team: 'k' }, nonce: 'n', data: Buffer.alloc(size + 16).toString('base64') } });
 const AT = '2026-11-05T10:00:00Z';
 // The record a bus commit's message holds.
 const record = msg => JSON.parse(msg.slice(msg.indexOf('\n\n') + 2));
 
 test("an encrypted record's size is the event's inside it, whatever its base64 padding", () => {
-  for (const size of [1, 2, 3, 120, 121, 122, 1090]) assert.equal(boxedSize(record(boxed(size, AT))), size, String(size));
+  for (const size of [1, 2, 3, 120, 121, 122, 1090]) assert.equal(boxedSize(record(boxed(size))), size, String(size));
   // Not a box, or not one Murmur wrote: no size, so no estimate.
   for (const r of [{ type: 'message' }, { type: 'box' }, { type: 'box', box: null }, { type: 'box', box: { data: 7 } },
     { type: 'box', box: { data: 'not base64!' } }, { type: 'box', box: { data: 'AAAA' } }, { type: 'message', box: { data: Buffer.alloc(500).toString('base64') } }]) {
@@ -503,10 +504,10 @@ test('an encrypted record 180 bytes or more beyond its device ID is an estimated
   const { dir, commit } = repo(t);
   // dev1 is 4 characters. A stop is about 101 bytes beyond the ID, the longest start seen 171.
   const mesh = 'refs/murmur/mesh/dev1';
-  for (const beyond of [101, 145, 171, 179]) commit(mesh, boxed(4 + beyond, AT), { date: AT });
-  for (const beyond of [180, 181, 900, 2574]) commit(mesh, boxed(4 + beyond, AT), { date: AT });
+  for (const beyond of [101, 145, 171, 179]) commit(mesh, boxed(4 + beyond), { date: AT });
+  for (const beyond of [180, 181, 900, 2574]) commit(mesh, boxed(4 + beyond), { date: AT });
   // The same 184 bytes from a device with a 24-character ID are 160 beyond it: a session's start.
-  commit('refs/murmur/mesh/a-much-longer-device-id1', boxed(184, AT), { date: AT });
+  commit('refs/murmur/mesh/a-much-longer-device-id1', boxed(184), { date: AT });
   // An unencrypted message is counted exactly, and never estimated as well.
   commit(mesh, event({ type: 'message', at: AT, body: 'x'.repeat(500) }), { date: AT });
   // A box that isn't one Murmur writes is a record, and nothing more.
@@ -517,12 +518,14 @@ test('an encrypted record 180 bytes or more beyond its device ID is an estimated
   assert.deepEqual(c.days.map(d => [d.day, d.messages, d.est_messages, d.records]), [['2026-11-05', 1, 4, 11]]);
 });
 
-test('an estimated message is counted on the day of its record', t => {
+test("an estimated message is counted on the day of its commit, the only date an encrypted record shows", t => {
   const { dir, commit } = repo(t);
-  commit('refs/murmur/mesh/dev1', boxed(500, '2026-11-05T23:59:00Z'), { date: '2026-11-05T23:59:00Z' });
-  commit('refs/murmur/mesh/dev1', boxed(500, '2026-11-06T00:01:00Z'), { date: '2026-11-06T00:01:00Z' });
+  commit('refs/murmur/mesh/dev1', boxed(500), { date: '2026-11-05T23:59:00Z' });
+  commit('refs/murmur/mesh/dev1', boxed(500), { date: '2026-11-06T00:01:00Z' });
+  // One whose commit's date can't be believed either isn't counted at all.
+  commit('refs/murmur/mesh/dev1', boxed(500), { date: '2099-01-01T00:00:00Z' });
   // A presence is never a message, encrypted or not, however large.
-  commit('refs/murmur/presence/dev1', boxed(5000, '2026-11-06T00:01:00Z'), { date: '2026-11-06T00:01:00Z' });
+  commit('refs/murmur/presence/dev1', boxed(5000), { date: '2026-11-06T00:01:00Z' });
   const c = count(dir, { now: NOW });
   assert.deepEqual(c.days.map(d => [d.day, d.est_messages, d.records]), [['2026-11-05', 1, 1], ['2026-11-06', 1, 1]]);
 });
@@ -536,7 +539,7 @@ test('a session the name registry shows and no unencrypted start does is an esti
   commit(mesh, event({ type: 'session.started', from: 'dev1/s1', at: '2026-11-04T10:00:00Z' }), { date: '2026-11-04T10:00:00Z' });
   commit(names, named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: '2026-11-05T10:00:00Z' }), { date: '2026-11-05T10:00:00Z' });
   // s2 and s3 started on an encrypted log: only the registry shows them.
-  commit(mesh, boxed(4 + 145, '2026-11-05T11:00:00Z'), { date: '2026-11-05T11:00:00Z' });
+  commit(mesh, boxed(4 + 145), { date: '2026-11-05T11:00:00Z' });
   commit(names, named({ name: 'brisk-finch', device: 'dev1', session: 's2', at: '2026-11-05T11:00:00Z' }), { date: '2026-11-05T11:00:00Z' });
   commit(names, named({ name: 'calm-heron', device: 'dev2', session: 's3', at: '2026-11-06T09:00:00Z' }), { date: '2026-11-06T09:00:00Z' });
   // s2 named again counts once, on its first day.
@@ -560,14 +563,14 @@ test('a session the name registry shows and no unencrypted start does is an esti
 
 test("census() fetches the name registry too, and counts a repo that has none", async t => {
   const r = remote(t);
-  r.commit('refs/murmur/mesh/dev1', boxed(600, r.at));
+  r.commit('refs/murmur/mesh/dev1', boxed(600), { date: r.at });
   r.commit('refs/murmur/names', named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: r.at }));
   const c = await readRepo('github.com/a/one', { url: r.url, lookup: unlinked });
   const day = r.at.slice(0, 10);
   assert.deepEqual(c.totals, { sessions: 0, messages: 0, records: 1, est_sessions: 1, est_messages: 1, first_day: day, last_day: day });
 
   const bare = remote(t);
-  bare.commit('refs/murmur/mesh/dev1', boxed(600, bare.at));
+  bare.commit('refs/murmur/mesh/dev1', boxed(600), { date: bare.at });
   const b = await readRepo('github.com/a/two', { url: bare.url, lookup: unlinked });
   assert.deepEqual(b.totals, { sessions: 0, messages: 0, records: 1, est_sessions: 0, est_messages: 1, first_day: day, last_day: day });
 });

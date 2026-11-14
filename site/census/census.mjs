@@ -135,25 +135,27 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 // message.
 //
 // Measured on 2026-11-13 against the unencrypted history of two public repos, a-Fig/murmur and
-// SomeoneElseSt/aie-hack (three devices; 155 messages, 593 starts and 505 stops), in bytes beyond
+// SomeoneElseSt/aie-hack (three devices; 155 messages, 589 starts and 505 stops), in bytes beyond
 // the device's ID: stops were 98 to 101, starts 130 to 171, messages 158 to 2,574. At 180:
 // - 8 of the 155 messages (5%) were shorter and would be missed: each had no body and a subject
 //   under 40 characters;
-// - none of the 1,098 session events was as long. A start is, once its agent and branch together
+// - none of the 1,094 session events was as long. A start is, once its agent and branch together
 //   pass about 55 characters; the longest seen were 47. Any cut from 172 to 180 took no start for
 //   a message; 180 leaves room for a longer branch, at the cost of 3 more messages missed than 172.
-// So the estimate runs about 5% low on traffic like that history's. What that history couldn't
-// measure:
-// - every message in it was to one session. One to a group or to everyone has a shorter
-//   recipient, so more of the short ones are missed;
+// So the estimate runs about 5% low on traffic like that history's. It can also run high, by what
+// that history couldn't measure:
+// - a start from a session on a long branch reads as a message, as above, and again each time
+//   its daemon restarts and announces it;
 // - it has no tags or group.add events (page and group actions, internal/bus/event.go). One is
-//   about the size of a start, and reads as a message only with some 40 characters of tags.
+//   about the size of a start, and reads as a message with some 40 characters of tags or more.
+// And lower: every message in it was to one session or device. One to a group or to everyone has
+// a shorter recipient, so more of the short ones are missed.
 //
 // Sessions, from the name registry, not from size. A start re-announced after its daemon
 // restarts, a tags event and a group.add are all the size of a start: start-sized records were
 // 1.35 times the sessions in murmur's unencrypted history, and 1.3 to 3 times the registry's
 // sessions on three encrypted buses. The registry (refs/murmur/names, internal/bus/names.go) is
-// not encrypted, and each session that takes a name is recorded there once, by its ID. It held 445
+// not encrypted, and each session that takes a name is recorded there, by its ID. It held 445
 // of the 446 sessions those two histories started, and one they didn't show. So a session the
 // registry names that no unencrypted start shows is counted as estimated, on the day of its
 // registry record. It is told from the exact ones by its ID, so none counts twice. Two things make
@@ -161,8 +163,9 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 // - since 2026-11-13 a session another session started takes a name but writes no start (#487),
 //   so the registry counts it, where the exact count no longer would;
 // - a snapshot (a registry rebuilt after it was lost) isn't read, since it would date every older
-//   session to the day it was written. Sessions from before one are missed, unless the site
-//   already had them: it only ever raises a count.
+//   session to the day it was written. Sessions from before one are missed. The site keeps the
+//   days it already had, and only ever raises a count, so a repo's total then stays at what it
+//   was until the sessions since the snapshot pass it.
 const MESSAGE_FROM = 180;
 const GCM_TAG = 16;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;

@@ -2362,21 +2362,25 @@ away roughly what kind of event a record is, never what it says.
 - **Messages, from size.** An encrypted record's length gives the length of the event inside it
   exactly, and a message is longer than a session's start or stop. An encrypted event 180 bytes or
   more longer than its device's ID counts as a message. Measured on 2026-11-13 against the
-  unencrypted history of two public repos (155 messages, 1,098 session starts and stops), that cut
+  unencrypted history of two public repos (155 messages, 1,094 session starts and stops), that cut
   missed 8 messages, 5%, each with no body and a short subject, and took no session event for a
-  message. So the estimate runs about 5% low. That history had no message to a group or to
-  everyone, which is shorter and so missed more often, and no tags or group-add event, which
-  reads as a message only when it carries some 40 characters of tags.
+  message. So the estimate runs about 5% low on traffic like that. It can run high where that
+  history had nothing to measure: a start reads as a message once its agent and branch together
+  pass about 55 characters (the longest seen were 47), and so does a tags or group-add event with
+  some 40 characters of tags. It had no message to a group or to everyone either, which is
+  shorter and so missed more often.
 - **Sessions, from the name registry.** Size can't count them: a start announced again after a
   daemon restarts, a tags event and a group-add are all the size of a start, and start-sized
   records came to 1.3 to 3 times the sessions on the buses measured. The registry isn't encrypted
-  and records each session that takes a name once, by its ID: it held 445 of the 446 sessions
+  and records each session that takes a name, by its ID: it held 445 of the 446 sessions
   that history started. A session it names that no unencrypted start shows counts as estimated,
   on the day of its registry record. A session another session started takes a name but, since
   #487, writes no start, so the registry counts it too.
 
 The estimates are sent and kept apart from the exact counts (`est_sessions`, `est_messages`), and
-`site/census/census.mjs` has the measurements. An updated device's presence hides its owner too, so
+`site/census/census.mjs` has the measurements. The site only ever raises them, as it does every
+count, so if the census later estimates differently and lower, what is stored stays until someone
+lowers it in D1 by hand. An updated device's presence hides its owner too, so
 the census can't tell its person apart; whether that should stay readable is open on #156.
 
 Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
