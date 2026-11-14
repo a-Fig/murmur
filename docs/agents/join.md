@@ -34,8 +34,9 @@ joining does:
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
-  session. Two short skills on using Murmur well go into the skills folder of Claude Code, Codex,
-  OpenCode and Pi. In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
+  session. Three skills go into the skills folder of Claude Code, Codex, OpenCode and Pi: two
+  short ones on using Murmur well, and one for a session its user has made the manager of a team
+  of agents. In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
   command the agent runs around each tool call and when it finishes, so a busy session is told when
   a message comes. OpenCode 2 gets a plugin file of Murmur's (`plugins/murmur.js` in its config
   folder) that does the same. In Codex, join also marks the hook as approved, so Codex runs it without asking.

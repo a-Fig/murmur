@@ -13,8 +13,8 @@ import (
 // brand, so a rename that misses them fails here.
 func TestSkills(t *testing.T) {
 	all := All()
-	if len(all) != 2 {
-		t.Fatalf("got %d skills, want 2", len(all))
+	if len(all) != 3 {
+		t.Fatalf("got %d skills, want 3", len(all))
 	}
 	for _, s := range all {
 		if !strings.HasPrefix(s.Name, brand.Name) {
