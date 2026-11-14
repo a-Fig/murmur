@@ -66,13 +66,13 @@ about the job: deciding, staffing, checking and reporting.
 
 ## Thread, delegate or subagent
 
-Pick in this order. Delegates and new threads are T3's; elsewhere, the choice is between a live
-agent and a subagent.
+Pick in this order. Delegates and new threads are T3 Code's; elsewhere, the choice is between a
+live agent and a subagent.
 1. **A live agent** on your user's device that already has the context. Send it the work over
    Murmur.
-2. **A subagent** (native `Agent`), for a read-only answer you need: a review of a few commits, an
-   investigation, or a test of a hypothesis.
-3. **A delegate** (`delegate_task`, in T3), for bounded work that ends in a PR you'll check and
+2. **A subagent** (your agent's own subagent tool), for a read-only answer you need: a review of
+   a few commits, an investigation, or a test of a hypothesis.
+3. **A delegate** (`delegate_task`, in T3 Code), for bounded work that ends in a PR you'll check and
    merge, or for another provider's model.
 4. **A new thread, only when your user asks for one.** That's for work they'll watch, talk to or
    OK in place. If you think they'd want to steer something, offer a thread in one line and wait.
@@ -119,8 +119,8 @@ agent and a subagent.
 - **Short.** Lead with the answer, link every PR you mention, and use plain words.
 - **"What should I OK?"** Give a numbered list in merge order, one line each on what it does and
   why it's in that place.
-- **"What's the point of #N?"** Give the problem in terms of the people who use the product, then the fix, then your honest view.
-  Change your recommendation openly when the facts change.
+- **"What's the point of #N?"** Give the problem in terms of the people who use the product, then
+  the fix, then your honest view. Change your recommendation openly when the facts change.
 - **Lead with the cheaper route** when there is one.
 - **Separate three things:** what's done, what's waiting on the user (with the decision), and
   what's running.
