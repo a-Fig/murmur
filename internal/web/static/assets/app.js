@@ -2794,13 +2794,17 @@ function conversationList(list) {
   const q = (ui.cq || "").toLowerCase();
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
   // One list, newest first, so a busy group chat is never below every quiet DM. The switch
-  // narrows it to direct messages or group chats.
-  const kind = ui.convKind || "all";
-  const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
+  // narrows it to direct messages a person is in, to those agents sent each other, or to group
+  // chats. Your messages all have you in them, so there it has no Agents tab.
+  const mine = isMyFilter();
+  const kinds = [["all", "All"], ["dm", "Direct"], !mine && ["agents", "Agents"], ["group", "Group"]].filter(Boolean);
+  const kind = kinds.some(([id]) => id === ui.convKind) ? ui.convKind : "all";
+  const of = (c) => (c.kind !== "dm" ? "group" : c.pair.some(isPerson) ? "dm" : "agents");
+  const is = (k, c) => k === "all" || k === of(c);
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
-  const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
-  const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
-  const count = (k) => list.filter((c) => (k === "all" || (k === "dm") === (c.kind === "dm")) && hit(c) && (q || name || !old(c))).length;
+  const rows = list.filter((c) => is(kind, c) && hit(c) && (q || name || !old(c)));
+  const older = q || name ? [] : list.filter((c) => is(kind, c) && old(c));
+  const count = (k) => list.filter((c) => is(k, c) && hit(c) && (q || name || !old(c))).length;
   return h(
     "nav",
     { class: "chat-list g-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
@@ -2861,11 +2865,7 @@ function conversationList(list) {
     h(
       "div",
       { class: "segmented g-kinds", role: "tablist", "aria-label": "Which conversations" },
-      [
-        ["all", "All"],
-        ["dm", "Direct"],
-        ["group", "Group"],
-      ].map(([id, label]) =>
+      kinds.map(([id, label]) =>
         h(
           "button",
           {
@@ -2899,7 +2899,7 @@ function conversationList(list) {
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),
-    !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
+    !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "agents" ? "No messages between agents" : kind === "group" ? "No group chats" : "No conversations"),
     kind === "group" && !q && !(name && !isMyFilter()) && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
   );
 }
