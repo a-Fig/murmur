@@ -3054,11 +3054,14 @@ function chatMessages(c) {
   return out;
 }
 
-// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText).
+// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText). A
+// subject that is only the body's start, cut short, is left out, as repeatsSubject in
+// internal/view/view.go leaves it out of the agent's turn and inbox.
 function personText(m) {
   const subject = m.subject || "";
   const body = m.body || "";
-  if (subject.endsWith("…") && body.startsWith(subject.slice(0, -1))) return body;
+  const end = ["…", "..."].find((e) => subject.endsWith(e));
+  if (end && body.startsWith(subject.slice(0, -end.length))) return body;
   return body ? subject + "\n" + body : subject;
 }
 
