@@ -4894,6 +4894,7 @@ let tipFor = null; // the element whose tip shows, or is about to
 let tipTimer = 0;
 let tipHiddenAt = 0;
 let tipShown = false;
+let tipBy = ""; // what opened the tip: "hover", "focus" or "tap"
 let pointerX = 0;
 let pointerY = 0;
 
@@ -4950,20 +4951,29 @@ function hideTip() {
   tipShown = false;
   returnTitle(tipFor);
   tipFor = null;
+  tipBy = "";
   tip.classList.remove("on");
   tip.removeAttribute("role");
 }
 
 // refreshTip runs after each render. A tip that shows was for an element the render may have
 // replaced, and whose text may have changed (a tick that moved on to read): it moves to the element
-// with the same data-key and reads its text again, or goes if there is none.
-// An element without a data-key is found again by what is under the mouse, as a hover tip's is.
+// with the same data-key and reads its text again, or goes if there is none. A hover tip is for what
+// is under the mouse now, which a render may have scrolled something else under.
 let renderedAt = 0;
 function refreshTip() {
   renderedAt = Date.now();
   if (!tipShown || !tipFor) return;
   const key = tipFor.dataset.key;
-  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : tipTarget(document.elementFromPoint(pointerX, pointerY));
+  if (tipBy === "hover") {
+    const el = tipTarget(document.elementFromPoint(pointerX, pointerY));
+    if (!el) return hideTip();
+    if (el !== tipFor && !(key && el.dataset.key === key)) return queueTip(el, true, "hover");
+    tipFor = el;
+    borrowTitle(el);
+    return showTip(el, true);
+  }
+  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
   if (!el) return hideTip();
   tipFor = el;
   borrowTitle(el); // a render takes off what borrowing put on an element it kept
@@ -4994,14 +5004,16 @@ function inView(el) {
 function showTipNow(el) {
   hideTip();
   tipFor = el;
+  tipBy = "tap";
   borrowTitle(el);
   showTip(el, false);
 }
 
-function queueTip(el, atPointer) {
+function queueTip(el, atPointer, by) {
   if (el === tipFor) return;
   hideTip();
   tipFor = el;
+  tipBy = by;
   borrowTitle(el);
   if (Date.now() - tipHiddenAt < 400 || tipShown) return showTip(el, atPointer);
   tipTimer = setTimeout(() => showTip(el, atPointer), 150);
@@ -5026,19 +5038,20 @@ function tipTarget(node) {
 
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
-  // A render that replaces the element under a still mouse brings a pointerover the mouse didn't
-  // make. refreshTip has already moved the tip, and it mustn't hide one that focus or a tap opened.
-  if (Date.now() - renderedAt < 250 && e.clientX === pointerX && e.clientY === pointerY) return;
+  // A render that changes what is under a still mouse brings a pointerover the mouse didn't make. It
+  // mustn't hide a tip that focus or a tap opened; refreshTip has already moved that one.
+  const still = e.clientX === pointerX && e.clientY === pointerY;
+  if (still && tipShown && tipBy !== "hover" && Date.now() - renderedAt < 250) return;
   pointerX = e.clientX;
   pointerY = e.clientY;
   const el = tipTarget(e.target);
-  el ? queueTip(el, true) : hideTip();
+  el ? queueTip(el, true, "hover") : hideTip();
 });
 document.addEventListener("pointermove", (e) => ((pointerX = e.clientX), (pointerY = e.clientY)), { passive: true });
 document.documentElement.addEventListener("pointerleave", hideTip);
 document.addEventListener("focusin", (e) => {
   const el = tipTarget(e.target);
-  if (el && e.target.matches(":focus-visible")) queueTip(el, false);
+  if (el && e.target.matches(":focus-visible")) queueTip(el, false, "focus");
 });
 document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
