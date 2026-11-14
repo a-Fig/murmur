@@ -1484,14 +1484,16 @@ travel back over the bus.
 
 - **The page shows a chat app's ticks, and no more** (Tyler, 2026-11-13: a first version, with a
   word and a count under every bubble, was too much, next to what WhatsApp or iMessage show). Each
-  of the person's messages has one small mark at the end of the line under it: one tick for sent,
+  of the person's messages has one small tick at the end of the line under it: one tick for sent,
   two for delivered, and two in the accent colour for read, the only state that stands out. The
   states between sent and delivered, queued and handed over, show as sent, and so does a recipient
-  whose Murmur sends no receipts: the mark says what the person can act on, and the bus keeps the
+  whose Murmur sends no receipts: the tick says what the person can act on, and the bus keeps the
   rest. A message to several shows the lowest state among them, so it reads as read only once
-  everyone has read it. Who has it, and since when, shows only on request, as WhatsApp's message
-  info does: on hover, and in a list a tap on the mark opens under the message. A message from
-  before receipts, or past the newest 200, has no mark.
+  everyone has read it, and one that found nobody to send to shows as sent. Who has it, and since
+  when, shows only on request, as WhatsApp's message info does: on hover, and in a list a tap on the
+  tick opens under the message. A message from before receipts, or past the newest 200, has no
+  tick. In the rest of this section a *mark* is what a recipient's daemon writes on the bus, not the
+  tick.
 
 - **A message asks for receipts** (`Event.Receipts`), and only a person's from the page asks now. A
   recipient's daemon writes marks only for messages that ask, so agents' chatter costs the bus
@@ -1521,22 +1523,26 @@ travel back over the bus.
   messages, in `state.json`, with the recipients it expected when it sent: the one it was sent to,
   or for a group, a device or everyone, the sessions it saw there, less offline ones and those that
   muted the sender. A mark for any other address is dropped: a device writes marks for its own
-  sessions, and one the message wasn't for would otherwise list itself as a reader. A session that
-  joined the group after the message was sent is dropped with it. Marks only go forward, so one read late, or twice, changes nothing. A receipt read after a long
-  absence, even in a backlog passed over for messages, still counts, as tags do.
+  sessions, and one the message wasn't for would otherwise list itself as a reader. What that costs:
+  for a group, a device or everyone, only the sessions this device saw in fresh, readable presence
+  when the message was sent are counted. One that joined the group after, or whose device was asleep
+  or couldn't be read here then, gets the message but not a place in its tick. Marks only go
+  forward, so one read late, or twice, changes nothing. A receipt read after a long absence, even in
+  a backlog passed over for messages, still counts, as tags do.
 - **An older recipient isn't waited for.** A device whose presence, read when the message is sent,
   doesn't say it writes marks (`Presence.Receipts`, inside the encrypted part) is marked as sending
-  none (`web.ReceiptNone`), which the page shows as sent, never as unread; it holds a group's mark at
-  sent for good. One with no presence here (its daemon exited, as a person's does soon after their
-  page closes) or one this device can't open yet has no mark: it may still write one. A mark that
-  arrives anyway (it updated before reading the message) still counts.
+  none (`web.ReceiptNone`), which the page shows as sent, never as unread; it holds a group's tick
+  at sent for good. A direct message's recipient with no presence here (its daemon exited, as a
+  person's does soon after their page closes) or one this device can't open yet isn't counted as
+  older: it may still write a mark. A mark that arrives anyway (it updated before reading the
+  message) still counts.
   `proto.Protocol` 21 lets an upgraded `mur` replace a daemon that writes none.
 - **Left for later.** An agent's `send` result, `lookup` and `who` don't show receipts yet (Tyler
   wants it queryable on demand, #26's comment of 2026-11-09). #275's delivered is marked where the
   daemon sees the hook fetch a notice, which is as far as it can see; whether the agent's context
   took it is still unknown. #276's opt-in "tell me" would set the flag on an agent's message and
   notify the sender once from the marks. A recipient that is idle, on do not disturb or offline
-  shows only as queued or with no mark: saying why (#26's "idle 12 min") isn't built.
+  shows as sent: saying why (#26's "idle 12 min") isn't built.
 
 ### When a session stays the same session
 

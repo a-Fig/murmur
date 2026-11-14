@@ -43,9 +43,9 @@ type sentRecord struct {
 	// every session, for everyone.
 	To []string `json:"to"`
 	// Old is those of To whose device's presence, read, didn't say it writes marks
-	// (bus.Presence.Receipts): their marks aren't waited for, and the page says so. A device with no
-	// presence here (its daemon said goodbye, as an idle one does) or one this device can't open yet
-	// isn't old, only not heard from.
+	// (bus.Presence.Receipts): their marks aren't waited for, and the page shows them as sent. A
+	// device with no presence here (its daemon said goodbye, as an idle one does) or one this device
+	// can't open yet isn't old, only not heard from.
 	Old []string `json:"old,omitempty"`
 	// Direct says it was sent to one session or person: a mark from whichever session took it, as
 	// one holding the recipient's name now (forwardLocked), is that recipient's.

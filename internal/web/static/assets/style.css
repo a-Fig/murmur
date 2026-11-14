@@ -2880,7 +2880,7 @@ a.g-pr:hover {
 .receipt-mark {
   display: inline-flex;
   align-items: center;
-  padding: 0.125rem;
+  padding: 0.25rem; /* a target to tap on a phone, as the copy button beside it is */
   border: 0;
   border-radius: var(--radius-md);
   background: none;
