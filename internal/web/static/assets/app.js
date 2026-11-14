@@ -3185,9 +3185,11 @@ function receiptEntry(r) {
 function receiptMark(m) {
   const rs = ui.state?.receipts?.[m.id];
   if (!rs) return null;
+  // A message that found nobody to send to (a group with no member in presence) is sent, not read,
+  // and has nobody to list: its tick is a plain one, not a button that would open nothing.
+  if (!rs.length) return h("span", { class: "receipt-mark", "data-state": "sent", role: "img", "aria-label": "Sent", "data-tip": "Sent" }, icon("check"));
   const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
-  // A message that found nobody to send to (a group with no member in presence) is sent, not read.
-  const state = entries.length ? entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read") : "sent";
+  const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
   const open = ui.openReceipts.has(m.id);
   return h(
     "button",
@@ -3195,7 +3197,7 @@ function receiptMark(m) {
       class: "receipt-mark",
       "data-state": state,
       "data-key": "receipt-" + m.id,
-      "data-tip": entries.length ? entries.map((e) => e.name + ": " + e.text).join("\n") : "Sent",
+      "data-tip": entries.map((e) => e.name + ": " + e.text).join("\n"),
       "aria-label": receiptLabel(state) + ". Show who has it",
       "aria-expanded": String(open),
       onclick: () => {
