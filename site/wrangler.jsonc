@@ -22,7 +22,9 @@
   // murmur-usage --remote` applies migrations/ to it. The stats page's keys, one per reader separated
   // by spaces or commas, are the STATS_KEY secret (`npx wrangler secret put`). CENSUS_KEY is the
   // census's, the same as the repo's Actions secret of that name. GITHUB_TOKEN, optional, raises the
-  // rate limit of the check that a reported repo is public.
+  // rate limit of the check that a reported repo is public. CENSUS_RUN_TOKEN, a fine-grained GitHub
+  // token scoped to a-Fig/murmur with only the Actions permission dispatching a workflow needs,
+  // lets the stats page's run button start the census (#557); without it the button says so.
   "d1_databases": [
     { "binding": "DB", "database_name": "murmur-usage", "database_id": "178820d5-4536-4e57-90bc-4591131e3e0a" }
   ],
