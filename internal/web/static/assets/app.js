@@ -549,6 +549,20 @@ function setMini(v) {
   render();
 }
 
+// Whether the conversation list shows the DMs agents send each other, remembered like the sidebar.
+const AGENT_CHATS_KEY = NAME + ":agent-chats";
+let agentChats = true;
+try {
+  agentChats = localStorage.getItem(AGENT_CHATS_KEY) !== "0";
+} catch {}
+function setAgentChats(v) {
+  agentChats = v;
+  try {
+    localStorage.setItem(AGENT_CHATS_KEY, v ? "1" : "0");
+  } catch {}
+  render();
+}
+
 function setDrawer(open) {
   ui.drawer = open;
   render();
@@ -1553,6 +1567,10 @@ function sessionCard(d, s) {
           { class: "s-line name-line" },
           h("span", { class: "s-name truncate" }, s.name),
           h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          // The hook never reported after a tool call, so the session isn't told of messages while it
+          // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
+          // cell there shifted chats, state and Message one column over (#546).
+          s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
           tagChips(s, 3, true),
         ),
         h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
@@ -1563,8 +1581,6 @@ function sessionCard(d, s) {
       { class: "s-meta" },
       h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
-      // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
-      s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
       h(
@@ -2794,17 +2810,18 @@ function conversationList(list) {
   const q = (ui.cq || "").toLowerCase();
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
   // One list, newest first, so a busy group chat is never below every quiet DM. The switch
-  // narrows it to direct messages a person is in, to those agents sent each other, or to group
-  // chats. Your messages all have you in them, so there it has no Agents tab.
-  const mine = isMyFilter();
-  const kinds = [["all", "All"], ["dm", "Direct"], !mine && ["agents", "Agents"], ["group", "Group"]].filter(Boolean);
-  const kind = kinds.some(([id]) => id === ui.convKind) ? ui.convKind : "all";
-  const of = (c) => (c.kind !== "dm" ? "group" : c.pair.some(isPerson) ? "dm" : "agents");
-  const is = (k, c) => k === "all" || k === of(c);
+  // narrows it to direct messages or group chats.
+  // The toggle under it hides the DMs between two agents from every tab, so a person can read only
+  // what they and the groups are saying. Your messages all have you in them, so it isn't there.
+  const kind = ui.convKind || "all";
+  const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
+  const between = (c) => c.kind === "dm" && !c.pair.some(isPerson);
+  const agentsN = isMyFilter() ? 0 : list.filter(between).length;
+  if (agentsN && !agentChats) list = list.filter((c) => !between(c));
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
-  const rows = list.filter((c) => is(kind, c) && hit(c) && (q || name || !old(c)));
-  const older = q || name ? [] : list.filter((c) => is(kind, c) && old(c));
-  const count = (k) => list.filter((c) => is(k, c) && hit(c) && (q || name || !old(c))).length;
+  const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
+  const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
+  const count = (k) => list.filter((c) => (k === "all" || (k === "dm") === (c.kind === "dm")) && hit(c) && (q || name || !old(c))).length;
   return h(
     "nav",
     { class: "chat-list g-list", "aria-label": "Conversations", onscroll: (e) => (ui.chatListTop = e.target.scrollTop) },
@@ -2865,7 +2882,11 @@ function conversationList(list) {
     h(
       "div",
       { class: "segmented g-kinds", role: "tablist", "aria-label": "Which conversations" },
-      kinds.map(([id, label]) =>
+      [
+        ["all", "All"],
+        ["dm", "Direct"],
+        ["group", "Group"],
+      ].map(([id, label]) =>
         h(
           "button",
           {
@@ -2882,6 +2903,20 @@ function conversationList(list) {
         ),
       ),
     ),
+    agentsN > 0 &&
+      h(
+        "button",
+        {
+          class: "g-agent-toggle",
+          role: "switch",
+          "aria-checked": agentChats ? "true" : "false",
+          "data-key": "agent-chats",
+          onclick: () => setAgentChats(!agentChats),
+        },
+        h("span", { class: "tm-box" + (agentChats ? " on" : "") }, agentChats && icon("check")),
+        h("span", { class: "truncate" }, "Show agent-to-agent chats"),
+        h("span", { class: "g-tab-n" }, agentsN),
+      ),
     rows.map(conversationRow),
     older.length > 0 &&
       h(
@@ -2899,7 +2934,7 @@ function conversationList(list) {
         h("span", { class: "g-sec-n" }, older.length),
       ),
     ui.showOlder && older.map(conversationRow),
-    !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "agents" ? "No messages between agents" : kind === "group" ? "No group chats" : "No conversations"),
+    !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
     kind === "group" && !q && !(name && !isMyFilter()) && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
   );
 }
@@ -3052,11 +3087,14 @@ function chatMessages(c) {
   return out;
 }
 
-// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText).
+// What a person wrote, whole, from the subject and body the bus carries it as (web.SplitText). A
+// subject that is only the body's start, cut short, is left out, as repeatsSubject in
+// internal/view/view.go leaves it out of the agent's turn and inbox.
 function personText(m) {
   const subject = m.subject || "";
   const body = m.body || "";
-  if (subject.endsWith("…") && body.startsWith(subject.slice(0, -1))) return body;
+  const end = ["…", "..."].find((e) => subject.endsWith(e));
+  if (end && body && body.startsWith(subject.slice(0, -end.length))) return body;
   return body ? subject + "\n" + body : subject;
 }
 
