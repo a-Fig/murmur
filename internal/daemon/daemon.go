@@ -93,6 +93,8 @@ type Options struct {
 	// receipts gather before they go on the bus as one receipt (#26): 3 s. A message queued and handed
 	// over within it costs one mark, not two.
 	ReceiptGather time.Duration
+	// ReceiptGap is the least time between two receipts from this device: 15 s.
+	ReceiptGap time.Duration
 	// ContinueHold is how long a Stop's continuation of a turn counts as at work outside T3 before
 	// another hook of the session shows the turn went on: 2 min (see continueTurnLocked).
 	ContinueHold time.Duration
@@ -179,6 +181,9 @@ func (o *Options) defaults() {
 	}
 	if o.ReceiptGather == 0 {
 		o.ReceiptGather = 3 * time.Second
+	}
+	if o.ReceiptGap == 0 {
+		o.ReceiptGap = 15 * time.Second
 	}
 	if o.StaleAfter == 0 {
 		o.StaleAfter = 6 * time.Minute

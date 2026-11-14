@@ -795,7 +795,7 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if tagsOnly && e.Type != bus.Tags && e.Type != bus.Receipt {
 			continue // a receipt, like a tag, is news however late it is read
 		}
-		if mode != modeSkip {
+		if mode != modeSkip && e.Type != bus.Receipt { // a receipt is bookkeeping, not news for the log
 			d.noteLocked(e.At, e.Line())
 		}
 		if e.Type == bus.Tags {

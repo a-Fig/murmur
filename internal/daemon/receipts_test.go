@@ -1,6 +1,8 @@
 package daemon_test
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -70,6 +72,40 @@ func TestAPersonSeesHowFarTheirMessageGotOnAnotherDevice(t *testing.T) {
 	if got := pa.state().Receipts[sent.Messages[0].ID]; got != nil {
 		t.Errorf("an agent's message has receipts: %+v", got)
 	}
+}
+
+// A message handed to a T3 thread as a turn stays handed over: Murmur can't see the turn start. One
+// to a person on another device is delivered once it is in their inbox, and read once they open it.
+func TestReceiptsForATurnAndForAPerson(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	bobName := b.named(bob)
+	pa, pb := a.page(), b.page()
+	pa.choose("ada")
+	pb.choose("bea")
+	bea := b.self() + "/" + bus.PersonSession
+	eventually(t, "presence", func() bool {
+		_, ok := a.whoEntry(bea)
+		return ok && a.seesSession(bob)
+	})
+
+	turn := pa.sendText(bobName, "Can you rerun CI?\nIt flaked.")
+	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
+	eventually(t, "handed over", pa.stateIs(turn, bob, bus.MarkHanded))
+
+	note := pa.sendText("bea", "Lunch?\nAt one.")
+	eventually(t, "delivered: in bea's inbox", pa.stateIs(note, bea, bus.MarkDelivered))
+	if r, _ := pa.receipt(note, bea); !r.Person || r.Name != "bea" {
+		t.Errorf("bea's receipt: %+v", r)
+	}
+	b2, _ := json.Marshal(map[string][]string{"ids": {note}})
+	if code, body := pb.call("POST", "/api/read", pb.token, string(b2)); code != http.StatusNoContent {
+		t.Fatalf("bea opening it: %d %s", code, body)
+	}
+	eventually(t, "read: bea opened it", pa.stateIs(note, bea, bus.MarkRead))
 }
 
 // A message to a group shows each member, on this device and another: marks for a member here never

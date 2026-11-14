@@ -233,8 +233,8 @@ func (d *device) start() {
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
 			SessionGrace: d.grace, StoppedInbox: d.keep, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
-			ReceiptGather: 200 * time.Millisecond,
-			Consent:       d.consent, ConsentPoll: d.consentPoll,
+			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond,
+			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,
 			CodexLineage: d.codexLineage, Log: logger})
 		if err != nil {

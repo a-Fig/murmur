@@ -228,15 +228,16 @@ func (e *Event) Clean() {
 	e.Marks = cleanMarks(e.Type, e.Marks)
 }
 
-// cleanMarks holds a receipt's marks to what Murmur writes: at most MaxMarks, each with a message's
+// cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's
 // ID, a session's ID and a state this version knows. A mark with a state from a newer version is
-// dropped, not the receipt. Any other event carries none.
+// dropped, not the receipt, and so are marks past the cap, which a newer version might raise. Any
+// other event carries none.
 func cleanMarks(typ string, in []Mark) []Mark {
-	if typ != Receipt || len(in) > MaxMarks {
+	if typ != Receipt {
 		return nil
 	}
 	var out []Mark
-	for _, m := range in {
+	for _, m := range in[:min(len(in), MaxMarks)] {
 		if validID(m.Msg) && ValidName(m.To) && MarkRank(m.State) > 0 {
 			out = append(out, m)
 		}

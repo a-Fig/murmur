@@ -1497,11 +1497,16 @@ devices, so their marks travel back over the bus.
   and is nobody's, marks nothing. A turn handed to T3, the socket or a client's command line stays
   handed over: the daemon can't see the turn start.
 - **Marks are batched.** They wait 3 s (`ReceiptGather`) and go out together as one `receipt`
-  event on the recipient device's own log, up to 500 marks to a record; within a batch a message
-  keeps only its furthest state, so a message queued and handed over at once costs one mark, not
-  two. A receipt is an event like any other, so it is encrypted for the team key, and readers can
-  tell neither which messages it marks nor how many. One push per batch per device, and only while
-  people's messages are arriving, keeps the cost to a few records per message a person sends.
+  event on the recipient device's own log, up to 500 marks to a record, and a device's receipts are
+  15 s apart at least (`ReceiptGap`). Within a batch a message keeps only its furthest state, so a
+  message queued and handed over at once costs one mark, not two. A group's members get to a message
+  at different times, each one's delivered and read coming when its own hook or `inbox` does, and
+  the gap gathers those too: without it, a message to ten sessions on five devices could cost twenty
+  receipts. A receipt is an event like any other, encrypted for the team key: a reader without the
+  key can't tell which messages it marks, but can see when a device wrote one and, from its size
+  (boxes aren't padded), roughly how many marks it holds. Receipts are commits on the logs, so they
+  count toward the 4,000 commits the page's read-back looks through ("The page for humans"), and
+  in a busy group chat leave it fewer old messages.
   Marks not yet written are kept in `state.json`, so a daemon that stops first leaves them to the
   next. A mark for a message sent from the same device never goes on the bus: it is applied there.
 - **The sender's daemon keeps the furthest mark per recipient** for its person's newest 200
@@ -1510,9 +1515,11 @@ devices, so their marks travel back over the bus.
   muted the sender. A mark from a session not on that list (it joined the group since) adds it.
   Marks only go forward, so one read late, or twice, changes nothing. A receipt read after a long
   absence, even in a backlog passed over for messages, still counts, as tags do.
-- **An older recipient says so.** A device whose presence doesn't say it writes marks
-  (`Presence.Receipts`, inside the encrypted part) when the message is sent shows as "No receipt",
-  never as unread. A mark that arrives anyway (it updated before reading the message) still counts.
+- **An older recipient says so.** A device whose presence, read when the message is sent, doesn't
+  say it writes marks (`Presence.Receipts`, inside the encrypted part) shows as "No receipt", never
+  as unread. One with no presence here (its daemon exited, as a person's does soon after their page
+  closes) or one this device can't open yet shows as sent, with no mark: it may still write one. A
+  mark that arrives anyway (it updated before reading the message) still counts.
   `proto.Protocol` 21 lets an upgraded `mur` replace a daemon that writes none.
 - **Left for later.** An agent's `send` result, `lookup` and `who` don't show receipts yet (Tyler
   wants it queryable on demand, #26's comment of 2026-11-09). #275's delivered is marked where the

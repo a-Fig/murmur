@@ -69,6 +69,37 @@ func TestTheSenderKeepsTheFurthestMarkAndSaysWhoSendsNone(t *testing.T) {
 	if len(d.receiptsLocked()) != 1 {
 		t.Errorf("a mark for a message that isn't ours was kept: %+v", d.st.Sent)
 	}
+
+	// A device not heard from isn't older: its daemon said goodbye, as a person's does once their
+	// page closes, or its presence can't be opened here yet. It may still mark the message.
+	d.peers["locked-0005"] = &peer{locked: true, lastChange: time.Now()}
+	for _, to := range []string{"gone-0004/human", "locked-0005/human"} {
+		e := bus.Event{ID: bus.NewID(), Type: bus.Message, From: "here-0001/human", To: to, At: time.Now(), Receipts: true}
+		d.recordSentLocked(e)
+		if r := d.receiptsLocked()[e.ID]; len(r) != 1 || r[0].State != "" {
+			t.Errorf("to %s: %+v, want no mark yet", to, r)
+		}
+	}
+	// A direct message's mark from its recipient's device is the recipient's, whichever session wrote
+	// it; one from another device isn't.
+	dm := bus.Event{ID: bus.NewID(), Type: bus.Message, From: "here-0001/human", To: "new-0002/bbbbbb", At: time.Now(), Receipts: true}
+	d.recordSentLocked(dm)
+	d.applyMarkLocked(dm.ID, "new-0002/eeeeee", bus.MarkRead, at)
+	d.applyMarkLocked(dm.ID, "old-0003/cccccc", bus.MarkQueued, at)
+	if m := d.st.Sent[dm.ID].Marks; m["new-0002/bbbbbb"].State != bus.MarkRead || m["old-0003/cccccc"].State != bus.MarkQueued {
+		t.Errorf("a direct message's marks: %+v", m)
+	}
+}
+
+// A receipt keeps its first MaxMarks marks, so one from a version with a higher cap isn't lost whole.
+func TestAReceiptOverTheCapKeepsItsFirstMarks(t *testing.T) {
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Receipt, From: "new-0002/receipts"}
+	for range bus.MaxMarks + 3 {
+		e.Marks = append(e.Marks, bus.Mark{Msg: bus.NewID(), To: "bbbbbb", State: bus.MarkRead})
+	}
+	if e.Clean(); !e.Valid() || len(e.Marks) != bus.MaxMarks {
+		t.Errorf("valid %v with %d marks", e.Valid(), len(e.Marks))
+	}
 }
 
 // Only the newest maxSent messages keep their receipts.
