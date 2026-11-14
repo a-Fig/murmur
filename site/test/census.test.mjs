@@ -497,7 +497,7 @@ test("an encrypted record's size is the event's inside it, whatever its base64 p
   for (const size of [1, 2, 3, 120, 121, 122, 1090]) assert.equal(boxedSize(record(boxed(size))), size, String(size));
   // Not a box, or not one Murmur wrote: no size, so no estimate.
   for (const r of [{ type: 'message' }, { type: 'box' }, { type: 'box', box: null }, { type: 'box', box: { data: 7 } },
-    { type: 'box', box: { data: 'not base64!' } }, { type: 'box', box: { data: 'AAAA' } }, { type: 'message', box: { data: Buffer.alloc(500).toString('base64') } }]) {
+    { type: 'box', box: { data: 'not base64!' } }, { type: 'box', box: { data: 'AAAA' } }, { type: 'box', box: { data: 'A'.repeat(401) } }, { type: 'message', box: { data: Buffer.alloc(500).toString('base64') } }]) {
     assert.equal(boxedSize(r), null, JSON.stringify(r));
   }
 });
@@ -716,6 +716,23 @@ test('bytes are kept, only ever raised, and shown as sizes beside the records', 
 });
 
 test('a size reads as people write one', () => {
-  assert.deepEqual([0, 999, 1000, 12345, 123456, 999999, 4560000, 2.5e9, undefined].map(size),
-    ['0 B', '999 B', '1.00 kB', '12.3 kB', '123 kB', '1000 kB', '4.56 MB', '2.50 GB', '0 B']);
+  assert.deepEqual([0, 999, 1000, 12345, 123456, 4560000, 2.5e9, 5e12, undefined].map(size),
+    ['0 B', '999 B', '1.00 kB', '12.3 kB', '123 kB', '4.56 MB', '2.50 GB', '5000 GB', '0 B']);
+  // Rounded before the unit is chosen: never 1000 kB or 100.0 kB.
+  assert.deepEqual([9999, 99999, 999499, 999999, 999999999].map(size), ['10.0 kB', '100 kB', '999 kB', '1.00 MB', '1.00 GB']);
+});
+
+test("a commit larger than any Murmur writes is passed over, as a daemon passes it over", t => {
+  const { dir, commit } = repo(t);
+  const mesh = 'refs/murmur/mesh/dev1';
+  commit(mesh, event({ v: 1, type: 'message', at: AT, body: 'x' }), { date: AT });
+  // Git packs these to a few kilobytes: a megabyte and more of padding, in a record and in a box.
+  commit(mesh, event({ v: 1, type: 'message', at: AT, body: 'x'.repeat(2 << 20) }), { date: AT });
+  commit(mesh, boxed(2 << 20), { date: AT });
+  commit('refs/murmur/names', named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: AT, pad: 'x'.repeat(2 << 20) }), { date: AT });
+  const c = count(dir, { now: NOW });
+  assert.deepEqual(c.totals, {
+    sessions: 0, messages: 1, records: 1, bytes: Buffer.byteLength(JSON.stringify({ v: 1, type: 'message', at: AT, body: 'x' })),
+    est_sessions: 0, est_messages: 0, first_day: '2026-11-05', last_day: '2026-11-05',
+  });
 });

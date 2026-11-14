@@ -352,8 +352,11 @@ export const approx = (exact, est) => (est ? `≈${exact + est}` : String(exact)
 export function size(n) {
   const b = n ?? 0;
   if (b < 1000) return `${b} B`;
-  const [v, unit] = b < 1e6 ? [b / 1e3, 'kB'] : b < 1e9 ? [b / 1e6, 'MB'] : [b / 1e9, 'GB'];
-  return `${v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)} ${unit}`;
+  // The unit is chosen after rounding, so 999,999 bytes is 1.00 MB, not 1000 kB.
+  for (const [unit, k] of [['kB', 1e3], ['MB', 1e6], ['GB', 1e9]]) {
+    const v = b / k;
+    if (v < 999.5 || unit === 'GB') return `${v < 9.995 ? v.toFixed(2) : v < 99.95 ? v.toFixed(1) : v.toFixed(0)} ${unit}`;
+  }
 }
 
 // The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.

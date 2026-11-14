@@ -286,8 +286,11 @@ const approx = (n, est) => (est ? '≈' : '') + fmt(n + (est || 0));
 const size = n => {
   const b = n || 0;
   if (b < 1000) return `${b} B`;
-  const [v, unit] = b < 1e6 ? [b / 1e3, 'kB'] : b < 1e9 ? [b / 1e6, 'MB'] : [b / 1e9, 'GB'];
-  return `${v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)} ${unit}`;
+  // The unit is chosen after rounding, so 999,999 bytes is 1.00 MB, not 1000 kB.
+  for (const [unit, k] of [['kB', 1e3], ['MB', 1e6], ['GB', 1e9]]) {
+    const v = b / k;
+    if (v < 999.5 || unit === 'GB') return `${v < 9.995 ? v.toFixed(2) : v < 99.95 ? v.toFixed(1) : v.toFixed(0)} ${unit}`;
+  }
 };
 // The same on an axis, without the zeros a round tick ends in: 2.5 kB, not 2.50 kB.
 const sizeTick = v => size(v).replace(/\.(\d*?)0+ /, (m, d) => (d ? '.' + d : '') + ' ');
@@ -469,7 +472,7 @@ function repoTable(box, list, colors) {
   if (!list.length) { box.append(el('div', { class: 'empty' }, 'No repos yet.')); return; }
   const table = el('table');
   const head = el('tr');
-  const cols = [['Repo'], ['Contributors', 1], ['Devices', 1], ['People', 1], ['Bus records', 1], ['Data', 1], ['Sessions', 1], ['Messages', 1], ['Days active', 1], ['First on the bus'], ['Last on the bus']];
+  const cols = [['Repo'], ['Contributors', 1], ['Devices', 1], ['People', 1], ['Records', 1], ['Data', 1], ['Sessions', 1], ['Messages', 1], ['Days active', 1], ['First on the bus'], ['Last on the bus']];
   for (const [t, num] of cols) head.append(el('th', num ? { class: 'num' } : {}, t));
   table.append(head);
   for (const r of list) {
@@ -524,7 +527,7 @@ function render() {
   $('t-bytes').textContent = size(d.bytes);
   $('t-bytes-note').textContent = `the size of their events; ${size(d.weekBytes)} in the last ${d.week} days`;
   $('t-devices').textContent = fmt(d.devices);
-  $('t-devices-note').textContent = `clones that have run Murmur, of ${plural(d.people, 'person', 'people')}`;
+  $('t-devices-note').textContent = 'clones that have run Murmur in these repos';
   // Sessions and messages are the exact counts and the estimates of what encrypted buses hide
   // together, marked ≈ when any of it is estimated; the line under the tiles says how.
   const estimated = n => (n ? `; ${fmt(n)} of the total estimated` : '');

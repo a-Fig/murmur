@@ -87,10 +87,17 @@ const dayOf = t => {
 const EPOCH = '2026-10-01';
 const latestDay = now => new Date(now + 864e5).toISOString().slice(0, 10);
 
-// Each commit on ref, newest first: its hash, committer date and message.
+// The largest commit message a reader of the bus reads: Murmur's own limit (internal/bus/repo.go,
+// MaxRecord), which nothing it writes comes near. Git stores a message compressed, so a repo can
+// push megabytes of padding in a few kilobytes; a daemon passes such a commit over as junk, and so
+// does the census, or one commit could add gigabytes to a repo's bytes for good.
+const MAX_RECORD = 1 << 20;
+
+// Each commit on a bus ref, newest first: its hash, committer date and message. One whose message
+// is over MAX_RECORD is left out.
 function log(dir, ref, deadline) {
   const out = git(dir, ['log', '--format=%H%x00%cI%x00%B%x01', ref], deadline);
-  return out.split('\x01').map(s => s.replace(/^\n/, '')).filter(s => s.includes('\x00')).map(s => {
+  return out.split('\x01').map(s => s.replace(/^\n/, '')).filter(s => s.includes('\x00') && Buffer.byteLength(s) <= MAX_RECORD).map(s => {
     const [hash, date, msg] = s.split('\x00');
     return { hash, date, msg };
   });
@@ -181,13 +188,13 @@ const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
 //   was until the sessions since the snapshot pass it.
 const MESSAGE_FROM = 180;
 const GCM_TAG = 16;
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 const NAME = /^[a-z0-9-]{1,40}$/;
 
 // The length in bytes of the event inside an encrypted record, or null if r isn't one.
 export function boxedSize(r) {
   const data = r.type === 'box' && r.box && typeof r.box === 'object' ? r.box.data : null;
-  if (typeof data !== 'string' || !BASE64.test(data)) return null;
+  if (typeof data !== 'string' || data.length % 4 || !BASE64.test(data)) return null;
   const size = (data.length / 4) * 3 - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) - GCM_TAG;
   return size > 0 ? size : null;
 }
