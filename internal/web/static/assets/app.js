@@ -1553,6 +1553,10 @@ function sessionCard(d, s) {
           { class: "s-line name-line" },
           h("span", { class: "s-name truncate" }, s.name),
           h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          // The hook never reported after a tool call, so the session isn't told of messages while it
+          // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
+          // cell there shifted chats, state and Message one column over (#546).
+          s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
           tagChips(s, 3, true),
         ),
         h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
@@ -1563,8 +1567,6 @@ function sessionCard(d, s) {
       { class: "s-meta" },
       h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
-      // The hook never reported after a tool call, so the session isn't told of messages while it works (#225).
-      s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
       h(
