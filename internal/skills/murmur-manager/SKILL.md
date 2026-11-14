@@ -39,7 +39,8 @@ about the job: deciding, staffing, checking and reporting.
 ## Know the state before acting
 
 - **After any gap, rebuild the picture:** who's live and on what (`who`, `lookup`), the open PRs
-  and how close each is to merging, and which issues are claimed.
+  and how close each is to merging, and which issues are claimed. The repo's rules say how an
+  issue is claimed; where they don't, an agent's Murmur status is its claim.
 - **Before saying "nobody's on it" or "nothing was pushed",** look everywhere work can hide: the
   claim on the issue, remote branches, and local worktrees. Agents crash after pushing and before
   opening a PR.
@@ -65,7 +66,8 @@ about the job: deciding, staffing, checking and reporting.
 
 ## Thread, delegate or subagent
 
-Pick in this order:
+Pick in this order. Delegates and new threads are T3's; elsewhere, the choice is between a live
+agent and a subagent.
 1. **A live agent** on your user's device that already has the context. Send it the work over
    Murmur.
 2. **A subagent** (native `Agent`), for a read-only answer you need: a review of a few commits, an
@@ -117,7 +119,7 @@ Pick in this order:
 - **Short.** Lead with the answer, link every PR you mention, and use plain words.
 - **"What should I OK?"** Give a numbered list in merge order, one line each on what it does and
   why it's in that place.
-- **"What's the point of #N?"** Give the problem in user terms, then the fix, then your honest view.
+- **"What's the point of #N?"** Give the problem in terms of the people who use the product, then the fix, then your honest view.
   Change your recommendation openly when the facts change.
 - **Lead with the cheaper route** when there is one.
 - **Separate three things:** what's done, what's waiting on the user (with the decision), and

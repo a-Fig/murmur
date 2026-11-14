@@ -532,8 +532,8 @@ at the page (`mur ui`), and the commands left are `init`, `join`, `ui`, `stop`, 
   to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a team
   of agents as its user's COO (#548). A model may load it on its own, so it opens by saying to
   follow it only when the user has made the session the manager in words, and otherwise to ignore
-  it. A SKILL.md of the same name without the skills'
-  marker comment is the user's own, and is left alone; one with it is rewritten to this binary's.
+  it. A SKILL.md of the same name without the skills' marker comment is the user's own, and is
+  left alone; one with it is rewritten to this binary's.
   A leave leaves them, like the server, and says how to delete them. Unlike the server, they cost
   every session of those agents their descriptions' worth of context in any repo, so each
   description starts by saying it applies only where the repo has the Murmur section. The folders
