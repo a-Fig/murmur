@@ -4895,6 +4895,7 @@ let tipTimer = 0;
 let tipHiddenAt = 0;
 let tipShown = false;
 let pointerX = 0;
+let pointerY = 0;
 
 function tipText(el) {
   return el.dataset.tip || el.dataset.tipTitle || el.getAttribute("title") || "";
@@ -4956,18 +4957,37 @@ function hideTip() {
 // refreshTip runs after each render. A tip that shows was for an element the render may have
 // replaced, and whose text may have changed (a tick that moved on to read): it moves to the element
 // with the same data-key and reads its text again, or goes if there is none.
+// An element without a data-key is found again by what is under the mouse, as a hover tip's is.
 let renderedAt = 0;
 function refreshTip() {
   renderedAt = Date.now();
   if (!tipShown || !tipFor) return;
   const key = tipFor.dataset.key;
-  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
+  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : tipTarget(document.elementFromPoint(pointerX, pointerY));
   if (!el) return hideTip();
-  if (el !== tipFor) {
-    tipFor = el;
-  }
+  tipFor = el;
   borrowTitle(el); // a render takes off what borrowing put on an element it kept
-  showTip(el, false);
+  placeTip();
+}
+
+// placeTip shows the tip again where its element is now, or hides it if that has scrolled out of view.
+function placeTip() {
+  if (!tipShown || !tipFor) return;
+  if (!inView(tipFor)) return hideTip();
+  showTip(tipFor, false);
+}
+
+// inView says el is on screen: in the window, and in each scrolling element it sits in.
+function inView(el) {
+  if (!el.isConnected) return false;
+  const r = el.getBoundingClientRect();
+  if (r.bottom <= 0 || r.top >= window.innerHeight) return false;
+  for (let a = el.parentElement; a; a = a.parentElement) {
+    if (!/auto|scroll/.test(getComputedStyle(a).overflowY)) continue;
+    const box = a.getBoundingClientRect();
+    if (r.bottom <= box.top || r.top >= box.bottom) return false;
+  }
+  return true;
 }
 
 // showTipNow shows el's tip at once, for a tap, which the pointer's hover never brings.
@@ -5006,11 +5026,15 @@ function tipTarget(node) {
 
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
+  // A render that replaces the element under a still mouse brings a pointerover the mouse didn't
+  // make. refreshTip has already moved the tip, and it mustn't hide one that focus or a tap opened.
+  if (Date.now() - renderedAt < 250 && e.clientX === pointerX && e.clientY === pointerY) return;
   pointerX = e.clientX;
+  pointerY = e.clientY;
   const el = tipTarget(e.target);
   el ? queueTip(el, true) : hideTip();
 });
-document.addEventListener("pointermove", (e) => (pointerX = e.clientX), { passive: true });
+document.addEventListener("pointermove", (e) => ((pointerX = e.clientX), (pointerY = e.clientY)), { passive: true });
 document.documentElement.addEventListener("pointerleave", hideTip);
 document.addEventListener("focusin", (e) => {
   const el = tipTarget(e.target);
@@ -5020,8 +5044,9 @@ document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
 // Escape also cancels a tip that is still waiting to show.
 document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
-// A render puts the thread's scroll back, which fires a scroll; only a scroll of someone's hides a tip.
-document.addEventListener("scroll", () => Date.now() - renderedAt > 250 && hideTip(), { capture: true, passive: true });
+// A render puts the thread's scroll back, which fires a scroll; a tip outlives that unless its element
+// went out of view. Any other scroll hides it.
+document.addEventListener("scroll", () => (Date.now() - renderedAt > 250 ? hideTip() : placeTip()), { capture: true, passive: true });
 
 setInterval(tick, 10000);
 start();
