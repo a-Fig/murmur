@@ -3180,7 +3180,7 @@ function receiptLabel(state) {
 // for several (Tyler, 2026-11-13: a few words, no sentences). Delivered is knowing a message waits,
 // read is having it (#325); sent covers every step before.
 const RECEIPT_MEANS = {
-  sent: ["Sent: not picked up yet", "Sent: not all picked up yet"],
+  sent: ["Sent", "Sent"],
   delivered: ["Delivered: not read yet", "Delivered: not all read yet"],
   read: ["Read", "Read"],
 };

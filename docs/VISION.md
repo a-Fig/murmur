@@ -1490,7 +1490,7 @@ travel back over the bus.
   whose Murmur sends no receipts: the tick says what the person can act on, and the bus keeps the
   rest. A message to several shows the lowest state among them, so it reads as read only once
   everyone has read it, and one that found nobody to send to shows as sent. The tick's tooltip says
-  its state in a few words ("Read", "Delivered: not read yet", "Sent: not picked up yet"), then
+  its state in a few words ("Read", "Delivered: not read yet", "Sent"), then
   lists who has it and since when, each member of a group with their own state. Nothing else shows
   them (Tyler, 2026-11-13: not a list under the message). It shows on hover, on keyboard focus, and
   on a tap where nothing hovers. A message from before receipts, or past the newest 200, has no
