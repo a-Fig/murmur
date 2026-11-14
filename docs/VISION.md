@@ -322,7 +322,8 @@ a team key, below.
   public keys; the name registry; and `refs/murmur/reported`. They don't see messages, subjects, who
   sent what to whom, statuses, branches, tags, hosts, owners, agents, or who is on a roster.
 - **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
-  `owner` or an event's kind, now that encryption hides them from it; whether new clones should
+  `owner` or an event's kind, now that encryption hides them from it (since #550 it estimates
+  messages and sessions instead); whether new clones should
   get a device ID without the hostname in it (#330); and when a rotation should happen without
   anyone running `mur rotate`.
 
@@ -2345,20 +2346,64 @@ in the state dir's `latest.json`; with updates off it hears of none.
 
 The counts come from the census (#259), which reads what each reported repo shows anyone. Once a
 day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches
-the commits, without their files, of each repo's device logs and presences
-(`refs/murmur/mesh/*`, `refs/murmur/presence/*`) and of its default branch, and sends the
+the commits, without their files, of each repo's device logs, presences and name registry
+(`refs/murmur/mesh/*`, `refs/murmur/presence/*`, `refs/murmur/names`) and of its default branch, and sends the
 site counts and hashes, never content: per UTC day, the sessions started (each once, though a
-daemon that restarts announces its sessions again), the messages and all records, and a hash of
+daemon that restarts announces its sessions again), the messages, all records and the bytes their
+events come to, and a hash of
 each device that wrote anything, presence included; a hash of each device's owner, the git user name
 its presence shows; and for each contributor, a hash of their GitHub login or email and the day of
 their first commit, so one person in two repos counts once. The site only ever raises a count and
 keeps every device and owner it has seen, since a bus log can be rewritten and a daemon deletes its
 presence when it stops. It runs from GitHub,
 not from the Worker, because counting needs git, and a fetch of the whole bus is one request where
-the API would need one per commit. Once the bus is encrypted (#257) a record's kind is hidden from a
-public reader, so messages stop being told from other records, and only records are counted. An
-updated device's presence hides its owner and sessions too, so the census then can't count its
-sessions or tell its person apart. Whether some of that should stay readable is open on #156.
+the API would need one per commit.
+
+Since 0.3 every event is encrypted (#156), with its kind sealed inside, so the census counts an
+encrypted log's records exactly but can't read which are messages or session starts. Tyler's
+decision (2026-11-13, #550): it estimates them, since 0 is wrong and "unknown" says too little, and
+the stats say which figures hold an estimate: the page with an asterisk on sessions and on
+messages, the report with ≈ on each such figure. The census decrypts nothing and holds
+no key. It reads only public repos, and uses two things any reader of one sees (see "What anyone who
+can read a public repo still sees"): how large each record is, and the name registry. A size gives
+away roughly what kind of event a record is, never what it says.
+
+- **Messages, from size.** An encrypted record's length gives the length of the event inside it
+  exactly, and a message is longer than a session's start or stop. An encrypted event 180 bytes or
+  more longer than its device's ID counts as a message. Measured on 2026-11-13 against the
+  unencrypted history of two public repos (155 messages, 1,094 session starts and stops), that cut
+  missed 8 messages, 5%, each with no body and a short subject, and took no session event for a
+  message. So the estimate runs about 5% low on traffic like that. It can run high where that
+  history had nothing to measure: a start reads as a message once its agent and branch together
+  pass about 55 characters (the longest seen were 47), and so does a tags or group-add event with
+  some 40 characters of tags. It had no message to a group or to everyone either, which is
+  shorter and so missed more often. Checked the same day against the truth on four buses Tyler's
+  machine could read whole (three with their team key, opened only for each event's type and
+  lengths; 868 messages and 1,598 other records, most of them not among those measured), the cut
+  missed 19 messages, 2.2%, and 0 to 5.2% by repo, and took no other record for a message. The
+  longest start came within 7 bytes of it.
+- **Sessions, from the name registry.** Size can't count them: a start announced again after a
+  daemon restarts, a tags event and a group-add are all the size of a start, and start-sized
+  records came to 1.3 to 3 times the sessions on the buses measured. The registry isn't encrypted
+  and records each session that takes a name, by its ID: it held 445 of the 446 sessions
+  that history started. A session it names that no unencrypted start shows counts as estimated,
+  on the day of its registry record. In that check it gave, with the exact count, 569 of the four
+  buses' 570 sessions. A session another session started takes a name but, since #487, writes no
+  start, so the registry counts it too.
+
+The estimates are sent and kept apart from the exact counts (`est_sessions`, `est_messages`), and
+`site/census/census.mjs` has the measurements. The site only ever raises them, as it does every
+count, so if the census later estimates differently and lower, what is stored stays until someone
+lowers it in D1 by hand. An updated device's presence hides its owner too, so
+the census can't tell its person apart; whether that should stay readable is open on #156.
+
+What encryption doesn't hide is how many records a device wrote and how large they are, so the
+stats page is built around those (Tyler, 2026-11-13). Bytes are the size of each record's event as
+JSON, which for an encrypted event is the event inside the box, so a log weighs the same encrypted
+or not. They grow with what agents say to each other, which makes them the exact measure of a bus's
+traffic. The page shows repos and users first, then what is measured (records, bytes, devices,
+contributors), then sessions and messages, the figures that matter most, estimated where a bus is
+encrypted.
 
 Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
 private, or deleted) keeps the counts it had. A repo may take 3 minutes, for its git and its
