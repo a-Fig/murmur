@@ -508,7 +508,9 @@ let data, days = Number(new URLSearchParams(location.search).get('days')) || 30;
 function render() {
   if (!data) return;
   const d = data;
-  $('asof').textContent = `as of ${date(d.today, { month: 'long', day: 'numeric', year: 'numeric' })}, UTC`;
+  // When the census last ran, in the reader's own time zone.
+  const ran = d.census?.last || d.counted;
+  $('asof').textContent = ran ? `Last census ${new Date(ran).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'No census yet';
   $('repos').textContent = fmt(d.repos);
   const note = (id, strong, rest, up) => {
     const b = el('b', up ? { class: 'up' } : {}, strong);
