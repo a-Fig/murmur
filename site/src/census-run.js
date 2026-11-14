@@ -7,6 +7,12 @@
 // once can't both slip past a check the other hasn't landed yet. A dispatch GitHub refuses (or
 // that never answers) deletes its row again, so a failed start doesn't spend the slot.
 //
+// The 15-minute gap is shorter than the 30 minutes src/repos.js (RUN) takes counts within to be
+// one census run, and the scheduled run isn't recorded here at all: two runs that close together
+// read as one to the page's census health, so a repo the second of them missed isn't named as
+// missed. Tyler set the gap at 15 minutes knowing that (#557); the counts themselves are exact
+// either way, and the next run over 30 minutes later names what it misses again.
+//
 // The dispatch token is the CENSUS_RUN_TOKEN secret: a fine-grained GitHub token scoped to
 // a-Fig/murmur with only the Actions permission dispatching a workflow needs. It is deliberately
 // not the site's GITHUB_TOKEN, which only raises a read rate limit, so the read path never holds
@@ -25,7 +31,7 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
   }
   const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
   if (type !== 'application/json') {
-    return new Response('Only application/json.\n', { status: 415, headers: { ...headers, Accept: 'application/json' } });
+    return new Response('Only application/json.\n', { status: 415, headers: { ...headers, 'Accept-Post': 'application/json' } });
   }
   const token = String(env.CENSUS_RUN_TOKEN || '');
   if (!token) {
@@ -52,7 +58,10 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
         message: `${PER_DAY} manual runs already today; the limit resets at midnight UTC.`,
       }, { ...headers, 'Retry-After': String(retryAfterSeconds) });
     }
-    const retryAfterSeconds = Math.max(1, Math.ceil((Date.parse(last) + GAP_MS - now) / 1000));
+    // `last` can be gone by now: the run that blocked this one may have failed and freed its
+    // slot between the refused INSERT and this read. Then there is nothing to wait for.
+    const lastMs = last ? Date.parse(last) : NaN;
+    const retryAfterSeconds = Number.isFinite(lastMs) ? Math.max(1, Math.ceil((lastMs + GAP_MS - now) / 1000)) : 1;
     const minutes = Math.ceil(retryAfterSeconds / 60);
     return json(429, {
       ok: false, runsToday, retryAfterSeconds,
@@ -77,7 +86,8 @@ export async function runCensus(request, env, headers, { now = Date.now() } = {}
   } catch (err) {
     console.log(`starting the census: ${err}`);
     await release(env.DB, id);
-    return json(502, { ok: false, message: "GitHub didn't answer, so no run was started and nothing was counted against the limit." }, headers);
+    // GitHub may have started the run before the answer was lost, so this doesn't claim none was.
+    return json(502, { ok: false, message: "GitHub didn't answer, so the start couldn't be confirmed; nothing was counted against the limit." }, headers);
   }
   if (!res.ok) {
     // A 204 with no body is the only success; anything else means no run, so the slot is freed.

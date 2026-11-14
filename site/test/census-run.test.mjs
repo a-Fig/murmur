@@ -86,6 +86,27 @@ test('a second run within 15 minutes is refused and dispatches nothing', skip, a
   assert.equal(await rows(db), 1);
 });
 
+test("a slot freed while a refused run is being answered doesn't make its wait NaN", skip, async () => {
+  const db = await sqliteD1();
+  await seed(db, '2026-11-14T11:55:00.000Z');
+  // The blocking run's dispatch fails and frees its slot after this run's INSERT was refused but
+  // before its state is read: the day's rows vanish under it, as the review of #557 pointed out.
+  const gone = {
+    ...db,
+    prepare(sql) {
+      if (sql.includes('COUNT(*) AS n FROM census_runs')) db.sql.exec('DELETE FROM census_runs');
+      return db.prepare(sql);
+    },
+  };
+  await withFetch(new Response(null, { status: 204 }), async calls => {
+    const res = await runCensus(post(), { DB: gone, CENSUS_RUN_TOKEN: 'run-token' }, HEADERS, { now: NOW });
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get('Retry-After'), '1');
+    assert.match((await res.json()).message, /try again in 1 minute/);
+    assert.equal(calls.length, 0);
+  });
+});
+
 test('a run 15 minutes after the last one is allowed', skip, async () => {
   const db = await sqliteD1();
   await seed(db, '2026-11-14T11:45:00.000Z');

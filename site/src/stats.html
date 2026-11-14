@@ -609,6 +609,8 @@ $('run-census').addEventListener('click', async () => {
     });
     const body = await res.json().catch(() => null);
     note.textContent = body?.message || `The census couldn't be started (${res.status}).`;
+    // A census takes under a minute; draw the numbers again once it has had time to land.
+    if (res.ok) setTimeout(load, 60000);
   } catch {
     note.textContent = "The census couldn't be started: the site didn't answer.";
   }
