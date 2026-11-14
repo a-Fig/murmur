@@ -91,7 +91,9 @@ const (
 //	    through it (#452)
 //	20: the route's Child and ParentNative: a Codex tool call says its thread is a subagent's, and
 //	    the session is a child from that call on (#487)
-const Protocol = 20
+//	21: receipts (#26): a daemon of 20 or less writes no marks for its sessions, and its page shows
+//	    none for its person's messages, so an upgraded mur replaces it where it may.
+const Protocol = 21
 
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12

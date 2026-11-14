@@ -471,6 +471,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		msgs := d.messageViewsLocked(read, true)
 		d.explainViewsLocked(msgs, func(int) []string { return []string{sess} })
+		d.markAllLocked(sess, read, bus.MarkRead)
 		if len(left) == 0 {
 			delete(d.st.Inbox, sess)
 		} else {
@@ -641,6 +642,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 				if room.takeNotice(m) {
 					m.Held = d.hookBusyLocked(id) && d.holdableLocked(id, m, wake, d.turnStartLocked(id))
 					m.Noticed, m.NoticedAt = true, time.Now()
+					d.markLocked(id, m.Event, bus.MarkDelivered)
 					fresh = append(fresh, m)
 				}
 			}
@@ -868,11 +870,20 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: body}
 	if bus.IsPerson(from) {
+		// A person's message asks for receipts, which the page shows (#26). It is kept with its
+		// recipients before it is written, as one on this device marks it while it is.
 		d.mu.Lock()
-		e.Person = d.st.Person
+		e.Person, e.Receipts = d.st.Person, true
+		d.recordSentLocked(e)
 		d.mu.Unlock()
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
+		if e.Receipts {
+			d.mu.Lock()
+			delete(d.st.Sent, e.ID)
+			d.saveLocked()
+			d.mu.Unlock()
+		}
 		return fail("not sent: " + err.Error())
 	}
 	note = strings.TrimSpace(renamed + " " + note)

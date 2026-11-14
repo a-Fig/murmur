@@ -1476,6 +1476,51 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   (an old one still reaches it after a move) and a device beside one of its sessions each still send.
   A device's ID looks like a person's name, so a list can't tell one apart to refuse it.
 
+### Receipts
+
+#26, first part built 2026-11-13, for a hackathon user who asked, after writing in a group chat on
+the page, whether the agents got it. Each message a person sends from the page shows, per
+recipient, how far it got, in the words of "What 'delivered' and 'read' mean": one recipient's state
+("Read"), or for several a count ("Read by 2 of 3", or "Reached 3 of 3" when nobody has read it yet),
+with each one's state on hover and in a list a tap opens. The recipients' daemons are on other
+devices, so their marks travel back over the bus.
+
+- **A message asks for receipts** (`Event.Receipts`), and only a person's from the page asks now. A
+  recipient's daemon writes marks only for messages that ask, so agents' chatter costs the bus
+  nothing, and a later opt-in for agents (#276) needs no change on the recipients' side: daemons
+  from this version on already honor the flag, whoever sets it.
+- **The recipient's daemon marks each state as it sees it**: queued when the message goes in a
+  session's inbox, handed over when the client took it as a turn, delivered when the hook's notice
+  told the session, read when the session had it whole (`inbox`, the hook's whole message, the
+  `Stop` hook's continuation). For a person, being in their inbox is delivered (the page counts it
+  as unread), and opening the conversation is read. The CLI's mailbox, which takes every broadcast
+  and is nobody's, marks nothing. A turn handed to T3, the socket or a client's command line stays
+  handed over: the daemon can't see the turn start.
+- **Marks are batched.** They wait 3 s (`ReceiptGather`) and go out together as one `receipt`
+  event on the recipient device's own log, up to 500 marks to a record; within a batch a message
+  keeps only its furthest state, so a message queued and handed over at once costs one mark, not
+  two. A receipt is an event like any other, so it is encrypted for the team key, and readers can
+  tell neither which messages it marks nor how many. One push per batch per device, and only while
+  people's messages are arriving, keeps the cost to a few records per message a person sends.
+  Marks not yet written are kept in `state.json`, so a daemon that stops first leaves them to the
+  next. A mark for a message sent from the same device never goes on the bus: it is applied there.
+- **The sender's daemon keeps the furthest mark per recipient** for its person's newest 200
+  messages, in `state.json`, with the recipients it expected when it sent: the one it was sent to,
+  or for a group, a device or everyone, the sessions it saw there, less offline ones and those that
+  muted the sender. A mark from a session not on that list (it joined the group since) adds it.
+  Marks only go forward, so one read late, or twice, changes nothing. A receipt read after a long
+  absence, even in a backlog passed over for messages, still counts, as tags do.
+- **An older recipient says so.** A device whose presence doesn't say it writes marks
+  (`Presence.Receipts`, inside the encrypted part) when the message is sent shows as "No receipt",
+  never as unread. A mark that arrives anyway (it updated before reading the message) still counts.
+  `proto.Protocol` 21 lets an upgraded `mur` replace a daemon that writes none.
+- **Left for later.** An agent's `send` result, `lookup` and `who` don't show receipts yet (Tyler
+  wants it queryable on demand, #26's comment of 2026-11-09). #275's delivered is marked where the
+  daemon sees the hook fetch a notice, which is as far as it can see; whether the agent's context
+  took it is still unknown. #276's opt-in "tell me" would set the flag on an agent's message and
+  notify the sender once from the marks. A recipient that is idle, on do not disturb or offline
+  shows only as queued or with no mark: saying why (#26's "idle 12 min") isn't built.
+
 ### When a session stays the same session
 
 A session's name (#20) lasts as long as its client treats it as the same conversation, so it
@@ -1723,9 +1768,9 @@ whole then says a notice told of it, so the agent doesn't take it for a second m
 | The hook's notice (Claude Code, and Pi through its extension) | delivered when the hook's `additionalContext` is added, after the agent's next tool call or at its next prompt, with the sender and subject. Where the page's busy setting says whole message (#204), it is read then instead. So is a message with no body, whatever the setting: its notice would show all of it, and until 2026-11-09 it stayed unread and came again as a turn (#355). A message told of is read later by `inbox`, by the `Stop` hook keeping the turn going with it, or as a turn handed over when the turn ends | Partly: the daemon sees the hook fetch the notices (`Noticed`), not the hook's output reach the agent |
 | `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer, not the answer reach the agent through MCP |
 
-Nothing reports a message's state to its sender yet. Whatever does (#26, `who`, `lookup`, the web
-page) shows queued, handed over, delivered and read as different states, and a handed-over message
-as read only once something can see the turn start.
+Receipts report these states back to the sender (#26; "Receipts", below): queued, handed over,
+delivered and read as different states, and a handed-over message as read only once something can
+see the turn start, which nothing can yet.
 
 The daemon hands a message over at once, when it arrives for a session it can reach, unless the
 hook has the session at work (see "A session at work", below):

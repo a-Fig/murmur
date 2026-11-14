@@ -106,6 +106,7 @@ const ui = {
   armed: null, // the group chat whose next send goes: its key
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
   drawer: false, // on a phone, whether the sidebar's drawer is open
+  openReceipts: new Set(), // the person's messages whose receipt lists are open, by ID (#26)
 };
 
 class AuthError extends Error {
@@ -3137,6 +3138,7 @@ function chatMessage(m, from, at, head) {
       "article",
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
       h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      receiptLine(m),
       h("div", { class: "chat-msg-meta" }, time, copyButton(copy)),
     );
   }
@@ -3154,6 +3156,87 @@ function chatMessage(m, from, at, head) {
       messageText(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
+  );
+}
+
+// How far one of the person's messages got (#26), from the marks its recipients' devices send back
+// (docs/VISION.md, "Receipts"): one recipient's state, or, for several, how many have read it, or
+// failing that how many it reached. Hovering lists each one; a tap opens the list under it. A
+// message from before receipts, or past the newest 200, shows nothing rather than a guess.
+function receiptWord(r) {
+  switch (r.state) {
+    case "read":
+      return "Read";
+    case "delivered":
+      return "Delivered";
+    case "handed":
+      return "Handed over";
+    case "queued":
+      return "Queued";
+    case "none":
+      return "No receipt";
+  }
+  return "Sent";
+}
+
+// The words are VISION's (#325): delivered is knowing a message waits, read is having it.
+function receiptDetail(r) {
+  const t = when(r.at) ? " at " + clockTime(r.at) : "";
+  switch (r.state) {
+    case "read":
+      return r.name + (r.person ? " opened it" : " has it") + t;
+    case "delivered":
+      return (r.person ? "Unread in " + r.name + "'s inbox" : r.name + " was told it is waiting") + t;
+    case "handed":
+      return "Given to " + r.name + " as a turn" + t + ". " + NAME + " can't see the turn start";
+    case "queued":
+      return "Waiting in " + r.name + "'s inbox" + t;
+    case "none":
+      return r.name + "'s " + NAME + " is older, and sends no receipts";
+  }
+  return "Not on " + r.name + "'s device yet";
+}
+
+function receiptLine(m) {
+  const rs = ui.state?.receipts?.[m.id];
+  if (!rs?.length) return null;
+  let text;
+  if (rs.length === 1) {
+    text = receiptWord(rs[0]);
+  } else {
+    const n = rs.length;
+    const read = rs.filter((r) => r.state === "read").length;
+    const reached = rs.filter((r) => r.state && r.state !== "none").length;
+    const none = rs.filter((r) => r.state === "none").length;
+    text = read ? "Read by " + read + " of " + n : reached ? "Reached " + reached + " of " + n : "Sent";
+    if (none) text += " · " + none + " no receipt";
+  }
+  const open = ui.openReceipts.has(m.id);
+  const tip = rs.length === 1 ? receiptDetail(rs[0]) : rs.map((r) => r.name + ": " + receiptWord(r).toLowerCase()).join("\n");
+  return h(
+    "div",
+    { class: "receipt" },
+    h(
+      "button",
+      {
+        class: "receipt-sum",
+        "data-state": rs.length === 1 ? rs[0].state || "sent" : null,
+        "data-key": "receipt-" + m.id,
+        "data-tip": tip,
+        "aria-expanded": String(open),
+        onclick: () => {
+          open ? ui.openReceipts.delete(m.id) : ui.openReceipts.add(m.id);
+          render();
+        },
+      },
+      text,
+    ),
+    open &&
+      h(
+        "ul",
+        { class: "receipt-list" },
+        rs.map((r) => h("li", { "data-state": r.state || "sent" }, rs.length > 1 && h("span", { class: "receipt-name truncate" }, r.name), h("span", { class: "receipt-detail" }, rs.length > 1 ? receiptWord(r) : receiptDetail(r)))),
+      ),
   );
 }
 

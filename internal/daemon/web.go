@@ -245,6 +245,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		st.Devices = append(st.Devices, dv)
 	}
 	st.Mutes = d.muteViewsLocked()
+	st.Receipts = d.receiptsLocked()
 	return st, nil
 }
 

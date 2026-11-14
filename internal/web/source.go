@@ -59,7 +59,25 @@ type State struct {
 	Mutes   []Mute   `json:"mutes"`
 	Version Version  `json:"version"`
 	Account Account  `json:"account"`
+	// Receipts is, for each of the person's recent messages, by its ID, how far it got with each of
+	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
+	// the page asks for every few seconds, and not on the message.
+	Receipts map[string][]Receipt `json:"receipts,omitempty"`
 }
+
+// Receipt is how far one of the person's messages got with one recipient (#26).
+type Receipt struct {
+	Addr   string `json:"addr"` // the recipient's device/session
+	Name   string `json:"name"` // what to call them: a session's name, a person's, or the address
+	Person bool   `json:"person,omitempty"`
+	// State is the furthest mark from the recipient's device: queued, handed, delivered or read
+	// (bus.Mark*). "" is none yet. ReceiptNone says none will come: the device's Murmur writes none.
+	State string    `json:"state,omitempty"`
+	At    time.Time `json:"at,omitzero"` // the recipient device's clock when it got there
+}
+
+// ReceiptNone is a Receipt's state for a recipient whose device writes no marks.
+const ReceiptNone = "none"
 
 // Version is this daemon's version, and what is known of a newer one (#240).
 type Version struct {

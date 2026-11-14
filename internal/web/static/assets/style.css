@@ -1301,6 +1301,7 @@ a.g-pr:hover {
 /* The page's tooltip (app.js showTip), as T3 Code's: small, in the inverse of the page, quick to
  * show and to move. A long one wraps. */
 .tip {
+  white-space: pre-line; /* a list, as a group's receipts are, goes one to a line */
   position: fixed;
   z-index: 100;
   top: 0;
@@ -2862,6 +2863,49 @@ a.g-pr:hover {
 }
 .chat-msg-own > .chat-msg-meta {
   padding-right: 0.25rem;
+}
+/* How far a person's message got (#26): under the bubble, always shown, as quiet as the time. */
+.receipt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 80%;
+  padding-right: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.receipt-sum {
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.receipt-sum:hover {
+  color: var(--foreground);
+}
+.receipt-sum[data-state="read"] {
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+}
+.receipt-list {
+  margin: 0.125rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.receipt-list li {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0 0.25rem;
+  line-height: 1.25rem;
+}
+.receipt-name {
+  max-width: 12rem;
+}
+.receipt-list li[data-state="read"] > .receipt-detail {
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
 }
 .chat-msg-sending > .chat-bubble {
   opacity: 0.64;

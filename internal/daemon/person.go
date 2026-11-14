@@ -458,6 +458,11 @@ func (s pageSource) MarkRead(ctx context.Context, ids []string) error {
 	if len(kept) == len(box) {
 		return nil
 	}
+	for _, m := range box {
+		if slices.Contains(ids, m.Event.ID) {
+			d.markLocked(bus.PersonSession, m.Event, bus.MarkRead)
+		}
+	}
 	if len(kept) == 0 {
 		delete(d.st.Inbox, bus.PersonSession)
 	} else {

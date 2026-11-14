@@ -195,6 +195,9 @@ type fixtures struct {
 	downTill time.Time // a restart in progress: State fails until then
 	account  web.Account
 	repo     string // the repo's name, for the picker
+	// receipts is how far each of the person's messages got (#26). sam-desktop stands for a device
+	// on an older Murmur, which sends none.
+	receipts map[string][]web.Receipt
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -234,7 +237,7 @@ func newFixtures(now time.Time) *fixtures {
 			Sessions: []web.Session{
 				{Name: "lucid-badger", Agent: "claude-code", Branch: "session-names",
 					Doing: "Taking names by compare-and-swap on refs/murmur/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second),
-					Tags: []tags.Tag{{Name: "bus"}, {Name: "model:sonnet-5.5"}, {Name: "reviewing"}}},
+					Tags: []tags.Tag{{Name: "bus"}, {Name: "group:ui"}, {Name: "model:sonnet-5.5"}, {Name: "reviewing"}}},
 				{Name: "velvet-moth", Agent: "t3", Branch: "session-names",
 					Doing: "Writing the word lists", Started: ago(35 * time.Minute), LastActive: ago(9 * time.Minute)},
 				{Name: "solar-wren", Agent: "codex", Branch: "wake-ups",
@@ -246,7 +249,8 @@ func newFixtures(now time.Time) *fixtures {
 			ID: "sam-desktop-07be", Host: "sam-desktop", Owner: "Sam", Reachable: true, LastSeen: ago(70 * time.Second),
 			Sessions: []web.Session{
 				{Name: "rapid-ibis", Agent: "claude-code", Branch: "fix/ls-remote-rate-limit",
-					Doing: "Measuring ls-remote against GitHub's limits", Started: ago(25 * time.Minute), LastActive: ago(15 * time.Second)},
+					Doing: "Measuring ls-remote against GitHub's limits", Started: ago(25 * time.Minute), LastActive: ago(15 * time.Second),
+					Tags: []tags.Tag{{Name: "group:ui"}}},
 				{Name: "mellow-yak", Agent: "claude-code", Branch: "receipts",
 					Started: ago(4 * time.Hour), LastActive: ago(2 * time.Hour)},
 			},
@@ -383,6 +387,12 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 		return web.State{}, errors.New("restarting")
 	}
 	st := web.State{Repo: f.repo, Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
+	if len(f.receipts) > 0 {
+		st.Receipts = map[string][]web.Receipt{}
+		for id, rs := range f.receipts {
+			st.Receipts[id] = append([]web.Receipt(nil), rs...)
+		}
+	}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		st.Devices = append(st.Devices, d)
@@ -493,11 +503,59 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 		}
 	}
 	f.messages = append(f.messages, m)
+	f.receive(m)
 	sent := web.Sent{ID: m.ID}
 	if m.ToKind == web.ToSession && !m.ToPerson {
 		go f.answer(m)
 	}
 	return sent, nil
+}
+
+// receive gives m a receipt per recipient (#26), and moves each along as a recipient's device would
+// mark it: queued, then delivered or handed over, then for some, read. A recipient on sam-desktop
+// sends none. Caller holds mu.
+func (f *fixtures) receive(m web.Message) {
+	var rs []web.Receipt
+	for _, d := range f.devices {
+		if d.Person != nil && d.Person.Addr == m.ToAddr {
+			rs = append(rs, web.Receipt{Addr: d.Person.Addr, Name: d.Person.Name, Person: true})
+		}
+		for _, s := range d.Sessions {
+			if s.Addr == m.ToAddr || m.ToKind == web.ToAll || m.ToKind == web.ToDevice && d.ID == m.To ||
+				m.ToKind == web.ToGroup && slices.ContainsFunc(s.Tags, func(t tags.Tag) bool { return t.Name == m.To }) {
+				r := web.Receipt{Addr: s.Addr, Name: s.Name}
+				if d.ID == "sam-desktop-07be" {
+					r.State = web.ReceiptNone
+				}
+				rs = append(rs, r)
+			}
+		}
+	}
+	if len(rs) == 0 {
+		return
+	}
+	if f.receipts == nil {
+		f.receipts = map[string][]web.Receipt{}
+	}
+	f.receipts[m.ID] = rs
+	steps := []string{bus.MarkQueued, bus.MarkDelivered, bus.MarkRead}
+	for i := range rs {
+		if rs[i].State == web.ReceiptNone {
+			continue
+		}
+		last := 1 + mrand.IntN(len(steps)) // some stay queued or delivered
+		if len(rs) == 1 {
+			last = len(steps)
+		}
+		go func(i int) {
+			for _, state := range steps[:last] {
+				time.Sleep(time.Duration(1500+mrand.IntN(2500)) * time.Millisecond)
+				f.mu.Lock()
+				f.receipts[m.ID][i].State, f.receipts[m.ID][i].At = state, time.Now()
+				f.mu.Unlock()
+			}
+		}(i)
+	}
 }
 
 // answer is the session m went to, starting a turn and then answering with `send`.
