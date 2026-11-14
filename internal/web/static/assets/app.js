@@ -504,6 +504,7 @@ function render() {
   placeLive();
   announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  refreshTip();
   queueMicrotask(markOpenRead);
 }
 
@@ -3192,7 +3193,9 @@ function receiptMeaning(state, several) {
 // time they got there if they got past sent.
 function receiptEntry(r) {
   const state = receiptFold(r.state);
-  return { name: r.name, state, time: state !== "sent" && when(r.at) ? clockTime(r.at) : "" };
+  const at = state !== "sent" && when(r.at);
+  const today = at && new Date(at).toDateString() === new Date().toDateString();
+  return { name: r.name, state, time: !at ? "" : today ? clockTime(at) : new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) };
 }
 
 function receiptLine(e, several) {
@@ -3202,29 +3205,26 @@ function receiptLine(e, several) {
 function receiptMark(m) {
   const rs = ui.state?.receipts?.[m.id];
   if (!rs) return null;
-  // A message that found nobody to send to (a group with no member in presence) is sent, not read,
-  // and has nobody to list: its tick is a plain one, not a button that would open nothing.
-  if (!rs.length) {
-    const nobody = "Sent: no recipients";
-    return h("span", { class: "receipt-mark", "data-state": "sent", role: "img", "aria-label": nobody, "data-tip": nobody }, icon("check"));
-  }
   const entries = rs.map(receiptEntry).sort((a, b) => RECEIPT_RANK[b.state] - RECEIPT_RANK[a.state] || a.name.localeCompare(b.name));
   const state = entries.reduce((low, e) => (RECEIPT_RANK[e.state] < RECEIPT_RANK[low] ? e.state : low), "read");
   const several = entries.length > 1;
-  const lines = [receiptMeaning(state, several), ...entries.map((e) => receiptLine(e, several))];
+  // A message that found nobody in presence to count (a group with no member online) is sent.
+  const lines = entries.length ? [receiptMeaning(state, several), ...entries.map((e) => receiptLine(e, several))] : ["Sent: nobody online"];
   // A button, so the keyboard reaches it and focus shows its tooltip. A tap shows it too: the page's
-  // tips follow the mouse, and a touch has none. The next tap anywhere hides it, as any tip is.
+  // tips follow the mouse, and a touch has none. A tap elsewhere hides it, as any tip is. Its label is
+  // the tip's text, so the tip doesn't describe it again (data-tip-labelled).
   return h(
     "button",
     {
       class: "receipt-mark",
-      "data-state": state,
+      "data-state": entries.length ? state : "sent",
       "data-key": "receipt-" + m.id,
       "data-tip": lines.join("\n"),
+      "data-tip-labelled": "1",
       "aria-label": lines.join(". "),
       onclick: (e) => showTipNow(e.currentTarget),
     },
-    icon(state === "sent" ? "check" : "checks"),
+    icon(entries.length && state !== "sent" ? "checks" : "check"),
   );
 }
 
@@ -4908,7 +4908,7 @@ function borrowTitle(el) {
     el.removeAttribute("title");
   }
   tip.textContent = tipText(el);
-  if (!el.hasAttribute("aria-describedby")) {
+  if (!el.hasAttribute("aria-describedby") && !el.dataset.tipLabelled) {
     el.setAttribute("aria-describedby", tip.id);
     el.dataset.tipDescribed = "1";
   }
@@ -4951,6 +4951,23 @@ function hideTip() {
   tipFor = null;
   tip.classList.remove("on");
   tip.removeAttribute("role");
+}
+
+// refreshTip runs after each render. A tip that shows was for an element the render may have
+// replaced, and whose text may have changed (a tick that moved on to read): it moves to the element
+// with the same data-key and reads its text again, or goes if there is none.
+let renderedAt = 0;
+function refreshTip() {
+  renderedAt = Date.now();
+  if (!tipShown || !tipFor) return;
+  const key = tipFor.dataset.key;
+  const el = tipFor.isConnected ? tipFor : key ? root.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
+  if (!el) return hideTip();
+  if (el !== tipFor) {
+    tipFor = el;
+  }
+  borrowTitle(el); // a render takes off what borrowing put on an element it kept
+  showTip(el, false);
 }
 
 // showTipNow shows el's tip at once, for a tap, which the pointer's hover never brings.
@@ -5003,7 +5020,8 @@ document.addEventListener("focusout", hideTip);
 document.addEventListener("pointerdown", hideTip, true);
 // Escape also cancels a tip that is still waiting to show.
 document.addEventListener("keydown", (e) => e.key === "Escape" && tipFor && hideTip());
-document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+// A render puts the thread's scroll back, which fires a scroll; only a scroll of someone's hides a tip.
+document.addEventListener("scroll", () => Date.now() - renderedAt > 250 && hideTip(), { capture: true, passive: true });
 
 setInterval(tick, 10000);
 start();
