@@ -2355,7 +2355,8 @@ the API would need one per commit.
 Since 0.3 every event is encrypted (#156), with its kind sealed inside, so the census counts an
 encrypted log's records exactly but can't read which are messages or session starts. Tyler's
 decision (2026-11-13, #550): it estimates them, since 0 is wrong and "unknown" says too little, and
-the stats mark every figure that includes an estimate with ≈. The census decrypts nothing and holds
+the stats say which figures hold an estimate: the page with an asterisk on sessions and on
+messages, the report with ≈ on each such figure. The census decrypts nothing and holds
 no key. It reads only public repos, and uses two things any reader of one sees (see "What anyone who
 can read a public repo still sees"): how large each record is, and the name registry. A size gives
 away roughly what kind of event a record is, never what it says.
