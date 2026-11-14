@@ -3697,6 +3697,27 @@ a.g-pr:hover {
   height: 0.5rem;
 }
 
+/* A person's face (#560): a thin ring in the accent colour, a small gap from the face. The gap is
+ * the surface's colour, as the state dot's cutout is. */
+.avatar.avatar-person {
+  box-shadow:
+    0 0 0 1.5px var(--dot-ring, var(--background)),
+    0 0 0 3px var(--primary);
+}
+/* In an overlapping stack the ring takes the place of the stack's cutout, so a face has one outline. */
+.avatar-pair > .avatar.avatar-person,
+.g-pile .avatar.avatar-person {
+  box-shadow:
+    0 0 0 1px var(--dot-ring, var(--background)),
+    0 0 0 2.5px var(--primary);
+}
+/* A group's square of faces has no room outside a face: the ring goes inside it. */
+.g-grid .avatar.avatar-person {
+  box-shadow:
+    inset 0 0 0 1.25px var(--primary),
+    inset 0 0 0 2.5px var(--dot-ring, var(--background));
+}
+
 /* In the sidebar's rows, a face in place of the bare dot. */
 .side-session {
   padding-left: 1.25rem;
