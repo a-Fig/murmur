@@ -8,7 +8,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { census as handle, repoNumbers, repoReport } from '../src/repos.js';
+import { census as handle, repoNumbers, repoReport, size } from '../src/repos.js';
 import { recordingD1, sqliteD1 } from './d1.mjs';
 
 // The Workers runtime adds this to Web Crypto; node has it only in node:crypto.
@@ -181,6 +181,8 @@ function repo(t) {
   return { dir, git, commit };
 }
 const event = r => `event\n\n${JSON.stringify(r)}\n`;
+// A repo's totals without its bytes, for the tests that are about something else.
+const noBytes = ({ bytes, ...t }) => t;
 const NOW = Date.parse('2026-11-09T12:00:00Z');
 
 test("a bus time after tomorrow, or before Murmur, gives way to its commit's date, and neither is counted", t => {
@@ -199,7 +201,7 @@ test("a bus time after tomorrow, or before Murmur, gives way to its commit's dat
 
   const c = count(dir, { now: NOW });
   assert.deepEqual(c.days.map(d => [d.day, d.messages]), [['2026-11-05', 1], ['2026-11-06', 1], ['2026-11-07', 1], ['2026-11-08', 1], ['2026-11-10', 1]]);
-  assert.deepEqual(c.totals, { sessions: 0, messages: 5, records: 5, est_sessions: 0, est_messages: 0, first_day: '2026-11-05', last_day: '2026-11-10' });
+  assert.deepEqual(noBytes(c.totals), { sessions: 0, messages: 5, records: 5, est_sessions: 0, est_messages: 0, first_day: '2026-11-05', last_day: '2026-11-10' });
   assert.equal(c.devices.length, 1);
 });
 
@@ -274,7 +276,7 @@ test("census() fetches a repo's bus and default branch, and only the refs it rea
   const c = await readRepo('github.com/A/One', { url: r.url, maxRefs: 2, lookup: unlinked });
   assert.equal(c.repo, 'github.com/a/one');
   const day = r.at.slice(0, 10);
-  assert.deepEqual(c.totals, { sessions: 1, messages: 1, records: 2, est_sessions: 0, est_messages: 0, first_day: day, last_day: day });
+  assert.deepEqual(noBytes(c.totals), { sessions: 1, messages: 1, records: 2, est_sessions: 0, est_messages: 0, first_day: day, last_day: day });
   assert.equal(c.devices.length, 1);
   assert.notEqual(c.devices[0].person, null);
   // Ann's presence matches Ann's commit on main, so her device has an account.
@@ -414,13 +416,13 @@ test("the run's summary has a row for each repo, its counts or why it has none, 
     '',
     '4 repos to count.',
     '',
-    '| Repo | Result | Devices | People | Matched to an account | Sessions | Estimated sessions | Messages | Estimated messages | Records | Contributors | Days |',
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
-    '| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 1 |',
-    '| [b/two](https://github.com/b/two) | skipped: took too long to count |  |  |  |  |  |  |  |  |  |  |',
-    '| [c/gone](https://github.com/c/gone) | not read: remote: Repository not found. |  |  |  |  |  |  |  |  |  |  |',
-    '| [d/four](https://github.com/d/four) | sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 3 | 1 |',
-    '| **Total** | 2 sent | 2 | 2 | 0 | 2 | 0 | 4 | 0 | 6 | 3 | 2 |',
+    '| Repo | Result | Devices | People | Matched to an account | Sessions | Estimated sessions | Messages | Estimated messages | Records | Bytes | Contributors | Days |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |',
+    '| [b/two](https://github.com/b/two) | skipped: took too long to count |  |  |  |  |  |  |  |  |  |  |  |',
+    '| [c/gone](https://github.com/c/gone) | not read: remote: Repository not found. |  |  |  |  |  |  |  |  |  |  |  |',
+    '| [d/four](https://github.com/d/four) | sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 3 | 1 |',
+    '| **Total** | 2 sent | 2 | 2 | 0 | 2 | 0 | 4 | 0 | 6 | 0 | 3 | 2 |',
     '',
     '4 repos: 2 sent, 1 skipped, 1 not read.',
     '',
@@ -457,8 +459,8 @@ test("a run that fails for a repo the site refused still writes its summary, wit
   await assert.rejects(main(names, { read: name => counts(name, name.endsWith('two') ? { days: early } : {}) }), /1 of 2 repos counted but not sent/);
   const out = written();
   assert.ok(out.endsWith('\n2 repos: 1 sent, 1 not sent.\n'), out);
-  assert.ok(out.includes('| [b/two](https://github.com/b/two) | not sent: /v1/census: 400 Not counts: totals days. | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 1 |'), out);
-  assert.ok(out.includes('| **Total** | 1 sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 1 |'), out);
+  assert.ok(out.includes('| [b/two](https://github.com/b/two) | not sent: /v1/census: 400 Not counts: totals days. | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |'), out);
+  assert.ok(out.includes('| **Total** | 1 sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |'), out);
 });
 
 test('a dry run says in its summary that it counted and sent nothing', async t => {
@@ -467,14 +469,14 @@ test('a dry run says in its summary that it counted and sent nothing', async t =
   const written = stepSummary(t);
   await main(['--dry', 'github.com/a/one'], { read: name => counts(name) });
   const out = written();
-  assert.ok(out.includes('| [a/one](https://github.com/a/one) | counted: not sent (--dry) | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 1 |\n'), out);
-  assert.ok(out.endsWith('| **Total** | 1 counted | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 1 |\n\n1 repo: 1 counted.\n'), out);
+  assert.ok(out.includes('| [a/one](https://github.com/a/one) | counted: not sent (--dry) | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |\n'), out);
+  assert.ok(out.endsWith('| **Total** | 1 counted | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |\n\n1 repo: 1 counted.\n'), out);
   assert.equal(db.batches.length, 0);
 });
 
 test("a reason in the summary stays on its line and in its cell, whatever git or the site said", () => {
   assert.equal(summaryRow({ name: 'github.com/a/one', kind: 'not read', why: 'fatal: one\n| two | <img src=x> [link](https://x) `code` **bold**' }),
-    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |  |  |\n');
+    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |  |  |  |\n');
   assert.equal(summaryHead(0, new Date(NOW)), '## Census, 2026-11-09 12:00 UTC\n\nNo repos listed.\n');
   // A name GitHub allows can still hold what Markdown reads: __demo__ would show as bold demo.
   assert.ok(summaryRow({ name: 'github.com/a/__demo__', kind: 'skipped', why: 'x' }).startsWith('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'));
@@ -514,7 +516,7 @@ test('an encrypted record 180 bytes or more beyond its device ID is an estimated
   commit(mesh, event({ type: 'box', at: AT, box: { data: '!'.repeat(400) } }), { date: AT });
 
   const c = count(dir, { now: NOW });
-  assert.deepEqual(c.totals, { sessions: 0, messages: 1, records: 11, est_sessions: 0, est_messages: 4, first_day: '2026-11-05', last_day: '2026-11-05' });
+  assert.deepEqual(noBytes(c.totals), { sessions: 0, messages: 1, records: 11, est_sessions: 0, est_messages: 4, first_day: '2026-11-05', last_day: '2026-11-05' });
   assert.deepEqual(c.days.map(d => [d.day, d.messages, d.est_messages, d.records]), [['2026-11-05', 1, 4, 11]]);
 });
 
@@ -554,7 +556,7 @@ test('a session the name registry shows and no unencrypted start does is an esti
   commit(names, named({ name: 'late-one', device: 'dev1', session: 's5', at: '9999-01-01T00:00:00Z' }), { date: '2099-01-01T00:00:00Z' });
 
   const c = count(dir, { now: NOW });
-  assert.deepEqual(c.totals, { sessions: 1, messages: 0, records: 2, est_sessions: 2, est_messages: 0, first_day: '2026-11-04', last_day: '2026-11-06' });
+  assert.deepEqual(noBytes(c.totals), { sessions: 1, messages: 0, records: 2, est_sessions: 2, est_messages: 0, first_day: '2026-11-04', last_day: '2026-11-06' });
   assert.deepEqual(c.days.map(d => [d.day, d.sessions, d.est_sessions]), [['2026-11-04', 1, 0], ['2026-11-05', 0, 1], ['2026-11-06', 0, 1]]);
   // The registry makes no device: dev2 wrote nothing to a log or a presence.
   assert.equal(c.devices.length, 1);
@@ -567,12 +569,12 @@ test("census() fetches the name registry too, and counts a repo that has none", 
   r.commit('refs/murmur/names', named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: r.at }));
   const c = await readRepo('github.com/a/one', { url: r.url, lookup: unlinked });
   const day = r.at.slice(0, 10);
-  assert.deepEqual(c.totals, { sessions: 0, messages: 0, records: 1, est_sessions: 1, est_messages: 1, first_day: day, last_day: day });
+  assert.deepEqual(noBytes(c.totals), { sessions: 0, messages: 0, records: 1, est_sessions: 1, est_messages: 1, first_day: day, last_day: day });
 
   const bare = remote(t);
   bare.commit('refs/murmur/mesh/dev1', boxed(600), { date: bare.at });
   const b = await readRepo('github.com/a/two', { url: bare.url, lookup: unlinked });
-  assert.deepEqual(b.totals, { sessions: 0, messages: 0, records: 1, est_sessions: 0, est_messages: 1, first_day: day, last_day: day });
+  assert.deepEqual(noBytes(b.totals), { sessions: 0, messages: 0, records: 1, est_sessions: 0, est_messages: 1, first_day: day, last_day: day });
 });
 
 test("the run's log and summary give the estimates beside the exact counts", async t => {
@@ -580,13 +582,13 @@ test("the run's log and summary give the estimates beside the exact counts", asy
   const said = site(t, db);
   const written = stepSummary(t);
   const c = counts('github.com/a/one');
-  c.totals.est_sessions = 20, c.totals.est_messages = 237;
-  c.days[0].est_sessions = 20, c.days[0].est_messages = 237;
+  c.totals.est_sessions = 20, c.totals.est_messages = 237, c.totals.bytes = 4100;
+  c.days[0].est_sessions = 20, c.days[0].est_messages = 237, c.days[0].bytes = 4100;
   await main(['github.com/a/one'], { read: () => c });
-  assert.match(said.log[0], /, 1 sessions and about 20 more estimated, 2 messages and about 237 more estimated, 3 records, /);
-  assert.ok(written().includes('| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 20 | 2 | 237 | 3 | 0 | 1 |'), written());
+  assert.match(said.log[0], /, 1 sessions and about 20 more estimated, 2 messages and about 237 more estimated, 3 records of 4100 bytes, /);
+  assert.ok(written().includes('| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 20 | 2 | 237 | 3 | 4100 | 0 | 1 |'), written());
   const totals = db.batches.flat().find(s => /INTO repo_census/.test(s.sql));
-  assert.deepEqual(totals.args.slice(-2), [20, 237]);
+  assert.deepEqual(totals.args.slice(-3), [20, 237, 4100]);
 });
 
 test('the site refuses an estimate that is not a count, and takes a POST with none', async () => {
@@ -600,6 +602,8 @@ test('the site refuses an estimate that is not a count, and takes a POST with no
   assert.equal((await status(counts(name)))[0], 200);
   assert.equal((await status(withDay({ est_sessions: 0, est_messages: 9 })))[0], 200);
   for (const bad of [-1, 1.5, '3', null]) {
+    assert.deepEqual(await status(withDay({ bytes: bad })), [400, 'Not counts: a day.'], String(bad));
+    assert.deepEqual(await status(withTotals({ bytes: bad })), [400, 'Not counts: totals.'], String(bad));
     assert.deepEqual(await status(withDay({ est_messages: bad })), [400, 'Not counts: a day.'], String(bad));
     assert.deepEqual(await status(withTotals({ est_sessions: bad })), [400, 'Not counts: totals.'], String(bad));
   }
@@ -643,7 +647,7 @@ test('estimates are kept beside the exact counts, only ever raised, and left alo
   assert.ok(md.includes('| Agent sessions | ≈4 |\n| Of those sessions, estimated (see below) | 3 |'), md);
   assert.ok(md.includes('| Messages between agents | ≈27 |\n| Of those messages, estimated (see below) | 25 |'), md);
   assert.ok(md.includes(`| Messages in the last ${n.week} days | ≈32 |`), md);
-  assert.match(md, /\| \[a\/one\]\(https:\/\/github\.com\/a\/one\) \| 0 \| 1 \| 1 \| ≈4 \| ≈27 \| 30 \|/);
+  assert.match(md, /\| \[a\/one\]\(https:\/\/github\.com\/a\/one\) \| 0 \| 1 \| 1 \| 30 \| 0 B \| ≈4 \| ≈27 \|/);
   assert.match(md, /- A figure marked \*\*≈\*\* includes an estimate\./);
 });
 
@@ -655,4 +659,63 @@ test('a report with nothing estimated marks nothing', { skip: !sqlite && 'no nod
   const md = repoReport(await repoNumbers(db, 14), 'https://murmur.invalid');
   assert.ok(md.includes('| Agent sessions | 1 |\n| Of those sessions, estimated (see below) | 0 |'), md);
   assert.doesNotMatch(md.slice(0, md.indexOf('## What the numbers mean')), /≈/);
+});
+
+// What is measured exactly, encrypted or not (#550): the bytes the devices wrote.
+
+test("a bus's bytes are its events' sizes as JSON, the same encrypted or not, by day", t => {
+  const { dir, commit } = repo(t);
+  const mesh = 'refs/murmur/mesh/dev1';
+  const clear = { v: 1, type: 'message', at: '2026-11-05T10:00:00Z', subject: 'héllo', body: 'x'.repeat(300) };
+  const stop = { v: 1, type: 'session.stopped', at: '2026-11-06T10:00:00Z' };
+  commit(mesh, event(clear), { date: '2026-11-05T10:00:00Z' });
+  // The same event encrypted weighs what it did: the size of the event inside the box, not of the
+  // box, its keys and its base64.
+  commit(mesh, boxed(Buffer.byteLength(JSON.stringify(clear))), { date: '2026-11-05T11:00:00Z' });
+  commit(mesh, event(stop), { date: '2026-11-06T10:00:00Z' });
+  // A box that isn't one Murmur writes weighs what its record does.
+  const junk = { type: 'box', at: '2026-11-06T11:00:00Z', box: { data: '!!' } };
+  commit(mesh, event(junk), { date: '2026-11-06T11:00:00Z' });
+  // A presence is no record, so it adds no bytes.
+  commit('refs/murmur/presence/dev1', event({ owner: 'Ann', at: '2026-11-06T10:00:00Z', host: 'x'.repeat(500) }), { date: '2026-11-06T10:00:00Z' });
+
+  const one = Buffer.byteLength(JSON.stringify(clear));
+  const c = count(dir, { now: NOW });
+  assert.deepEqual(c.days.map(d => [d.day, d.records, d.bytes]), [
+    ['2026-11-05', 2, 2 * one],
+    ['2026-11-06', 2, Buffer.byteLength(JSON.stringify(stop)) + Buffer.byteLength(JSON.stringify(junk))],
+  ]);
+  assert.equal(c.totals.bytes, c.days[0].bytes + c.days[1].bytes);
+  assert.equal(one, JSON.stringify(clear).length + 1, 'bytes, not characters: é is two');
+});
+
+test('bytes are kept, only ever raised, and shown as sizes beside the records', { skip: !sqlite && 'no node:sqlite in this node' }, async () => {
+  const db = await sqliteD1();
+  const name = 'github.com/a/one';
+  db.sql.exec(`INSERT INTO repos (repo, name, first) VALUES ('${name}', '${name}', '${daysAgo(3)}')`);
+  const send = async bytes => {
+    const c = counts(name, { days: [{ day: daysAgo(1), sessions: 1, messages: 2, records: 3, devices: [ID], ...bytes }] });
+    Object.assign(c.totals, bytes);
+    assert.equal((await post(db, c)).status, 200);
+  };
+  await send({ bytes: 123456 });
+  // A census from before bytes sends none, and a rewritten log fewer: what is kept stays.
+  await send({});
+  await send({ bytes: 500 });
+  assert.equal(db.sql.prepare('SELECT bytes FROM repo_days').get().bytes, 123456);
+  assert.equal(db.sql.prepare('SELECT bytes FROM repo_census').get().bytes, 123456);
+
+  const n = await repoNumbers(db, 14);
+  assert.deepEqual([n.records, n.weekRecords, n.bytes, n.weekBytes], [3, 3, 123456, 123456]);
+  assert.equal(n.repoList[0].bytes, 123456);
+  assert.equal(n.series.at(-2).bytes, 123456);
+  assert.equal(n.byRepo[0].bytes, 123456);
+  const md = repoReport(n, 'https://murmur.invalid');
+  assert.ok(md.includes('| Bus records | 3 |\n| Bus records in the last 7 days | 3 |\n| Data in those records | 123 kB |\n| Data in the last 7 days | 123 kB |'), md);
+  assert.match(md, /\| \[a\/one\]\(https:\/\/github\.com\/a\/one\) \| 0 \| 1 \| 1 \| 3 \| 123 kB \| 1 \| 2 \|/);
+});
+
+test('a size reads as people write one', () => {
+  assert.deepEqual([0, 999, 1000, 12345, 123456, 999999, 4560000, 2.5e9, undefined].map(size),
+    ['0 B', '999 B', '1.00 kB', '12.3 kB', '123 kB', '1000 kB', '4.56 MB', '2.50 GB', '0 B']);
 });

@@ -2342,7 +2342,8 @@ day a GitHub Action in this repo (`.github/workflows/census.yml`, `site/census/c
 the commits, without their files, of each repo's device logs, presences and name registry
 (`refs/murmur/mesh/*`, `refs/murmur/presence/*`, `refs/murmur/names`) and of its default branch, and sends the
 site counts and hashes, never content: per UTC day, the sessions started (each once, though a
-daemon that restarts announces its sessions again), the messages and all records, and a hash of
+daemon that restarts announces its sessions again), the messages, all records and the bytes their
+events come to, and a hash of
 each device that wrote anything, presence included; a hash of each device's owner, the git user name
 its presence shows; and for each contributor, a hash of their GitHub login or email and the day of
 their first commit, so one person in two repos counts once. The site only ever raises a count and
@@ -2387,6 +2388,14 @@ The estimates are sent and kept apart from the exact counts (`est_sessions`, `es
 count, so if the census later estimates differently and lower, what is stored stays until someone
 lowers it in D1 by hand. An updated device's presence hides its owner too, so
 the census can't tell its person apart; whether that should stay readable is open on #156.
+
+What encryption doesn't hide is how many records a device wrote and how large they are, so the
+stats page is built around those (Tyler, 2026-11-13). Bytes are the size of each record's event as
+JSON, which for an encrypted event is the event inside the box, so a log weighs the same encrypted
+or not. They grow with what agents say to each other, which makes them the exact measure of a bus's
+traffic. The page shows repos and users first, then what is measured (records, bytes, devices,
+contributors), then sessions and messages, the figures that matter most, estimated where a bus is
+encrypted.
 
 Each repo is counted on its own, since anyone can list one (#298). A repo that can't be read (gone
 private, or deleted) keeps the counts it had. A repo may take 3 minutes, for its git and its

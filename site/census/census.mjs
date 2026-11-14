@@ -16,14 +16,14 @@
 // - its default branch's commits, without their files: who committed, and when each first did.
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
-// there were and which devices wrote, each device by a hash with a hash of its owner and of the
-// GitHub account it is matched to (#323); and each contributor by a hash, so one person in two
-// repos counts once.
+// there were, how many bytes those records' events came to, and which devices wrote, each device
+// by a hash with a hash of its owner and of the GitHub account it is matched to (#323); and each
+// contributor by a hash, so one person in two repos counts once.
 //
 // Since Murmur 0.3 every event is encrypted (#156), and its kind is sealed inside with the rest.
-// The record count stays exact. The sessions and messages an encrypted log hides are estimated
-// (#550), and sent apart from the exact counts, as est_sessions and est_messages. "Estimating what
-// encryption hides", below, says how, and how far off the estimates are.
+// The record count and the bytes stay exact. The sessions and messages an encrypted log hides are
+// estimated (#550), and sent apart from the exact counts, as est_sessions and est_messages.
+// "Estimating what encryption hides", below, says how, and how far off the estimates are.
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -107,6 +107,9 @@ function record(msg) {
     return null;
   }
 }
+
+// The length in bytes of the JSON after a bus commit's subject line.
+const jsonBytes = msg => Buffer.byteLength(msg.slice(msg.indexOf('\n\n') + 2).trim());
 
 // A GitHub no-reply address stands for its login; any other address for itself.
 function identity(email, name) {
@@ -211,6 +214,12 @@ function named(r) {
 // A record is dated by its `at`, or by its commit's date when `at` isn't believable, and isn't
 // counted when neither is.
 //
+// bytes is how much the devices wrote to their logs (#550): the length of each record's event as
+// JSON, which for an encrypted event is the event inside the box, so that a log weighs the same
+// encrypted or not. Like records it is exact either way, and unlike them it grows with what the
+// agents say to each other, so it is the one measure of how much a bus carries that encryption
+// doesn't hide.
+//
 // sessions and messages are exact: what unencrypted records show. est_sessions and est_messages
 // are the estimates of what encrypted ones hide, to be added to them (see "Estimating what
 // encryption hides", above).
@@ -222,9 +231,9 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
   };
   const refs = git(dir, ['for-each-ref', '--format=%(refname)', 'refs/murmur/'], deadline).split('\n').filter(Boolean);
   if (refs.length > maxRefs) throw skip(`${refs.length} refs on its bus, more than ${maxRefs}`);
-  const days = new Map(); // day -> { devices: Set, sessions, messages, records, est_sessions, est_messages }
+  const days = new Map(); // day -> { devices: Set, sessions, messages, records, bytes, est_sessions, est_messages }
   const day = d => {
-    if (!days.has(d)) days.set(d, { devices: new Set(), sessions: 0, messages: 0, records: 0, est_sessions: 0, est_messages: 0 });
+    if (!days.has(d)) days.set(d, { devices: new Set(), sessions: 0, messages: 0, records: 0, bytes: 0, est_sessions: 0, est_messages: 0 });
     return days.get(d);
   };
   const owners = new Map(); // device -> git user name, from its newest presence that shows one
@@ -232,7 +241,7 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
   const registered = new Map(); // session -> the first day the registry named it
   const seen = new Set();
   const devices = new Set();
-  let messages = 0, records = 0, estMessages = 0;
+  let messages = 0, records = 0, bytes = 0, estMessages = 0;
   for (const ref of refs) {
     const [, , kind, device] = ref.split('/');
     if (ref === 'refs/murmur/names') {
@@ -267,6 +276,8 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
       }
       const size = boxedSize(r);
       if (size !== null && size - device.length >= MESSAGE_FROM) t.est_messages++, estMessages++;
+      const wrote = size ?? jsonBytes(c.msg);
+      t.bytes += wrote, bytes += wrote;
     }
   }
   for (const d of started.values()) day(d).sessions++;
@@ -277,7 +288,7 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
     days: sorted.map(d => {
       const t = days.get(d);
       return {
-        day: d, sessions: t.sessions, messages: t.messages, records: t.records,
+        day: d, sessions: t.sessions, messages: t.messages, records: t.records, bytes: t.bytes,
         est_sessions: t.est_sessions, est_messages: t.est_messages,
         devices: [...t.devices].map(v => hash('device:' + v)).sort(),
       };
@@ -285,7 +296,7 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
     // The owner's name stays here: census() hashes it, and matches it to an account, before sending.
     devices: [...devices].sort().map(v => ({ id: hash('device:' + v), owner: owners.get(v) ?? null })),
     totals: {
-      sessions: started.size, messages, records, est_sessions: estSessions, est_messages: estMessages,
+      sessions: started.size, messages, records, bytes, est_sessions: estSessions, est_messages: estMessages,
       first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null,
     },
   };
@@ -427,12 +438,12 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
 //
 // Sessions and Messages are the exact counts; the estimates of what encryption hides have their
 // own columns, and a repo's sessions or messages are the two together.
-const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Sessions', 'Estimated sessions', 'Messages', 'Estimated messages', 'Records', 'Contributors', 'Days'];
+const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Sessions', 'Estimated sessions', 'Messages', 'Estimated messages', 'Records', 'Bytes', 'Contributors', 'Days'];
 const KINDS = ['sent', 'counted', 'skipped', 'not read', 'not sent'];
 const cells = cs => `| ${cs.join(' | ')} |\n`;
 const numbers = c => [c.devices.length, new Set(c.devices.map(v => v.person ?? v.id)).size,
   c.devices.filter(v => v.account).length, c.totals.sessions, c.totals.est_sessions ?? 0,
-  c.totals.messages, c.totals.est_messages ?? 0, c.totals.records, c.contributors.length, c.days.length];
+  c.totals.messages, c.totals.est_messages ?? 0, c.totals.records, c.totals.bytes ?? 0, c.contributors.length, c.days.length];
 const text = s => String(s).replace(/\s+/g, ' ').trim().slice(0, 300).replace(/[\\`*_[\]<>|]/g, '\\$&');
 
 export function summaryHead(listed, now) {
@@ -545,7 +556,8 @@ export async function main(args, { read = census } = {}) {
     const est = n => (n ? ` and about ${n} more estimated` : '');
     const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ` +
       `${c.devices.filter(v => v.account).length} matched to an account, ${c.totals.sessions} sessions${est(c.totals.est_sessions)}, ` +
-      `${c.totals.messages} messages${est(c.totals.est_messages)}, ${c.totals.records} records, ${c.contributors.length} contributors, ${c.days.length} days`;
+      `${c.totals.messages} messages${est(c.totals.est_messages)}, ${c.totals.records} records of ${c.totals.bytes ?? 0} bytes, ` +
+      `${c.contributors.length} contributors, ${c.days.length} days`;
     if (dry) {
       console.log(line);
       console.log(JSON.stringify(c.days));
