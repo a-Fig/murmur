@@ -188,7 +188,7 @@ Thank you as well to these people for their help and support:
 
 - [Aaditya Desai](https://github.com/aadityad12)
 - [Thy Tang](https://github.com/tthy-working)
-- Everyone at the AIE hackathon who tried Murmur early
+- Everyone at AIE who tried Murmur early
 
 ## License
 
