@@ -176,9 +176,11 @@ func (a *app) openOutside(link string) {
 }
 
 // follow keeps the window on a live page. The app is a person waiting for messages, so its page
-// keeps its daemon up (app.js leaves its calls unmarked when hidden), but a daemon can still go:
-// a crash, `mur stop`, a reboot of what it ran on. Its next start is on a new port with a new
-// token, which the old page can't reach, so follow starts it again and sends the window there.
+// keeps its daemon up (app.js marks its calls X-Page-App while still marking hidden ones
+// X-Page-Hidden, and the daemon stays up for X-Page-App without counting a hidden window as someone
+// looking), but a daemon can still go: a crash, `mur stop`, a reboot of what it ran on. Its next
+// start is on a new port with a new token, which the old page can't reach, so follow starts it
+// again and sends the window there.
 func (a *app) follow(ctx context.Context, follow func(context.Context, string) string) {
 	t := time.NewTicker(followEvery)
 	defer t.Stop()
