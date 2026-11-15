@@ -724,7 +724,7 @@ function deviceGroup(d) {
       h(
         "span",
         { class: "label" },
-        h("span", { class: "dev-swatch " + deviceColor(d.id), "aria-hidden": "true" }),
+        h("span", { class: "dev-swatch " + deviceColor(d), "aria-hidden": "true" }),
         h("span", { class: "dev-name truncate" }, deviceLabel(d)),
         h("span", { class: "dev-host truncate" }, host(d.id)),
       ),
@@ -2720,27 +2720,29 @@ function draftConversation() {
   return ui.conversation === key ? { key, kind: "dm", title: pair.join(" & "), pair, messages: [] } : null;
 }
 
-// The same name always gets the same color, and a ring in the color of the device it is on (#560),
-// where that is known. The classes are in style.css: the page's content policy doesn't allow an
-// inline style.
+// A face is filled with the color of the device it is on (#560), so a stack of faces says whose
+// machines they are; a person's also has a ring. The classes are in style.css: the page's content
+// policy doesn't allow an inline style.
 function avatar(name) {
-  let n = 0;
-  for (const ch of name) n = (n * 31 + ch.codePointAt(0)) % 997;
-  const dev = deviceOfName(name);
-  const cls = (isPerson(name) ? "avatar avatar-person" : "avatar avatar-" + (n % 5)) + (dev ? " dev-ring " + deviceColor(dev) : "");
-  return h("span", { class: cls, "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
+  const d = deviceOfName(name);
+  return h(
+    "span",
+    { class: "avatar dev-fill " + deviceColor(d) + (isPerson(name) ? " avatar-person" : ""), "aria-hidden": "true" },
+    (name[0] || "?").toUpperCase(),
+  );
 }
 
-// A device's color, fixed by its ID: one of six muted hues, the same on its sessions' rings and by
-// its name in the sidebar.
-function deviceColor(id) {
+// A device's color, fixed by its ID: one of six hues, the same on its faces and by its name in the
+// sidebar. Offline, or not in presence, it is grey.
+function deviceColor(d) {
+  if (!d || !d.reachable) return "dev-off";
   let n = 0;
-  for (const ch of id) n = (n * 31 + ch.codePointAt(0)) % 9973;
+  for (const ch of d.id) n = (n * 31 + ch.codePointAt(0)) % 9973;
   return "dev-c" + (n % 6);
 }
 
-// The device a session or a person is on, by name, or "" if none in presence has it. Built once per
-// state, since every face asks.
+// The device a session or a person is on, by name, or null if none in presence has it. Built once
+// per state, since every face asks.
 let devOfNames = null;
 let devOfState = null;
 function deviceOfName(name) {
@@ -2748,11 +2750,11 @@ function deviceOfName(name) {
     devOfState = ui.state;
     devOfNames = new Map();
     for (const d of ui.state?.devices || []) {
-      for (const s of d.sessions || []) devOfNames.set(s.name, d.id);
-      if (d.person) devOfNames.set(d.person.name, d.id);
+      for (const s of d.sessions || []) devOfNames.set(s.name, d);
+      if (d.person) devOfNames.set(d.person.name, d);
     }
   }
-  return devOfNames.get(name) || "";
+  return devOfNames.get(name) || null;
 }
 
 // A group chat is named for whose it is, and its face is its members'.
