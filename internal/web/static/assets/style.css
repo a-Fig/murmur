@@ -3663,25 +3663,65 @@ a.g-pr:hover {
   height: 0.5rem;
 }
 
-/* A person's face (#560): a thin ring in the accent colour, a small gap from the face. The gap is
- * the surface's colour, as the state dot's cutout is. */
-.avatar.avatar-person {
+/* A device's color (#560): six muted hues of one lightness, a step darker on the light themes. A
+ * face wears it as a thin ring, a small gap from the face, the gap the surface's color as the state
+ * dot's cutout is; the device's header shows it as a dot by its name. */
+:root {
+  --dev-l: 0.7;
+  --dev-c: 0.085;
+}
+:root[data-theme="light"],
+:root[data-theme="murmur"] {
+  --dev-l: 0.62;
+}
+.dev-c0 {
+  --dev: oklch(var(--dev-l) var(--dev-c) 255);
+}
+.dev-c1 {
+  --dev: oklch(var(--dev-l) var(--dev-c) 195);
+}
+.dev-c2 {
+  --dev: oklch(var(--dev-l) var(--dev-c) 320);
+}
+.dev-c3 {
+  --dev: oklch(var(--dev-l) var(--dev-c) 80);
+}
+.dev-c4 {
+  --dev: oklch(var(--dev-l) var(--dev-c) 145);
+}
+.dev-c5 {
+  --dev: oklch(var(--dev-l) var(--dev-c) 30);
+}
+.avatar.dev-ring {
   box-shadow:
     0 0 0 1.5px var(--dot-ring, var(--background)),
-    0 0 0 3px var(--primary);
+    0 0 0 3px var(--dev);
 }
 /* In an overlapping stack the ring takes the place of the stack's cutout, so a face has one outline. */
-.avatar-pair > .avatar.avatar-person,
-.g-pile .avatar.avatar-person {
+.avatar-pair > .avatar.dev-ring,
+.g-pile .avatar.dev-ring {
   box-shadow:
     0 0 0 1px var(--dot-ring, var(--background)),
-    0 0 0 2.5px var(--primary);
+    0 0 0 2.5px var(--dev);
 }
 /* A group's square of faces has no room outside a face: the ring goes inside it. */
-.g-grid .avatar.avatar-person {
+.g-grid .avatar.dev-ring {
   box-shadow:
-    inset 0 0 0 1.25px var(--primary),
+    inset 0 0 0 1.25px var(--dev),
     inset 0 0 0 2.5px var(--dot-ring, var(--background));
+}
+.dev-swatch {
+  flex-shrink: 0;
+  align-self: center;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 999px;
+  background: var(--dev);
+}
+/* Where a device header is short of room, its host gives way before its name. */
+.device-link .dev-name {
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 /* In the sidebar's rows, a face in place of the bare dot. */
