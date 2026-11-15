@@ -3663,34 +3663,37 @@ a.g-pr:hover {
   height: 0.5rem;
 }
 
-/* A device's color (#560): six muted hues of one lightness, a step darker on the light themes. A
- * face wears it as a thin ring, a small gap from the face, the gap the surface's color as the state
- * dot's cutout is; the device's header shows it as a dot by its name. */
+/* A device's color (#560): six hues of one lightness, a step darker on the light themes, a third
+ * blended into the surface behind it so a ring reads as a quiet tint rather than an outline. A face
+ * wears it as a thin ring, a small gap from the face, the gap the surface's color as the state dot's
+ * cutout is; the device's header shows it as a dot by its name. */
 :root {
-  --dev-l: 0.7;
+  --dev-l: 0.76;
   --dev-c: 0.085;
+  --dev-mix: 62%;
 }
 :root[data-theme="light"],
 :root[data-theme="murmur"] {
   --dev-l: 0.62;
+  --dev-mix: 60%;
 }
 .dev-c0 {
-  --dev: oklch(var(--dev-l) var(--dev-c) 255);
+  --dev: color-mix(in oklab, oklch(var(--dev-l) var(--dev-c) 255) var(--dev-mix), var(--dot-ring, var(--background)));
 }
 .dev-c1 {
-  --dev: oklch(var(--dev-l) var(--dev-c) 195);
+  --dev: color-mix(in oklab, oklch(var(--dev-l) var(--dev-c) 195) var(--dev-mix), var(--dot-ring, var(--background)));
 }
 .dev-c2 {
-  --dev: oklch(var(--dev-l) var(--dev-c) 320);
+  --dev: color-mix(in oklab, oklch(var(--dev-l) var(--dev-c) 320) var(--dev-mix), var(--dot-ring, var(--background)));
 }
 .dev-c3 {
-  --dev: oklch(var(--dev-l) var(--dev-c) 80);
+  --dev: color-mix(in oklab, oklch(var(--dev-l) var(--dev-c) 80) var(--dev-mix), var(--dot-ring, var(--background)));
 }
 .dev-c4 {
-  --dev: oklch(var(--dev-l) var(--dev-c) 145);
+  --dev: color-mix(in oklab, oklch(var(--dev-l) var(--dev-c) 145) var(--dev-mix), var(--dot-ring, var(--background)));
 }
 .dev-c5 {
-  --dev: oklch(var(--dev-l) var(--dev-c) 30);
+  --dev: color-mix(in oklab, oklch(var(--dev-l) var(--dev-c) 30) var(--dev-mix), var(--dot-ring, var(--background)));
 }
 .avatar.dev-ring {
   box-shadow:
@@ -3713,8 +3716,8 @@ a.g-pr:hover {
 .dev-swatch {
   flex-shrink: 0;
   align-self: center;
-  width: 0.4375rem;
-  height: 0.4375rem;
+  width: 0.5rem;
+  height: 0.5rem;
   border-radius: 999px;
   background: var(--dev);
 }
