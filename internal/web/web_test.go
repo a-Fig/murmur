@@ -128,10 +128,20 @@ func (f *fakeSource) SetNick(ctx context.Context, nick string) (Account, error) 
 	return f.state.Account, nil
 }
 
-func (f *fakeSource) Send(ctx context.Context, to, text string) (Sent, error) {
+func (f *fakeSource) File(ctx context.Context, id string, index int) (string, []byte, error) {
+	if id != "abc123" || index != 1 {
+		return "", nil, errors.New("that file couldn't be fetched")
+	}
+	return "shot one.png", []byte("<script>alert(1)</script>"), nil
+}
+
+func (f *fakeSource) Send(ctx context.Context, to, text string, files []Upload) (Sent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sends = append(f.sends, to+": "+text)
+	for _, u := range files {
+		f.sends = append(f.sends, fmt.Sprintf("file %s: %s", u.Name, u.Data))
+	}
 	if strings.Contains(text, "secret") {
 		return Sent{}, errors.New("not sent: it looks like a secret")
 	}

@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -14,6 +15,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"log"
 	mrand "math/rand/v2"
 	"net"
@@ -193,6 +198,63 @@ type fixtures struct {
 	receipts map[string][]web.Receipt
 	// picks is the colour each device's person picked (#573), by device; the rest are chosen.
 	picks map[string]bus.ColorPick
+	// files is the files each message carries (#570), by the message's ID.
+	files map[string][]web.Upload
+}
+
+// attach gives the message last added these files. Caller holds mu, or is still building f.
+func (f *fixtures) attach(files ...web.Upload) {
+	m := &f.messages[len(f.messages)-1]
+	if f.files == nil {
+		f.files = map[string][]web.Upload{}
+	}
+	f.files[m.ID] = files
+	for _, u := range files {
+		m.Files = append(m.Files, web.File{Name: bus.FileName(u.Name), Size: int64(len(u.Data))})
+	}
+}
+
+// File is a file of a fixture message, after the moment a fetch takes. One called gone can't be had.
+func (f *fixtures) File(ctx context.Context, id string, index int) (string, []byte, error) {
+	select {
+	case <-time.After(400 * time.Millisecond):
+	case <-ctx.Done():
+		return "", nil, ctx.Err()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	files := f.files[id]
+	if index >= len(files) {
+		return "", nil, errors.New("no such file")
+	}
+	if name := bus.FileName(files[index].Name); !strings.HasPrefix(name, "gone") {
+		return name, files[index].Data, nil
+	}
+	return "", nil, errors.New(files[index].Name + " isn't here: it couldn't be fetched, or was sent more than a week ago")
+}
+
+// screenshot draws a picture that stands for a screenshot of a sign-in page: w by h, dark, with a
+// card and a button, so the page has an image to show that looks like what agents send.
+func screenshot(w, h int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	fill := func(r image.Rectangle, c color.RGBA) {
+		draw.Draw(img, r, &image.Uniform{C: c}, image.Point{}, draw.Src)
+	}
+	fill(img.Bounds(), color.RGBA{0x12, 0x14, 0x1a, 0xff})
+	fill(image.Rect(0, 0, w, h/12), color.RGBA{0x1c, 0x20, 0x29, 0xff})
+	card := image.Rect(w/3, h/4, 2*w/3, 3*h/4)
+	fill(card, color.RGBA{0x23, 0x28, 0x33, 0xff})
+	for i := range 2 {
+		y := card.Min.Y + (i+2)*card.Dy()/6
+		fill(image.Rect(card.Min.X+w/30, y, card.Max.X-w/30, y+h/22), color.RGBA{0x15, 0x18, 0x1f, 0xff})
+	}
+	fill(image.Rect(card.Min.X+w/30, card.Max.Y-h/8, card.Max.X-w/30, card.Max.Y-h/16), color.RGBA{0x5b, 0x8d, 0xef, 0xff})
+	fill(image.Rect(card.Min.X+w/30, card.Min.Y+h/20, card.Min.X+w/6, card.Min.Y+h/20+h/40), color.RGBA{0xd7, 0xdc, 0xe5, 0xff})
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
 }
 
 func newFixtures(now time.Time) *fixtures {
@@ -308,6 +370,16 @@ func newFixtures(now time.Time) *fixtures {
 		f.messages = append(f.messages, web.Message{ID: randomHex(6), From: from, To: to, ToAddr: personAddr(f.devices, to), ToPerson: true,
 			ToKind: web.ToSession, Subject: subject, Body: body, At: ago(d)})
 	}
+	// Messages with files (#570): a screenshot and a log between two agents, and one to the person
+	// whose second file can't be had.
+	msg(200*time.Minute, "tidy-badger", "quiet-otter", web.ToSession, "The sign-in page after the redirect",
+		"The callback lands here with the form empty. The log has the request that fails.")
+	f.attach(web.Upload{Name: "sign-in.png", Data: screenshot(960, 600)},
+		web.Upload{Name: "auth.log", Data: []byte(strings.Repeat("GET /auth/callback?code=... 302\nPOST /auth/session 401 token expired\n", 40))})
+	toPerson(190*time.Minute, "quiet-otter", "tyler", "Two views of the fix",
+		"Before and after. The trace from the first run is gone by now.")
+	f.attach(web.Upload{Name: "before.png", Data: screenshot(640, 400)}, web.Upload{Name: "after.png", Data: screenshot(640, 480)},
+		web.Upload{Name: "gone-trace.zip", Data: make([]byte, 3<<20)})
 	msg(3*time.Hour, "tidy-badger", "*", web.ToAll, "Taking auth-flow",
 		"I'm on GitHub sign-in. Please stay out of app/auth and middleware.ts until I push; tell me if you need something from them.")
 	msg(170*time.Minute, "brave-heron", "tidy-badger", web.ToSession, "The rate limit sits behind your middleware",
@@ -518,7 +590,7 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 
 // Send takes as long as a push does, refuses what scrub would, and has the session answer a few
 // seconds later, as an agent does, going active first so the page can show it working.
-func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) {
+func (f *fixtures) Send(ctx context.Context, to, text string, files []web.Upload) (web.Sent, error) {
 	f.mu.Lock()
 	takenBy := f.account.Taken
 	f.mu.Unlock()
@@ -535,6 +607,9 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if strings.TrimSpace(text) == "" && len(files) > 0 {
+		text = bus.FileName(files[0].Name)
+	}
 	subject, body := web.SplitText(text)
 	m := web.Message{ID: randomHex(6), From: f.account.Name, FromAddr: f.account.Addr, FromPerson: true,
 		Subject: subject, Body: body, At: time.Now()}
@@ -566,6 +641,10 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 		}
 	}
 	f.messages = append(f.messages, m)
+	if len(files) > 0 {
+		f.attach(files...)
+		m = f.messages[len(f.messages)-1]
+	}
 	f.receive(m)
 	sent := web.Sent{ID: m.ID}
 	if m.ToKind == web.ToSession && !m.ToPerson {

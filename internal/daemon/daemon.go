@@ -524,6 +524,7 @@ type Daemon struct {
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
 	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
+	fileMu   sync.Mutex    // held for a fetch of a message's files (fetchFiles)
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
 	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc

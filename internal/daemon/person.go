@@ -421,7 +421,7 @@ func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, e
 
 // Send sends text as this device's person. It returns once the message is on the remote, as an
 // agent's send does.
-func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error) {
+func (s pageSource) Send(ctx context.Context, to, text string, files []web.Upload) (web.Sent, error) {
 	d := s.d
 	d.pageCalled(ctx)
 	d.awaitFirstSync(ctx) // as send does for a session: the names it resolves, and its push
@@ -435,8 +435,20 @@ func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error)
 		// Their messages would carry a name that reaches someone else.
 		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
 	}
+	uploads := make([]sendFile, len(files))
+	for i, f := range files {
+		uploads[i] = sendFile{f.Name, f.Data}
+	}
+	if strings.TrimSpace(text) == "" && len(files) > 0 {
+		// Files alone: a message needs a subject, and their names say what it is.
+		names := make([]string, len(files))
+		for i, f := range files {
+			names[i] = bus.FileName(f.Name)
+		}
+		text = strings.Join(names, ", ")
+	}
 	subject, body := web.SplitText(text)
-	r := d.send(ctx, d.personAddr(), proto.Request{To: to, Subject: subject, Body: body})
+	r := d.sendWith(ctx, d.personAddr(), proto.Request{To: to, Subject: subject, Body: body}, uploads)
 	if r.Error != "" {
 		return web.Sent{}, errors.New(r.Error)
 	}
@@ -445,6 +457,12 @@ func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error)
 		sent.ID = r.Messages[0].ID
 	}
 	return sent, nil
+}
+
+// File returns one file of a message the page lists, fetched first if it isn't here.
+func (s pageSource) File(ctx context.Context, id string, index int) (string, []byte, error) {
+	s.d.pageCalled(ctx)
+	return s.d.fileOf(ctx, id, index)
 }
 
 // MarkRead takes the messages with these IDs out of the person's unread.
