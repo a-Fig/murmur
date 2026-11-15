@@ -164,6 +164,12 @@
   .tip .row b { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 24px; }
   .tip .row i { width: 10px; height: 10px; border-radius: 3px; }
   .tip .row span { color: var(--text-secondary); }
+  /* Progress over time: one big chart, a measure and a way of counting it picked above it. */
+  .progress .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .progress .figure { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .progress .figure .big { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .progress .figure .change { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .seg button:disabled { opacity: .4; cursor: default; }
   /* The share of the range by repo: one bar per repo, labelled directly. */
   .share { display: grid; gap: 10px; margin-top: 16px; }
   .share .item { display: grid; grid-template-columns: minmax(0, 150px) 1fr auto; align-items: center; gap: 12px; }
@@ -194,7 +200,7 @@
   footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; max-width: 960px; }
   /* Marks arrive once per load, not on every resize: columns rise from the baseline, lines draw in. */
   .grow { transform-box: fill-box; transform-origin: 50% 100%; animation: grow .55s cubic-bezier(.2,.75,.25,1) both; }
-  .growx { transform-origin: 0 50%; animation: growx .7s cubic-bezier(.2,.75,.25,1) both; }
+  .growx { transform-box: fill-box; transform-origin: 0 50%; animation: growx .7s cubic-bezier(.2,.75,.25,1) both; }
   .draw { stroke-dasharray: 1; animation: draw 1s cubic-bezier(.35,.6,.2,1) both; }
   .fade { animation: fade .5s ease both; }
   @keyframes grow { from { transform: scaleY(0); } }
@@ -264,6 +270,34 @@
         </div>
       </div>
       <div class="chart" id="c-users"></div>
+    </section>
+
+    <section class="card wide progress">
+      <div class="head">
+        <div>
+          <h2>Progress over time</h2>
+          <div class="sub" id="prog-sub"></div>
+        </div>
+        <div class="controls">
+          <div class="seg small" id="prog-metric" role="group" aria-label="Measure">
+            <button data-k="repos">Repos</button>
+            <button data-k="users">Users</button>
+            <button data-k="contributors">Contributors</button>
+            <button data-k="records">Bus records</button>
+            <button data-k="bytes">Data</button>
+            <button data-k="sessions">Sessions</button>
+            <button data-k="messages">Messages</button>
+            <button data-k="devices">Devices</button>
+          </div>
+          <div class="seg small" id="prog-mode" role="group" aria-label="Count">
+            <button data-m="cumulative">Cumulative</button>
+            <button data-m="daily">Per day</button>
+          </div>
+        </div>
+      </div>
+      <div class="figure"><span class="big" id="prog-big">–</span><span class="change" id="prog-change"></span></div>
+      <div class="chart" id="c-prog"></div>
+      <div class="legend" id="l-prog"></div>
     </section>
 
     <h2 class="section"><span class="def"><button type="button" aria-describedby="measured-def">Measured</button><span class="why" role="tooltip" id="measured-def">Exact, whether or not a bus is encrypted.</span></span></h2>
@@ -571,10 +605,10 @@ const FULL = 1;
 // Columns per day, stacked by repo in the repos' fixed colors, with the 7-day average of the
 // whole as a dashed line over them. With estKey, a column is the exact count and the estimate
 // together. With bytes, the values are bytes, and are written as sizes.
-function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, bytes = false } = {}) {
+function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, bytes = false, height = 260 } = {}) {
   const value = bytes ? size : fmt;
   box.replaceChildren();
-  const n = days.length, H = 260;
+  const n = days.length, H = height;
   const cell = new Map(); // day -> Map(slot -> value)
   for (const r of byRepo) {
     const extra = (estKey && r[estKey]) || 0, v = (r[key] || 0) + extra;
@@ -840,6 +874,117 @@ function ratioChart(box, legendBox, series) {
   legendBox.append(a, b);
 }
 
+// Running totals by repo, stacked: each repo's all-time count, less what the range added, is where
+// its band starts, so the top edge is the all-time total on each day, not just the range's.
+function cumulativeChart(box, legendBox, days, byRepo, repoList, value, what, colors, show) {
+  box.replaceChildren();
+  const n = days.length, H = 300, idx = new Map(days.map((d, i) => [d, i]));
+  const daily = new Map(colors.slots.map(s => [s.key, days.map(() => 0)]));
+  for (const r of byRepo) if (idx.has(r.day)) daily.get(colors.slotOf(r.name))[idx.get(r.day)] += value(r);
+  const base = new Map(colors.slots.map(s => [s.key, 0]));
+  for (const r of repoList) { const k = colors.slotOf(r.name); base.set(k, base.get(k) + value(r)); }
+  const bands = colors.slots.map(s => {
+    // A count is only raised, so the range can't hold more than the total; if it seems to, the
+    // census is mid-run, and the band starts at 0.
+    let run = Math.max(0, base.get(s.key) - sum(daily.get(s.key)));
+    return { ...s, cum: daily.get(s.key).map(v => (run += v)) };
+  }).filter(b => b.cum[n - 1] > 0);
+  const tops = days.map((_, i) => sum(bands, b => b.cum[i]));
+  const f = frame(box, n, Math.max(1, ...tops), H, `${what}, in all, by repo`, show === size ? sizeTick : fmt);
+  const surface = css('--surface-1');
+  const g = el('g');
+  let lower = days.map(() => 0);
+  for (const b of bands) {
+    const upper = lower.map((v, i) => v + b.cum[i]);
+    const xs = days.map((_, i) => (i === 0 ? f.m.l : i === n - 1 ? f.W - f.m.r : f.x(i)).toFixed(1));
+    const top = upper.map((v, i) => `${i ? 'L' : 'M'}${xs[i]},${f.y(v).toFixed(1)}`).join('');
+    const bottom = lower.map((v, i) => `L${xs[i]},${f.y(v).toFixed(1)}`).reverse().join('');
+    g.append(el('path', { d: `${top}${bottom}Z`, fill: b.color, opacity: 0.88 }));
+    // A surface edge between bands, as between stacked columns.
+    g.append(el('path', { d: top, fill: 'none', stroke: surface, 'stroke-width': 1.5, 'stroke-linejoin': 'round' }));
+    lower = upper;
+  }
+  if (animate) {
+    const id = `reveal-${++gradients}`, clip = el('clipPath', { id });
+    clip.append(grow(el('rect', { x: f.m.l, y: 0, width: f.W - f.m.l - f.m.r, height: H }), 0, 'growx'));
+    const defs = el('defs'); defs.append(clip); f.svg.append(defs);
+    g.setAttribute('clip-path', `url(#${id})`);
+  }
+  f.svg.append(g);
+  f.svg.append(grow(el('text', { class: 'bar-value', x: f.W - f.m.r, y: f.y(tops[n - 1]) - 8, 'text-anchor': 'end' }, show(tops[n - 1])), 700, 'fade'));
+  dayLabels(f, days);
+  box.append(f.svg);
+  crosshair(box, f, n, css('--text-primary'), i => ({
+    y: f.y(tops[i]), when: `${long(days[i])} · ${show(tops[i])} in all`,
+    rows: [...bands].reverse().map(b => [b.color, show(b.cum[i]), b.label]),
+  }));
+  legendBox.replaceChildren();
+  for (const b of bands) {
+    const item = el('span'), k = el('i'); k.style.background = b.color;
+    item.append(k, document.createTextNode(b.label)); legendBox.append(item);
+  }
+  if (!bands.length) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} yet.`));
+}
+
+// What the progress card can show. A total kind (repos, users, contributors) is a running total
+// the server already keeps per day; per day it is how many were new. A repo kind is summed from
+// each repo's days. Devices come only per day: the data holds each day's active devices, not the
+// day each device first appeared.
+const PROGRESS = {
+  repos: { what: 'Public repos', total: 'repos', newWhat: 'new repos' },
+  users: { what: 'Users', total: 'users', newWhat: 'new users', note: 'approximate: see the asterisk on Users' },
+  contributors: { what: 'Contributors', total: 'contributors', newWhat: 'new contributors' },
+  records: { what: 'Bus records', value: r => r.records || 0 },
+  bytes: { what: 'Data', value: r => r.bytes || 0, show: size },
+  sessions: { what: 'Agent sessions', value: r => (r.sessions || 0) + (r.estSessions || 0), est: 'estSessions', note: 'estimates included' },
+  messages: { what: 'Messages', value: r => (r.messages || 0) + (r.estMessages || 0), est: 'estMessages', note: 'estimates included' },
+  devices: { what: 'Devices active', value: r => r.devices || 0, dailyOnly: true },
+};
+let progKey = 'records', progMode = 'cumulative';
+function progress(d, colors) {
+  const m = PROGRESS[progKey], show = m.show || fmt, S = d.series, days = S.map(s => s.day), n = S.length;
+  const mode = m.dailyOnly ? 'daily' : progMode;
+  for (const b of document.querySelectorAll('#prog-metric button')) b.setAttribute('aria-pressed', String(b.dataset.k === progKey));
+  for (const b of document.querySelectorAll('#prog-mode button')) {
+    b.setAttribute('aria-pressed', String(b.dataset.m === mode));
+    b.disabled = b.dataset.m === 'cumulative' && !!m.dailyOnly;
+    b.title = b.disabled ? 'Per day only: the data has each day’s active devices, not when each first ran Murmur' : '';
+  }
+  const box = $('c-prog'), legend = $('l-prog');
+  const tail = m.note ? `; ${m.note}` : '';
+  if (m.total) {
+    // New on a day is the change in the running total; the range's first day has nothing before it.
+    const news = S.map((s, i) => (i ? Math.max(0, s[m.total] - S[i - 1][m.total]) : 0));
+    const added = S[n - 1][m.total] - S[0][m.total];
+    $('prog-big').textContent = fmt(S[n - 1][m.total]);
+    $('prog-change').textContent = `+${fmt(added)} since ${date(days[0])}`;
+    if (mode === 'cumulative') {
+      $('prog-sub').textContent = `${m.what.toLowerCase()}, in all, each day${tail}`;
+      totalChart(box, S, m.total, m.what.toLowerCase(), 300);
+      legend.replaceChildren();
+    } else {
+      $('prog-sub').textContent = `${m.newWhat} each day${tail}`;
+      const one = { slots: [{ key: 'all', label: m.newWhat, color: css('--series-1') }], slotOf: () => 'all' };
+      stackChart(box, legend, days, S.map((s, i) => ({ name: 'all', day: s.day, v: news[i] })), 'v', m.newWhat[0].toUpperCase() + m.newWhat.slice(1), one, { height: 300 });
+    }
+    return;
+  }
+  const inRange = sum(d.byRepo, m.value);
+  if (mode === 'cumulative') {
+    const all = sum(d.repoList, m.value);
+    $('prog-big').textContent = show(all);
+    $('prog-change').textContent = `+${show(inRange)} since ${date(days[0])}`;
+    $('prog-sub').textContent = `${m.what.toLowerCase()}, in all, each day, by repo${tail}`;
+    cumulativeChart(box, legend, days, d.byRepo, d.repoList, m.value, m.what, colors, show);
+  } else {
+    const per = days.map(day => sum(d.byRepo.filter(r => r.day === day), m.value));
+    $('prog-big').textContent = m.dailyOnly ? ratioFmt(sum(per) / n) : show(inRange);
+    $('prog-change').textContent = m.dailyOnly ? `a day on average since ${date(days[0])}` : `since ${date(days[0])}, ${show(Math.round(inRange / n))} a day`;
+    $('prog-sub').textContent = `${m.what.toLowerCase()} each day, by repo${tail}`;
+    stackChart(box, legend, days, d.byRepo.map(r => ({ ...r, v: m.value(r) })), 'v', m.what, colors, { bytes: m.show === size, height: 300 });
+  }
+}
+
 // Each repo keeps a color by when it started, the oldest first; past seven, the rest are Other.
 function repoColors(list) {
   const order = [...list].sort((a, b) => a.start.localeCompare(b.start) || a.name.localeCompare(b.name));
@@ -1014,6 +1159,7 @@ function render() {
   stackChart($('c-sessions'), $('l-sessions'), dayList, d.byRepo, 'sessions', 'Sessions', colors, { estKey: 'estSessions' });
   stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors, { estKey: 'estMessages' });
   stackChart($('c-devices'), $('l-devices'), dayList, d.byRepo, 'devices', 'Devices', colors);
+  progress(d, colors);
   heatmap($('c-heat'), $('l-heat'), dayList, d.byRepo, colors);
   shareChart($('c-share'), d.byRepo, colors, dayList.length);
   ratioChart($('c-ratio'), $('l-ratio'), S);
@@ -1055,6 +1201,15 @@ for (const b of document.querySelectorAll('.ranges button')) {
     days = Number(b.dataset.days);
     history.replaceState(null, '', `?days=${days}`);
     load();
+  });
+}
+for (const b of document.querySelectorAll('#prog-metric button, #prog-mode button')) {
+  b.addEventListener('click', () => {
+    if (b.dataset.k) progKey = b.dataset.k; else progMode = b.dataset.m;
+    if (!data) return;
+    animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    progress(data, repoColors(data.repoList));
+    animate = false;
   });
 }
 for (const b of document.querySelectorAll('#share-metric button')) {
