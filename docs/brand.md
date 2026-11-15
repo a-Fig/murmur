@@ -118,6 +118,9 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
 
+A person's face is a ghost from `internal/web/static/assets/ghosts/` (#579): six tones crossed with
+nine looks, 54 in all, written by `scripts/ghosts.py`. A change to the set means running it again.
+
 ## Renders
 
 `site/how-wide.mp4`, `site/how-tall.mp4` and their posters are rendered from
