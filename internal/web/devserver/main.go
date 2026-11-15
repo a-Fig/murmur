@@ -209,9 +209,28 @@ func (f *fixtures) attach(files ...web.Upload) {
 		f.files = map[string][]web.Upload{}
 	}
 	f.files[m.ID] = files
-	for _, u := range files {
-		m.Files = append(m.Files, web.File{Name: bus.FileName(u.Name), Size: int64(len(u.Data))})
+	for i, name := range fileNames(files) {
+		m.Files = append(m.Files, web.File{Name: name, Size: int64(len(files[i].Data))})
 	}
+}
+
+// noFile is why a file can't be had, in words to show (web.ErrNoFile).
+type noFile string
+
+func (e noFile) Error() string        { return string(e) }
+func (e noFile) Is(target error) bool { return target == web.ErrNoFile }
+
+// fileNames is the names files are sent under, as the daemon makes them: safe, and distinct.
+func fileNames(files []web.Upload) []string {
+	named := make([]bus.File, len(files))
+	for i, u := range files {
+		named[i].Name = u.Name
+	}
+	names := make([]string, len(files))
+	for i, f := range bus.CleanFiles(named) {
+		names[i] = f.Name
+	}
+	return names
 }
 
 // File is a file of a fixture message, after the moment a fetch takes. One called gone can't be had.
@@ -225,12 +244,12 @@ func (f *fixtures) File(ctx context.Context, id string, index int) (string, []by
 	defer f.mu.Unlock()
 	files := f.files[id]
 	if index >= len(files) {
-		return "", nil, errors.New("no such file")
+		return "", nil, web.ErrNoFile
 	}
-	if name := bus.FileName(files[index].Name); !strings.HasPrefix(name, "gone") {
+	if name := fileNames(files)[index]; !strings.HasPrefix(name, "gone") {
 		return name, files[index].Data, nil
 	}
-	return "", nil, errors.New(files[index].Name + " isn't here: it couldn't be fetched, or was sent more than a week ago")
+	return "", nil, noFile(files[index].Name + " isn't here: it couldn't be fetched, or was sent more than a week ago")
 }
 
 // screenshot draws a picture that stands for a screenshot of a sign-in page: w by h, dark, with a
@@ -608,11 +627,7 @@ func (f *fixtures) Send(ctx context.Context, to, text string, files []web.Upload
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if strings.TrimSpace(text) == "" && len(files) > 0 {
-		names := make([]string, len(files)) // as the daemon does
-		for i, u := range files {
-			names[i] = bus.FileName(u.Name)
-		}
-		text = strings.Join(names, ", ")
+		text = strings.Join(fileNames(files), ", ") // as the daemon does
 	}
 	subject, body := web.SplitText(text)
 	m := web.Message{ID: randomHex(6), From: f.account.Name, FromAddr: f.account.Addr, FromPerson: true,

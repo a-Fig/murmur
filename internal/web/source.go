@@ -46,7 +46,8 @@ type Source interface {
 	// wasn't sent, and says why.
 	Send(ctx context.Context, to, text string, files []Upload) (Sent, error)
 	// File returns the index'th file of the message with that ID, fetching it if it isn't on this
-	// device yet. An error says why it can't be had, in words to show.
+	// device yet. An error says why it can't be had, in words to show: one that is ErrNoFile if
+	// asking again won't help, any other if it might (the remote couldn't be reached).
 	File(ctx context.Context, id string, index int) (name string, data []byte, err error)
 	// MarkRead takes these messages out of the person's unread.
 	MarkRead(ctx context.Context, ids []string) error
@@ -213,6 +214,10 @@ type File struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 }
+
+// ErrNoFile is what a Source's File error is when the file can't be had at all: its message has
+// no such file, or it is gone from the remote. The page says so and stops asking.
+var ErrNoFile = errors.New("no such file")
 
 // Upload is a file a person sends with a message from the page.
 type Upload struct {

@@ -128,9 +128,18 @@ func (f *fakeSource) SetNick(ctx context.Context, nick string) (Account, error) 
 	return f.state.Account, nil
 }
 
+// noFile makes an error ErrNoFile without adding to what it says.
+type noFile struct{}
+
+func (noFile) Error() string        { return "" }
+func (noFile) Is(target error) bool { return target == ErrNoFile }
+
 func (f *fakeSource) File(ctx context.Context, id string, index int) (string, []byte, error) {
+	if id == "later" {
+		return "", nil, errors.New("that file couldn't be fetched just now")
+	}
 	if id != "abc123" || index != 1 {
-		return "", nil, errors.New("that file couldn't be fetched")
+		return "", nil, fmt.Errorf("that file isn't here%w", noFile{})
 	}
 	return "shot one.png", []byte("<script>alert(1)</script>"), nil
 }

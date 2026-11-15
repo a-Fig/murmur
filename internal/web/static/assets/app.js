@@ -3239,10 +3239,27 @@ const MAX_FILES_TOTAL = 20 << 20;
 // What the page shows as a picture, by the end of its name. Not SVG, which is a document.
 const PICTURES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 const FETCHED_KEEP = 96 << 20; // how many bytes of what was fetched the page holds on to
-const FETCH_AGAIN = 30000; // how long before a picture the daemon couldn't be asked for is asked for again
+const FETCH_AGAIN = 30000; // how long before a picture that couldn't be fetched is asked for again
+// How many files are asked for at once. A browser gives a page six connections, and each of these
+// can wait on a fetch from the remote while the polls and a send need theirs.
+const FETCH_AT_ONCE = 2;
+let fetchSlots = FETCH_AT_ONCE;
+const fetchWaits = [];
+
+async function inFetchSlot(run) {
+  if (fetchSlots) fetchSlots--;
+  else await new Promise((go) => fetchWaits.push(go));
+  try {
+    return await run();
+  } finally {
+    const next = fetchWaits.shift();
+    if (next) next();
+    else fetchSlots++;
+  }
+}
 
 // A message's files as the page has them, by "id:place": { state, url, size, why, at, done }, where
-// state is "loading", "here", "gone" (the daemon hasn't got it) or "failed" (it couldn't be asked).
+// state is "loading", "here", "gone" (it can't be had: a 404) or "failed" (not just now).
 // A picture's entry keeps the elements that show it, so the renders polling causes don't load it
 // again. A file the person attached is an entry too, from the moment it is attached.
 const fetched = new Map();
@@ -3267,8 +3284,7 @@ function fetchFile(id, i, name, again) {
   if (f && !retry) return f;
   f = { state: "loading" };
   fetched.set(key, f);
-  f.done = api("/api/file?id=" + encodeURIComponent(id) + "&i=" + i, { raw: true })
-    .then((res) => res.blob())
+  f.done = inFetchSlot(async () => (await api("/api/file?id=" + encodeURIComponent(id) + "&i=" + i, { raw: true })).blob())
     .then((blob) => {
       // The daemon sends every file as bytes to save; a picture is shown as the kind its name says.
       const type = pictureType(name);
@@ -3414,7 +3430,12 @@ function attach(key, files) {
     else if (!file.size) note = file.name + " is empty.";
     else if (file.size > MAX_FILE) note = file.name + " is " + fileSize(file.size) + ". A file can be " + (MAX_FILE >> 20) + " MB at most.";
     else if (total + file.size > MAX_FILES_TOTAL) note = "A message's files can come to " + (MAX_FILES_TOTAL >> 20) + " MB at most.";
-    else list.push({ state: "here", file, name: file.name, size: file.size, url: URL.createObjectURL(file), done: Promise.resolve() });
+    else {
+      // Shown or saved as a fetched file is: a picture by its name, anything else as bytes,
+      // whatever kind the browser took it for.
+      const blob = new Blob([file], { type: pictureType(file.name) || "application/octet-stream" });
+      list.push({ state: "here", file, name: file.name, size: file.size, url: URL.createObjectURL(blob), done: Promise.resolve() });
+    }
   }
   if (list.length) attached.set(key, list);
   ui.fileNote = note ? { key, text: note } : null;
@@ -4248,11 +4269,12 @@ function composerFor(key, send, onchange) {
     fit(el);
     onchange();
   };
-  // A pasted file is attached: a screenshot, most often. What also comes as text is pasted as text
-  // (a spreadsheet's cells come as both).
+  // A pasted file is attached: a screenshot, most often. What also comes as rich text is pasted as
+  // text: a spreadsheet's cells come as a picture too. A file copied in a file manager comes with
+  // its name as plain text, and is attached.
   el.onpaste = (e) => {
     const files = [...(e.clipboardData?.files || [])];
-    if (!files.length || e.clipboardData.getData("text/plain")) return;
+    if (!files.length || e.clipboardData.types.includes("text/html")) return;
     e.preventDefault();
     attach(key, files);
   };
@@ -5431,7 +5453,10 @@ document.addEventListener("drop", (e) => {
 
 // Escape closes the tag menu wherever the focus is, even on the page's body.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
+  if (e.key === "Escape" && ui.viewer && !e.defaultPrevented) {
+    e.preventDefault(); // a click on the picture leaves the focus on the page's body
+    closeViewer();
+  } else if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
     e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
     closeTagMenu();
   } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {

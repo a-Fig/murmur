@@ -250,25 +250,29 @@ func TestFilesToAndFromThePage(t *testing.T) {
 		t.Errorf("a file the message hasn't got: %d, want 404", code)
 	}
 
-	// From the person to an agent, with nothing written.
-	notes := []byte("what I see on my screen\n")
-	code, body := pa.sendFiles(bobName, "", web.Upload{Name: "my notes.txt", Data: notes})
+	// From the person to an agent, with nothing written: two files of one name, as two pasted
+	// screenshots are. The subject is the names they were sent under.
+	notes, more := []byte("what I see on my screen\n"), []byte("and after a reload\n")
+	code, body := pa.sendFiles(bobName, "", web.Upload{Name: "my notes.txt", Data: notes}, web.Upload{Name: "my notes.txt", Data: more})
 	if code != http.StatusOK {
 		t.Fatalf("the person's send: %d %s", code, body)
 	}
+	const names = "my_notes.txt, 2-my_notes.txt"
 	got := inboxMessage(t, b, "bbbbbb")
-	if got.Subject != "my_notes.txt" || len(got.Files) != 1 || got.Files[0].Name != "my_notes.txt" {
+	if got.Subject != names || len(got.Files) != 2 || got.Files[0].Name+", "+got.Files[1].Name != names {
 		t.Fatalf("what bob got: %+v", got)
 	}
-	if saved, err := os.ReadFile(got.Files[0].Path); err != nil || !bytes.Equal(saved, notes) {
-		t.Errorf("bob's copy: %q, %v", saved, err)
+	for i, want := range [][]byte{notes, more} {
+		if saved, err := os.ReadFile(got.Files[i].Path); err != nil || !bytes.Equal(saved, want) {
+			t.Errorf("bob's copy of %s: %q, %v", got.Files[i].Name, saved, err)
+		}
 	}
-	// The person's own page shows it too, from the copy the send kept.
-	mine, ok := pa.messageWith("my_notes.txt")
-	if !ok || len(mine.Files) != 1 {
+	// The person's own page shows them too, from the copies the send kept.
+	mine, ok := pa.messageWith(names)
+	if !ok || len(mine.Files) != 2 {
 		t.Fatalf("the person's own message on the page: %+v, %v", mine, ok)
 	}
-	if code, body := pa.call("GET", "/api/file?id="+mine.ID+"&i=0", pa.token, ""); code != http.StatusOK || body != string(notes) {
+	if code, body := pa.call("GET", "/api/file?id="+mine.ID+"&i=1", pa.token, ""); code != http.StatusOK || body != string(more) {
 		t.Errorf("the person's own file, asked for: %d %q", code, body)
 	}
 

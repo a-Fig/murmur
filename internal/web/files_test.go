@@ -105,7 +105,8 @@ func TestAFileComesAsBytesToSave(t *testing.T) {
 	}
 	host := "127.0.0.1:" + h.port
 	for path, want := range map[string]int{
-		"/api/file?id=abc123&i=0":  http.StatusNotFound, // the source hasn't got it
+		"/api/file?id=abc123&i=0":  http.StatusNotFound,           // the source hasn't got it
+		"/api/file?id=later&i=0":   http.StatusServiceUnavailable, // or couldn't fetch it just now
 		"/api/file?id=abc123":      http.StatusBadRequest,
 		"/api/file?id=abc123&i=-1": http.StatusBadRequest,
 		"/api/file?id=abc123&i=x":  http.StatusBadRequest,

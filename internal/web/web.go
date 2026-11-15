@@ -577,7 +577,13 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	name, data, err := s.src.File(ctx, id, index)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		// 404 for a file that can't be had, which the page then stops asking for; 503 for one it
+		// can ask for again.
+		code := http.StatusServiceUnavailable
+		if errors.Is(err, ErrNoFile) {
+			code = http.StatusNotFound
+		}
+		writeError(w, code, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

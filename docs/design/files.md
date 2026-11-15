@@ -130,6 +130,12 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   a person isn't held for its files, since the page can show it at once and fill a picture in.
   PNG, JPEG, GIF and WebP are shown as pictures, asked for when their message is drawn; anything
   else is a button that saves it. SVG is saved, not shown: it is a document.
+- **A fetch mustn't stall the page.** A browser gives a page six connections, and a file can wait
+  on a fetch from the remote, so the page asks for two files at a time and the polls and sends
+  keep theirs. The daemon fetches for the page once, not three times, and for 20 seconds after a
+  fetch fails it answers the message's other files without fetching again. It says 404 for a file
+  that can't be had, which the page shows as "Not here" until it is clicked, and 503 for one that
+  couldn't be fetched just now, which the page asks for again after 30 seconds.
 - **A file never runs.** The daemon sends every file as `application/octet-stream` with
   `nosniff`, to be saved. A file opened by the browser as the page's own would run a teammate's
   agent's HTML with the page's key in reach. A picture is shown through an `<img>` from an object
@@ -139,8 +145,10 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   before an upload ends loses the message, where a message of text alone still goes
   ([page](page.md)). The page keeps what it fetched in memory, up to 96 MB, and lets go of the
   oldest it isn't showing.
-- **Not tried** (2026-11-15): saving a file from the desktop app's window, whose web view decides
-  what a download does ([desktop](desktop.md)).
+- **The desktop app.** Its window asks where to save a file with a save panel (`OnDownload`,
+  [desktop](desktop.md)): without one the web view cancels every download on macOS and Linux.
+  Written from the web view's source and not tried on either (2026-11-15); Windows leaves
+  downloads to WebView2.
 
 ## Older daemons
 

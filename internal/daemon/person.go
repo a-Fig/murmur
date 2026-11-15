@@ -440,10 +440,15 @@ func (s pageSource) Send(ctx context.Context, to, text string, files []web.Uploa
 		uploads[i] = sendFile{f.Name, f.Data}
 	}
 	if strings.TrimSpace(text) == "" && len(files) > 0 {
-		// Files alone: a message needs a subject, and their names say what it is.
-		names := make([]string, len(files))
+		// Files alone: a message needs a subject, and their names say what it is. The names they
+		// are sent under: two pasted screenshots are both image.png until then.
+		named := make([]bus.File, len(files))
 		for i, f := range files {
-			names[i] = bus.FileName(f.Name)
+			named[i].Name = f.Name
+		}
+		names := make([]string, len(files))
+		for i, f := range bus.CleanFiles(named) {
+			names[i] = f.Name
 		}
 		text = strings.Join(names, ", ")
 	}
