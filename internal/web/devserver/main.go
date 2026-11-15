@@ -608,7 +608,11 @@ func (f *fixtures) Send(ctx context.Context, to, text string, files []web.Upload
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if strings.TrimSpace(text) == "" && len(files) > 0 {
-		text = bus.FileName(files[0].Name)
+		names := make([]string, len(files)) // as the daemon does
+		for i, u := range files {
+			names[i] = bus.FileName(u.Name)
+		}
+		text = strings.Join(names, ", ")
 	}
 	subject, body := web.SplitText(text)
 	m := web.Message{ID: randomHex(6), From: f.account.Name, FromAddr: f.account.Addr, FromPerson: true,

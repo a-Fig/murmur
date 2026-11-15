@@ -498,7 +498,11 @@ func (s *Server) postSend(w http.ResponseWriter, r *http.Request) {
 	// Not cut short by the page going: a person who closes or reloads it while the push is on its
 	// way has sent the message, and the page told them so (#613). Cut short, git's push was killed
 	// and the message was lost without a word.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
+	timeout := sendTimeout
+	if len(files) > 0 {
+		timeout += fileTimeout // its files are pushed first, on a ref of their own
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
 	defer cancel()
 	sent, err := s.src.Send(ctx, m.To, m.Text, files)
 	if err != nil {

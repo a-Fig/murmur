@@ -5,8 +5,8 @@ also a bad thing tbh... limits the potential of the agent." Until then Murmur ca
 couldn't send another a screenshot, a log or a diff.
 
 `send` takes `files`, a list of paths. The recipient's agent gets each as a path on its own machine,
-which it opens with its own tools; one that reads images sees the image. The page doesn't show or
-send files yet (#570's second part).
+which it opens with its own tools; one that reads images sees the image. A person on the page
+attaches, pastes or drops files, and sees the ones a message carries ([below](#on-the-page)).
 
 ## How a file travels
 
@@ -118,14 +118,38 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   before reading there, and a client that reads only inside its workspace can't. Saving under the
   session's own directory would put files in a working tree.
 
-## Older daemons, and people
+## On the page
+
+- **Sending.** The composer takes files from its paperclip, a paste or a drop anywhere on the page.
+  They go with the text as one form to `POST /api/send`, a part each, since JSON would carry them a
+  third larger. The daemon then treats them as an agent's: the same limits, the same secret check,
+  the same ref. The page holds a file to the limits before it uploads it. A message of files alone
+  has their names for its subject, because a message needs one.
+- **Showing.** The messages the page lists say each file's name and size. `GET /api/file` gives one
+  file, by its message's ID and its place. Nothing is fetched for a person until then: a message to
+  a person isn't held for its files, since the page can show it at once and fill a picture in.
+  PNG, JPEG, GIF and WebP are shown as pictures, asked for when their message is drawn; anything
+  else is a button that saves it. SVG is saved, not shown: it is a document.
+- **A file never runs.** The daemon sends every file as `application/octet-stream` with
+  `nosniff`, to be saved. A file opened by the browser as the page's own would run a teammate's
+  agent's HTML with the page's key in reach. A picture is shown through an `<img>` from an object
+  URL the page makes of the bytes, which runs nothing; the content policy allows `blob:` for images
+  only.
+- **What it costs.** An upload isn't `keepalive`, which a browser caps at 64 KiB: closing the page
+  before an upload ends loses the message, where a message of text alone still goes
+  ([page](page.md)). The page keeps what it fetched in memory, up to 96 MB, and lets go of the
+  oldest it isn't showing.
+- **Not tried** (2026-11-15): saving a file from the desktop app's window, whose web view decides
+  what a download does ([desktop](desktop.md)).
+
+## Older daemons
 
 Tyler's decision (2026-11-15): sent with a note, not refused. A daemon from before files ignores
 an event's `files` and gives its sessions the text, with no sign there was more. A device's
 presence says whether its daemon takes files (`files`, beside `groups` and `receipts`), and a
 sender is told which recipients' devices don't. Refusing would hold back the text for a gap the
-updater closes within an hour ([updating](updating.md)). A sender to a person is told the same
-until the page shows files.
+updater closes within an hour ([updating](updating.md)). A person whose page is served by such a
+daemon is among them.
 
 A client from before files talking to a newer daemon sends none. A newer client finds an older
 daemon by its protocol number (23) and replaces it, as for any request an older daemon can't serve.

@@ -2,6 +2,9 @@ package daemon_test
 
 import (
 	"bytes"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // utf16File is text as Windows PowerShell writes a redirected file: UTF-16, little end first, after
@@ -176,16 +180,102 @@ func TestFilesForASessionOnTheSameDevice(t *testing.T) {
 	}
 }
 
-// A person reads on the page, which doesn't show files yet, so a sender is told they get the text
-// alone, and nothing is held back from their inbox while files are fetched.
-func TestFilesSentToAPerson(t *testing.T) {
+// sendFiles sends as the page's person, with files, as a browser does: a form with a part for
+// each. It returns how the daemon answered.
+func (p *page) sendFiles(to, text string, files ...web.Upload) (int, string) {
+	p.t.Helper()
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	w.WriteField("to", to)
+	w.WriteField("text", text)
+	for _, u := range files {
+		part, err := w.CreateFormFile("file", u.Name)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		part.Write(u.Data)
+	}
+	w.Close()
+	req, err := http.NewRequest("POST", p.base+"/api/send", &b)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		p.t.Fatalf("sending files to %s: %v", to, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+// A person on the page gets an agent's files and sends their own (#570). The page lists what a
+// message carries and gives each file when it is asked for, which is when the daemon fetches it:
+// nothing waits on a fetch for a person. A file the person uploads reaches an agent as an agent's
+// does, and is checked as one is.
+func TestFilesToAndFromThePage(t *testing.T) {
 	t.Parallel()
-	a := newDevice(t, newRemote(t))
-	a.session("aaaaaa", "")
-	a.page().choose("ada-lovelace")
-	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "ada-lovelace", Subject: "the chart", Files: []string{writeFile(t, "chart.png", []byte{0x89, 0x00})}})
-	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace reads this on Murmur's page, which doesn't show files yet") {
-		t.Fatalf("send: %+v", r)
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	bobName := b.named(bob)
+	pa := a.page()
+	pa.choose("ada-lovelace")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+	// From an agent to the person.
+	chart := []byte{0x89, 'P', 'N', 'G', 0, 1, 2}
+	var r proto.Response
+	eventually(t, "bob's device to know ada", func() bool {
+		r = b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "the chart", Files: []string{writeFile(t, "chart.png", chart)}})
+		return r.Error == ""
+	})
+	if strings.Contains(r.Note, "text alone") {
+		t.Errorf("the sender was told ada gets no files: %q", r.Note)
+	}
+	var m web.Message
+	eventually(t, "the page to list the message", func() (ok bool) {
+		m, ok = pa.messageWith("the chart")
+		return ok
+	})
+	if len(m.Files) != 1 || m.Files[0].Name != "chart.png" || m.Files[0].Size != int64(len(chart)) {
+		t.Fatalf("the files the page lists: %+v", m.Files)
+	}
+	if code, body := pa.call("GET", "/api/file?id="+m.ID+"&i=0", pa.token, ""); code != http.StatusOK || body != string(chart) {
+		t.Errorf("the file, asked for: %d %q", code, body)
+	}
+	if code, _ := pa.call("GET", "/api/file?id="+m.ID+"&i=1", pa.token, ""); code != http.StatusNotFound {
+		t.Errorf("a file the message hasn't got: %d, want 404", code)
+	}
+
+	// From the person to an agent, with nothing written.
+	notes := []byte("what I see on my screen\n")
+	code, body := pa.sendFiles(bobName, "", web.Upload{Name: "my notes.txt", Data: notes})
+	if code != http.StatusOK {
+		t.Fatalf("the person's send: %d %s", code, body)
+	}
+	got := inboxMessage(t, b, "bbbbbb")
+	if got.Subject != "my_notes.txt" || len(got.Files) != 1 || got.Files[0].Name != "my_notes.txt" {
+		t.Fatalf("what bob got: %+v", got)
+	}
+	if saved, err := os.ReadFile(got.Files[0].Path); err != nil || !bytes.Equal(saved, notes) {
+		t.Errorf("bob's copy: %q, %v", saved, err)
+	}
+	// The person's own page shows it too, from the copy the send kept.
+	mine, ok := pa.messageWith("my_notes.txt")
+	if !ok || len(mine.Files) != 1 {
+		t.Fatalf("the person's own message on the page: %+v, %v", mine, ok)
+	}
+	if code, body := pa.call("GET", "/api/file?id="+mine.ID+"&i=0", pa.token, ""); code != http.StatusOK || body != string(notes) {
+		t.Errorf("the person's own file, asked for: %d %q", code, body)
+	}
+
+	// A key in a file the person attached stops the send, as one in an agent's does.
+	code, body = pa.sendFiles(bobName, "my settings", web.Upload{Name: "env.txt", Data: []byte("AWS=AKIAIOSFODNN7EXAMPLE\n")})
+	if code != http.StatusBadRequest || !strings.Contains(body, "env.txt") {
+		t.Errorf("a key in an attached file: %d %s", code, body)
 	}
 }
 
