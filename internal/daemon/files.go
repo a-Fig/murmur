@@ -356,15 +356,31 @@ var errFetchLater = errors.New("the files couldn't be fetched just now")
 // something else, is not. What the fetch brings goes to a scratch directory, not the clone's
 // objects.
 func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
-	// One at a time: the page asks for each file of a message as it shows it, and the loop may be
-	// fetching for the same message. Whoever comes second finds the files here. A caller whose
-	// time runs out while it waits gives up.
+	release, err := d.holdFiles(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return d.fetchFilesHeld(ctx, e, tries)
+}
+
+// holdFiles waits for the one turn there is to fetch files, and returns what gives it back. One
+// at a time: the page asks for each file of a message as it shows it, and the loop may be fetching
+// for the same message. Whoever comes second finds the files here. A caller whose time runs out
+// while it waits gives up.
+func (d *Daemon) holdFiles(ctx context.Context) (release func(), err error) {
 	select {
 	case d.fileOne <- struct{}{}:
+		return func() { <-d.fileOne }, nil
 	case <-ctx.Done():
-		return fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
+		return nil, fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
 	}
-	defer func() { <-d.fileOne }()
+}
+
+// fetchFilesHeld is fetchFiles for a caller that holds the turn (holdFiles). What stops it is
+// errFetchLater unless it would stop every try: the ref isn't there, or what it holds isn't the
+// message's files.
+func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) error {
 	if d.filesHere(e) {
 		return nil
 	}
@@ -398,10 +414,14 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
 		return fmt.Errorf("%w: %w", errFetchLater, err)
 	}
 	pack, err := repo.ReadPack(ctx, sha, bus.MaxPack)
-	if err != nil {
+	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
 	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", errFetchLater, err)
+	}
 	var failed []string
+	later := false // a file couldn't be saved, which a full disk does: the remote still has it
 	for i, f := range e.Files {
 		if !f.Readable() {
 			continue
@@ -412,16 +432,21 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
 			plain, err = bus.OpenFile(blob, f, e.FilesAt, i)
 		}
 		if err == nil {
-			err = saveFile(d.filesDir(e), f.Name, plain)
+			if err = saveFile(d.filesDir(e), f.Name, plain); err != nil {
+				later = true
+			}
 		}
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", f.Name, err))
 		}
 	}
-	if len(failed) > 0 {
-		return errors.New(strings.Join(failed, "; "))
+	switch {
+	case len(failed) == 0:
+		return nil
+	case later:
+		return fmt.Errorf("%w: %s", errFetchLater, strings.Join(failed, "; "))
 	}
-	return nil
+	return errors.New(strings.Join(failed, "; "))
 }
 
 // pruneFiles deletes the copies of files kept longer than FileKeep, and from the remote the files
@@ -495,16 +520,52 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 		brand.Product + " from before files, so the text alone gets there."
 }
 
-// fileMiss is a fetch for the page that failed: when, and whether another try might not.
+// fileMiss is a fetch for the page that failed: when, and how.
 type fileMiss struct {
-	at    time.Time
-	later bool
+	at  time.Time
+	err error
 }
 
 // pageFetchAgain is how long the page's asks for a message's files go unanswered by a new fetch
 // after one failed. A message's pictures are asked for together, and each would otherwise wait out
 // a fetch that the one before it just saw fail.
 const pageFetchAgain = 20 * time.Second
+
+// pageFetch fetches the files of message e for the page. Once: the page asks again by itself, and
+// a person is looking at it meanwhile. Not at all if a fetch for the message failed a moment ago,
+// which it says again.
+func (d *Daemon) pageFetch(ctx context.Context, e bus.Event) error {
+	release, err := d.holdFiles(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	// Looked at with the turn held: the fetch that was waited for may be the one that failed.
+	d.mu.Lock()
+	miss, missed := d.fileMiss[e.FilesAt]
+	d.mu.Unlock()
+	if missed && time.Since(miss.at) < pageFetchAgain {
+		return miss.err
+	}
+	err = d.fetchFilesHeld(ctx, e, 1)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	switch {
+	case err == nil:
+		delete(d.fileMiss, e.FilesAt)
+	case ctx.Err() != nil:
+		// The page went, or its time ran out: that says nothing of the remote.
+	default:
+		d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
+		d.fileMiss[e.FilesAt] = fileMiss{time.Now(), err}
+	}
+	for at, m := range d.fileMiss { // few, and small, but not kept for good
+		if time.Since(m.at) > pageFetchAgain {
+			delete(d.fileMiss, at)
+		}
+	}
+	return err
+}
 
 // noFile is why the page can't have a file at all, in words to show (web.ErrNoFile).
 type noFile string
@@ -513,8 +574,7 @@ func (e noFile) Error() string        { return string(e) }
 func (e noFile) Is(target error) bool { return target == web.ErrNoFile }
 
 // fileOf returns the index'th file of the message with that ID, for the page: its name and what is
-// in it, fetched first if it isn't here. The fetch is tried once: the page asks again by itself,
-// and a person is looking at it meanwhile.
+// in it, fetched first if it isn't here.
 func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []byte, error) {
 	d.mu.Lock()
 	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.e.ID == id })
@@ -522,42 +582,19 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 	if i >= 0 {
 		e = d.msgs[i].e
 	}
-	miss, missed := d.fileMiss[e.FilesAt]
 	d.mu.Unlock()
 	if i < 0 || index >= len(e.Files) {
 		return "", nil, noFile("no such file")
 	}
 	f := e.Files[index]
 	gone := noFile(f.Name + " isn't here: it couldn't be fetched, or was sent more than a week ago")
-	later := errors.New(f.Name + " couldn't be fetched just now")
 	if !f.Readable() || e.FilesAt == "" {
 		return "", nil, gone
 	}
 	path := filepath.Join(d.filesDir(e), f.Name)
 	if !fileExists(path) {
-		if missed && time.Since(miss.at) < pageFetchAgain {
-			if miss.later {
-				return "", nil, later
-			}
-			return "", nil, gone
-		}
-		err := d.fetchFiles(ctx, e, 1)
-		d.mu.Lock()
-		if err != nil {
-			d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
-			d.fileMiss[e.FilesAt] = fileMiss{time.Now(), errors.Is(err, errFetchLater)}
-		} else {
-			delete(d.fileMiss, e.FilesAt)
-		}
-		// Few, and small: but not kept for good.
-		for at, m := range d.fileMiss {
-			if time.Since(m.at) > pageFetchAgain {
-				delete(d.fileMiss, at)
-			}
-		}
-		d.mu.Unlock()
-		if errors.Is(err, errFetchLater) && !fileExists(path) {
-			return "", nil, later
+		if err := d.pageFetch(ctx, e); errors.Is(err, errFetchLater) && !fileExists(path) {
+			return "", nil, errors.New(f.Name + " couldn't be fetched just now")
 		}
 	}
 	data, err := os.ReadFile(path)

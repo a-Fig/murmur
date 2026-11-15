@@ -366,17 +366,30 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 	}
 }
 
+func fileThere(path string) bool {
+	_, err := os.Stat(path)
+	return path != "" && err == nil
+}
+
 // A sender takes a message's files off the remote once they are past their time, and its own
-// copies with them.
+// copies with them. A receiver deletes its copies too.
 func TestFilesLeaveTheRemote(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDevice(t, remote)
+	a, b := newDevice(t, remote), newDevice(t, remote)
 	a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "for a while", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
 	if r.Error != "" {
 		t.Fatalf("send: %s", r.Error)
 	}
+	got := inboxMessage(t, b, "bbbbbb")
+	if len(got.Files) != 1 || !fileThere(got.Files[0].Path) {
+		t.Fatalf("what the receiver got: %+v", got.Files)
+	}
+	b.fileKeep, b.filePrune = time.Millisecond, 300*time.Millisecond
+	b.restart()
+	eventually(t, "the receiver's copy to go", func() bool { return !fileThere(got.Files[0].Path) })
 	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
 	saved := func() []string {
 		got, _ := filepath.Glob(filepath.Join(a.gitDir, "murmur", "files", "*", "a.txt"))

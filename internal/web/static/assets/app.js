@@ -4269,12 +4269,14 @@ function composerFor(key, send, onchange) {
     fit(el);
     onchange();
   };
-  // A pasted file is attached: a screenshot, most often. What also comes as rich text is pasted as
-  // text: a spreadsheet's cells come as a picture too. A file copied in a file manager comes with
-  // its name as plain text, and is attached.
+  // A pasted file is attached: a screenshot, most often. What also comes as text, plain and rich
+  // both, is pasted as text: a spreadsheet's cells come as a picture too. One of the two isn't
+  // enough to go by: a file copied in a file manager brings its name as plain text, and a picture
+  // copied in a browser brings an <img> as rich text.
   el.onpaste = (e) => {
     const files = [...(e.clipboardData?.files || [])];
-    if (!files.length || e.clipboardData.types.includes("text/html")) return;
+    const types = e.clipboardData?.types || [];
+    if (!files.length || (types.includes("text/html") && types.includes("text/plain"))) return;
     e.preventDefault();
     attach(key, files);
   };
