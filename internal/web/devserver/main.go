@@ -203,7 +203,7 @@ type fixtures struct {
 func newFixtures(now time.Time) *fixtures {
 	ago := func(d time.Duration) time.Time { return now.Add(-d) }
 	f := &fixtures{
-		self:    "tyler-mbp-3f2a",
+		self:    "tyler-mbp-7a20",
 		account: web.Account{Suggested: "tyler"},
 		settings: web.Settings{
 			Wake:           web.Wake{When: web.WakeWithin},
@@ -218,7 +218,7 @@ func newFixtures(now time.Time) *fixtures {
 	// meeting notes: four people, five machines, agents from three clients.
 	f.devices = []web.Device{
 		{
-			ID: "tyler-mbp-3f2a", Host: "tyler-mbp", Owner: "Tyler", Self: true, Reachable: true,
+			ID: "tyler-mbp-7a20", Host: "tyler-mbp", Owner: "Tyler", Self: true, Reachable: true,
 			LastSeen: ago(5 * time.Second),
 			Sessions: []web.Session{
 				{Name: "quiet-otter", Agent: "claude-code", Branch: "demo-polish", Worktree: "demo-polish",

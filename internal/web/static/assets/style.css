@@ -3645,27 +3645,47 @@ a.g-pr:hover {
   height: 0.5rem;
 }
 
-/* A device's color (#560): six quiet hues, as saturated as the faces were, the same on every theme
- * so a white initial reads on each. Every face on a device is filled with it, and its sidebar header
- * shows it as a dot by its name; the initial tells that device's sessions apart. A face on a device
- * that is offline or not in presence is grey. */
+/* A device's color (#560): twelve quiet hues, as saturated as the faces were, the same on every
+ * theme so a white initial reads on each. Neighbouring hues alternate in lightness so they stay
+ * apart, and those near the state dots' green, amber and red, or the accent ring's blue, are muted
+ * well below them. Every face on a device is filled with it, and its sidebar header shows it as a
+ * dot by its name; the initial tells that device's sessions apart. A face on a device that is
+ * offline or not in presence is grey. */
 .dev-c0 {
-  --dev: oklch(0.58 0.11 265);
+  --dev: oklch(0.57 0.085 15); /* dusty rose */
 }
 .dev-c1 {
-  --dev: oklch(0.6 0.09 200);
+  --dev: oklch(0.62 0.09 45); /* clay */
 }
 .dev-c2 {
-  --dev: oklch(0.58 0.11 330);
+  --dev: oklch(0.66 0.09 82); /* ochre */
 }
 .dev-c3 {
-  --dev: oklch(0.66 0.11 75);
+  --dev: oklch(0.6 0.08 115); /* olive */
 }
 .dev-c4 {
-  --dev: oklch(0.6 0.1 150);
+  --dev: oklch(0.57 0.075 145); /* sage */
 }
 .dev-c5 {
-  --dev: oklch(0.58 0.12 25);
+  --dev: oklch(0.62 0.075 180); /* sea green */
+}
+.dev-c6 {
+  --dev: oklch(0.57 0.07 210); /* teal */
+}
+.dev-c7 {
+  --dev: oklch(0.6 0.075 238); /* steel blue */
+}
+.dev-c8 {
+  --dev: oklch(0.56 0.09 290); /* violet */
+}
+.dev-c9 {
+  --dev: oklch(0.6 0.09 318); /* plum */
+}
+.dev-c10 {
+  --dev: oklch(0.55 0.09 348); /* berry */
+}
+.dev-c11 {
+  --dev: oklch(0.5 0.05 60); /* cocoa */
 }
 .dev-off {
   --dev: #6b7280;

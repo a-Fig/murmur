@@ -2732,13 +2732,13 @@ function avatar(name) {
   );
 }
 
-// A device's color, fixed by its ID: one of six hues, the same on its faces and by its name in the
+// A device's color, fixed by its ID: one of twelve hues, the same on its faces and by its name in the
 // sidebar. Offline, or not in presence, it is grey.
 function deviceColor(d) {
   if (!d || !d.reachable) return "dev-off";
   let n = 0;
   for (const ch of d.id) n = (n * 31 + ch.codePointAt(0)) % 9973;
-  return "dev-c" + (n % 6);
+  return "dev-c" + (n % 12);
 }
 
 // The device a session or a person is on, by name, or null if none in presence has it. Built once
