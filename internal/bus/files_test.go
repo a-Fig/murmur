@@ -31,9 +31,16 @@ func TestFileName(t *testing.T) {
 		"x\x00y\x1b[31m.txt":              "x_y__31m.txt",
 		strings.Repeat("a", 200):          strings.Repeat("a", 60),
 		strings.Repeat("b", 200) + ".png": strings.Repeat("b", 56) + ".png",
+		"con." + strings.Repeat("c", 70):  "_con." + strings.Repeat("c", 55),
+		strings.Repeat("d", 59) + ".":     strings.Repeat("d", 59),
+		strings.Repeat("e", 59) + "..x":   strings.Repeat("e", 58) + ".x",
 	} {
-		if got := bus.FileName(in); got != want {
+		got := bus.FileName(in)
+		if got != want {
 			t.Errorf("FileName(%q) = %q, want %q", in, got, want)
+		}
+		if again := bus.FileName(got); again != got {
+			t.Errorf("FileName of %q, a name it made, is %q", got, again)
 		}
 	}
 }

@@ -3,7 +3,9 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +36,9 @@ const (
 	// scratchPrefix begins the name of a directory git writes a files commit's objects to, or a
 	// fetch's, inside the daemon's own (bus.Repo.Scratch). Each is deleted when its work is done.
 	scratchPrefix = "files-scratch-"
+	// scratchKeep is how old a scratch directory is before a prune takes it for left behind: no
+	// send or fetch lasts that long.
+	scratchKeep = 10 * time.Minute
 )
 
 // fileWait is a message held back from the inboxes of sessions here until its files are fetched.
@@ -44,10 +49,22 @@ type fileWait struct {
 	Since time.Time `json:"since"`
 }
 
-// filesDir is where the files on the files ref called at are saved: inside the git directory, never
-// the working tree. It is named by the ref, which is random and which a reader holds to the form
-// Murmur makes, and not by the message's ID, which is short and anyone's to repeat.
-func (d *Daemon) filesDir(at string) string { return filepath.Join(d.dir, "files", at) }
+// filesDir is where the files of message e are saved: inside the git directory, never the working
+// tree. It is named by the files ref and by what the event says the files are, their names and
+// sums. Not by the message's ID, which is short and anyone's to repeat, and not by the ref alone:
+// a teammate could push their own blob over a ref and send a message naming it, and a device that
+// read theirs first would show their file under the real message. With the sums in the name, a
+// directory holds only files that are what its message says. "" if e's files can't be had.
+func (d *Daemon) filesDir(e bus.Event) string {
+	if e.FilesAt == "" || len(e.Files) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	for _, f := range e.Files {
+		fmt.Fprintf(h, "%s\x00%s\x00", f.Name, f.Sum)
+	}
+	return filepath.Join(d.dir, "files", e.FilesAt+"-"+hex.EncodeToString(h.Sum(nil))[:12])
+}
 
 // scratch makes a directory for git to write objects to in place of the clone's, and returns the
 // repo that writes there and what deletes the directory.
@@ -184,8 +201,9 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		d.dropFileRef(at, true)
 		return nil, "", fmt.Errorf("its files didn't go out: %w", err)
 	}
+	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
 	for i, f := range files {
-		if err := d.saveFile(at, f.Name, in[i].data); err != nil {
+		if err := saveFile(dir, f.Name, in[i].data); err != nil {
 			d.log.Printf("keeping a copy of %s, sent on files ref %s: %v", f.Name, at, err)
 		}
 	}
@@ -205,10 +223,9 @@ func (d *Daemon) dropFileRef(at string, due bool) {
 	d.saveLocked()
 }
 
-// saveFile writes one file from the files ref called at where sessions are told it is. It is
-// written beside its place and renamed, so a path that exists holds the whole file.
-func (d *Daemon) saveFile(at, name string, data []byte) error {
-	dir := d.filesDir(at)
+// saveFile writes one file of a message in dir, its message's directory, where sessions are told it
+// is. It is written beside its place and renamed, so a path that exists holds the whole file.
+func saveFile(dir, name string, data []byte) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -237,7 +254,7 @@ func fileExists(path string) bool {
 // filesHere says every file of e that can be read is saved here.
 func (d *Daemon) filesHere(e bus.Event) bool {
 	for _, f := range e.Files {
-		if f.Readable() && (e.FilesAt == "" || !fileExists(filepath.Join(d.filesDir(e.FilesAt), f.Name))) {
+		if f.Readable() && (e.FilesAt == "" || !fileExists(filepath.Join(d.filesDir(e), f.Name))) {
 			return false
 		}
 	}
@@ -286,11 +303,6 @@ func (d *Daemon) nextFileWaitLocked() (bus.Event, bool) {
 // order they came, and deletes what is past FileKeep. Messages go first: a prune is a push for each
 // ref past its time, and a session shouldn't wait for those.
 func (d *Daemon) fileLoop(ctx context.Context) {
-	// Scratch directories a daemon that was stopped mid-work left.
-	left, _ := filepath.Glob(filepath.Join(d.dir, scratchPrefix+"*"))
-	for _, dir := range left {
-		os.RemoveAll(dir)
-	}
 	prune := time.NewTicker(d.opt.FilePrune)
 	defer prune.Stop()
 	pruned := false
@@ -386,7 +398,7 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 			plain, err = bus.OpenFile(blob, f, e.FilesAt, i)
 		}
 		if err == nil {
-			err = d.saveFile(e.FilesAt, f.Name, plain)
+			err = saveFile(d.filesDir(e), f.Name, plain)
 		}
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", f.Name, err))
@@ -401,6 +413,15 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 // pruneFiles deletes the copies of files kept longer than FileKeep, and from the remote the files
 // refs this device pushed that long ago.
 func (d *Daemon) pruneFiles(ctx context.Context) {
+	// Scratch directories nothing deleted: a daemon stopped mid-work left them, or Windows wouldn't
+	// let one go while a scanner still held a file in it. Only old ones: a send can be using one
+	// made a moment ago, before this loop started.
+	left, _ := filepath.Glob(filepath.Join(d.dir, scratchPrefix+"*"))
+	for _, dir := range left {
+		if info, err := os.Stat(dir); err == nil && time.Since(info.ModTime()) > scratchKeep {
+			os.RemoveAll(dir)
+		}
+	}
 	root := filepath.Join(d.dir, "files")
 	entries, _ := os.ReadDir(root)
 	for _, entry := range entries {
@@ -478,7 +499,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 	if !f.Readable() || e.FilesAt == "" {
 		return "", nil, gone
 	}
-	path := filepath.Join(d.filesDir(e.FilesAt), f.Name)
+	path := filepath.Join(d.filesDir(e), f.Name)
 	if !fileExists(path) {
 		if err := d.fetchFiles(ctx, e); err != nil {
 			d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
@@ -502,7 +523,7 @@ func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 	for _, f := range e.Files {
 		v := proto.FileView{Name: f.Name, Size: f.Size}
 		if f.Readable() && e.FilesAt != "" {
-			if path := filepath.Join(d.filesDir(e.FilesAt), f.Name); fileExists(path) {
+			if path := filepath.Join(d.filesDir(e), f.Name); fileExists(path) {
 				v.Path = path
 			}
 		}

@@ -80,17 +80,8 @@ func FileName(s string) string {
 			b.WriteByte('_')
 		}
 	}
-	name := strings.TrimLeft(b.String(), ".")
-	if r := []rune(name); len(r) > maxFileName {
-		// Cut the stem, so "a-long-name.png" stays a .png.
-		ext := ""
-		if i := strings.LastIndex(name, "."); i > 0 && len(name)-i <= 12 {
-			ext = name[i:]
-		}
-		stem := []rune(strings.TrimSuffix(name, ext))
-		name = string(stem[:maxFileName-len([]rune(ext))]) + ext
-	}
-	name = strings.TrimRight(name, ".") // Windows drops a trailing dot, and two names become one
+	// A trailing dot goes too: Windows drops one, and two names become one.
+	name := strings.Trim(b.String(), ".")
 	if name == "" {
 		return "file"
 	}
@@ -98,7 +89,18 @@ func FileName(s string) string {
 	switch up := strings.ToUpper(stem); {
 	case up == "CON", up == "PRN", up == "AUX", up == "NUL",
 		len(up) == 4 && (strings.HasPrefix(up, "COM") || strings.HasPrefix(up, "LPT")) && up[3] >= '0' && up[3] <= '9':
-		return "_" + name
+		name = "_" + name
+	}
+	// Cut last, so that what comes out is within the length whatever was added, and a second pass
+	// leaves it as it is.
+	if r := []rune(name); len(r) > maxFileName {
+		// Cut the stem, so "a-long-name.png" stays a .png.
+		ext := ""
+		if i := strings.LastIndex(name, "."); i > 0 && len(name)-i <= 12 {
+			ext = name[i:]
+		}
+		stem := []rune(strings.TrimSuffix(name, ext))
+		name = strings.TrimRight(string(stem[:maxFileName-len([]rune(ext))])+ext, ".")
 	}
 	return name
 }
@@ -212,10 +214,13 @@ func OpenFile(blob []byte, f File, at string, index int) ([]byte, error) {
 // readable. What a files commit is made of, and what a fetch of one brings, goes there, and the
 // caller deletes dir after: nothing names those objects once the push or the read is done, and in
 // the clone they would stay until a garbage collection that may be months away, up to 23 MB a
-// message. It is r itself if the clone's objects aren't where a git directory keeps them.
+// message. It is r itself if the clone's objects aren't where a git directory keeps them, or can't
+// be named as an alternate.
 func (r *Repo) Scratch(dir string) *Repo {
 	objects := filepath.Join(r.Git.Dir, "objects")
-	if info, err := os.Stat(objects); err != nil || !info.IsDir() {
+	// Git reads the alternates as a list, so a clone whose path holds the list's separator (a
+	// colon, outside Windows) can't be named there.
+	if info, err := os.Stat(objects); err != nil || !info.IsDir() || strings.ContainsRune(objects, os.PathListSeparator) {
 		return r
 	}
 	c := &Repo{Git: r.Git, Remote: r.Remote, Name: r.Name, Email: r.Email, Page: r.Page}

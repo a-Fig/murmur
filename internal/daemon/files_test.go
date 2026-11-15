@@ -138,13 +138,17 @@ func TestFilesTravelWithAMessage(t *testing.T) {
 		t.Errorf("the receiver kept a files ref: %s", refs)
 	}
 	at := strings.TrimPrefix(refs[0], "refs/murmur/files/")
-	if got, err := os.ReadFile(filepath.Join(a.gitDir, "murmur", "files", at, "notes.txt")); err != nil || !bytes.Equal(got, notes) {
+	copies, _ := filepath.Glob(filepath.Join(a.gitDir, "murmur", "files", at+"-*", "notes.txt"))
+	if len(copies) != 1 {
+		t.Fatalf("the sender's copies: %v", copies)
+	}
+	if got, err := os.ReadFile(copies[0]); err != nil || !bytes.Equal(got, notes) {
 		t.Errorf("the sender's copy: %q, %v", got, err)
 	}
 	// Neither clone keeps the files commit: it was made, and fetched, in a directory since deleted.
 	commit := git(t, remote, "rev-parse", refs[0])
 	for who, d := range map[string]*device{"sender": a, "receiver": b} {
-		if gitOK(filepath.Dir(d.gitDir), "cat-file", "-e", commit) != "" || gitOK(filepath.Dir(d.gitDir), "cat-file", "-t", commit) != "" {
+		if gitOK(filepath.Dir(d.gitDir), "cat-file", "-t", commit) != "" {
 			t.Errorf("the %s's clone holds the files commit", who)
 		}
 		if left, _ := filepath.Glob(filepath.Join(d.gitDir, "murmur", "files-scratch-*")); len(left) > 0 {
@@ -263,8 +267,8 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 	if m.Subject != "wrong blob" || len(m.Files) != 1 || m.Files[0].Path != "" {
 		t.Fatalf("message: %+v", m)
 	}
-	if _, err := os.Stat(filepath.Join(b.gitDir, "murmur", "files", at, "swapped.txt")); err == nil {
-		t.Error("a blob that isn't the file was saved as it")
+	if saved, _ := filepath.Glob(filepath.Join(b.gitDir, "murmur", "files", "*", "swapped.txt")); len(saved) > 0 {
+		t.Errorf("a blob that isn't the file was saved as it: %v", saved)
 	}
 }
 
@@ -280,16 +284,16 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 		t.Fatalf("send: %s", r.Error)
 	}
 	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
-	copies := filepath.Join(a.gitDir, "murmur", "files", strings.TrimPrefix(listed(), "refs/murmur/files/"))
-	if _, err := os.Stat(filepath.Join(copies, "a.txt")); err != nil || listed() == "" {
-		t.Fatalf("after the send: the copy %v, the files refs %q", err, listed())
+	saved := func() []string {
+		got, _ := filepath.Glob(filepath.Join(a.gitDir, "murmur", "files", "*", "a.txt"))
+		return got
+	}
+	if len(saved()) != 1 || listed() == "" {
+		t.Fatalf("after the send: the copies %v, the files refs %q", saved(), listed())
 	}
 	// The same device, with a time to keep files that has already passed.
 	a.fileKeep, a.filePrune = time.Millisecond, 300*time.Millisecond
 	a.restart()
 	eventually(t, "the files ref to leave the remote", func() bool { return listed() == "" })
-	eventually(t, "the sender's copy to go", func() bool {
-		_, err := os.Stat(copies)
-		return os.IsNotExist(err)
-	})
+	eventually(t, "the sender's copy to go", func() bool { return len(saved()) == 0 })
 }

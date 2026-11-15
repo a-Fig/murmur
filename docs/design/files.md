@@ -27,8 +27,8 @@ send files yet (#570's second part).
   event's size and SHA-256. It is bound to the ref and not the message so that several messages
   can one day share an upload.
 - **Fetched before the message is queued.** A daemon that reads a message with files for one of
-  its sessions fetches the ref, saves the files under `.git/murmur/files/<the ref's name>/`, never
-  the working tree, and only then queues the message, so a path in a turn works when the agent
+  its sessions fetches the ref, saves the files under `.git/murmur/files/`, never the working
+  tree, and only then queues the message, so a path in a turn works when the agent
   reads it. It gets three tries of a minute each; then the message is queued without the files, and
   the turn says which aren't there. A ref that isn't on the remote, or holds something else, costs
   one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
@@ -86,8 +86,12 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   and makes the names in one message distinct (`bus.FileName`, `bus.CleanFiles`). The sender runs
   the same, so both sides agree on the names.
 - **The ref's name.** A reader takes only a name of the form Murmur makes, so no event can point
-  it at another ref, and saves files in a directory of that name, not of the message's ID, which
-  is short and anyone's to repeat.
+  it at another ref.
+- **Where a file is saved.** The directory is named by the ref and by a hash of the names and
+  SHA-256 sums the event gives. A message's ID is short and anyone's to repeat, and the ref alone
+  is known to every teammate: one could push their own blob over it and send a message naming it,
+  and a device that read theirs first would show their file under the real message. With the sums
+  in the name, a directory holds only files that are what its message says.
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
