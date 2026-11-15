@@ -93,8 +93,8 @@ func TestEncryptedEventHidesEverything(t *testing.T) {
 
 func TestEncryptedPresence(t *testing.T) {
 	k, sk := NewBoxKey(), NewSignKey()
-	p := Presence{V: Version, Device: "dev-0001", Host: "secret-host", Owner: "Secret Owner", At: time.Now().UTC(),
-		BoxKey: BoxPublic(k), Offline: []string{"cccccc"},
+	p := Presence{V: Version, Device: "dev-0001", Host: "secret-host", Owner: "Secret Owner", Nick: "secretnick", At: time.Now().UTC(),
+		Color: 4, ColorAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), BoxKey: BoxPublic(k), Offline: []string{"cccccc"},
 		Sessions: []SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Branch: "secret-branch", Doing: "secret status"},
 			{ID: PersonSession, Name: "secretperson", Agent: AgentPerson}}}
 	enc, err := EncryptPresence(p, map[string]string{"dev-0001": BoxPublic(k)})
@@ -106,7 +106,7 @@ func TestEncryptedPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"secret", "Secret", "cccccc", "claude"} {
+	for _, s := range []string{"secret", "Secret", "cccccc", "claude", "color", "2026-11-14"} {
 		if strings.Contains(msg, s) {
 			t.Fatalf("%q is readable in %s", s, msg)
 		}
@@ -127,7 +127,8 @@ func TestEncryptedPresence(t *testing.T) {
 		t.Fatalf("older reader sees %+v", read)
 	}
 	open, err := DecryptPresence(read, Keyring{"dev-0001": k})
-	if err != nil || open.Host != p.Host || open.Owner != p.Owner || len(open.Sessions) != 2 ||
+	if err != nil || open.Host != p.Host || open.Owner != p.Owner || open.Nick != p.Nick || len(open.Sessions) != 2 ||
+		open.Color != 4 || !open.ColorAt.Equal(p.ColorAt) ||
 		open.Sessions[0].Doing != "secret status" || len(open.Offline) != 1 || open.Box != nil {
 		t.Fatalf("opened %+v, %v", open, err)
 	}
@@ -163,5 +164,16 @@ func TestSealBindsRefAndBytes(t *testing.T) {
 	forged := "x\n\n{\"v\":1,\"device\":\"dev-0001\",\"boxKey\":\"y\",\"seal\":" + string(top["seal"]) + "}\n"
 	if st, _ := OpenSeal(forged, ref); st != BadSeal {
 		t.Fatalf("moved seal: %v", st)
+	}
+}
+
+// A nickname stands in for a device's ID in an address (#190), so one read from the bus is held
+// to what Murmur writes: the form of a person's name, and not the device's own ID.
+func TestPresenceCleanDropsABadNick(t *testing.T) {
+	for nick, want := range map[string]string{"tyler": "tyler", "Tyler": "", "a/b": "", "dev-0001": "", "everyone": ""} {
+		p := Presence{Device: "dev-0001", Nick: nick}
+		if p.Clean(); p.Nick != want {
+			t.Errorf("the nickname %q is read as %q, want %q", nick, p.Nick, want)
+		}
 	}
 }

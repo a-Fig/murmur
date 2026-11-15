@@ -126,7 +126,7 @@ func TestRegisterClaudeAddsTheServerOnce(t *testing.T) {
 	write(t, filepath.Join(sb.ClaudeDir, "settings.json"), "{\n    \"model\": \"x\",\n    \"permissions\": {\"allow\": [\"Bash(ls)\"], \"deny\": []},\n    \"theme\": \"dark\"\n}\n")
 
 	did, fresh, err := sb.registerClaude(context.Background())
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 { // the server, the allow rule, the hook
 		t.Fatalf("first: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	cfg := read(t, sb.ClaudeJSON)
@@ -139,8 +139,12 @@ func TestRegisterClaudeAddsTheServerOnce(t *testing.T) {
 		t.Errorf("the user's keys moved:\n%s", cfg)
 	}
 	settings := read(t, filepath.Join(sb.ClaudeDir, "settings.json"))
-	if want := "{\n    \"model\": \"x\",\n    \"permissions\": {\n        \"allow\": [\n            \"Bash(ls)\",\n            \"mcp__murmur\"\n        ],\n        \"deny\": []\n    },\n    \"theme\": \"dark\"\n}\n"; settings != want {
-		t.Errorf("settings.json:\n%s\nwant:\n%s", settings, want)
+	// What the user had stays as it was, in its order and its indentation, with the hook after it.
+	if want := "{\n    \"model\": \"x\",\n    \"permissions\": {\n        \"allow\": [\n            \"Bash(ls)\",\n            \"mcp__murmur\"\n        ],\n        \"deny\": []\n    },\n    \"theme\": \"dark\",\n    \"hooks\": {\n"; !strings.HasPrefix(settings, want) {
+		t.Errorf("settings.json:\n%s\nwant it to start:\n%s", settings, want)
+	}
+	if events := hookEvents(t, filepath.Join(sb.ClaudeDir, "settings.json")); !reflect.DeepEqual(events, wantHookEvents()) {
+		t.Errorf("the hook is on %v, want %v", events, wantHookEvents())
 	}
 
 	runs := len(sb.claudeRuns(t))
@@ -173,7 +177,7 @@ func TestRegisterClaudeWithoutTheCommand(t *testing.T) {
 	sb := newSandbox(t, false)
 	write(t, sb.ClaudeJSON, "{\n  \"keep\": true\n}\n")
 	did, fresh, err := sb.registerClaude(context.Background())
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	cfg := read(t, sb.ClaudeJSON)
@@ -281,54 +285,53 @@ func clone(t *testing.T) (Place, string) {
 	return p, other
 }
 
-// The notice hook goes into every working tree of the clone, in a file that isn't committed, once.
-// Taking it out leaves the user's other settings and deletes a file that held only the hook.
-func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
-	p, other := clone(t)
+// The notice hook goes into the Claude Code home's settings, once, beside what the user has there.
+func TestTheHookGoesInTheClaudeHomeOnce(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "settings.json")
 	exe := filepath.Join(t.TempDir(), "a b", "bin", "mur") // a path with a space, in this OS's own form
 	command, err := json.Marshal(setup.HookCommand(exe))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	write(t, filepath.Join(other, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
+	write(t, path, "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
 
-	changed, _, err := installHooks(ctx, p, exe)
-	if err != nil || len(changed) != 2 {
-		t.Fatalf("changed %q, err %v", changed, err)
+	if changed, err := installClaudeHook(home, exe); err != nil || !changed {
+		t.Fatalf("changed %v, err %v", changed, err)
 	}
-	for _, top := range []string{p.Top, other} {
-		got := read(t, filepath.Join(top, ".claude", "settings.local.json"))
-		if !strings.Contains(got, string(command)) || !strings.Contains(got, "a b") {
-			t.Errorf("%s:\n%s", top, got)
-		}
-		if events := hookEvents(t, filepath.Join(top, ".claude", "settings.local.json")); !reflect.DeepEqual(events, wantHookEvents()) {
-			t.Errorf("%s: the hook is on %v, want %v", top, events, wantHookEvents())
-		}
+	got := read(t, path)
+	if !strings.Contains(got, string(command)) || !strings.Contains(got, "a b") || !strings.Contains(got, "Bash(ls)") {
+		t.Errorf("settings.json:\n%s", got)
 	}
-	if !strings.Contains(read(t, filepath.Join(other, ".claude", "settings.local.json")), "Bash(ls)") {
-		t.Error("the user's settings were lost")
+	if events := hookEvents(t, path); !reflect.DeepEqual(events, wantHookEvents()) {
+		t.Errorf("the hook is on %v, want %v", events, wantHookEvents())
 	}
-	if status, _ := exec.Command("git", "-C", p.Top, "status", "--porcelain", "--", ".claude").Output(); strings.Contains(string(status), "settings.local.json") {
-		t.Errorf("the hook file would be committed:\n%s", status)
+	if !hasClaudeHook(path) {
+		t.Error("the hook isn't seen where it was written")
 	}
-	if again, _, err := installHooks(ctx, p, exe); err != nil || len(again) != 0 {
-		t.Errorf("a second install changed %q (err %v)", again, err)
-	}
-	if n := strings.Count(read(t, filepath.Join(p.GitDir, "info", "exclude")), "settings.local.json"); n != 1 {
-		t.Errorf("the ignore entry is there %d times", n)
+	if again, err := installClaudeHook(home, exe); err != nil || again {
+		t.Errorf("a second install changed the file: %v (err %v)", again, err)
 	}
 
 	// The binary moved: the hook names the new path and there is still one of it.
-	if _, _, err := installHooks(ctx, p, `/new/mur`); err != nil {
+	if _, err := installClaudeHook(home, `/new/mur`); err != nil {
 		t.Fatal(err)
 	}
-	got := read(t, filepath.Join(p.Top, ".claude", "settings.local.json"))
+	got = read(t, path)
 	if strings.Contains(got, "a b") || strings.Count(got, `/new/mur`) != len(setup.HookEvents) {
 		t.Errorf("after the binary moved:\n%s", got)
 	}
+}
 
-	removed, _, err := removeHooks(ctx, p)
+// The hook a join before #422 put in every working tree of the clone comes out of each. That leaves
+// the user's other settings and deletes a file that held only the hook.
+func TestAnOlderJoinsHooksComeOutOfEveryWorktree(t *testing.T) {
+	p, other := clone(t)
+	ctx := context.Background()
+	write(t, filepath.Join(other, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
+	oldHooks(t, p, filepath.Join(t.TempDir(), "bin", "mur"))
+
+	removed, _, err := removeHooks(ctx, p, nil)
 	if err != nil || len(removed) != 2 {
 		t.Fatalf("removed %q, err %v", removed, err)
 	}
@@ -338,6 +341,30 @@ func TestHooksInEveryWorktreeAndOutAgain(t *testing.T) {
 	left := read(t, filepath.Join(other, ".claude", "settings.local.json"))
 	if strings.Contains(left, "hook") || !strings.Contains(left, "Bash(ls)") {
 		t.Errorf("what is left in the worktree with its own settings:\n%s", left)
+	}
+	if again, _, err := removeHooks(ctx, p, nil); err != nil || len(again) != 0 {
+		t.Errorf("a second removal changed %q (err %v)", again, err)
+	}
+}
+
+// A working tree's hook file that is the user's own link to Claude Code's settings holds the
+// per-user hook, not an older join's: taking the older hooks out passes it over (Sol's review of
+// #426).
+func TestTheNewHookStaysWhereAWorktreesFileLinksToTheHome(t *testing.T) {
+	p, _ := clone(t)
+	home := t.TempDir()
+	settings := filepath.Join(home, "settings.json")
+	if _, err := installClaudeHook(home, filepath.Join(t.TempDir(), "bin", "mur")); err != nil {
+		t.Fatal(err)
+	}
+	linkOrSkip(t, settings, filepath.Join(p.Top, ".claude", "settings.local.json"))
+
+	removed, notes, err := removeHooks(context.Background(), p, []string{settings})
+	if err != nil || len(removed) != 0 || len(notes) != 0 {
+		t.Errorf("removed %q, notes %q, err %v", removed, notes, err)
+	}
+	if !hasClaudeHook(settings) {
+		t.Errorf("the per-user hook went with the older ones:\n%s", read(t, settings))
 	}
 }
 

@@ -33,6 +33,8 @@ type Commit struct {
 	// Oversize is a commit over the limit it was read with: it was left unread, so it has no Time
 	// or Message.
 	Oversize bool
+	// Tip is, for a commit Recent read, the tip of the log it is in.
+	Tip string
 }
 
 // PushMode chooses how a push may move the remote ref.
@@ -137,10 +139,11 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // It offers the server only the bus commits it has (--negotiation-tip), as no commit Murmur writes
 // has a branch's commit in its history. By default git offers every local ref, and for a presence
 // commit, which has no parent, the server is never ready, so the clone lists the user's whole
-// history a batch per request (VISION, "Speed"). The cost: a commit built on a branch and pushed
-// onto a bus ref, junk to Murmur, brings its branch's whole history, since the server isn't told
-// the clone has it; on a large repo #15's slow fetch takes it. A clone with no bus refs yet offers
-// nothing, which git warns of on stderr, where it leads the error of a fetch that fails.
+// history a batch per request (docs/design/transport.md, "A fetch offers only bus commits"). The
+// cost: a commit built on a branch and pushed onto a bus ref, junk to Murmur, brings its branch's
+// whole history, since the server isn't told the clone has it; on a large repo #15's slow fetch
+// takes it. A clone with no bus refs yet offers nothing, which git warns of on stderr, where it
+// leads the error of a fetch that fails.
 func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 	if len(refs) == 0 {
 		return nil
@@ -188,7 +191,7 @@ const pushTries = 3
 // busyReasons are the reasons GitHub gives, now and then, for refusing a push that met another push
 // to the same repository, from the same device or another ("[remote rejected] (failed)"). They say
 // nothing about the push itself, and the same push sent a moment later lands. What was seen, and
-// when, is under "Git is the transport" in docs/VISION.md.
+// when, is under "Pushes" in docs/design/transport.md.
 var busyReasons = map[string]bool{"failed": true, "failure": true, "fatal error in commit_refs": true}
 
 // busyWait is how long Push waits after its try'th try was refused as busy: half a second to a
@@ -374,11 +377,17 @@ func (r *Repo) Log(ctx context.Context, from, to string, max int64, page func([]
 	if err != nil {
 		return err
 	}
-	shas := strings.Fields(out)
 	n := r.Page
 	if n <= 0 {
 		n = LogPage
 	}
+	return r.readPaged(ctx, strings.Fields(out), n, max, page)
+}
+
+// readPaged reads the commits named, in order, and calls page with them a page at a time, as Log
+// says: n commits to a page at most, and no more than pageBytes. Git is asked the sizes of n
+// commits at a time, and then for each page.
+func (r *Repo) readPaged(ctx context.Context, shas []string, n int, max int64, page func([]Commit) error) error {
 	for len(shas) > 0 {
 		batch := shas[:min(n, len(shas))]
 		sizes, err := r.sizes(ctx, batch)
@@ -406,6 +415,125 @@ func (r *Repo) Log(ctx context.Context, from, to string, max int64, page func([]
 		}
 	}
 	return nil
+}
+
+// errEnough ends Recent's read when its caller has what it wanted.
+var errEnough = errors.New("enough")
+
+// Recent reads the newest commits of the logs that end at tips, newest first by when each was
+// written, whichever log it is in, and calls page with them a page at a time: until page returns
+// false, limit commits have been read, or the logs run out. Each commit says which log it is in
+// (Commit.Tip). It is for looking back over what the logs hold, and Log is for reading them on: the
+// order across logs goes by their writers' clocks, so a device whose clock runs ahead comes first.
+// A tip that isn't a commit here is passed over, and one that isn't here at all is returned as
+// missing, so a caller can come back when it has been fetched. An oversize commit comes marked, and
+// only first parents are followed, as in Log.
+//
+// It takes four git commands however many commits it reads, where Log takes two for every LogPage
+// of them: a page here is all the commits that fit in pageBytes, about 10,000 of Murmur's, as
+// nothing waits on a cursor between pages. Repo.Page, if set, still bounds a page.
+func (r *Repo) Recent(ctx context.Context, tips []string, limit int, max int64, page func([]Commit) bool) (missing []string, err error) {
+	if tips, missing, err = r.commitsAmong(ctx, tips); err != nil {
+		return nil, err
+	}
+	if len(tips) == 0 || limit <= 0 {
+		return missing, nil
+	}
+	// One walk over every log: git hands the commits over newest first, each log's from its tip
+	// back, and with each its first parent, which says whose log it is in.
+	out, err := r.Git.Run(ctx, strings.Join(tips, "\n")+"\n", "rev-list", "--first-parent", "--parents",
+		"-n", strconv.Itoa(limit), "--stdin")
+	if err != nil {
+		return missing, err
+	}
+	var shas []string
+	parent := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		shas = append(shas, f[0])
+		parent[f[0]] = ""
+		if len(f) > 1 {
+			parent[f[0]] = f[1]
+		}
+	}
+	tipOf := make(map[string]string, len(shas))
+	for _, tip := range tips {
+		for c := tip; ; c = parent[c] {
+			if _, listed := parent[c]; !listed || tipOf[c] != "" {
+				break // past what was listed, or into a log that another tip's shares
+			}
+			tipOf[c] = tip
+		}
+	}
+	n := r.Page
+	if n <= 0 {
+		n = len(shas)
+	}
+	err = r.readPaged(ctx, shas, n, max, func(commits []Commit) error {
+		for i := range commits {
+			commits[i].Tip = tipOf[commits[i].SHA]
+		}
+		if !page(commits) {
+			return errEnough
+		}
+		return nil
+	})
+	if errors.Is(err, errEnough) {
+		err = nil
+	}
+	return missing, err
+}
+
+// commitsAmong is the object names in shas that are commits here, each once, in the order given,
+// and those that name nothing here. Anything that isn't a whole object name is left out of both:
+// these go to git on its standard input, where a line could otherwise be read as an option.
+func (r *Repo) commitsAmong(ctx context.Context, shas []string) (commits, missing []string, err error) {
+	var names []string
+	seen := map[string]bool{}
+	for _, sha := range shas {
+		if !seen[sha] && isObjectName(sha) {
+			seen[sha] = true
+			names = append(names, sha)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil, nil
+	}
+	out, err := r.Git.Run(ctx, strings.Join(names, "\n")+"\n", "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	if err != nil {
+		return nil, nil, err
+	}
+	kind := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 2 {
+			kind[f[0]] = f[1] // for an object that isn't here, git prints its name and "missing"
+		}
+	}
+	for _, sha := range names {
+		switch kind[sha] {
+		case "commit":
+			commits = append(commits, sha)
+		case "missing":
+			missing = append(missing, sha)
+		}
+	}
+	return commits, missing, nil
+}
+
+// isObjectName says s is a full object name as git prints one: 40 hex digits, or 64 with SHA-256.
+func isObjectName(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // sizes asks git how large each commit is, without reading it.

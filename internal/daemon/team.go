@@ -101,6 +101,7 @@ func (d *Daemon) addTeamKeysLocked(keys bus.Keyring) bool {
 	if !added {
 		return false
 	}
+	d.kickHistory() // the page's earlier messages that this key opens
 	raw := map[string]string{}
 	for id, k := range d.teamKeys {
 		raw[id] = hex.EncodeToString(k.Bytes())

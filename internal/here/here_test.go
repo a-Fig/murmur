@@ -158,3 +158,38 @@ func TestSessionsLeavesAnUnreadableRecord(t *testing.T) {
 		t.Errorf("an unreadable record was removed: %v", err)
 	}
 }
+
+// The hook asks for the servers of its agent's process on every tool call: those still running that
+// the nearest of the processes it names started, and it removes no record on the way.
+func TestOfIsTheNearestProcessesLiveServers(t *testing.T) {
+	dir := t.TempDir()
+	me, parent := os.Getpid(), os.Getppid()
+	mine := Session{ServerPID: me, ClientPID: 100, GitDir: "/a/.git", On: true}
+	sibling := Session{ServerPID: parent, ClientPID: 100, GitDir: "/b/.git"}
+	above := Session{ServerPID: me + 1<<22, ClientPID: 200, GitDir: "/c/.git"} // no such process
+	for i, s := range []Session{mine, sibling, above} {
+		// Written under names of their own: two of them have one server PID.
+		if err := writeJSON(filepath.Join(dir, "server-"+string(rune('a'+i))+".json"), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := Of(dir, []int{7, 100, 200}); !slices.Equal(got, []Session{mine, sibling}) {
+		t.Errorf("of the nearest process: %+v", got)
+	}
+	if got := Of(dir, []int{200}); got != nil {
+		t.Errorf("a server that isn't running was returned: %+v", got)
+	}
+	// A dead server's record is passed over for the next process up.
+	if got := Of(dir, []int{200, 100}); len(got) != 2 {
+		t.Errorf("past a process whose server is gone: %+v", got)
+	}
+	if got := Of(dir, nil); got != nil {
+		t.Errorf("with no process named: %+v", got)
+	}
+	if got := Of(filepath.Join(dir, "none"), []int{100}); got != nil {
+		t.Errorf("with no directory: %+v", got)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 3 {
+		t.Errorf("Of removed a record: %d left", len(entries))
+	}
+}

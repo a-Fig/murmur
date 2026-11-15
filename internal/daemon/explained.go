@@ -26,6 +26,15 @@ import (
 // ends. An agent told twice is the cost, and the safe way to err, where recording first would leave
 // one whose handoff failed told never. It is rare: a handoff goes to a session that was idle when
 // it began, and typically takes seconds, though T3's can take up to 30.
+//
+// In a group, a person's message ends with the group's line, not their own (#484), so it doesn't
+// count as explaining them: their first direct message still does.
+//
+// A group's messages are explained the same way (#184, Tyler, 2026-11-12): the first a session is
+// given from a group says in full that it is in the group, how to answer the group or the sender,
+// and how to leave; later ones end with one short line. What is kept is the group's tag, beside the
+// people's addresses, which it can't be taken for. A session that leaves a group and joins it again
+// has been told.
 
 // conversationLocked is the name key of the conversation session id is in: a registered session's
 // own, else, for a session of T3 that has stopped, its thread's; "" if neither is known. Caller
@@ -65,11 +74,15 @@ func (d *Daemon) explainKeyLocked(id string) string {
 	return tagKeyOf("", id)
 }
 
-// explainedLocked says session id has had a message from person from, so another needs no more
-// than an agent's line. Always true for a sender who isn't a person, whose line is that already.
-// Caller holds mu.
+// explains says what is a person's address or a group's tag: the two things a session is told of
+// in full once.
+func explains(what string) bool { return bus.IsPerson(what) || bus.IsGroup(what) }
+
+// explainedLocked says session id has had a message from person from, or sent to group from, so
+// another needs no more than the short line. Always true for anything else: an agent's own line is
+// short already. Caller holds mu.
 func (d *Daemon) explainedLocked(id, from string) bool {
-	if !bus.IsPerson(from) {
+	if !explains(from) {
 		return true
 	}
 	key := d.explainKeyLocked(id)
@@ -83,9 +96,9 @@ func (d *Daemon) noteExplainedLocked(id, from string) {
 }
 
 // noteExplainedAtLocked records that the session kept by key has had a message from from, if
-// from is a person. The caller saves the state. Caller holds mu.
+// from is a person, or sent to it, if it is a group. The caller saves the state. Caller holds mu.
 func (d *Daemon) noteExplainedAtLocked(key, from string) {
-	if key == "" || !bus.IsPerson(from) || slices.Contains(d.st.Explained[key], from) {
+	if key == "" || !explains(from) || slices.Contains(d.st.Explained[key], from) {
 		return
 	}
 	if d.st.Explained == nil {
@@ -115,19 +128,27 @@ func (d *Daemon) explainKeyOfPushLocked(j *pushJob) string {
 // message once, as wholeViewsLocked does for Introduced. A second message from the same person in
 // views is explained already by the first. The caller saves the state. Caller holds mu.
 func (d *Daemon) explainViewsLocked(views []proto.MessageView, to func(i int) []string) {
-	for i := range views {
-		if !bus.IsPerson(views[i].From) {
-			continue // an agent's line is the short one already
-		}
-		ids := to(i)
-		views[i].Explained = true
+	// known says every session of ids has been told of what, and records them as told.
+	known := func(ids []string, what string) bool {
+		all := true
 		for _, id := range ids {
-			if !d.explainedLocked(id, views[i].From) {
-				views[i].Explained = false
+			if !d.explainedLocked(id, what) {
+				all = false
 			}
 		}
 		for _, id := range ids {
-			d.noteExplainedLocked(id, views[i].From)
+			d.noteExplainedLocked(id, what)
+		}
+		return all
+	}
+	for i := range views {
+		// An agent's line is the short one already, and in a group the group's line stands in for
+		// a person's (#484): the person is still to be explained in their first direct message.
+		if bus.IsPerson(views[i].From) && !bus.IsGroup(views[i].To) {
+			views[i].Explained = known(to(i), views[i].From)
+		}
+		if bus.IsGroup(views[i].To) {
+			views[i].GroupKnown = known(to(i), views[i].To)
 		}
 	}
 }

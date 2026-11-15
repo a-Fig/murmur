@@ -70,6 +70,7 @@ func TestCodexThreadsHaveTheirOwnNames(t *testing.T) {
 // different thread IDs of its own, and a session's name does not follow a Codex thread ID that
 // another T3 thread's session also has.
 func TestT3ThreadWinsOverTheCodexThread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)

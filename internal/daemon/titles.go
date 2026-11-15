@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,11 +13,11 @@ import (
 	"github.com/a-Fig/murmur/internal/title"
 )
 
-// A conversation's title as the default status line (#66, docs/VISION.md, "Who is on, and what
-// they are doing"). Where an agent has set no status, the session's line in `who` is the title of
-// the conversation it is in, read from the client's own state: T3's database, Codex's name for the
-// thread, Claude Code's transcript. The title goes out in presence as `doing`, as a status does;
-// the format has no field for it, and an older daemon shows it as it shows a status.
+// A conversation's title as the default status line (#66, docs/design/presence.md, "Who is on, and
+// what they are doing"). Where an agent has set no status, the session's line in `who` is the title
+// of the conversation it is in, read from the client's own state: T3's database, Codex's name for
+// the thread, Claude Code's transcript. The title goes out in presence as `doing`, as a status
+// does; the format has no field for it, and an older daemon shows it as it shows a status.
 
 // titleLoop reads the titles every TitleEvery. Each pass reads each session's source once, so no
 // database is read more often than that; a title takes at most that long to show after its source
@@ -118,13 +117,7 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		// server when the session has one, else Codex's default (#88). The daemon's own CODEX_HOME
 		// is the home of whichever session started it, so it is taken only for a route that names
 		// no home, which comes from a server older than #88's, as such a server expects.
-		dir := r.CodexHome
-		if !filepath.IsAbs(dir) {
-			if dir = os.Getenv("CODEX_HOME"); !filepath.IsAbs(dir) {
-				dir = title.DefaultCodexDir()
-			}
-		}
-		raw, err = title.Codex(ctx, dir, r.Native)
+		raw, err = title.Codex(ctx, codexDir(r), r.Native)
 		return raw, true, err
 	case j.transcript != "":
 		raw, err = title.Claude(j.transcript)

@@ -36,7 +36,7 @@ type health struct {
 	syncErr           *web.HealthError
 	pushes            [refKinds]web.PushHealth
 	giveUps           int64
-	handoffs          [2]web.HandoffHealth // by route: viaT3, then viaSocket
+	handoffs          [3]web.HandoffHealth // by route: viaT3, viaSocket, then the client's command line
 	hook              web.HookHealth
 	// poll and every are the poll's rate as pollLoop last set it, and the wait it chose.
 	poll  string
@@ -139,16 +139,20 @@ func (h *health) gaveUp() {
 	h.giveUps++
 }
 
-// handedOff records a handoff of a message as a turn through via, viaT3 or viaSocket. A failed one
-// leaves the message to the hook's notice.
+// handedOff records a handoff of a message as a turn through via. A failed one leaves the message
+// to the hook's notice.
 func (h *health) handedOff(via string, err error) {
 	if errors.Is(err, context.Canceled) {
 		return
 	}
-	i := 0
-	if via == viaSocket {
+	var i int
+	switch via {
+	case viaT3:
+	case viaSocket:
 		i = 1
-	} else if via != viaT3 {
+	case viaCodex, viaOpenCode:
+		i = 2
+	default:
 		return
 	}
 	h.mu.Lock()
@@ -317,7 +321,7 @@ func (s pageSource) Health(ctx context.Context) (web.Health, error) {
 	out.Pushes = web.PushesHealth{Mesh: h.pushes[refMesh], Presence: h.pushes[refPresence],
 		Names: h.pushes[refNames], Other: h.pushes[refOther]}
 	out.Fetches.BacklogGiveUps = h.giveUps
-	out.Delivery = web.DeliveryHealth{T3: h.handoffs[0], Socket: h.handoffs[1], Hook: h.hook}
+	out.Delivery = web.DeliveryHealth{T3: h.handoffs[0], Socket: h.handoffs[1], CLI: h.handoffs[2], Hook: h.hook}
 	out.Daemon.Poll, out.Daemon.PollEvery = h.poll, h.every.Seconds()
 	return out, nil
 }

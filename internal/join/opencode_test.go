@@ -203,7 +203,7 @@ func TestRegisterOpenCodeMovesV1ToV2(t *testing.T) {
 }
 `)
 	did, fresh, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb))
-	if err != nil || !fresh || len(did) != 3 || !strings.Contains(did[0], "OpenCode 2") {
+	if err != nil || !fresh || len(did) != 4 || !strings.Contains(did[0], "OpenCode 2") { // the last is the plugin (#431)
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)

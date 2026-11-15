@@ -122,3 +122,57 @@ func TestPiExtensionTurnsOnWhenItsCloneIsJoined(t *testing.T) {
 		}
 	}
 }
+
+// piLoadHarness loads the extension with a stand-in for Pi's API and prints how many servers it
+// registered and how many of Pi's events it listens for.
+const piLoadHarness = `
+import { pathToFileURL } from "node:url";
+const { default: load } = await import(pathToFileURL(process.argv[2]).href);
+let regs = 0, events = 0;
+load({ registerMcpServer: () => regs++, on: () => events++, sendMessage: () => {} });
+console.log("registered " + regs + ", listening for " + events);
+`
+
+// A subagent that the pi-subagents package runs as a pi of its own, marked in its environment, is
+// kept off Murmur (#457): there the extension registers no server and listens for nothing, so the
+// child is no session of its own. Any other pi gets the server and the events.
+func TestPiExtensionStaysOutOfASubagent(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node")
+	}
+	out, err := exec.Command(node, "--version").Output()
+	m := regexp.MustCompile(`^v(\d+)\.(\d+)`).FindStringSubmatch(string(out))
+	if err != nil || m == nil {
+		t.Skip("node's version unknown")
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	if major < 22 || major == 22 && minor < 6 {
+		t.Skipf("node %s.%s can't run TypeScript", m[1], m[2])
+	}
+	dir := t.TempDir()
+	ext := filepath.Join(dir, "murmur.mts")
+	harness := filepath.Join(dir, "harness.mjs")
+	if err := os.WriteFile(ext, []byte(piExtension("/bin/false")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harness, []byte(piLoadHarness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(child string) string {
+		cmd := exec.Command(node, "--experimental-strip-types", "--no-warnings", harness, ext)
+		cmd.Env = append(os.Environ(), "PI_SUBAGENT_CHILD="+child)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("the harness: %v\n%s", err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if got := run("1"); got != "registered 0, listening for 0" {
+		t.Errorf("in a subagent: %s", got)
+	}
+	if got := run(""); !strings.HasPrefix(got, "registered 1, listening for ") || strings.HasSuffix(got, " 0") {
+		t.Errorf("in a pi of the user's: %s", got)
+	}
+}

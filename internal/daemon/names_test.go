@@ -89,7 +89,7 @@ func newNamedDevice(t *testing.T, remote string, src io.Reader, stale ...time.Du
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond,
 		names: src}
 	if len(stale) > 0 {
 		d.stale = stale[0]
@@ -304,6 +304,14 @@ func TestSameKeyKeepsItsName(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, conn := a.session("aaaaaa", "claude-alice-session-0001")
 	name := a.named(alice)
+	// Her start is on a's log on the remote before anything else happens. The test ends by reading
+	// that log, and a start still unpushed when a goes offline below can be lost: a write that
+	// fails in the background is logged, not sent again (appendSoon). Presence would still give b
+	// her name, with a log that never reaches the remote (#410, Sol's review of #433).
+	mesh := "refs/murmur/mesh/" + a.self()
+	eventually(t, "her start on a's log", func() bool {
+		return git(t, remote, "for-each-ref", mesh) != "" && strings.Contains(busText(t, remote, a), " started (")
+	})
 
 	conn.Close()
 	// The daemon may not have seen the drop yet, and answers "in use" until it has: the MCP server

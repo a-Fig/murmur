@@ -9,3 +9,6 @@ dist/
 # wrangler deploy cache (site/wrangler.jsonc)
 .wrangler/
 .dev.vars
+
+# Agents write PR bodies to scratch files before gh pr create; #409 committed one.
+.git-pr-body-*

@@ -33,12 +33,18 @@ func caseEnv(extra []string) []string {
 		"GIT_AUTHOR_NAME=Attribution Case", "GIT_AUTHOR_EMAIL=case@example.invalid",
 		"GIT_COMMITTER_NAME=Attribution Case", "GIT_COMMITTER_EMAIL=case@example.invalid",
 		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull,
-		"GIT_CONFIG_COUNT=5",
+		// gc.auto and maintenance.auto: after a commit, git may start maintenance in the background
+		// and leave it writing the commit-graph after the test ends, when the test's directory is
+		// being removed ("unlinkat …/objects/info/commit-graphs: directory not empty", TestManyBranches
+		// on macOS CI, 2026-11-13).
+		"GIT_CONFIG_COUNT=7",
 		"GIT_CONFIG_KEY_0=commit.gpgsign", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=init.defaultBranch", "GIT_CONFIG_VALUE_1=main",
 		"GIT_CONFIG_KEY_2=core.autocrlf", "GIT_CONFIG_VALUE_2=false",
 		"GIT_CONFIG_KEY_3=core.hooksPath", "GIT_CONFIG_VALUE_3="+filepath.ToSlash(filepath.Join(os.TempDir(), "murmur-attrib-no-hooks")),
 		"GIT_CONFIG_KEY_4=advice.detachedHead", "GIT_CONFIG_VALUE_4=false",
+		"GIT_CONFIG_KEY_5=gc.auto", "GIT_CONFIG_VALUE_5=0",
+		"GIT_CONFIG_KEY_6=maintenance.auto", "GIT_CONFIG_VALUE_6=false",
 	)
 	return append(env, extra...)
 }

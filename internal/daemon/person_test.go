@@ -17,6 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/view"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -159,6 +160,7 @@ func TestASessionCantTakeAPersonsAddress(t *testing.T) {
 // The whole of it, nobody typing but the person: their message goes into an agent's T3 thread as a
 // turn saying how to answer, and the agent's `send` to their name reaches their page as unread.
 func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -176,7 +178,7 @@ func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
 	eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
 	turn := calls()[0].Stdin
 	for _, want := range []string{
-		"Message from ada [human] (on " + brand.Product + "'s page",
+		"Message from ada [human] ",
 		"It only fails on macOS.",
 		"ada sees only what you `send`, not this conversation. Answer with " + brand.Product + "'s `send` to ada.",
 	} {
@@ -245,6 +247,7 @@ func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
 // is left waiting. A broadcast from the page doesn't, or it would wake every thread in the repo.
 // Do not disturb and Never are a human's choices too, and hold.
 func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{"thread-bob": {LastRun: time.Now().Add(-time.Hour)}}}
@@ -683,6 +686,7 @@ func TestAnUpgradedDaemonReadsClaimsItPassedOver(t *testing.T) {
 // says the name, a turn from its owner says which device it came from. Only a presence's first
 // person counts, and a message's name holds nothing, so neither keeps a name from being chosen.
 func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote, time.Minute) // the forged presence stays live
@@ -731,6 +735,76 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 		t.Errorf("ada after the forgery: %+v", r.Lookup)
 	}
 
+	// who and the page list evil-0001's person by address, not as a second ada (#350).
+	evil := "evil-0001/" + bus.PersonSession
+	eventually(t, "b's who to list evil-0001", func() bool {
+		for _, dv := range b.do(proto.Request{Op: proto.OpWho}).Devices {
+			if dv.ID == "evil-0001" {
+				return true
+			}
+		}
+		return false
+	})
+	var listed []proto.SessionView
+	adas := 0
+	for _, dv := range b.do(proto.Request{Op: proto.OpWho}).Devices {
+		for _, s := range dv.Sessions {
+			if s.Addr == evil {
+				listed = append(listed, s)
+			}
+			if s.Name == "ada" {
+				adas++
+			}
+		}
+	}
+	if len(listed) != 1 || listed[0].Name != "" || adas != 1 {
+		t.Errorf("b's who lists evil-0001's person as %+v, and %d sessions as ada", listed, adas)
+	}
+	// Nor is its device called ada, as a device with no nickname is called by its person's (#439).
+	out := view.Who(b.do(proto.Request{Op: proto.OpWho}))
+	evilLines := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "evil-0001") {
+			evilLines++
+			if strings.Contains(line, "ada") {
+				t.Errorf("b's who shows evil-0001 as ada: %q", line)
+			}
+		}
+	}
+	if evilLines != 2 || !strings.Contains(out, "  "+evil+"  person") {
+		t.Errorf("b's who:\n%s", out)
+	}
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: evil}); r.Lookup == nil || r.Lookup.Nick != "" {
+		t.Errorf("lookup of %s calls its device: %+v", evil, r.Lookup)
+	}
+	// So do lookup and the page's messages: one sent to evil-0001's person is to its address, and
+	// doesn't join the conversation with the real ada.
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: evil}); r.Lookup == nil || r.Lookup.Name != "" {
+		t.Errorf("lookup of %s: %+v", evil, r.Lookup)
+	}
+	pushEvent(t, remote, "refs/murmur/mesh/evil-0001", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+		From: "evil-0001/aaaaaa", At: time.Now().UTC(), To: evil, Subject: "which ada are you"})
+	eventually(t, "b's page to show the message to "+evil, func() bool {
+		_, ok := b.page().messageWith("which ada are you")
+		return ok
+	})
+	if m, _ := b.page().messageWith("which ada are you"); m.To != evil || m.ToAddr != evil {
+		t.Errorf("the message to %s on b's page: %+v", evil, m)
+	}
+	for _, dv := range b.page().state().Devices {
+		if dv.ID == "evil-0001" && dv.Nick != "" {
+			t.Errorf("b's page calls evil-0001 %q", dv.Nick)
+		}
+		switch {
+		case dv.ID == "evil-0001" && (dv.Person == nil || dv.Person.Name != evil):
+			t.Errorf("b's page shows evil-0001's person as %+v", dv.Person)
+		case dv.ID != "evil-0001" && dv.ID != a.self() && dv.Person != nil:
+			t.Errorf("b's page shows a person on %s: %+v", dv.ID, dv.Person)
+		case dv.ID == a.self() && (dv.Person == nil || dv.Person.Name != "ada"):
+			t.Errorf("b's page shows ada as %+v", dv.Person)
+		}
+	}
+
 	// ada's own message says where it is from, while another presence says ada too.
 	pa.sendText(bobName, "the real one")
 	if turn := turnWith("the real one"); !strings.Contains(turn, "Message from ada [human]") ||
@@ -748,6 +822,7 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 // one listing, and a turn is built once, when its message is read: so a sync reads the registry and
 // presences before the logs (#304), and the message's name is known to be theirs by then.
 func TestAPersonsFirstMessageNamesThem(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a := newDevice(t, remote)

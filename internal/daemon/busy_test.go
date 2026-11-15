@@ -53,6 +53,7 @@ func viewSubjects(ms []proto.MessageView) []string {
 // count isn't repeated after every tool call, only when it changes. When the turn ends, both
 // messages, still unread, go in as turns, in order.
 func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -98,6 +99,7 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 
 // A message the agent read with inbox during its turn is not given to it again when the turn ends.
 func TestAMessageReadDuringTheTurnIsNotATurnAfter(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -119,6 +121,7 @@ func TestAMessageReadDuringTheTurnIsNotATurnAfter(t *testing.T) {
 // A message that comes while the session is idle wakes it as before, and one that comes during a
 // turn with no tool call after it, so nothing was told, goes in when the turn ends.
 func TestAnIdleSessionIsWokenAndAnUntoldMessageWaitsForTheTurnEnd(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -145,6 +148,7 @@ func TestAnIdleSessionIsWokenAndAnUntoldMessageWaitsForTheTurnEnd(t *testing.T) 
 // A subagent's tool call during the session's turn tells it nothing: the notice would go to the
 // subagent (#188).
 func TestASubagentsCallTellsNothing(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -170,6 +174,7 @@ func TestASubagentsCallTellsNothing(t *testing.T) {
 // read of T3's database that began after the hook last ran finds no run: the message isn't held
 // for good. That holds when a late hook came after the run's recorded end, too.
 func TestAnInterruptedTurnInT3EndsByT3sDatabase(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{"thread-bob": {Busy: true, LastRun: time.Now()}}}
@@ -190,6 +195,7 @@ func TestAnInterruptedTurnInT3EndsByT3sDatabase(t *testing.T) {
 // A subagent working in the background after the session's turn ended doesn't hold the session's
 // messages: its tool calls don't mark the session at work.
 func TestABackgroundSubagentDoesntHoldTheSession(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -207,6 +213,7 @@ func TestABackgroundSubagentDoesntHoldTheSession(t *testing.T) {
 // has seen a turn end, a busy session gets its message as a turn, as before: held, it would never
 // be seen to finish its turn.
 func TestBeforeTheFirstStopABusySessionGetsTheTurn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -236,6 +243,7 @@ func (d *device) reconnected(id, claude string, r proto.Route) string {
 // held for the end of its turn mustn't go to T3's queue mid-turn. A subagent's hook doesn't end
 // that; the session's own does.
 func TestAReconnectedSessionIsHeldWhileItsRunGoes(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{}} // no thread read yet

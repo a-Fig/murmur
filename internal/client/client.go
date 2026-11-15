@@ -46,6 +46,9 @@ func StateDir(gitDir string) string { return filepath.Join(gitDir, brand.StateDi
 type Client struct {
 	GitDir string
 	Spawn  bool // start a daemon when none answers
+	// EndOlder lets c end a daemon from before proof by its process, to start a current one in its
+	// place (see endOlder). For a command the user ran to set the clone up, not for a session.
+	EndOlder bool
 	// MaySpawn, if set, is asked each time a daemon would be started, and says no to stop it. A
 	// client that outlives the user's consent (the MCP server) needs it: it learns the consent is
 	// gone when the daemon it talked to goes away, which is the moment it would start another.
@@ -126,6 +129,14 @@ func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 	return c, c.connect(ctx)
 }
 
+// Replace is Connect for `mur join`, which someone coming from 0.2 is told to run again: it starts
+// a daemon, and where one from before proof is in the way it ends that one by its process first
+// (see endOlder), which Connect leaves running.
+func Replace(ctx context.Context, gitDir string) (*Client, error) {
+	c := &Client{GitDir: gitDir, Spawn: true, EndOlder: true}
+	return c, c.connect(ctx)
+}
+
 // connect finds the clone's daemon. One that speaks an older protocol than this binary (left running
 // by the mur it replaced) is stopped and replaced if the client may start daemons; a client that
 // may not, such as `mur stop`, which has to be able to stop it, takes it as it is.
@@ -188,30 +199,43 @@ var replaceWait = StopWait
 func (c *Client) replace(ctx context.Context) error {
 	old, legacy := c.target()
 	if legacy {
+		if c.EndOlder {
+			return endOlder(ctx, c.GitDir, old)
+		}
 		return olderDaemon(old) // a stop would hand its token to whatever answers (see errOlderDaemon)
 	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	c.roundTrip(sctx, proto.Request{Op: proto.OpStop}) // by the old address and token, never a newer daemon's
 	cancel()
-	lock := filepath.Join(StateDir(c.GitDir), "daemon.lock")
+	_, err := letGo(ctx, c.GitDir, old, "didn't exit when asked to")
+	return err
+}
+
+// letGo waits, up to replaceWait, until the daemon old names has let go of the clone, and reports
+// whether the lock was then free. It wasn't if another daemon has it already: another client may be
+// replacing the daemon too, and one that starts between two looks here holds the lock as the old
+// one did. So a daemon.json that isn't the old one's means the old daemon went, and the wait is
+// over. stayed is what the error says of a daemon still there at the end.
+func letGo(ctx context.Context, gitDir string, old proto.Info, stayed string) (free bool, err error) {
+	lock := filepath.Join(StateDir(gitDir), "daemon.lock")
 	for end := time.Now().Add(replaceWait); ; {
-		if info, ok := c.load(); ok && info.Token != old.Token {
-			return nil
+		if info, ok := (&Client{GitDir: gitDir}).load(); ok && info.Token != old.Token {
+			return false, nil
 		}
 		l, err := proc.LockShared(lock)
 		if err == nil {
 			l.Close()
-			return nil
+			return true, nil
 		}
 		if !errors.Is(err, proc.ErrLocked) {
-			return fmt.Errorf("replacing the daemon of an older version: %w", err)
+			return false, fmt.Errorf("replacing the daemon of an older version: %w", err)
 		}
 		if time.Now().After(end) {
-			return fmt.Errorf("the daemon of an older version (pid %d) didn't exit when asked to", old.PID)
+			return false, fmt.Errorf("the daemon of an older version (pid %d) %s", old.PID, stayed)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -335,9 +359,10 @@ var errLegacy = errors.New("the daemon is from before proof")
 // the next client, which would find the old daemon's lock and daemon.json beside it, until the old
 // daemon finished stopping (Sol's second review of #389).
 //
-// So a client can neither stop nor replace one of these. It says how to end it, by its process ID
-// in daemon.json, or that it ends on its own once it has had no sessions for a while; the daemon
-// started after it is current.
+// So a client can't ask one of these to stop, or ask it anything else. `mur stop` and `mur join`
+// end it by its process instead (endOlder), which sends it nothing. Every other client says how to
+// end it, by its process ID in daemon.json, or that it ends on its own once it has had no sessions
+// for a while; the daemon started after it is current.
 var errOlderDaemon = errors.New("the daemon running for this clone is from an older version of " + brand.Product +
 	" and can't prove it is the daemon, so it is sent nothing, not even a stop, which would hand over its token")
 
@@ -349,6 +374,64 @@ func olderDaemon(info proto.Info) error {
 	}
 	return fmt.Errorf("%w. End it (process %d: `%s`), or wait until it exits on its own, 10 minutes after its last session; the next %s command that may start a daemon then starts a current one",
 		errOlderDaemon, info.PID, end, brand.Command)
+}
+
+// endProcess is proc.End, unless a test says otherwise.
+var endProcess = proc.End
+
+// endOlder ends a daemon from before proof by its process, and waits until it has let go of the
+// clone (#394). Someone who installs 0.3 over a running 0.2 has such a daemon in every clone, and
+// 0.2 never updates itself, so each of them would otherwise be ended by hand.
+//
+// Nothing is sent to the daemon, so nothing can be handed to what may have taken its port
+// (errOlderDaemon). What is ended is the process daemon.json names, and only once three things
+// say it is the daemon: running found the clone's lock held, which only a daemon holds, with that
+// daemon.json beside it; the process is alive; and the program it runs is this command
+// (isCommand). The last is against a process ID given to another process since: a daemon that
+// died leaves its daemon.json, and the next daemon holds the lock for a moment before it removes
+// the file.
+//
+// One thing gets past all three: in that moment, a process ID that went to another process of
+// this command (a session's server, another clone's daemon), while something at the dead daemon's
+// port answers as a daemon from before proof does. That takes a process on this machine that set
+// out to do it, and costs the user one of their own processes, which starts again.
+//
+// Where a check fails, the error is olderDaemon's, with why the daemon wasn't ended.
+func endOlder(ctx context.Context, gitDir string, info proto.Info) error {
+	if err := endProcess(info.PID, isCommand); err != nil {
+		return fmt.Errorf("%w (%s didn't end it itself: %w)", olderDaemon(info), brand.Command, err)
+	}
+	free, err := letGo(ctx, gitDir, info, "was ended and still holds the clone")
+	if err != nil || !free {
+		return err // not free: a daemon another client started has the clone already
+	}
+	// Ended without a word, it may not have removed its daemon.json, as one that crashed doesn't.
+	// As in running: no daemon can start to write a new one while the lock is held here.
+	dir := StateDir(gitDir)
+	if l, err := proc.LockShared(filepath.Join(dir, "daemon.lock")); err == nil {
+		if again, ok := (&Client{GitDir: gitDir}).load(); ok && again == info {
+			os.Remove(filepath.Join(dir, "daemon.json"))
+		}
+		l.Close()
+	}
+	return nil
+}
+
+// isCommand reports whether exe, the path of the program a process runs, is this command: mur, or
+// mur.exe, or either as it is renamed aside when a running one is replaced (mur.exe.old-1a2b3c4d
+// by install.ps1, mur.old-.mur-update-... by the updater), with the " (deleted)" Linux adds to a
+// replaced file's path. The folder isn't compared: the new mur may be installed somewhere else.
+func isCommand(exe string) bool {
+	base := filepath.Base(strings.TrimSuffix(exe, " (deleted)"))
+	if runtime.GOOS == "windows" {
+		base = strings.ToLower(base)
+	}
+	for _, name := range []string{brand.Command, brand.Command + ".exe"} {
+		if base == name || strings.HasPrefix(base, name+".old-") {
+			return true
+		}
+	}
+	return false
 }
 
 // errTooLong is a reply longer than a client reads.
@@ -479,6 +562,7 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 }
 
 // Stop asks the clone's daemon to exit and waits for it to go. It reports whether there was one.
+// A daemon from before proof can't be asked, and is ended by its process (see endOlder).
 func Stop(ctx context.Context, gitDir string) (bool, error) {
 	c, err := Connect(ctx, gitDir, false)
 	if errors.Is(err, ErrNoDaemon) {
@@ -486,6 +570,9 @@ func Stop(ctx context.Context, gitDir string) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	if info, legacy := c.target(); legacy {
+		return true, endOlder(ctx, gitDir, info)
 	}
 	resp, err := c.Do(ctx, proto.Request{Op: proto.OpStop})
 	if err == nil && resp.Error != "" {

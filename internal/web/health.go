@@ -102,6 +102,7 @@ type RefHealth struct {
 type DeliveryHealth struct {
 	T3     HandoffHealth `json:"t3"`     // handed to a T3 thread as a turn
 	Socket HandoffHealth `json:"socket"` // handed through a session's messaging socket as a turn
+	CLI    HandoffHealth `json:"cli"`    // handed through the client's own command line as a turn (Codex, OpenCode)
 	Hook   HookHealth    `json:"hook"`
 }
 

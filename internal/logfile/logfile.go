@@ -1,7 +1,7 @@
 // Package logfile is what a daemon's log passes through on its way to daemon.log. It keeps the
 // file bounded while the daemon runs, and keeps credentials in URLs out of it, since daemon.log is
-// what a teammate is asked to send when their device misbehaves (docs/VISION.md, "One daemon per
-// device").
+// what a teammate is asked to send when their device misbehaves (docs/design/daemon.md, "The
+// log").
 package logfile
 
 import (

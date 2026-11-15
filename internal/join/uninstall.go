@@ -17,6 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/jsonedit"
 	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/skills"
@@ -128,10 +129,12 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 		r.Did = append(r.Did, "Removed the record of this machine's clones ("+record+")")
 	}
 
-	if len(r.Did) == 0 && len(r.Problems) == 0 {
+	left := removeUserFolder(&r)
+
+	if len(r.Did) == 0 && len(r.Problems) == 0 && len(left) == 0 {
 		r.Did = []string{"Nothing to remove: " + brand.Product + " wasn't set up for any agent here"}
 	}
-	r.Left = e.leftovers()
+	r.Left = append(e.leftovers(), left...)
 	if len(r.Problems) > 0 {
 		return r, errors.New("not everything was removed; see above. Running it again retries")
 	}
@@ -239,9 +242,8 @@ func (e Env) leaveClone(ctx context.Context, r *Report, record string, c clones.
 }
 
 // removeRecord deletes, from the record of this machine's clones, the files of the clones done
-// says finished, by ID, and any file half written. It deletes the folder once it is empty, with the
-// folder above it when that is the default one, Murmur's, and empty too. kept is how many clones'
-// files stay.
+// says finished, by ID, and any file half written. It deletes the folder once it is empty. kept is
+// how many clones' files stay.
 func removeRecord(dir string, done map[string]bool) (kept int, err error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -267,13 +269,86 @@ func removeRecord(dir string, done map[string]bool) (kept int, err error) {
 			return kept, err
 		}
 	}
-	if os.Remove(dir) != nil {
-		return kept, nil // something else is in it
-	}
-	if os.Getenv(clones.DirEnv) == "" {
-		os.Remove(filepath.Dir(dir)) // fails, and stays, while it holds anything else (the sessions' records)
-	}
+	os.Remove(dir) // fails, and stays, while something else is in it
 	return kept, nil
+}
+
+// removeUserFolder deletes Murmur's folder in the user's config directory, which holds the record
+// of this machine's clones (removeRecord's), the records MCP servers publish of themselves
+// (internal/here), and `id`, the random user ID the daily check-ins of 0.2.3 to 0.2.x sent, which
+// nothing reads since #199 (#430). The records of servers that have exited go, and the folder with
+// them; a server still running keeps its record, since it reads its moves there until its session
+// ends, and the folder stays for it. What stays is returned, for the report's "Left for you". A
+// folder a test or a user named in place of the default one (clones.DirEnv, brand.SessionsDirEnv)
+// is left alone: it may not be Murmur's to delete.
+func removeUserFolder(r *Report) (left []string) {
+	if os.Getenv(clones.DirEnv) != "" || os.Getenv(brand.SessionsDirEnv) != "" {
+		return nil
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(config, brand.Name)
+	switch fi, err := os.Lstat(dir); {
+	case err != nil:
+		return nil
+	case !fi.IsDir():
+		// A link, most likely, which removing would take away and leave what it points to, sessions'
+		// records and all. It is the user's to deal with.
+		return []string{brand.Product + "'s folder in your config directory (" + dir + "), which is a link or a file rather than a folder, " +
+			"so it wasn't touched. Delete what it points to once no agent session is using " + brand.Product + "."}
+	}
+	sessions := filepath.Join(dir, "sessions")
+	var live []here.Session
+	switch fi, err := os.Lstat(sessions); {
+	case err != nil:
+	case !fi.IsDir():
+		// A link too: removing it would leave what it points to, a running server's record and all.
+		return []string{brand.Product + "'s folder in your config directory (" + dir + "), whose sessions (" + sessions + ") is a link or a file " +
+			"rather than a folder, so neither was touched. Delete them, and what they point to, once no agent session is using " + brand.Product + "."}
+	default:
+		live, err = here.Sessions(sessions) // removes the records of servers that have exited
+		if err != nil {
+			r.Problems = append(r.Problems, "reading the records of agent sessions ("+sessions+"): "+err.Error())
+		}
+		os.Remove(sessions)
+	}
+	id := filepath.Join(dir, "id")
+	removedID := false
+	if fi, err := os.Lstat(id); err == nil && fi.Mode().IsRegular() {
+		if err := os.Remove(id); err != nil {
+			r.Problems = append(r.Problems, "removing the old check-ins' user ID ("+id+"): "+err.Error())
+		} else {
+			removedID = true
+		}
+	}
+	if os.Remove(dir) == nil {
+		r.Did = append(r.Did, "Removed "+brand.Product+"'s folder in your config directory ("+dir+")")
+		return nil
+	}
+	if removedID {
+		r.Did = append(r.Did, "Removed the user ID that "+brand.Product+"'s old daily check-ins sent ("+id+")")
+	}
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, en := range entries {
+		names = append(names, en.Name())
+	}
+	var why []string
+	if len(live) > 0 {
+		why = append(why, fmt.Sprintf("the records of %d agent %s whose %s server still runs, each removed when its session ends",
+			len(live), plural(len(live), "session", "sessions"), brand.Product))
+	}
+	if slices.Contains(names, "clones") {
+		why = append(why, "the record of the clones kept above")
+	}
+	held := strings.Join(names, ", ")
+	if len(why) > 0 {
+		held += " (" + strings.Join(why, "; ") + ")"
+	}
+	return []string{brand.Product + "'s folder in your config directory (" + dir + "), which still holds " + held +
+		". Once nothing in it is in use, delete the folder, or run uninstall again."}
 }
 
 // readConfig is a user config file's text for an edit, "" for one that isn't there: a regular file
@@ -367,8 +442,7 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 	if err != nil {
 		return did, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	// A notice hook here is none of join's (it writes the hook per working tree), but one a user
-	// copied from a worktree's file runs `mur hook`, which won't be there.
+	// The notice hook join wrote here (#422).
 	hooked := false
 	if cfg, perr := jsonedit.Parse([]byte(out)); perr == nil && setup.RemoveHooks(cfg) {
 		b, err := jsonedit.Format(cfg, []byte(out))
@@ -925,7 +999,14 @@ func (e Env) unregisterOpenCodeAt(_ context.Context, hs []agentHome) (did, notes
 			did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+path+")")
 		}
 	}
-	return did, notes, nil
+	gone, note, err := removeOpenCodePlugin(h.Dir)
+	if gone {
+		did = append(did, h.Label+": removed "+brand.Product+"'s plugin, its hook there ("+openCodePluginPath(h.Dir)+")")
+	}
+	if note != "" {
+		notes = append(notes, h.Label+": "+note)
+	}
+	return did, notes, err
 }
 
 // unregisterMuseAt takes Murmur's server out of Muse's settings.json.

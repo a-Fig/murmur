@@ -17,7 +17,7 @@ import (
 // MCP server's copy never does, so the daemon learns the live ID from the hook, which always has
 // it, and pairs the hook with its sessions by process: the hook's CLAUDE_PID is the MCP server's
 // parent. A session that follows keeps its Murmur ID and its inbox; its key, and so its name,
-// change. docs/VISION.md ("When a session stays the same session") has the reasons.
+// change. docs/design/session-names.md ("When a session stays the same session") has the reasons.
 
 // uniqueKeyLocked is key, unless another live session has it, or has the name it would bring: two
 // live sessions of one client session (two MCP servers in it) would share a name, and a name is an
@@ -44,6 +44,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		return
 	}
 	d.adoptTagsLocked(s)
+	d.adoptMutesLocked(s)
 	d.adoptExplainedLocked(s)
 	adopted := d.adoptLocked(s, name)
 	if !adopted && d.st.NameHolders[name] == s.id && d.st.SessionNames[s.id] == name {
@@ -118,6 +119,9 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // commits, but none follows it, as that would take the session back to the conversation it left,
 // with that one's name, tags and holds (#231). Caller holds mu.
 func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
+	if req.Child {
+		d.noteHookChildLocked(req.Native, req.ParentNative)
+	}
 	if req.Native != "" && req.ClaudeSession == "" {
 		return d.nativeSessionsLocked(req.Native) // Pi's, by its session's file (#205)
 	}
@@ -212,8 +216,8 @@ func (d *Daemon) receivesLocked(id string) bool {
 // if that session can receive it and the name is still the last it took. A holder that has moved
 // to another conversation since gets nothing for the name it left (#46): the message stays in the
 // kept inbox, which the next session to take the name takes (see adoptLocked). It goes by the
-// address alone, which is all a message on the bus carries; docs/VISION.md ("A name held by
-// another session") says what that misses. Caller holds mu.
+// address alone, which is all a message on the bus carries; docs/design/session-names.md ("A name
+// held by another session") says what that misses. Caller holds mu.
 func (d *Daemon) forwardLocked(to string) string {
 	dev, id := bus.SplitAddr(to)
 	if dev != d.device || id == "" || d.liveLocked(id) {
@@ -284,11 +288,13 @@ func isAgent(sessionAgent, agent string) bool {
 }
 
 // toolOps are the requests an MCP server makes only when the agent calls one of Murmur's tools.
-var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true,
+var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true, proto.OpMute: true,
 	proto.OpSend: true, proto.OpInbox: true}
 
 // hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi,
-// whose extension join writes runs it (#205).
+// whose extension join writes runs it (#205). OpenCode isn't one, though join's plugin runs the
+// hook in OpenCode 2 (#431): OpenCode 1 registers under the same name and can have no plugin, so
+// its sessions would be told to run join again, which changes nothing for them.
 var hookedAgents = []string{"claude-code", "codex", "grok", "pi"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs

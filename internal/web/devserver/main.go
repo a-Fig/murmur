@@ -1,12 +1,13 @@
 // Command devserver serves the web page with made-up devices, sessions and messages, for working
 // on the page without a daemon or a team: go run ./internal/web/devserver
 //
-// The fixtures change while it runs: a message arrives every 10 to 40 seconds and sessions go on
+// The fixtures are a hackathon team's (#560). They change while it runs: a message arrives every 10 to 40 seconds and sessions go on
 // being active, so the page's polling has something to show. Most messages answer the one before,
 // so a conversation goes back and forth as a real one does.
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -61,7 +62,7 @@ func main() {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
 	}
 	go src.run()
-	page := web.NewWithPRs(src, token, fixturePRs)
+	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
 	if *repos != "" {
 		serveRepos(strings.Split(*repos, ","), ln, src, page)
 	}
@@ -140,7 +141,7 @@ func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web
 			src.devices = src.devices[:1+i%2]
 			src.messages = src.messages[len(src.messages)/(i+1):]
 			go src.run()
-			d.addr, d.page = l.Addr().String(), web.NewWithPRs(src, randomHex(16), fixturePRs)
+			d.addr, d.page = l.Addr().String(), web.NewWithGitHub(src, randomHex(16), fixturePRs, fixtureGitHub(time.Now()))
 			srv := &http.Server{Handler: d.page, ReadHeaderTimeout: 10 * time.Second}
 			go func() { log.Fatal(srv.Serve(l)) }()
 		}
@@ -168,12 +169,12 @@ func fixturePRs(ctx context.Context, branch string) (*web.PR, error) {
 		return nil, ctx.Err()
 	}
 	prs := map[string]web.PR{
-		"session-names": {Number: 31, URL: "https://github.com/a-Fig/murmur/pull/31"},
-		"wake-ups":      {Number: 33, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/33"},
-		"receipts":      {Number: 35, URL: "https://github.com/a-Fig/murmur/pull/35"},
-		"web-page":      {Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"},
+		"auth-flow":      {Number: 12, URL: "https://github.com/example/huddle/pull/12"},
+		"landing-page":   {Number: 14, Draft: true, URL: "https://github.com/example/huddle/pull/14"},
+		"api-rate-limit": {Number: 17, URL: "https://github.com/example/huddle/pull/17"},
+		"demo-polish":    {Number: 19, Draft: true, URL: "https://github.com/example/huddle/pull/19"},
 	}
-	if branch == "fix/ls-remote-rate-limit" {
+	if branch == "seed-data" {
 		return nil, errors.New("gh: simulated failure") // shown as no PR state
 	}
 	if pr, ok := prs[branch]; ok {
@@ -187,18 +188,24 @@ type fixtures struct {
 	self     string
 	devices  []web.Device
 	messages []web.Message
+	activity []web.Activity
 	mutes    []web.Mute
 	settings web.Settings
 	version  web.Version
 	downTill time.Time // a restart in progress: State fails until then
 	account  web.Account
 	repo     string // the repo's name, for the picker
+	// receipts is how far each of the person's messages got (#26). sam-thinkpad stands for a device
+	// on an older Murmur, which sends none.
+	receipts map[string][]web.Receipt
+	// picks is the colour each device's person picked (#573), by device; the rest are chosen.
+	picks map[string]bus.ColorPick
 }
 
 func newFixtures(now time.Time) *fixtures {
 	ago := func(d time.Duration) time.Time { return now.Add(-d) }
 	f := &fixtures{
-		self:    "tyler-laptop-3f2a",
+		self:    "tyler-mbp-7a20",
 		account: web.Account{Suggested: "tyler"},
 		settings: web.Settings{
 			Wake:           web.Wake{When: web.WakeWithin},
@@ -208,57 +215,85 @@ func newFixtures(now time.Time) *fixtures {
 			DefaultMinutes: 3,
 		},
 	}
+	f.activity = fixtureActivity(now)
+	// Maya and Jordan picked colours, so Settings shows two as taken.
+	f.picks = map[string]bus.ColorPick{
+		"maya-mbp-91c0":   {Device: "maya-mbp-91c0", Color: 9, At: ago(26 * time.Hour)},
+		"jordan-xps-2b90": {Device: "jordan-xps-2b90", Color: 2, At: ago(3 * time.Hour)},
+	}
+	// A hackathon team on its second afternoon, racing to a 5 pm demo of Huddle, an app that writes
+	// meeting notes: four people, five machines, agents from three clients.
 	f.devices = []web.Device{
 		{
-			ID: "tyler-laptop-3f2a", Host: "tyler-laptop", Owner: "Tyler", Self: true, Reachable: true,
+			ID: "tyler-mbp-7a20", Host: "tyler-mbp", Owner: "Tyler", Self: true, Reachable: true,
 			LastSeen: ago(5 * time.Second),
 			Sessions: []web.Session{
-				{Name: "quiet-otter", Agent: "claude-code", Branch: "web-page", Worktree: "agent-a5adaaef",
-					Doing: "Building the settings view of the web page", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second),
-					Tags: []tags.Tag{{Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
-				{Name: "brave-heron", Agent: "codex", Branch: "remove-claims", Worktree: "remove-claims",
-					Doing: "Deleting claims from the daemon and the MCP tools", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute),
-					Tags: []tags.Tag{{Name: "model:gpt-5.1-codex"}, {Name: "release", Src: tags.SrcHuman}}},
-				{Name: "amber-finch", Agent: "claude-code", Branch: "main", Worktree: "murmur",
+				{Name: "quiet-otter", Agent: "claude-code", Branch: "demo-polish", Worktree: "demo-polish",
+					Doing: "Adding empty states and a loading skeleton to the dashboard", Started: ago(52 * time.Minute), LastActive: ago(20 * time.Second),
+					Tags: []tags.Tag{{Name: "group:demo"}, {Name: "group:frontend"}, {Name: "model:opus-5.5", Src: tags.SrcDerived}, {Name: "ui"}}},
+				{Name: "brave-heron", Agent: "codex", Branch: "api-rate-limit", Worktree: "api-rate-limit",
+					Doing: "Limiting /api/summarize to 10 requests a minute per user", Started: ago(2*time.Hour + 4*time.Minute), LastActive: ago(3 * time.Minute),
+					Tags: []tags.Tag{{Name: "group:demo"}, {Name: "model:gpt-5.1-codex"}, {Name: "backend", Src: tags.SrcHuman}}},
+				{Name: "calm-finch", Agent: "claude-code", Branch: "main", Worktree: "huddle",
 					Started: ago(5 * time.Hour), LastActive: ago(26 * time.Minute)},
-				// Left open in a terminal for days: the page folds it away as quiet.
-				{Name: "stale-gecko", Agent: "claude-code", Branch: "old-experiment", Worktree: "old-experiment",
-					Doing: "Trying a different poll interval", Started: ago(80 * time.Hour), LastActive: ago(52 * time.Hour)},
+				// Left open since last night: the page folds it away as quiet.
+				{Name: "gentle-gecko", Agent: "claude-code", Branch: "websocket-spike", Worktree: "websocket-spike",
+					Doing: "Trying live transcripts over a WebSocket", Started: ago(20 * time.Hour), LastActive: ago(15 * time.Hour)},
 			},
 		},
 		{
-			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya", Reachable: true, LastSeen: ago(40 * time.Second),
+			ID: "maya-mbp-91c0", Host: "maya-mbp", Owner: "Maya Chen", Nick: "maya", Reachable: true, LastSeen: ago(40 * time.Second),
 			Sessions: []web.Session{
-				{Name: "lucid-badger", Agent: "claude-code", Branch: "session-names",
-					Doing: "Taking names by compare-and-swap on refs/murmur/names", Started: ago(80 * time.Minute), LastActive: ago(50 * time.Second),
-					Tags: []tags.Tag{{Name: "bus"}, {Name: "model:sonnet-5.5"}, {Name: "reviewing"}}},
-				{Name: "velvet-moth", Agent: "t3", Branch: "session-names",
-					Doing: "Writing the word lists", Started: ago(35 * time.Minute), LastActive: ago(9 * time.Minute)},
-				{Name: "solar-wren", Agent: "codex", Branch: "wake-ups",
-					Doing:   "Finding out whether Claude Code's messaging socket can start a turn in an idle session, and what it costs when the prompt cache has already expired",
-					Started: ago(3 * time.Hour), LastActive: ago(1 * time.Minute)},
+				{Name: "tidy-badger", Agent: "claude-code", Branch: "auth-flow",
+					Doing: "Wiring GitHub sign-in through NextAuth", Started: ago(3 * time.Hour), LastActive: ago(50 * time.Second),
+					Tags: []tags.Tag{{Name: "group:frontend"}, {Name: "model:sonnet-5.5"}, {Name: "reviewing"}}},
+				{Name: "crisp-lark", Agent: "t3", Branch: "landing-page",
+					Doing: "Writing the landing page's hero and its three feature cards", Started: ago(95 * time.Minute), LastActive: ago(2 * time.Minute),
+					Tags: []tags.Tag{{Name: "group:frontend"}}},
+				{Name: "solar-sparrow", Agent: "codex", Branch: "auth-flow",
+					Doing:   "Writing tests for the session middleware, including what happens when a GitHub token expires in the middle of the demo",
+					Started: ago(70 * time.Minute), LastActive: ago(1 * time.Minute)},
 			},
 		},
 		{
-			ID: "sam-desktop-07be", Host: "sam-desktop", Owner: "Sam", Reachable: true, LastSeen: ago(70 * time.Second),
+			ID: "jordan-xps-2b90", Host: "jordan-xps", Owner: "Jordan Reyes", Nick: "jordan", Reachable: true, LastSeen: ago(25 * time.Second),
 			Sessions: []web.Session{
-				{Name: "rapid-ibis", Agent: "claude-code", Branch: "fix/ls-remote-rate-limit",
-					Doing: "Measuring ls-remote against GitHub's limits", Started: ago(25 * time.Minute), LastActive: ago(15 * time.Second)},
-				{Name: "mellow-yak", Agent: "claude-code", Branch: "receipts",
-					Started: ago(4 * time.Hour), LastActive: ago(2 * time.Hour)},
+				{Name: "rapid-ibis", Agent: "claude-code", Branch: "api-rate-limit",
+					Doing: "Load-testing /api/summarize at 50 requests a second", Started: ago(40 * time.Minute), LastActive: ago(15 * time.Second),
+					Tags: []tags.Tag{{Name: "group:demo"}, {Name: "backend"}}},
+				{Name: "mellow-yak", Agent: "claude-code", Branch: "db-migrations",
+					Doing: "Adding the transcripts table and its indexes", Started: ago(4 * time.Hour), LastActive: ago(12 * time.Minute),
+					Tags: []tags.Tag{{Name: "backend"}}},
+				{Name: "keen-pike", Agent: "t3", Branch: "deploy",
+					Doing: "Moving staging's secrets into Fly", Started: ago(2 * time.Hour), LastActive: ago(4 * time.Minute),
+					Tags: []tags.Tag{{Name: "group:demo"}}},
 			},
 		},
 		{
-			ID: "mac-mini-c4d1", Host: "mac-mini", Owner: "Tyler", Reachable: false, LastSeen: ago(47 * time.Minute),
+			ID: "sam-thinkpad-a81e", Host: "sam-thinkpad", Owner: "Sam Okafor", Reachable: true, LastSeen: ago(70 * time.Second),
 			Sessions: []web.Session{
-				{Name: "dusty-lynx", Agent: "codex", Branch: "macos-ci",
-					Doing: "Running the test suite on macOS", Started: ago(6 * time.Hour), LastActive: ago(48 * time.Minute)},
-				{Name: "keen-pike", Agent: "claude-code", Started: ago(7 * time.Hour), LastActive: ago(55 * time.Minute)},
+				{Name: "bold-crane", Agent: "codex", Branch: "landing-page",
+					Doing: "Fixing the mobile nav on the landing page", Started: ago(45 * time.Minute), LastActive: ago(30 * time.Second),
+					Tags: []tags.Tag{{Name: "group:frontend"}}},
+				{Name: "keen-bison", Agent: "claude-code", Branch: "seed-data",
+					Doing: "Seeding three teams and forty meetings for the demo", Started: ago(90 * time.Minute), LastActive: ago(6 * time.Minute),
+					Tags: []tags.Tag{{Name: "group:demo"}}},
+			},
+		},
+		{
+			// Sam's desktop at home, running the summary eval. It has gone to sleep.
+			ID: "sam-desktop-07be", Host: "sam-desktop", Owner: "Sam Okafor", Reachable: false, LastSeen: ago(47 * time.Minute),
+			Sessions: []web.Session{
+				{Name: "calm-moose", Agent: "codex", Branch: "summary-eval",
+					Doing: "Scoring summaries of 200 transcripts against hand-written ones", Started: ago(6 * time.Hour), LastActive: ago(48 * time.Minute)},
+				{Name: "mellow-lark", Agent: "claude-code", Started: ago(7 * time.Hour), LastActive: ago(55 * time.Minute)},
 			},
 		},
 	}
-	// Another person has an account already, so the page's list of people has someone in it.
+	// Two other people have accounts, so the page's list of people has someone in it.
 	f.devices[1].Person = &web.Person{Name: "maya", Addr: "maya-mbp-91c0/human", LastActive: ago(40 * time.Second),
+		Tags: tags.Person()}
+	f.devices[2].Person = &web.Person{Name: "jordan", Addr: "jordan-xps-2b90/human", LastActive: ago(20 * time.Second),
 		Tags: tags.Person()}
 	// Every session has an address, device/session, as the daemon's do.
 	for di := range f.devices {
@@ -271,70 +306,83 @@ func newFixtures(now time.Time) *fixtures {
 			ID: randomHex(6), From: from, To: to, ToKind: kind, Subject: subject, Body: body, At: ago(d),
 		})
 	}
-	msg(3*time.Hour, "solar-wren", "*", web.ToAll, "Taking wake-ups (#25)",
-		"I'm on #25. Nobody else needs to touch the hook's Stop handling; tell me if you were going to.")
-	msg(170*time.Minute, "brave-heron", "solar-wren", web.ToSession, "Claims are going away under you",
-		"Heads up: #24 deletes claims.go and the claim/release tools. If wake-ups reads anything from claims, it won't be there.")
-	msg(165*time.Minute, "solar-wren", "brave-heron", web.ToSession, "Re: Claims are going away under you",
-		"It doesn't. Thanks.")
-	msg(80*time.Minute, "lucid-badger", "*", web.ToAll, "Names are moving to refs/murmur/names",
-		"Session names (#20) land on a new shared ref. Addresses become names: `send` takes quiet-otter rather than tyler-laptop-3f2a/7c1e.")
-	msg(62*time.Minute, "dusty-lynx", "tyler-laptop-3f2a", web.ToDevice, "macOS run is red",
-		"TestRestart fails on macOS only:\n\n    restart_test.go:212: daemon did not exit within 5s\n\nLooks like the interrupt is delivered to the process group. Leaving it for whoever owns the daemon tonight.")
-	msg(50*time.Minute, "quiet-otter", "lucid-badger", web.ToSession, "What does a session's name look like before it lands?",
-		"The page shows every session by name. Between hello and the name's push landing, what should it show? I'd rather not invent a placeholder you'll later contradict.")
-	msg(46*time.Minute, "lucid-badger", "quiet-otter", web.ToSession, "Re: What does a session's name look like before it lands?",
-		long)
-	msg(45*time.Minute, "lucid-badger", "quiet-otter", web.ToSession, "And the name can change once",
-		"If the push fails the session takes the next word pair, so don't cache a name past the next poll.")
-	msg(43*time.Minute, "quiet-otter", "lucid-badger", web.ToSession, "Re: And the name can change once",
-		"The page goes by address and looks the name up each time, so that's covered.")
-	msg(30*time.Minute, "velvet-moth", "maya-mbp-91c0", web.ToDevice, "Word lists are in", "")
-	msg(18*time.Minute, "rapid-ibis", "*", web.ToAll, "No rate limit hit at 6 ls-remote/min/device",
-		"Ran 4 devices for 30 minutes at the 10 s poll. No 429s, no secondary limits. Numbers in #15's thread.")
-	msg(9*time.Minute, "brave-heron", "quiet-otter", web.ToSession, "Session view types",
-		"Claims are gone from proto.SessionView on my branch. Don't build on Claims.")
-	msg(4*time.Minute, "mellow-yak", "solar-wren", web.ToSession, "Receipts can say \"idle 12 min\"",
-		"If your wake-up check knows the idle time, receipts (#26) can carry it back to the sender. Want me to read it from the session, or will you hand it over?")
-	// A person's conversation with an agent, as another device's person had it.
-	f.messages = append(f.messages,
-		web.Message{ID: randomHex(6), From: "maya", FromAddr: "maya-mbp-91c0/human", FromPerson: true, To: "solar-wren",
-			ToKind: web.ToSession, Subject: "Can you look at the flaky wake-up test before you go?", At: ago(3 * time.Minute)},
-		web.Message{ID: randomHex(6), From: "solar-wren", To: "maya", ToAddr: "maya-mbp-91c0/human", ToPerson: true,
-			ToKind: web.ToSession, Subject: "Re: Can you look at the flaky wake-up test before you go?",
-			Body: "Yes. It's the 50 ms idle check racing the heartbeat; I'll send you the fix.", At: ago(2 * time.Minute)})
-	msg(90*time.Second, "solar-wren", "mellow-yak", web.ToSession, "Re: Receipts can say \"idle 12 min\"",
-		"I'll hand it over: the daemon will keep lastTurnEnded per session.")
+	// A person's message to a session, and a session's to a person.
+	fromPerson := func(d time.Duration, from, to, subject, body string) {
+		f.messages = append(f.messages, web.Message{ID: randomHex(6), From: from, FromAddr: personAddr(f.devices, from), FromPerson: true,
+			To: to, ToKind: web.ToSession, Subject: subject, Body: body, At: ago(d)})
+	}
+	toPerson := func(d time.Duration, from, to, subject, body string) {
+		f.messages = append(f.messages, web.Message{ID: randomHex(6), From: from, To: to, ToAddr: personAddr(f.devices, to), ToPerson: true,
+			ToKind: web.ToSession, Subject: subject, Body: body, At: ago(d)})
+	}
+	msg(3*time.Hour, "tidy-badger", "*", web.ToAll, "Taking auth-flow",
+		"I'm on GitHub sign-in. Please stay out of app/auth and middleware.ts until I push; tell me if you need something from them.")
+	msg(170*time.Minute, "brave-heron", "tidy-badger", web.ToSession, "The rate limit sits behind your middleware",
+		"api-rate-limit wraps /api/* in middleware.ts too. I'll run after yours, so the session is there when I key the limit on the user.")
+	msg(165*time.Minute, "tidy-badger", "brave-heron", web.ToSession, "Re: The rate limit sits behind your middleware",
+		"Works for me. The user is on req.auth once mine has run.")
+	msg(2*time.Hour, "keen-pike", "group:demo", web.ToGroup, "Staging is up",
+		"huddle-staging.fly.dev deploys from main on every merge now. Secrets live in Fly; don't put them back in .env.")
+	msg(80*time.Minute, "rapid-ibis", "group:demo", web.ToGroup, "Load test numbers",
+		"/api/summarize holds 50 req/s for two minutes. p95 is 4.1 s, nearly all of it the model call. Key the limit on the user, not the IP: the demo room shares one IP.")
+	msg(62*time.Minute, "mellow-yak", "jordan-xps-2b90", web.ToDevice, "Staging needs a database reset",
+		"The transcripts table changed shape. Run `pnpm db:reset` on staging before the next deploy, or the seed script fails.")
+	msg(50*time.Minute, "quiet-otter", "crisp-lark", web.ToSession, "Hero copy and the demo script",
+		"The demo opens on the landing page. Can the hero say \"Notes that write themselves\", so it matches the first line of the script?")
+	msg(47*time.Minute, "crisp-lark", "quiet-otter", web.ToSession, "Re: Hero copy and the demo script",
+		"Done, it's on landing-page. I shortened the subhead to fit one line at 1280 px.")
+	msg(30*time.Minute, "crisp-lark", "maya-mbp-91c0", web.ToDevice, "Landing page copy is in", "")
+	msg(22*time.Minute, "tidy-badger", "quiet-otter", web.ToSession, "Review of demo-polish", long)
+	msg(18*time.Minute, "brave-heron", "*", web.ToAll, "Merged main, rebase",
+		"api-rate-limit is in main. middleware.ts changed shape, so rebase before you push or you'll fight the conflict.")
+	msg(12*time.Minute, "quiet-otter", "tidy-badger", web.ToSession, "Re: Review of demo-polish",
+		"All three fixed and pushed. Can you look again before 4? The demo starts on that dashboard.")
+	msg(9*time.Minute, "bold-crane", "group:frontend", web.ToGroup, "Mobile nav is fixed",
+		"The landing page's menu no longer covers the sign-in button below 400 px.")
+	fromPerson(6*time.Minute, "jordan", "rapid-ibis", "Is the limit on in staging?", "")
+	toPerson(5*time.Minute, "rapid-ibis", "jordan", "Re: Is the limit on in staging?",
+		"Yes, since the 3:12 deploy. A second browser on your account gets a 429 after ten summaries a minute.")
+	msg(4*time.Minute, "keen-bison", "group:demo", web.ToGroup, "Seed data is on staging",
+		"Three teams, forty meetings, transcripts included. Sign in as demo@huddle.dev to see the full dashboard.")
+	fromPerson(3*time.Minute, "maya", "crisp-lark", "Can you send me a screenshot of the landing page on a phone?", "")
+	toPerson(2*time.Minute, "crisp-lark", "maya", "Re: Can you send me a screenshot of the landing page on a phone?",
+		"It's at the bottom of #14: 390 px wide, with bold-crane's nav fix.")
+	msg(90*time.Second, "solar-sparrow", "tidy-badger", web.ToSession, "Middleware tests pass",
+		"Twelve tests, including a GitHub token that expires mid-session: it signs the user out instead of throwing.")
 	f.mutes = []web.Mute{
-		{By: "quiet-otter", Muted: "dusty-lynx", At: ago(40 * time.Minute), CanUnmute: true},
-		{By: "solar-wren", Muted: "rapid-ibis", At: ago(12 * time.Minute)},
+		{By: "quiet-otter", Muted: "keen-pike", At: ago(40 * time.Minute), CanUnmute: true},
+		{By: "solar-sparrow", Muted: "rapid-ibis", At: ago(12 * time.Minute)},
 	}
 	return f
 }
 
-const long = `It doesn't exist yet. A session has no name until its push to refs/murmur/names lands, and until then it isn't on the bus at all: hello registers it with its own daemon, but presence only carries named sessions.
+// personAddr is the address of the person called name.
+func personAddr(devices []web.Device, name string) string {
+	for _, d := range devices {
+		if d.Person != nil && d.Person.Name == name {
+			return d.Person.Addr
+		}
+	}
+	return ""
+}
 
-So for the page:
+const long = `Looked at demo-polish. It's close; three things before the demo:
 
-1. Sessions on other devices only ever appear with a name.
-2. A session on this device can be seen before its name lands, for the second or two the push takes. Show nothing for it until then; it will appear on the next poll.
-3. If the push fails (offline), the daemon retries with the next word pair. The session stays unnamed and invisible meanwhile.
+1. The empty state says "No meetings yet" while the first fetch is still running. Show the skeleton until the request settles, or a slow staging response reads as an empty account.
+2. The skeleton rows are 48 px and the real rows 56 px, so the list jumps when it loads. Match them.
+3. The Summarize button stays enabled during a request. Two clicks make two calls, and with brave-heron's limit the second can come back as a 429 on stage.
 
-Names are never reused, so the page can key everything on them. When a session ends, its name stays taken; if you ever show history, an old name still means that one session.
+Smaller, if there's time:
 
-One more thing: names are lowercase ASCII, two words joined by a hyphen, each from a list of about 1,800 words, so they're at most 25 characters. You can lay the page out for that.
+    - The meeting card's date is in UTC. The demo is in Pacific.
+    - "Re-generate" should be "Regenerate".
 
-The lists are in internal/names/words.go on my branch, if you want real ones for fixtures:
-
-    adjectives: amber, brave, dusty, keen, lucid, mellow, quiet, rapid, solar, velvet, ...
-    nouns:      badger, finch, heron, ibis, lynx, moth, otter, pike, wren, yak, ...
-
-Ping me if anything here doesn't match what you need.`
+Everything else reads well. Ping me when it's pushed and I'll look again.`
 
 func (f *fixtures) run() {
 	subjects := []string{
-		"Rebased on main", "Is anyone in internal/mcpserver?", "Tests pass on Windows",
-		"Can I take the hook's Stop handling?", "Pushed the fixtures", "Done with #24",
+		"Rebased on main", "Is anyone in app/api/summarize?", "Staging deploy is green",
+		"Can I take the empty states?", "Pushed the seed data", "Done with the rate limit",
 	}
 	var from, to string
 	for i := 0; ; i++ {
@@ -380,11 +428,46 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 		return web.State{}, errors.New("restarting")
 	}
 	st := web.State{Repo: f.repo, Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
+	if len(f.receipts) > 0 {
+		st.Receipts = map[string][]web.Receipt{}
+		for id, rs := range f.receipts {
+			st.Receipts[id] = append([]web.Receipt(nil), rs...)
+		}
+	}
+	colors := f.colorsLocked()
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
+		d.Color, d.Picked = colors[d.ID].Color, colors[d.ID].Picked
 		st.Devices = append(st.Devices, d)
 	}
 	return st, nil
+}
+
+// colorsLocked settles every device's colour as the daemon does. Caller holds mu.
+func (f *fixtures) colorsLocked() map[string]bus.DeviceColor {
+	var picks []bus.ColorPick
+	for _, d := range f.devices {
+		picks = append(picks, cmp.Or(f.picks[d.ID], bus.ColorPick{Device: d.ID}))
+	}
+	return bus.DeviceColors(picks)
+}
+
+// SetColor picks this device's colour as the daemon does, refusing one another device has.
+func (f *fixtures) SetColor(ctx context.Context, color int) (web.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if color < 0 || color > bus.Colors {
+		return web.Account{}, fmt.Errorf("there is no colour %d", color)
+	}
+	colors := f.colorsLocked()
+	for _, d := range f.devices {
+		if c := colors[d.ID]; !d.Self && c.Picked && c.Color == color-1 {
+			return web.Account{}, fmt.Errorf("%s has that colour", cmp.Or(d.Nick, d.Owner, d.ID))
+		}
+	}
+	f.account.Color, f.account.ColorLost = color, ""
+	f.picks[f.self] = bus.ColorPick{Device: f.self, Color: color, At: time.Now()}
+	return f.account, nil
 }
 
 // Messages uses the count of messages seen as its cursor.
@@ -402,6 +485,25 @@ func (f *fixtures) Messages(ctx context.Context, cursor string) ([]web.Message, 
 	return append([]web.Message(nil), f.messages[from:]...), strconv.Itoa(len(f.messages)), nil
 }
 
+// SetNick takes a nickname the way the daemon does, refusing another device's ID or person.
+func (f *fixtures) SetNick(ctx context.Context, nick string) (web.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if nick != "" && !bus.ValidNick(nick) {
+		return web.Account{}, fmt.Errorf("%q can't be a nickname. Use 2 to %d lowercase letters and digits, with single dashes between words, and not a session's name.", nick, names.MaxPerson)
+	}
+	if nick == "maya" || nick == "jordan" {
+		return web.Account{}, fmt.Errorf("%s is the name of the person on %s.", nick, strings.TrimSuffix(personAddr(f.devices, nick), "/human"))
+	}
+	f.account.Nick = nick
+	for i := range f.devices {
+		if f.devices[i].Self {
+			f.devices[i].Nick = cmp.Or(nick, f.account.Name)
+		}
+	}
+	return f.account, nil
+}
+
 // SetAccount takes a name the way the daemon does, refusing the other person's.
 func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, error) {
 	f.mu.Lock()
@@ -409,8 +511,8 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 	if !bus.ValidPerson(name) {
 		return web.Account{}, fmt.Errorf("%q can't be a name. Use 2 to %d lowercase letters and digits, with single dashes between words.", name, names.MaxPerson)
 	}
-	if name == "maya" {
-		return web.Account{}, errors.New("maya is taken, by the person on maya-mbp-91c0.")
+	if name == "maya" || name == "jordan" {
+		return web.Account{}, fmt.Errorf("%s is taken, by the person on %s.", name, strings.TrimSuffix(personAddr(f.devices, name), "/human"))
 	}
 	f.account.Name, f.account.Addr, f.account.Suggested, f.account.Taken = name, f.self+"/human", "", ""
 	for i := range f.devices {
@@ -447,6 +549,10 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 	case "*":
 		m.To, m.ToAddr, m.ToKind = "*", "*", web.ToAll
 	default:
+		if tags.IsGroup(to) {
+			m.To, m.ToAddr, m.ToKind = to, to, web.ToGroup
+			break
+		}
 		m.To, m.ToAddr, m.ToKind = to, to, web.ToSession
 		isDevice := false
 		for _, d := range f.devices {
@@ -467,11 +573,59 @@ func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) 
 		}
 	}
 	f.messages = append(f.messages, m)
+	f.receive(m)
 	sent := web.Sent{ID: m.ID}
 	if m.ToKind == web.ToSession && !m.ToPerson {
 		go f.answer(m)
 	}
 	return sent, nil
+}
+
+// receive gives m a receipt per recipient (#26), and moves each along as a recipient's device would
+// mark it: queued, then delivered or handed over, then for some, read. A recipient on sam-thinkpad
+// sends none. Caller holds mu.
+func (f *fixtures) receive(m web.Message) {
+	var rs []web.Receipt
+	for _, d := range f.devices {
+		if d.Person != nil && d.Person.Addr == m.ToAddr {
+			rs = append(rs, web.Receipt{Addr: d.Person.Addr, Name: d.Person.Name, Person: true})
+		}
+		for _, s := range d.Sessions {
+			if s.Addr == m.ToAddr || m.ToKind == web.ToAll || m.ToKind == web.ToDevice && d.ID == m.To ||
+				m.ToKind == web.ToGroup && slices.ContainsFunc(s.Tags, func(t tags.Tag) bool { return t.Name == m.To }) {
+				r := web.Receipt{Addr: s.Addr, Name: s.Name}
+				if d.ID == "sam-thinkpad-a81e" {
+					r.State = web.ReceiptNone
+				}
+				rs = append(rs, r)
+			}
+		}
+	}
+	if len(rs) == 0 {
+		return
+	}
+	if f.receipts == nil {
+		f.receipts = map[string][]web.Receipt{}
+	}
+	f.receipts[m.ID] = rs
+	steps := []string{bus.MarkQueued, bus.MarkDelivered, bus.MarkRead}
+	for i := range rs {
+		if rs[i].State == web.ReceiptNone {
+			continue
+		}
+		last := 1 + mrand.IntN(len(steps)) // some stay queued or delivered
+		if len(rs) == 1 {
+			last = len(steps)
+		}
+		go func(i int) {
+			for _, state := range steps[:last] {
+				time.Sleep(time.Duration(1500+mrand.IntN(2500)) * time.Millisecond)
+				f.mu.Lock()
+				f.receipts[m.ID][i].State, f.receipts[m.ID][i].At = state, time.Now()
+				f.mu.Unlock()
+			}
+		}(i)
+	}
 }
 
 // answer is the session m went to, starting a turn and then answering with `send`.
@@ -566,8 +720,9 @@ func (f *fixtures) Restart(ctx context.Context) error {
 	return nil
 }
 
-// SetTags applies a human's change as the session's device would, with no derived tags to
-// account for.
+// SetTags applies a human's change as the session's device would. The fixtures keep only the
+// session's current tags, so its state is rebuilt from them, each by where it came from: a derived
+// tag counted as the session's own would show as set by the session after any change (#224).
 func (f *fixtures) SetTags(ctx context.Context, addr string, add, remove []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -577,20 +732,23 @@ func (f *fixtures) SetTags(ctx context.Context, addr string, add, remove []strin
 			if s.Addr != addr && s.Name != addr {
 				continue
 			}
-			var self []string
+			var self, derived []string
 			human := map[string]tags.Mark{}
 			for _, t := range s.Tags {
-				if t.Src == tags.SrcHuman {
+				switch t.Src {
+				case tags.SrcHuman:
 					human[t.Name] = tags.Mark{On: true}
-				} else {
+				case tags.SrcDerived:
+					derived = append(derived, t.Name)
+				default:
 					self = append(self, t.Name)
 				}
 			}
 			st := tags.State{Self: self, Human: human}
-			if err := st.SetHuman(self, add, remove, "Tyler", time.Now()); err != nil {
+			if err := st.SetHuman(tags.Base(self, derived), add, remove, "Tyler", time.Now()); err != nil {
 				return err
 			}
-			s.Tags = tags.Effective(st.Self, nil, st.Human)
+			s.Tags = tags.Effective(st.Self, derived, st.Human)
 			return nil
 		}
 	}

@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { timingSafeEqual } from 'node:crypto';
 import { census as handle, repoNumbers, repoReport, health } from '../src/repos.js';
+import { archiveReport } from '../src/archive.js';
 import { statsD1, sqliteD1 } from './d1.mjs';
 
 // The Workers runtime adds this to Web Crypto; node has it only in node:crypto.
@@ -134,4 +135,25 @@ test("a repo's name is a link's label in the report, with what Markdown would re
   assert.ok(main.includes('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'), main);
   assert.ok(main.includes('| [x-1/v2.0\\_b-c](https://github.com/x-1/v2.0_b-c) |'), main);
   assert.ok(main.includes('| [a/one](https://github.com/a/one) |'), main);
+});
+
+// #152: one of something reads as one, in both reports' headlines.
+test('a report of one repo and one user says "repo" and "user", not "repos" and "users"', async () => {
+  const { n } = await report([row('github.com/a/one', ago(2))]);
+  const one = repoReport({ ...n, repos: 1, users: 1, usersBy: { account: 1, name: 0, device: 0 } }, 'https://murmur.invalid');
+  assert.match(one, /^\*\*1 public repo\*\* uses Murmur; /m);
+  assert.match(one, /About \*\*1 user\*\* has run it there;/);
+  assert.match(one, /Of 1 user, 1 was matched to an account,/);
+  const two = repoReport({ ...n, repos: 2, users: 2, usersBy: { account: 2, name: 0, device: 0 } }, 'https://murmur.invalid');
+  assert.match(two, /^\*\*2 public repos\*\* use Murmur; /m);
+  assert.match(two, /About \*\*2 users\*\* have run it there;/);
+  assert.match(two, /Of 2 users, 2 were matched to an account,/);
+
+  const archive = active => archiveReport({
+    today: '2026-11-11', checkInsEnded: '2026-11-08', goal: 100, active, activeBefore: 0, activeDays: 7, activeToday: 0,
+    teams: 0, newUsers: 0, allUsers: active, allTeams: 0, days: 14, series: [], newByWeek: [], teamList: [], teamSizes: [],
+    versions: [], systems: [],
+  }, 'https://murmur.invalid');
+  assert.match(archive(1), /^\*\*1 active user\*\*, 1% of the goal/m);
+  assert.match(archive(3), /^\*\*3 active users\*\*, 3% of the goal/m);
 });

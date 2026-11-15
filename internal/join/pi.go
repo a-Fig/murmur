@@ -60,6 +60,17 @@ import (
 // (`pi --no-session`) has nothing to give the hook, so it gets no notices, only turns through the
 // socket, which a busy one takes when it finishes. Not covered: Pi's commits aren't credited to
 // its session, as no tool call is bracketed (Claude Code's hook snapshots before and after each).
+//
+// Pi has no subagents of its own (its docs and source, 0.99.0, read 2026-11-11). Packages add
+// them. pi-subagents (0.31.0, the one `pi install npm:pi-subagents` gives) runs each subagent as a
+// child `pi --mode json -p`, with the user's extensions unless the agent's definition lists its
+// own, and PI_SUBAGENT_CHILD=1 in its environment: such a child would load this extension,
+// register Murmur's server, and show in who as a session, one per subagent (#457). The extension
+// does nothing in a process with that variable, so the child has no Murmur tools, hook or socket
+// and never reaches the daemon; a T3 delegate does, and the daemon keeps it off (#188). Not covered: @gotgenes/pi-subagents (16.6.0), which makes its
+// subagents inside the parent's process with Pi's SDK and binds the parent's extensions to each.
+// Nothing in the environment tells such a session from its parent, and the parentSession its file
+// records is what a /fork records too.
 
 // piExtension is the extension's text for the mur at exe.
 func piExtension(exe string) string {
@@ -119,6 +130,10 @@ const sockPath = (id: string): string => {
 };
 
 export default function (pi: any) {
+  // A subagent stays off {{product}}: the pi-subagents package runs each one as a pi of its own, which
+  // loads this extension as any pi does, and would be a session of its own to everyone else. Its
+  // parent is the one on {{product}}, and says what the subagent needs said.
+  if (process.env.PI_SUBAGENT_CHILD === "1") return;
   let file = "";
   let cwd = "";
   // on says the session is in a joined clone: the hook runs and the socket is open.

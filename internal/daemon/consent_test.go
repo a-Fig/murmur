@@ -165,14 +165,14 @@ func TestDaemonRefusesRequestsOnceTheUserHasLeft(t *testing.T) {
 // that is deleted from the remote is pushed again within a heartbeat, which shows the test can see a
 // publication; once the user has left it is not.
 //
-// A push already past its consent check when the leave lands still completes (docs/VISION.md,
-// "Joining a repo"), and one nearly always is here: clearing the bus while joined deletes the names
-// registry too, and the daemon pushes it again right behind the presence the test waits for. So the
-// test clears the bus only once a push has been refused for the leave. A device pushes one ref at a
-// time and checks consent after taking its turn, so by then any push that passed its check before
-// the leave has landed, and anything on the remote afterwards was pushed after the leave. Only push
-// asks for consent in this test: no session registers, no message is delivered, and the watcher's
-// poll is an hour.
+// A push already past its consent check when the leave lands still completes
+// (docs/design/joining.md), and one nearly always is here: clearing the bus while joined deletes
+// the names registry too, and the daemon pushes it again right behind the presence the test waits
+// for. So the test clears the bus only once a push has been refused for the leave. A device pushes
+// one ref at a time and checks consent after taking its turn, so by then any push that passed its
+// check before the leave has landed, and anything on the remote afterwards was pushed after the
+// leave. Only push asks for consent in this test: no session registers, no message is delivered,
+// and the watcher's poll is an hour.
 func TestDaemonPublishesNothingOnceTheUserHasLeft(t *testing.T) {
 	t.Parallel()
 	remote, gitDir, joined := consentClone(t)

@@ -50,26 +50,23 @@ func TestRegisterCodexWritesThroughADanglingSymlink(t *testing.T) {
 	}
 }
 
-// A hook file that is a link is written through when the hook goes in, and again when it comes out,
-// even when what is left is nothing: the link is the user's and stays, with the file it points to
-// emptied rather than deleted (Codex review, 2026-10-29).
-func TestHookFileThatIsALinkIsKeptThroughJoinAndLeave(t *testing.T) {
+// A hook file that is a link was written through when an older join put the hook in, and is again
+// when it comes out, even when what is left is nothing: the link is the user's and stays, with the
+// file it points to emptied rather than deleted (Codex review, 2026-10-29).
+func TestHookFileThatIsALinkIsKeptWhenTheHookComesOut(t *testing.T) {
 	p, _ := clone(t)
 	target := filepath.Join(t.TempDir(), "settings.json")
 	write(t, target, "{}\n")
 	link := filepath.Join(p.Top, ".claude", "settings.local.json")
 	linkOrSkip(t, target, link)
 
-	exe := filepath.Join(t.TempDir(), "bin", "mur")
-	if _, _, err := installHooks(context.Background(), p, exe); err != nil {
-		t.Fatal(err)
-	}
+	oldHooks(t, p, filepath.Join(t.TempDir(), "bin", "mur"))
 	mustBeLink(t, link)
 	if events := hookEvents(t, target); !reflect.DeepEqual(events, wantHookEvents()) {
 		t.Errorf("the file the link points to has the hook on %v", events)
 	}
 
-	if _, _, err := removeHooks(context.Background(), p); err != nil {
+	if _, _, err := removeHooks(context.Background(), p, nil); err != nil {
 		t.Fatal(err)
 	}
 	mustBeLink(t, link)

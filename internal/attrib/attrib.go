@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -32,7 +34,7 @@ type Ref struct {
 	SHA    string
 	Branch string
 	Time   time.Time
-	tips   []string // commit and annotated-tag object names, deduplicated
+	tips   []string // commit and annotated-tag object names, then detached HEADs, deduplicated
 	gitDir string   // the worktree's git directory where Head found it itself, "" where git did
 }
 
@@ -45,17 +47,21 @@ type Commit struct {
 }
 
 // Head reads this worktree's own HEAD, including in linked worktrees, and records every ref tip
-// (local branches, remote-tracking branches and tags) with the time it started. Where it can read
-// HEAD itself, from the worktree's git directory (see gitx.Discover), it runs one git process, the
-// for-each-ref scan, which grows with the refs. Elsewhere, such as a reftable repository, it asks git
-// for HEAD too, and runs three. The hook waits for it before every tool call that could commit
+// (local branches, remote-tracking branches and tags) and every worktree's detached HEAD with the
+// time it started. for-each-ref lists no worktree's HEAD, and a call judged in another worktree of
+// the clone than the one it started in (judgeEnd in the daemon) would otherwise credit a commit
+// only that worktree's detached HEAD reached, made in the slack before the start (#60). Where it
+// can read HEAD itself, from the worktree's git directory (see gitx.Discover), it runs one git
+// process, the for-each-ref scan, which grows with the refs, and reads the other worktrees' HEAD
+// files, a small read each. Elsewhere, such as a reftable repository, it asks git for HEAD and the
+// worktrees too, and runs four. The hook waits for it before every tool call that could commit
 // (#21), and on Windows each git process costs a tenth of a second or more.
 func Head(ctx context.Context, worktree string) (Ref, error) {
 	// Read the clock before any ref: a commit made after this and not on a tip is one the command made.
 	ref := Ref{Time: time.Now()}
 	if gitDir, commonDir, ok := gitx.Discover(worktree); ok {
 		if symref, sha, ok := readHEAD(gitDir, commonDir); ok {
-			return headFromFile(ctx, worktree, gitDir, symref, sha, ref)
+			return headFromFile(ctx, worktree, gitDir, commonDir, symref, sha, ref)
 		}
 	}
 	return headByGit(ctx, worktree, ref)
@@ -68,7 +74,11 @@ func readHEAD(gitDir, commonDir string) (symref, sha string, ok bool) {
 	if _, err := os.Stat(filepath.Join(commonDir, "reftable")); err == nil {
 		return "", "", false
 	}
-	path := filepath.Join(gitDir, "HEAD")
+	return readHEADFile(filepath.Join(gitDir, "HEAD"))
+}
+
+// readHEADFile is readHEAD for the HEAD file at path, in a repository that isn't reftable.
+func readHEADFile(path string) (symref, sha string, ok bool) {
 	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() || fi.Size() > 1024 {
 		return "", "", false
 	}
@@ -94,11 +104,12 @@ func readHEAD(gitDir, commonDir string) (symref, sha string, ok bool) {
 // the commit HEAD's branch is at. A branch that isn't among the refs is unborn, as headByGit has
 // it; a branch at anything but a commit, or one that is itself a symbolic ref (git names the branch
 // at the end of the chain), is left to git to read.
-func headFromFile(ctx context.Context, worktree, gitDir, symref, sha string, ref Ref) (Ref, error) {
+func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha string, ref Ref) (Ref, error) {
 	head, err := scanRefs(ctx, worktree, symref, &ref)
 	if err != nil {
 		return Ref{}, err
 	}
+	addTips(&ref, detachedHeadFiles(commonDir))
 	if symref == "" {
 		ref.SHA = sha
 	} else {
@@ -119,7 +130,95 @@ func headFromFile(ctx context.Context, worktree, gitDir, symref, sha string, ref
 	return ref, nil
 }
 
-// headByGit is Head with git reading HEAD: three processes.
+// detachedHeadFiles returns the commits the clone's worktrees are detached at, from their HEAD
+// files: the main worktree's in the common directory, and each linked one's under worktrees/. A
+// HEAD on a branch is left out, as for-each-ref has the branch. One that can't be read is skipped:
+// a missing tip only lets in what Head always let in before (#60).
+//
+// The files are read by up to headReaders goroutines at once. Each read is a file open, and a clone
+// can hold hundreds of worktree entries, stale ones included until `git worktree prune`: in a
+// Windows clone with 159 (2026-11-12) reading them one at a time took 22 ms of every Head, and 8 at
+// once took 5 ms (#507).
+func detachedHeadFiles(commonDir string) []string {
+	paths := []string{filepath.Join(commonDir, "HEAD")}
+	entries, _ := os.ReadDir(filepath.Join(commonDir, "worktrees"))
+	for _, e := range entries {
+		paths = append(paths, filepath.Join(commonDir, "worktrees", e.Name(), "HEAD"))
+	}
+	found := make([]string, len(paths))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(headReaders, len(paths)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				if _, sha, ok := readHEADFile(paths[i]); ok {
+					found[i] = sha
+				}
+			}
+		}()
+	}
+	for i := range paths {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	var shas []string
+	for _, sha := range found {
+		if sha != "" {
+			shas = append(shas, sha)
+		}
+	}
+	return shas
+}
+
+// headReaders is how many HEAD files detachedHeadFiles reads at once. More than 8 measured no faster.
+const headReaders = 8
+
+// detachedHeadsByGit is detachedHeadFiles with git listing the worktrees: one more process.
+func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) {
+	out, err := gitx.RunIn(ctx, worktree, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	// Each worktree is a block of lines ended by a blank one; a detached one has a "detached" line
+	// after its "HEAD <sha>". -z would keep a path with a newline in it from reading as lines of
+	// its own, but needs git 2.36, and mur supports 2.31; such a path could at most add a tip,
+	// which only keeps more out.
+	var shas []string
+	var sha string
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		switch {
+		case line == "":
+			sha = ""
+		case strings.HasPrefix(line, "HEAD "):
+			sha = strings.TrimPrefix(line, "HEAD ")
+		case line == "detached" && sha != "":
+			shas = append(shas, sha)
+		}
+	}
+	return shas, nil
+}
+
+// addTips adds detached HEADs to ref's tips, sorted, so both ways of finding them record the same
+// list, and leaving out any already there.
+func addTips(ref *Ref, shas []string) {
+	slices.Sort(shas)
+	for _, sha := range slices.Compact(shas) {
+		// git before 2.44 writes the all-zero ID into a new worktree's HEAD for a moment during
+		// `git worktree add`. It names no commit, and as a tip it would make NewCommits's git log
+		// fail with "bad object", so the call would be credited nothing.
+		if strings.Trim(sha, "0") == "" {
+			continue
+		}
+		if !slices.Contains(ref.tips, sha) {
+			ref.tips = append(ref.tips, sha)
+		}
+	}
+}
+
+// headByGit is Head with git reading HEAD and the worktrees: four processes.
 func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 	// RunIn uses exec.CommandContext and the repository's git error/cancellation conventions.
 	branch, err := gitx.RunIn(ctx, worktree, "symbolic-ref", "--quiet", "HEAD")
@@ -132,6 +231,11 @@ func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 	if err != nil {
 		return Ref{}, err
 	}
+	detached, err := detachedHeadsByGit(ctx, worktree)
+	if err != nil {
+		return Ref{}, err
+	}
+	addTips(&ref, detached)
 	sha, err := gitx.RunIn(ctx, worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if err != nil {
 		if exitCode(err, 1) && branch != "" && head.objectType == "" {
@@ -185,7 +289,7 @@ func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, 
 // returned when all three hold:
 //
 //  1. it is reachable from after;
-//  2. it is not reachable from any ref tip in before, whether or not the branch changed;
+//  2. it is not reachable from any tip in before, whether or not the branch changed;
 //  3. its committer date is no earlier than before.Time less committerSlack, and no later than
 //     after.Time plus committerSlack.
 //

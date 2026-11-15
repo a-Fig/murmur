@@ -3,6 +3,15 @@
 The brand dates from 2026-11-10. Its source is Tyler's Figma file, "murmur"; the files here were
 cut from that file's SVG export, so the shapes are the designer's and nothing was redrawn.
 
+## Taglines
+
+Kept for later use; not on the site yet (2026-11-14).
+
+- **Your team's agents, moving as one.** Tyler's pick. A murmuration is a flock of starlings moving as one with no leader, which is what Murmur does for a team's agents: they steer each other, and no single agent orchestrates.
+- **Murmur: agent swarms for teams.** The plainer sibling, for positioning Murmur as the practical way for a team to run an agent swarm.
+
+Evidence to pair with them: at the AIE x MLH hackathon at Code Summit (2026-11-13), 4 people ran 21 Claude Code sessions on 4 laptops for about 4 hours on github.com/a-Fig/cue, with 44 merged PRs and 225 agent messages, and the result held together.
+
 ## The mark
 
 Two agents side by side that read as an M: two agents in one repo, talking. The left one has round
@@ -34,15 +43,29 @@ color is a change of `fill`, not a new drawing.
 - README: the banner at the top, the icon at the foot.
 - Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
   on its sign-in gate.
-- Home page: the mark in the hero's top left corner on screens 1000px and wider, the mark before
-  "Murmur daemon" in the How it works diagram, and the lockup at the start of the footer.
+- Home page: the lockup behind the hero's reeded glass (on a phone, the wordmark there and the
+  mark at the hero's foot), the mark in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
+  lockup at the start of the footer.
 - About, Privacy, Contact and Other ways to use Murmur: the mark in the back pill, the lockup in
   the footer.
 - The daemon page: the mark in the back pill, the lockup in the footer, in cream.
 - The stats pages: the mark on the header's blue tile.
-- `site/og.jpg`, the card a shared link shows: the lockup in its top left corner.
+- `site/og.jpg`, the card a shared link shows: the home page's hero.
 
-The hero's big word stays "murmur" in Inter behind the glass; it is the site's look, not the logo.
+The hero's lockup (2026-11-12, #488) is the one place the logo is changed, and Tyler chose each
+change from drafts. It took the place of the word "murmur" in Inter. The mark is drawn at 85% of its
+size in `lockup-on-blue.svg` and the letters at 145%, on the same base line: at the file's
+proportions the letters were small enough that the glass broke them apart. Both are blurred and bent
+by the glass, at under half the strength the Inter word had (11 against 24), which is the most the
+mark's eyes survive. The eyes of that mark, and of the one in the corner, follow the pointer by a few
+units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
+reduced motion.
+
+On a phone (600px and narrower, #498) the hero is cleaner: the wordmark alone in butter where the
+lockup is, the mark in cream at the hero's foot with its lower third below the edge, and only the
+headline and the button over the glass; the sentence that explains Murmur opens How it works
+instead. The wordmark is behind the gentlest glass (scale 4), as Tyler asked on 2026-11-12 for less
+bend in it than #498's draft had.
 
 ## Color
 
@@ -90,7 +113,7 @@ it already had, so this palette stayed and the logo files were colored to match.
 ## Type
 
 The wordmark is Fredoka One and ships as outlines, so nothing loads the font. The site is set in
-Inter, and its hero word is "murmur" in Inter behind the reeded glass, not the wordmark. The Figma
+Inter; the only Fredoka on it is the logo's own letters. The Figma
 file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
 
 ## The mur ui page
@@ -103,6 +126,19 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
+
+A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
+a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
+drawn in three layers: a round tile in its device's colour, one of 16 ghosts (`ghost-*.svg` in
+`internal/web/static/assets/ghosts/`) and one of 15 accessories (`acc-*.svg`) or none, so 256 faces
+in all. The ghosts are named for ways of talking quietly (murmur, hush, whisper, psst); the murmur
+ghost has the mark's quotation-mark eyes and mumble its leaning ovals, and the bubble accessory is a
+butter speech bubble with someone typing. The ghosts carry no tile of their own; their bodies are the
+brand's light tints, which read on all twelve device hues. A session's name picks its ghost and
+accessory (`ghostOf` in `app.js`), so it wears the same one everywhere. Every body shares one head
+and eye line, so each accessory fits every ghost; some, like the bubble, reach past the tile's edge,
+and the page doesn't clip them. `scripts/ghosts.py` writes them and `docs/ghosts.html`, a sheet of
+every combination; a change to the set means running it again.
 
 ### The v3 page
 
@@ -120,7 +156,11 @@ updating the list in `v3/app.js`.
 ## Renders
 
 `site/how-wide.mp4`, `site/how-tall.mp4` and their posters are rendered from
-`site/src/how-scene.html` by `site/src/render-video.mjs`. `site/og.jpg` and
-`docs/assets/murmur-demo.gif` come from the wide film: the card is its last frame with the lockup
-set in the top left corner, and the GIF is the film at about 14 frames a second, 960px wide. A
-change to the palette means rendering all of them again.
+`site/src/how-scene.html` by `site/src/render-video.mjs`. `docs/assets/murmur-demo.gif` comes from
+the wide film, at about 14 frames a second, 960px wide. A change to the palette means rendering all
+of them again.
+
+`site/og.jpg` is a capture of the home page's hero (2026-11-12, #488; before that it was the film's
+last frame). It was taken in Chromium at 1200x735 and twice the pixel density, with the hero's
+minimum height set to 735px and the line for agents hidden, at a moment the glint was crossing, and
+scaled down to 1200x735. All six pages share it, so a change to the hero means taking it again.

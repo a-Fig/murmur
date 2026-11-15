@@ -33,4 +33,5 @@ How to call it: once this clone has joined, Murmur's MCP server gives you the to
 ## Optional
 
 - [README](https://github.com/a-Fig/murmur): what Murmur is, for people
-- [Design](https://github.com/a-Fig/murmur/blob/main/docs/VISION.md): how it works and why, including what each agent gets
+- [Design](https://github.com/a-Fig/murmur/blob/main/docs/VISION.md): the direction and why, including what each agent gets
+- [Design files](https://github.com/a-Fig/murmur/tree/main/docs/design): how each part works, one file per topic

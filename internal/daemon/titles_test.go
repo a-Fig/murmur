@@ -322,7 +322,7 @@ func TestTitlesAreReadNoMoreOftenThanTitleEvery(t *testing.T) {
 	home, _ := t3Fixture(t, map[string]string{"thread-a": "Slow title"})
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", newRemote(t), dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond,
 		titleEvery: time.Hour}
 	d.start()
 	alice, _ := d.sessionRoute("aaaaaa", "", t3Route(home, "thread-a"))

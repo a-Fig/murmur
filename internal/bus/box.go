@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/names"
 )
@@ -236,19 +237,24 @@ func DecryptEvent(e Event, device string, keys Keyring) (Event, error) {
 type presenceSecret struct {
 	Host     string        `json:"host"`
 	Owner    string        `json:"owner,omitempty"`
+	Nick     string        `json:"nick,omitempty"`
+	Color    int           `json:"color,omitempty"`
+	ColorAt  time.Time     `json:"colorAt,omitzero"`
 	Sessions []SessionInfo `json:"sessions"`
 	Offline  []string      `json:"offline,omitempty"`
+	Groups   bool          `json:"groups,omitempty"`
+	Receipts bool          `json:"receipts,omitempty"`
 	Epoch    string        `json:"epoch,omitempty"`
 	Holds    []string      `json:"holds,omitempty"`
 }
 
 func presenceAAD(device string) []byte { return []byte("presence\x00" + device) }
 
-// EncryptPresence returns p with its host, owner, sessions, offline sessions, epoch and held team
+// EncryptPresence returns p with its host, owner, nickname, colour, sessions, offline sessions, epoch and held team
 // keys encrypted for recipients. A daemon from before encryption reads it as a device with no sessions.
 func EncryptPresence(p Presence, recipients map[string]string) (Presence, error) {
-	plain, err := json.Marshal(presenceSecret{Host: p.Host, Owner: p.Owner, Sessions: p.Sessions, Offline: p.Offline,
-		Epoch: p.Epoch, Holds: p.Holds})
+	plain, err := json.Marshal(presenceSecret{Host: p.Host, Owner: p.Owner, Nick: p.Nick, Color: p.Color, ColorAt: p.ColorAt, Sessions: p.Sessions, Offline: p.Offline,
+		Groups: p.Groups, Receipts: p.Receipts, Epoch: p.Epoch, Holds: p.Holds})
 	if err != nil {
 		return Presence{}, err
 	}
@@ -278,8 +284,9 @@ func DecryptPresence(p Presence, keys Keyring) (Presence, error) {
 	if err := json.Unmarshal(plain, &s); err != nil {
 		return Presence{}, errBadBox
 	}
-	p.Host, p.Owner, p.Sessions, p.Offline, p.Box = s.Host, s.Owner, s.Sessions, s.Offline, nil
-	p.Epoch, p.Holds = s.Epoch, s.Holds
+	p.Host, p.Owner, p.Nick, p.Sessions, p.Offline, p.Box = s.Host, s.Owner, s.Nick, s.Sessions, s.Offline, nil
+	p.Groups, p.Receipts, p.Epoch, p.Holds = s.Groups, s.Receipts, s.Epoch, s.Holds
+	p.Color, p.ColorAt = s.Color, s.ColorAt
 	return p, nil
 }
 

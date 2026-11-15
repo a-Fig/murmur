@@ -15,6 +15,7 @@ import (
 // With the default busy setting, the hook gives a message that has no body whole: it is read, and
 // is neither counted, nor in the inbox, nor a turn when the turn ends.
 func TestAMessageWithNoBodyIsReadWhenTheHookShowsIt(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -72,6 +73,7 @@ func TestAnOlderHookKeepsAMessageWithNoBodyUnread(t *testing.T) {
 // A message with a body is told of by its subject, and given whole when the turn ends. That turn
 // says a notice told of it, so the agent doesn't take it for a second message.
 func TestATurnSaysItsMessageWasToldOfBefore(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)

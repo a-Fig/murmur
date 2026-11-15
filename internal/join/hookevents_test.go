@@ -49,16 +49,26 @@ func wantHookEvents() map[string]string {
 	return map[string]string{"PreToolUse": "*", "PostToolUse": "*", "PostToolUseFailure": "*", "UserPromptSubmit": "", "Stop": ""}
 }
 
-// A join over an install from before the hook watched tool calls (PostToolUse and UserPromptSubmit
-// only) adds the events it lacks, and doesn't double the ones it has or touch the user's own hooks.
-func TestJoinCompletesAnOlderHookInstall(t *testing.T) {
-	p, _ := clone(t)
+// oldHooks puts the hook in every working tree of the clone, as a join before #422 did.
+func oldHooks(t *testing.T, p Place, exe string) {
+	t.Helper()
+	for _, top := range worktrees(context.Background(), p) {
+		if _, err := installHook(filepath.Join(top, filepath.FromSlash(hookFile)), setup.HookCommand(exe)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A join over settings that have the hook on some of its events only adds the events it lacks, and
+// doesn't double the ones it has or touch the user's own hooks.
+func TestJoinCompletesAHookInstall(t *testing.T) {
+	home := t.TempDir()
 	exe := filepath.Join(t.TempDir(), "bin", "mur")
 	command, err := json.Marshal(setup.HookCommand(exe))
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(p.Top, ".claude", "settings.local.json")
+	path := filepath.Join(home, "settings.json")
 	write(t, path, `{
   "hooks": {
     "PostToolUse": [
@@ -69,9 +79,9 @@ func TestJoinCompletesAnOlderHookInstall(t *testing.T) {
   }
 }
 `)
-	changed, _, err := installHooks(context.Background(), p, exe)
-	if err != nil || len(changed) == 0 {
-		t.Fatalf("changed %q, err %v", changed, err)
+	changed, err := installClaudeHook(home, exe)
+	if err != nil || !changed {
+		t.Fatalf("changed %v, err %v", changed, err)
 	}
 	if events := hookEvents(t, path); !reflect.DeepEqual(events, wantHookEvents()) {
 		t.Errorf("the hook is on %v, want %v", events, wantHookEvents())
@@ -79,7 +89,7 @@ func TestJoinCompletesAnOlderHookInstall(t *testing.T) {
 	if got := read(t, path); strings.Count(got, "other-tool") != 1 {
 		t.Errorf("the user's own hook was changed:\n%s", got)
 	}
-	if again, _, err := installHooks(context.Background(), p, exe); err != nil || len(again) != 0 {
-		t.Errorf("a second install changed %q (err %v)", again, err)
+	if again, err := installClaudeHook(home, exe); err != nil || again {
+		t.Errorf("a second install changed the file: %v (err %v)", again, err)
 	}
 }

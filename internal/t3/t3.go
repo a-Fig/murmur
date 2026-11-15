@@ -2,7 +2,7 @@
 // session T3 runs is a thread, and T3's own command line, `t3 thread send`, puts a message in one:
 // at once if the thread is idle, as its next turn if it is busy, interrupting nothing. A message to
 // a thread is how T3's agents talk to each other, and it is how Murmur hands a teammate's message
-// to the agent it is for (docs/VISION.md, "Delivering a message as a turn").
+// to the agent it is for (docs/design/handoff.md, "T3 Code").
 package t3
 
 import (

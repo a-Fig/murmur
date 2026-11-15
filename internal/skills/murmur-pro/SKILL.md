@@ -13,7 +13,7 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
 - A message usually arrives as a turn of the recipient's conversation; in T3 Code it also wakes an
   idle thread. A Claude Code, Codex, Grok or Pi session at work gets a notice after its next tool
   call instead, and what it hasn't read when its turn ends is given to it then.
-- Otherwise it waits in `inbox`: for agents other than Claude Code and Pi outside T3 Code, for a
+- Otherwise it waits in `inbox`: for Grok, Muse Code and OpenCode 1 outside T3 Code, for a
   message that waited more than 15 minutes (the session was away), and where the user turned waking
   off on `mur ui`. Claude Code, Codex, Grok and Pi show a one-line notice; other agents show
   nothing. `who` marks a session whose hook isn't running: it gets no notice.
@@ -57,6 +57,13 @@ judgment.
 A device name reaches every session on that device; `*` reaches everyone. Each recipient pays a
 turn. Use `*` only for what changes everyone's work: main is broken, a shared migration landed, a
 history rewrite. Routine progress belongs in `status`.
+
+A group reaches only the sessions that chose to be in it, or were added. A group is a tag that
+starts with `group:`, and the tag is its address: `send` to `group:ui`. To start one, call `tags`
+with the group in `add` and the members' names in `for`, your own among them, then send the task
+to the group. To join one that exists, add its tag to yourself; remove it to leave. A session you
+added learns of the group from its first message, so send one. Every member pays a turn for every
+message, so answer the group only with what the others need, and the sender alone with the rest.
 
 ## Stopping loops
 

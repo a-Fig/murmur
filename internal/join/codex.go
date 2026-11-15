@@ -31,14 +31,14 @@ var codexServer = tomlServer{file: "config.toml", args: codexArgs, envVars: []st
 // t3CLIEnv is the variable that says a session runs inside T3 Code, and where its command line is.
 // Codex starts an MCP server with a bare environment and passes on only the variables the table
 // names in env_vars, so without this one the server can't tell it is in T3 and the daemon has no way
-// to wake the thread with a message (docs/VISION.md, "Delivering a message as a turn").
+// to wake the thread with a message (docs/design/handoff.md, "Codex under T3").
 const t3CLIEnv = "T3CODE_CLI_PATH"
 
-// codexHomeEnv is the Codex home of a session whose home isn't ~/.codex. The server passes it to the
-// daemon, which reads a Codex thread's name from that home outside T3; without it the daemon reads
-// its own home, which may be another (docs/VISION.md, "Session names"). Codex leaves out a name
-// its own environment doesn't have (create_env_for_mcp_server in codex-rs/rmcp-client, read
-// 2026-11-09), so a session in ~/.codex is started as before.
+// codexHomeEnv is the Codex home of a session whose home isn't ~/.codex. The server passes it to
+// the daemon, which reads a Codex thread's name from that home outside T3; without it the daemon
+// reads its own home, which may be another (docs/design/presence.md, the table of titles). Codex
+// leaves out a name its own environment doesn't have (create_env_for_mcp_server in
+// codex-rs/rmcp-client, read 2026-11-09), so a session in ~/.codex is started as before.
 const codexHomeEnv = "CODEX_HOME"
 
 // editCodexConfig returns config.toml's text with Murmur's server in it. changed is false, and out

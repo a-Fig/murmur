@@ -80,6 +80,7 @@ export async function archiveNumbers(db, days) {
 // The numbers as markdown, for an agent: what the page shows, in tables, with what they mean.
 export function archiveReport(n, origin) {
   const pct = Math.round((100 * n.active) / n.goal);
+  const users = k => `${k} active ${k === 1 ? 'user' : 'users'}`;
   const diff = n.active - n.activeBefore;
   const change = diff === 0 ? 'the same as' : `${diff > 0 ? 'up' : 'down'} ${Math.abs(diff)} from`;
   const table = (head, rows) =>
@@ -98,7 +99,7 @@ export function archiveReport(n, origin) {
 
 > History. These numbers come from the daily check-ins of Murmur 0.2.3 onward, which the site stopped storing after ${n.checkInsEnded}, so every "today" and "last 7 days" here ends on that day. Murmur now sends only a public repo's address, once per repo; what those repos show is at ${origin}/stats/report.md.
 
-**${n.active} active users**, ${pct}% of the goal of ${n.goal} (${Math.max(0, n.goal - n.active)} to go), ${change} the ${n.activeDays} days before (${n.activeBefore}).
+**${users(n.active)}**, ${pct}% of the goal of ${n.goal} (${Math.max(0, n.goal - n.active)} to go), ${change} the ${n.activeDays} days before (${n.activeBefore}).
 
 ${table(['Measure', 'Count'], [
     ['Active users (a check-in in the last 7 days)', n.active],

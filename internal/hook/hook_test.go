@@ -13,12 +13,166 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 )
+
+// The hook finds its session's MCP server among the records of this user's (package here). The
+// tests' are in a directory of their own, empty unless a test publishes one, so a hook here never
+// finds a real session's, and none takes the test's process for Claude Code's.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "hook-sessions")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv(brand.SessionsDirEnv, dir)
+	os.Unsetenv("CLAUDE_PID")
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// publish puts a server's record where the hook looks, for the length of the test.
+func publish(t *testing.T, s here.Session) {
+	t.Helper()
+	dir, err := here.DefaultDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := here.Publish(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { here.Withdraw(dir, s.ServerPID) })
+}
+
+// ops are the requests of one kind among those a fake daemon got.
+func ops(requests []proto.Request, op string) []proto.Request {
+	var out []proto.Request
+	for _, r := range requests {
+		if r.Op == op {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// A session that joined a clone it doesn't work in (`mur join -C`) has its hook speak to that
+// clone's daemon, wherever the hook runs: in another repo, whose own daemon hears nothing, or in no
+// repo at all (#422). A call is bracketed with the repository it ran in, which the daemon doesn't
+// watch.
+func TestTheHookFindsTheCloneItsSessionJoined(t *testing.T) {
+	joined, works := newRepo(t), newRepo(t)
+	theirs := fakeDaemon(t, filepath.Join(joined, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpTurnEnd {
+			b, _ := json.Marshal(proto.Response{OK: true, Read: []proto.MessageView{{From: "dev-0001/aaaaaa", Subject: "s", Body: "b"}}})
+			return string(b)
+		}
+		return `{"ok":true,"unread":2}`
+	})
+	own := fakeDaemon(t, filepath.Join(works, ".git"), okToAll)
+	publish(t, here.Session{ServerPID: os.Getpid(), ClientPID: 4242, GitDir: filepath.Join(joined, ".git"), On: true})
+	t.Setenv("CLAUDE_PID", "4242")
+
+	for _, cwd := range []string{works, t.TempDir()} {
+		if out, _ := run("PostToolUse", cwd); !strings.Contains(out, "2 messages unread") {
+			t.Errorf("in %s the hook printed %q, want the count", cwd, out)
+		}
+	}
+	if out, _ := run("Stop", works); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("Stop printed %q, want the turn kept going", out)
+	}
+	if got := own(); len(got) != 0 {
+		t.Errorf("the daemon of the repo the session works in was asked %+v", got)
+	}
+	got := theirs()
+	if n := len(ops(got, proto.OpNotices)); n != 2 {
+		t.Errorf("the joined clone's daemon got %d notices requests, want 2: %+v", n, got)
+	}
+	ends := ops(got, proto.OpToolEnd)
+	if len(ends) != 2 {
+		t.Fatalf("the joined clone's daemon was told of %d calls ending, want 2: %+v", len(ends), got)
+	}
+	want, _ := os.Stat(filepath.Join(works, ".git"))
+	if at, err := os.Stat(ends[0].GitDir); err != nil || !os.SameFile(at, want) {
+		t.Errorf("the call in %s was bracketed with the clone %q", works, ends[0].GitDir)
+	}
+	if ends[1].GitDir != "" {
+		t.Errorf("the call outside any repo was bracketed with the clone %q", ends[1].GitDir)
+	}
+}
+
+// Claude Code runs the hook in every project. In a session whose server is in no repository it
+// asks no daemon, not even the one of a joined clone it happens to run in: the session isn't in
+// Murmur there. One with no record, as before servers published them, goes by where it runs.
+func TestTheHookDoesNothingForASessionInNoClone(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	publish(t, here.Session{ServerPID: os.Getpid(), ClientPID: 4242})
+	t.Setenv("CLAUDE_PID", "4242")
+	for _, event := range []string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"} {
+		if out, _ := run(event, repo); out != "" {
+			t.Errorf("%s printed %q", event, out)
+		}
+	}
+	if got := requests(); len(got) != 0 {
+		t.Errorf("the daemon was asked %+v", got)
+	}
+	t.Setenv("CLAUDE_PID", "4243") // another process, with no server
+	run("PostToolUse", repo)
+	if got := ops(requests(), proto.OpNotices); len(got) != 1 {
+		t.Errorf("without a record the hook sent %d notices requests, want 1", len(got))
+	}
+}
+
+// Another agent's hook finds its session's record among those of the processes above it, by the
+// session's own ID. A record without it isn't taken: it may be a sibling's in a process that runs
+// several sessions, or that of an agent that started this one. The hook then goes by where it
+// runs (Sol's reviews of #426).
+func TestAnotherAgentsHookFindsItsSessionsClone(t *testing.T) {
+	joined, works := newRepo(t), newRepo(t)
+	theirs := fakeDaemon(t, filepath.Join(joined, ".git"), okToAll)
+	own := fakeDaemon(t, filepath.Join(works, ".git"), okToAll)
+	payload, _ := json.Marshal(map[string]string{"session_id": "thread-1", "hook_event_name": "PostToolUse", "cwd": works, "tool_name": "Bash"})
+	asked := func(requests func() []proto.Request) int { return len(ops(requests(), proto.OpNotices)) }
+	// The hook's parent stands in for the agent's process. A record's server has to be a process
+	// that is running: this test's, or its parent's for a second one.
+	agent, there := os.Getppid(), filepath.Join(joined, ".git")
+	steps := []struct {
+		what    string
+		records []here.Session
+		joined  bool // the hook speaks to the clone the record names, not the repo it runs in
+	}{
+		{"no record", nil, false},
+		{"the session's record", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex", Native: "thread-1", GitDir: there, On: true}}, true},
+		{"a record of a session whose ID isn't known", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex", GitDir: there, On: true}}, false},
+		{"a sibling's record", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: there, On: true}}, false},
+		{"the record of the Claude Code that started the agent", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code", ClaudeSession: "thread-1", GitDir: there, On: true}}, false},
+		{"that agent's record, in no repository", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code"}}, false},
+		{"the session's record beside a sibling's", []here.Session{
+			{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-1", GitDir: there, On: true},
+			{ServerPID: os.Getppid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: filepath.Join(works, ".git"), On: true}}, true},
+	}
+	dir, _ := here.DefaultDir()
+	for _, step := range steps {
+		for _, r := range step.records {
+			publish(t, r)
+		}
+		wasTheirs, wasOwn := asked(theirs), asked(own)
+		hook.RunFor(hook.Codex, bytes.NewReader(payload), &bytes.Buffer{})
+		gotTheirs, gotOwn := asked(theirs)-wasTheirs, asked(own)-wasOwn
+		if wantTheirs := map[bool]int{true: 1}[step.joined]; gotTheirs != wantTheirs || gotOwn != 1-wantTheirs {
+			t.Errorf("%s: the clone a record names was asked %d times, the repo the hook runs in %d", step.what, gotTheirs, gotOwn)
+		}
+		for _, r := range step.records {
+			here.Withdraw(dir, r.ServerPID)
+		}
+	}
+}
 
 // fakeDaemon serves the daemon's protocol for the clone at gitDir: answer gives the response line
 // to each request, or "" to hold the connection open without one. It returns the requests so far.
@@ -431,13 +585,79 @@ func TestAnInterruptedPiStopKeepsNothingGoing(t *testing.T) {
 	}
 }
 
+// Murmur's OpenCode plugin runs the hook with OpenCode's session ID (#431), as Pi's extension does
+// with the session's file: the requests name the session by it. For a session another session
+// started, each request says so and names the parent (#455), the one sent as the session is made
+// included; no other agent's hook can say that. An interrupted Stop keeps nothing going.
+func TestOpenCodeHookNamesItsSessionAndItsParent(t *testing.T) {
+	t.Setenv("CLAUDE_PID", "4242")
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		switch r.Op {
+		case proto.OpNotices:
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"hi"}]}`
+		case proto.OpTurnEnd:
+			return `{"ok":true,"delivered":[{"id":"m2","from":"other-0001/bbbbbb","subject":"at the end"}]}`
+		}
+		return `{"ok":true}`
+	})
+	run := func(agent string, payload map[string]any) string {
+		payload["cwd"] = repo
+		b, _ := json.Marshal(payload)
+		var out bytes.Buffer
+		hook.RunFor(agent, bytes.NewReader(b), &out)
+		return out.String()
+	}
+	if out := run("opencode", map[string]any{"session_id": "ses_a", "hook_event_name": "PostToolUse"}); !strings.Contains(out, `\"hi\"`) {
+		t.Errorf("PostToolUse printed %q", out)
+	}
+	if out := run("opencode", map[string]any{"session_id": "ses_a", "hook_event_name": "Stop"}); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("Stop printed %q", out)
+	}
+	if out := run("opencode", map[string]any{"session_id": "ses_a", "hook_event_name": "Stop", "interrupted": true}); out != "" {
+		t.Errorf("an interrupted Stop printed %q", out)
+	}
+	run("opencode", map[string]any{"session_id": "ses_kid", "hook_event_name": "SessionStart", "child": true, "parent_native": "ses_a"})
+	run("pi", map[string]any{"session_id": "/s/a.jsonl", "hook_event_name": "PostToolUse", "child": true, "parent_native": "ses_a"})
+	var reqs []proto.Request
+	for _, r := range requests() {
+		if r.Op != proto.OpPing {
+			reqs = append(reqs, r)
+		}
+	}
+	if len(reqs) != 5 {
+		t.Fatalf("requests: %+v", reqs)
+	}
+	for i, r := range reqs[:4] {
+		want := "ses_a"
+		if i == 3 {
+			want = "ses_kid"
+		}
+		if r.Native != want || r.ClaudeSession != "" || r.ClientPID != 0 || r.Agent != "" || len(r.Ancestors) != 0 {
+			t.Errorf("%s named its session %q, Claude %q, pid %d, agent %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Agent)
+		}
+	}
+	if !reqs[1].Continues || reqs[2].Continues {
+		t.Errorf("Continues is %v on the Stop and %v on the interrupted one; want true, false", reqs[1].Continues, reqs[2].Continues)
+	}
+	if reqs[0].Child || reqs[0].ParentNative != "" {
+		t.Errorf("a session a person started was named a child: %+v", reqs[0])
+	}
+	if !reqs[3].Child || reqs[3].ParentNative != "ses_a" || reqs[3].Op != proto.OpNotices {
+		t.Errorf("the child's request: %+v", reqs[3])
+	}
+	if reqs[4].Child || reqs[4].ParentNative != "" {
+		t.Errorf("Pi's hook named a child: %+v", reqs[4])
+	}
+}
+
 // An agent the hook doesn't know gets nothing, and the daemon isn't asked.
 func TestHookForAnUnknownAgentDoesNothing(t *testing.T) {
 	repo := newRepo(t)
 	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
 	payload, _ := json.Marshal(map[string]string{"session_id": "x", "hook_event_name": "PostToolUse", "cwd": repo})
 	var out bytes.Buffer
-	hook.RunFor("opencode", bytes.NewReader(payload), &out)
+	hook.RunFor("muse", bytes.NewReader(payload), &out)
 	if out.Len() != 0 || len(requests()) != 0 {
 		t.Errorf("printed %q, asked %+v", out.String(), requests())
 	}

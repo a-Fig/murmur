@@ -106,6 +106,7 @@ func socketTurn(t *testing.T, lines []string, token string) string {
 // with the token the MCP server passed on, then the user message, framed as a turn. It is then no
 // longer unread, and the log has neither the token nor the socket's address.
 func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	_, calls := useFakeT3(t)
@@ -151,6 +152,7 @@ func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T)
 // A session in T3 is reached through T3 even if its environment also had a messaging socket: the
 // socket is T3's, and T3 may not take a turn it didn't start.
 func TestSessionInT3IsNotWrittenToItsSocket(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	exe, calls := useFakeT3(t)

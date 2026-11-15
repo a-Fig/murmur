@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,40 +20,18 @@ import (
 // the stand-in in its place. A handoff to it fails before anything starts.
 func lateT3(t *testing.T) (exe string, install func(), calls func() []t3Call) {
 	t.Helper()
-	stand, calls := useFakeT3(t)
-	exe = filepath.Join(t.TempDir(), "t3"+filepath.Ext(stand))
-	install = func() {
-		src, err := os.Open(stand)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer src.Close()
-		tmp := exe + ".tmp"
-		dst, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = io.Copy(dst, src)
-		if cerr := dst.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(tmp, exe); err != nil { // whole, or not there: never half a command
-			t.Fatal(err)
-		}
-	}
-	return exe, install, calls
+	exe, calls = fakeT3Path(t)
+	return exe, func() { installFakeT3(t, exe) }, calls
 }
 
 // A `t3` that took the message and then failed, as one does that times out or has its output lost
 // after T3 accepted it, is not run again: the message may be in the thread already, and it would
 // be there twice. It waits for the hook's notice instead, and is never handed over a second time.
 func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1") // the stand-in records the call, which is T3 having it, and then fails
+	setFakeT3(t, exe, fakeT3Fail, "1") // the stand-in records the call, which is T3 having it, and then fails
 	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.pushRetry = 300 * time.Millisecond })
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
@@ -78,21 +55,22 @@ func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
 // sent the same turn again. The mark is saved before the handoff, so it is there whether the daemon
 // stopped after the call failed or in the middle of it, and the message is left to the notice.
 func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
+	t.Parallel()
 	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
 	for _, tc := range []struct {
-		name string
-		env  string // what makes the stand-in fail, or take its time, the first time
-		val  string
+		name    string
+		setting string // what makes the stand-in fail, or take its time, the first time
+		val     string
 		// failed says the daemon is restarted after the call has failed, not while it runs.
 		failed bool
 	}{
-		{"after the call failed", fakeT3FailEnv, "1", true},
-		{"in the middle of the call", fakeT3SleepEnv, "30s", false},
+		{"after the call failed", fakeT3Fail, "1", true},
+		{"in the middle of the call", fakeT3Sleep, "30s", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := newRemote(t)
 			exe, calls := useFakeT3(t)
-			t.Setenv(tc.env, tc.val)
+			setFakeT3(t, exe, tc.setting, tc.val)
 			var out syncBuf
 			a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
 			alice, _ := a.session("aaaaaa", "")
@@ -110,7 +88,7 @@ func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 				t.Errorf("state.json doesn't say the message was handed over (%v):\n%s", err, st)
 			}
 
-			t.Setenv(tc.env, "") // T3 would take the message now, if it were sent again
+			setFakeT3(t, exe, tc.setting, "") // T3 would take the message now, if it were sent again
 			b.restart()
 			b.sessionRoute("bbbbbb", "claude-bob", route(exe)) // the session's MCP server reconnects
 			holds(t, "no second call after the restart", 2*time.Second, func() bool { return len(calls()) == 1 })
@@ -130,6 +108,7 @@ func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 // would leave a restart nothing to find, and the turn would be sent again. It is left to the notice,
 // as after any failed handoff (#82).
 func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -139,13 +118,7 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	// state.json is written by way of state.json.tmp: a directory there makes every save fail. A
 	// file in it keeps writeJSON's removal of a leftover tmp from taking the directory away.
-	blocker := filepath.Join(b.gitDir, brand.StateDir, "state.json.tmp")
-	if err := os.Mkdir(blocker, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(blocker, "x"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	blockSaves(t, filepath.Join(b.gitDir, brand.StateDir, "state.json"))
 
 	a.send("aaaaaa", bob, "cannot be marked", "body")
 	eventually(t, "the refusal", func() bool { return strings.Contains(out.String(), "can't be saved") })
@@ -163,6 +136,7 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 // An attempt that never started anything is the one kind that is tried again, once: no `t3` is
 // there yet when the first attempt is made, and the retry finds it.
 func TestAHandoffThatNeverStartedIsTriedOnceMore(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
@@ -189,6 +163,7 @@ func TestAHandoffThatNeverStartedIsTriedOnceMore(t *testing.T) {
 
 // A retry that fails to start too leaves the message to the notice, after two attempts and no more.
 func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _, calls := lateT3(t)
 	var out syncBuf
@@ -207,4 +182,31 @@ func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
 	if n := len(calls()); n != 0 {
 		t.Errorf("the stand-in ran %d times with no command there", n)
 	}
+}
+
+// blockSaves makes every later save of path by writeJSON fail, by putting a directory where it
+// writes its tmp file. The daemon may be saving right then (#442): a Mkdir there can find a save's
+// tmp file, and a save's removal of a leftover tmp can take an empty directory away before a file
+// is put in it. So the directory is made whole, file and all, under another name, and renamed into
+// place, tried again while a save's tmp file is in the way: on Unix while it is there at all, on
+// Windows while it is open. On Windows the rename can replace a tmp file a save has closed but not
+// yet renamed; that save then carries the directory onto path itself, and every later save fails
+// at its rename instead of at writing the tmp file. Either way nothing is saved from then on
+// (Fable's review found the second, 2026-11-13).
+func blockSaves(t *testing.T, path string) {
+	t.Helper()
+	staged := path + ".blocker"
+	if err := os.Mkdir(staged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if err = os.Rename(staged, path+".tmp"); err == nil {
+			return
+		}
+	}
+	t.Fatalf("the blocker never took the tmp file's place: %v", err)
 }

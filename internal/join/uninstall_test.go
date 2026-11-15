@@ -3,12 +3,14 @@ package join
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/jsonedit"
 	"github.com/a-Fig/murmur/internal/skills"
 )
@@ -313,9 +315,7 @@ func TestRemoveRecordKeepsWhatIsUnfinished(t *testing.T) {
 func TestUninstallFinishesALeaveThatDidNot(t *testing.T) {
 	sb, record := uninstallSandbox(t)
 	p, other := clone(t)
-	if _, _, err := installHooks(context.Background(), p, sb.Exe); err != nil {
-		t.Fatal(err)
-	}
+	oldHooks(t, p, sb.Exe)
 	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir}); err != nil {
 		t.Fatal(err)
 	}
@@ -381,5 +381,164 @@ func TestUninstallCodexHomesSharingAHooksFile(t *testing.T) {
 	got := read(t, filepath.Join(second, "config.toml"))
 	if got != "[hooks.state."+tomlKey(key+":stop:0:0")+"]\ntrusted_hash = \"sha256:mine\"\n" {
 		t.Errorf("the second home's config.toml:\n%s", got)
+	}
+}
+
+// Murmur's folder in the user's config directory goes too (#430): the old check-ins' user ID, the
+// records of MCP servers that exited, and the record of clones. A server still running keeps its
+// record and the folder, and the report says so.
+func TestUninstallRemovesTheUserFolder(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	// The default folders, which the sandbox's home holds, in place of the ones tests name.
+	t.Setenv(clones.DirEnv, "")
+	t.Setenv(brand.SessionsDirEnv, "")
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(config, sb.root) {
+		t.Fatalf("the config directory %s isn't the sandbox's", config)
+	}
+	dir := filepath.Join(config, brand.Name)
+	sessions := filepath.Join(dir, "sessions")
+	if err := os.MkdirAll(filepath.Join(dir, "clones"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "id"), "0123456789abcdef0123456789abcdef\n")
+	if err := here.Publish(sessions, here.Session{ServerPID: exitedPID(t)}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// A server still running: this test's process stands in for it.
+	if err := here.Publish(sessions, here.Session{ServerPID: os.Getpid()}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Uninstall(ctx, sb.Env, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "id")); !os.IsNotExist(err) {
+		t.Errorf("the old user ID is still there: %v", err)
+	}
+	if left, _ := here.Sessions(sessions); len(left) != 1 || left[0].ServerPID != os.Getpid() {
+		t.Errorf("sessions' records left = %+v, want only the running server's", left)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "clones")); !os.IsNotExist(err) {
+		t.Errorf("the record of clones is still there: %v", err)
+	}
+	want := brand.Product + "'s folder in your config directory (" + dir + "), which still holds sessions (the records of 1 agent session whose " + brand.Product + " server still runs"
+	if s := r.String(); !strings.Contains(s, want) || !strings.Contains(s, "Removed the user ID") || strings.Contains(s, "Nothing to remove") {
+		t.Errorf("the report doesn't say what went and what stayed:\n%s", s)
+	}
+
+	// Once that server has exited, uninstall again takes the rest.
+	here.Withdraw(sessions, os.Getpid())
+	r, err = Uninstall(ctx, sb.Env, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(dir)
+		t.Fatalf("the folder is still there (%v), holding %v\n%s", err, entries, r)
+	}
+	s := r.String()
+	if !strings.Contains(s, "Removed "+brand.Product+"'s folder in your config directory ("+dir+")") || strings.Contains(s, "your config directory ("+dir+"), which") {
+		t.Errorf("report:\n%s", s)
+	}
+}
+
+// A folder that isn't the default one, as tests and MURMUR_CLONES_DIR name, is never removed
+// whole: only the record of clones in it is.
+func TestUninstallLeavesANamedFolder(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(config, brand.Name)
+	write(t, filepath.Join(dir, "id"), "0123456789abcdef0123456789abcdef\n")
+	if err := os.MkdirAll(record, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := Uninstall(context.Background(), sb.Env, false); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "id")); err != nil {
+		t.Errorf("the default folder was touched while another was named: %v", err)
+	}
+}
+
+func exitedPID(t *testing.T) int {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
+}
+
+// A config folder that is a link isn't removed: that would take the link away and leave what it
+// points to, a running server's record and all (from the review).
+func TestUninstallLeavesALinkedFolder(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	t.Setenv(clones.DirEnv, "")
+	t.Setenv(brand.SessionsDirEnv, "")
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(sb.root, "elsewhere")
+	write(t, filepath.Join(real, "id"), "0123456789abcdef0123456789abcdef\n")
+	if err := os.MkdirAll(config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(config, brand.Name)
+	if err := os.Symlink(real, dir); err != nil {
+		t.Skipf("can't make a link here: %v", err)
+	}
+	r, err := Uninstall(context.Background(), sb.Env, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if fi, err := os.Lstat(dir); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link is gone or changed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(real, "id")); err != nil {
+		t.Errorf("what the link points to was touched: %v", err)
+	}
+	if s := r.String(); !strings.Contains(s, "which is a link or a file rather than a folder") {
+		t.Errorf("report:\n%s", s)
+	}
+
+	// The same for its sessions folder, which holds a running server's record (from the second review).
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	sessions := filepath.Join(sb.root, "sessions-elsewhere")
+	if err := here.Publish(sessions, here.Session{ServerPID: os.Getpid()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sessions, filepath.Join(dir, "sessions")); err != nil {
+		t.Fatal(err)
+	}
+	if r, err = Uninstall(context.Background(), sb.Env, false); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, "sessions")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the sessions link is gone or changed: %v", err)
+	}
+	if left, _ := here.Sessions(sessions); len(left) != 1 {
+		t.Errorf("the running server's record = %+v", left)
+	}
+	if s := r.String(); !strings.Contains(s, "whose sessions ("+filepath.Join(dir, "sessions")+") is a link or a file") || strings.Contains(s, "Removed "+brand.Product+"'s folder") {
+		t.Errorf("report:\n%s", s)
 	}
 }

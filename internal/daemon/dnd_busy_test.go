@@ -31,6 +31,7 @@ func (d *device) queuedFor(addr, subject string) bool {
 }
 
 func TestDoNotDisturbOnABusySessionHoldsEveryRouteUntilItComesOff(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)

@@ -21,8 +21,8 @@ import (
 
 // A person's account (#242). A human chooses a name on the page, and from then on is a participant:
 // their address is device/human, presence lists them, agents find them in who and send to their
-// name, and the messages to and from them are kept on this device past a restart. docs/VISION.md
-// ("A person on the page") has the reasons.
+// name, and the messages to and from them are kept on this device past a restart.
+// docs/design/people.md has the reasons.
 //
 // The account is one per clone, like the CLI's mailbox it sits beside. It is unlike it in three ways:
 // it has a name, what is sent to it reaches the page and only the page, and it gets what was sent
@@ -68,9 +68,26 @@ func (d *Daemon) resolvePersonLocked(name string) (string, bool) {
 	return "", false
 }
 
+// listedPersonNameLocked is the name who and the page list a peer's person under: the one its
+// presence gives, if that name reaches them, and "" otherwise, when they are listed by address. Any
+// device can say its person has any name, so one whose presence says ada while ada is someone
+// else's would be listed as a second ada (#350); sending to ada reaches whoever holds the name, the
+// way a message's name counts only if its sender holds it (personSenderLocked). Caller holds mu.
+func (d *Daemon) listedPersonNameLocked(addr, name string) string {
+	if name == "" {
+		return ""
+	}
+	if got, ok := d.resolvePersonLocked(name); ok && got != addr {
+		return ""
+	}
+	return name
+}
+
 // personNameOfLocked is the name of the person at addr, "" if addr isn't a person's or their name
 // isn't known. A person who changed their name has the earlier one in People too, so presence, which
-// has only the current one, goes first. Caller holds mu.
+// has only the current one, goes first. Another device's person has a name only if it reaches them
+// (listedPersonNameLocked), so a lookup, a turn or the page never labels them, or a message to
+// them, with a name that is someone else's (#350). Caller holds mu.
 func (d *Daemon) personNameOfLocked(addr string) string {
 	if !bus.IsPerson(addr) {
 		return ""
@@ -82,13 +99,15 @@ func (d *Daemon) personNameOfLocked(addr string) string {
 	if p := d.peers[dev]; p != nil {
 		for _, s := range p.pres.Sessions {
 			if s.ID == bus.PersonSession {
-				return s.Name
+				if name := d.listedPersonNameLocked(addr, s.Name); name != "" {
+					return name
+				}
 			}
 		}
 	}
 	found := ""
 	for name, a := range d.st.People {
-		if a == addr && (found == "" || name < found) {
+		if a == addr && (found == "" || name < found) && d.listedPersonNameLocked(addr, name) != "" {
 			found = name
 		}
 	}
@@ -310,9 +329,9 @@ func (d *Daemon) suggestedNameLocked() string {
 // accountLocked is this device's person as the page sees them. Caller holds mu.
 func (d *Daemon) accountLocked() web.Account {
 	if d.st.Person == "" {
-		return web.Account{Suggested: d.suggestedNameLocked()}
+		return web.Account{Suggested: d.suggestedNameLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
 	}
-	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked()}
+	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
 		a.Unread = append(a.Unread, m.Event.ID)
 	}
@@ -438,6 +457,11 @@ func (s pageSource) MarkRead(ctx context.Context, ids []string) error {
 	kept := slices.DeleteFunc(slices.Clone(box), func(m *inMsg) bool { return slices.Contains(ids, m.Event.ID) })
 	if len(kept) == len(box) {
 		return nil
+	}
+	for _, m := range box {
+		if slices.Contains(ids, m.Event.ID) {
+			d.markLocked(bus.PersonSession, m.Event, bus.MarkRead)
+		}
 	}
 	if len(kept) == 0 {
 		delete(d.st.Inbox, bus.PersonSession)

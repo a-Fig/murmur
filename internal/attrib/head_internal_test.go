@@ -2,10 +2,13 @@ package attrib
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -163,5 +166,84 @@ func TestHeadRunsOneGitProcess(t *testing.T) {
 		if n := gitStarts(t, trace); n != 2 {
 			t.Errorf("Head and NewCommits after a call in %s ran %d git processes, want 2", wt, n)
 		}
+	}
+}
+
+// Every worktree's detached HEAD is a tip, read from its HEAD file or by git: for-each-ref lists
+// none, and a call judged in another worktree than the one it started in would otherwise count
+// what only that HEAD reaches as new (#60).
+func TestDetachedHeadsOfEveryWorktreeAreTips(t *testing.T) {
+	dir := t.TempDir()
+	hgit(t, dir, "init", "-q", "-b", "main")
+	hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "root")
+	other := filepath.Join(t.TempDir(), "other")
+	hgit(t, dir, "worktree", "add", "-q", "--detach", other)
+	hgit(t, other, "commit", "-q", "--allow-empty", "-m", "on no ref")
+	linkedOnly := hgit(t, other, "rev-parse", "HEAD")
+	hgit(t, dir, "switch", "-q", "--detach")
+	hgit(t, dir, "commit", "-q", "--allow-empty", "-m", "on no ref either")
+	mainOnly := hgit(t, dir, "rev-parse", "HEAD")
+	third := filepath.Join(t.TempDir(), "third")
+	hgit(t, dir, "worktree", "add", "-q", "-b", "third", third)
+
+	for _, wt := range []string{third, other, dir} {
+		fast := sameHead(t, "worktree "+filepath.Base(wt), wt)
+		if fast.gitDir == "" {
+			t.Errorf("%s: HEAD was read by git", wt)
+		}
+		for _, sha := range []string{linkedOnly, mainOnly} {
+			if !slices.Contains(fast.tips, sha) {
+				t.Errorf("Head in %s: the detached HEAD at %s is not among the tips %v", wt, sha, fast.tips)
+			}
+		}
+	}
+}
+
+// A new worktree's HEAD holds the all-zero ID for a moment under git before 2.44; it is no
+// commit, and as a tip it would make NewCommits's git log fail.
+func TestAddTipsSkipsTheZeroID(t *testing.T) {
+	var ref Ref
+	addTips(&ref, []string{strings.Repeat("0", 40), strings.Repeat("a", 40)})
+	if len(ref.tips) != 1 || ref.tips[0] != strings.Repeat("a", 40) {
+		t.Fatalf("tips = %v, want only the real one", ref.tips)
+	}
+}
+
+// detachedHeadFiles reads its HEAD files several at a time, so give it more entries than readers,
+// on and off branches, and some it can't read, and check it finds exactly the detached ones.
+func TestDetachedHeadFilesReadsEveryEntry(t *testing.T) {
+	common := t.TempDir()
+	write := func(path, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	main := strings.Repeat("a", 40)
+	write(filepath.Join(common, "HEAD"), main+"\n")
+	want := []string{main}
+	for i := range 3*headReaders + 1 {
+		dir := filepath.Join(common, "worktrees", "w"+strconv.Itoa(i))
+		switch i % 4 {
+		case 0:
+			sha := fmt.Sprintf("%040x", i+1)
+			write(filepath.Join(dir, "HEAD"), sha+"\n")
+			want = append(want, sha)
+		case 1:
+			write(filepath.Join(dir, "HEAD"), "ref: refs/heads/b"+strconv.Itoa(i)+"\n")
+		case 2:
+			write(filepath.Join(dir, "gitdir"), "gone\n") // no HEAD file
+		case 3:
+			write(filepath.Join(dir, "HEAD"), "not a head\n")
+		}
+	}
+	got := detachedHeadFiles(common)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("detachedHeadFiles = %v, want %v", got, want)
 	}
 }

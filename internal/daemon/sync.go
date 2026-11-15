@@ -195,6 +195,10 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 				delete(d.st.Junked, ref) // otherwise readGivenUpTags still goes by it
 			}
 			delete(d.backlog, ref)
+			if d.historyOwed == nil {
+				d.historyOwed = map[string]bool{}
+			}
+			d.historyOwed[ref] = true // the page still shows them, once they are here (advanceMesh)
 		}
 	}
 	for ref, sha := range remote {
@@ -299,9 +303,13 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		}
 	}
 	d.lastPollOK = polled
+	d.settleColorLocked()
 	d.kickTeam() // a device to grant the team keys to, or a team ref still empty
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
+		if d.mode == modeSkip {
+			d.kickHistory() // the page still shows what was passed over as history
+		}
 		d.mode = modeNormal
 		d.st.Initialized = true
 		switched = true
@@ -341,8 +349,8 @@ func readFirstContext(ctx context.Context, limit time.Duration) (context.Context
 // presence, then the logs (#71). A message's handoff starts as soon as its log is read, and writes
 // the turn from what this daemon knows of the sender then, so what was fetched with the message
 // about its sender is read first. In the refs' own order, mesh/ before names and presence/, a turn
-// could go out without a name the same sync had brought (docs/VISION.md, "Delivering a message as
-// a turn").
+// could go out without a name the same sync had brought (docs/design/delivery.md, "Who it
+// is from, as the receiver knows it").
 func readOrder(remote map[string]string) []string {
 	rank := func(ref string) int {
 		switch {
@@ -620,14 +628,26 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 		mode = d.mode
 	}
 	hidden, junked := d.st.Junked[ref]
+	// A backlog given up on before it could be fetched is here once the cursor, which went on to
+	// the tip the remote had, is what was fetched or comes before it: the page gets its messages.
+	owed := d.historyOwed[ref]
 	d.mu.Unlock()
 	settled := func() {
 		d.mu.Lock()
 		delete(d.backlog, ref)
 		d.mu.Unlock()
 	}
+	arrived := func() {
+		if owed {
+			d.mu.Lock()
+			delete(d.historyOwed, ref)
+			d.mu.Unlock()
+			d.kickHistory()
+		}
+	}
 	if prev == sha {
 		settled()
+		arrived()
 		return
 	}
 	if ok, err := d.repo.IsCommit(ctx, sha); err != nil {
@@ -692,8 +712,10 @@ func (d *Daemon) advanceMesh(ctx context.Context, ref, sha, listed string) {
 			}
 			d.log.Printf("%s was rewritten; skipping its history rather than replaying it", ref)
 			skipTo()
+			d.kickHistory() // what it holds now is passed over for the sessions, and still shown on the page
 			return
 		}
+		arrived()
 	}
 	// A page at a time, with mu let go between pages, so a long log (a device back after days away)
 	// doesn't hold up the sessions, the hook and the page while it is read. Each page moves the cursor
@@ -771,14 +793,23 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
 		}
-		if tagsOnly && e.Type != bus.Tags {
-			continue
+		if tagsOnly && e.Type != bus.Tags && e.Type != bus.Receipt {
+			continue // a receipt, like a tag, is news however late it is read
 		}
-		if mode != modeSkip {
+		if mode != modeSkip && e.Type != bus.Receipt { // a receipt is bookkeeping, not news for the log
 			d.noteLocked(e.At, e.Line())
 		}
 		if e.Type == bus.Tags {
 			d.applyTagsEventLocked(e)
+		}
+		if (e.Type == bus.SessionStarted || e.Type == bus.SessionStopped) && (mode != modeSkip || !e.At.Before(d.started.Add(-time.Minute))) {
+			d.recordSessionEventLocked(e) // for the page's Recent view; history from before this run isn't
+		}
+		if e.Type == bus.GroupAdd {
+			d.applyGroupAddLocked(e, mode) // unless it is old: the session may have left the group since
+		}
+		if e.Type == bus.Receipt {
+			d.applyReceiptLocked(e) // in any mode: a mark is news to its sender however late it is read
 		}
 		if e.Type == bus.Message {
 			// The name a message carries is shown only if it is its sender's (personSenderLocked),
@@ -900,6 +931,9 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
 						d.applyTagsEventLocked(e)
 					}
+					if ok && e.Type == bus.Receipt {
+						d.applyReceiptLocked(e) // as readEventsLocked does
+					}
 				}
 				d.st.TagsFrom[ref] = commits[len(commits)-1].SHA
 			})
@@ -927,18 +961,19 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 	delete(d.st.TagsFrom, ref)
 	delete(d.st.Junked, ref)
 	d.saveLocked()
+	d.kickHistory() // the messages given up on are here now, and the page still shows them
 	return true
 }
 
 // queueLocked puts a message in the inbox of each session here it is addressed to. That queues it;
-// it is delivered once the agent is told of it, and read once it has it (docs/VISION.md,
-// `What "delivered" and "read" mean`, #325). A session gets only what arrives while it runs, or, if it stops, within StoppedInbox of that, in case it
-// comes back (see recipientsLocked). What arrived while the daemon was down (modeCatchUp)
-// goes only to sessions that were running before and reconnect, and in modeSkip to nobody, except
-// the sessions whose inbox is kept, for what was sent since they stopped (see inTimeLocked); in
-// both, what was sent after a session here started is for it. Everything
-// is held for catchUpWindow after the daemon starts, for sessions still reconnecting (see
-// catchUpLocked). A message forwarded to the session that holds its recipient's name (see
+// it is delivered once the agent is told of it, and read once it has it (docs/design/delivery.md,
+// "Delivered and read", #325). A session gets only what arrives while it runs, or, if it stops,
+// within StoppedInbox of that, in case it comes back (see recipientsLocked). What arrived while the
+// daemon was down (modeCatchUp) goes only to sessions that were running before and reconnect, and
+// in modeSkip to nobody, except the sessions whose inbox is kept, for what was sent since they
+// stopped (see inTimeLocked); in both, what was sent after a session here started is for it.
+// Everything is held for catchUpWindow after the daemon starts, for sessions still reconnecting
+// (see catchUpLocked). A message forwarded to the session that holds its recipient's name (see
 // forwardLocked) is the holder's if it is new enough for either: a backlog read after the holder
 // started still gives it what the recipient's kept inbox would have caught up on. Caller holds mu.
 func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
@@ -956,6 +991,12 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
 			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
 				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, e.To)
+			}
+			continue
+		}
+		if d.mutedHereLocked(id, e) {
+			if mode == modeNormal && !held {
+				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
 			}
 			continue
 		}
@@ -1051,8 +1092,9 @@ func (d *Daemon) sentSinceLocked(e bus.Event, id string, mode syncMode) bool {
 	return !e.At.Before(from.Add(-time.Minute))
 }
 
-// addressedLocked says whether e is for session id on this device: sent to it, to this device,
-// or to everyone, and not by it. A message to a session that no longer holds its name is for the
+// addressedLocked says whether e is for session id on this device: sent to it, to this device, to
+// a group it is in, or to everyone, and not by it. Who is in a group is decided here, by the tags
+// the session has when the message is read: its own device is the one that knows them (#184). A message to a session that no longer holds its name is for the
 // session that does instead (see forwardLocked). Caller holds mu.
 func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	addr := bus.Addr(d.device, id)
@@ -1061,6 +1103,9 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	}
 	if id == bus.PersonSession {
 		return e.To == addr // agents' broadcasts show in their group chats, not as a person's unread
+	}
+	if bus.IsGroup(e.To) {
+		return d.hasTagLocked(id, e.To)
 	}
 	if e.To == addr {
 		return d.forwardLocked(e.To) == ""
@@ -1079,18 +1124,20 @@ func (d *Daemon) addInboxLocked(id string, e bus.Event) {
 		box = box[len(box)-maxInbox:]
 	}
 	d.st.Inbox[id] = box
+	d.markLocked(id, e, bus.MarkQueued)
 	d.kickPush()
 }
 
 // catchUpLocked gives a session that reconnects after a restart what arrived for it while the
-// daemon was down. Caller holds mu.
+// daemon was down, less what a session it has muted sent, as queueLocked leaves that out (#482).
+// Caller holds mu.
 func (d *Daemon) catchUpLocked(id string) {
 	if time.Since(d.started) > catchUpWindow || d.caughtUp[id] {
 		return
 	}
 	d.caughtUp[id] = true
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) {
+		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
 			d.addInboxLocked(id, e)
 		}
 	}
@@ -1148,6 +1195,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
+		pres.Groups, pres.Receipts = false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1178,6 +1226,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, sealed: sealed, locked: locked}
+	if !locked {
+		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
+	}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
 	for _, s := range pres.Sessions {
@@ -1491,7 +1542,7 @@ func (d *Daemon) presenceLoop(ctx context.Context) {
 
 // jittered is d give or take up to a fifth, at random. Each heartbeat waits that long, so devices
 // whose daemons started together drift apart rather than push at the same moment every beat, which
-// GitHub refuses now and then (see "Git is the transport" in docs/VISION.md).
+// GitHub refuses now and then (see "Pushes" in docs/design/transport.md).
 func jittered(d time.Duration) time.Duration {
 	return d - d/5 + rand.N(2*(d/5)+1)
 }
@@ -1517,8 +1568,10 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, At: d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}}
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
+		At:       d.nextPresenceAtLocked(),
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true}
+	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
 	// reach the live one, not the one about to stop.
@@ -1533,12 +1586,14 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			name = ""
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
-			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s)}
+			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
+			Muted: d.mutesOfLocked(s.id)}
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
 		}
 		pres.Sessions = append(pres.Sessions, info)
 	}
+	d.noteSessionsLocked(d.device, pres.Sessions, time.Now())
 	room := bus.MaxSessions
 	if d.st.Person != "" {
 		room--

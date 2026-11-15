@@ -18,7 +18,7 @@ import (
 // key and wraps its private half for devices; a grant record wraps every team private key there has
 // been for one device. A new epoch (a rotation) is how a collaborator who has lost push access stops
 // reading what is new: the epoch is granted only to devices that publish a presence after it, which
-// takes push access. docs/VISION.md, "The bus is encrypted", has the reasons and the costs.
+// takes push access. docs/design/encryption.md has the reasons and the costs.
 
 // Team record types.
 const (

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
@@ -99,15 +100,25 @@ func TestThePageSwitchesToAnotherClone(t *testing.T) {
 		t.Fatalf("state: %d, repo %q; want the remote's name", code, st.Repo)
 	}
 
-	// a's daemon put a on the record as it started, named; b is there from its join, not running.
-	var list struct {
+	// a's daemon puts a on the record as it starts, named; b is there from its join, not running.
+	// The daemon answers its page before that write is done, so the list is read until a is on it
+	// (#477: a slow runner saw only b).
+	type repoList struct {
 		Repos []struct {
 			ID, Name, Path   string
 			Running, Current bool
 		}
 	}
-	if code := call(t, "GET", base+"/api/repos", tokenA, "", &list); code != 200 || len(list.Repos) != 2 {
-		t.Fatalf("repos: %d, %+v", code, list.Repos)
+	var list repoList
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		list = repoList{}
+		code := call(t, "GET", base+"/api/repos", tokenA, "", &list)
+		if code == 200 && len(list.Repos) == 2 {
+			break
+		}
+		if code != 200 || time.Now().After(deadline) {
+			t.Fatalf("repos: %d, %+v", code, list.Repos)
+		}
 	}
 	idB := clones.ID(gitB)
 	for _, r := range list.Repos {

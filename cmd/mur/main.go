@@ -52,13 +52,16 @@ Setup:
                                 the agent's session joins too, even one that started outside the repo;
                                 --leave undoes it
   mur uninstall [--leave]       remove Murmur from this machine for you: its server, hooks and skills from
-                                every agent, its daemons, its record of your clones; refuses while a repo
-                                here is joined, unless --leave leaves each first
+                                every agent, its daemons, its folder in your config directory; refuses
+                                while a repo here is joined, unless --leave leaves each first
 
 For humans:
   mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message
                                 agents; --no-open only prints its address (starts the clone's daemon
                                 if it isn't running)
+  mur nickname [NAME|--clear]   call this clone's device NAME, such as your own name: teammates see it
+                                beside the device's ID; --clear takes it off; alone, says what the
+                                device is called
   mur stop                      stop this clone's daemon
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.
@@ -67,8 +70,9 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, or pi's through
-                                Murmur's extension (reads the payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, or pi's and
+                                opencode's through Murmur's extension and plugin (reads the
+                                payload on stdin)
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
@@ -109,6 +113,8 @@ func main() {
 		err = runInit(ctx, args, os.Stdout)
 	case "join":
 		err = runJoin(ctx, args, os.Stdout)
+	case "nickname":
+		err = runNickname(ctx, args, os.Stdout)
 	case "stop":
 		err = runStop(ctx, args, os.Stdout)
 	case "rotate":
@@ -549,6 +555,35 @@ func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	report, err := join.Uninstall(ctx, env, *leave)
 	fmt.Fprint(out, report.String())
 	return err
+}
+
+// runNickname gives this clone's device a nickname (#190), takes it off, or says what it has.
+func runNickname(ctx context.Context, args []string, out io.Writer) error {
+	fs, dir := flags("nickname")
+	clear := fs.Bool("clear", false, "take the device's nickname off")
+	fs.Parse(args)
+	if fs.NArg() > 1 || *clear && fs.NArg() > 0 {
+		return fmt.Errorf("nickname takes one name, or --clear")
+	}
+	gitDir, err := client.FindGitDir(ctx, *dir)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	c, err := client.Connect(ctx, gitDir, true)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpNick, Nick: fs.Arg(0), Clear: *clear})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	fmt.Fprintln(out, resp.Note)
+	return nil
 }
 
 func runStop(ctx context.Context, args []string, out io.Writer) error {

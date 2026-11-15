@@ -26,8 +26,8 @@ func (d *device) seesDevices(n int) bool {
 
 // seesSession says whether d's who lists the session at addr on a device that is fresh, which is
 // what a send needs to count it as known. A device stays listed when it goes stale, and the tests'
-// load can hold its heartbeats back past their 3 s stale limit: a send then says its sessions
-// aren't in any device's presence (#387).
+// load can hold its heartbeats back past their stale limit (testStale): a send then says its
+// sessions aren't in any device's presence (#387).
 func (d *device) seesSession(addr string) bool {
 	_, listed, fresh := d.whoShows(addr)
 	return listed && fresh
@@ -82,7 +82,7 @@ func TestRestartDoesNotReplayToNewSessions(t *testing.T) {
 	eventually(t, "presence", func() bool { return a.seesDevices(2) && b.seesDevices(2) })
 	// Both hold the team key before b stops. A device still waiting for its grant reads what it
 	// missed late, once granted, and that can reach a session started within the minute after it was
-	// sent (docs/VISION.md, "The bus is encrypted"): another case than a restart's.
+	// sent (docs/design/encryption.md): another case than a restart's.
 	eventually(t, "both to hold the team key", func() bool {
 		ids := teamIDs(t, remote)
 		return len(ids) == 1 && ringOf(t, a)[ids[0]] != nil && ringOf(t, b)[ids[0]] != nil
@@ -156,7 +156,7 @@ func (d *device) offline(remote string, off bool) {
 // gone: it judges staleness only up to its own last successful sync.
 func TestOfflineReaderCallsNobodyStale(t *testing.T) {
 	// Not parallel: b must stay fresh on a for seconds, and other tests' load can hold one of its
-	// heartbeats back for the 3 seconds that make it stale.
+	// heartbeats back for the stale limit (testStale) that makes it stale.
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bdev := b.self()
@@ -205,7 +205,7 @@ func TestRestartCatchesUpReconnectingSessions(t *testing.T) {
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "presence", func() bool { return a.seesSession(bob) })
 	// b holds the team key before it goes, as any device that has been up a few seconds does, so
-	// what it reads on its return isn't held back for a grant (docs/VISION.md, "The bus is encrypted").
+	// what it reads on its return isn't held back for a grant (docs/design/encryption.md).
 	eventually(t, "b holds the team key", func() bool {
 		ids := teamIDs(t, remote)
 		return len(ids) == 1 && ringOf(t, b)[ids[0]] != nil
@@ -307,11 +307,11 @@ func TestFirstSyncFailedStillQueues(t *testing.T) {
 	// Pushes go out, so presence is seen, but listing and fetching fail.
 	git(t, dir, "config", "remote.origin.pushurl", remote)
 	git(t, dir, "config", "remote.origin.url", filepath.Join(filepath.Dir(remote), "nowhere.git"))
-	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	b := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
 	b.start()
 	bob, _ := b.session("bbbbbb", "")
 	// a sees b's device, not bob: b, never having read the team ref, encrypts its presence for
-	// itself alone (docs/VISION.md, "The bus is encrypted").
+	// itself alone (docs/design/encryption.md).
 	eventually(t, "a sees b", func() bool { return a.seesDevices(2) })
 
 	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast"})

@@ -11,6 +11,7 @@ import statsHtml from './stats.html';
 import archiveHtml from './stats-archive.html';
 import { archiveNumbers, archiveReport } from './archive.js';
 import { repoNumbers, repoReport } from './repos.js';
+import { runCensus } from './census-run.js';
 import { prefersMarkdown } from './accept.js';
 
 const RELEASES = 'https://api.github.com/repos/a-Fig/murmur/releases/latest';
@@ -34,9 +35,18 @@ const REPO = /^github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,1
 // POST /v1/repo: a public repo that uses Murmur, sent once per repo by internal/publicrepo. Its
 // address is the whole request, and all that is kept, with the day it first came. A repo GitHub
 // doesn't show to someone signed out is refused, so nothing private or made up is stored.
+//
+// Only a JSON body is taken (#299). A web page can make its visitors' browsers send a text/plain
+// POST anywhere without asking, but application/json needs a CORS preflight, which this Worker
+// doesn't answer, so a page can't have browsers spend the GitHub calls below. mur has sent this
+// header since its first /v1/repo (internal/publicrepo).
 export async function reportRepo(request, env) {
   if (request.method !== 'POST') {
     return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
+  }
+  const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (type !== 'application/json') {
+    return new Response('Only application/json.\n', { status: 415, headers: { Accept: 'application/json' } });
   }
   const text = await readUpTo(request, 512);
   if (text === null) return new Response('Too long.\n', { status: 413 });
@@ -48,6 +58,18 @@ export async function reportRepo(request, env) {
   }
   const m = typeof r?.repo === 'string' ? REPO.exec(r.repo) : null;
   if (!m || m[2] === '.' || m[2] === '..') return new Response('Not a repo.\n', { status: 400 });
+  const key = r.repo.toLowerCase();
+  // A repo already stored was confirmed public when it came, so it is answered from D1, without
+  // asking GitHub again or writing the row again (#299). Each repo's clones each send it once, so
+  // this is most POSTs, and they no longer spend GITHUB_TOKEN's rate limit. If D1 can't say, the
+  // repo is checked as if new.
+  try {
+    if (await env.DB.prepare('SELECT 1 FROM repos WHERE repo = ?1').bind(key).first()) {
+      return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+  } catch (err) {
+    console.log(`looking up a repo: ${err}`);
+  }
   // Stored only once GitHub confirms it public. When GitHub can't say, nothing is stored and the
   // daemon, told to try again, sends it again at its next look.
   const shown = await isPublic(m[1], m[2], env);
@@ -59,7 +81,7 @@ export async function reportRepo(request, env) {
     await env.DB.prepare(
       `INSERT INTO repos (repo, name, first) VALUES (?1, ?2, ?3)
        ON CONFLICT (repo) DO UPDATE SET name = excluded.name`,
-    ).bind(r.repo.toLowerCase(), r.repo, day).run();
+    ).bind(key, r.repo, day).run();
   } catch (err) {
     console.log(`storing a repo: ${err}`);
     return new Response('Not stored; try again later.\n', { status: 503 });
@@ -165,6 +187,7 @@ async function latestRelease(ctx) {
 //
 // - /stats, /stats/report.md, /stats/data?days=N: the public repos that use Murmur, and what the
 //   census reads from them (#259, src/repos.js).
+// - POST /stats/run-census: start the census now, rate-limited (src/census-run.js, #557).
 // - /stats/archive, /stats/archive/report.md, /stats/archive/data?days=N: the check-ins of earlier
 //   versions, which are no longer stored (src/archive.js).
 //
@@ -195,9 +218,14 @@ export async function stats(request, env) {
   if (key === null || !(await anyOf(key, keys))) return notFound();
 
   const path = url.pathname.replace(/\/$/, '');
-  const base = path.replace(/\/(report\.md|data)$/, '');
+  const base = path.replace(/\/(report\.md|data|run-census)$/, '');
   const view = VIEWS[base];
   if (!view) return notFound();
+  // Only /stats can start a census: the archive is history, and its numbers no longer change.
+  if (path.endsWith('/run-census')) {
+    if (path !== '/stats/run-census') return notFound();
+    return runCensus(request, env, { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
+  }
   const page = path === base;
   if (page && given !== null && request.headers.get('Sec-Fetch-Mode') === 'navigate') {
     return new Response(null, {

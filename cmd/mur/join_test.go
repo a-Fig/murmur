@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -106,7 +107,7 @@ func TestInitJoinAndLeave(t *testing.T) {
 
 	// The skills, for each agent that reads them, beside its config.
 	for _, dir := range []string{filepath.Dir(b.claudeSettings()), filepath.Dir(b.codexConfig())} {
-		for _, name := range []string{"murmur", "murmur-pro"} {
+		for _, name := range []string{"murmur", "murmur-pro", "murmur-manager"} {
 			if !strings.Contains(readFile(t, filepath.Join(dir, "skills", name, "SKILL.md")), "name: "+name) {
 				t.Errorf("no %s skill in %s", name, dir)
 			}
@@ -125,14 +126,17 @@ func TestInitJoinAndLeave(t *testing.T) {
 		}
 	}
 
-	// The hook is for this user in this repo, and not committed.
-	hook := readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
+	// The hook is for this user, in Claude Code's own settings, and nothing goes in the repo (#422).
+	hook := readFile(t, b.claudeSettings())
 	missing := false
-	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit"} {
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop"} {
 		missing = missing || !strings.Contains(hook, `"`+event+`"`)
 	}
 	if missing || !strings.Contains(hook, ` hook`) {
-		t.Errorf("settings.local.json:\n%s", hook)
+		t.Errorf("Claude Code's settings.json:\n%s", hook)
+	}
+	if exists(filepath.Join(b.clone, ".claude")) {
+		t.Error("join wrote in the repo's .claude")
 	}
 	status := git(t, b.clone, "status", "--porcelain")
 	if strings.Contains(status, ".claude") || strings.Contains(status, ".mcp.json") {
@@ -156,8 +160,8 @@ func TestInitJoinAndLeave(t *testing.T) {
 		t.Errorf("a repeat join in Claude Code should say the tools are coming:\n%s", out)
 	}
 
-	// --leave takes this repo's part out: the consent, the hook, the daemon. The per-user
-	// registration stays, as other repos may have joined.
+	// --leave takes this repo's part out: the consent and the daemon. The per-user registration
+	// and hook stay, as other repos may have joined.
 	out = b.mustRun(b.clone, "join", "--leave")
 	if !strings.Contains(out, "Removed the record") {
 		t.Errorf("leave's output:\n%s", out)
@@ -165,8 +169,8 @@ func TestInitJoinAndLeave(t *testing.T) {
 	if exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) || exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Error("consent or the daemon survived --leave")
 	}
-	if exists(filepath.Join(b.clone, ".claude", "settings.local.json")) || exists(filepath.Join(b.clone, ".claude")) {
-		t.Error("the hook survived --leave")
+	if !strings.Contains(readFile(t, b.claudeSettings()), ` hook`) {
+		t.Error("--leave took the hook out for every repo")
 	}
 	if !strings.Contains(out, filepath.Join(filepath.Dir(b.claudeSettings()), "skills", "murmur-pro")) {
 		t.Errorf("leave should say how to delete the skills:\n%s", out)
@@ -186,7 +190,7 @@ func TestInitJoinAndLeave(t *testing.T) {
 
 	// And back in.
 	b.mustRun(b.clone, "join")
-	if !exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) || !exists(filepath.Join(b.clone, ".claude", "settings.local.json")) {
+	if !exists(filepath.Join(b.clone, ".git", "murmur", "joined.json")) {
 		t.Error("joining again after leaving didn't join")
 	}
 }
@@ -219,9 +223,11 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	writeFile(t, b.claudeSettings(), "{\n  \"model\": \"x\",\n  \"permissions\": {\"allow\": [\"Bash(ls)\"]}\n}\n")
 	codex := "# my codex\nmodel = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"o\"  # mine\n"
 	writeFile(t, b.codexConfig(), codex)
-	writeFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(git status)\"]}\n}\n")
+	// The repo's own settings file, with the hook a join before #422 put there.
+	writeFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"), "{\n  \"permissions\": {\"allow\": [\"Bash(git status)\"]},\n"+
+		"  \"hooks\": {\"PostToolUse\": [{\"matcher\": \"*\", \"hooks\": [{\"type\": \"command\", \"command\": \"\\\"/old/bin/mur\\\" hook\"}]}]}\n}\n")
 
-	b.mustRun(b.clone, "join")
+	out := b.mustRun(b.clone, "join")
 
 	cfg := readFile(t, b.claudeJSON())
 	if !(strings.Index(cfg, "numStartups") < strings.Index(cfg, "mcpServers") && strings.Index(cfg, `"other"`) < strings.Index(cfg, `"murmur"`) && strings.Index(cfg, `"murmur"`) < strings.Index(cfg, "theme")) {
@@ -233,21 +239,49 @@ func TestJoinKeepsTheUsersConfig(t *testing.T) {
 	if got := readFile(t, b.codexConfig()); !strings.HasPrefix(got, codex) {
 		t.Errorf("config.toml no longer starts with what the user wrote:\n%s", got)
 	}
+	if settings := readFile(t, b.claudeSettings()); !strings.HasPrefix(settings, "{\n  \"model\": \"x\",") || !strings.Contains(settings, "PostToolUse") {
+		t.Errorf("settings.json:\n%s", settings)
+	}
+	// The older hook comes out of the repo's file, which keeps what else it had.
 	local := readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
-	if !strings.Contains(local, "Bash(git status)") || !strings.Contains(local, "PostToolUse") {
-		t.Errorf("settings.local.json:\n%s", local)
+	if !strings.Contains(local, "Bash(git status)") || strings.Contains(local, "hook") || !strings.Contains(out, "Removed the hook an older") {
+		t.Errorf("settings.local.json:\n%s\njoin's output:\n%s", local, out)
 	}
 	b.mustRun(b.clone, "join", "--leave")
-	local = readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json"))
-	if !strings.Contains(local, "Bash(git status)") || strings.Contains(local, "hook") {
-		t.Errorf("settings.local.json after --leave:\n%s", local)
+	if got := readFile(t, filepath.Join(b.clone, ".claude", "settings.local.json")); got != local {
+		t.Errorf("settings.local.json after --leave:\n%s", got)
 	}
 }
 
-// A repo that commits .claude/settings.local.json by accident gets no hook there, but the join
-// still succeeds: running it again couldn't change that, so it is a note, not a problem, and the
-// advice is what any join gives.
-func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
+// A join that can't write the hook in Claude Code's settings leaves the older one in the clone's
+// working tree, which is then the only hook the user's sessions have (Sol's review of #426). The
+// next join, with the settings mended, moves it.
+func TestJoinKeepsTheOlderHookWhereTheNewOneFailed(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	local := filepath.Join(b.clone, ".claude", "settings.local.json")
+	writeFile(t, local, "{\n  \"hooks\": {\"PostToolUse\": [{\"matcher\": \"*\", \"hooks\": [{\"type\": \"command\", \"command\": \"\\\"/old/bin/mur\\\" hook\"}]}]}\n}\n")
+	writeFile(t, b.claudeSettings(), "{\"hooks\": 1}\n") // not an object: join won't replace it
+
+	out, code := b.run(b.clone, "join")
+	if code == 0 || !strings.Contains(out, "Problems:") || !strings.Contains(out, `"hooks" isn't an object`) {
+		t.Errorf("join over settings it can't edit: exit %d\n%s", code, out)
+	}
+	if got := readFile(t, local); !strings.Contains(got, " hook") {
+		t.Errorf("the older hook went though the new one isn't in:\n%s", got)
+	}
+
+	writeFile(t, b.claudeSettings(), "{}\n")
+	out = b.mustRun(b.clone, "join")
+	if exists(local) || !strings.Contains(out, "Removed the hook an older") || !strings.Contains(readFile(t, b.claudeSettings()), " hook") {
+		t.Errorf("the next join didn't move the hook:\n%s", out)
+	}
+	b.mustRun(b.clone, "join", "--leave")
+}
+
+// A repo that commits .claude/settings.local.json is nothing to a join, which writes no hook in
+// the repo (#422): it says nothing about the file and leaves it as it is.
+func TestJoinLeavesAHookFileTheRepoTracksAlone(t *testing.T) {
 	b := newBox(t)
 	b.mustRun(b.clone, "init")
 	local := filepath.Join(b.clone, ".claude", "settings.local.json")
@@ -257,11 +291,8 @@ func TestJoinWhereTheRepoTracksTheHookFileStillSucceeds(t *testing.T) {
 	git(t, b.clone, "commit", "-q", "-m", "settings")
 
 	out := b.mustRun(b.clone, "join")
-	if !strings.Contains(out, "Not done:") || !strings.Contains(out, "git tracks") || strings.Contains(out, "Problems:") || strings.Contains(out, "retries") {
+	if strings.Contains(out, "Not done:") || strings.Contains(out, "Problems:") {
 		t.Errorf("join's output:\n%s", out)
-	}
-	if !strings.Contains(out, "copy theirs aside") || !strings.Contains(out, "join --leave") {
-		t.Errorf("join's output lacks the warning about untracking, or the usual advice:\n%s", out)
 	}
 	if got := readFile(t, local); got != settings {
 		t.Errorf("join edited the tracked hook file:\n%s", got)
@@ -511,4 +542,20 @@ func TestJoinBringsInASessionStartedOutside(t *testing.T) {
 	if out := b.mustRun(b.clone, "join"); strings.Contains(out, "Moved this session") {
 		t.Errorf("a second join moved the session again:\n%s", out)
 	}
+
+	// Claude Code runs the hook where the session started, outside the repo. It finds the clone the
+	// session joined (#422): that clone's daemon hears the hook's conversation ID, which is news to
+	// it, and moves the session to it.
+	payload, _ := json.Marshal(map[string]string{"session_id": "claude-outside", "hook_event_name": "UserPromptSubmit", "cwd": b.root})
+	cmd := exec.Command(b.mur, "hook")
+	cmd.Dir = b.root
+	// The session's server is this test's child, so this test is its Claude Code.
+	cmd.Env = append(b.env(), "CLAUDE_PID="+strconv.Itoa(os.Getpid()))
+	cmd.Stdin = bytes.NewReader(payload)
+	if out, err := cmd.CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("mur hook: %v\n%s", err, out)
+	}
+	eventually(t, "the joined clone's daemon to hear the hook", func() bool {
+		return strings.Contains(readFile(t, filepath.Join(b.clone, ".git", "murmur", "daemon.log")), "followed Claude Code to another conversation")
+	})
 }

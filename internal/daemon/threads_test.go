@@ -48,7 +48,7 @@ func newT3Device(t *testing.T, remote string, threads *fakeThreads) *device {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond,
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond,
 		threadState: threads.read}
 	d.start()
 	return d
@@ -57,6 +57,7 @@ func newT3Device(t *testing.T, remote string, threads *fakeThreads) *device {
 // Under the default, within 3 minutes, a thread idle longer is not woken: the message waits as a
 // notice. Once the thread is at work again, it goes in as the next turn.
 func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{"thread-bob": {LastRun: time.Now().Add(-10 * time.Minute)}}}
@@ -83,6 +84,7 @@ func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 // A settled thread is offline: it leaves the other device's who, a message to it is refused, and
 // it is back once unsettled.
 func TestSettledThreadIsOfflineAndRefusesMessages(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{"thread-bob": {LastRun: time.Now()}}}
@@ -120,6 +122,7 @@ func TestSettledThreadIsOfflineAndRefusesMessages(t *testing.T) {
 // A delegate is off the mesh (#188): another device stops listing it once its thread is read, a
 // message to it is refused with its parent named, and its own sends are refused.
 func TestDelegateIsReachedThroughItsParent(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	threads := &fakeThreads{st: map[string]t3db.State{"thread-boss": {LastRun: time.Now()}}}

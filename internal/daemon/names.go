@@ -18,7 +18,7 @@ import (
 // records one assignment or reservation, and a name is this device's only if the leased push of
 // that commit lands. A device keeps a few names set aside that way (the pool), so a new session
 // takes one at once, without the remote, and the registry is told which session took it after.
-// docs/VISION.md has the reasons.
+// docs/design/session-names.md has the reasons.
 //
 // What a daemon holds, in state.json:
 //   - Used: every name it has ever seen, from the registry's history or another device's

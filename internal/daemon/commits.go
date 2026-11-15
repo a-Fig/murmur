@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/attrib"
@@ -14,7 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
-// Which commits are a session's, and when it was last active (#21). docs/VISION.md has the
+// Which commits are a session's, and when it was last active (#21). docs/design/presence.md has the
 // reasons.
 //
 // Git doesn't record which session made a commit, so the daemon watches for them: the Claude Code
@@ -209,6 +211,19 @@ func (d *Daemon) toolEnd(ctx context.Context, req proto.Request) proto.Response 
 			d.mu.Unlock()
 		}()
 		defer snapped()
+		// Runs first. A panic in judging a call loses only that call's credit, so it is logged
+		// and the daemon carries on; judgeEnd unlocks mu on its way out, so the deferred calls
+		// above, which take mu, don't wait on it forever (#467). Test daemons log to nowhere, so
+		// in a test binary the panic goes on, after the deferred calls, and fails the run with its
+		// message instead of showing only as a commit nobody was credited with.
+		defer func() {
+			if p := recover(); p != nil {
+				if testing.Testing() && !d.survivePanics {
+					panic(p)
+				}
+				d.judgePanicked(p)
+			}
+		}()
 		d.judgeEnd(ctx, b, moved, ended, sessions, snapped)
 	}()
 	return proto.Response{OK: true}
@@ -232,8 +247,8 @@ func (d *Daemon) settleEnds() {
 // judgeEnd snapshots the worktree a call started in, calls snapped, and credits the sessions with
 // the commits made since its start, as of when the call ended. A call that ended with the hook in another worktree of the
 // clone, moved, is judged there too, against the same start: the start's tips are the whole
-// clone's, so they keep that worktree's history out as well as this one's, but for what only a
-// detached HEAD there holds (#60).
+// clone's, every worktree's detached HEAD among them, so they keep that worktree's history out as
+// well as this one's (#60).
 func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, ended time.Time, sessions []*session, snapped func()) {
 	ctx, cancel := context.WithTimeout(ctx, d.snapshotLimit())
 	defer cancel()
@@ -260,10 +275,13 @@ func (d *Daemon) judgeEnd(ctx context.Context, b *bracket, moved string, ended t
 	if !ok || len(commits) == 0 {
 		return
 	}
-	d.mu.Lock()
-	published := d.creditLocked(sessions, commits, ended)
-	d.saveLocked()
-	d.mu.Unlock()
+	published := func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock() // deferred, so a panic doesn't leave mu held
+		published := d.creditLocked(sessions, commits, ended)
+		d.saveLocked()
+		return published
+	}()
 	if published {
 		d.kickPresence()
 	}
@@ -292,6 +310,20 @@ func sameWorktree(a, b string) bool {
 	return okA && okB && filepath.Clean(ga) == filepath.Clean(gb)
 }
 
+// judgePanicked logs a panic in judging a call's end, with its stack, at most once a minute: a bug
+// that panics on every call, like #451's nil map, would otherwise log a stack per tool call.
+func (d *Daemon) judgePanicked(p any) {
+	d.mu.Lock()
+	quiet := time.Since(d.panicLogged) < time.Minute
+	if !quiet {
+		d.panicLogged = time.Now()
+	}
+	d.mu.Unlock()
+	if !quiet {
+		d.log.Printf("panic while judging the end of a tool call (its commits are not credited): %v\n%s", p, debug.Stack())
+	}
+}
+
 // snapshotFailed logs a snapshot that couldn't be taken, at most once a minute: it would otherwise
 // fill the log with a line per tool call, for a worktree that went away or a repository git can't
 // read.
@@ -316,8 +348,10 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 	for _, id := range d.creditedLocked(sessions) {
 		before := d.committedLocked(id)
 		recs := d.st.Commits[id]
+		var fresh []attrib.Commit // those not credited to it before, which the page's Recent view shows
 		for _, c := range commits {
 			if !slices.ContainsFunc(recs, func(r commitRec) bool { return r.SHA == c.SHA }) {
+				fresh = append(fresh, c)
 				i := len(recs)
 				for i > 0 && recs[i-1].At.After(at) {
 					i--
@@ -329,6 +363,7 @@ func (d *Daemon) creditLocked(sessions []*session, commits []attrib.Commit, at t
 			recs = slices.Clone(recs[len(recs)-maxCommits:])
 		}
 		d.st.Commits[id] = recs
+		d.recordCommitsLocked(id, fresh, at)
 		if !slices.Equal(before, d.committedLocked(id)) {
 			branchesChanged = true
 		}

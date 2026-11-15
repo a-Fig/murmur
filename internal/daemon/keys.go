@@ -23,8 +23,8 @@ import (
 // (team.go), with nothing for anyone to run, approve or copy. Each device makes its own keys at
 // start, publishes the public halves in its sealed presence, and pins its teammates' keys the first
 // time it reads them. Push access is the key directory: only collaborators can write refs/murmur/*,
-// so only they can publish a key, and only they are granted the team key. docs/VISION.md, "The bus
-// is encrypted", has the reasons and what it costs.
+// so only they can publish a key, and only they are granted the team key. docs/design/encryption.md
+// has the reasons and what it costs.
 
 // keyPin is what this device knows of a device's keys: the signing key it pinned on first sight,
 // the box key that device's latest sealed presence carried, the latest time a sealed presence of it
@@ -246,7 +246,9 @@ func short(sha string) string {
 // errOldDevice says a device can't read what this one writes.
 func errOldDevice(dev string) error {
 	return fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
-		"It can once it is updated: Murmur updates itself within the hour, unless updates are turned off there", dev)
+		"It can once it runs Murmur 0.3 or later. Versions after 0.2.3 check for a newer release on their channel every hour, "+
+		"unless updates are turned off there; 0.2.3 and older don't, so that teammate runs Murmur's installer again "+
+		"(https://murmur.afig.dev)", dev)
 }
 
 // encryptEventLocked returns e as this device writes it: encrypted for the current team key
@@ -256,7 +258,7 @@ func errOldDevice(dev string) error {
 // on a Murmur from before encryption, which could never read it, is refused: nothing goes out in
 // the clear. Caller holds mu.
 func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
-	if e.Type == bus.Message && e.To != "" && e.To != "*" {
+	if e.Type == bus.Message && e.To != "" && e.To != "*" && !bus.IsGroup(e.To) {
 		dev, _ := bus.SplitAddr(e.To)
 		if pin := d.st.Pins[dev]; dev != d.device && (pin == nil || pin.Box == "") {
 			if p := d.peers[dev]; p != nil {

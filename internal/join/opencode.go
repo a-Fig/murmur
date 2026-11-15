@@ -149,8 +149,9 @@ func openCodeFile(dir string) (path, other string) {
 }
 
 // registerOpenCodeAt puts Murmur's server in OpenCode's config in h, in the shape its OpenCode
-// loads, and allows its tools. OpenCode isn't touched where neither its command nor the directory
-// is there.
+// loads, and allows its tools; for OpenCode 2 it also writes Murmur's plugin there, which runs its
+// hook (opencodeplugin.go). OpenCode isn't touched where neither its command nor the directory is
+// there.
 func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string, fresh bool, err error) {
 	if h.Dir == "" {
 		return nil, false, nil
@@ -159,6 +160,27 @@ func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string,
 		return nil, false, nil
 	}
 	shape := e.openCodeShapeFor(ctx, h)
+	did, fresh, err = e.registerOpenCodeConfigAt(h, shape)
+	if err != nil {
+		return did, fresh, err
+	}
+	if !shape.v2() {
+		// OpenCode 1 loads plugins of another shape, and gets none: one join wrote for an OpenCode 2
+		// that was here before goes.
+		if gone, _, _ := removeOpenCodePlugin(h.Dir); gone {
+			did = append(did, h.Label+": removed "+brand.Product+"'s plugin, which is for OpenCode 2 ("+openCodePluginPath(h.Dir)+")")
+		}
+		return did, fresh, nil
+	}
+	wrote, err := writeOpenCodePlugin(h.Dir, e.Exe)
+	if wrote {
+		did = append(did, h.Label+": added "+brand.Product+"'s plugin, which tells a session of its messages while it works ("+openCodePluginPath(h.Dir)+")")
+	}
+	return did, fresh || wrote, err
+}
+
+// registerOpenCodeConfigAt is registerOpenCodeAt's edit of OpenCode's config files, in shape.
+func (e Env) registerOpenCodeConfigAt(h agentHome, shape openCodeShape) (did []string, fresh bool, err error) {
 	entry := shape.entry(e.Exe)
 	path, other := openCodeFile(h.Dir)
 	text, err := readOpenCode(path)
@@ -404,6 +426,9 @@ func openCodeRemoval(_ Env, h agentHome) string {
 			what = append(what, "\""+openCodeV1Rule[1]+"\" from permission")
 		}
 		steps = append(steps, "delete "+strings.Join(what, ", ")+" in "+path)
+	}
+	if path := openCodePluginPath(h.Dir); exists(path) {
+		steps = append(steps, "delete "+path)
 	}
 	return strings.Join(steps, "; ")
 }

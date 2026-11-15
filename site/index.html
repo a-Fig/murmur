@@ -15,7 +15,7 @@
 <meta property="og:image" content="https://murmur.afig.dev/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="735">
-<meta property="og:image:alt" content="Two laptops: quiet-otter asks brave-heron whether it is changing the auth middleware, and the answer comes back through refs/murmur/* on GitHub in 15 seconds.">
+<meta property="og:image:alt" content="The Murmur logo behind reeded glass on blue, over the words: Intra-repo agent communication. Your agents work better as a team.">
 <meta name="twitter:card" content="summary_large_image">
 <!-- Who and what this is, for search engines and agents that read schema.org. The keywords are
      phrases the page itself uses. -->
@@ -247,6 +247,8 @@
   .route-in { max-width: 960px; margin: 0 auto; }
   #how .route h2, #setup h2 { font-size: clamp(30px, 3.2vw, 42px); font-weight: 600; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); }
   #how .route h2 { margin-bottom: 36px; }
+  /* What Murmur is, on a phone, where it is not in the hero (#488). */
+  .how-lead { display: none; }
   .route figure { margin: 0; }
   .route .fig-panel { background: var(--cream-2); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 8px; }
   .route svg { display: block; width: 100%; height: auto; }
@@ -289,7 +291,8 @@
   .route svg .lk-mute-t { fill: var(--ink-mute); }
   @media (max-width: 759px) {
     .route { padding: 56px 12px 48px; }
-    #how .route h2 { margin: 0 8px 24px; }
+    #how .route h2 { margin: 0 8px 12px; }
+    .how-lead { display: block; margin: 0 8px 24px; font-size: 17px; line-height: 1.5; text-wrap: pretty; color: var(--ink-soft); }
     .route .fig-panel { padding: 4px; }
     .route .wide { display: none; }
     .route .tall { display: block; max-width: 440px; margin: 0 auto; }
@@ -434,10 +437,6 @@
     background: linear-gradient(180deg, #2E64FF 0%, #2257F7 100%); }
   .st .st-behind { position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: url(#st-reeds); }
   .st .st-light { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .st .st-mark { position: absolute; left: 0; right: 0; top: var(--mark-top, 45%); transform: translateY(-50%);
-    font: 700 min(24vw, 50vh)/.8 Inter, system-ui, sans-serif; letter-spacing: -.06em; text-indent: -.06em;
-    white-space: nowrap; color: rgba(255, 251, 234, .88); filter: blur(2.5px); }
-  .st .st-mark span { display: inline-block; }
   /* The glass: reed faces and grain in soft light, then the reed faces again, plain. */
   .st .st-glass { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--grain), var(--flutes);
     background-size: 180px 180px, auto; mix-blend-mode: soft-light; opacity: .75; }
@@ -459,7 +458,6 @@
   /* Overlap: the copy centred over the word; the word dimmed so the headline leads. */
   .st-overlap { justify-content: flex-start; }
   .st-overlap .st-copy { margin: auto 0; padding-top: 12vh; }
-  .st-overlap .st-mark { color: rgba(14, 27, 69, .42); filter: blur(3px); }
 
   /* Split: mur over mur on the left, the copy on the right. */
   @media (min-width: 1000px) {
@@ -468,26 +466,16 @@
     .st-split .st-copy { grid-column: 2; margin: 0; }
     .st-split .st-copy p { margin-left: 0; }
     .st-split h1 span { white-space: normal; }
-    .st-split .st-mark { right: 50%; text-align: center; font-size: min(22vw, 40vh); line-height: .74; }
-    .st-split .st-mark span { display: block; }
   }
 
   .st-compact h1 { font-size: clamp(32px, 3.6vw, 52px); }
-  .st-compact .st-mark { font-size: min(21vw, 44vh); }
   .st-compact .st-copy p { margin-top: 16px; }
   .st-compact .button { margin-top: 24px; }
   .st-compact .st-bubbles { margin-top: 26px; }
-  /* Wider tracking than the others: at this size the refraction smears each edge by ~12px, and at
-     -.06em the r's arm ran into the next m. */
-  .st-big .st-mark { font-size: min(23.5vw, 50vh); letter-spacing: .01em; text-indent: .01em; }
-  .st-butter .st-mark { color: rgba(253, 238, 140, .92); }
-  .st-trim .st-mark { font-size: min(19vw, 42vh); }
-  /* The inline word: in the copy's flow but still under the glass. The copy stops being its own
-     stacking context, so the word can sit under the reeds (z 0) while the text sits over them (z 2). */
+  /* The logo is in the copy's flow but still under the glass. The copy stops being its own
+     stacking context, so the logo can sit under the reeds (z 0) while the text sits over them (z 2). */
   .st-trim .st-copy { z-index: auto; margin: auto 0; }
-  .st-trim .st-copy > :not(.st-mark) { position: relative; z-index: 2; }
-  .st .st-mark.st-inline { position: relative; z-index: 0; left: auto; right: auto; top: auto; transform: none;
-    display: block; margin: 0 0 .12em; filter: blur(2.5px) url(#st-reeds); }
+  .st-trim .st-copy > :not(.st-lock, .st-word) { position: relative; z-index: 2; }
   @media (min-width: 1000px) {
     .st-trim .agent-note { max-width: none; white-space: nowrap; }
     .st-trim .st-copy p { max-width: 740px; }
@@ -497,8 +485,6 @@
   @media (max-width: 600px) {
     .st { padding: 0 16px 40px; }
     .st .st-behind { filter: url(#st-reeds-sm); }
-    .st .st-mark { --mark-top: 36% !important; font-size: 46vw; line-height: .72; }
-    .st .st-mark span { display: block; }
     .st h1 { font-size: clamp(32px, 9.4vw, 42px); }
     .st .st-copy p { font-size: 16.5px; margin-top: 18px; }
     .st .button { margin-top: 24px; }
@@ -506,8 +492,6 @@
     .st .st-bubbles .card { width: 88%; }
     .st .st-bubbles .c-reply { align-self: flex-end; margin-top: 0; }
     .st-overlap .st-copy { padding-top: 30vh; }
-    .st-big .st-mark { font-size: 40vw; }
-    .st .st-mark.st-inline { filter: blur(2px) url(#st-reeds-sm); }
   }
 
   /* Both headline lines in the same white, as Tyler asked. */
@@ -521,16 +505,62 @@
   .st .st-logo:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
   @media (min-width: 1000px) { .st .st-logo { display: block; } }
 
+  /* ---------- The logo behind the glass (#488) ---------- */
+  /* The lockup in the place of the Inter word: the filled mark in cream as the M, "urmur" in butter.
+     The mark is drawn at 85% of its size in docs/assets/brand/lockup-on-blue.svg and the letters at
+     145%, on the same base line, so the letters are big enough to hold their shape through the reeds;
+     --mw, --lw, --gap and --rise are their widths, the space between them and the letters' lift off
+     the mark's base, each as a share of the lockup's width. Both sit behind gentler glass than the
+     light does (#st-reeds-md, 11 against 24): the full strength breaks the eyes and the thin strokes
+     apart. Each half is filtered on its own, with padding for the filter to push pixels into. */
+  .st .st-lock { --w: min(76vw, 150vh); --mw: 0.3520; --lw: 0.6436; --gap: 0.0044; --rise: 0.0164;
+    position: relative; z-index: 0; display: flex; justify-content: center; align-items: flex-end; margin: 0 auto clamp(40px, 6vh, 64px); }
+  .st .st-lock > span { display: block; padding: 10px 16px; filter: blur(1.2px) url(#st-reeds-md); }
+  .st .st-lock svg { display: block; height: auto; overflow: visible; fill: currentColor; }
+  .st .st-lock-mark { margin: -10px -16px; color: rgba(255, 251, 234, .95); }
+  .st .st-lock-mark svg { width: calc(var(--w) * var(--mw)); }
+  .st .st-lock-word { margin: -10px -16px calc(var(--w) * var(--rise) - 10px) calc(var(--w) * var(--gap) - 16px); color: rgba(253, 238, 140, .93); }
+  .st .st-lock-word svg { width: calc(var(--w) * var(--lw)); }
+  /* The eyes are cut out of the mark by a mask, so they are holes; the script at the end of the
+     hero moves them toward the pointer. */
+  .st .st-eye { transition: transform .25s cubic-bezier(.2, .8, .3, 1); }
+  @media (prefers-reduced-motion: reduce) { .st .st-eye { transition: none; } }
+  @media (max-width: 600px) {
+    .st .st-lock { --w: 88vw; margin-bottom: 30px; }
+    .st .st-lock > span { filter: blur(.6px) url(#st-reeds-xs); }
+  }
+  /* On a phone the hero is cleaner (2026-11-12, #498): the word "murmur" alone in butter behind the
+     glass, the mark in cream at the hero's foot with its lower third below the edge, and only the
+     headline and the button over the glass. The sentence that explains Murmur opens How it works.
+     The word's glass is the gentlest, #st-reeds-xs (scale 4), as Tyler asked for less bend in it. */
+  .st .st-word, .st .st-peek { display: none; }
+  @media (max-width: 600px) {
+    .st-trim { --mw: 92vw; }
+    .st .st-lock, .st-trim .st-what { display: none; }
+    .st .st-word { position: relative; z-index: 0; display: flex; justify-content: center; margin: 0 0 30px;
+      padding: 10px 18px; color: rgba(253, 238, 140, .93); filter: blur(.8px) url(#st-reeds-xs); }
+    .st .st-word svg { display: block; width: 66vw; height: auto; overflow: visible; fill: currentColor; }
+    .st .st-peek { display: block; position: absolute; z-index: 0; left: 50%; bottom: 0; width: var(--mw); translate: -50% 35%; padding: 0 20px;
+      pointer-events: none; color: rgba(255, 251, 234, .94); filter: blur(.6px) url(#st-reeds-xs); }
+    .st .st-peek svg { display: block; width: 100%; height: auto; overflow: visible; fill: currentColor; }
+    .st-trim .st-copy { padding-bottom: calc(var(--mw) * .42); }
+  }
+  /* WebKit, which is Safari and every browser on an iPhone, draws nothing at all for an element
+     whose filter uses feImage or feTile (seen 2026-11-12 in Playwright's WebKit: the logo was
+     missing, and so was the Inter word before it). There the logo is only blurred, behind the reed
+     faces, which are plain gradients. -webkit-nbsp-mode is a property only WebKit has. */
+  @supports (-webkit-nbsp-mode: space) {
+    .st .st-lock > span { filter: blur(1.2px); }
+    @media (max-width: 600px) { .st .st-lock > span, .st .st-peek { filter: blur(.6px); } .st .st-word { filter: blur(.8px); } }
+  }
+
   /* ---------- The hero on a phone ---------- */
-  /* "murmur" stacked, mur over mur, so it stays poster-sized. The 12px reeds are coarse against
-     phone-sized letters, so the refraction is gentler here (#st-reeds-sm, and the glint's
-     shader to match), the reed faces are fainter, and the hero is one screen tall with the group
-     centred in it. */
+  /* The 12px reeds are coarse against a phone-sized logo, so the refraction is gentler here (the
+     glint's shader to match), the reed faces are fainter, and the hero is one screen tall with the
+     group centred in it. */
   @media (max-width: 600px) {
     .st-trim { min-height: 100vh; min-height: 100svh; padding: 0 20px 28px; }
     .st-trim .agent-note { padding-top: 14px; max-width: 320px; font-size: 12.5px; line-height: 1.45; opacity: .85; }
-    .st-trim .st-mark { font-size: 39vw; line-height: .74; letter-spacing: .01em; text-indent: .01em; }
-    .st-trim .st-mark.st-inline { margin: 0 0 .14em; filter: blur(1.3px) url(#st-reeds-sm); }
     .st-trim h1 { font-size: clamp(27px, 8.2vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
     .st-trim .st-copy p { font-size: 15.5px; line-height: 1.55; max-width: 34ch; margin-top: 16px; }
     .st-trim .button { margin-top: 26px; padding: 14px 24px; font-size: 15.5px; }
@@ -540,7 +570,7 @@
 </style>
 </head>
 <body>
-<main class="st st-big st-butter st-trim" style="--mark-top: 42%">
+<main class="st st-trim">
 <style>
   /* ---------- Light behind the glass ---------- */
   /* One WebGL canvas, above the blue ground and under the reed faces and the word (both later at
@@ -551,16 +581,18 @@
   .st::before { z-index: 0; }
   .st .st-gl { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 </style>
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><filter id="st-reeds" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="24" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="st-reeds-sm" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="9" xChannelSelector="R" yChannelSelector="G"/></filter></svg>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><filter id="st-reeds" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="24" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="st-reeds-sm" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="9" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="st-reeds-md" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="11" xChannelSelector="R" yChannelSelector="G"/></filter><filter id="st-reeds-xs" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feImage x="0" y="0" width="12" height="12" preserveAspectRatio="none" result="ramp" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3ClinearGradient id='g'%3E%3Cstop offset='0' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='1' stop-color='rgb(255,128,0)'/%3E%3C/linearGradient%3E%3Crect width='12' height='12' fill='url(%23g)'/%3E%3C/svg%3E"/><feTile in="ramp" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="4" xChannelSelector="R" yChannelSelector="G"/></filter></svg>
   <div class="st-behind" aria-hidden="true"></div>
   <canvas class="st-gl" aria-hidden="true"></canvas>
   <div class="st-glass" aria-hidden="true"></div>
-  <a class="st-logo" href="/" aria-label="Murmur"><svg viewBox="0 0 170.90 105.44" width="44" height="27.1" aria-hidden="true"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg></a>
+  <a class="st-logo" href="/" aria-label="Murmur"><svg viewBox="0 0 170.9 105.44" data-look="170.9;54.4,38.7,3.54;132.1,55.0,2.50" width="44" height="27.1" aria-hidden="true"><mask id="st-logo-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path mask="url(#st-logo-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg></a>
   <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
+  <div class="st-peek" aria-hidden="true"><svg viewBox="0 0 170.9 105.44" data-look="170.9;54.4,38.7,3.54;132.1,55.0,2.50"><mask id="st-peek-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path class="g-m" mask="url(#st-peek-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg></div>
   <div class="st-copy">
-    <div class="st-mark st-inline" aria-hidden="true"><span>mur</span><span>mur</span></div>
+    <div class="st-lock" aria-hidden="true"><span class="st-lock-mark"><svg viewBox="0 0 374.4 222.17" data-look="374.4;114.6,81.6,7.2;278.4,116.0,5.1"><mask id="st-lock-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="454.4" height="302.16999999999996"><rect x="-40" y="-40" width="454.4" height="302.16999999999996" fill="#fff"/><g class="st-eye"><path fill="#000" d="M108.32 83.81C106.56 93.01 100.07 99.49 93.82 98.29C87.57 97.13 83.93 88.69 85.69 79.45C87.45 70.25 93.94 63.77 100.19 64.97C106.44 66.13 110.08 74.57 108.32 83.81ZM143.59 83.81C141.83 93.01 135.33 99.49 129.09 98.29C122.84 97.13 119.2 88.69 120.96 79.45C122.72 70.25 129.21 63.77 135.46 64.97C141.71 66.13 145.35 74.57 143.59 83.81Z"/></g><g class="st-eye"><path fill="#000" d="M274.65 114.57C273.93 116.45 273.31 118.37 273.05 120.33C272.23 126.53 271.92 129.41 265.81 129.41C258.16 128.77 257.8 123.05 260.07 113.53C261.75 106.49 269.36 102.57 272.83 103.37C277.24 104.45 276.89 108.89 274.65 114.57ZM296.43 114.57C295.7 116.45 295.09 118.37 294.82 120.33C294 126.53 293.69 129.41 287.59 129.41C279.93 128.77 279.57 123.05 281.84 113.53C283.53 106.49 291.13 102.57 294.61 103.37C299.01 104.45 298.66 108.89 296.43 114.57Z"/></g></mask><path mask="url(#st-lock-eyes)" d="M8.7 222.17C37.44 222.17 170.68 222.13 170.68 222.13C170.68 222.13 179.82 222.13 182.43 213.65C185.05 205.17 185.7 197.97 191.58 197.97C197.45 197.97 197.45 205.17 200.07 213.65C202.68 222.13 212.48 222.13 212.48 222.13H348.33C366.62 222.13 374.45 51.69 286.93 51.69C256.89 51.69 232.07 88.89 212.48 88.89C179.17 88.89 164.15 -3.19 98.18 0.09C25.67 3.65 -20.04 222.13 8.7 222.17Z"/></svg></span><span class="st-lock-word"><svg viewBox="369.5 134.3 401.4 73.1"><path d="M401.6 207.09C392.35 207.09 384.66 203.61 378.52 196.65C372.48 189.61 369.46 181.05 369.46 170.97V146.93C369.46 144.73 369.5 143.13 369.59 142.13C369.78 141.13 370.19 139.93 370.83 138.57C372.11 136.09 375.69 134.85 381.55 134.85C387.95 134.85 391.71 136.61 392.81 140.09C393.36 141.53 393.63 143.89 393.63 147.09V171.13C393.63 174.85 394.68 177.81 396.79 179.89C398.99 182.01 401.87 183.05 405.44 183.05C409.11 183.05 412.03 181.97 414.23 179.77C416.52 177.57 417.67 174.69 417.67 171.13V146.81C417.67 144.69 417.71 143.13 417.8 142.13C417.99 141.05 418.45 139.81 419.18 138.41C420.37 136.05 423.89 134.85 429.75 134.85C435.52 134.85 439.05 136.09 440.33 138.57C440.97 139.93 441.33 141.17 441.43 142.25C441.61 143.29 441.7 144.85 441.7 146.93V195.57C441.7 197.57 441.61 199.13 441.43 200.21C441.33 201.25 440.92 202.37 440.19 203.65C438.82 206.05 435.29 207.25 429.61 207.25C424.03 207.25 420.6 206.13 419.31 203.93C418.4 202.37 417.94 200.49 417.94 198.29C417.57 198.93 416.75 199.85 415.47 201.05C414.19 202.25 412.95 203.25 411.76 204.09C408.65 206.09 405.26 207.09 401.6 207.09ZM501.92 135.81C503.66 136.37 505.08 137.33 506.18 138.69C507.37 139.97 507.96 142.09 507.96 145.01C507.96 147.93 507.09 151.17 505.35 154.61C503.61 158.09 501.09 159.85 497.8 159.85C496.15 159.85 494.55 159.49 492.99 158.73C491.53 158.01 489.56 157.65 487.09 157.65C484.61 157.65 482.28 158.53 480.08 160.25C477.98 162.01 476.92 164.09 476.92 166.57V195.41C476.92 197.53 476.83 199.13 476.65 200.21C476.56 201.25 476.15 202.41 475.41 203.81C474.04 206.17 470.47 207.37 464.7 207.37C460.31 207.37 457.15 206.61 455.22 205.05C453.76 203.77 452.93 201.77 452.75 199.13C452.75 198.21 452.75 196.89 452.75 195.13V146.93C452.75 144.85 452.8 143.29 452.89 142.25C453.07 141.17 453.48 139.97 454.12 138.69C455.41 136.21 458.98 134.97 464.84 134.97C470.33 134.97 473.77 136.05 475.14 138.13C476.15 139.61 476.65 141.13 476.65 142.69C477.11 142.05 477.75 141.25 478.57 140.33C479.49 139.45 481.36 138.21 484.2 136.65C487.04 135.09 489.51 134.29 491.62 134.29C493.82 134.29 495.65 134.45 497.11 134.73C498.58 134.89 500.18 135.25 501.92 135.81ZM539.15 144.61C543.45 138.09 548.62 134.85 554.67 134.85C564.01 134.85 570.96 138.85 575.54 146.81C576.55 145.41 577.74 144.01 579.11 142.53C580.58 140.97 582.87 139.33 585.98 137.61C589.09 135.77 592.3 134.85 595.59 134.85C602.92 134.85 609.05 137.69 614 143.37C618.94 148.97 621.41 158.25 621.41 171.25V195.29C621.41 197.37 621.32 199.01 621.14 200.09C621.05 201.09 620.64 202.29 619.9 203.65C618.71 206.13 615.19 207.37 609.33 207.37C603.56 207.37 600.03 206.09 598.75 203.53C598.11 202.17 597.7 200.97 597.52 199.97C597.43 198.85 597.38 197.25 597.38 195.13V171.13C597.38 163.13 594.54 159.17 588.86 159.17C585.66 159.17 583.46 160.21 582.27 162.33C581.17 164.41 580.62 167.41 580.62 171.25V195.29C580.62 197.49 580.53 199.09 580.35 200.09C580.26 201.09 579.85 202.29 579.11 203.65C577.83 206.13 574.26 207.37 568.4 207.37C562.63 207.37 559.11 206.09 557.82 203.53C557.18 202.17 556.77 200.97 556.59 199.97C556.5 198.85 556.45 197.25 556.45 195.13V171.13C556.45 163.13 553.61 159.17 547.93 159.17C542.44 159.17 539.69 163.13 539.69 171.13V195.41C539.69 197.53 539.6 199.13 539.42 200.21C539.33 201.25 538.91 202.41 538.18 203.81C536.81 206.17 533.24 207.37 527.47 207.37C521.7 207.37 518.18 206.13 516.89 203.65C516.25 202.29 515.84 201.09 515.66 200.09C515.57 199.09 515.52 197.49 515.52 195.29V146.93C515.52 144.85 515.57 143.29 515.66 142.25C515.84 141.17 516.3 139.97 517.03 138.69C518.41 136.21 521.66 134.97 526.78 134.97C531.91 134.97 535.25 135.81 536.81 137.45C538.37 139.09 539.15 141.49 539.15 144.61ZM664.49 207.09C655.24 207.09 647.55 203.61 641.41 196.65C635.37 189.61 632.35 181.05 632.35 170.97V146.93C632.35 144.73 632.39 143.13 632.48 142.13C632.67 141.13 633.08 139.93 633.72 138.57C635 136.09 638.57 134.85 644.43 134.85C650.84 134.85 654.59 136.61 655.69 140.09C656.24 141.53 656.52 143.89 656.52 147.09V171.13C656.52 174.85 657.57 177.81 659.68 179.89C661.87 182.01 664.76 183.05 668.33 183.05C671.99 183.05 674.92 181.97 677.12 179.77C679.41 177.57 680.55 174.69 680.55 171.13V146.81C680.55 144.69 680.6 143.13 680.69 142.13C680.87 141.05 681.33 139.81 682.07 138.41C683.25 136.05 686.78 134.85 692.64 134.85C698.41 134.85 701.93 136.09 703.21 138.57C703.86 139.93 704.22 141.17 704.31 142.25C704.5 143.29 704.59 144.85 704.59 146.93V195.57C704.59 197.57 704.5 199.13 704.31 200.21C704.22 201.25 703.81 202.37 703.08 203.65C701.71 206.05 698.18 207.25 692.5 207.25C686.92 207.25 683.48 206.13 682.2 203.93C681.29 202.37 680.83 200.49 680.83 198.29C680.46 198.93 679.64 199.85 678.35 201.05C677.07 202.25 675.84 203.25 674.65 204.09C671.53 206.09 668.15 207.09 664.49 207.09ZM764.81 135.81C766.55 136.37 767.97 137.33 769.07 138.69C770.25 139.97 770.85 142.09 770.85 145.01C770.85 147.93 769.98 151.17 768.24 154.61C766.5 158.09 763.98 159.85 760.69 159.85C759.04 159.85 757.44 159.49 755.88 158.73C754.41 158.01 752.45 157.65 749.97 157.65C747.5 157.65 745.17 158.53 742.97 160.25C740.86 162.01 739.81 164.09 739.81 166.57V195.41C739.81 197.53 739.72 199.13 739.53 200.21C739.45 201.25 739.03 202.41 738.3 203.81C736.93 206.17 733.35 207.37 727.59 207.37C723.19 207.37 720.03 206.61 718.11 205.05C716.65 203.77 715.82 201.77 715.64 199.13C715.64 198.21 715.64 196.89 715.64 195.13V146.93C715.64 144.85 715.68 143.29 715.77 142.25C715.96 141.17 716.37 139.97 717.01 138.69C718.29 136.21 721.86 134.97 727.72 134.97C733.22 134.97 736.65 136.05 738.03 138.13C739.03 139.61 739.53 141.13 739.53 142.69C739.99 142.05 740.63 141.25 741.46 140.33C742.37 139.45 744.25 138.21 747.09 136.65C749.93 135.09 752.4 134.29 754.51 134.29C756.7 134.29 758.53 134.45 760 134.73C761.47 134.89 763.07 135.25 764.81 135.81Z"/></svg></span></div>
+    <div class="st-word" aria-hidden="true"><svg viewBox="0 0 763.11 107.6"><path d="M34.78 15.16C41.12 5.6 48.74 0.8 57.64 0.8C71.39 0.8 81.64 6.68 88.38 18.4C89.86 16.36 91.62 14.28 93.64 12.12C95.8 9.84 99.17 7.4 103.75 4.84C108.34 2.16 113.06 0.8 117.91 0.8C128.7 0.8 137.73 5 145.01 13.36C152.29 21.56 155.94 35.24 155.94 54.4V89.8C155.94 92.88 155.8 95.24 155.53 96.88C155.4 98.36 154.79 100.12 153.71 102.12C151.96 105.76 146.76 107.6 138.14 107.6C129.64 107.6 124.45 105.72 122.56 101.92C121.62 99.92 121.01 98.16 120.74 96.68C120.61 95.04 120.54 92.68 120.54 89.6V54.2C120.54 42.48 116.36 36.6 108 36.6C103.28 36.6 100.04 38.16 98.29 41.24C96.68 44.36 95.86 48.72 95.86 54.4V89.8C95.86 93.04 95.73 95.4 95.46 96.88C95.32 98.36 94.72 100.12 93.64 102.12C91.75 105.76 86.5 107.6 77.86 107.6C69.37 107.6 64.18 105.72 62.29 101.92C61.35 99.92 60.74 98.16 60.47 96.68C60.34 95.04 60.27 92.68 60.27 89.6V54.2C60.27 42.48 56.09 36.6 47.73 36.6C39.64 36.6 35.6 42.48 35.6 54.2V90C35.6 93.08 35.46 95.44 35.19 97.08C35.06 98.56 34.45 100.32 33.37 102.32C31.35 105.84 26.09 107.6 17.59 107.6C9.1 107.6 3.91 105.76 2.02 102.12C1.08 100.12 0.47 98.36 0.2 96.88C0.06 95.4 0 93.04 0 89.8V18.6C0 15.52 0.06 13.2 0.2 11.72C0.47 10.12 1.14 8.36 2.22 6.48C4.24 2.84 9.03 1 16.58 1C24.13 1 29.06 2.24 31.35 4.64C33.64 7.08 34.78 10.6 34.78 15.16ZM219.36 107.2C205.74 107.2 194.41 102.08 185.38 91.8C176.48 81.44 172.03 68.84 172.03 54V18.6C172.03 15.36 172.1 13 172.23 11.52C172.5 10.04 173.11 8.28 174.05 6.28C175.94 2.64 181.2 0.8 189.83 0.8C199.27 0.8 204.8 3.36 206.41 8.48C207.22 10.64 207.63 14.08 207.63 18.8V54.2C207.63 59.72 209.18 64.04 212.28 67.16C215.52 70.24 219.76 71.8 225.02 71.8C230.41 71.8 234.73 70.16 237.96 66.96C241.34 63.72 243.02 59.44 243.02 54.2V18.4C243.02 15.32 243.09 13 243.22 11.52C243.49 9.92 244.17 8.08 245.24 6.08C247 2.56 252.19 0.8 260.82 0.8C269.31 0.8 274.5 2.64 276.39 6.28C277.34 8.28 277.88 10.12 278.01 11.72C278.28 13.2 278.42 15.52 278.42 18.6V90.2C278.42 93.16 278.28 95.44 278.01 97.08C277.88 98.56 277.27 100.24 276.19 102.12C274.17 105.64 268.98 107.4 260.62 107.4C252.39 107.4 247.34 105.76 245.45 102.52C244.1 100.24 243.42 97.48 243.42 94.24C242.88 95.2 241.67 96.52 239.78 98.28C237.9 100.04 236.08 101.52 234.32 102.76C229.74 105.72 224.75 107.2 219.36 107.2ZM367.09 2.24C369.65 3.04 371.74 4.44 373.36 6.48C375.11 8.36 375.99 11.44 375.99 15.76C375.99 20.08 374.71 24.8 372.15 29.92C369.58 35.04 365.88 37.6 361.02 37.6C358.6 37.6 356.24 37.08 353.94 36C351.79 34.92 348.89 34.36 345.25 34.36C341.61 34.36 338.17 35.68 334.93 38.24C331.83 40.8 330.28 43.88 330.28 47.52V90C330.28 93.08 330.15 95.44 329.88 97.08C329.74 98.56 329.14 100.32 328.06 102.32C326.03 105.84 320.78 107.6 312.28 107.6C305.81 107.6 301.16 106.44 298.32 104.16C296.17 102.28 294.96 99.36 294.68 95.44C294.68 94.12 294.68 92.16 294.68 89.6V18.6C294.68 15.52 294.75 13.2 294.89 11.72C295.16 10.12 295.76 8.36 296.71 6.48C298.6 2.84 303.85 1 312.48 1C320.57 1 325.63 2.56 327.65 5.64C329.14 7.8 329.88 10.04 329.88 12.32C330.55 11.4 331.5 10.24 332.71 8.88C334.06 7.56 336.82 5.72 341 3.44C345.18 1.16 348.82 0 351.92 0C355.16 0 357.86 0.2 360.01 0.6C362.17 0.88 364.53 1.4 367.09 2.24ZM421.91 15.16C428.24 5.6 435.86 0.8 444.76 0.8C458.52 0.8 468.76 6.68 475.5 18.4C476.99 16.36 478.74 14.28 480.76 12.12C482.92 9.84 486.29 7.4 490.88 4.84C495.46 2.16 500.18 0.8 505.03 0.8C515.82 0.8 524.85 5 532.14 13.36C539.42 21.56 543.06 35.24 543.06 54.4V89.8C543.06 92.88 542.92 95.24 542.65 96.88C542.52 98.36 541.91 100.12 540.83 102.12C539.08 105.76 533.89 107.6 525.26 107.6C516.76 107.6 511.57 105.72 509.68 101.92C508.74 99.92 508.14 98.16 507.86 96.68C507.73 95.04 507.66 92.68 507.66 89.6V54.2C507.66 42.48 503.48 36.6 495.12 36.6C490.4 36.6 487.17 38.16 485.42 41.24C483.8 44.36 482.99 48.72 482.99 54.4V89.8C482.99 93.04 482.85 95.4 482.58 96.88C482.45 98.36 481.84 100.12 480.76 102.12C478.88 105.76 473.62 107.6 464.99 107.6C456.49 107.6 451.3 105.72 449.41 101.92C448.47 99.92 447.86 98.16 447.59 96.68C447.46 95.04 447.39 92.68 447.39 89.6V54.2C447.39 42.48 443.21 36.6 434.85 36.6C426.76 36.6 422.72 42.48 422.72 54.2V90C422.72 93.08 422.58 95.44 422.31 97.08C422.18 98.56 421.57 100.32 420.49 102.32C418.47 105.84 413.21 107.6 404.72 107.6C396.22 107.6 391.03 105.76 389.14 102.12C388.2 100.12 387.59 98.36 387.32 96.88C387.19 95.4 387.12 93.04 387.12 89.8V18.6C387.12 15.52 387.19 13.2 387.32 11.72C387.59 10.12 388.27 8.36 389.34 6.48C391.37 2.84 396.16 1 403.7 1C411.26 1 416.18 2.24 418.47 4.64C420.76 7.08 421.91 10.6 421.91 15.16ZM606.48 107.2C592.86 107.2 581.54 102.08 572.5 91.8C563.6 81.44 559.15 68.84 559.15 54V18.6C559.15 15.36 559.22 13 559.36 11.52C559.62 10.04 560.23 8.28 561.18 6.28C563.06 2.64 568.32 0.8 576.95 0.8C586.39 0.8 591.92 3.36 593.54 8.48C594.34 10.64 594.75 14.08 594.75 18.8V54.2C594.75 59.72 596.3 64.04 599.4 67.16C602.64 70.24 606.88 71.8 612.14 71.8C617.54 71.8 621.85 70.16 625.09 66.96C628.46 63.72 630.14 59.44 630.14 54.2V18.4C630.14 15.32 630.21 13 630.34 11.52C630.62 9.92 631.29 8.08 632.37 6.08C634.12 2.56 639.31 0.8 647.94 0.8C656.44 0.8 661.63 2.64 663.52 6.28C664.46 8.28 665 10.12 665.13 11.72C665.4 13.2 665.54 15.52 665.54 18.6V90.2C665.54 93.16 665.4 95.44 665.13 97.08C665 98.56 664.39 100.24 663.31 102.12C661.29 105.64 656.1 107.4 647.74 107.4C639.51 107.4 634.46 105.76 632.57 102.52C631.22 100.24 630.55 97.48 630.55 94.24C630.01 95.2 628.8 96.52 626.91 98.28C625.02 100.04 623.2 101.52 621.45 102.76C616.86 105.72 611.87 107.2 606.48 107.2ZM754.21 2.24C756.78 3.04 758.86 4.44 760.48 6.48C762.24 8.36 763.11 11.44 763.11 15.76C763.11 20.08 761.83 24.8 759.27 29.92C756.71 35.04 753 37.6 748.14 37.6C745.72 37.6 743.36 37.08 741.07 36C738.91 34.92 736.01 34.36 732.37 34.36C728.73 34.36 725.29 35.68 722.06 38.24C718.95 40.8 717.4 43.88 717.4 47.52V90C717.4 93.08 717.27 95.44 717 97.08C716.86 98.56 716.26 100.32 715.18 102.32C713.16 105.84 707.9 107.6 699.4 107.6C692.93 107.6 688.28 106.44 685.45 104.16C683.29 102.28 682.08 99.36 681.81 95.44C681.81 94.12 681.81 92.16 681.81 89.6V18.6C681.81 15.52 681.88 13.2 682.01 11.72C682.28 10.12 682.88 8.36 683.83 6.48C685.72 2.84 690.98 1 699.6 1C707.7 1 712.75 2.56 714.78 5.64C716.26 7.8 717 10.04 717 12.32C717.67 11.4 718.62 10.24 719.83 8.88C721.18 7.56 723.94 5.72 728.12 3.44C732.3 1.16 735.94 0 739.04 0C742.28 0 744.98 0.2 747.14 0.6C749.29 0.88 751.65 1.4 754.21 2.24Z"/></svg></div>
     <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
-    <p>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
+    <p class="st-what">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
     <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
   </div>
 <script>
@@ -584,17 +616,19 @@ float band(float d, float c, float w) { float x = (d - c) / w; return exp(-x * x
 vec4 light(vec2 q, vec2 s, float f) {
   vec2 n = normalize(vec2(1., .72));
   float span = dot(uRes, n);
-  float m = 300. * uSc;
+  float m = 400. * uSc;
   float c = mix(-m, span + m, uP);
   float dq = dot(q, n), ds = dot(s, n);
-  float wash = band(ds, c, 190. * uSc);
-  float core = band(ds, c + 30. * uSc, 46. * uSc);
+  float wash = band(ds, c, 255. * uSc);
+  float core = band(ds, c + 40. * uSc, 62. * uSc);
   // The hairline is the reed's own left edge, so it is not refracted; it lights with the band.
   float edge = 1. - smoothstep(0., 1.8 / 12., f);
-  float hair = edge * band(dq, c + 10. * uSc, 120. * uSc);
+  float hair = edge * band(dq, c + 14. * uSc, 160. * uSc);
   // A second, fainter run just behind, so the passing light reads as a sheen with depth.
-  float hair2 = edge * band(dq, c - 150. * uSc, 70. * uSc) * .45;
-  float a = .15 * wash + .24 * core + .6 * (hair + hair2);
+  float hair2 = edge * band(dq, c - 200. * uSc, 95. * uSc) * .45;
+  // A little over half the brightness it first had (.15, .24, .6), which read as harsh, and a
+  // third wider (the wash was 190, the core 46, the hairlines 120 and 70).
+  float a = .10 * wash + .15 * core + .32 * (hair + hair2);
   vec3 col = mix(BUT, CRM, clamp(.35 + core * .5 + hair, 0., 1.));
   return vec4(col * a, a);
 }`;
@@ -602,14 +636,14 @@ vec4 light(vec2 q, vec2 s, float f) {
   const DPR_CAP = 1.5;
   const T0 = 0;
   const STILL_T = -1;  // reduced motion: the band held where it crosses the wordmark
-  const DUR = 4.2;
+  const DUR = 5.6;  // was 4.2: the pass is slower, and the wait between passes is as it was
   const ease = x => x < 0 ? 0 : x > 1 ? 1 : .5 * x + .5 * x * x * (3 - 2 * x);
   const hash = n => { const x = Math.sin(n * 127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
-  // Pass n starts at start(n): the first right away, then every 7 to 9 s.
+  // Pass n starts at start(n): the first right away, then 2.8 to 4.8 s after the one before ends.
   const progress = t => {
     if (t < 0) return .46;
     let s = -.8, n = 0;
-    while (s + DUR < t) { s += 7 + 2 * hash(n++); }
+    while (s + DUR < t) { s += DUR + 2.8 + 2 * hash(n++); }
     return t < s ? -1 : ease((t - s) / DUR);
   };
   const IDLE = t => { const p = progress(t); return p <= 0 || p >= 1; };
@@ -654,9 +688,7 @@ void main() {
   const u = {};
   for (const n of ['uRes', 'uDpr', 'uT', 'uK', 'uSc', 'uWord', ...UNIFORMS]) u[n] = gl.getUniformLocation(prog, n);
 
-  // The hero's size, and where the word's letters sit in it (CSS px, y down), as centre and
-  // half-size. "mur" is all x-height letters: in its .8em line box the glyphs start about .19em
-  // below the top and end about .04em above the bottom. On a phone it is two lines, mur over mur.
+  // The hero's size, and where the logo sits in it (CSS px, y down), as centre and half-size.
   const view = { w: 1, h: 1, dpr: 1, word: [0, 0, 1, 1], text: [0, 0, 1, 1], note: [0, -999, 1, 1] };
   const measure = () => {
     const r = hero.getBoundingClientRect();
@@ -666,13 +698,9 @@ void main() {
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     gl.viewport(0, 0, w, h);
     view.word = [view.w / 2, view.h * .4, view.w * .38, view.h * .09];
-    const mk = hero.querySelector('.st-mark');
+    const mk = [...hero.querySelectorAll('.st-lock, .st-word')].find(e => e.offsetWidth);
     const mb = mk && mk.getBoundingClientRect();
-    if (mb && mb.width) {
-      const em = parseFloat(getComputedStyle(mk).fontSize) || mb.height / .8;
-      const top = mb.top - r.top + .19 * em, bot = mb.bottom - r.top - .04 * em;
-      view.word = [mb.left - r.left + mb.width / 2, (top + bot) / 2, mb.width / 2, (bot - top) / 2];
-    }
+    if (mb && mb.width) view.word = [mb.left - r.left + mb.width / 2, mb.top - r.top + mb.height / 2, mb.width / 2, mb.height / 2];
     // The headline, the line and the button as one box, and the note's text, as centre and half-size.
     const box = els => {
       let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -686,7 +714,7 @@ void main() {
       return x1 > x0 ? [(x0 + x1) / 2 - r.left, (y0 + y1) / 2 - r.top, (x1 - x0) / 2, (y1 - y0) / 2] : null;
     };
     const q = s => hero.querySelector(s);
-    view.text = box([q('h1'), q('.st-copy p'), q('.button')]) || view.text;
+    view.text = box([q('h1'), q('.st-what'), q('.button')]) || view.text;
     view.note = box([q('.agent-note')]) || view.note;
   };
 
@@ -735,11 +763,42 @@ void main() {
   kick();
 })();
 </script>
+<script>
+(() => {
+  // The eyes of the hero's two marks look at the pointer, a few of the mark's own units at most.
+  // data-look is the drawing's width and, for each pair of eyes, its centre and reach. Nothing
+  // moves on a touch screen or with reduced motion.
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const marks = [...document.querySelectorAll('.st svg[data-look]')].map(svg => {
+    const [vb, l, r] = svg.dataset.look.split(';');
+    return { svg, vb: +vb, eyes: [l, r].map((e, i) => [svg.querySelectorAll('.st-eye')[i], ...e.split(',').map(Number)]) };
+  });
+  let at = null, queued = false;
+  const aim = () => {
+    queued = false;
+    for (const m of marks) {
+      const b = m.svg.getBoundingClientRect();
+      if (!b.width || b.bottom < 0) continue;
+      const s = b.width / m.vb;
+      for (const [g, cx, cy, max] of m.eyes) {
+        if (!at) { g.style.transform = ''; continue; }
+        const dx = at[0] - (b.left + cx * s), dy = at[1] - (b.top + cy * s), d = Math.hypot(dx, dy) || 1;
+        const reach = Math.min(1, d / (max * s * 40)) * max;
+        g.style.transform = 'translate(' + (dx / d * reach).toFixed(2) + 'px,' + (dy / d * reach).toFixed(2) + 'px)';
+      }
+    }
+  };
+  const look = p => { at = p; if (!queued) { queued = true; requestAnimationFrame(aim); } };
+  addEventListener('pointermove', e => { if (e.pointerType !== 'touch') look([e.clientX, e.clientY]); }, { passive: true });
+  document.documentElement.addEventListener('pointerleave', () => look(null));
+})();
+</script>
 </main>
 
 <section id="how">
   <div class="route"><div class="route-in">
     <h2>How it works</h2>
+    <p class="how-lead">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
     <figure>
       <div class="fig-panel">
         <svg class="wide" viewBox="16 -118 788 419" role="img" aria-labelledby="f3-t f3-d" xmlns="http://www.w3.org/2000/svg"><title id="f3-t">A message through a side ref on GitHub</title><desc id="f3-d">A message server in the cloud, with a big X through it, is the route Murmur doesn't use. quiet-otter calls send. Bob's Murmur daemon pushes a commit to the side ref refs/murmur/mesh/* on the GitHub remote, beside the branches. Alice's daemon fetches it and delivers it to brave-heron.</desc><g><rect class="ct" x="28" y="32" width="190" height="257" rx="12"/>

@@ -16,6 +16,7 @@ import (
 // nothing new arrives to start a handoff: both tries failed because there was no `t3` to run. (A
 // handoff that got as far as running `t3` is not repeated after a restart: deliver_repeat_test.go.)
 func TestMessagesKeptOverARestartAreHandedOverWhenTheDaemonIsBack(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
@@ -38,9 +39,10 @@ func TestMessagesKeptOverARestartAreHandedOverWhenTheDaemonIsBack(t *testing.T) 
 // The hook doesn't tell a session of the messages queued behind the one being handed over: they are
 // turns too, and told by a notice they would never be handed over.
 func TestHookLeavesMessagesWaitingForAHandoffAlone(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3SleepEnv, "1500ms")
+	setFakeT3(t, exe, fakeT3Sleep, "1500ms")
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
@@ -63,6 +65,7 @@ func TestHookLeavesMessagesWaitingForAHandoffAlone(t *testing.T) {
 // A thread whose MCP server was replaced by a new session is one recipient of a message for
 // everyone, not two: the session it replaced, in its grace or stopped, still has the thread.
 func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
+	t.Parallel()
 	route := func(exe string) proto.Route { return proto.Route{T3CLI: exe, T3Thread: "thread-bob"} }
 	t.Run("the old session stopped", func(t *testing.T) {
 		remote := newRemote(t)
@@ -98,10 +101,48 @@ func TestMessageForEveryoneReachesAThreadOnce(t *testing.T) {
 	})
 }
 
+// A message for everyone that comes after a thread's new session registered, and before it found its
+// thread, is handed to the thread once (#70): the old session, in its grace, still has the thread
+// and hands its copy over at once, and the new one's copy is not handed over again when the route
+// moves to it. A message for the new session alone is another event, and still goes in.
+func TestMessageForEveryoneBeforeTheThreadIsFoundReachesItOnce(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	b := newTimedDevice(t, remote, 20*time.Second, time.Hour)
+	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
+	_, conn := b.sessionRoute("bbbbbb", "claude-1", route)
+	conn.Close()
+	time.Sleep(500 * time.Millisecond) // the daemon has seen it go; its grace is long
+	// In T3, its thread not found yet.
+	bob, _ := b.sessionRoute("cccccc", "claude-2", proto.Route{T3CLI: exe})
+	b.session("dddddd", "")
+
+	b.send("dddddd", "*", "to everyone", "hello")
+	// Handed over, not only on its way: one still on its way when the route moves is taken over
+	// as it is (see takeInboxLocked), which is another case.
+	eventually(t, "the old session's copy to be handed over", func() bool { return logHas(b, `handed "to everyone"`) })
+	b.send("dddddd", bob, "to the new one", "hi")
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "cccccc", Route: &route}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+
+	eventually(t, "the new session's own message to be handed over", func() bool { return len(calls()) >= 2 })
+	holds(t, "two handoffs", 1500*time.Millisecond, func() bool { return len(calls()) == 2 })
+	for i, want := range []string{"to everyone", "to the new one"} {
+		if got := calls()[i].Stdin; !strings.Contains(got, want) {
+			t.Errorf("call %d carried %q, want the message %q", i, got, want)
+		}
+	}
+	if inbox, notices := b.unread("cccccc", "claude-2"); len(inbox) != 0 || len(notices) != 0 {
+		t.Errorf("left unread: inbox %q, notices %q", inbox, notices)
+	}
+}
+
 // A session that found its T3 thread keeps its name under the thread, and the Claude Code session
 // ID it had before no longer brings that name to a second process of the same client session: a
 // name is an address, and two live sessions can't share one.
 func TestClientSessionIDDoesNotBringBackTheNameOfASessionInT3(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	b := newDevice(t, remote)
@@ -123,9 +164,10 @@ func TestClientSessionIDDoesNotBringBackTheNameOfASessionInT3(t *testing.T) {
 // is handed over: with the old route retired, nothing else would. One that is on its way in as the
 // replacement registers is handed over once.
 func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3SleepEnv, "4s")
+	setFakeT3(t, exe, fakeT3Sleep, "4s")
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 20*time.Second, time.Hour)
 	alice, _ := a.session("aaaaaa", "")
 	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
@@ -152,6 +194,7 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 // the order the messages did. The first message waits for its retry because the first attempt could
 // not start `t3`, which is not there yet.
 func TestReplacementHandsOverInOrderWhatWasOnItsWay(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
@@ -214,6 +257,7 @@ func quietReplacement(t *testing.T) (b *device, calls func() []t3Call, found fun
 // A message the new session of a thread sent for everyone, before it found its thread, is in the
 // inbox of the session it replaces, which isn't a sender: it must not come back to the new session.
 func TestReplacementIsNotHandedItsOwnBroadcast(t *testing.T) {
+	t.Parallel()
 	b, calls, found := quietReplacement(t)
 	b.send("cccccc", "*", "from the new one", "hello")
 	found()
@@ -230,6 +274,7 @@ func TestReplacementIsNotHandedItsOwnBroadcast(t *testing.T) {
 // A message for everyone that the new session of a thread has read, before it found its thread, is
 // not told again from the inbox of the session it replaces.
 func TestReplacementIsNotHandedWhatItHasRead(t *testing.T) {
+	t.Parallel()
 	b, _, found := quietReplacement(t)
 	b.send("dddddd", "*", "to everyone", "hi")
 	if r := b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}); len(r.Messages) != 1 {

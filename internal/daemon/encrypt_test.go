@@ -24,7 +24,7 @@ func newOwnedDevice(t *testing.T, remote, owner string) *device {
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
 	git(t, dir, "config", "user.name", owner)
-	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond}
+	d := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
 	d.start()
 	return d
 }
@@ -219,7 +219,7 @@ func TestKeySwapIsRefused(t *testing.T) {
 	logs := &syncWriter{}
 	dir := filepath.Join(t.TempDir(), "clone")
 	git(t, filepath.Dir(dir), "clone", "-q", "--no-local", remote, dir)
-	a := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: 3 * time.Second, poll: 100 * time.Millisecond, logTo: logs}
+	a := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond, logTo: logs}
 	a.start()
 	b := newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")

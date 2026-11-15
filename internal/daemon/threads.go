@@ -24,7 +24,8 @@ import (
 //     refuses one, here and, through presence's Offline list, on other devices. A thread unsettled
 //     again (someone typed in it) is back with the next read.
 //   - delegates (#188): a thread another thread started (a T3 delegate_task child, a provider's
-//     subagent thread) is off the mesh in the same ways, and goes through its parent (Tyler,
+//     subagent thread; and a session a hook or Codex's state says another started, see codexkids.go) is
+//     off the mesh in the same ways, and goes through its parent (Tyler,
 //     2026-11-07): it can't send or set a status, and what it commits is credited to the session
 //     of its parent thread here, if there is one. A session that wants it messages the parent. It
 //     may have taken a name before its thread was read; nobody sees the name.
@@ -54,6 +55,7 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 // inbox is kept was in. A change to whether a thread is settled is published, and any change lets
 // the handoffs look again.
 func (d *Daemon) refreshThreads(ctx context.Context) {
+	kids := d.refreshKids(ctx) // before the inboxes and commits of delegates are seen to, below
 	d.mu.Lock()
 	routes := map[threadKey]t3Route{}
 	// who names each thread in the log by a session in it: the thread's ID is the route, which
@@ -162,10 +164,10 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 	}
 	d.mu.Unlock()
-	if settled {
+	if settled || kids {
 		d.kickPresence()
 	}
-	if changed {
+	if changed || kids {
 		d.kickPush()
 	}
 }
@@ -181,9 +183,13 @@ func (d *Daemon) threadStateLocked(id string) (t3db.State, bool) {
 	return st, ok
 }
 
-// offMeshLocked says session id is in a T3 thread that is settled, archived or deleted, or that
-// another thread started: it is offline, and takes no messages. Caller holds mu.
+// offMeshLocked says session id is in a T3 thread that is settled, archived or deleted, or is one
+// another session started, by T3's word or another's (#452, codexkids.go): it is offline, and
+// takes no messages. Caller holds mu.
 func (d *Daemon) offMeshLocked(id string) bool {
+	if _, kid := d.kids[id]; kid {
+		return true
+	}
 	st, ok := d.threadStateLocked(id)
 	return ok && (st.Settled || st.Parent != "")
 }
@@ -191,6 +197,9 @@ func (d *Daemon) offMeshLocked(id string) bool {
 // parentOfLocked says session id is in a thread another thread started, and which session here is
 // in that thread: "" if none is, as when the parent isn't on the mesh here. Caller holds mu.
 func (d *Daemon) parentOfLocked(id string) (parent string, child bool) {
+	if k, kid := d.kids[id]; kid {
+		return d.kidParentLocked(id, k), true
+	}
 	st, ok := d.threadStateLocked(id)
 	if !ok || st.Parent == "" {
 		return "", false

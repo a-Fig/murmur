@@ -37,7 +37,7 @@ func (e Env) registerClaude(ctx context.Context) (did []string, fresh bool, err 
 }
 
 // registerClaudeAt makes Claude Code know Murmur's server in home h, for this user in every
-// project, and lets its tools run without a prompt each time. fresh reports whether the server was
+// project, lets its tools run without a prompt each time, and adds the notice hook (hook.go). fresh reports whether the server was
 // new to that home (or moved), which is when sessions that are already running have never heard of
 // it.
 func (e Env) registerClaudeAt(ctx context.Context, h agentHome) (did []string, fresh bool, err error) {
@@ -98,6 +98,13 @@ func (e Env) registerClaudeAt(ctx context.Context, h agentHome) (did []string, f
 	}
 	if allowed {
 		did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+filepath.Join(h.Dir, "settings.json")+")")
+	}
+	hooked, err := installClaudeHook(h.Dir, e.Exe)
+	if err != nil {
+		return did, fresh, err
+	}
+	if hooked {
+		did = append(did, h.Label+": added "+brand.Product+"'s hook, in every project ("+filepath.Join(h.Dir, "settings.json")+")")
 	}
 	return did, fresh, nil
 }
@@ -171,20 +178,24 @@ func (e Env) runClaude(ctx context.Context, h agentHome, claude string, args ...
 	return string(out), err
 }
 
-// claudeRemoval is how to take the server out of Claude Code home h, for a leave's advice.
+// claudeRemoval is how to take the server and the hook out of Claude Code home h, for a leave's
+// advice.
 func (e Env) claudeRemoval(h agentHome) string {
-	cfg, _, err := jsonedit.ReadFile(h.JSON)
-	if err != nil || cfg.Object("mcpServers").Object(brand.MCPServer) == nil {
-		return ""
+	var steps []string
+	if cfg, _, err := jsonedit.ReadFile(h.JSON); err == nil && cfg.Object("mcpServers").Object(brand.MCPServer) != nil {
+		step := "`claude mcp remove --scope user " + brand.MCPServer + "`"
+		switch dir, mine := h.configDir(), e.getenv("CLAUDE_CONFIG_DIR"); {
+		case dir != "" && !samePath(dir, mine):
+			step += " with CLAUDE_CONFIG_DIR set to " + dir
+		case dir == "" && mine != "":
+			step += " with CLAUDE_CONFIG_DIR unset"
+		}
+		steps = append(steps, step)
 	}
-	step := "`claude mcp remove --scope user " + brand.MCPServer + "`"
-	switch dir, mine := h.configDir(), e.getenv("CLAUDE_CONFIG_DIR"); {
-	case dir != "" && !samePath(dir, mine):
-		step += " with CLAUDE_CONFIG_DIR set to " + dir
-	case dir == "" && mine != "":
-		step += " with CLAUDE_CONFIG_DIR unset"
+	if path := filepath.Join(h.Dir, "settings.json"); hasClaudeHook(path) {
+		steps = append(steps, "delete the hooks that run `"+brand.Command+" hook` from "+path)
 	}
-	return step
+	return joinSteps(steps)
 }
 
 func exists(path string) bool {

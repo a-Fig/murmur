@@ -17,6 +17,9 @@ type Source interface {
 	// Messages returns the messages after cursor, oldest first, and the cursor to pass next
 	// time. An empty cursor asks for the most recent ones, as many as the source keeps.
 	Messages(ctx context.Context, cursor string) (msgs []Message, next string, err error)
+	// Activity returns what sessions did, other than send messages, after cursor, oldest first,
+	// and the cursor to pass next time (#448). An empty cursor asks for as much as the source keeps.
+	Activity(ctx context.Context, cursor string) (acts []Activity, next string, err error)
 	// Settings returns the human's settings for this device.
 	Settings(ctx context.Context) (Settings, error)
 	// SetSettings replaces them, saved so they outlast a restart, and returns them as saved.
@@ -32,6 +35,12 @@ type Source interface {
 	// SetAccount gives this device's person a name, or a new one, and returns the account. An
 	// error says why the name won't do, in words to show them.
 	SetAccount(ctx context.Context, name string) (Account, error)
+	// SetNick gives this device a nickname (#190, #533), as `mur nickname` does, or with "" takes
+	// it off, and returns the account. An error says why the nickname won't do, in words to show.
+	SetNick(ctx context.Context, nick string) (Account, error)
+	// SetColor picks this device's colour (#573), 1 to bus.Colors, or with 0 lets it be chosen, and
+	// returns the account. An error says why the colour won't do: another device has it.
+	SetColor(ctx context.Context, color int) (Account, error)
 	// Send sends text as this device's person to a name, a device/session address, a device or "*".
 	// It returns once the message is on the remote; an error means it wasn't sent, and says why.
 	Send(ctx context.Context, to, text string) (Sent, error)
@@ -53,7 +62,25 @@ type State struct {
 	Mutes   []Mute   `json:"mutes"`
 	Version Version  `json:"version"`
 	Account Account  `json:"account"`
+	// Receipts is, for each of the person's recent messages, by its ID, how far it got with each of
+	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
+	// the page asks for every few seconds, and not on the message.
+	Receipts map[string][]Receipt `json:"receipts,omitempty"`
 }
+
+// Receipt is how far one of the person's messages got with one recipient (#26).
+type Receipt struct {
+	Addr   string `json:"addr"` // the recipient's device/session
+	Name   string `json:"name"` // what to call them: a session's name, a person's, or the address
+	Person bool   `json:"person,omitempty"`
+	// State is the furthest mark from the recipient's device: queued, handed, delivered or read
+	// (bus.Mark*). "" is none yet. ReceiptNone says none will come: the device's Murmur writes none.
+	State string    `json:"state,omitempty"`
+	At    time.Time `json:"at,omitzero"` // the recipient device's clock when it got there
+}
+
+// ReceiptNone is a Receipt's state for a recipient whose device writes no marks.
+const ReceiptNone = "none"
 
 // Version is this daemon's version, and what is known of a newer one (#240).
 type Version struct {
@@ -86,6 +113,14 @@ type Account struct {
 	// Taken is the device whose person claimed this name first, "" if nobody else did (#268): a
 	// name chosen before people's names were claimed. They are asked to choose another.
 	Taken string `json:"taken,omitempty"`
+	// Nick is the nickname this device's person gave it (#190), "" if none: not the name it is
+	// called by without one, which Device.Nick gives.
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour this device's person picked (#573), 1 to bus.Colors, 0 if none.
+	// ColorLost is what the device that took their last pick is called, "" if none did: a pick
+	// that loses a race, or that someone made while this device was away, is given up.
+	Color     int    `json:"color,omitempty"`
+	ColorLost string `json:"colorLost,omitempty"`
 }
 
 // Person is a person on a device.
@@ -108,13 +143,19 @@ type Device struct {
 	ID    string `json:"id"`
 	Host  string `json:"host"`
 	Owner string `json:"owner,omitempty"`
-	Self  bool   `json:"self,omitempty"`
+	// Nick is what the device is called (#190): the nickname its user gave it, else its person's name.
+	Nick string `json:"nick,omitempty"`
+	Self bool   `json:"self,omitempty"`
 	// Reachable says the device's heartbeat is current, so its sessions can get messages now.
 	Reachable bool      `json:"reachable"`
 	LastSeen  time.Time `json:"lastSeen"` // when this daemon last saw the device's presence change
 	Sessions  []Session `json:"sessions"`
 	// Person is the person on this device, nil if they have no account.
 	Person *Person `json:"person,omitempty"`
+	// Color is the colour of the device's faces (#560, #573), a place in the page's palette, 0 to
+	// bus.Colors-1. Picked says its person picked it; otherwise it was chosen for them.
+	Color  int  `json:"color"`
+	Picked bool `json:"picked,omitempty"`
 }
 
 // Session is one agent session.
@@ -145,8 +186,8 @@ type Session struct {
 type Message struct {
 	ID      string    `json:"id"`
 	From    string    `json:"from"`   // the sender's name
-	To      string    `json:"to"`     // a name, a device ID, or "*"
-	ToKind  string    `json:"toKind"` // ToSession, ToDevice or ToAll
+	To      string    `json:"to"`     // a name, a device ID, a group's tag, or "*"
+	ToKind  string    `json:"toKind"` // ToSession, ToDevice, ToGroup or ToAll
 	Subject string    `json:"subject"`
 	Body    string    `json:"body,omitempty"`
 	At      time.Time `json:"at"` // the sender's clock
@@ -165,6 +206,7 @@ const (
 	ToSession = "session"
 	ToDevice  = "device"
 	ToAll     = "all"
+	ToGroup   = "group" // a group's tag (#184): every session that has it
 )
 
 // Mute is one session's mute of another: the muted session's messages never reach it.

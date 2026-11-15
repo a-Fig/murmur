@@ -374,6 +374,28 @@ func TestEndInAnotherWorktreeIsJudgedInBoth(t *testing.T) {
 	}
 }
 
+// A call that ends in another worktree, detached there, isn't credited with a commit made on that
+// HEAD just before it started, which no ref reaches: every worktree's HEAD is among the start's
+// tips (#60). The commit must fall within the 2 s attrib allows before the start for this to show
+// anything, which it does unless the machine is very slow.
+func TestDetachedCommitInTheWorktreeACallEndsInBeforeItIsNotCredited(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	wt1 := a.linkedTree("wt-start", "feat-start")
+	wt2 := a.linkedTree("wt-end", "feat-end")
+	alice, _ := a.claudeSession("aaaaaa", "claude-x", procP, wt1)
+	name := a.named(alice)
+
+	git(t, wt2, "switch", "-q", "--detach")
+	commitFile(t, wt2, "before.txt")
+	a.callStart("claude-x", procP, "toolu_x", wt1)
+	a.callEnd("claude-x", procP, "toolu_x", wt2)
+	if got := a.look("aaaaaa", name).Commits; len(got) != 0 {
+		t.Errorf("credited %+v; the call made no commit", got)
+	}
+}
+
 // A call in another repository, or in none, is not this daemon's to watch.
 func TestCallOutsideTheCloneIsSkipped(t *testing.T) {
 	t.Parallel()

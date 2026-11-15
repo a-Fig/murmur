@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,19 +21,33 @@ import (
 )
 
 // Tests of handing a message over to a session as a turn (#57). `t3` is a stand-in: the test
-// binary itself, run again as `t3 thread send <thread> -`, which records what it was asked.
+// binary itself, put in a test's own directory as fakeT3Name and run from there as
+// `t3 thread send <thread> -`, which records what it was asked.
 
-// fakeT3Env names the file the stand-in appends its calls to; fakeT3FailEnv, if set, makes it fail.
+// fakeT3Name is the stand-in's file name, less the extension Windows needs: TestMain runs the
+// stand-in instead of the tests when the binary was started under this name.
+const fakeT3Name = "fake-t3"
+
+// The stand-in is told what to do by files beside it, not by the environment, so that each test
+// has its own and can call t.Parallel (#282): an environment variable can't be set in a parallel
+// test, and one test's would reach the stand-in another test started. fakeT3Calls is the file it
+// appends its calls to; fakeT3Fail, if there, makes it fail; fakeT3Sleep holds a duration it takes,
+// as a `t3` that is busy.
 const (
-	fakeT3Env     = "MURMUR_TEST_FAKE_T3"
-	fakeT3FailEnv = "MURMUR_TEST_FAKE_T3_FAIL"
-	// fakeT3SleepEnv, if set to a duration, makes the stand-in take that long, as a `t3` that is busy.
-	fakeT3SleepEnv = "MURMUR_TEST_FAKE_T3_SLEEP"
+	fakeT3Calls = "calls.jsonl"
+	fakeT3Fail  = "fail"
+	fakeT3Sleep = "sleep"
 )
 
 func TestMain(m *testing.M) {
-	if path := os.Getenv(fakeT3Env); path != "" {
-		os.Exit(fakeT3(path))
+	// By the path it was started at when the executable's can't be read (Linux without /proc), so a
+	// stand-in never runs the whole suite instead: the daemon starts it by that path (the route's T3CLI).
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	if strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)) == fakeT3Name {
+		os.Exit(fakeT3(filepath.Dir(exe)))
 	}
 	// The daemon reads conversation titles from the clients' state under the user's home (#66): in
 	// tests that is an empty directory, so nothing here reads the real ~/.t3, ~/.codex or ~/.claude.
@@ -43,53 +59,78 @@ func TestMain(m *testing.M) {
 	os.Setenv("HOME", home)
 	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	// The hook looks for its session's MCP server among the records of this user's (#422): none
+	// here, so it finds its clone from its working directory, and never a real session's.
+	os.Setenv(brand.SessionsDirEnv, filepath.Join(home, "sessions"))
 	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
+	started := time.Now()
 	code := m.Run()
 	os.RemoveAll(home)
+	if path := os.Getenv("MURMUR_GIT_STATS"); path != "" && gitStats.ran() { // not for `go test -list`
+		// How git did over the whole run, failing or not, added to the file it names (#513). go test
+		// shows a passing package's output only with -v, so CI prints the file in a step of its own.
+		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			fmt.Fprintf(f, "git in a test run of %s: %s\n", time.Since(started).Round(time.Second), gitStats.summary(24*time.Hour))
+			f.Close()
+		}
+	}
 	os.Exit(code)
 }
 
-// t3Call is one run of the stand-in `t3`.
+// t3Call is one run of the stand-in `t3`, which also stands in for `codex` and `opencode` (#135).
 type t3Call struct {
-	Args  []string `json:"args"`
-	Stdin string   `json:"stdin"`
-	Home  string   `json:"home"`
+	Args      []string `json:"args"`
+	Stdin     string   `json:"stdin"`
+	Home      string   `json:"home"`
+	CodexHome string   `json:"codexHome"`
 }
 
-// fakeT3 is the stand-in `t3`: it records its arguments, standard input and T3CODE_HOME, and
-// fails if told to.
-func fakeT3(path string) int {
+// fakeT3 is the stand-in `t3`, run from dir: it records its arguments, standard input, T3CODE_HOME
+// and CODEX_HOME, and takes its time or fails if told to. It reads what it is told before it records
+// the call, as a process reads its environment when it starts, so a test that changes the settings
+// once it has seen the call changes only the calls after it.
+func fakeT3(dir string) int {
+	var sleep time.Duration
+	if s, err := os.ReadFile(filepath.Join(dir, fakeT3Sleep)); err == nil {
+		sleep, _ = time.ParseDuration(strings.TrimSpace(string(s)))
+	}
+	_, err := os.Stat(filepath.Join(dir, fakeT3Fail))
+	fail := err == nil
 	in, _ := io.ReadAll(os.Stdin)
-	line, _ := json.Marshal(t3Call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME")})
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	line, _ := json.Marshal(t3Call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME"), CodexHome: os.Getenv("CODEX_HOME")})
+	f, err := os.OpenFile(filepath.Join(dir, fakeT3Calls), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 3
 	}
 	f.Write(append(line, '\n'))
 	f.Close()
-	if s := os.Getenv(fakeT3SleepEnv); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
-			time.Sleep(d)
-		}
-	}
-	if os.Getenv(fakeT3FailEnv) != "" {
+	time.Sleep(sleep)
+	if fail {
 		os.Stdout.WriteString("no thread with that id\nsecond line\n")
 		return 1
 	}
 	return 0
 }
 
-// useFakeT3 points T3CODE_CLI_PATH-style routes at the stand-in. It returns the path to put in a
-// route as T3CLI, and what the stand-in has been asked so far. It tells the stand-in where to
-// write through the environment, so a test that uses it can't call t.Parallel (#39).
+// useFakeT3 puts a stand-in `t3` in a directory of the test's own. It returns the path to put in a
+// route as T3CLI, and what the stand-in has been asked so far.
 func useFakeT3(t *testing.T) (exe string, calls func() []t3Call) {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	exe, calls = fakeT3Path(t)
+	installFakeT3(t, exe)
+	return exe, calls
+}
+
+// fakeT3Path is where a test's stand-in goes, in a new directory, and what the stand-in there has
+// been asked so far. Nothing is there yet: installFakeT3 puts it there.
+func fakeT3Path(t *testing.T) (exe string, calls func() []t3Call) {
+	t.Helper()
+	dir := t.TempDir()
+	exe = filepath.Join(dir, fakeT3Name)
+	if runtime.GOOS == "windows" {
+		exe += ".exe" // the only kind of file Windows runs as a program
 	}
-	path := filepath.Join(t.TempDir(), "t3-calls.jsonl")
-	t.Setenv(fakeT3Env, path)
+	path := filepath.Join(dir, fakeT3Calls)
 	return exe, func() []t3Call {
 		f, err := os.Open(path)
 		if err != nil {
@@ -108,6 +149,67 @@ func useFakeT3(t *testing.T) (exe string, calls func() []t3Call) {
 			out = append(out, c)
 		}
 		return out
+	}
+}
+
+// installFakeT3 puts the test binary at exe, whole or not at all: it is made beside exe and renamed
+// into place, so a daemon that runs exe meanwhile never finds half a command. A hard link costs
+// nothing where it can be made; elsewhere, as across volumes, the binary is copied. On Windows it
+// is always copied: a hard link would be another name of the running test binary, and Windows
+// won't remove a program's file while it runs, by any of its names, so the test's directory
+// couldn't be cleaned up.
+func installFakeT3(t *testing.T, exe string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := exe + ".tmp"
+	if runtime.GOOS == "windows" || os.Link(self, tmp) != nil {
+		if err := copyFile(self, tmp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Rename(tmp, exe); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// copyFile copies src to a new file dst that can be run.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// setFakeT3 changes one of the settings (fakeT3Fail, fakeT3Sleep) of the stand-in at exe, for the
+// calls that start after it; an empty value takes it away. The file is written whole, by renaming,
+// so a stand-in that starts meanwhile reads the old value or the new one.
+func setFakeT3(t *testing.T, exe, setting, value string) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(exe), setting)
+	if value == "" {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err := os.WriteFile(path+".tmp", []byte(value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -146,6 +248,7 @@ func (d *device) unread(id, claude string) (inbox, notices []string) {
 // A message for a session in T3 runs `t3 thread send <thread> -` with the text on standard input,
 // once, and is no longer unread: not in the inbox, not in the hook's notices.
 func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -188,6 +291,7 @@ func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 
 // Messages for one session go in one at a time, in the order they came, and each once.
 func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -211,6 +315,7 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 // Only a session's first turn from a sender says what agent the sender is and whose machine it is
 // on; later ones name it alone (#216). Another sender is introduced in its own first turn.
 func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -241,6 +346,7 @@ func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
 // A session that isn't in T3 and has no messaging socket can't be put a turn into, so its
 // messages are the hook's notices, as they were, and the daemon says so once.
 func TestWithNoWayInMessagesStayNotices(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	_, calls := useFakeT3(t)
 	var out syncBuf
@@ -269,9 +375,10 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 // once per session however many messages fail. It is not tried again: the failure may have come
 // after T3 took the message (see deliver_repeat_test.go).
 func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	t.Setenv(fakeT3FailEnv, "1")
+	setFakeT3(t, exe, fakeT3Fail, "1")
 	var out syncBuf
 	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
 	alice, _ := a.session("aaaaaa", "")
@@ -310,6 +417,7 @@ func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 // The page's wake setting "never" keeps messages as notices, for the device or for one session; a
 // message that waited is handed over when the setting is lifted.
 func TestWakeNeverKeepsTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -351,6 +459,7 @@ func TestWakeNeverKeepsTheNotice(t *testing.T) {
 // still reached, through its thread, which the daemon remembers; a restart of the daemon doesn't
 // forget it.
 func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -389,6 +498,7 @@ func TestMessageForAStoppedT3SessionStillReachesItsThread(t *testing.T) {
 // A session's name follows its T3 thread: a new MCP server in the same thread, with another
 // Claude session ID (/clear, a restart, another account), has the name the thread had.
 func TestNameFollowsTheT3Thread(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -412,6 +522,7 @@ func TestNameFollowsTheT3Thread(t *testing.T) {
 // background) keeps its name, and from then on takes messages as turns, including one that came
 // while the thread was unknown.
 func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -438,6 +549,7 @@ func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 // token are in state.json at most (the thread, so that a message can still find it), and never in
 // the log, on the page or on the bus.
 func TestRouteStaysOnTheDevice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf

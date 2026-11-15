@@ -8,9 +8,16 @@
 // during the turn, and if there is any it keeps the turn going with it, as each message's turn
 // would read; if not, the session is idle (#202).
 //
+// The agents run it in every project, whatever repo the session works in, so it first finds the
+// clone the session is in Murmur in (sessionClone), and does nothing where there is none (#422).
+//
 // Pi has no hooks of this kind, so Murmur's Pi extension runs this one (`mur hook --agent pi`) at
 // the same moments, with a payload of Claude Code's shape whose session_id is the Pi session's
 // file, and reads its answer as Claude Code would (internal/join/pi.go, #205).
+//
+// OpenCode 2 has none either, and Murmur's plugin there does the same (`mur hook --agent opencode`),
+// with OpenCode's session ID, and says which sessions another session started
+// (internal/join/opencodeplugin.go, #431, #455).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
@@ -28,6 +35,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
@@ -60,6 +68,10 @@ type input struct {
 	// to go on (Escape, an error), so the hook tells the daemon the turn ended and keeps nothing
 	// going. Claude Code fires no Stop then.
 	Interrupted bool `json:"interrupted"`
+	// Child and ParentNative are Murmur's own, from its OpenCode plugin: another session started
+	// this one, whose OpenCode session ID ParentNative is (#455).
+	Child        bool   `json:"child"`
+	ParentNative string `json:"parent_native"`
 }
 
 type output struct {
@@ -137,15 +149,84 @@ func bracketOp(in input) string {
 	return ""
 }
 
-// findClone is the git common dir of the repository the hook runs in, which is what names its
-// daemon. It is read from the repository's files where it can be (gitx.Discover): a git process
-// here would add a tenth of a second or more to every tool call on Windows. Git is asked where it
-// can't.
+// findClone is the git common dir of the repository the hook runs in. It is read from the
+// repository's files where it can be (gitx.Discover): a git process here would add a tenth of a
+// second or more to every tool call on Windows. Git is asked where it can't.
 func findClone(ctx context.Context, cwd string) (string, error) {
 	if _, common, ok := gitx.Discover(cwd); ok {
 		return common, nil
 	}
 	return client.FindGitDir(ctx, cwd)
+}
+
+// sessionClone is the git common dir of the clone the hook's session is in Murmur in, which names
+// its daemon; "" where there is none, and the hook does nothing. placed says it came from the
+// session's own record, and so may not be the repository the hook runs in.
+//
+// The session's MCP server publishes where it is (package here), and `mur join -C` can have moved
+// it to a clone the session doesn't work in (#200), so the working directory doesn't say. The
+// record is found by the agent's process: Claude Code's CLAUDE_PID, or for another agent the
+// nearest of the hook's ancestors that started a server (ownRecord). It settles it with no git
+// process and no daemon asked: its clone, or nothing for a server outside any repository, which is
+// every tool call in a folder that isn't one. A server in a repo that hasn't joined names its
+// clone, and the hook stops at the daemon that isn't there.
+//
+// Where no record is surely the session's, the working directory answers, as it did before #422:
+// no directory for records, a server from before they were written or one that isn't running, or
+// a process whose sessions can't be told apart. Pi's extension and OpenCode's plugin run the hook
+// only in a clone their user joined, by its working directory.
+func sessionClone(ctx context.Context, agent string, in input, who proto.Request) (gitDir string, placed bool) {
+	if !byExtension(agent) {
+		if dir, err := here.DefaultDir(); err == nil {
+			pids := who.Ancestors
+			if agent == "" {
+				pids = nil
+				if who.ClientPID != 0 {
+					pids = []int{who.ClientPID}
+				}
+			}
+			if rec, ok := ownRecord(agent, in.SessionID, here.Of(dir, pids)); ok {
+				return rec.GitDir, true
+			}
+		}
+	}
+	gitDir, err := findClone(ctx, in.Cwd)
+	if err != nil {
+		return "", false
+	}
+	return gitDir, false
+}
+
+// ownRecord picks, from the records of the servers the agent's process started, the one of the
+// hook's session, whose ID is native.
+//
+// Claude Code names its own process (CLAUDE_PID), which runs one session, so its one record is the
+// session's. Another agent's hook has only its ancestors to go by, and a record found among them
+// doesn't say whose it is. The nearest may be the process of an agent that started this one (a
+// Codex run from Claude Code's shell, whose own server has published nothing); or the agent's own
+// process with several sessions, each with a server (Codex's app server, in T3 and outside it), of
+// which this session's hasn't published. Taking such a record would send the hook to the wrong
+// clone's daemon, where it could be taken for the record's session and given its messages
+// (internal/daemon, agentHookSessionsLocked), or stop it where that session is in no repository.
+// So for another agent the record has to carry the hook's own session ID: Grok's server has it
+// from the start, and Codex's learns it from the first call to one of Murmur's tools.
+func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
+	if agent == "" {
+		if len(recs) == 1 {
+			return recs[0], true
+		}
+		return here.Session{}, false
+	}
+	var mine []here.Session
+	for _, r := range recs {
+		if native != "" && r.Native == native {
+			mine = append(mine, r)
+		}
+	}
+	if len(mine) == 1 {
+		return mine[0], true
+	}
+	return here.Session{}, false
 }
 
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout. It is
@@ -155,17 +236,23 @@ func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 // Agents other than Claude Code that join installs the hook in, by the name their hook's command
 // line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
 // some fields of its own (#225). Pi's is run by Murmur's own extension, which gives the session's
-// file for its ID (#205).
+// file for its ID (#205), and OpenCode's by Murmur's plugin, with OpenCode's session ID (#431).
 const (
-	Codex = "codex"
-	Grok  = "grok"
-	Pi    = "pi"
+	Codex    = "codex"
+	Grok     = "grok"
+	Pi       = "pi"
+	OpenCode = "opencode"
 )
 
-// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok or pi.
+// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi or opencode.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode
 }
+
+// byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
+// own hooks: Pi's extension and OpenCode's plugin. Their payload names the session by the ID its
+// MCP server registered with, and may say the work was interrupted.
+func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 
 // RunFor is Run for agent, "" for Claude Code. It does nothing for an agent it doesn't know, rather
 // than take another agent's hook for Claude Code's. Another agent's hook brackets no tool call, as
@@ -185,12 +272,15 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	if in.SessionID == "" || !events[in.Event] {
 		return
 	}
-	if agent != Pi {
-		in.Interrupted = false // Pi's extension's own field: Claude Code fires no Stop then
+	if !byExtension(agent) {
+		in.Interrupted = false // the extensions' own field: Claude Code fires no Stop then
+	}
+	if agent != OpenCode {
+		in.Child, in.ParentNative = false, ""
 	}
 	who := identify(agent, in)
 	if in.Event == stop {
-		turnEnd(in, who, stdout)
+		turnEnd(agent, in, who, stdout)
 		return
 	}
 	op := bracketOp(in)
@@ -209,13 +299,19 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	gitDir, err := findClone(ctx, in.Cwd)
-	if err != nil {
+	gitDir, placed := sessionClone(ctx, agent, in, who)
+	if gitDir == "" {
 		return
 	}
 	c, err := client.Connect(ctx, gitDir, false)
 	if err != nil {
 		return
+	}
+	// A bracket names the repository the call ran in, which the daemon watches only if it is its
+	// own: a session moved into this clone works in another, and its commits there aren't credited.
+	callDir := gitDir
+	if op != "" && placed {
+		callDir, _ = findClone(ctx, in.Cwd)
 	}
 	// The end of a call is sent alongside the notices request. The daemon answers it at once and
 	// finds the call's commits after, so neither holds up the notices or the agent.
@@ -226,7 +322,7 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 			defer wg.Done()
 			defer func() { recover() }()
 			r := who
-			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, in.Cwd, gitDir
+			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, in.Cwd, callDir
 			c.Do(ctx, r)
 		}()
 	}
@@ -259,19 +355,19 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 // back, if any, unless it was interrupted: then the daemon gives none back. They are read once
 // the daemon answers: a hook that gave up waiting (NoticeTimeout) just before the answer came loses
 // them, the risk #204's whole messages take too.
-func turnEnd(in input, who proto.Request, stdout io.Writer) {
+func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
 	defer cancel()
-	gitDir, err := findClone(ctx, in.Cwd)
-	if err != nil {
+	gitDir, _ := sessionClone(ctx, agent, in, who)
+	if gitDir == "" {
 		return
 	}
 	c, err := client.Connect(ctx, gitDir, false)
 	if err != nil {
 		return
 	}
-	// Grok's Stop at the session's close can't keep anything going, nor can Pi's after Escape or an
-	// error: the messages are left to be handed over as a turn, as after a turn the user interrupted.
+	// Grok's Stop at the session's close can't keep anything going, nor can Pi's or OpenCode's after
+	// Escape or an error: the messages are left to be handed over as a turn, as after a turn the user interrupted.
 	who.Op, who.Continues = proto.OpTurnEnd, (in.Reason == "" || in.Reason == "end_turn") && !in.Interrupted
 	resp, err := c.Do(ctx, who)
 	if err != nil || len(resp.Read) == 0 || !who.Continues {
@@ -284,12 +380,12 @@ func turnEnd(in input, who proto.Request, stdout io.Writer) {
 // for Claude Code, its process (CLAUDE_PID); for another agent, the agent's name and the hook's
 // ancestors, among which is the agent's process (proc.Ancestors).
 func identify(agent string, in input) proto.Request {
-	if agent == Pi {
-		// The session is named by its file, which its MCP server registered with too, never by a
-		// Claude Code ID or process: a Pi started from a Claude Code session's shell inherits that
-		// session's CLAUDE_PID. Nothing of Pi's is a transcript of Claude Code's form, and no call is
-		// bracketed, so Pi's commits aren't credited to it.
-		return proto.Request{Native: in.SessionID}
+	if byExtension(agent) {
+		// The session is named by its file (Pi) or its session ID (OpenCode), which its MCP server
+		// registered with too, never by a Claude Code ID or process: a Pi started from a Claude Code
+		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
+		// Claude Code's form, and no call is bracketed, so their commits aren't credited to them.
+		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}
 	if agent == "" {

@@ -4,9 +4,10 @@ Murmur lets coding agents on different teammates' machines, in the same repo, di
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
 binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
 request runs it on macOS, Windows and Linux in CI (`docs/testing.md`).
-`docs/VISION.md` is the design and its reasons; read it before proposing architecture, and change
-it when a decision changes. The name lives in `internal/brand`, so a rename is that file plus the
-module path.
+`docs/VISION.md` is the direction and its reasons; read it before proposing architecture. How each
+part works is in `docs/design/`, one file per topic. Tyler's rule (2026-11-14, #578): a PR adds to
+VISION only when it changes a direction; how a feature works goes in its design file or in code
+comments. The name lives in `internal/brand`, so a rename is that file plus the module path.
 The logo files, palette and type, and the renders a palette change means redoing, are in
 `docs/brand.md`.
 
@@ -61,8 +62,24 @@ Tyler's rules:
   issue covers gets one filed first.
 - PR bodies follow `.github/pull_request_template.md`. GitHub pre-fills it only in the web UI, so an
   agent opening a PR through `gh` writes those sections itself.
-- Every code PR gets an Opus or sol review before it is handed over; the PR body says which
-  commits it covered. Doc-only PRs need none.
+- Every PR gets an Opus or Sol review before it is handed over, and merges with every CI check
+  that ran green, except as the next rule says. The PR body says which commits the review covered.
+- **PRs can skip CI and code review in these situations:**
+  - **Docs, templates and images only** (Markdown outside `internal/` and `docs/agents/` other
+    than `README.md`, `.github/` templates, images): skip both. No check reads these files.
+  - **UI, styling or assets** (2026-11-10): skip review. CI still runs, because the page in
+    `internal/web/static` is built into the binary and tested.
+  - **The website only** (`site/`, plus anything in the first item): skip review. The Go tests
+    never read `site/`; its own tests run in `test-linux`, or locally in seconds:
+    `node --test --import ./site/test/register.mjs site/test/*.test.mjs`. Either one passing is
+    enough.
+  - **A merge of main that only resolves conflicts:** skip review of that commit.
+  - **With permission from Tyler.**
+
+  Anything else waits for both. `README.md` and `docs/agents/` (a setup test reads them),
+  `internal/skills`, `go.mod` and `.github/workflows` are tested, so even a small change to them
+  waits for CI. Since 2026-11-12 CI applies its half of these itself (#512): it runs only the jobs
+  the changed files need (`scripts/ci-level.sh`), so there is no job to skip by hand.
 - A PR that changes something a person sees (the `mur ui` page, the site, terminal output) shows
   it in its body: before and after screenshots, and a GIF when it moves or is interactive.
   `gh` can't upload images; `scripts/pr-media.sh` can (`docs/pr-media.md`).

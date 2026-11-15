@@ -163,11 +163,12 @@ func Who(r proto.Response) string {
 			continue // every one of its sessions is among the hidden
 		}
 		sort.SliceStable(sessions, func(a, b int) bool { return activeAt(sessions[a]).After(activeAt(sessions[b])) })
+		id := device(d.Nick, d.ID)
 		switch {
 		case d.Self:
-			fmt.Fprintf(&b, "\n%s (%s, this device)\n", d.ID, who)
+			fmt.Fprintf(&b, "\n%s (%s, this device)\n", id, who)
 		case d.Stale:
-			fmt.Fprintf(&b, "\n%s (%s) STALE: last seen %s; messages may not reach it", d.ID, who, Ago(d.LastSeen))
+			fmt.Fprintf(&b, "\n%s (%s) STALE: last seen %s; messages may not reach it", id, who, Ago(d.LastSeen))
 			if n := len(d.Sessions); n == 1 {
 				b.WriteString("; its 1 session is not listed")
 			} else if n > 1 {
@@ -175,7 +176,7 @@ func Who(r proto.Response) string {
 			}
 			b.WriteString("\n")
 		default:
-			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", d.ID, who, Ago(d.LastSeen))
+			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", id, who, Ago(d.LastSeen))
 		}
 		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
@@ -225,6 +226,15 @@ func Who(r proto.Response) string {
 	return b.String()
 }
 
+// device renders a device as a session is rendered: what it is called (#190), if anything, then
+// its ID, which is its address.
+func device(nick, id string) string {
+	if nick != "" {
+		return nick + "  " + id
+	}
+	return id
+}
+
 func from(m proto.MessageView) string {
 	s := m.From
 	if m.FromName != "" {
@@ -255,9 +265,15 @@ func Inbox(r proto.Response) string {
 		fmt.Fprintf(&b, "\n[%s message from %s, %s]\n", brand.Product, from(m), Ago(m.At))
 		if m.To == "*" {
 			b.WriteString("To: everyone\n")
+		} else if bus.IsGroup(m.To) {
+			// Being in it is a given (Tyler, 2026-11-13); the line after the subject says how to leave.
+			fmt.Fprintf(&b, "To: %s\n", m.To)
 		}
-		fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
-		if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
+		body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
+		if !repeatsSubject(m.Subject, body) {
+			fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
+		}
+		if body != "" {
 			// Quoted line by line, so no line of it can pass for one of these headers.
 			for _, line := range strings.Split(body, "\n") {
 				b.WriteString("> " + line + "\n")
@@ -267,13 +283,38 @@ func Inbox(r proto.Response) string {
 		if m.FromName != "" {
 			reply = m.FromName // a name is an address
 		}
-		if isPerson(m) && !m.Explained {
+		// In a group, the group's line, whoever wrote: a person's own line would send the reply
+		// to them alone (#484).
+		switch {
+		case bus.IsGroup(m.To) && m.GroupKnown:
+			fmt.Fprintf(&b, "(Reply to %s or %s.)\n", m.To, reply)
+		case bus.IsGroup(m.To):
+			fmt.Fprintf(&b, "(Reply to %s, or to %s alone. Remove the tag %s from yourself to leave the group.)\n", m.To, reply, m.To)
+		case isPerson(m) && !m.Explained:
 			fmt.Fprintf(&b, "(%s is a person, and sees only what you send them. Reply to %s.)\n", reply, reply)
-		} else {
+		default:
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 		}
 	}
 	return b.String()
+}
+
+// repeatsSubject says a subject is only the start of the body, cut short and ended with "…" or
+// "...". That is what web.SplitText makes of a message a person writes on the page with no subject
+// and a first line too long for one; printing both would give the agent that line twice (#552), so
+// Turn and Inbox print the body alone, whoever sent it: an agent's cut subject repeats its body
+// just the same. The page hides a person's such subject by the same rule (personText in
+// internal/web/static/assets/app.js). body is the body as the view prints it, trimmed.
+func repeatsSubject(subject, body string) bool {
+	if body == "" {
+		return false
+	}
+	for _, end := range []string{"…", "..."} {
+		if stem, ok := strings.CutSuffix(subject, end); ok {
+			return strings.HasPrefix(body, stem)
+		}
+	}
+	return false
 }
 
 // isPerson says a person sent m from Murmur's page (#242), not an agent.
@@ -290,7 +331,7 @@ func senders(msgs []proto.MessageView) string {
 }
 
 // Turn renders a message as the turn it becomes in the session it is for, when Murmur hands it
-// over at once (docs/VISION.md, "Delivering a message as a turn"): who it is from, as Murmur knows them,
+// over at once (docs/design/delivery.md, "Handing over"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
 // reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
@@ -303,7 +344,9 @@ func senders(msgs []proto.MessageView) string {
 // A person on Murmur's page (#242) reads nothing of the conversation they wrote into, so the first
 // message a session has from one ends by saying that what the agent writes here doesn't reach them:
 // an agent that answers in its conversation, as it would to its user, has answered nobody. Their
-// later messages (m.Explained, #345) end as an agent's do: the agent has been told.
+// later messages (m.Explained, #345) end as an agent's do: the agent has been told. In a group a
+// person's message ends with the group's line instead (#484), and the daemon leaves them to be
+// explained in their first direct message.
 func Turn(m proto.MessageView) string {
 	who := m.From
 	if m.FromName != "" {
@@ -314,7 +357,7 @@ func Turn(m proto.MessageView) string {
 		agent = "the command line"
 	}
 	if isPerson(m) {
-		agent = "on " + brand.Product + "'s page"
+		agent = "" // [human] says it; where they wrote from tells the agent nothing (Tyler, 2026-11-13)
 	}
 	var about []string
 	if agent != "" && !m.Introduced {
@@ -329,7 +372,13 @@ func Turn(m proto.MessageView) string {
 		about = append(about, "from device "+m.FromDevice)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Message from %s", who)
+	if bus.IsGroup(m.To) {
+		// The group goes first (Tyler, 2026-11-12): which conversation this is in is what the
+		// agent needs before who wrote it.
+		fmt.Fprintf(&b, "Message sent in %s from %s", m.To, who)
+	} else {
+		fmt.Fprintf(&b, "Message from %s", who)
+	}
 	if isPerson(m) {
 		fmt.Fprintf(&b, " [%s]", tags.Human) // on every message, as who shows it, introduced or not (#267)
 	}
@@ -343,9 +392,28 @@ func Turn(m proto.MessageView) string {
 	if !m.Told.IsZero() {
 		fmt.Fprintf(&b, ", which a notice told you of %s", Ago(m.Told))
 	}
-	fmt.Fprintf(&b, ":\n\n%s\n", m.Subject)
-	if body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody)); body != "" {
+	b.WriteString(":\n")
+	body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
+	if !repeatsSubject(m.Subject, body) {
+		fmt.Fprintf(&b, "\n%s\n", m.Subject)
+	}
+	if body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
+	}
+	if bus.IsGroup(m.To) && m.GroupKnown {
+		// The session has had the long line below from this group (Tyler, 2026-11-12).
+		fmt.Fprintf(&b, "\nReply with %s's `send` to %s or %s, if a reply is needed.\n", brand.Product, m.To, who)
+		return b.String()
+	}
+	if bus.IsGroup(m.To) {
+		// The first message a session has from a group. A group's message is answered to the
+		// group, so the others see it; the tag is how a member leaves, and a session another agent
+		// added learns here that it is in the group. A person writing in a group gets this line, not
+		// their own (#484): theirs said to answer them, and the rest of the group never saw the
+		// answer. This one says to answer with send too, and is short (Tyler, 2026-11-13).
+		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s's `send` to %s, or to %s alone, if a reply is needed. Remove the tag %s from yourself to leave the group.\n",
+			m.To, brand.Product, m.To, who, m.To)
+		return b.String()
 	}
 	if isPerson(m) && !m.Explained {
 		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s's `send` to %s.\n", who, brand.Product, who)
@@ -422,6 +490,44 @@ func Sent(r proto.Response) string {
 	return b.String()
 }
 
+// SentTo is what became of one recipient of a send to a list (#520): sent, with the daemon's
+// answer; not sent, with why; or the same recipient as one named before it, by that name.
+type SentTo struct {
+	To   string // as the sender named it
+	Resp proto.Response
+	Err  string
+	Same string
+}
+
+// SentEach renders the outcome of a send to a list: a line per recipient, in the order named.
+func SentEach(rs []SentTo) string {
+	sent, named := 0, 0
+	for _, r := range rs {
+		if r.Same == "" {
+			named++ // one named twice is one recipient
+			if r.Err == "" {
+				sent++
+			}
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Sent to %d of %d, each as a message of its own:\n", sent, named)
+	for _, r := range rs {
+		switch {
+		case r.Same != "":
+			fmt.Fprintf(&b, "- %s is %s, so it got the message once.\n", r.To, r.Same)
+		case r.Err != "":
+			// The daemon's own refusals can start "not sent: " too.
+			why := strings.TrimSuffix(strings.TrimPrefix(r.Err, "not sent: "), ".")
+			fmt.Fprintf(&b, "- Not sent to %s: %s\n", r.To, why)
+		default:
+			line := strings.TrimSpace(Sent(r.Resp))
+			b.WriteString("- " + strings.Join(strings.Fields(line), " ") + "\n")
+		}
+	}
+	return b.String()
+}
+
 // TagList renders tags with where each came from, where that isn't the session itself.
 func TagList(ts []tags.Tag) string {
 	parts := make([]string, len(ts))
@@ -448,6 +554,21 @@ func Tags(r proto.Response) string {
 		b.WriteString("You have no tags.\n")
 	} else {
 		fmt.Fprintf(&b, "Your tags: %s\n", TagList(r.Tags))
+	}
+	return b.String()
+}
+
+// Muted renders the outcome of mute: what changed or, when the caller only asked, whom it has
+// muted.
+func Muted(r proto.Response) string {
+	var b strings.Builder
+	if r.Note != "" {
+		return r.Note + "\n"
+	}
+	if len(r.Muted) == 0 {
+		b.WriteString("You have muted nobody.\n")
+	} else {
+		fmt.Fprintf(&b, "You have muted: %s\n", strings.Join(r.Muted, ", "))
 	}
 	return b.String()
 }
@@ -485,12 +606,13 @@ func Lookup(r proto.Response) string {
 	if d.Owner != "" {
 		who = d.Owner + " on " + d.Host
 	}
+	id := device(d.Nick, d.Device)
 	if d.Local {
-		fmt.Fprintf(&b, "  device %s (%s, this device)\n", d.Device, who)
+		fmt.Fprintf(&b, "  device %s (%s, this device)\n", id, who)
 	} else if who != "" {
-		fmt.Fprintf(&b, "  device %s (%s)\n", d.Device, who)
+		fmt.Fprintf(&b, "  device %s (%s)\n", id, who)
 	} else {
-		fmt.Fprintf(&b, "  device %s\n", d.Device)
+		fmt.Fprintf(&b, "  device %s\n", id)
 	}
 
 	if d.Branch != "" {
@@ -506,6 +628,9 @@ func Lookup(r proto.Response) string {
 	}
 	if len(d.Tags) > 0 {
 		fmt.Fprintf(&b, "  tags: %s\n", TagList(d.Tags))
+	}
+	if len(d.Muted) > 0 {
+		fmt.Fprintf(&b, "  has muted: %s (it gets nothing they send)\n", strings.Join(d.Muted, ", "))
 	}
 
 	switch {

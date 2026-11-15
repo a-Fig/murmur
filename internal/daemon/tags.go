@@ -12,7 +12,7 @@ import (
 	"github.com/a-Fig/murmur/internal/tags"
 )
 
-// Session tags (#198, docs/VISION.md, "Session tags"). A session's own device decides its tags and
+// Session tags (#198, docs/design/tags.md). A session's own device decides its tags and
 // publishes them in presence: the tags the session set for itself, those the daemon derives (the
 // model, from T3's thread), and a human's marks over both. A human on another device's page sends
 // the change to this device as a tags event on their own log, and this device applies it. No
@@ -57,16 +57,20 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
 // inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
-func (d *Daemon) dndLocked(id string) bool {
+func (d *Daemon) dndLocked(id string) bool { return d.hasTagLocked(id, tags.DoNotDisturb) }
+
+// hasTagLocked says session id on this device has tag name. A session that isn't registered at
+// the moment goes by the tags kept for its name. Caller holds mu.
+func (d *Daemon) hasTagLocked(id, name string) bool {
 	if s := d.sessions[id]; s != nil {
-		return tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb)
+		return tags.Has(d.tagsOfLocked(s), name)
 	}
 	key := d.tagKeyLocked(id)
 	st := d.st.Tags[key]
 	if key == "" || st == nil {
 		return false
 	}
-	return tags.Has(tags.Effective(st.Self, d.derivedTagsLocked(id), st.Human), tags.DoNotDisturb)
+	return tags.Has(tags.Effective(st.Self, d.derivedTagsLocked(id), st.Human), name)
 }
 
 // peerDNDLocked says the session at dev/sess is on do not disturb: by this device's own tags, or
@@ -137,7 +141,8 @@ func peerTagsLocked(p *peer, sess string) []tags.Tag {
 }
 
 // setOwnTags is OpTags: session id adds and removes its own tags. A human's mark on a tag stands
-// over the session's change, and the reply says so.
+// over the session's change, and the reply says so, except that a session can always leave a
+// group (see tags.State.Left).
 func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	from := bus.Addr(d.device, id)
 	d.mu.Lock()
@@ -158,6 +163,9 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	var held []string
 	added, _ := tags.Clean(req.Add)
 	removed, _ := tags.Clean(req.Remove)
+	// A session leaves a group a human put it in (#539): the line every group message ends with
+	// says removing the tag leaves, and only a person on the page could take it out otherwise.
+	next.Left(removed, time.Now().UTC())
 	for _, t := range append(added, removed...) {
 		if m, ok := next.Human[t]; ok {
 			held = append(held, fmt.Sprintf("%s (a human set it %s)", t, map[bool]string{true: "on", false: "off"}[m.On]))

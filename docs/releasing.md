@@ -51,10 +51,14 @@ channel first (#244).
   versions rather than by date. Tyler's machines run it. Unsetting it doesn't go back: a daemon on
   a nightly stays there until a stable release is higher.
 
-Daemons from before the channel (v0.2.3 and earlier) don't read `murmur.channel` and keep taking
-stable releases, so a machine joins the channel at the first stable release that has it. The key is
-separate from `murmur.update` because those daemons read that one as a bool, and an unknown value
-there reads as "updates on".
+v0.2.3 and earlier have no updater: it arrived with #196 (2026-11-07), after v0.2.3 was tagged. A
+machine on one takes no release, stable or prerelease, until someone runs the installer again, and
+a daemon the old `mur` left running is then ended by hand (#394). Every published release that
+updates itself also reads `murmur.channel` (#423).
+
+Builds of `main` between #196 and the channel (#246) update but don't read `murmur.channel`, and
+keep taking stable releases. The key is separate from `murmur.update` because those builds read
+that one as a bool, and an unknown value there reads as "updates on".
 
 ## Nightlies
 

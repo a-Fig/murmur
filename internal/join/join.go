@@ -176,12 +176,14 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	r.Notes = append(r.Notes, notes...)
 	var claudeFresh, codexFresh bool
 	var othersFresh []string
+	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
 			if err != nil {
 				problem(h.Label, err)
+				claudeOK = claudeOK && a.driver != "claudeAgent"
 			}
 			// The home exists once registering found the agent installed, even where it then
 			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
@@ -204,14 +206,18 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 
-	// Per repo: the hook that shows incoming messages, in every working tree of the clone.
-	trees, hookNotes, err := installHooks(ctx, p, e.Exe)
-	r.Notes = append(r.Notes, hookNotes...)
-	for _, t := range trees {
-		r.Did = append(r.Did, "Installed the hook in "+filepath.Join(t, filepath.FromSlash(hookFile))+" (not committed)")
-	}
-	if err != nil {
-		problem("hook", err)
+	// Claude Code's hook is per user now, written above; one an older join put in the clone's
+	// working trees comes out, or Claude Code would run both (#422). Not where a home couldn't be
+	// written: the older hook is then the only one its sessions have, and stays for the next join.
+	if claudeOK {
+		trees, hookNotes, err := removeHooks(ctx, p, e.claudeSettings())
+		r.Notes = append(r.Notes, hookNotes...)
+		for _, t := range trees {
+			r.Did = append(r.Did, "Removed the hook an older "+brand.Command+" put in "+filepath.Join(t, filepath.FromSlash(hookFile))+": it is in Claude Code's own settings now")
+		}
+		if err != nil {
+			problem("hook", err)
+		}
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
@@ -232,7 +238,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
-	// over as a turn, for one): it is replaced, which Connect does for a client that may start daemons.
+	// over as a turn, for one): it is replaced. One from before proof (0.2) can't be asked to stop,
+	// and Replace ends it by its process (#394).
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
 	case errors.Is(err, client.ErrNoDaemon):
@@ -242,7 +249,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			r.Did = append(r.Did, "Started this clone's daemon")
 		}
 	case err == nil && c.Outdated():
-		if _, err := client.Connect(ctx, p.GitDir, true); err != nil {
+		if _, err := client.Replace(ctx, p.GitDir); err != nil {
 			problem("replacing the daemon of an older version", err)
 		} else {
 			r.Did = append(r.Did, "Replaced this clone's daemon, which was left running by an older version of "+brand.Product)
@@ -275,9 +282,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// Leave undoes a join for the clone containing dir: the consent, the hook in each working
-// tree, and the daemon. The MCP server stays registered with the agents, which is per user, and does
-// nothing in a repo that hasn't joined.
+// Leave undoes a join for the clone containing dir: the consent, the daemon, and the hook an older
+// join put in each working tree. The MCP server and the hooks stay with the agents, which is per
+// user, and do nothing in a repo that hasn't joined.
 func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	var r Report
 	p, err := Locate(ctx, dir)
@@ -298,7 +305,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 			problem("taking this clone off the record of this machine's clones", err)
 		}
 	}
-	trees, notes, err := removeHooks(ctx, p)
+	trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
 	r.Notes = append(r.Notes, notes...)
 	for _, t := range trees {
 		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
@@ -335,7 +342,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	r.Tell = []string{
 		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
-		"The " + brand.Product + " MCP server stays registered with the agents, and its skills installed, since that is per user. The server does nothing in a repo that hasn't joined; " +
+		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
 			"To remove them by hand: " + e.removal() + ".",
@@ -404,7 +411,7 @@ func othersAdvice(labels []string) string {
 // agent is running join decides it: the MCP server is registered once, so a session that started
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
-// (docs/VISION.md, "Reloading MCP servers").
+// (docs/design/joining.md, "Reloading MCP servers").
 func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
@@ -422,7 +429,8 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
 	case e.looksLikeCodex() && e.getenv("T3CODE_CLI_PATH") != "":
 		// T3's Codex provider loads the server in a thread created after it was registered, and
-		// never in an older one, which T3 doesn't refresh (docs/VISION.md, "Reloading MCP servers").
+		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
+		// servers").
 		out = append(out, brand.Product+" is on for this repo, but Codex loads MCP servers only in a thread that starts after they were added, so this thread doesn't have the tools: "+
 			"open a new thread in this project to talk to other agents through "+brand.Product+".")
 	case e.looksLikeCodex():
@@ -441,8 +449,8 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 
 // looksLikeCodex reports whether the agent running join is Codex. The variables are the ones Codex
 // is believed to set for the commands it runs; no Codex session's environment has been checked
-// (docs/VISION.md, "Reloading MCP servers"), so this may miss one, and advice then falls back to
-// covering every client.
+// (docs/design/joining.md, "Reloading MCP servers"), so this may miss one, and advice then falls
+// back to covering every client.
 func (e Env) looksLikeCodex() bool {
 	for _, k := range []string{"CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_CI"} {
 		if e.getenv(k) != "" {

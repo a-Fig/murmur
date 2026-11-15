@@ -18,6 +18,7 @@ import (
 // A message that arrives by sync once the user has left waits in the inbox. It isn't handed over, and
 // isn't counted as a failure either: when the user joins again, it goes in front of what came after.
 func TestNoTurnIsHandedOverForAUserWhoHasLeft(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var joined atomic.Bool
@@ -50,6 +51,7 @@ func TestNoTurnIsHandedOverForAUserWhoHasLeft(t *testing.T) {
 // user who left in between. Without the guard the second attempt would fail to start too, and be
 // logged as a failure; with it, the attempt isn't made.
 func TestRetryOfAHandoffStopsWhenTheUserLeaves(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _, calls := lateT3(t) // never installed: every attempt fails to start
 	var joined atomic.Bool

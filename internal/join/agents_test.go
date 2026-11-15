@@ -28,7 +28,7 @@ func TestRegisterOpenCodeKeepsTheConfig(t *testing.T) {
 	write(t, path, before)
 	h := sb.defaultHome(agents[agentIndex("opencode")])
 	did, fresh, err := sb.registerOpenCodeAt(context.Background(), h)
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 { // the server, the rule, and the plugin (#431)
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)

@@ -1,12 +1,14 @@
 package bus_test
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/names"
 )
 
 // A presence read from the bus is held to what Murmur writes: the branches a session has committed
@@ -87,5 +89,29 @@ func TestPresenceWithNewFieldsDecodesInAnOlderReader(t *testing.T) {
 	b, _ := json.Marshal(bus.SessionInfo{ID: "s1", Started: at})
 	if strings.Contains(string(b), "lastActive") || strings.Contains(string(b), "committed") {
 		t.Errorf("unset fields are written: %s", b)
+	}
+}
+
+// The sessions a session has muted (#27) are names: none that isn't one, none repeated, at most
+// bus.MaxMuted.
+func TestPresenceCleanHoldsMutedToNames(t *testing.T) {
+	var many []string
+	for len(many) < bus.MaxMuted+10 {
+		name, err := names.Generate(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		many = append(many, name)
+	}
+	p := bus.Presence{Sessions: []bus.SessionInfo{
+		{ID: "s1", Muted: []string{many[0], "not a name", "dev-0001/abc", many[0], many[1]}},
+		{ID: "s2", Muted: many},
+	}}
+	p.Clean()
+	if got := p.Sessions[0].Muted; len(got) != 2 || got[0] != many[0] || got[1] != many[1] {
+		t.Errorf("kept %q, want the two names once each", got)
+	}
+	if n := len(p.Sessions[1].Muted); n > bus.MaxMuted {
+		t.Errorf("kept %d mutes, want at most %d", n, bus.MaxMuted)
 	}
 }

@@ -15,7 +15,8 @@ import (
 
 // lookup (#21) gathers what the daemon knows about one session: what presence shows of anyone's,
 // and, for a session on this device, what never leaves it. The messages are the ones this daemon
-// has read, which is what the page keeps too: the last PageMessages, none from before it started.
+// has read, which is what the page keeps too: the last PageMessages, those from before it started
+// read back from the logs (history.go).
 
 const (
 	defaultLookupMessages = 10
@@ -106,13 +107,14 @@ func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail {
 	dev, sess := bus.SplitAddr(addr)
 	byAddr := d.namesByAddrLocked()
-	det := &proto.SessionDetail{Addr: addr, Device: dev, You: dev == d.device && sess == you}
+	det := &proto.SessionDetail{Addr: addr, Device: dev, Nick: d.nickOfLocked(dev), You: dev == d.device && sess == you}
 	if dev == d.device {
 		det.Local, det.Host, det.Owner = true, d.host, d.owner
 		det.Committed = d.committedLocked(sess)
 		if s := d.sessions[sess]; s != nil {
 			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.name, s.agent, s.branch, s.shownDoing(), s.started
 			det.Tags = d.tagsOfLocked(s)
+			det.Muted = d.mutesOfLocked(sess)
 			det.Running, det.Reachable, det.Dropped = true, s.dropped.IsZero(), !s.dropped.IsZero()
 			det.LastActive, det.Worktree, det.ClientSession = s.lastActive, s.worktree, s.claudeSession
 		} else if sess == bus.PersonSession && d.st.Person != "" {
@@ -142,7 +144,10 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 				continue
 			}
 			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.Name, s.Agent, s.Branch, s.Doing, peerStarted(p, s)
-			det.Committed, det.LastActive, det.Tags = s.Committed, peerActive(p, s), s.Tags
+			if sess == bus.PersonSession {
+				det.Name = d.listedPersonNameLocked(addr, s.Name) // only a name that reaches them (#350)
+			}
+			det.Committed, det.LastActive, det.Tags, det.Muted = s.Committed, peerActive(p, s), s.Tags, s.Muted
 			det.Running, det.Reachable = true, !det.Stale
 		}
 		det.Offline = d.offlineLocked(dev, sess)

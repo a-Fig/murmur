@@ -31,10 +31,61 @@ const (
 	// page of the device whose log carries it. The session's device applies it; a daemon from before
 	// tags doesn't know the type and passes over it.
 	Tags = "tags"
+	// GroupAdd is an agent adding another session to groups (#184): Add is the groups' tags and To
+	// the session, whose device applies it as the session's own tags. It is a type of its own
+	// because every daemon applies Tags as a human's choice, which outranks the session's own tags
+	// and, on a daemon from before #539, can't be undone by the session even for a group. A daemon
+	// from before groups doesn't know the type and passes over it.
+	GroupAdd = "group.add"
 	// Boxed is an event encrypted for the team's devices (#156): it holds another event whole, and
 	// says nothing else. A daemon from before encryption doesn't know the type and passes over it.
 	Boxed = "box"
+	// Receipt is a device's marks on messages that asked for them (#26): how far each got with
+	// each of the device's sessions it reached. A device writes its marks in batches, so one receipt
+	// carries many. A daemon from before receipts doesn't know the type and passes over it.
+	Receipt = "receipt"
 )
+
+// ReceiptFrom is the session part of a receipt's From: the marks are the device's, for any of its
+// sessions, and no session's ID is this (session IDs Murmur makes are hex or a client's own).
+const ReceiptFrom = "receipts"
+
+// What a mark says of a message, in the order a message meets them (docs/design/delivery.md,
+// "Delivered and read"): queued in the recipient's inbox, handed over to its client as a
+// turn, delivered (it knows the message is waiting), read (it has the message).
+const (
+	MarkQueued    = "queued"
+	MarkHanded    = "handed"
+	MarkDelivered = "delivered"
+	MarkRead      = "read"
+)
+
+// MarkRank orders the states a mark can say, from 1; a state this version doesn't know is 0.
+func MarkRank(state string) int {
+	switch state {
+	case MarkQueued:
+		return 1
+	case MarkHanded:
+		return 2
+	case MarkDelivered:
+		return 3
+	case MarkRead:
+		return 4
+	}
+	return 0
+}
+
+// Mark is how far one message got with one session: Msg is the message's ID, To the session's ID on
+// the receipt's device, and At the writer's clock when it got there.
+type Mark struct {
+	Msg   string    `json:"msg"`
+	To    string    `json:"to"`
+	State string    `json:"state"`
+	At    time.Time `json:"at"`
+}
+
+// MaxMarks caps the marks one receipt carries; a device with more writes a second.
+const MaxMarks = 500
 
 // PersonSession is the session ID of a device's person (#242), so a person's address is
 // device/human. It is one ID per device, like the CLI's, and no agent's session can register it.
@@ -57,6 +108,10 @@ func ValidPerson(name string) bool {
 	return names.ValidPerson(name) && ValidDevice(name)
 }
 
+// ValidNick accepts a device's nickname (#190). It is shown where sessions' names are, and is
+// often a person's name, so it has that form: never a session's name.
+func ValidNick(nick string) bool { return ValidPerson(nick) }
+
 // Event is one entry in a device's log. Fields beyond the first five depend on Type.
 type Event struct {
 	V    int       `json:"v"`
@@ -68,14 +123,20 @@ type Event struct {
 	Agent  string `json:"agent,omitempty"`  // session.started
 	Branch string `json:"branch,omitempty"` // session.started
 
-	To      string `json:"to,omitempty"` // message: device/session, device, or "*"
+	To      string `json:"to,omitempty"` // message: device/session, device, "*", or a group's tag
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
 	// Person is a person's name on a message they sent, so that a daemon that never saw their
 	// presence still calls them by it.
 	Person string `json:"person,omitempty"`
+	// Receipts, on a message, asks each recipient's device to write marks of how far it got (#26).
+	// A daemon from before receipts ignores it and writes none.
+	Receipts bool `json:"receipts,omitempty"`
+	// Marks is a receipt's marks.
+	Marks []Mark `json:"marks,omitempty"`
 
-	// tags: the tags the human added and removed. To is the session.
+	// tags: the tags the human added and removed. To is the session. group.add: Add is the groups
+	// an agent added the session to.
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
 
@@ -109,6 +170,10 @@ func (e Event) Line() string {
 			ch = append(ch, "-"+t)
 		}
 		return fmt.Sprintf("%s tags %s: %s", e.From, e.To, strings.Join(ch, " "))
+	case GroupAdd:
+		return fmt.Sprintf("%s added %s to %s", e.From, e.To, strings.Join(e.Add, ", "))
+	case Receipt:
+		return fmt.Sprintf("%s marked %d message(s)", e.From, len(e.Marks))
 	}
 	return e.From + " " + e.Type
 }
@@ -128,9 +193,21 @@ func (e Event) Valid() bool {
 		return true
 	case Message:
 		return ValidTo(e.To) && e.Subject != ""
+	case GroupAdd:
+		if !strings.Contains(e.To, "/") || !validAddr(e.To) || IsPerson(e.To) || len(e.Add) == 0 || len(e.Remove) > 0 || !validTags(e.Add) {
+			return false
+		}
+		for _, t := range e.Add {
+			if !tags.IsGroup(t) {
+				return false
+			}
+		}
+		return true
 	case Tags:
 		return strings.Contains(e.To, "/") && validAddr(e.To) && len(e.Add)+len(e.Remove) > 0 &&
 			validTags(e.Add) && validTags(e.Remove)
+	case Receipt:
+		return len(e.Marks) > 0 // Clean kept only marks Murmur writes
 	}
 	return false
 }
@@ -145,6 +222,27 @@ func (e *Event) Clean() {
 	if e.Type != Message || !IsPerson(e.From) || !ValidPerson(e.Person) {
 		e.Person = ""
 	}
+	if e.Type != Message {
+		e.Receipts = false
+	}
+	e.Marks = cleanMarks(e.Type, e.Marks)
+}
+
+// cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's
+// ID, a session's ID and a state this version knows. A mark with a state from a newer version is
+// dropped, not the receipt, and so are marks past the cap, which a newer version might raise. Any
+// other event carries none.
+func cleanMarks(typ string, in []Mark) []Mark {
+	if typ != Receipt {
+		return nil
+	}
+	var out []Mark
+	for _, m := range in[:min(len(in), MaxMarks)] {
+		if validID(m.Msg) && ValidName(m.To) && MarkRank(m.State) > 0 {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // Clean does for a presence what Event.Clean does for an event, and drops sessions whose IDs
@@ -158,6 +256,12 @@ func (p *Presence) Clean() {
 	}
 	p.Host = OneLine(p.Host, 64)
 	p.Owner = OneLine(p.Owner, 64)
+	if !ValidNick(p.Nick) || p.Nick == p.Device {
+		p.Nick = ""
+	}
+	if p.Color < 1 || p.Color > Colors || p.ColorAt.IsZero() {
+		p.Color, p.ColorAt = 0, time.Time{}
+	}
 	var keep []SessionInfo
 	person := false
 	for _, s := range p.Sessions {
@@ -176,6 +280,7 @@ func (p *Presence) Clean() {
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
+			s.Muted = cleanMuted(s.Muted)
 			if s.ID == PersonSession {
 				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
 			}
@@ -183,6 +288,18 @@ func (p *Presence) Clean() {
 		}
 	}
 	p.Sessions = keep
+}
+
+// cleanMuted holds a session's mutes to what Murmur writes: sessions' names, none repeated, at
+// most MaxMuted.
+func cleanMuted(in []string) []string {
+	var out []string
+	for _, n := range in {
+		if names.Valid(n) && !slices.Contains(out, n) && len(out) < MaxMuted {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // cleanBranches holds a list of branch names to what Murmur writes: each on one line, none empty or
@@ -259,9 +376,12 @@ func validAddr(a string) bool {
 	return ValidDevice(dev) && ValidName(sess)
 }
 
-// ValidTo accepts a recipient: everyone, a device, or a session.
+// IsGroup says to is a group's address: its tag, such as group:ui (#184).
+func IsGroup(to string) bool { return tags.IsGroup(to) }
+
+// ValidTo accepts a recipient: everyone, a group, a device, or a session.
 func ValidTo(to string) bool {
-	if to == "*" {
+	if to == "*" || IsGroup(to) {
 		return true
 	}
 	if !strings.Contains(to, "/") {
@@ -272,16 +392,31 @@ func ValidTo(to string) bool {
 
 // Presence is a device's current state, the whole of its presence ref.
 type Presence struct {
-	V        int           `json:"v"`
-	Device   string        `json:"device"`
-	Host     string        `json:"host,omitempty"`  // absent when encrypted
-	Owner    string        `json:"owner,omitempty"` // git user.name on that clone
-	At       time.Time     `json:"at"`              // the writer's clock
+	V      int    `json:"v"`
+	Device string `json:"device"`
+	Host   string `json:"host,omitempty"`  // absent when encrypted
+	Owner  string `json:"owner,omitempty"` // git user.name on that clone
+	// Nick is the nickname the device's user gave it (#190), "" if none. Nothing keeps two devices
+	// from saying the same one: it is a label, and the ID stays the device's address.
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour the device's user picked for its faces on the page (#573): 1 to
+	// Colors, a place in the page's palette; 0 lets the page choose. ColorAt is when they picked it,
+	// by the writer's clock: of two devices that picked one colour, the one that picked it first
+	// keeps it (DeviceColors).
+	Color    int           `json:"color,omitempty"`
+	ColorAt  time.Time     `json:"colorAt,omitzero"`
+	At       time.Time     `json:"at"` // the writer's clock
 	Sessions []SessionInfo `json:"sessions"`
 	// Offline lists the IDs of the device's sessions whose T3 thread is settled (#189). They are
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
 	// before the field sees them only as gone, and the writer drops what it sends them.
 	Offline []string `json:"offline,omitempty"`
+	// Groups says the device's daemon gives its sessions what is sent to a group they are in, and
+	// takes an agent's add to one (#184). A sender is told of a member whose device doesn't.
+	Groups bool `json:"groups,omitempty"`
+	// Receipts says the device's daemon writes marks for the messages that ask for them (#26). A
+	// sender shows a recipient on a device without it as sending no receipts, not as unread.
+	Receipts bool `json:"receipts,omitempty"`
 	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
 	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
 	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
@@ -290,7 +425,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Sessions and Offline, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups and Receipts, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that
@@ -320,7 +455,14 @@ type SessionInfo struct {
 	// HookOff says Murmur's hook doesn't run for the session (proto.SessionView.HookOff, #225). A
 	// daemon from before it ignores it.
 	HookOff bool `json:"hookOff,omitempty"`
+	// Muted is the names of the sessions this one has muted (#27), at most MaxMuted: it gets
+	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
+	// session's device, which is the one that drops the message.
+	Muted []string `json:"muted,omitempty"`
 }
+
+// MaxMuted caps SessionInfo.Muted.
+const MaxMuted = 50
 
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5
@@ -353,10 +495,10 @@ func Decode(msg string, v any) error {
 const MaxBody = 32 << 10
 
 // OneLine collapses whitespace, line breaks of every kind included, turns other control
-// characters (a terminal escape, say) into spaces, drops invisible format characters (see
-// dropFormat), and cuts s to at most max runes.
+// characters (a terminal escape, say) into spaces, drops invisible characters (see dropFormat and
+// dropInvisible), and cuts s to at most max runes.
 func OneLine(s string, max int) string {
-	s = dropFormat(s)
+	s = dropFormat(dropInvisible(s))
 	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
@@ -365,10 +507,11 @@ func OneLine(s string, max int) string {
 }
 
 // Text keeps a text's lines but writes every kind of line break as "\n", turns other control
-// characters but tabs into spaces, drops invisible format characters (see dropFormat), and cuts it
-// to at most max bytes. Whoever shows it line by line then sees the same lines everyone else does.
+// characters but tabs into spaces, drops invisible characters (see dropFormat and dropInvisible),
+// and cuts it to at most max bytes. Whoever shows it line by line then sees the same lines everyone
+// else does.
 func Text(s string, max int) string {
-	s = dropFormat(s)
+	s = dropFormat(dropInvisible(s))
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
@@ -406,8 +549,7 @@ func Text(s string, max int) string {
 // signs (U+0600 to U+0605); and a Malayalam chillu in the old encoding, a virama and a joiner at the
 // end of a word, loses its joiner.
 //
-// Other invisible characters aren't format characters and still pass: runs of variation selectors,
-// the combining grapheme joiner (U+034F) and the Hangul fillers.
+// Other invisible characters aren't format characters: dropInvisible takes those.
 func dropFormat(s string) string {
 	if !strings.ContainsFunc(s, isFormat) {
 		return s
@@ -428,6 +570,112 @@ func dropFormat(s string) string {
 }
 
 func isFormat(r rune) bool { return unicode.Is(unicode.Cf, r) }
+
+// dropInvisible removes the characters that show nothing but aren't format characters, so
+// dropFormat keeps them (#349). It runs before dropFormat, so a joiner that stood next to a selector
+// is judged by what is left around it.
+//
+//   - Variation selectors (U+FE00 to U+FE0F) are marks. One after an emoji or a symbol picks how it
+//     is drawn, and stays. A run of them after one character would encode a byte each, so only the
+//     first stays. One after ASCII stays only in a keycap (a digit, # or *, then U+20E3, which draws
+//     the key), and one after a mark, a joiner, a space, a line break or nothing is dropped: no
+//     emoji is spelled so, and a key split by one would hide from scrub, as the joiners would (see
+//     dropFormat).
+//   - The supplement (U+E0100 to U+E01EF) picks among a CJK ideograph's variant glyphs, so one stays
+//     after a Han character and none anywhere else.
+//   - Mongolian's free variation selectors (U+180B to U+180D, U+180F) pick a letter's shape, so one
+//     stays after a Mongolian letter and none anywhere else.
+//   - The combining grapheme joiner (U+034F) changes only how text is sorted and searched, never
+//     what is drawn, so it always goes. So do the Khmer inherent vowels (U+17B4, U+17B5), which
+//     Unicode advises against using, and the code points set aside to show as nothing that have no
+//     meaning yet (U+2065, U+FFF0 to U+FFF8, U+E0000, U+E0002 to U+E001F, U+E0080 to U+E00FF,
+//     U+E01F0 to U+E0FFF).
+//   - The Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) stand in for a missing part of a Korean
+//     syllable, and are kept only next to Hangul that isn't a filler. Elsewhere one shows as a blank
+//     that isn't a space, and a run of them as nothing a reader can count.
+//
+// What that costs: a standardized variant after an ASCII character, such as a zero with a slash
+// (U+0030 U+FE00), loses its selector and shows as a plain zero; so does an ideograph's variant
+// after a character that isn't Han.
+func dropInvisible(s string) string {
+	if !strings.ContainsFunc(s, invisible) {
+		return s
+	}
+	rs := []rune(s)
+	out := make([]rune, 0, len(rs))
+	for i, r := range rs {
+		prev, next := rune(-1), rune(-1)
+		if len(out) > 0 {
+			prev = out[len(out)-1]
+		}
+		if i+1 < len(rs) {
+			next = rs[i+1]
+		}
+		switch {
+		case r == '\u034f':
+			continue
+		case isSelector(r):
+			if !selectable(prev) {
+				continue
+			}
+			if prev <= unicode.MaxASCII && !(keycap(prev) && next == '\u20e3') {
+				continue
+			}
+		case isIdeographSelector(r):
+			if prev < 0 || !unicode.Is(unicode.Han, prev) {
+				continue
+			}
+		case isMongolianSelector(r):
+			// Not after the vowel separator (U+180E), which is Mongolian but a format character:
+			// dropFormat takes it afterwards, and would leave the selector next to whatever came before.
+			if prev < 0 || !unicode.Is(unicode.Mongolian, prev) || isMongolianSelector(prev) || isFormat(prev) {
+				continue
+			}
+		case unusedInvisible(r):
+			continue
+		case isFiller(r):
+			if !hangul(prev) && !hangul(next) {
+				continue
+			}
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
+func invisible(r rune) bool {
+	return r == '\u034f' || isSelector(r) || isIdeographSelector(r) || isFiller(r) || isMongolianSelector(r) || unusedInvisible(r)
+}
+
+// isMongolianSelector is one of Mongolian's free variation selectors (U+180E, the vowel separator,
+// is a format character, which dropFormat takes).
+func isMongolianSelector(r rune) bool { return r >= 0x180B && r <= 0x180D || r == 0x180F }
+
+// unusedInvisible is a character Unicode says to show as nothing that no text needs: the Khmer
+// inherent vowels, which Unicode advises against using, and code points set aside as invisible but
+// not yet given a meaning.
+func unusedInvisible(r rune) bool {
+	return r == 0x17B4 || r == 0x17B5 || r == 0x2065 || r >= 0xFFF0 && r <= 0xFFF8 || r == 0xE0000 ||
+		r >= 0xE0002 && r <= 0xE001F || r >= 0xE0080 && r <= 0xE00FF || r >= 0xE01F0 && r <= 0xE0FFF
+}
+
+// selectable says whether a variation selector may follow r: a character that starts what is drawn,
+// not a mark, a joiner or another selector. Only one may follow it, and a mark between would let a
+// run through as mark, selector, mark, selector; no emoji or standardized variant is spelled so,
+// and the selector of an emoji joined to another comes before the joiner (U+2764 U+FE0F U+200D).
+func selectable(r rune) bool {
+	return r >= 0 && !unicode.IsSpace(r) && !unicode.IsControl(r) && !isFormat(r) && !unicode.Is(unicode.M, r)
+}
+
+// keycap says whether r is one of the ASCII characters a keycap emoji is made of: 0 to 9, # and *.
+func keycap(r rune) bool { return r >= '0' && r <= '9' || r == '#' || r == '*' }
+
+func isSelector(r rune) bool          { return r >= 0xFE00 && r <= 0xFE0F }
+func isIdeographSelector(r rune) bool { return r >= 0xE0100 && r <= 0xE01EF }
+func isFiller(r rune) bool            { return r == 0x115F || r == 0x1160 || r == 0x3164 || r == 0xFFA0 }
+
+// hangul says whether r is Hangul a filler may stand next to: a syllable or a jamo, not a filler.
+func hangul(r rune) bool { return r >= 0 && unicode.Is(unicode.Hangul, r) && !isFiller(r) }
 
 // joinable says whether r is a visible character outside ASCII that a joiner may stand next to: a
 // letter, a mark (a vowel sign, an emoji's variation selector), a digit or a symbol (an emoji).

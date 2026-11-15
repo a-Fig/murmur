@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/clientcli"
 	"github.com/a-Fig/murmur/internal/msgsock"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3"
@@ -19,13 +20,15 @@ import (
 // between T3 threads is, so an idle agent starts working on it and nobody has to type. Where that
 // can't be done the message waits for the hook's notice and `inbox`, as it did before.
 //
-// There are two ways in, by what the session's MCP server found out about its client (proto.Route):
+// There are three ways in, by what the session's MCP server found out about its client (proto.Route):
 //   - inside T3, `t3 thread send <thread>`: an idle thread starts a turn, a busy one takes the
 //     message as its next turn, nothing is interrupted, and it works for a thread whose MCP server
 //     T3 has stopped (idle threads lose theirs after 30 minutes), which is the thread most worth
 //     waking;
 //   - in Claude Code outside T3, the session's messaging socket (package msgsock), and in Pi
-//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines.
+//     outside T3 the socket Murmur's extension opens in the session, which speaks the same lines;
+//   - in Codex and OpenCode 2 outside T3, the client's own command line (package clientcli, #135):
+//     `codex queue` and `opencode api session.prompt`, which do as `t3 thread send` does.
 //
 // A session Murmur's hook runs in (Claude Code, and Pi through its extension) is not given a turn
 // while it is at work (#202): T3 would queue it behind the running turn, and nothing could take it
@@ -36,9 +39,10 @@ import (
 // Stop can't keep it going (Pi's after Escape or an error).
 //
 // Handing a message over is not the agent having it: it is read (it arrives whole, so it skips
-// delivered) when the turn carrying it starts, which the daemon doesn't see (docs/VISION.md,
-// `What "delivered" and "read" mean`, #325). A message handed over is removed from the inbox, as the
-// client holds it now: neither the hook nor `inbox` shows it again. docs/VISION.md ("Delivering a message as a turn") has the reasons.
+// delivered) when the turn carrying it starts, which the daemon doesn't see
+// (docs/design/delivery.md, "Delivered and read", #325). A message handed over is removed from the
+// inbox, as the client holds it now: neither the hook nor `inbox` shows it again.
+// docs/design/delivery.md has the reasons.
 
 const (
 	// maxPushes is how many handoffs run at once. Each `t3 thread send` starts a process, and a
@@ -56,8 +60,10 @@ var errNotNow = errors.New("the session may not be woken now")
 
 // How a message goes into a session.
 const (
-	viaT3     = "T3"
-	viaSocket = "the messaging socket"
+	viaT3       = "T3"
+	viaSocket   = "the messaging socket"
+	viaCodex    = "Codex's queue"
+	viaOpenCode = "OpenCode's server"
 )
 
 // kickPush wakes pushLoop, which finds messages to hand over. Any lock may be held.
@@ -113,7 +119,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 
 // pusher hands session id's messages over until it has none left to hand over.
 //
-// Nothing is handed over for a user who has left (docs/VISION.md, "Joining a repo"): the daemon exits
+// Nothing is handed over for a user who has left (docs/design/joining.md): the daemon exits
 // within ConsentPoll of the consent going, and until then a message that comes in by sync waits in
 // the inbox instead of being put into a thread or a socket. The handoff is the one thing the daemon does
 // to the user's other programs, so it asks here, before taking a message, and again in sendTurn,
@@ -176,13 +182,21 @@ func (d *Daemon) routeOfLocked(id string) proto.Route {
 // viaOf is the way to hand a message over to a session with route r, "" if there is none. A session in T3
 // is reached through T3 only: its messaging socket is T3's to use, and T3 may not take a turn it
 // didn't start. live says the session's MCP server is connected, which the socket needs, as the
-// token dies with the server's process.
+// token dies with the server's process. The client's command line is used only then too: a Codex
+// thread nobody has open keeps a queued message until it is next resumed, which may be days on,
+// and by then the message has left the inbox.
 func viaOf(r proto.Route, live bool) string {
 	switch {
 	case r.T3CLI != "" && r.T3Thread != "":
 		return viaT3
-	case r.T3CLI == "" && live && r.MsgSocket != "" && r.MsgToken != "":
+	case r.T3CLI != "" || !live:
+		return ""
+	case r.MsgSocket != "" && r.MsgToken != "":
 		return viaSocket
+	case r.CodexCLI != "" && r.Native != "":
+		return viaCodex
+	case r.OpenCodeCLI != "" && r.Native != "":
+		return viaOpenCode
 	}
 	return ""
 }
@@ -468,8 +482,12 @@ func noWay(r proto.Route, live bool) string {
 	switch {
 	case r.T3CLI != "":
 		return "inside T3, but its thread isn't known"
+	case (r.CodexCLI != "" || r.OpenCodeCLI != "") && r.Native == "":
+		return "its client hasn't named its conversation yet"
+	case r.CodexCLI != "" || r.OpenCodeCLI != "":
+		return "its MCP server has gone"
 	case r.MsgSocket == "" || r.MsgToken == "":
-		return "not inside T3, and no messaging socket"
+		return "not inside T3, and no messaging socket or client command line"
 	case !live:
 		return "its MCP server has gone"
 	}
@@ -499,6 +517,7 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 	if bus.IsPerson(m.Event.From) {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
+	views[0].GroupKnown = bus.IsGroup(m.Event.To) && d.explainedLocked(id, m.Event.To) // likewise
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
 		route: route, text: view.Turn(views[0])}
 }
@@ -538,7 +557,7 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 // notReached says an attempt failed before it could have put the message anywhere: the command
 // didn't start, or the socket couldn't be connected to.
 func notReached(err error) bool {
-	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected)
+	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
 }
 
 // sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it
@@ -566,9 +585,23 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		return d.attempt(j.msg, func() error {
 			return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
 		})
+	case viaCodex:
+		return d.attempt(j.msg, func() error {
+			return codexQueue(ctx, j.route.CodexCLI, j.route.CodexHome, j.route.Native, j.text)
+		})
+	case viaOpenCode:
+		return d.attempt(j.msg, func() error {
+			return openCodePrompt(ctx, j.route.OpenCodeCLI, j.route.Native, j.text)
+		})
 	}
 	return fmt.Errorf("no way to hand a message over by %s", j.via)
 }
+
+// The client's command lines, as variables so that tests needn't have a Codex or an OpenCode.
+var (
+	codexQueue     = clientcli.CodexQueue
+	openCodePrompt = clientcli.OpenCodePrompt
+)
 
 // attempt runs send, the handoff of message m, after marking m Attempted and saving the mark: the
 // daemon may stop at any point of the call, and the next one has to know the message may be there.
@@ -638,8 +671,14 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		return
 	}
 	d.outOfInboxLocked(j.id, j.msg, "handed", "as a turn, through "+j.via)
+	if j.via == viaT3 {
+		d.noteHandedLocked(j.route, j.msg.Event.ID)
+	}
 	d.introduceLocked(j.key, j.msg.Event.From)
-	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
+	if !bus.IsGroup(j.msg.Event.To) { // a group's line stands in for a person's (#484), so they are still to be explained
+		d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.From)
+	}
+	d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), j.msg.Event.To)
 	d.saveLocked()
 	delete(d.pushWarned, j.id)
 }
@@ -763,6 +802,12 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 	}
 	d.pushedAt[id] = time.Now()
 	d.health.outOfInbox(verb)
+	switch verb {
+	case "handed":
+		d.markLocked(id, m.Event, bus.MarkHanded) // Murmur can't see the turn start (#325)
+	case "gave":
+		d.markLocked(id, m.Event, bus.MarkRead)
+	}
 	d.noteConversationLocked() // the client has the message for the agent; its answer may soon follow
 	e, addr := m.Event, bus.Addr(d.device, id)
 	d.noteLocked(time.Now(), fmt.Sprintf("%s %q from %s to %s %s", verb, e.Subject, e.From, addr, how))
@@ -781,6 +826,7 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 	}
 	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
 	d.retireRoutesLocked(s, want)
+	d.dropHandedLocked(s.id)
 	if d.st.T3Routes[s.id] != want {
 		d.st.T3Routes[s.id] = want
 		d.saveLocked()
@@ -865,6 +911,105 @@ func (d *Daemon) hadCopyLocked(s *session, m *inMsg) bool {
 	return !m.Arrived.Before(s.started) && d.addressedLocked(m.Event, s.id)
 }
 
+// A thread is one recipient of a message, whichever session's copy reaches it (#70). A thread's new
+// session registers before it has found its thread (#56), and a message for everyone that comes in
+// that second is in both sessions' inboxes: the old session, in its grace, still has the thread and
+// hands its copy over at once, and the new one's copy waits until the thread is found and the route
+// moves to it. takeInboxLocked can't tell that copy from a message the thread never had, as the old
+// copy has left the inbox by then. So the daemon remembers, by event ID, what it handed to each
+// thread, and takes another copy out of the inbox of any session of that thread: the thread has the
+// message, and the session is its thread. Left in, the copy would be handed over as a second turn,
+// or told again by the hook. Taking it out is what a handoff does with the copy it hands over, so
+// nothing tries it again or shows it unread. A message only the new session was sent is another
+// event, and goes in, and so does each of two messages that are both for the thread.
+//
+// What is remembered is in memory only, as introduced is: a daemon that restarts forgets it, and a
+// repeat in that window is what there was before.
+
+// handed is a message handed to a thread as a turn: its event ID, and when.
+type handed struct {
+	id string
+	at time.Time
+}
+
+const (
+	// handedFor is how long a message handed to a thread is remembered. The copy that matters waits
+	// only until its session finds its thread: a second or so for Claude Code in T3, the first tool
+	// call for Codex. A copy older than pushMaxAge is no longer handed over as a turn, unless it was
+	// held for the end of one; twice that is past the window, and bounds what is kept in time.
+	handedFor = 2 * pushMaxAge
+	// maxHanded is how many are remembered for one thread, the most one inbox holds, so a thread
+	// handed a burst of messages keeps the newest.
+	maxHanded = maxInbox
+)
+
+// noteHandedLocked records that the message with event ID id was handed to the thread of route r,
+// forgets what is older than handedFor, and takes any other copy of the message out of the inbox of
+// each session of that thread. Caller holds mu.
+func (d *Daemon) noteHandedLocked(r proto.Route, id string) {
+	if r.T3Thread == "" {
+		return
+	}
+	now := time.Now()
+	for k, list := range d.handedTo {
+		for len(list) > 0 && now.Sub(list[0].at) > handedFor {
+			list = list[1:]
+		}
+		if len(list) == 0 {
+			delete(d.handedTo, k)
+		} else {
+			d.handedTo[k] = list
+		}
+	}
+	k := threadKey{r.T3Home, r.T3Thread}
+	list := append(d.handedTo[k], handed{id: id, at: now})
+	if len(list) > maxHanded {
+		list = list[len(list)-maxHanded:]
+	}
+	d.handedTo[k] = list
+	for _, sid := range sortedKeys(d.st.Inbox) {
+		d.dropHandedLocked(sid)
+	}
+}
+
+// dropHandedLocked takes out of session id's inbox each message its T3 thread was already handed,
+// through another session's copy. A copy on its way in stays: usually it is the one being handed
+// over (see takeInboxLocked), and leaves the inbox when it has been. It can also be a second session
+// of the thread handing over its own copy at the same moment, when both already hold the thread's
+// route; that repeat is #99's, which this doesn't cover. Caller holds mu.
+func (d *Daemon) dropHandedLocked(id string) {
+	r := d.routeOfLocked(id)
+	list := d.handedTo[threadKey{r.T3Home, r.T3Thread}]
+	if r.T3Thread == "" || len(list) == 0 {
+		return
+	}
+	got := map[string]bool{}
+	for _, h := range list {
+		if time.Since(h.at) <= handedFor {
+			got[h.id] = true
+		}
+	}
+	box := d.st.Inbox[id]
+	var keep []*inMsg
+	for _, m := range box {
+		if m.Pushing || !got[m.Event.ID] {
+			keep = append(keep, m)
+			continue
+		}
+		d.log.Printf("session %s: message %s is in its T3 thread already, handed over as another session's copy; not handing it over again",
+			bus.Addr(d.device, id), m.Event.ID)
+	}
+	if len(keep) == len(box) {
+		return
+	}
+	if len(keep) == 0 {
+		delete(d.st.Inbox, id)
+	} else {
+		d.st.Inbox[id] = keep
+	}
+	d.saveLocked()
+}
+
 // setRouteLocked takes what a session's MCP server has learned about reaching its client since it
 // registered: the T3 thread, once it finds it, or its client's own thread ID (Codex's). The session's name follows it from then on
 // (see rekeyLocked). Caller holds mu.
@@ -874,8 +1019,16 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 		s.title = ""
 		d.kickPresence()
 	}
+	if live := s.dropped.IsZero(); viaOf(r, live) != viaOf(s.route, live) {
+		// Another way in, or a first one: what the log said of the last no longer holds, and a
+		// failure of this one is worth its own line.
+		delete(d.pushWarned, s.id)
+	}
 	s.route = r
 	d.rememberRouteLocked(s)
+	if d.routeChildLocked(s) {
+		d.kickPresence()
+	}
 	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, r.Native, s.id), s.id); key != s.key {
 		d.rekeyLocked(s, key)
 	}

@@ -2,12 +2,14 @@ package attrib_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/attrib"
 )
@@ -185,6 +187,23 @@ func TestNewCommits(t *testing.T) {
 		sha := commit(t, dir, "detached commit")
 		wantCommits(t, dir, before, head(t, dir), attrib.Commit{SHA: sha, Subject: "detached commit"})
 	})
+}
+
+// A call that starts in one worktree and is judged in another, detached there, credits only what
+// it made there: not a commit that worktree's HEAD alone reached at the start, though its date
+// falls in the slack (#60). The commit is dated a second ahead so that it does, however slow the
+// test runs.
+func TestAnotherWorktreesDetachedCommitIsNotCredited(t *testing.T) {
+	dir := repo(t)
+	commit(t, dir, "root")
+	other := filepath.Join(t.TempDir(), "other")
+	git(t, dir, "worktree", "add", "-q", "--detach", other)
+	soon := fmt.Sprintf("GIT_COMMITTER_DATE=@%d +0000", time.Now().Add(time.Second).Unix())
+	gitEnv(t, other, []string{soon}, "commit", "-q", "--allow-empty", "-m", "on no ref")
+	before := head(t, dir)
+	wantCommits(t, other, before, head(t, other))
+	sha := commit(t, other, "during the call")
+	wantCommits(t, other, before, head(t, other), attrib.Commit{SHA: sha, Subject: "during the call"})
 }
 
 func TestReadOnly(t *testing.T) {

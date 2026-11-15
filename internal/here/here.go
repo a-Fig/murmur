@@ -32,9 +32,13 @@ type Session struct {
 	ClientPID     int    `json:"clientPid"`               // its parent: the agent's process
 	ClientStarted string `json:"clientStarted,omitempty"` // when that process started, to tell it from a later one with its PID
 	ClaudeSession string `json:"claudeSession,omitempty"` // Claude Code's session ID, as the server started with it
-	Agent         string `json:"agent,omitempty"`
-	GitDir        string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
-	On            bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
+	// Native is the agent's own ID for the session, where the server knows it: Codex's thread ID
+	// once one of Murmur's tools has been called, Grok's session ID from the start. A hook carries
+	// the same ID, which is how it tells its session's record from another's of its process.
+	Native string `json:"native,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	GitDir string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
+	On     bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
 	// Fixed says the server can't be moved: one OpenCode server serves every session in its
 	// directory, so moving it for one would move them all. Its record still stops the search up
 	// the process tree, or join would move an agent further up (a Claude Code that started it).
@@ -143,6 +147,35 @@ func Caller(sessions []Session, ancestors []int, claudePID int, claudeSession st
 		if len(found) > 1 && claudeSession != "" {
 			found = slices.DeleteFunc(found, func(s Session) bool { return s.ClaudeSession != claudeSession })
 		}
+		if len(found) > 0 {
+			return found
+		}
+	}
+	return nil
+}
+
+// Of are the records of the servers still running that the nearest of pids started: an agent's
+// process, or a command's ancestors with its parent first. The hook asks on every tool call, so
+// unlike Sessions it removes nothing, and asks whether a process is alive only of the servers it
+// would return.
+func Of(dir string, pids []int) []Session {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(pids) == 0 {
+		return nil
+	}
+	byClient := map[int][]Session{}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "server-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		var s Session
+		if readJSON(filepath.Join(dir, name), &s) == nil && slices.Contains(pids, s.ClientPID) {
+			byClient[s.ClientPID] = append(byClient[s.ClientPID], s)
+		}
+	}
+	for _, pid := range pids {
+		found := slices.DeleteFunc(byClient[pid], func(s Session) bool { return !alive(s.ServerPID) })
 		if len(found) > 0 {
 			return found
 		}

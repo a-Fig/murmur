@@ -28,6 +28,7 @@ func (d *device) stopHook(claude string) proto.Response {
 // and none goes to T3. The turn goes on, so a message that comes then waits for its next end, not
 // T3's queue; once a Stop gives nothing, the session is idle and a message wakes it as before.
 func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -93,6 +94,7 @@ func TestTheStopHookIsAWayInWithoutASocket(t *testing.T) {
 // A message the agent read with inbox during the turn isn't given again at its end, and the page's
 // never-wake setting keeps the rest in the inbox, as it keeps them from being turns.
 func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -147,6 +149,7 @@ func TestTheFirstStopGivesWhatWasToldBeforeIt(t *testing.T) {
 // Stop with no tool call between gives nothing, and its message is handed over as a turn instead.
 // A tool call starts the count again.
 func TestContinuationsStopAtClaudeCodesCap(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)

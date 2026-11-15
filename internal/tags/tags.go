@@ -2,7 +2,7 @@
 // in who, lookup and the page, and can search by. A tag comes from one of three places, highest
 // first: a human on the page, the session itself, or the daemon, which derives a few from facts it
 // already has (the model, where T3 records it). The session's own device decides the tags of its
-// sessions and publishes them in presence; docs/VISION.md, "Session tags", has the reasons.
+// sessions and publishes them in presence; docs/design/tags.md has the reasons.
 //
 // One tag carries behaviour: do-not-disturb, set by the session or a human, keeps the session's
 // messages queued in its inbox. None is handed over as a turn or told by the hook until the
@@ -35,6 +35,10 @@ const (
 	Human = "human"
 	// ModelPrefix starts the tag naming the session's model. A session has at most one.
 	ModelPrefix = "model:"
+	// GroupPrefix starts a group's tag (#184), such as group:ui. The sessions that have the tag are
+	// the group's members, and the tag is the group's address: send takes it as it takes a name. It
+	// is the only kind of tag one agent can give another.
+	GroupPrefix = "group:"
 	// MaxLen caps a tag's length, and MaxPerSession how many a session has.
 	MaxLen        = 40
 	MaxPerSession = 12
@@ -62,6 +66,26 @@ func Normalize(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 // a digit, at most MaxLen long.
 func Valid(name string) bool {
 	return len(name) <= MaxLen && shape.MatchString(name) && name != ModelPrefix
+}
+
+// IsGroup says name is a group's tag: a tag that starts with GroupPrefix and goes on, with no
+// slash, which in an address parts a device from its session.
+func IsGroup(name string) bool {
+	return len(name) > len(GroupPrefix) && strings.HasPrefix(name, GroupPrefix) && Valid(name) && !strings.Contains(name, "/")
+}
+
+// Groups reads tags as typed, as Clean does, and fails unless every one is a group's.
+func Groups(in []string) ([]string, error) {
+	names, err := Clean(in)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range names {
+		if !IsGroup(t) {
+			return nil, fmt.Errorf("%s isn't a group: a group's tag starts with %s and has no slash (%sui), and it is the only kind of tag an agent can give another session", t, GroupPrefix, GroupPrefix)
+		}
+	}
+	return names, nil
 }
 
 // family is the group of tags a session has at most one of: every model: tag is one family; any
@@ -130,8 +154,9 @@ type Mark struct {
 //
 // The last two decide nothing about the session's tags, and are kept only so a change from before
 // them, read late, is known to be out of date (see SetHuman). Cleared is when a human last removed a
-// tag leaving no mark. Picked is when a human last gave the session a tag of a family with several,
-// by the family: it outlasts that tag being replaced or removed.
+// tag leaving no mark, or the session left a group a human had put it in (see Left). Picked is
+// when a human last gave the session a tag of a family with several, by the family: it outlasts
+// that tag being replaced or removed.
 type State struct {
 	Self    []string             `json:"self,omitempty"`
 	Human   map[string]Mark      `json:"human,omitempty"`
@@ -291,6 +316,46 @@ func (st *State) SetSelf(add, remove []string) error {
 	slices.Sort(next)
 	st.Self = next
 	return nil
+}
+
+// Given applies another agent's add of group tags (see Groups) to the session: each becomes the
+// session's own, which it can take off again as any tag it set. It fails, and changes nothing, if
+// the session would have more than MaxPerSession. A human's mark still stands over the tag.
+func (st *State) Given(groups []string) error {
+	groups, err := Groups(groups)
+	if err != nil {
+		return err
+	}
+	return st.SetSelf(groups, nil)
+}
+
+// Left applies the session's own removal of group tags (see Groups) at at: a human's mark putting
+// the session in one of them gives way, so a session a person put in a group can leave it, as one
+// an agent added can (#539). The removal counts as a human's choice made at at, so a human's add
+// made more than clockAllowance before it, read late, doesn't put the session back. Other tags,
+// and a human's mark taking a session out of a group, stand over the session as ever. It returns
+// the groups it took a mark off.
+func (st *State) Left(remove []string, at time.Time) (left []string) {
+	for _, t := range remove {
+		if !IsGroup(t) || !st.Human[t].On {
+			continue
+		}
+		if len(left) == 0 {
+			// A caller's copy of a State shares its maps with the one kept (see dropHuman).
+			st.Human, st.Cleared = maps.Clone(st.Human), maps.Clone(st.Cleared)
+			if st.Cleared == nil {
+				st.Cleared = map[string]time.Time{}
+			}
+		}
+		when := at
+		if c := st.chosenAt(t); c.After(when) {
+			when = c
+		}
+		delete(st.Human, t)
+		st.Cleared[t] = when
+		left = append(left, t)
+	}
+	return left
 }
 
 // SetHuman applies a human's change, given the tags the session has without the human's marks

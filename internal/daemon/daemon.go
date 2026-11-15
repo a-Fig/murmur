@@ -30,10 +30,11 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
+	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// Options configure a daemon. Zero values take the defaults in docs/VISION.md.
+// Options configure a daemon. Zero values take the defaults in docs/design/.
 type Options struct {
 	GitDir string        // the clone's git common dir, absolute
 	Poll   time.Duration // how often to check the remote; 3 s
@@ -68,6 +69,9 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
+	// MuteGrace is how long after a session mutes another it still gets that session's direct
+	// messages (see mutedHereLocked): 30 s. Negative: none.
+	MuteGrace time.Duration
 	// NameSource is where the randomness for session names comes from: crypto/rand's reader.
 	// Tests give two devices the same one, to make them pick the same name.
 	NameSource io.Reader
@@ -85,6 +89,12 @@ type Options struct {
 	// handed the message over, so it is not repeated, and a second failure of this kind too leaves
 	// the message to the hook's notice.
 	PushRetry time.Duration
+	// ReceiptGather is how long the marks this device's sessions make on messages that asked for
+	// receipts gather before they go on the bus as one receipt (#26): 3 s. A message queued and handed
+	// over within it costs one mark, not two.
+	ReceiptGather time.Duration
+	// ReceiptGap is the least time between two receipts from this device: 15 s.
+	ReceiptGap time.Duration
 	// ContinueHold is how long a Stop's continuation of a turn counts as at work outside T3 before
 	// another hook of the session shows the turn went on: 2 min (see continueTurnLocked).
 	ContinueHold time.Duration
@@ -98,7 +108,8 @@ type Options struct {
 	// PageOpen is how recently a page someone can see must have called its API to count as open,
 	// which keeps the daemon running like a session does: 2 min. A hidden tab's calls don't count.
 	PageOpen time.Duration
-	// PageMessages is how many messages the page can look back on: 500.
+	// PageMessages is how many messages the page can look back on: 500. A daemon that starts reads
+	// that many back from the logs it has (history.go).
 	PageMessages int
 	// SnapshotTimeout bounds the git a snapshot of a tool call's worktree runs (#21): 4 s. Tests on a
 	// loaded machine raise it.
@@ -110,6 +121,9 @@ type Options struct {
 	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), for
+	// the sessions another session started (codexkids.go). Tests put a stand-in here.
+	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
 	// Consent says whether the user has joined Murmur in this clone (nil: always). A daemon exists
 	// only for a user who did: it won't start without it, refuses requests once it is gone, and
 	// stops within ConsentPoll of it going, so a leave that races a daemon still starting ends that
@@ -165,6 +179,12 @@ func (o *Options) defaults() {
 	if o.Heartbeat == 0 {
 		o.Heartbeat = 2 * time.Minute
 	}
+	if o.ReceiptGather == 0 {
+		o.ReceiptGather = 3 * time.Second
+	}
+	if o.ReceiptGap == 0 {
+		o.ReceiptGap = 15 * time.Second
+	}
 	if o.StaleAfter == 0 {
 		o.StaleAfter = 6 * time.Minute
 	}
@@ -176,6 +196,9 @@ func (o *Options) defaults() {
 	}
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
+	}
+	if o.MuteGrace == 0 {
+		o.MuteGrace = 30 * time.Second
 	}
 	if o.NameSource == nil {
 		o.NameSource = rand.Reader
@@ -206,6 +229,9 @@ func (o *Options) defaults() {
 	}
 	if o.ThreadState == nil {
 		o.ThreadState = t3db.StateOf
+	}
+	if o.CodexLineage == nil {
+		o.CodexLineage = title.CodexLineage
 	}
 	if o.ConsentPoll == 0 {
 		o.ConsentPoll = time.Second
@@ -243,7 +269,7 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // A device pushes one ref at a time. Its presence, its log and the names registry used to be pushed
 // each from its own goroutine, and a session starting or stopping set off two or three pushes in
 // the same second; GitHub then refused one of them now and then with "[remote rejected] (failed)",
-// which is not a lease refusal and cost a retry (see "Git is the transport" in docs/VISION.md).
+// which is not a lease refusal and cost a retry (see "Pushes" in docs/design/transport.md).
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
@@ -363,12 +389,36 @@ type Daemon struct {
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
+	// historyKick wakes historyLoop, which reads the page's earlier messages back from the logs
+	// (history.go). historyWant is closed, by historyAsked, when a page or a lookup first asks for
+	// them, and historyRead once they have been read for the first time, done or not; both are nil
+	// for a daemon Run didn't start. historyOwed is the logs whose backlog was given up on before
+	// it was fetched, which are read back once it is; under mu.
+	historyKick  chan struct{}
+	historyWant  chan struct{}
+	historyRead  chan struct{}
+	historyAsked sync.Once
+	historyOwed  map[string]bool
+	// historyLate says a call waited historyWait for the first read and it hadn't come, so no
+	// other call waits for it (awaitHistory).
+	historyLate atomic.Bool
+	// acts is what sessions did other than send messages, for the page (activity.go), oldest
+	// first; actSeq the number of the newest, actIDs the IDs in acts, and actSeen what each
+	// session's presence last said of it, by address.
+	acts    []pageAct
+	actSeq  uint64
+	actIDs  map[string]bool
+	actSeen map[string]sessSeen
 	// brackets holds the tool calls in flight whose start was snapshotted, by Claude session and
 	// tool-use ID (see toolStart). snapLogged is when a failed snapshot was last logged.
 	brackets   map[string]*bracket
 	snapLogged time.Time
 	// ending counts the calls whose end is being judged in the background (see toolEnd).
 	ending int
+	// panicLogged is when a panic in judging a call was last logged. survivePanics keeps such a
+	// panic from crashing a test binary, for the test that causes one on purpose (see toolEnd).
+	panicLogged   time.Time
+	survivePanics bool
 	// unsnapped holds a channel for each ended call whose worktree hasn't been snapshotted again
 	// yet, closed when it has; the next call's start waits for them (see toolStart).
 	unsnapped []chan struct{}
@@ -397,6 +447,17 @@ type Daemon struct {
 	threads      map[threadKey]t3db.State
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
+	// handedTo is, for each T3 thread, the messages lately handed to it as a turn, oldest first, so
+	// another session's copy of one is not handed to it again (see noteHandedLocked).
+	handedTo map[threadKey][]handed
+	// The sessions another session started, where T3 doesn't say so (codexkids.go): kids the
+	// sessions here that are one, kidNative the children a hook named, by their client's ID,
+	// with their parent's, codexLin who started each Codex thread read so far, and codexWarned
+	// the threads whose read failed, logged once. All are made where they are first written.
+	kids        map[string]kid
+	kidNative   map[string]string
+	codexLin    map[codexThread]title.Lineage
+	codexWarned map[codexThread]bool
 
 	// refused is when a presence claiming each device was last refused (see checkPresenceLocked), to
 	// log it once a minute.
@@ -435,6 +496,7 @@ type Daemon struct {
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
+	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
 	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
 	nameSrc  io.Reader
@@ -450,6 +512,9 @@ type Daemon struct {
 	// firstSync is closed once Run's first sync is over, done or not (see awaitFirstSync). Nil for
 	// a daemon Run didn't start, which has no first sync to wait for.
 	firstSync chan struct{}
+	// colorSettled says a full sync has checked this device's picked colour against its peers',
+	// so its presence may carry it (color.go).
+	colorSettled bool
 }
 
 type session struct {
@@ -506,6 +571,9 @@ type session struct {
 	hookSeen   bool
 	toolCalled time.Time
 	hookNative string
+	// unlogged says the session was a child when it registered, so neither its start nor its stop
+	// goes on the bus (#487).
+	unlogged bool
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -627,7 +695,16 @@ type state struct {
 	// or the registry: the first address seen with it, unless the registry gives the name to another
 	// (see notePersonLocked). A message's name never goes in it. It only grows, so a person's earlier
 	// name still reaches them.
-	Person      string            `json:"person,omitempty"`
+	Person string `json:"person,omitempty"`
+	// Nick is the nickname this device's user gave it (#190), "" if none.
+	Nick string `json:"nick,omitempty"`
+	// Color is the colour this device's user picked for its faces on the page (#573), 1 to
+	// bus.Colors, 0 if none; ColorAt is when they picked it.
+	Color   int       `json:"color,omitempty"`
+	ColorAt time.Time `json:"colorAt,omitzero"`
+	// ColorLostTo is what the device that took this one's picked colour is called, "" if none
+	// did since its person last picked.
+	ColorLostTo string            `json:"colorLostTo,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it
@@ -685,6 +762,9 @@ type state struct {
 	// and its ID while the name is pending): the tags each set for itself and a human's marks
 	// (#198). Derived tags aren't kept.
 	Tags map[string]*tags.State `json:"tags,omitempty"`
+	// Mutes is, for each of this device's sessions, by its name as Tags is, the sessions it has
+	// muted (#27): their names, and when.
+	Mutes map[string]map[string]time.Time `json:"mutes,omitempty"`
 
 	// Pins is each device's keys as this device first pinned them (keys.go), this device's own
 	// included, by device ID. A pin is never undone.
@@ -702,7 +782,14 @@ type state struct {
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
+	// So are the groups whose messages have told it, in full, that it is in them (#184).
 	Explained map[string][]string `json:"explained,omitempty"`
+
+	// Marks is what this device's sessions have done with messages from other devices that asked
+	// for receipts, not yet on the bus (#26, receipts.go). Sent is this device's person's messages
+	// that asked for them, by ID, with how far each got with each recipient.
+	Marks []bus.Mark             `json:"marks,omitempty"`
+	Sent  map[string]*sentRecord `json:"sent,omitempty"`
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
@@ -785,6 +872,8 @@ func Run(ctx context.Context, opt Options) error {
 	defer cancel()
 	d.bgCtx = ctx
 	d.firstSync = make(chan struct{})
+	// Before the page is served: its calls read these (awaitHistory).
+	d.historyRead, d.historyWant = make(chan struct{}), make(chan struct{})
 	if pageLn != nil {
 		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
 	}
@@ -804,6 +893,15 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Consent != nil {
 		go d.consentLoop(ctx)
 	}
+	// The page's earlier messages are read back from the logs already here (history.go), apart
+	// from the first sync: a page opened on a daemon that has just started, or has no network, has
+	// them, and no session waits for them. The read begins when a page or a lookup first asks.
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.historyLoop(ctx)
+	}()
+	d.kickHistory()
 
 	if d.opt.Clones != "" {
 		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
@@ -868,6 +966,11 @@ func Run(ctx context.Context, opt Options) error {
 		go func() {
 			defer d.bg.Done()
 			d.teamLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
+			d.receiptLoop(ctx)
 		}()
 		d.bg.Add(1)
 		go func() {
@@ -968,10 +1071,11 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		pushKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
-		quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		handedTo: map[threadKey][]handed{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
@@ -1284,6 +1388,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Tags == nil {
 		d.st.Tags = map[string]*tags.State{}
+	}
+	if d.st.Mutes == nil {
+		d.st.Mutes = map[string]map[string]time.Time{}
 	}
 	if d.st.PersonClaims == nil {
 		d.st.PersonClaims = map[string]string{}

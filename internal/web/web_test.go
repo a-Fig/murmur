@@ -20,17 +20,18 @@ import (
 const testToken = "s3cret-token"
 
 type fakeSource struct {
-	mu       sync.Mutex
-	state    State
-	settings Settings
-	sets     int
-	cursor   string
-	unmuted  [][2]string
-	tagged   []string // each SetTags: addr +added -removed
-	watched  []bool   // what Watched said of each State call
-	restarts int
-	sends    []string // each Send: to: text
-	read     []string // the IDs given to MarkRead
+	mu        sync.Mutex
+	state     State
+	settings  Settings
+	sets      int
+	cursor    string
+	actCursor string
+	unmuted   [][2]string
+	tagged    []string // each SetTags: addr +added -removed
+	watched   []bool   // what Watched said of each State call
+	restarts  int
+	sends     []string // each Send: to: text
+	read      []string // the IDs given to MarkRead
 }
 
 func (f *fakeSource) State(ctx context.Context) (State, error) {
@@ -45,6 +46,13 @@ func (f *fakeSource) Messages(ctx context.Context, cursor string) ([]Message, st
 	defer f.mu.Unlock()
 	f.cursor = cursor
 	return []Message{{ID: "m1", From: "quiet-otter", To: "*", ToKind: ToAll, Subject: "hi"}}, "c1", nil
+}
+
+func (f *fakeSource) Activity(ctx context.Context, cursor string) ([]Activity, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.actCursor = cursor
+	return []Activity{{ID: "a1", Kind: ActStatus, Who: "quiet-otter", Doing: "reading"}}, "a-c1", nil
 }
 
 func (f *fakeSource) Settings(ctx context.Context) (Settings, error) {
@@ -93,6 +101,26 @@ func (f *fakeSource) SetAccount(ctx context.Context, name string) (Account, erro
 		return Account{}, errors.New("taken is taken")
 	}
 	f.state.Account = Account{Name: name, Addr: "tyler-laptop-3f2a/human"}
+	return f.state.Account, nil
+}
+
+func (f *fakeSource) SetColor(ctx context.Context, color int) (Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if color == 3 {
+		return Account{}, errors.New("maya has that colour")
+	}
+	f.state.Account.Color = color
+	return f.state.Account, nil
+}
+
+func (f *fakeSource) SetNick(ctx context.Context, nick string) (Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if nick == "x" {
+		return Account{}, errors.New(`"x" can't be a nickname`)
+	}
+	f.state.Account.Nick = nick
 	return f.state.Account, nil
 }
 
@@ -657,12 +685,62 @@ func TestAccountAndSendCalls(t *testing.T) {
 	}
 }
 
+// The page sets and clears this device's nickname (#533); a refused one says why.
+func TestNickCall(t *testing.T) {
+	f := newFake()
+	h := start(t, f, noPRs)
+	put := func(body string) (int, Account, string) {
+		t.Helper()
+		resp := h.do("PUT", "/api/nick", "127.0.0.1:"+h.port, testToken, body)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		var a Account
+		json.Unmarshal(b, &a)
+		return resp.StatusCode, a, string(b)
+	}
+	if code, a, b := put(`{"nick":" tyler "}`); code != http.StatusOK || a.Nick != "tyler" {
+		t.Errorf("setting it: %d %s", code, b)
+	}
+	if code, _, b := put(`{"nick":"x"}`); code != http.StatusBadRequest || !strings.Contains(b, "can't be a nickname") {
+		t.Errorf("a refused one: %d %s", code, b)
+	}
+	if code, a, b := put(`{"nick":""}`); code != http.StatusOK || a.Nick != "" {
+		t.Errorf("clearing it: %d %s", code, b)
+	}
+}
+
+// The page picks this device's colour (#573); a refused one says why.
+func TestColorCall(t *testing.T) {
+	f := newFake()
+	h := start(t, f, noPRs)
+	put := func(body string) (int, Account, string) {
+		t.Helper()
+		resp := h.do("PUT", "/api/color", "127.0.0.1:"+h.port, testToken, body)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		var a Account
+		json.Unmarshal(b, &a)
+		return resp.StatusCode, a, string(b)
+	}
+	if code, a, b := put(`{"color":5}`); code != http.StatusOK || a.Color != 5 {
+		t.Errorf("picking one: %d %s", code, b)
+	}
+	if code, _, b := put(`{"color":3}`); code != http.StatusBadRequest || !strings.Contains(b, "has that colour") {
+		t.Errorf("a taken one: %d %s", code, b)
+	}
+	if code, a, b := put(`{"color":0}`); code != http.StatusOK || a.Color != 0 {
+		t.Errorf("going back to auto: %d %s", code, b)
+	}
+}
+
 // Sending as the person is the page's most dangerous call: every new one needs the token.
 func TestAccountCallsNeedTheToken(t *testing.T) {
 	f := newFake()
 	h := start(t, f, noPRs)
 	for _, c := range []struct{ method, path, body string }{
 		{"PUT", "/api/account", `{"name":"ada"}`},
+		{"PUT", "/api/nick", `{"nick":"ada"}`},
+		{"PUT", "/api/color", `{"color":2}`},
 		{"POST", "/api/send", `{"to":"*","text":"hi"}`},
 		{"POST", "/api/read", `{"ids":["m1"]}`},
 	} {

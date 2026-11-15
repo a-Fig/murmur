@@ -1,7 +1,13 @@
 <!doctype html>
-<!-- The private stats page (#148, #259): the public repos that use Murmur, and what the census reads
-     from them. Public repos and users, approximate (#323), lead; the rest is activity. src/usage.js serves it at /stats, to a browser holding the key, and it draws
-     /stats/data (src/repos.js). The check-ins of earlier versions are at /stats/archive. -->
+<!-- The private stats page (#148, #259), laid out for a desktop browser first: Tyler reads it there,
+     and a phone only has to stay readable: the public repos that use Murmur, and what the census reads
+     from them. Public repos and users, approximate (#323), lead. Then what is measured exactly,
+     encrypted or not: bus records, their bytes, devices and contributors. Then sessions and
+     messages, which an encrypted bus hides and the census estimates (#550). Then where the activity
+     is: each repo's days, its share of the range, and how much agents talk per session. src/usage.js
+     serves it at /stats, to a browser holding the key, and it draws /stats/data (src/repos.js); every
+     chart is drawn from that one response, so the page asks for nothing the report doesn't have. The
+     check-ins of earlier versions are at /stats/archive. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -25,6 +31,7 @@
     --border: #e3e2db;
     --brand: #225BFF;
     --good-text: #006300;
+    --shadow: 0 1px 2px rgba(20,20,10,.04), 0 8px 24px -12px rgba(20,20,10,.10);
     /* The categorical order of the dataviz palette; a repo keeps its slot as repos are added. */
     --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
     --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-other: #a9a8a1;
@@ -41,6 +48,7 @@
       --border: #2c2c2a;
       --brand: #6b8cff;
       --good-text: #5fd35f;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
       --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
       --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-other: #5f5e59;
     }
@@ -53,65 +61,97 @@
   }
   a { color: var(--brand); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  main { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }
+  main { max-width: 1440px; margin: 0 auto; padding: 32px 24px 64px; }
   header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
   header .mark { width: 28px; height: 28px; border-radius: 8px; background: #225BFF; display: grid; place-items: center; }
   header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
   header .asof { color: var(--text-muted); }
-  header .right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-  .ranges { display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
-  .ranges button {
+  header .right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .seg { display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+  .seg button {
     font: inherit; font-weight: 500; color: var(--text-secondary); background: none; border: 0;
     border-radius: 7px; padding: 5px 12px; cursor: pointer;
   }
-  .ranges button[aria-pressed="true"] { background: var(--page); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border); }
+  .seg.small button { font-size: 12px; padding: 3px 9px; }
+  .seg button[aria-pressed="true"] { background: var(--page); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border); }
+  .run { display: flex; align-items: center; gap: 8px; }
+  #run-census {
+    font: inherit; font-weight: 500; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; cursor: pointer; white-space: nowrap;
+  }
+  #run-census:disabled { opacity: .55; cursor: default; }
+  #run-census-note { color: var(--text-muted); font-size: 12px; max-width: 240px; }
   .grid { display: grid; gap: 16px; grid-template-columns: repeat(12, 1fr); }
-  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-width: 0; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-width: 0; box-shadow: var(--shadow); }
   .card h2 { font-size: 14px; font-weight: 600; }
   .card .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  .card .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   /* The two main numbers, public repos and users (#323), each over its chart. */
   .hero { grid-column: span 6; }
   .hero .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .hero .label, .tile .label { color: var(--text-secondary); font-weight: 500; }
-  .hero .value { font-size: 64px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .hero .value { font-size: 72px; font-weight: 600; letter-spacing: -0.035em; line-height: 1; margin-top: 10px; font-variant-numeric: tabular-nums; }
   .hero .notes { display: grid; gap: 4px; color: var(--text-secondary); text-align: right; }
   .hero .notes b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
-  .up { color: var(--good-text); font-weight: 600; }
+  .up { color: var(--good-text) !important; font-weight: 600; }
+  .down { color: var(--text-secondary) !important; font-weight: 600; }
   /* The asterisk on the users label, a superscript, and what it means on hover or focus. */
   /* The explanation hangs from the card's top, not the asterisk, so it fits a narrow screen; its
      ::before bridges the gap below the label, so the pointer can move onto it without closing it. */
-  .hero .top { position: relative; }
+  .hero .top, .tile { position: relative; }
   .star { display: inline-block; line-height: 0; }
   .star button {
     font: inherit; font-size: 12px; font-weight: 600; line-height: 1; color: var(--brand); background: none;
     border: 0; padding: 0 2px 0 1px; cursor: help; position: relative; top: -0.5em;
   }
-  .star .why::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
-  .star .why {
+  /* A dotted label says what a figure is on hover or focus, so the line under the number keeps only
+     what changed. The asterisk stays for estimates. */
+  .def { display: inline; }
+  .def button {
+    font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; background: none; border: 0;
+    padding: 0; cursor: help; text-decoration: underline dotted var(--text-muted); text-underline-offset: 3px;
+  }
+  .def button:hover { color: var(--text-primary); }
+  :is(.star, .def) .why::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
+  :is(.star, .def) .why {
     display: none; position: absolute; left: 0; top: 28px; z-index: 3; width: max-content; max-width: min(340px, 100%);
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
     box-shadow: 0 6px 20px rgba(0,0,0,.12); color: var(--text-secondary); font-size: 13px; font-weight: 400;
-    letter-spacing: 0; line-height: 1.45;
+    letter-spacing: 0; text-transform: none; line-height: 1.45;
   }
   .star .why p { margin-bottom: 6px; }
   .star .why .how { display: flex; gap: 10px; }
   .star .why .how b { min-width: 24px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .star .why .fine { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
-  .star:hover .why, .star:focus-within .why { display: block; }
-  .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; }
+  :is(.star, .def):hover .why, :is(.star, .def):focus-within .why { display: block; }
+  /* Escape closes one until the pointer or focus leaves it, since it covers the number below. */
+  :is(.star, .def).hush .why { display: none; }
+  /* In a tile the label sits inside the card's padding, so the explanation starts below it. */
+  .tile :is(.star, .def) .why { left: 16px; top: 40px; max-width: min(340px, calc(100% - 32px)); }
+  .section { grid-column: span 12; color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-top: 12px; position: relative; }
+  .section .why { top: 24px; }
   .tiles { grid-column: span 12; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .tiles.three { grid-template-columns: repeat(3, 1fr); }
   .tiles .card { padding: 14px 16px; }
   .tile .label { font-size: 13px; }
-  .tile .value { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .tile .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  .tile .value { font-size: 24px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile .spark { width: 96px; height: 32px; flex: none; }
+  .tile .spark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .note b { font-weight: 600; }
   .wide { grid-column: span 12; }
   .half { grid-column: span 6; }
   .chart { position: relative; margin-top: 14px; }
   .chart svg { display: block; width: 100%; overflow: visible; }
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-secondary); font-size: 13px; margin-top: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-secondary); font-size: 13px; margin-top: 10px; align-items: center; }
   .legend span { white-space: nowrap; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+  .legend i.line { width: 16px; height: 0; border-radius: 0; border-top: 2px dashed var(--text-secondary); vertical-align: 3px; }
+  .legend .ramp { display: inline-flex; gap: 2px; margin: 0 6px; vertical-align: -1px; }
+  .legend .ramp i { margin: 0; }
   .axis { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .rowname { fill: var(--text-secondary); font-size: 12px; }
   .gridline { stroke: var(--grid); stroke-width: 1; }
   .bar-value { fill: var(--text-primary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .tip {
@@ -123,20 +163,62 @@
   .tip .row { display: flex; align-items: center; gap: 8px; }
   .tip .row b { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 24px; }
   .tip .row i { width: 10px; height: 10px; border-radius: 3px; }
+  .tip .row i.line { height: 2.5px; border-radius: 2px; }
   .tip .row span { color: var(--text-secondary); }
+  /* Progress over time: one big chart, a measure and a way of counting it picked above it. */
+  .progress .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .progress .seg { flex-wrap: wrap; }
+  .progress .figure { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .progress .figure .big { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .progress .figure .change { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .seg button:disabled { opacity: .4; cursor: default; }
+  /* The share of the range by repo: one bar per repo, labelled directly. */
+  .share { display: grid; gap: 10px; margin-top: 16px; }
+  .share .item { display: grid; grid-template-columns: minmax(0, 150px) 1fr auto; align-items: center; gap: 12px; }
+  .share .name { color: var(--text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .share .name i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+  .share .track { height: 14px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+  .share .bar { height: 100%; border-radius: 4px; min-width: 2px; }
+  .share .num { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; min-width: 96px; }
+  .share .num b { font-weight: 600; }
+  .share .num span { color: var(--text-muted); margin-left: 6px; }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }
   th { text-align: left; font-weight: 500; color: var(--text-muted); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  th button:hover, th[aria-sort] button { color: var(--text-primary); }
+  th[aria-sort="descending"] button::after { content: ' ↓'; }
+  th[aria-sort="ascending"] button::after { content: ' ↑'; }
   td { white-space: nowrap; padding: 9px 10px; border-bottom: 1px solid var(--grid); }
   td.num, th.num { text-align: right; }
   td .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+  td.trend svg { display: block; }
+  /* A long repo name is cut short, with the whole of it on hover, so the table fits a laptop screen. */
+  td.repo { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  tbody tr:hover td { background: color-mix(in srgb, var(--page) 60%, transparent); }
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--text-muted); padding: 24px 0 8px; text-align: center; }
   .loading main { opacity: .55; transition: opacity .2s; }
-  footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; max-width: 860px; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; max-width: 960px; }
+  /* Marks arrive once per load, not on every resize: columns rise from the baseline, lines draw in. */
+  .grow { transform-box: fill-box; transform-origin: 50% 100%; animation: grow .55s cubic-bezier(.2,.75,.25,1) both; }
+  .growx { transform-box: fill-box; transform-origin: 0 50%; animation: growx .7s cubic-bezier(.2,.75,.25,1) both; }
+  .draw { stroke-dasharray: 1; animation: draw 1s cubic-bezier(.35,.6,.2,1) both; }
+  .fade { animation: fade .5s ease both; }
+  @keyframes grow { from { transform: scaleY(0); } }
+  @keyframes growx { from { transform: scaleX(0); } }
+  @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+  @keyframes fade { from { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .grow, .growx, .draw, .fade { animation: none; } }
   @media (max-width: 900px) {
     .hero, .half { grid-column: span 12; }
-    .tiles { grid-template-columns: 1fr 1fr; }
+    .tiles, .tiles.three { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 520px) {
+    main { padding: 20px 16px 48px; }
+    .hero .value { font-size: 48px; }
+    .tiles, .tiles.three { grid-template-columns: 1fr; }
+    .share .item { grid-template-columns: minmax(0, 100px) 1fr auto; }
   }
 </style>
 </head>
@@ -149,8 +231,12 @@
     <h1>Murmur · Public repos</h1>
     <span class="asof" id="asof"></span>
     <div class="right">
+      <div class="run">
+        <button id="run-census" type="button">Run census now</button>
+        <span id="run-census-note" role="status" aria-live="polite"></span>
+      </div>
       <a href="/stats/archive">Archive: check-ins</a>
-      <div class="ranges" role="group" aria-label="Range">
+      <div class="seg ranges" role="group" aria-label="Range">
         <button data-days="30">30 days</button>
         <button data-days="90">90 days</button>
         <button data-days="365">1 year</button>
@@ -171,6 +257,7 @@
         </div>
       </div>
       <div class="chart" id="c-repos"></div>
+      <div class="legend" id="l-repos"></div>
     </section>
 
     <section class="card hero">
@@ -187,13 +274,75 @@
       <div class="chart" id="c-users"></div>
     </section>
 
-    <h2 class="section">Activity</h2>
+    <section class="card wide progress">
+      <div class="head">
+        <div>
+          <h2>Progress over time</h2>
+          <div class="sub" id="prog-sub"></div>
+        </div>
+        <div class="controls">
+          <div class="seg small" id="prog-metric" role="group" aria-label="Measure">
+            <button data-k="repos">Repos</button>
+            <button data-k="users">Users</button>
+            <button data-k="contributors">Contributors</button>
+            <button data-k="records">Bus records</button>
+            <button data-k="bytes">Data</button>
+            <button data-k="sessions">Sessions</button>
+            <button data-k="messages">Messages</button>
+            <button data-k="devices">Devices</button>
+          </div>
+          <div class="seg small" id="prog-mode" role="group" aria-label="Count">
+            <button data-m="cumulative">Cumulative</button>
+            <button data-m="daily">Per day</button>
+          </div>
+        </div>
+      </div>
+      <div class="figure"><span class="big" id="prog-big">–</span><span class="change" id="prog-change"></span></div>
+      <div class="chart" id="c-prog"></div>
+    </section>
+
+    <h2 class="section"><span class="def"><button type="button" aria-describedby="measured-def">Measured</button><span class="why" role="tooltip" id="measured-def">Exact, whether or not a bus is encrypted.</span></span></h2>
 
     <section class="tiles">
-      <div class="card tile"><div class="label">Agent sessions</div><div class="value" id="t-sessions">–</div><div class="note" id="t-sessions-note"></div></div>
-      <div class="card tile"><div class="label">Messages between agents</div><div class="value" id="t-messages">–</div><div class="note" id="t-messages-note"></div></div>
-      <div class="card tile"><div class="label">Devices running Murmur</div><div class="value" id="t-devices">–</div><div class="note" id="t-devices-note"></div></div>
-      <div class="card tile"><div class="label">Contributors</div><div class="value" id="t-contributors">–</div><div class="note" id="t-contributors-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="records-def">Bus records</button><span class="why" role="tooltip" id="records-def">Everything devices wrote to their logs.</span></span></div><div class="row"><div class="value" id="t-records">–</div><div class="spark" id="s-records"></div></div><div class="note" id="t-records-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="bytes-def">Data in those records</button><span class="why" role="tooltip" id="bytes-def">The size of their events.</span></span></div><div class="row"><div class="value" id="t-bytes">–</div><div class="spark" id="s-bytes"></div></div><div class="note" id="t-bytes-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="devices-def">Devices running Murmur</button><span class="why" role="tooltip" id="devices-def">Clones that have run Murmur in these repos.</span></span></div><div class="row"><div class="value" id="t-devices">–</div><div class="spark" id="s-devices"></div></div><div class="note" id="t-devices-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="contributors-def">Contributors</button><span class="why" role="tooltip" id="contributors-def">People who have committed to these repos.</span></span></div><div class="row"><div class="value" id="t-contributors">–</div><div class="spark" id="s-contributors"></div></div><div class="note" id="t-contributors-note"></div></div>
+    </section>
+
+    <section class="card half">
+      <h2>Bus records per day</h2>
+      <div class="sub">everything devices wrote to their logs, by repo</div>
+      <div class="chart" id="c-records"></div>
+      <div class="legend" id="l-records"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Data per day</h2>
+      <div class="sub">the size of those records’ events, before encryption, by repo</div>
+      <div class="chart" id="c-bytes"></div>
+      <div class="legend" id="l-bytes"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Devices active per day</h2>
+      <div class="sub">clones running Murmur that wrote anything to their repo's bus, by repo</div>
+      <div class="chart" id="c-devices"></div>
+      <div class="legend" id="l-devices"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Contributors to those repos</h2>
+      <div class="sub">everyone who has committed to one, by their first commit; each person once</div>
+      <div class="chart" id="c-contributors"></div>
+    </section>
+
+    <h2 class="section"><span class="def"><button type="button" aria-describedby="sessions-def">Sessions and messages</button><span class="why" role="tooltip" id="sessions-def">What the records hold; estimated where a bus is encrypted.</span></span></h2>
+
+    <section class="tiles three">
+      <div class="card tile"><div class="label">Agent sessions<span class="star"><button type="button" aria-describedby="sessions-why" aria-label="Why estimated">*</button><span class="why" role="tooltip" id="sessions-why"></span></span></div><div class="row"><div class="value" id="t-sessions">–</div><div class="spark" id="s-sessions"></div></div><div class="note" id="t-sessions-note"></div></div>
+      <div class="card tile"><div class="label">Messages between agents<span class="star"><button type="button" aria-describedby="messages-why" aria-label="Why estimated">*</button><span class="why" role="tooltip" id="messages-why"></span></span></div><div class="row"><div class="value" id="t-messages">–</div><div class="spark" id="s-messages"></div></div><div class="note" id="t-messages-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="ratio-def">Messages per session</button><span class="why" role="tooltip" id="ratio-def">Messages divided by sessions started, estimates included: how much agents talk.</span></span></div><div class="row"><div class="value" id="t-ratio">–</div><div class="spark" id="s-ratio"></div></div><div class="note" id="t-ratio-note"></div></div>
     </section>
 
     <section class="card half">
@@ -210,22 +359,41 @@
       <div class="legend" id="l-messages"></div>
     </section>
 
-    <section class="card half">
-      <h2>Devices active per day</h2>
-      <div class="sub">clones running Murmur that wrote anything to their repo's bus, by repo</div>
-      <div class="chart" id="c-devices"></div>
-      <div class="legend" id="l-devices"></div>
+    <h2 class="section">Where the activity is</h2>
+
+    <section class="card wide">
+      <h2>Activity by repo and day</h2>
+      <div class="sub">bus records each repo wrote each day; darker is more</div>
+      <div class="chart" id="c-heat"></div>
+      <div class="legend" id="l-heat"></div>
     </section>
 
     <section class="card half">
-      <h2>Contributors to those repos</h2>
-      <div class="sub">everyone who has committed to one, by their first commit; each person once</div>
-      <div class="chart" id="c-contributors"></div>
+      <div class="head">
+        <div>
+          <h2>Share of the range</h2>
+          <div class="sub" id="share-sub">by repo</div>
+        </div>
+        <div class="seg small" id="share-metric" role="group" aria-label="Measure">
+          <button data-k="records">Records</button>
+          <button data-k="sessions">Sessions</button>
+          <button data-k="messages">Messages</button>
+          <button data-k="bytes">Data</button>
+        </div>
+      </div>
+      <div class="share" id="c-share"></div>
+    </section>
+
+    <section class="card half">
+      <h2>Messages per session</h2>
+      <div class="sub">each day’s messages over the sessions that started that day, estimates included</div>
+      <div class="chart" id="c-ratio"></div>
+      <div class="legend" id="l-ratio"></div>
     </section>
 
     <section class="card wide">
       <h2>Repos</h2>
-      <div class="sub">most active first; days active counts the last 7 days</div>
+      <div class="sub">most active first; days active counts the last 7 days; click a heading to sort</div>
       <div id="t-repos"></div>
     </section>
   </div>
@@ -235,7 +403,7 @@
 <script>
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
-const HTML_TAGS = new Set(['div', 'span', 'b', 'i', 'p', 'small', 'a', 'table', 'tr', 'th', 'td']);
+const HTML_TAGS = new Set(['div', 'span', 'b', 'i', 'p', 'small', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'button']);
 const el = (tag, attrs = {}, text) => {
   const e = HTML_TAGS.has(tag) ? document.createElement(tag) : document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -248,15 +416,67 @@ const long = d => date(d, { weekday: 'short', month: 'short', day: 'numeric', ye
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const short = name => name.replace(/^github\.com\//, '');
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
+const ratioFmt = v => v == null ? '–' : v >= 10 ? v.toFixed(0) : v.toFixed(1);
+// An axis tick keeps the digits it has: 0.25 stays 0.25.
+const ratioTick = v => String(+v.toFixed(2));
+const sum = (xs, f = x => x) => xs.reduce((s, x) => s + (f(x) || 0), 0);
+// A count with the estimate of what encrypted buses hide added (#550). The asterisk on sessions
+// and on messages says they hold one, and how it is made.
+const withEst = (n, est) => fmt(n + (est || 0));
+// A number of bytes as people read one: 950 B, 12.3 kB, 4.56 MB. 1 kB is 1,000 bytes.
+const size = n => {
+  const b = n || 0;
+  if (b < 1000) return `${b} B`;
+  // The unit is chosen after rounding, so 999,999 bytes is 1.00 MB, not 1000 kB.
+  for (const [unit, k] of [['kB', 1e3], ['MB', 1e6], ['GB', 1e9]]) {
+    const v = b / k;
+    if (v < 999.5 || unit === 'GB') return `${v < 9.995 ? v.toFixed(2) : v < 99.95 ? v.toFixed(1) : v.toFixed(0)} ${unit}`;
+  }
+};
+// The same on an axis, without the zeros a round tick ends in: 2.5 kB, not 2.50 kB.
+const sizeTick = v => size(v).replace(/\.(\d*?)0+ /, (m, d) => (d ? '.' + d : '') + ' ');
+
+// Marks animate in on a load or a change of range, and not when a resize redraws them.
+let animate = true;
+const grow = (node, delay = 0, cls = 'grow') => {
+  if (animate) { node.classList.add(cls); node.style.animationDelay = `${Math.round(delay)}ms`; }
+  return node;
+};
+const draw = node => {
+  if (animate) { node.setAttribute('pathLength', 1); node.classList.add('draw'); }
+  return node;
+};
+let gradients = 0;
+// A vertical fade of color under a line, from a quarter strength at its top to nothing.
+function fadeFill(svg, color) {
+  const id = `fade-${++gradients}`;
+  const g = el('linearGradient', { id, x1: 0, x2: 0, y1: 0, y2: 1 });
+  g.append(el('stop', { offset: '0%', 'stop-color': color, 'stop-opacity': 0.24 }), el('stop', { offset: '100%', 'stop-color': color, 'stop-opacity': 0 }));
+  const defs = el('defs'); defs.append(g); svg.append(defs);
+  return `url(#${id})`;
+}
+
+// Counts up to a number when the page loads, so the eye lands on the headline first.
+function countUp(node, value, show = fmt) {
+  if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches || !value) { node.textContent = show(value); return; }
+  const t0 = performance.now(), ms = 900;
+  const step = t => {
+    const p = Math.min(1, (t - t0) / ms), e = 1 - (1 - p) ** 3;
+    node.textContent = show(p < 1 ? Math.round(value * e) : value);
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 
 // Clean y-axis ticks from 0 to at least max.
-function ticks(max, count = 4) {
+function ticks(max, count = 4, whole = true) {
   if (max <= 0) return [0, 1];
   const raw = max / count, mag = 10 ** Math.floor(Math.log10(raw));
-  const step = Math.max(1, [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || mag * 10);
+  let step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || mag * 10;
+  if (whole) step = Math.max(1, step);
   const out = [];
-  for (let v = 0; v < max + step * 0.999; v += step) out.push(v);
-  if (out[out.length - 1] < max) out.push(out[out.length - 1] + step);
+  for (let v = 0; v < max + step * 0.999; v += step) out.push(+v.toFixed(6));
+  if (out[out.length - 1] < max) out.push(+(out[out.length - 1] + step).toFixed(6));
   return out;
 }
 
@@ -268,9 +488,9 @@ function tooltip(box) {
     show(x, y, when, rows) {
       tip.replaceChildren();
       if (when) tip.appendChild(el('div', { class: 'when' }, when));
-      for (const [color, value, name] of rows) {
+      for (const [color, value, name, shape] of rows) {
         const row = el('div', { class: 'row' });
-        const key = el('i'); key.style.background = color;
+        const key = el('i', shape === 'line' ? { class: 'line' } : {}); key.style.background = color;
         row.append(key, el('b', {}, value), el('span', {}, name));
         tip.appendChild(row);
       }
@@ -283,16 +503,16 @@ function tooltip(box) {
   };
 }
 
-function frame(box, n, max, H, label) {
-  const W = box.clientWidth, m = { t: 16, r: 16, b: 26, l: 36 };
-  const ys = ticks(max, 4), top = ys[ys.length - 1];
+function frame(box, n, max, H, label, tick = fmt, whole = true) {
+  const W = box.clientWidth, m = { t: 16, r: 16, b: 26, l: tick === sizeTick ? 52 : 36 };
+  const ys = ticks(max, 4, whole), top = ys[ys.length - 1];
   const band = (W - m.l - m.r) / n;
   const x = i => m.l + band * (i + 0.5);
   const y = v => m.t + (1 - v / top) * (H - m.t - m.b);
   const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': label });
   for (const v of ys) {
     svg.append(el('line', { class: 'gridline', x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
-    svg.append(el('text', { class: 'axis', x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, fmt(v)));
+    svg.append(el('text', { class: 'axis', x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, tick(v)));
   }
   return { W, H, m, band, x, y, svg };
 }
@@ -305,35 +525,20 @@ function dayLabels(f, days) {
   }
 }
 
-// A running total over time, one series, with a crosshair.
-function totalChart(box, series, key, what, H = 220) {
-  box.replaceChildren();
-  const n = series.length;
-  const f = frame(box, n, Math.max(1, ...series.map(d => d[key])), H, what + ' over time');
-  const c = css('--series-1'), surface = css('--surface-1');
-  // A step: the total holds until the day it changes.
-  let d = '';
-  series.forEach((s, i) => {
-    const x0 = f.m.l + f.band * i, x1 = x0 + f.band, yy = f.y(s[key]).toFixed(1);
-    d += i ? `L${x0.toFixed(1)},${yy}L${x1.toFixed(1)},${yy}` : `M${x0.toFixed(1)},${yy}L${x1.toFixed(1)},${yy}`;
-  });
-  f.svg.append(el('path', { d: `${d}L${f.W - f.m.r},${f.y(0)}L${f.m.l},${f.y(0)}Z`, fill: c, opacity: 0.1 }));
-  f.svg.append(el('path', { d, fill: 'none', stroke: c, 'stroke-width': 2, 'stroke-linejoin': 'round' }));
-  const last = series[n - 1];
-  f.svg.append(el('text', { class: 'bar-value', x: f.W - f.m.r, y: f.y(last[key]) - 8, 'text-anchor': 'end' }, fmt(last[key])));
-  dayLabels(f, series.map(s => s.day));
-  const cross = el('line', { y1: f.m.t, y2: H - f.m.b, stroke: css('--text-muted'), 'stroke-width': 1, opacity: 0 });
-  const dot = el('circle', { r: 4, fill: c, stroke: surface, 'stroke-width': 2, opacity: 0 });
-  const hit = el('rect', { x: f.m.l, y: f.m.t, width: Math.max(0, f.W - f.m.l - f.m.r), height: H - f.m.t - f.m.b, fill: 'transparent', tabindex: 0 });
+// A crosshair and dot that follow the pointer, or the arrow keys, day by day.
+function crosshair(box, f, n, color, place) {
+  const cross = el('line', { y1: f.m.t, y2: f.H - f.m.b, stroke: css('--text-muted'), 'stroke-width': 1, 'stroke-dasharray': '3 3', opacity: 0 });
+  const dot = el('circle', { r: 4.5, fill: color, stroke: css('--surface-1'), 'stroke-width': 2, opacity: 0 });
+  const hit = el('rect', { x: f.m.l, y: f.m.t, width: Math.max(0, f.W - f.m.l - f.m.r), height: f.H - f.m.t - f.m.b, fill: 'transparent', tabindex: 0 });
   f.svg.append(cross, dot, hit);
-  box.append(f.svg);
   const tip = tooltip(box);
   let at = n - 1;
   const show = i => {
-    const s = series[i], cx = f.x(i);
+    const cx = f.x(i), p = place(i);
     for (const [k, v] of [['x1', cx], ['x2', cx], ['opacity', 1]]) cross.setAttribute(k, v);
-    for (const [k, v] of [['cx', cx], ['cy', f.y(s[key])], ['opacity', 1]]) dot.setAttribute(k, v);
-    tip.show(cx, f.y(s[key]), long(s.day), [[c, fmt(s[key]), what]]);
+    if (p.y == null) dot.setAttribute('opacity', 0);
+    else for (const [k, v] of [['cx', cx], ['cy', p.y], ['opacity', 1]]) dot.setAttribute(k, v);
+    tip.show(cx, p.y ?? f.m.t + 20, p.when, p.rows);
   };
   const hide = () => { tip.hide(); cross.setAttribute('opacity', 0); dot.setAttribute('opacity', 0); };
   hit.addEventListener('pointermove', e => {
@@ -351,28 +556,82 @@ function totalChart(box, series, key, what, H = 220) {
   });
 }
 
-// Columns per day, stacked by repo in the repos' fixed colors.
-function stackChart(box, legendBox, days, byRepo, key, what, colors) {
+// A running total over time, one series, as a step with a fading area under it. With barKey, that
+// day's count of the same thing (repos active that day) stands under it as light columns, on the
+// same axis, since it is the same unit.
+function totalChart(box, series, key, what, H = 260, { barKey, barWhat, legendBox } = {}) {
   box.replaceChildren();
-  const n = days.length, H = 220;
+  const n = series.length;
+  const f = frame(box, n, Math.max(1, ...series.map(d => d[key])), H, what + ' over time');
+  const c = css('--series-1');
+  if (barKey) {
+    const bw = Math.max(2, Math.min(14, f.band - 2));
+    series.forEach((s, i) => {
+      if (!s[barKey]) return;
+      const y1 = f.y(s[barKey]), h = Math.max(1, f.y(0) - y1), r = Math.min(3, h, bw / 2), x0 = f.x(i) - bw / 2;
+      f.svg.append(grow(el('path', { d: `M${x0},${y1 + h}V${y1 + r}Q${x0},${y1} ${x0 + r},${y1}H${x0 + bw - r}Q${x0 + bw},${y1} ${x0 + bw},${y1 + r}V${y1 + h}Z`, fill: c, opacity: 0.28 }), i * 400 / n));
+    });
+  }
+  // A step: the total holds until the day it changes.
+  let d = '';
+  series.forEach((s, i) => {
+    const x0 = f.m.l + f.band * i, x1 = x0 + f.band, yy = f.y(s[key]).toFixed(1);
+    d += i ? `L${x0.toFixed(1)},${yy}L${x1.toFixed(1)},${yy}` : `M${x0.toFixed(1)},${yy}L${x1.toFixed(1)},${yy}`;
+  });
+  f.svg.append(grow(el('path', { d: `${d}L${f.W - f.m.r},${f.y(0)}L${f.m.l},${f.y(0)}Z`, fill: fadeFill(f.svg, c) }), 300, 'fade'));
+  f.svg.append(draw(el('path', { d, fill: 'none', stroke: c, 'stroke-width': 2, 'stroke-linejoin': 'round' })));
+  const last = series[n - 1];
+  f.svg.append(grow(el('text', { class: 'bar-value', x: f.W - f.m.r, y: f.y(last[key]) - 8, 'text-anchor': 'end' }, fmt(last[key])), 700, 'fade'));
+  dayLabels(f, series.map(s => s.day));
+  box.append(f.svg);
+  crosshair(box, f, n, c, i => {
+    const s = series[i], rows = [[c, fmt(s[key]), what]];
+    if (barKey) rows.push([c + '55', fmt(s[barKey] || 0), barWhat]);
+    return { y: f.y(s[key]), when: long(s.day), rows };
+  });
+  if (legendBox) {
+    legendBox.replaceChildren();
+    const a = el('span'), ka = el('i'); ka.style.background = c; a.append(ka, document.createTextNode(`${what[0].toUpperCase()}${what.slice(1)}, in all`));
+    const b = el('span'), kb = el('i'); kb.style.background = c; kb.style.opacity = 0.35; b.append(kb, document.createTextNode(barWhat));
+    legendBox.append(a, b);
+  }
+}
+
+// The mean of the 7 days up to each day; null until there are 7.
+const rolling = (xs, w = 7) => xs.map((_, i) => i < w - 1 ? null : sum(xs.slice(i - w + 1, i + 1)) / w);
+// The census reads a day's records through the day, so the newest day, today, is only partly
+// counted until tomorrow. Trends (averages, ▲/▼) end at yesterday, or they would dip every day.
+const FULL = 1;
+
+// Columns per day, stacked by repo in the repos' fixed colors, with the 7-day average of the
+// whole as a dashed line over them. With estKey, a column is the exact count and the estimate
+// together. With bytes, the values are bytes, and are written as sizes.
+function stackChart(box, legendBox, days, byRepo, key, what, colors, { estKey, bytes = false } = {}) {
+  const value = bytes ? size : fmt;
+  box.replaceChildren();
+  const n = days.length, H = 260;
   const cell = new Map(); // day -> Map(slot -> value)
   for (const r of byRepo) {
-    if (!r[key]) continue;
+    const extra = (estKey && r[estKey]) || 0, v = (r[key] || 0) + extra;
+    if (!v) continue;
     const slot = colors.slotOf(r.name);
     if (!cell.has(r.day)) cell.set(r.day, new Map());
     const m = cell.get(r.day);
-    m.set(slot, (m.get(slot) || 0) + r[key]);
+    m.set(slot, (m.get(slot) || 0) + v);
   }
-  const totals = days.map(d => [...(cell.get(d)?.values() || [])].reduce((s, v) => s + v, 0));
-  const f = frame(box, n, Math.max(1, ...totals), H, `${what} per day, by repo`);
+  const totals = days.map(d => sum([...(cell.get(d)?.values() || [])]));
+  const avg = rolling(totals);
+  const f = frame(box, n, Math.max(1, ...totals), H, `${what} per day, by repo`, bytes ? sizeTick : fmt);
   const bw = Math.max(2, Math.min(18, f.band - 2));
   const tip = tooltip(box);
   const used = new Set();
+  const hits = [];
   days.forEach((d, i) => {
     const m = cell.get(d);
     if (m) {
       let base = 0;
       const slots = colors.slots.filter(s => m.has(s.key));
+      const g = grow(el('g'), i * 450 / n);
       slots.forEach((s, j) => {
         used.add(s.key);
         const v = m.get(s.key), y0 = f.y(base), y1 = f.y(base + v);
@@ -380,19 +639,31 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors) {
         const h = Math.max(1, y0 - y1 - (j ? 2 : 0));
         const top = j === slots.length - 1, r = top ? Math.min(3, h, bw / 2) : 0;
         const x0 = f.x(i) - bw / 2;
-        f.svg.append(el('path', { d: `M${x0},${y1 + h}V${y1 + r}Q${x0},${y1} ${x0 + r},${y1}H${x0 + bw - r}Q${x0 + bw},${y1} ${x0 + bw},${y1 + r}V${y1 + h}Z`, fill: s.color }));
+        g.append(el('path', { d: `M${x0},${y1 + h}V${y1 + r}Q${x0},${y1} ${x0 + r},${y1}H${x0 + bw - r}Q${x0 + bw},${y1} ${x0 + bw},${y1 + r}V${y1 + h}Z`, fill: s.color }));
         base += v;
       });
+      f.svg.append(g);
     }
     const hit = el('rect', { x: f.m.l + f.band * i, y: f.m.t, width: f.band, height: H - f.m.t - f.m.b, fill: 'transparent', tabindex: 0 });
     const show = () => {
-      const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, fmt(m.get(s.key)), s.label]) : [];
-      tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${fmt(totals[i])} ${what.toLowerCase()}`, rows);
+      const rows = m ? colors.slots.filter(s => m.has(s.key)).map(s => [s.color, value(m.get(s.key)), s.label]) : [];
+      if (avg[i] != null && i < n - FULL) rows.push([css('--text-muted'), value(Math.round(avg[i])), '7-day average']);
+      tip.show(f.x(i), f.y(totals[i]), `${long(d)} · ${value(totals[i])}${bytes ? '' : ' ' + what.toLowerCase()}`, rows);
     };
     hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
     hit.addEventListener('pointerleave', () => tip.hide()); hit.addEventListener('blur', () => tip.hide());
-    f.svg.append(hit);
+    hits.push(hit);
   });
+  const any = totals.some(Boolean);
+  if (any && n >= 7 + FULL) {
+    const line = avg.map((v, i) => v == null || i >= n - FULL ? '' : `${avg[i - 1] == null ? 'M' : 'L'}${f.x(i).toFixed(1)},${f.y(v).toFixed(1)}`).join('');
+    // A surface halo under the line keeps it readable where it crosses the columns.
+    f.svg.append(el('path', { d: line, fill: 'none', stroke: css('--surface-1'), 'stroke-width': 4, 'stroke-linejoin': 'round', opacity: 0.9 }));
+    const p = el('path', { d: line, fill: 'none', stroke: css('--text-secondary'), 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-dasharray': '4 3' });
+    if (animate) grow(p, 500, 'fade');
+    f.svg.append(p);
+  }
+  f.svg.append(...hits);
   dayLabels(f, days);
   box.append(f.svg);
   legendBox.replaceChildren();
@@ -400,7 +671,367 @@ function stackChart(box, legendBox, days, byRepo, key, what, colors) {
     const item = el('span'); const k = el('i'); k.style.background = s.color;
     item.append(k, document.createTextNode(s.label)); legendBox.append(item);
   }
-  if (!used.size) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} in these days.`));
+  if (any && n >= 7 + FULL) {
+    const item = el('span'); item.append(el('i', { class: 'line' }), document.createTextNode('7-day average')); legendBox.append(item);
+  }
+  if (!any) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} in these days.`));
+}
+
+// A tile's sparkline: the range's days as a small line with a fading area, ending in a dot.
+function sparkline(box, values) {
+  box.replaceChildren();
+  const W = 96, H = 32, n = values.length;
+  if (n < 2) return;
+  const real = values.filter(v => v != null);
+  if (!real.length) return;
+  const max = Math.max(...real, 1), min = Math.min(0, ...real);
+  const x = i => (i / (n - 1)) * W, y = v => H - 2 - ((v - min) / (max - min || 1)) * (H - 6);
+  const c = css('--series-1');
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true', preserveAspectRatio: 'none' });
+  const d = values.map((v, i) => v == null ? '' : `${values[i - 1] == null ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  if (!values.includes(null)) svg.append(el('path', { d: `${d}L${W},${H}L0,${H}Z`, fill: fadeFill(svg, c) }));
+  svg.append(draw(el('path', { d, fill: 'none', stroke: c, 'stroke-width': 1.75, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' })));
+  const end = values.findLastIndex(v => v != null);
+  svg.append(el('circle', { cx: x(end), cy: y(values[end]), r: 2.75, fill: c, stroke: css('--surface-1'), 'stroke-width': 1.5 }));
+  box.append(svg);
+}
+
+// "1,234 in the last 7 days · ▲ 12%": the figure, then the 7 full days to yesterday against the
+// 7 before them (FULL). A week from nothing is "new", except for a ratio, where it means nothing.
+function weekNote(id, now, before, show, lead, { ratio = false } = {}) {
+  const box = $(id);
+  box.replaceChildren(document.createTextNode(lead));
+  if (!before && (!now || ratio)) return;
+  const pct = before ? Math.round((now - before) / before * 100) : null;
+  const text = pct === null ? 'new' : `${pct > 0 ? '▲' : pct < 0 ? '▼' : '='} ${Math.abs(pct)}%`;
+  const b = el('b', { class: pct === null || pct > 0 ? 'up' : pct < 0 ? 'down' : '', title: `The 7 days to yesterday: ${show(now)}; the 7 before: ${show(before)}` }, text);
+  box.append(document.createTextNode(' · '), b);
+}
+
+// Each repo's days as a grid, one row a repo, one column a day, its bus records in one hue from
+// light to dark. The busiest repos of the range get a row each; the rest share one.
+function heatmap(box, legendBox, days, byRepo, colors) {
+  box.replaceChildren();
+  const n = days.length, idx = new Map(days.map((d, i) => [d, i]));
+  const per = new Map(); // name -> per-day [{records, sessions, messages, devices}]
+  for (const r of byRepo) {
+    if (!idx.has(r.day)) continue;
+    if (!per.has(r.name)) per.set(r.name, days.map(() => ({ records: 0, sessions: 0, messages: 0, devices: 0 })));
+    const c = per.get(r.name)[idx.get(r.day)];
+    c.records += r.records || 0; c.sessions += (r.sessions || 0) + (r.estSessions || 0);
+    c.messages += (r.messages || 0) + (r.estMessages || 0); c.devices += r.devices || 0;
+  }
+  const ranked = [...per.entries()].map(([name, cells]) => ({ name, cells, total: sum(cells, c => c.records) }))
+    .filter(r => r.total > 0 || r.cells.some(c => c.devices)).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  if (!ranked.length) { box.append(el('div', { class: 'empty' }, 'No activity in these days.')); legendBox.replaceChildren(); return; }
+  // A repo with a color of its own gets a row; the rest share one, as they share Other's color.
+  const rest = ranked.filter(r => colors.slotOf(r.name) === 'other');
+  const rows = ranked.filter(r => colors.slotOf(r.name) !== 'other');
+  if (rest.length) {
+    const cells = days.map((_, i) => ({ records: sum(rest, r => r.cells[i].records), sessions: sum(rest, r => r.cells[i].sessions), messages: sum(rest, r => r.cells[i].messages), devices: sum(rest, r => r.cells[i].devices) }));
+    rows.push({ name: rest.length === 1 ? short(rest[0].name) : `${rest.length} other repos`, cells, other: true });
+  }
+  const W = box.clientWidth, narrow = W < 560;
+  const labelW = narrow ? 92 : 200, rowH = narrow ? 20 : 26, gap = 2, top = 4, bottom = 24;
+  const cw = (W - labelW) / n, H = top + rows.length * rowH + bottom;
+  const max = Math.max(1, ...rows.flatMap(r => r.cells.map(c => c.records)));
+  const c1 = css('--series-1'), empty = css('--grid');
+  const STEPS = [0.18, 0.36, 0.56, 0.78, 1];
+  const level = v => v <= 0 ? -1 : Math.min(4, Math.floor(4.999 * Math.log1p(v) / Math.log1p(max)));
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'Bus records by repo and day' });
+  const cr = Math.max(0, Math.min(3, (cw - gap) / 2 - 0.5));
+  rows.forEach((r, j) => {
+    const y = top + j * rowH;
+    const name = r.other ? r.name : short(r.name);
+    const max = narrow ? 12 : 24;
+    const label = el('text', { class: 'rowname', x: labelW - 26, y: y + rowH / 2 + 4, 'text-anchor': 'end' }, name.length > max ? name.slice(0, max - 1) + '…' : name);
+    svg.append(label, el('rect', { x: labelW - 18, y: y + rowH / 2 - 5, width: 10, height: 10, rx: 3, fill: r.other ? css('--series-other') : colors.colorOf(r.name) }));
+    const g = el('g');
+    r.cells.forEach((c, i) => {
+      const lv = level(c.records);
+      const rect = el('rect', { x: labelW + i * cw, y: y + 1, width: Math.max(1, cw - gap), height: rowH - gap - 1, rx: cr, fill: lv < 0 ? empty : c1 });
+      if (lv >= 0) rect.setAttribute('fill-opacity', STEPS[lv]);
+      if (lv >= 0) grow(rect, 80 + i * 500 / n + j * 30, 'fade');
+      g.append(rect);
+    });
+    svg.append(g);
+  });
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - labelW) / 80))));
+  for (let i = n - 1; i >= 0; i -= every) {
+    svg.append(el('text', { class: 'axis', x: labelW + (i + 0.5) * cw, y: H - 6, 'text-anchor': i === n - 1 ? 'end' : 'middle' }, date(days[i])));
+  }
+  const outline = el('rect', { width: Math.max(1, cw - gap), height: rowH - gap - 1, rx: cr, fill: 'none', stroke: css('--text-primary'), 'stroke-width': 1.5, opacity: 0, 'pointer-events': 'none' });
+  const hit = el('rect', { x: labelW, y: top, width: Math.max(0, W - labelW), height: rows.length * rowH, fill: 'transparent', tabindex: 0 });
+  svg.append(outline, hit);
+  box.append(svg);
+  const tip = tooltip(box);
+  let at = [rows.length - 1, n - 1];
+  const show = ([j, i]) => {
+    const r = rows[j], c = r.cells[i], x = labelW + i * cw, y = top + j * rowH + 1;
+    for (const [k, v] of [['x', x], ['y', y], ['opacity', 1]]) outline.setAttribute(k, v);
+    const color = r.other ? css('--series-other') : colors.colorOf(r.name);
+    tip.show(x + cw / 2, y, `${r.other ? r.name : short(r.name)} · ${long(days[i])}`, [
+      [color, fmt(c.records), 'bus records'], [color, fmt(c.devices), c.devices === 1 ? 'device' : 'devices'],
+      [color, fmt(c.sessions), 'sessions'], [color, fmt(c.messages), 'messages'],
+    ]);
+  };
+  const hide = () => { tip.hide(); outline.setAttribute('opacity', 0); };
+  hit.addEventListener('pointermove', e => {
+    const b = svg.getBoundingClientRect(), sx = (e.clientX - b.left) * (W / b.width), sy = (e.clientY - b.top) * (H / b.height);
+    at = [Math.min(rows.length - 1, Math.max(0, Math.floor((sy - top) / rowH))), Math.min(n - 1, Math.max(0, Math.floor((sx - labelW) / cw)))];
+    show(at);
+  });
+  hit.addEventListener('pointerleave', hide); hit.addEventListener('blur', hide);
+  hit.addEventListener('focus', () => show(at));
+  hit.addEventListener('keydown', e => {
+    const mv = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[e.key];
+    if (!mv) return;
+    at = [Math.min(rows.length - 1, Math.max(0, at[0] + mv[0])), Math.min(n - 1, Math.max(0, at[1] + mv[1]))];
+    show(at); e.preventDefault();
+  });
+  legendBox.replaceChildren();
+  const ramp = el('span', { class: 'ramp' });
+  const none = el('i'); none.style.background = empty; ramp.append(none);
+  for (const s of STEPS) { const k = el('i'); k.style.background = c1; k.style.opacity = s; ramp.append(k); }
+  const item = el('span'); item.append(document.createTextNode('None'), ramp, document.createTextNode(`${fmt(max)} records a day`));
+  legendBox.append(item);
+}
+
+// Each repo's part of the range's total of one measure, largest first, with its share written beside it.
+const SHARE = {
+  records: { what: 'bus records', value: r => r.records || 0, show: fmt },
+  sessions: { what: 'agent sessions, estimates included', value: r => (r.sessions || 0) + (r.estSessions || 0), show: fmt },
+  messages: { what: 'messages, estimates included', value: r => (r.messages || 0) + (r.estMessages || 0), show: fmt },
+  bytes: { what: 'data', value: r => r.bytes || 0, show: size },
+};
+let shareKey = 'records';
+function shareChart(box, byRepo, colors, days) {
+  const m = SHARE[shareKey];
+  for (const b of document.querySelectorAll('#share-metric button')) b.setAttribute('aria-pressed', String(b.dataset.k === shareKey));
+  $('share-sub').textContent = `${m.what} in the last ${days} days, by repo`;
+  box.replaceChildren();
+  const by = new Map();
+  for (const r of byRepo) { const s = colors.slotOf(r.name); by.set(s, (by.get(s) || 0) + m.value(r)); }
+  const total = sum([...by.values()]);
+  if (!total) { box.append(el('div', { class: 'empty' }, 'Nothing in these days.')); return; }
+  const items = colors.slots.filter(s => by.get(s.key)).map(s => ({ ...s, v: by.get(s.key) })).sort((a, b) => b.v - a.v);
+  items.forEach((s, i) => {
+    const row = el('div', { class: 'item' });
+    const name = el('div', { class: 'name', title: s.label }); const k = el('i'); k.style.background = s.color; name.append(k, document.createTextNode(s.label));
+    const track = el('div', { class: 'track' });
+    const bar = grow(el('div', { class: 'bar' }), i * 60, 'growx'); bar.style.width = `${(s.v / total) * 100}%`; bar.style.background = s.color;
+    track.append(bar);
+    const pct = s.v / total * 100;
+    const num = el('div', { class: 'num' }); num.append(el('b', {}, m.show(s.v)), el('span', {}, `${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}%`));
+    row.append(name, track, num);
+    box.append(row);
+  });
+}
+
+// Messages over sessions, day by day, estimates included in both; a day no session started has
+// no point. The range's own figure is a dashed reference line.
+function ratioChart(box, legendBox, series) {
+  box.replaceChildren();
+  const n = series.length, H = 260;
+  const pts = series.map(s => {
+    const ses = s.sessions + (s.estSessions || 0), msg = s.messages + (s.estMessages || 0);
+    return ses ? msg / ses : null;
+  });
+  const vals = pts.filter(v => v != null);
+  legendBox.replaceChildren();
+  if (!vals.length) { box.append(el('div', { class: 'empty' }, 'No sessions in these days.')); return; }
+  const ses = sum(series, s => s.sessions + (s.estSessions || 0)), msg = sum(series, s => s.messages + (s.estMessages || 0));
+  const overall = msg / ses;
+  const f = frame(box, n, Math.max(1, ...vals), H, 'Messages per session, by day', ratioTick, false);
+  const c = css('--series-1');
+  // Segments break where a day has no sessions, so a gap reads as a gap.
+  let d = '', pen = false;
+  pts.forEach((v, i) => {
+    if (v == null) { pen = false; return; }
+    d += `${pen ? 'L' : 'M'}${f.x(i).toFixed(1)},${f.y(v).toFixed(1)}`; pen = true;
+  });
+  const yo = f.y(overall);
+  f.svg.append(el('line', { x1: f.m.l, x2: f.W - f.m.r, y1: yo, y2: yo, stroke: css('--text-secondary'), 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }));
+  f.svg.append(el('text', { class: 'bar-value', x: f.m.l + 6, y: yo - 6 }, `${ratioFmt(overall)} over the range`));
+  f.svg.append(draw(el('path', { d, fill: 'none', stroke: c, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' })));
+  // Every point gets a dot on a short range; on a long one, only a point with no neighbour, which
+  // a line can't show.
+  pts.forEach((v, i) => { if (v != null && (n <= 45 || (pts[i - 1] == null && pts[i + 1] == null))) f.svg.append(grow(el('circle', { cx: f.x(i), cy: f.y(v), r: 3, fill: c, stroke: css('--surface-1'), 'stroke-width': 1.5 }), 400 + i * 400 / n, 'fade')); });
+  dayLabels(f, series.map(s => s.day));
+  box.append(f.svg);
+  crosshair(box, f, n, c, i => {
+    const s = series[i], v = pts[i];
+    return {
+      y: v == null ? null : f.y(v), when: long(s.day),
+      rows: v == null ? [[css('--grid'), '–', 'no sessions started']] : [
+        [c, ratioFmt(v), 'messages per session'],
+        [css('--text-muted'), fmt(s.messages + (s.estMessages || 0)), 'messages'],
+        [css('--text-muted'), fmt(s.sessions + (s.estSessions || 0)), 'sessions'],
+      ],
+    };
+  });
+  const a = el('span'), ka = el('i'); ka.style.background = c; a.append(ka, document.createTextNode('That day'));
+  const b = el('span'); b.append(el('i', { class: 'line' }), document.createTextNode('The whole range'));
+  legendBox.append(a, b);
+}
+
+// A smooth curve through the points that never overshoots them (monotone cubic, Fritsch and
+// Carlson), so a running total never seems to dip and a day's count never seems to go below 0.
+function smoothPath(pts) {
+  const n = pts.length;
+  if (!n) return '';
+  if (n === 1) return `M${pts[0][0]},${pts[0][1]}`;
+  const dx = [], m = [];
+  for (let i = 0; i < n - 1; i++) { dx.push(pts[i + 1][0] - pts[i][0]); m.push((pts[i + 1][1] - pts[i][1]) / (dx[i] || 1)); }
+  const t = pts.map((_, i) => (i === 0 ? m[0] : i === n - 1 ? m[n - 2] : m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2));
+  for (let i = 0; i < n - 1; i++) {
+    if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+    const a = t[i] / m[i], b = t[i + 1] / m[i], h = a * a + b * b;
+    if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; }
+  }
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], h = dx[i] / 3;
+    d += `C${(x0 + h).toFixed(1)},${(y0 + t[i] * h).toFixed(1)} ${(x1 - h).toFixed(1)},${(y1 - t[i + 1] * h).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return d;
+}
+
+// Each repo's running total over the range: its all-time count, less what the range added, then
+// day by day. A count is only raised, so the start can't be below 0; if it seems to be, the census
+// is mid-run, and that repo starts at 0. Clamped per repo, so one can't lower the others in its slot.
+function cumulativeBands(days, byRepo, repoList, value, colors) {
+  const idx = new Map(days.map((d, i) => [d, i]));
+  const daily = new Map(colors.slots.map(s => [s.key, days.map(() => 0)]));
+  const inRange = new Map();
+  for (const r of byRepo) {
+    if (!idx.has(r.day)) continue;
+    daily.get(colors.slotOf(r.name))[idx.get(r.day)] += value(r);
+    inRange.set(r.name, (inRange.get(r.name) || 0) + value(r));
+  }
+  const base = new Map(colors.slots.map(s => [s.key, 0]));
+  for (const r of repoList) {
+    const k = colors.slotOf(r.name);
+    base.set(k, base.get(k) + Math.max(0, value(r) - (inRange.get(r.name) || 0)));
+  }
+  return colors.slots.map(s => {
+    let run = base.get(s.key);
+    return { ...s, cum: daily.get(s.key).map(v => (run += v)), daily: daily.get(s.key) };
+  });
+}
+
+// The progress card's chart: one series, drawn as calmly as it can be. Cumulative is a smooth line
+// over a soft fill; per day is light columns under a smooth 7-day average. What makes up a day,
+// repo by repo, is in the tooltip rather than in the marks, so the shape reads at a glance.
+function progressChart(box, days, values, { mode, show = fmt, what, rowsAt = () => [] }) {
+  box.replaceChildren();
+  // The page's blue for one series, as on the other totals. The oldest repo has it too, so the
+  // tooltip's keys take the marks' shapes (a line for the average, the columns' tint for the day)
+  // to stay apart from that repo's square.
+  const n = days.length, H = 300, c = css('--series-1'), soft = `color-mix(in srgb, ${c} 28%, transparent)`;
+  const f = frame(box, n, Math.max(1, ...values), H, `${what}, ${mode === 'cumulative' ? 'in all' : 'per day'}`, show === size ? sizeTick : fmt);
+  const pt = i => [f.x(i), f.y(values[i])];
+  let lineAt = i => f.y(values[i]);
+  if (mode === 'cumulative') {
+    const line = smoothPath(days.map((_, i) => pt(i)));
+    f.svg.append(grow(el('path', { d: `${line}L${f.x(n - 1).toFixed(1)},${f.y(0)}L${f.x(0).toFixed(1)},${f.y(0)}Z`, fill: fadeFill(f.svg, c) }), 250, 'fade'));
+    f.svg.append(draw(el('path', { d: line, fill: 'none', stroke: c, 'stroke-width': 2.5, 'stroke-linecap': 'round' })));
+  } else {
+    const bw = Math.max(2, Math.min(14, f.band * 0.6));
+    values.forEach((v, i) => {
+      if (!v) return;
+      const y1 = f.y(v), h = Math.max(1, f.y(0) - y1), r = Math.min(3, h, bw / 2), x0 = f.x(i) - bw / 2;
+      f.svg.append(grow(el('path', { d: `M${x0},${y1 + h}V${y1 + r}Q${x0},${y1} ${x0 + r},${y1}H${x0 + bw - r}Q${x0 + bw},${y1} ${x0 + bw},${y1 + r}V${y1 + h}Z`, fill: soft }), i * 400 / n));
+    });
+    // The average ends at yesterday (FULL): today is only partly counted.
+    const avg = rolling(values);
+    const pts = [];
+    avg.forEach((v, i) => { if (v != null && i < n - FULL) pts.push([f.x(i), f.y(v)]); });
+    if (pts.length > 1) f.svg.append(draw(el('path', { d: smoothPath(pts), fill: 'none', stroke: c, 'stroke-width': 2.5, 'stroke-linecap': 'round' })));
+    const onLine = i => pts.length > 1 && avg[i] != null && i < n - FULL;
+    lineAt = i => (onLine(i) ? f.y(avg[i]) : f.y(values[i]));
+    rowsAt = (rows => i => [[soft, show(values[i]), 'that day'], ...(onLine(i) ? [[c, show(Math.round(avg[i])), '7-day average', 'line']] : []), ...rows(i)])(rowsAt);
+  }
+  const last = mode === 'cumulative' ? n - 1 : null;
+  if (last !== null) {
+    f.svg.append(grow(el('circle', { cx: f.x(last), cy: f.y(values[last]), r: 4.5, fill: c, stroke: css('--surface-1'), 'stroke-width': 2 }), 900, 'fade'));
+  }
+  dayLabels(f, days);
+  box.append(f.svg);
+  crosshair(box, f, n, c, i => ({
+    y: lineAt(i),
+    when: mode === 'cumulative' ? `${long(days[i])} · ${show(values[i])} in all` : long(days[i]),
+    rows: rowsAt(i),
+  }));
+  if (!values.some(Boolean)) box.append(el('div', { class: 'empty' }, `No ${what.toLowerCase()} ${mode === 'cumulative' ? 'yet' : 'in these days'}.`));
+}
+
+// What the progress card can show. A total kind (repos, users, contributors) is a running total
+// the server already keeps per day; per day it is how many were new. A repo kind is summed from
+// each repo's days. Devices come only per day: the data holds each day's active devices, not the
+// day each device first appeared.
+const PROGRESS = {
+  repos: { what: 'Public repos', total: 'repos', newWhat: 'new repos' },
+  users: { what: 'Users', total: 'users', newWhat: 'new users', note: 'approximate: see the asterisk on Users' },
+  contributors: { what: 'Contributors', total: 'contributors', newWhat: 'new contributors' },
+  records: { what: 'Bus records', value: r => r.records || 0 },
+  bytes: { what: 'Data', value: r => r.bytes || 0, show: size },
+  sessions: { what: 'Agent sessions', value: r => (r.sessions || 0) + (r.estSessions || 0), est: 'estSessions', note: 'estimates included' },
+  messages: { what: 'Messages', value: r => (r.messages || 0) + (r.estMessages || 0), est: 'estMessages', note: 'estimates included' },
+  devices: { what: 'Devices active', value: r => r.devices || 0, dailyOnly: true },
+};
+let progKey = 'records', progMode = 'cumulative';
+function progress(d, colors) {
+  const m = PROGRESS[progKey], show = m.show || fmt, S = d.series, days = S.map(s => s.day), n = S.length;
+  const mode = m.dailyOnly ? 'daily' : progMode;
+  for (const b of document.querySelectorAll('#prog-metric button')) b.setAttribute('aria-pressed', String(b.dataset.k === progKey));
+  for (const b of document.querySelectorAll('#prog-mode button')) {
+    b.setAttribute('aria-pressed', String(b.dataset.m === mode));
+    b.disabled = b.dataset.m === 'cumulative' && !!m.dailyOnly;
+    b.title = b.disabled ? 'Per day only: the data has each day’s active devices, not when each first ran Murmur' : '';
+  }
+  const box = $('c-prog');
+  const tail = m.note ? `; ${m.note}` : '';
+  if (m.total) {
+    // New on a day is the change in the running total. The range's first day has no day before it
+    // in the data, except for repos, whose start days are all there; for users and contributors
+    // that day counts 0, and the change is counted from the end of it.
+    const first = progKey === 'repos' ? d.repoList.filter(r => r.start === days[0]).length : null;
+    const news = S.map((s, i) => (i ? Math.max(0, s[m.total] - S[i - 1][m.total]) : first || 0));
+    const added = S[n - 1][m.total] - S[0][m.total] + (first || 0);
+    $('prog-big').textContent = fmt(S[n - 1][m.total]);
+    $('prog-change').textContent = `+${fmt(added)} ${first === null ? 'after' : 'since'} ${date(days[0])}`;
+    if (mode === 'cumulative') {
+      $('prog-sub').textContent = `${m.what.toLowerCase()}, in all, each day${tail}`;
+      progressChart(box, days, S.map(s => s[m.total]), { mode, what: m.what });
+    } else {
+      $('prog-sub').textContent = `${m.newWhat} each day, with the 7-day average${tail}`;
+      progressChart(box, days, news, { mode, what: m.newWhat });
+    }
+    return;
+  }
+  // Only listed repos: a day's row for a repo no longer listed (one deleted by hand) has no total
+  // to start from, so counting it would make the range add more than the whole.
+  const listed = new Set(d.repoList.map(r => r.name));
+  const byRepo = d.byRepo.filter(r => listed.has(r.name));
+  const inRange = sum(byRepo, m.value);
+  const bands = cumulativeBands(days, byRepo, d.repoList, m.value, colors);
+  // The tooltip names each repo with something that day, largest first.
+  const rowsBy = key => i => bands.filter(b => b[key][i] > 0).sort((x, y) => y[key][i] - x[key][i]).map(b => [b.color, show(b[key][i]), b.label]);
+  if (mode === 'cumulative') {
+    $('prog-big').textContent = show(sum(d.repoList, m.value));
+    $('prog-change').textContent = `+${show(inRange)} since ${date(days[0])}`;
+    $('prog-sub').textContent = `${m.what.toLowerCase()}, in all, each day; hover for each repo${tail}`;
+    progressChart(box, days, days.map((_, i) => sum(bands, b => b.cum[i])), { mode, show, what: m.what, rowsAt: rowsBy('cum') });
+  } else {
+    // The average a day is over full days, to yesterday (FULL): today is only partly counted.
+    const per = days.map((_, i) => sum(bands, b => b.daily[i]));
+    const fullDays = Math.max(1, n - FULL), avg = sum(per.slice(0, fullDays)) / fullDays;
+    $('prog-big').textContent = m.dailyOnly ? ratioFmt(avg) : show(inRange);
+    $('prog-change').textContent = m.dailyOnly ? `a day on average, ${date(days[0])} to yesterday` : `since ${date(days[0])}; ${show(Math.round(avg))} a day to yesterday`;
+    $('prog-sub').textContent = `${m.what.toLowerCase()} each day, with the 7-day average; hover for each repo${tail}${m.dailyOnly ? '; per day only, since the data doesn’t say when each device first ran Murmur' : ''}`;
+    progressChart(box, days, per, { mode, show, what: m.what, rowsAt: rowsBy('daily') });
+  }
 }
 
 // Each repo keeps a color by when it started, the oldest first; past seven, the rest are Other.
@@ -412,24 +1043,74 @@ function repoColors(list) {
   return { slots, slotOf: name => (named.has(name) ? name : 'other'), colorOf: name => slots.find(s => s.key === (named.has(name) ? name : 'other'))?.color };
 }
 
-function repoTable(box, list, colors) {
+// The repos, with a sparkline of each one's records over the range, sortable by any column.
+const COLS = [
+  { t: 'Repo', v: r => short(r.name).toLowerCase() },
+  { t: 'Trend', trend: true },
+  { t: 'Contributors', num: 1, v: r => r.contributors, s: r => fmt(r.contributors) },
+  { t: 'Devices', num: 1, v: r => r.devices, s: r => fmt(r.devices) },
+  { t: 'People', num: 1, v: r => r.people, s: r => fmt(r.people) },
+  { t: 'Records', num: 1, v: r => r.records, s: r => fmt(r.records) },
+  { t: 'Data', num: 1, v: r => r.bytes, s: r => size(r.bytes) },
+  { t: 'Sessions', num: 1, v: r => r.sessions + (r.estSessions || 0), s: r => withEst(r.sessions, r.estSessions) },
+  { t: 'Messages', num: 1, v: r => r.messages + (r.estMessages || 0), s: r => withEst(r.messages, r.estMessages) },
+  { t: 'Days active', num: 1, v: r => r.week, s: r => fmt(r.week) },
+  { t: 'First on the bus', v: r => r.start, s: r => date(r.start, { month: 'short', day: 'numeric', year: 'numeric' }) },
+  { t: 'Last on the bus', v: r => r.last || '', s: r => r.last ? date(r.last, { month: 'short', day: 'numeric', year: 'numeric' }) : 'not counted yet' },
+];
+let sortBy = null; // null keeps the server's order: most active first.
+function repoTable(box, list, colors, days, byRepo) {
   box.replaceChildren();
   if (!list.length) { box.append(el('div', { class: 'empty' }, 'No repos yet.')); return; }
-  const table = el('table');
-  const head = el('tr');
-  const cols = [['Repo'], ['Contributors', 1], ['Devices', 1], ['People', 1], ['Sessions', 1], ['Messages', 1], ['Bus records', 1], ['Days active', 1], ['First on the bus'], ['Last on the bus']];
-  for (const [t, num] of cols) head.append(el('th', num ? { class: 'num' } : {}, t));
-  table.append(head);
-  for (const r of list) {
+  const idx = new Map(days.map((d, i) => [d, i]));
+  const trend = new Map();
+  for (const r of byRepo) {
+    if (!idx.has(r.day)) continue;
+    if (!trend.has(r.name)) trend.set(r.name, days.map(() => 0));
+    trend.get(r.name)[idx.get(r.day)] += r.records || 0;
+  }
+  const rowsOf = [...list];
+  if (sortBy) {
+    const { v } = COLS[sortBy.col];
+    rowsOf.sort((a, b) => { const x = v(a), y = v(b); return (x < y ? -1 : x > y ? 1 : 0) * sortBy.dir; });
+  }
+  const table = el('table'), thead = el('thead'), head = el('tr');
+  COLS.forEach((c, i) => {
+    const th = el('th', c.num ? { class: 'num' } : {});
+    if (c.trend) th.textContent = `Last ${days.length} days`;
+    else {
+      const b = el('button', { type: 'button' }, c.t);
+      if (sortBy?.col === i) th.setAttribute('aria-sort', sortBy.dir > 0 ? 'ascending' : 'descending');
+      b.addEventListener('click', () => {
+        // Each heading cycles: its natural order (numbers largest first), the reverse, the server's.
+        const first = c.num ? -1 : 1;
+        sortBy = sortBy?.col !== i ? { col: i, dir: first } : sortBy.dir === first ? { col: i, dir: -first } : null;
+        animate = false;
+        repoTable(box, list, colors, days, byRepo);
+        box.querySelectorAll('th')[i].querySelector('button')?.focus();
+      });
+      th.append(b);
+    }
+    head.append(th);
+  });
+  thead.append(head); table.append(thead);
+  const tbody = el('tbody');
+  for (const r of rowsOf) {
     const tr = el('tr');
-    const name = el('td'); const key = el('span', { class: 'key' }); key.style.background = colors.colorOf(r.name);
+    const name = el('td', { class: 'repo', title: short(r.name) }); const key = el('span', { class: 'key' }); key.style.background = colors.colorOf(r.name);
     const a = el('a', { href: 'https://' + r.name, rel: 'noopener' }, short(r.name));
     name.append(key, a); tr.append(name);
-    for (const v of [r.contributors, r.devices, r.people, r.sessions, r.messages, r.records, r.week]) tr.append(el('td', { class: 'num' }, fmt(v)));
-    tr.append(el('td', {}, date(r.start, { month: 'short', day: 'numeric', year: 'numeric' })));
-    tr.append(el('td', {}, r.last ? date(r.last, { month: 'short', day: 'numeric', year: 'numeric' }) : 'not counted yet'));
-    table.append(tr);
+    const t = el('td', { class: 'trend' });
+    const vals = trend.get(r.name) || days.map(() => 0), W = 120, H = 24, mx = Math.max(1, ...vals);
+    const svg = el('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, 'aria-label': `${fmt(sum(vals))} records in the last ${days.length} days` });
+    const bw = W / vals.length;
+    vals.forEach((v, i) => { if (v) { const h = Math.max(1.5, (v / mx) * (H - 2)); svg.append(el('rect', { x: i * bw, y: H - h, width: Math.max(1, bw - (bw > 3 ? 1 : 0)), height: h, rx: Math.min(1.5, bw / 3), fill: colors.colorOf(r.name) })); } });
+    svg.append(el('line', { x1: 0, x2: W, y1: H - 0.5, y2: H - 0.5, class: 'gridline' }));
+    t.append(svg); tr.append(t);
+    for (const c of COLS.slice(2)) tr.append(el('td', c.num ? { class: 'num' } : {}, c.s(r)));
+    tbody.append(tr);
   }
+  table.append(tbody);
   const wrap = el('div', { class: 'table-wrap' });
   wrap.append(table);
   box.append(wrap);
@@ -440,15 +1121,18 @@ let data, days = Number(new URLSearchParams(location.search).get('days')) || 30;
 function render() {
   if (!data) return;
   const d = data;
-  $('asof').textContent = `as of ${date(d.today, { month: 'long', day: 'numeric', year: 'numeric' })}, UTC`;
-  $('repos').textContent = fmt(d.repos);
+  gradients = 0;
+  // When the census last ran, in the reader's own time zone.
+  const ran = d.census?.last || d.counted;
+  $('asof').textContent = ran ? `Last census ${new Date(ran).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'No census yet';
+  countUp($('repos'), d.repos);
   const note = (id, strong, rest, up) => {
     const b = el('b', up ? { class: 'up' } : {}, strong);
     $(id).replaceChildren(b, document.createTextNode(' ' + rest));
   };
   note('repos-new', d.newRepos ? `+${fmt(d.newRepos)}` : '0', `new in the last ${d.week} days`, d.newRepos > 0);
   note('repos-active', fmt(d.activeRepos), `active in the last ${d.week} days`);
-  $('users').textContent = fmt(d.users);
+  countUp($('users'), d.users);
   note('users-new', d.newUsers ? `+${fmt(d.newUsers)}` : '0', `new in the last ${d.week} days`, d.newUsers > 0);
   note('users-active', fmt(d.activeUsers), `active in the last ${d.week} days`);
   const b = d.usersBy;
@@ -463,23 +1147,72 @@ function render() {
     ...rows,
     el('p', { class: 'fine' }, 'Private repos aren’t counted.'),
   );
-  $('t-contributors').textContent = fmt(d.contributors);
-  $('t-contributors-note').textContent = `people who have committed to them; ${fmt(d.newContributors)} new in the last ${d.week} days`;
-  $('t-devices').textContent = fmt(d.devices);
-  $('t-devices-note').textContent = `clones that have run Murmur, of ${plural(d.people, 'person', 'people')}`;
-  $('t-sessions').textContent = fmt(d.sessions);
-  $('t-sessions-note').textContent = `${fmt(d.weekSessions)} in the last ${d.week} days`;
-  $('t-messages').textContent = fmt(d.messages);
-  $('t-messages-note').textContent = `${fmt(d.weekMessages)} in the last ${d.week} days`;
+
+  // The tiles: the total, a sparkline of the range, and the last 7 days against the 7 before.
+  const S = d.series, wk = d.week;
+  // Trends use full days only, ending yesterday (FULL); the notes' own figures are the server's
+  // week, which includes today.
+  const full = S.slice(0, S.length - FULL);
+  const last = (k, f = s => s[k]) => sum(full.slice(-wk), f), prev = (k, f = s => s[k]) => sum(full.slice(-2 * wk, -wk), f);
+  const daily = f => full.map(f);
+  const ses = s => s.sessions + (s.estSessions || 0), msg = s => s.messages + (s.estMessages || 0);
+  countUp($('t-records'), d.records);
+  sparkline($('s-records'), daily(s => s.records));
+  weekNote('t-records-note', last('records'), prev('records'), fmt, `${fmt(d.weekRecords || 0)} in the last ${wk} days`);
+  $('t-bytes').textContent = size(d.bytes);
+  sparkline($('s-bytes'), daily(s => s.bytes));
+  weekNote('t-bytes-note', last('bytes'), prev('bytes'), size, `${size(d.weekBytes)} in the last ${wk} days`);
+  countUp($('t-devices'), d.devices);
+  sparkline($('s-devices'), daily(s => s.devices));
+  const avgDev = last('devices') / wk, avgDevPrev = prev('devices') / wk;
+  weekNote('t-devices-note', avgDev, avgDevPrev, ratioFmt, `${ratioFmt(avgDev)} active a day, the 7 days to yesterday`);
+  countUp($('t-contributors'), d.contributors);
+  sparkline($('s-contributors'), daily(s => s.contributors));
+  $('t-contributors-note').textContent = `${fmt(d.newContributors)} new in the last ${wk} days`;
+  // Sessions and messages are the exact counts and the estimates of what encrypted buses hide
+  // together. Their asterisks say so, how each estimate is made, and how much of the total it is.
+  countUp($('t-sessions'), d.sessions + (d.estSessions || 0));
+  sparkline($('s-sessions'), daily(ses));
+  weekNote('t-sessions-note', last(null, ses), prev(null, ses), fmt, `${withEst(d.weekSessions, d.weekEstSessions)} in the last ${wk} days`);
+  countUp($('t-messages'), d.messages + (d.estMessages || 0));
+  sparkline($('s-messages'), daily(msg));
+  weekNote('t-messages-note', last(null, msg), prev(null, msg), fmt, `${withEst(d.weekMessages, d.weekEstMessages)} in the last ${wk} days`);
+  const allSes = d.sessions + (d.estSessions || 0), allMsg = d.messages + (d.estMessages || 0);
+  $('t-ratio').textContent = allSes ? ratioFmt(allMsg / allSes) : '–';
+  // Messages over sessions across each 7 days, not a mean of daily ratios, so it agrees with the number.
+  const rs = rolling(daily(ses)), rm = rolling(daily(msg));
+  sparkline($('s-ratio'), rs.map((v, i) => v ? rm[i] / v : null));
+  const r7 = last(null, ses) ? last(null, msg) / last(null, ses) : 0, rp = prev(null, ses) ? prev(null, msg) / prev(null, ses) : 0;
+  weekNote('t-ratio-note', r7, rp, ratioFmt, `${ratioFmt(r7)} in the 7 days to yesterday`, { ratio: true });
+  const why = (id, how, est, all) => {
+    const row = el('div', { class: 'how' });
+    row.append(el('b', {}, fmt(est || 0)), el('span', {}, `of ${fmt(all)} estimated`));
+    $(id).replaceChildren(
+      el('p', {}, 'Estimated where a repo’s bus is encrypted, which hides what each record is. ' + how),
+      row,
+      el('p', { class: 'fine' }, 'Nothing is decrypted to count it.'),
+    );
+  };
+  why('sessions-why', 'A session is counted from the repo’s name registry, which isn’t encrypted. It also names sessions that other sessions started.',
+    d.estSessions, d.sessions + (d.estSessions || 0));
+  why('messages-why', 'A message is counted from an encrypted record’s size. That misses about 2% of them, short ones with no body, and can take a session’s start on a long branch for one.',
+    d.estMessages, d.messages + (d.estMessages || 0));
+
   const colors = repoColors(d.repoList);
-  const dayList = d.series.map(s => s.day);
-  totalChart($('c-repos'), d.series, 'repos', 'public repos', 180);
-  totalChart($('c-users'), d.series, 'users', 'users', 180);
-  totalChart($('c-contributors'), d.series, 'contributors', 'contributors');
-  stackChart($('c-sessions'), $('l-sessions'), dayList, d.byRepo, 'sessions', 'Sessions', colors);
-  stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors);
+  const dayList = S.map(s => s.day);
+  totalChart($('c-repos'), S, 'repos', 'public repos', 240, { barKey: 'activeRepos', barWhat: 'Active that day', legendBox: $('l-repos') });
+  totalChart($('c-users'), S, 'users', 'users', 240);
+  totalChart($('c-contributors'), S, 'contributors', 'contributors');
+  stackChart($('c-records'), $('l-records'), dayList, d.byRepo, 'records', 'Records', colors);
+  stackChart($('c-bytes'), $('l-bytes'), dayList, d.byRepo, 'bytes', 'Data', colors, { bytes: true });
+  stackChart($('c-sessions'), $('l-sessions'), dayList, d.byRepo, 'sessions', 'Sessions', colors, { estKey: 'estSessions' });
+  stackChart($('c-messages'), $('l-messages'), dayList, d.byRepo, 'messages', 'Messages', colors, { estKey: 'estMessages' });
   stackChart($('c-devices'), $('l-devices'), dayList, d.byRepo, 'devices', 'Devices', colors);
-  repoTable($('t-repos'), d.repoList, colors);
+  progress(d, colors);
+  heatmap($('c-heat'), $('l-heat'), dayList, d.byRepo, colors);
+  shareChart($('c-share'), d.byRepo, colors, dayList.length);
+  ratioChart($('c-ratio'), $('l-ratio'), S);
+  repoTable($('t-repos'), d.repoList, colors, dayList, d.byRepo);
   const when = iso => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
   const counted = d.counted ? when(d.counted) : 'not yet';
   // Said first, and only when the census is behind: it hasn't run for over a day, or its last run
@@ -492,8 +1225,9 @@ function render() {
     (names.length ? `${h.late ? 'Its' : 'The census’s'} last run didn’t read ${names.join(', ')}. ` : '');
   $('footer').textContent = behind + 'A repo is listed once one of its clones reports it: Murmur sends a public repo’s address, once per repo, and nothing else. ' +
     `Everything else is read once a day from what each repo shows anyone, its bus and its commits; last read ${counted}. ` +
-    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Once the bus is encrypted, messages can’t be told from other records. Days are UTC. ' +
+    'A user is estimated: hover the asterisk. A device is one clone running Murmur; a person, one git user name among a repo’s devices. Bus records and their data are exact, encrypted or not; data is the size of the events devices wrote, as JSON. Sessions and messages are estimated where a bus is encrypted: hover their asterisks. A ▲ or ▼ compares the last 7 days with the 7 before. Days are UTC. ' +
     'For an agent, the same numbers are at /stats/report.md (markdown) and /stats/data (JSON).';
+  animate = false;
 }
 
 async function load() {
@@ -503,6 +1237,7 @@ async function load() {
     const res = await fetch(`/stats/data?days=${days}`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`the numbers didn't load (${res.status})`);
     data = await res.json();
+    animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
     render();
   } catch (err) {
     $('footer').textContent = String(err.message || err);
@@ -517,6 +1252,54 @@ for (const b of document.querySelectorAll('.ranges button')) {
     load();
   });
 }
+for (const b of document.querySelectorAll('#prog-metric button')) b.setAttribute('aria-pressed', String(b.dataset.k === progKey));
+for (const b of document.querySelectorAll('#prog-mode button')) b.setAttribute('aria-pressed', String(b.dataset.m === progMode));
+for (const b of document.querySelectorAll('#prog-metric button, #prog-mode button')) {
+  b.addEventListener('click', () => {
+    if (b.dataset.k) progKey = b.dataset.k; else progMode = b.dataset.m;
+    if (!data) return;
+    animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    progress(data, repoColors(data.repoList));
+    animate = false;
+  });
+}
+for (const b of document.querySelectorAll('#share-metric button')) {
+  b.addEventListener('click', () => {
+    shareKey = b.dataset.k;
+    animate = true;
+    shareChart($('c-share'), data?.byRepo || [], repoColors(data?.repoList || []), data?.series.length || days);
+    animate = false;
+  });
+}
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') for (const t of document.querySelectorAll(':is(.star, .def):is(:hover, :focus-within)')) t.classList.add('hush');
+});
+// It may open again once it is neither hovered nor focused; a clicked label is both.
+for (const t of document.querySelectorAll('.star, .def')) {
+  const unhush = () => setTimeout(() => { if (!t.matches(':hover, :focus-within')) t.classList.remove('hush'); });
+  t.addEventListener('mouseleave', unhush);
+  t.addEventListener('focusout', unhush);
+}
+
+$('run-census').addEventListener('click', async () => {
+  const button = $('run-census'), note = $('run-census-note');
+  button.disabled = true;
+  note.textContent = 'Starting…';
+  try {
+    const res = await fetch('/stats/run-census', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const body = await res.json().catch(() => null);
+    note.textContent = body?.message || `Failed (${res.status}).`;
+    // A census takes under a minute; draw the numbers again once it has had time to land.
+    if (res.ok) setTimeout(load, 60000);
+  } catch {
+    note.textContent = 'Failed.';
+  }
+  button.disabled = false;
+});
+
 let resize;
 addEventListener('resize', () => { clearTimeout(resize); resize = setTimeout(render, 120); });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);

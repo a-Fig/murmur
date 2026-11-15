@@ -1,0 +1,168 @@
+# Delivering a message as a turn
+
+Sending is an MCP tool call everywhere. Receiving is not, because MCP only answers when asked. Until
+2026-10-29 a message reached an agent only as a one-line notice that a hook added after one of the
+agent's own tool calls, which can't wake an idle agent and leaves a teammate's question unanswered
+until the agent happens to call a tool. Tyler's decision (2026-10-29, #57): **a message from another
+agent reaches the receiving session as a turn of its own**, the way a message between two T3 threads
+does. Murmur's core is two agents talking with nobody typing. How each client is handed a message is
+in [handoff](handoff.md).
+
+## Delivered and read
+
+Tyler's rule (2026-11-09, #325, replacing #187's of 2026-11-07): a message is *delivered* once its
+recipient knows it is waiting, and *read* once the recipient has the message itself, the same words
+for an agent and a person. These are what a sender acts on, so neither may be said early: a looser
+word would let a sender believe an agent knows something it hasn't seen, and may not see for hours
+if nothing wakes it (#25). #187 used *delivered* for what is now *read*. In the order a message
+meets them:
+
+- *Queued:* the recipient's daemon has put it in the session's inbox.
+- *Handed over:* the daemon has passed it to the session's client (`t3 thread send`, the messaging
+  socket, or the client's command line), and it is out of the daemon's inbox. Still queued, in the
+  client now.
+- *Delivered:* for an agent, the hook's notice (sender and subject) is in its context. For a person,
+  it is in their inbox on the page, counted as unread.
+- *Read:* for an agent, the body is in its context. For a person, they opened the conversation (a
+  hidden page marks nothing).
+
+A message that arrives whole (a turn, the hook's whole message, the `Stop` hook's continuation) is
+read then, and skips delivered if no notice told of it first. One a notice told of during a turn is
+read later, and the turn that gives it whole says a notice told of it, so the agent doesn't take it
+for a second message (#355).
+
+| Route | Delivered or read when | Can Murmur see it |
+|---|---|---|
+| `t3 thread send` | read when the turn carrying it starts | No: the daemon sees `t3` accept the message, not the turn start. T3's database would show it, but those tables are T3's own and may change |
+| The messaging socket (Claude Code, and Pi's extension, outside T3) | read when the client takes it as a turn | No: the socket answers nothing |
+| The client's command line (Codex and OpenCode 2 outside T3) | read when the turn carrying it starts | No: the daemon sees the command accept it |
+| The hook's notice | delivered when the notice is added, after the agent's next tool call or at its next prompt; read then if the busy setting says whole message, or the message has no body, since its notice would show all of it (it came again as a turn until 2026-11-09, #355) | Partly: the daemon sees the hook fetch the notice, not the hook's output reach the agent |
+| `inbox` | read when the tool's result returns to the agent | Partly: the daemon sees the messages leave in its answer |
+
+[Receipts](receipts.md) report these states back to the sender.
+
+## Handing over
+
+The daemon hands a message over at once when it arrives for a session it can reach, unless the hook
+has the session at work (below).
+
+| Where the session runs | Handed over by | Starts a turn in an idle session |
+|---|---|---|
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| Claude Code outside T3 | the session's messaging socket | Unverified: a message written to the socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle session hasn't been tried |
+| Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model) |
+| Codex or OpenCode 2 outside T3 | the client's own command line | Yes (2026-11-11) |
+| Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
+
+What the agent reads:
+
+```
+Message from quiet-otter (Claude Code, on smash's machine) via Murmur:
+
+<the subject, then the body>
+
+Reply with Murmur's `send` to quiet-otter if a reply is needed.
+```
+
+The first and last lines are Murmur's. The first says a teammate's agent is speaking, not the user,
+so the agent treats the message as information rather than its user's typing; the last says how to
+answer and that answering is optional. The sender's text between them is passed on as written,
+neither quoted nor wrapped: teammates' agents are trusted in Murmur's model, and a message that
+reads as a request is meant to be acted on. A body past the limit is cut, as in `inbox`.
+
+- **Who it is from, as the receiver knows it.** The first line is written when the message is
+  queued, from what the receiving daemon then knows of the sender. A sync reads the registry and
+  every presence before the logs, so what landed before the message is known; until 2026-11-09 the
+  logs came first, and a sync that fetched a sender's name with its message wrote the turn without
+  it (#71). Those reads get at most half of what is left of the sync (`ReadFirstLimit`), so the logs
+  are always read.
+- **Out of the inbox when handed over**, so neither the hook nor `inbox` shows it again; the page
+  and the daemon's log keep it as history. A message that couldn't be handed over stays in the
+  inbox, and the hook announces it.
+
+## A session at work
+
+#202. Until 2026-11-08 a message for a busy T3 thread went to `t3 thread send`, and T3 queued it
+behind the running turn. The agent heard nothing until the turn ended, Murmur couldn't tell whether
+T3 ever played the queued turn, and T3 holds such turns rather than starting them after a run the
+user stopped, while the provider is usage-limited, and while the thread's mode is above its ceiling
+(T3 source at f558007b, read, not observed); a person can also delete one. Tyler's decision
+(2026-11-08): where Murmur's hook runs, a busy session isn't handed the message. The hook tells it
+after its next tool call (sender, subject and the count unread), and the agent reads the body with
+`inbox` when it chooses. What it hasn't read when the turn ends is given to it then, however long
+the turn took, so nothing waits for good.
+
+- **At the end of the turn** the `Stop` hook keeps the turn going with those messages: it blocks the
+  stop, and Claude Code gives the agent the hook's reason, each message as its turn would read
+  (Tyler, 2026-11-08; first built as a new turn). That needs neither T3 nor a socket, and puts
+  nothing in T3's queue, which may hold a turn for good. The cost is a longer turn: its user sees it
+  go on after what looked like the agent's last word. They are handed over as a turn instead after a
+  turn that ends without `Stop` (one the user interrupted in T3), and at a ninth `Stop` in a row
+  with no tool call between, since Claude Code ends a turn after eight continuations whatever the
+  hook says (its hooks reference, 2026-11-08). Not seen in the world: a session kept going by the
+  hook; `decision: block` is Claude Code's documented answer.
+- **Busy and idle come from the hook**: a prompt or a tool call means busy, and `Stop` means the
+  turn ended. "No tool call lately" wouldn't do, as one long command looks idle. A turn the user
+  interrupts fires no `Stop`; in T3 the busy state also ends when a read of T3's database, begun
+  after the hook last ran, finds no run of the thread going. Comparing the run's end with the hook's
+  last call was dropped in review (Sol, 2026-11-08): a hook from a tool call the interrupt cut short
+  would have left the session busy for good. Outside T3 nothing ends an interrupted turn until the
+  next prompt and its `Stop`, so a message waits for the user to come back.
+- **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
+  2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
+  may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
+  length, whether or not it matters, and the message is then read.
+- **The count** is shown with each new message, and again only when it changes.
+- **Held however long.** A message that came during a turn goes in at its end whatever its age: the
+  15 minutes a message may wake a session (below) measure an absence, and a turn can be longer. One
+  from before the turn is held only if it is still within them.
+- **Why not hand it to T3 as well:** T3 can't take back a queued message, so the agent could read it
+  with `inbox` mid-turn and then get it again as a turn.
+- **Where the hook doesn't run** (OpenCode 1 and Muse in T3, as of 2026-11-12), nothing says the
+  session is at work, so a message goes to T3 as before; without the handoff the session would hear
+  nothing at all. Codex and Grok have the hook since #225, Pi since #205, and OpenCode 2 since #431.
+- **Subagents.** A subagent's tool call carries its parent's `session_id`, with `agent_id` set
+  (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as the notice would land in the
+  subagent's context and not the session's (inferred, not seen; #188), and doesn't mark the session
+  at work, since a background subagent goes on after its parent's turn has ended.
+- **Not covered:** a single tool call that runs a long time gets no notice until it ends. That a
+  busy Claude thread in T3 shows the notice mid-turn is read from T3's source (its Claude adapter
+  leaves the Agent SDK's `settingSources` unset, so project hooks load), not watched.
+- **Considered and not chosen:** a background watcher the agent starts (it has to restart it after
+  every message, and Codex isn't told when a background process ends); Claude Code Channels (events
+  that come while Claude is busy are held for the next turn, and it is a research preview the Agent
+  SDK ignores); steering the running turn with Codex's `turn/steer` or T3's `steer` mode, the
+  interruption the 2026-10-29 rule avoids.
+
+## When a handoff fails, and when to wake
+
+- **A failed handoff is left to the hook's notice**, and the log says why, once per session. It is
+  tried again only when it plainly never started (no `t3` command to run, no socket to connect to),
+  once, after 2 s. Any other failure may have come after T3 took the message: `t3 thread send` has
+  no idempotency key (the MCP tool `t3_thread_send` has one, the command line doesn't), and the
+  messaging socket answers nothing, so a second call could hand the message over twice, as two
+  turns. The cost: a failure that was only a failure (T3 starting up, say) gets a notice and no
+  second try.
+- **The mark is saved before the handoff** ("attempted", in `state.json`), so a daemon stopped
+  mid-call and started again leaves the message to the notice instead of sending the turn a second
+  time (#82). A crash between the save and the handoff leaves a notice, not a repeat, the safe way
+  round. Looking in T3's database for the message before trying again would keep the second try, but
+  relies on tables that are T3's own and may change in any update.
+- **Nothing is handed over for a user who has left** ([joining](joining.md)).
+- **Fifteen minutes.** A message that waited more than 15 minutes (T3 closed, the session away)
+  isn't sprung on the agent as a turn; it stays a notice. The 15 minutes count from when the daemon
+  queues it, so one read after a long outage (#30, 2026-10-30) is young and wakes its thread.
+- **The wake setting** (#22, #25), for the device or for one session, decides the rest. "Never"
+  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 3, hands
+  over only to a session that is busy or was last at work within N minutes; one idle longer gets the
+  notice, and the message is handed over after all if the session gets to work again while it is
+  young. The reason for the limit: a session idle that briefly still has its prompt cache, and a
+  turn started after the cache has gone reads the whole conversation again at full price. Until
+  2026-11-07 "within" acted as "always", which Tyler found out from the page. For a T3 session, "at
+  work" comes from T3's database (`orchestration_v2_projection_runs`, read every 5 s); for any
+  other, from its start, its last request or tool call, a turn just handed over and, stopped, when
+  it stopped. A daemon that starts hands over what its inboxes kept that is still young enough.
+- **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
+  decision, 2026-10-29). A message to a busy session never steers its running turn: it is queued as
+  the next turn, or announced and given at the turn's end. The AGENTS.md wording asks for
+  coordination, not chatting; beyond that only the agents stop a loop.

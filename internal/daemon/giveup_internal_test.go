@@ -442,6 +442,75 @@ func TestAGivenUpBacklogKeepsNoCursorWithNoSession(t *testing.T) {
 	r.sync()
 }
 
+// The messages of a backlog given up on are still for the page (#138). Until its fetch lands the
+// cursor is at a commit that isn't here, so a read of the logs passes that log over and keeps it
+// owed; when the fetch lands the logs are read back, and the page has the messages. No tags were
+// being read from this log, so nothing else would have asked for that read. A daemon that starts
+// in between finds the same cursor, and owes the log again.
+func TestAGivenUpBacklogIsReadBackForThePageOnceFetched(t *testing.T) {
+	t.Parallel()
+	r := newGiveUpRig(t)
+	tip := r.append("", r.message("sent before the give-up"))
+	r.append(tip, r.message("and one more"))
+	recovered := r.failFetches()
+	r.giveUp()
+	// The rig's failed fetch brought the commits and then couldn't move the ref. One that fails on
+	// the way, as a network does, brings none: they are taken away again.
+	r.git(r.work, "prune", "--expire=now")
+	if ok, err := r.d.repo.IsCommit(r.ctx, tip); err != nil || ok {
+		t.Fatalf("the commits of the fetch that failed are still here (%v, %v)", ok, err)
+	}
+
+	kicked := func() bool {
+		select {
+		case <-r.d.historyKick:
+			return true
+		default:
+			return false
+		}
+	}
+	read := func() []string {
+		t.Helper()
+		if err := r.d.readHistory(r.ctx); err != nil {
+			t.Fatal(err)
+		}
+		r.d.mu.Lock()
+		defer r.d.mu.Unlock()
+		got, _ := r.d.pageSubjects()
+		return got
+	}
+	owed := func() bool {
+		r.d.mu.Lock()
+		defer r.d.mu.Unlock()
+		return r.d.historyOwed[giveUpRef]
+	}
+	if !owed() {
+		t.Fatal("the log given up on isn't owed a reading back")
+	}
+	if got := read(); len(got) != 0 || !owed() {
+		t.Fatalf("before the fetch landed the page has %q, and the log owed is %v", got, owed())
+	}
+
+	r.open() // a restart forgets what was owed; the cursor, which it keeps, says it again
+	if got := read(); len(got) != 0 || !owed() {
+		t.Fatalf("after a restart the page has %q, and the log owed is %v", got, owed())
+	}
+
+	kicked() // whatever asked before
+	recovered()
+	r.sync()
+	if owed() || !kicked() {
+		t.Fatal("the fetch landed, and the logs weren't asked to be read back")
+	}
+	if got := read(); !slices.Equal(got, []string{"sent before the give-up", "and one more"}) {
+		t.Errorf("the page has %q, want both messages of the log given up on", got)
+	}
+	r.sync()
+	if kicked() {
+		t.Error("a later sync asked for the logs to be read back again")
+	}
+}
+
 // What junk hid when this device first looked is history for tags as for messages (see
 // state.Junked), and a give-up doesn't change that: only a change made after that look is applied.
 func TestAGivenUpBacklogKeepsWhatJunkHid(t *testing.T) {

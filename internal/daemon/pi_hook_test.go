@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
 )
 
 // Pi sessions get #202's delivery through Murmur's extension (#205): it runs the hook, which names
@@ -191,5 +192,66 @@ func TestBusyPiSessionGetsTheWholeMessage(t *testing.T) {
 	}
 	if inbox, _ := b.unread("bbbbbb", ""); len(inbox) != 0 {
 		t.Errorf("still in the inbox: %v", inbox)
+	}
+}
+
+// A Pi session in a T3 thread (#462) is told of a message by the extension's hook while it works,
+// as Pi is in a terminal, and not given it as a turn T3 would queue behind its work. The message
+// arrives once: whole at the end of the work, which reads it, and never as a T3 turn after. Once
+// the session is idle a message goes in through T3, not the extension's socket, which is there
+// under T3 too and unused. T3's database says the thread is at work for as long as Pi is, the
+// work its end goes on with included, as T3 ends a Pi run only when Pi has settled.
+func TestPiSessionInT3GetsNoticesWhileBusy(t *testing.T) {
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	sock := useFakeSocket(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-pi": {LastRun: time.Now()}}}
+	a, b := newDevice(t, remote), newT3Device(t, remote, threads)
+	alice, _ := a.session("aaaaaa", "")
+	const file = `C:\Users\u\.t3\userdata\pi\sessions\thread-pi.jsonl`
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "bbbbbb", Agent: "pi in T3",
+		Route: proto.Route{T3CLI: exe, T3Thread: "thread-pi", Native: file, MsgSocket: sock.path, MsgToken: "tok-pi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	bob := resp.Self
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	// One turn, so the daemon knows its end is seen.
+	b.piHook(proto.OpNotices, file)
+	b.piHook(proto.OpTurnEnd, file)
+
+	threads.set("thread-pi", t3db.State{Busy: true, LastRun: time.Now()})
+	b.piHook(proto.OpNotices, file) // a prompt: at work
+	a.send("aaaaaa", bob, "while busy", "the body")
+	var r proto.Response
+	eventually(t, "the notice", func() bool { r = b.piHook(proto.OpNotices, file); return len(r.Messages) > 0 })
+	if r.Messages[0].Subject != "while busy" || r.Messages[0].Body != "" || r.Unread != 1 {
+		t.Errorf("the notice: %+v, unread %d", r.Messages, r.Unread)
+	}
+	holds(t, "no turn through T3 or the socket while it works", time.Second, func() bool {
+		return len(calls()) == 0 && len(sock.lines()) == 0
+	})
+
+	if got := b.piHook(proto.OpTurnEnd, file).Read; len(got) != 1 || got[0].Body != "the body" {
+		t.Fatalf("the end of its work gave %+v", got)
+	}
+	// The message kept its work going; the end after that finds nothing more, and it is idle.
+	if got := b.piHook(proto.OpTurnEnd, file).Read; len(got) != 0 {
+		t.Fatalf("the next end gave %v", viewSubjects(got))
+	}
+	threads.set("thread-pi", t3db.State{LastRun: time.Now()})
+	holds(t, "the message it has read isn't sent again as a turn", 2*time.Second, func() bool {
+		return len(calls()) == 0 && len(sock.lines()) == 0
+	})
+
+	a.send("aaaaaa", bob, "while idle", "wake up")
+	eventually(t, "the turn through T3", func() bool { return len(calls()) == 1 })
+	if c := calls()[0]; !strings.Contains(strings.Join(c.Args, " "), "thread-pi") || !strings.Contains(c.Stdin, "wake up") {
+		t.Errorf("the T3 call: %+v", c)
+	}
+	if n := len(sock.lines()); n != 0 {
+		t.Errorf("%d lines went to the extension's socket, which T3 sessions don't use", n)
 	}
 }
