@@ -723,9 +723,11 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 	open := ""
 	var table []string
 	dropping, renamed := false, false
+	inStr := make([]bool, len(lines)) // the line starts inside a multi-line string
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		inString := open != ""
+		inStr[i] = inString
 		if open = tomlLineEnd(line, open); inString {
 			continue
 		}
@@ -775,8 +777,9 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 	// A dropped table goes from its header to its last line with a key or value on it, and the blank
 	// line before it goes too, so the tables around it keep one blank line between them. One with
 	// nothing kept before it takes its trailing blank lines instead. A comment after its last key is
-	// the user's, about what follows, as join writes none: it stays (#740). The empty string after the last newline
-	// is the file's end, not a line, and stays.
+	// the user's, about what follows, as join writes none: it stays (#740). A line of a multi-line
+	// string is the value's, whatever it starts with. The empty string after the last newline is the
+	// file's end, not a line, and stays.
 	drop := make([]bool, len(lines))
 	for n, h := range headers {
 		if !h.drop {
@@ -788,7 +791,7 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 		}
 		last := h.at
 		for i := h.at; i < next; i++ {
-			if t := strings.TrimSpace(lines[i]); t != "" && !strings.HasPrefix(t, "#") {
+			if t := strings.TrimSpace(lines[i]); t != "" && (inStr[i] || !strings.HasPrefix(t, "#")) {
 				last = i
 			}
 		}

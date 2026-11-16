@@ -206,6 +206,9 @@ func TestEditTOMLTables(t *testing.T) {
 		{"comment after, first", "[mcp_servers.murmur]\ncommand = \"mur\"\n\n# GitHub's\n[x]\n", "# GitHub's\n[x]\n"},
 		{"comment after, last", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n# the end\n", "a = 1\n# the end\n"},
 		{"comment inside", "a = 1\n\n[mcp_servers.murmur]\n# ours\ncommand = \"mur\"\n\n[x]\n", "a = 1\n\n[x]\n"},
+		// A multi-line string's lines are its value's, though they start with '#' (Opus's review).
+		{"string of hashes", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\nnote = \"\"\"\n# x\n# y\"\"\"\n\n[x]\n", "a = 1\n\n[x]\n"},
+		{"string of hashes, last", "a = 1\n\n[mcp_servers.murmur]\nnote = '''\n#x'''\n", "a = 1\n"},
 	} {
 		got, _, err := editTOMLTables(c.in, "config.toml", [][]string{server}, drop)
 		if err != nil || got != c.want {
