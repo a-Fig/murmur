@@ -66,6 +66,9 @@ type State struct {
 	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
 	// the page asks for every few seconds, and not on the message.
 	Receipts map[string][]Receipt `json:"receipts,omitempty"`
+	// Incognito says this device is off Murmur in this repo (Settings.Incognito): the page shows
+	// none of its agents, and sends nothing.
+	Incognito bool `json:"incognito,omitempty"`
 }
 
 // Receipt is how far one of the person's messages got with one recipient (#26).
@@ -230,6 +233,9 @@ type Settings struct {
 	Busy string `json:"busy"`
 	// SessionBusy overrides Busy for single sessions on this device, by name.
 	SessionBusy map[string]string `json:"sessionBusy,omitempty"`
+	// Incognito takes this device off Murmur in this repo, as if it were offline (#681): teammates
+	// stop seeing it, its agents can't use Murmur, and the page shows the team but sends nothing.
+	Incognito bool `json:"incognito,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`

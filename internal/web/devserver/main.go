@@ -428,8 +428,12 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 		}
 	}
 	colors := f.colorsLocked()
+	st.Incognito = f.settings.Incognito
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
+		if d.Self && st.Incognito {
+			d.Sessions = nil // as the daemon does: this device's agents are off Murmur (#681)
+		}
 		d.Color, d.Picked = colors[d.ID].Color, colors[d.ID].Picked
 		st.Devices = append(st.Devices, d)
 	}
@@ -520,8 +524,11 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 // seconds later, as an agent does, going active first so the page can show it working.
 func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) {
 	f.mu.Lock()
-	takenBy := f.account.Taken
+	takenBy, incognito := f.account.Taken, f.settings.Incognito
 	f.mu.Unlock()
+	if incognito {
+		return web.Sent{}, errors.New("incognito is on: turn it off in Settings to send")
+	}
 	if takenBy != "" {
 		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
 	}

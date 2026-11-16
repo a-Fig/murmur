@@ -715,6 +715,7 @@ function sidebar() {
         navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", "data-key": "notice", "data-announce": "", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
+      incognitoNote(),
       peopleGroup(),
       tagsGroup(),
       devs.map((d) => deviceGroup(d)),
@@ -4116,8 +4117,43 @@ function targetOf(c) {
   return { to: other, label: other, count: 1 };
 }
 
+// Incognito (#681): this device is off Murmur in this repo, as if offline.
+function incognitoNote() {
+  if (!ui.state?.incognito) return null;
+  return h(
+    "button",
+    { class: "side-incognito", title: "Open Settings", "data-key": "incognito-note", onclick: () => go("settings") },
+    icon("eyeOff"),
+    h("span", null, "Incognito: your agents here are off " + NAME),
+  );
+}
+
+// setIncognito saves the setting, from the daemon's settings if the page hasn't loaded them.
+async function setIncognito(on) {
+  try {
+    const base = ui.settings || (await api("/api/settings"));
+    saveSettings({ ...base, incognito: on });
+    queueSettings(async () => poll());
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.notice = e.message;
+    render();
+  }
+}
+
 // Under a conversation: somewhere to write, or, under one between two others, a way to either.
 function paneFoot(c) {
+  if (ui.state?.incognito)
+    return h(
+      "div",
+      { class: "pane-foot" },
+      h(
+        "div",
+        { class: "pane-foot-card" },
+        h("span", { class: "pane-foot-note" }, "Incognito is on, so nothing is sent from here."),
+        h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-incognito", onclick: () => setIncognito(false) }, icon("eye"), "Turn off incognito"),
+      ),
+    );
   const target = targetOf(c);
   if (target) return composer(c, target);
   if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
@@ -4720,6 +4756,29 @@ function settingsPage() {
   const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
+    sections.push(
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Incognito")),
+        h(
+          "div",
+          { class: "group" },
+          settingsRow(
+            "incognito",
+            "This device, in this repo",
+            "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages to your agents wait until you turn it off.",
+            h(
+              "div",
+              { class: "segmented", role: "group" },
+              [[false, "Off"], [true, "On"]].map(([v, label]) =>
+                h("button", { "aria-pressed": !!set.incognito === v ? "true" : "false", "data-key": "incognito-" + label.toLowerCase(), onclick: () => !!set.incognito !== v && setIncognito(v) }, label),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
     // A session is shown by its address until its name lands, and the daemon keeps these settings
     // by name: one saved under the address would never apply, so the session isn't offered (#43).
     const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/"));

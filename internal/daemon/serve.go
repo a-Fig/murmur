@@ -408,6 +408,12 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 	}
 	d.mu.Unlock()
+	if r, ok := d.incognitoAnswer(req); ok {
+		return r
+	}
+	if req.Op == proto.OpTurnEnd && d.hidden.Load() {
+		req.Continues = false // the turn ends, and nothing waiting is given (incognito.go)
+	}
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}

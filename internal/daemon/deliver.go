@@ -127,7 +127,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 // before each attempt.
 func (d *Daemon) pusher(ctx context.Context, id string) {
 	for {
-		if !d.consented() {
+		if !d.consented() || d.hidden.Load() {
 			d.mu.Lock()
 			delete(d.pushing, id)
 			d.mu.Unlock()
@@ -691,6 +691,9 @@ func notReached(err error) bool {
 func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	if !d.consented() {
 		return ErrNoConsent
+	}
+	if d.hidden.Load() {
+		return errNotNow // incognito: the message waits in the inbox until it is off
 	}
 	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
 	// settled, its session idle past its wake setting, or at work again: asked again before each

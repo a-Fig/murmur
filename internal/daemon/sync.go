@@ -1450,6 +1450,9 @@ const maxUnwritten = 100
 // landed all the same (see Repo.Push), so a start or stop can be on the log twice: the Recent view
 // keeps one by its ID (recordActLocked), and the notes show the line twice.
 func (d *Daemon) appendSoon(e bus.Event) {
+	if d.hidden.Load() {
+		return // incognito: never written, then or later (incognito.go)
+	}
 	d.mu.Lock()
 	d.st.Unwritten = append(d.st.Unwritten, e)
 	if n := len(d.st.Unwritten) - maxUnwritten; n > 0 {
@@ -1468,7 +1471,7 @@ func (d *Daemon) appendSoon(e bus.Event) {
 // it again (presenceLoop). Each is taken out once it has landed.
 func (d *Daemon) writeUnwritten() {
 	d.mu.Lock()
-	if d.unwriting || len(d.st.Unwritten) == 0 || d.bgCtx == nil || d.bgCtx.Err() != nil {
+	if d.unwriting || len(d.st.Unwritten) == 0 || d.bgCtx == nil || d.bgCtx.Err() != nil || d.hidden.Load() {
 		d.mu.Unlock()
 		return
 	}
@@ -1638,6 +1641,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	// Not cut short by shutdown: a push killed mid-flight can still land, after the goodbye.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
+	if d.hidden.Load() {
+		return d.hidePresence(ctx)
+	}
 	d.mu.Lock()
 	cwds := map[string]string{}
 	for id, s := range d.sessions {

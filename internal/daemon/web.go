@@ -214,7 +214,11 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		self.Person = &web.Person{Name: d.st.Person, Addr: d.personAddr(), LastActive: d.lastPage, Tags: tags.Person()}
 	}
 	live := d.liveNamesLocked()
+	hidden := d.hidden.Load()
 	for _, ss := range d.sortedSessionsLocked() {
+		if hidden {
+			break // incognito: this device's agents are off Murmur, and the page doesn't show them
+		}
 		if !ss.dropped.IsZero() && live[ss.name] {
 			continue // its name went to the session that took over, which stands for the conversation
 		}
@@ -229,7 +233,8 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	}
 	colors := d.colorsLocked()
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
-	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
+	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
+		Incognito: hidden}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
@@ -397,6 +402,7 @@ type pageSettings struct {
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
+	Incognito   bool                `json:"incognito,omitempty"`
 }
 
 // defaultSettings are what stands with no settings.json, and what one from before a setting
@@ -414,7 +420,7 @@ func (p pageSettings) clone() pageSettings {
 
 func (p pageSettings) view() web.Settings {
 	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
-		SessionBusy: maps.Clone(p.SessionBusy), DefaultMinutes: defaultWakeMinutes}
+		SessionBusy: maps.Clone(p.SessionBusy), Incognito: p.Incognito, DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -438,6 +444,7 @@ func (d *Daemon) loadSettings() {
 		return
 	}
 	d.settings = read
+	d.hidden.Store(read.Incognito)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -456,7 +463,7 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 		return web.Settings{}, err
 	}
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
-		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy)}
+		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Incognito: set.Incognito}
 	if len(next.SessionWake) == 0 {
 		next.SessionWake = nil
 	}
@@ -468,7 +475,11 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if err := writeJSON(d.settingsPath(), next); err != nil {
 		return web.Settings{}, fmt.Errorf("saving settings: %w", err)
 	}
+	was := d.settings.Incognito
 	d.settings = next
+	if next.Incognito != was {
+		d.setIncognito(next.Incognito)
+	}
 	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil
 }

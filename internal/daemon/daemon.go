@@ -304,6 +304,9 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	if d.hidden.Load() {
+		return ErrIncognito
+	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
@@ -522,6 +525,11 @@ type Daemon struct {
 	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
 	setMu    sync.Mutex
 	settings pageSettings
+	// hidden is settings.Incognito, read without setMu by everything that writes to the bus or
+	// answers an agent (incognito.go).
+	hidden atomic.Bool
+	// presenceGone says this device's presence has been deleted since it went incognito.
+	presenceGone atomic.Bool
 
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
