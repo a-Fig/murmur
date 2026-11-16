@@ -246,9 +246,11 @@ type presenceSecret struct {
 	Receipts bool          `json:"receipts,omitempty"`
 	Files    bool          `json:"files,omitempty"`
 	FilesOff bool          `json:"filesOff,omitempty"`
-	Epoch    string        `json:"epoch,omitempty"`
-	Holds    []string      `json:"holds,omitempty"`
-	DND      bool          `json:"dnd,omitempty"`
+	// PersonFilesOff is Presence's.
+	PersonFilesOff bool     `json:"personFilesOff,omitempty"`
+	Epoch          string   `json:"epoch,omitempty"`
+	Holds          []string `json:"holds,omitempty"`
+	DND            bool     `json:"dnd,omitempty"`
 }
 
 func presenceAAD(device string) []byte { return []byte("presence\x00" + device) }
@@ -257,7 +259,7 @@ func presenceAAD(device string) []byte { return []byte("presence\x00" + device) 
 // keys encrypted for recipients. A daemon from before encryption reads it as a device with no sessions.
 func EncryptPresence(p Presence, recipients map[string]string) (Presence, error) {
 	plain, err := json.Marshal(presenceSecret{Host: p.Host, Owner: p.Owner, Nick: p.Nick, Color: p.Color, ColorAt: p.ColorAt, Sessions: p.Sessions, Offline: p.Offline,
-		Groups: p.Groups, Receipts: p.Receipts, Files: p.Files, FilesOff: p.FilesOff, Epoch: p.Epoch, Holds: p.Holds, DND: p.DND})
+		Groups: p.Groups, Receipts: p.Receipts, Files: p.Files, FilesOff: p.FilesOff, PersonFilesOff: p.PersonFilesOff, Epoch: p.Epoch, Holds: p.Holds, DND: p.DND})
 	if err != nil {
 		return Presence{}, err
 	}
@@ -289,7 +291,7 @@ func DecryptPresence(p Presence, keys Keyring) (Presence, error) {
 	}
 	p.Host, p.Owner, p.Nick, p.Sessions, p.Offline, p.Box = s.Host, s.Owner, s.Nick, s.Sessions, s.Offline, nil
 	p.Groups, p.Receipts, p.Files, p.Epoch, p.Holds = s.Groups, s.Receipts, s.Files, s.Epoch, s.Holds
-	p.Color, p.ColorAt, p.DND, p.FilesOff = s.Color, s.ColorAt, s.DND, s.FilesOff
+	p.Color, p.ColorAt, p.DND, p.FilesOff, p.PersonFilesOff = s.Color, s.ColorAt, s.DND, s.FilesOff, s.PersonFilesOff
 	return p, nil
 }
 

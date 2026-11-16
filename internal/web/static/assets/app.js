@@ -106,7 +106,7 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
-  fileNote: null, // why a file wasn't attached: { key, text }, key the conversation's
+  fileNote: null, // why a file wasn't attached: { key, text, turnOn }, key the conversation's; turnOn, what to do once sending is turned on
   viewer: null, // the picture that is open: { file, name, size, from }, from the key of what opened it
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
   drawer: false, // on a phone, whether the sidebar's drawer is open
@@ -3659,13 +3659,12 @@ function followFileSwitches(state) {
   if (settingsSaving || stateAskedAt < settingsAt) {
     // A save of this page's is on its way, or this state was asked for before one was answered:
     // the page's are newer.
-    state.sendFiles = !!set.sendFiles;
-    state.receiveFiles = !!set.receiveFiles;
+    for (const k of FILE_SWITCHES) state[k] = !!set[k];
     return;
   }
-  for (const k of ["sendFiles", "receiveFiles"]) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
+  for (const k of FILE_SWITCHES) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
   const was = receiving;
-  receiving = !!state.receiveFiles;
+  receiving = !!state.pageReceiveFiles;
   // Messages the page has came without their files while it was off: ask again for theirs.
   if (receiving && was === false) refetchFiles(tokenEra);
   if (receiving) return;
@@ -3678,7 +3677,11 @@ function followFileSwitches(state) {
   }
 }
 
-let receiving = null; // Receive files, as the page last followed it
+let receiving = null; // the person's Receive files, as the page last followed it
+
+// The four file switches (#765): the agents' Send files and Receive files, and the person's own on
+// this page (Tyler, 2026-11-16).
+const FILE_SWITCHES = ["sendFiles", "receiveFiles", "pageSendFiles", "pageReceiveFiles"];
 
 // refetchFiles gives the messages the page has the files the daemon now shows for them.
 async function refetchFiles(era) {
@@ -3706,7 +3709,7 @@ function fromElsewhere(m) {
 // Under a message's text: its pictures, shown, and its other files, each a button that saves it.
 function messageFiles(m) {
   if (!m.files?.length) return null;
-  if (fromElsewhere(m) && !ui.settings?.receiveFiles) return null;
+  if (fromElsewhere(m) && !ui.settings?.pageReceiveFiles) return null;
   const remote = fromElsewhere(m);
   return fileList(m.id, m.files, (i, load, again) => {
     const f = load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i);
@@ -3798,18 +3801,30 @@ function viewerDialog() {
 
 // Adds files to a conversation's next message, held to what a message takes: the daemon would
 // refuse the rest only once they had been uploaded.
-// Send files is on for this device, in this repo (#765): off, the composer takes no files, and the
-// daemon would refuse them.
+// The person's Send files is on, in this repo (#765): off, a file attached, dropped or pasted asks
+// them to turn it on there, and goes on once they do (Tyler, 2026-11-16).
 function sendsFiles() {
-  return !!ui.settings?.sendFiles;
+  return !!ui.settings?.pageSendFiles;
+}
+
+function askToSend(key, files) {
+  ui.fileNote = { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
+  render();
+}
+
+// Turns the person's Send files on, then does what asked for it: opens the picker, in the same
+// click, or attaches what was dropped or pasted.
+function turnOnSending(key) {
+  const then = ui.fileNote?.turnOn;
+  ui.fileNote = null;
+  saveSettings({ ...ui.settings, pageSendFiles: true }, false, "pageSendFiles");
+  if (then === "pick") pickFiles(key);
+  else if (then) attach(key, then);
+  else render();
 }
 
 function attach(key, files) {
-  if (!sendsFiles()) {
-    ui.fileNote = { key, text: "Sending files is off. Turn on Send files in Settings." };
-    render();
-    return;
-  }
+  if (!sendsFiles()) return askToSend(key, files);
   const list = attached.get(key) || [];
   let note = "";
   for (const file of files) {
@@ -4812,7 +4827,13 @@ function composer(c, target) {
       "div",
       { class: "composer" + (armed ? " composer-armed" : "") },
       armed && h("p", { class: "composer-warn", "data-announce": "" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
-      ui.fileNote?.key === key && h("p", { class: "composer-warn", "data-announce": "" }, ui.fileNote.text),
+      ui.fileNote?.key === key &&
+        h(
+          "p",
+          { class: "composer-warn", "data-announce": "" },
+          ui.fileNote.text,
+          ui.fileNote.turnOn && h("button", { class: "composer-warn-btn", "data-key": "files-on-" + key, onclick: () => turnOnSending(key) }, "Turn on"),
+        ),
       files.length > 0 &&
         h(
           "div",
@@ -4832,7 +4853,7 @@ function composer(c, target) {
       h(
         "div",
         { class: "composer-bar" },
-        sendsFiles() && h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => pickFiles(key) }, icon("paperclip")),
+        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => (sendsFiles() ? pickFiles(key) : askToSend(key)) }, icon("paperclip")),
         h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: () => openPicker() }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
         h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() && !files.length, "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
@@ -5095,7 +5116,7 @@ function saveSettings(next, modeChange = false, filesChange = "") {
   // state unless this save changes them, so a page whose settings were loaded before they changed
   // elsewhere can't undo it.
   if (!modeChange && ui.state) next = { ...next, mode: deviceMode() };
-  if (ui.state) for (const k of ["sendFiles", "receiveFiles"]) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
+  if (ui.state) for (const k of FILE_SWITCHES) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
   if (filesChange && ui.state) ui.state[filesChange] = !!next[filesChange]; // as setMode does
   const seq = ++settingsSeq;
   ui.settings = next;
@@ -5450,32 +5471,47 @@ function settingsPage() {
           h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + "-" + (v ? "on" : "off"), onclick: () => on !== v && save(v) }, label),
         ),
       );
+    const fileRow = (key, title, on, onText, offText, prop) =>
+      settingsRow(key, title, on ? onText : offText, onOff(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)));
+    const fileSection = (title, rows) =>
+      h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title)), h("div", { class: "group" }, rows));
     sections.push(
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Files")),
-        h(
-          "div",
-          { class: "group" },
-          settingsRow(
-            "send-files",
-            "Send files",
-            set.sendFiles
-              ? "You and your agents here can send files with a message: screenshots, logs, diffs. An agent's come only from this repo or the temp folder."
-              : "A message with files isn't sent. Your agents are told you can turn this on.",
-            onOff("send-files", !!set.sendFiles, (v) => saveSettings({ ...ui.settings, sendFiles: v }, false, "sendFiles")),
-          ),
-          settingsRow(
-            "receive-files",
-            "Receive files",
-            set.receiveFiles
-              ? "Files that come with a message are downloaded into this repo's .git folder, for your agents and this page."
-              : "Messages arrive without their files, which aren't downloaded. Senders are told this device takes no files.",
-            onOff("receive-files", !!set.receiveFiles, (v) => saveSettings({ ...ui.settings, receiveFiles: v }, false, "receiveFiles")),
-          ),
+      fileSection("Your files", [
+        fileRow(
+          "page-send-files",
+          "Send files",
+          !!set.pageSendFiles,
+          "You can attach files to what you write here: screenshots, logs, diffs.",
+          "Attaching a file asks you to turn this on first.",
+          "pageSendFiles",
         ),
-      ),
+        fileRow(
+          "page-receive-files",
+          "Receive files",
+          !!set.pageReceiveFiles,
+          "Files other devices send are downloaded into this repo's .git folder and shown here.",
+          "Messages show here without their files, which aren't downloaded. Anyone writing to you is told.",
+          "pageReceiveFiles",
+        ),
+      ]),
+      fileSection("Your agents' files", [
+        fileRow(
+          "send-files",
+          "Send files",
+          !!set.sendFiles,
+          "Your agents here can send files with a message, only from this repo or the temp folder.",
+          "An agent's message with files isn't sent. It is told you can turn this on.",
+          "sendFiles",
+        ),
+        fileRow(
+          "receive-files",
+          "Receive files",
+          !!set.receiveFiles,
+          "Files sent to your agents here are downloaded into this repo's .git folder for them.",
+          "Your agents get messages without their files, which aren't downloaded. Senders are told.",
+          "receiveFiles",
+        ),
+      ]),
     );
     // A session is shown by its address until its name lands, and the daemon keeps these settings
     // by name: one saved under the address would never apply, so the session isn't offered (#43).
@@ -5949,7 +5985,7 @@ function dragsFiles(e) {
   return [...(e.dataTransfer?.types || [])].includes("Files");
 }
 function dropsHere() {
-  return ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer || !sendsFiles() ? null : root.querySelector(".composer");
+  return ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer ? null : root.querySelector(".composer");
 }
 document.addEventListener("dragover", (e) => {
   if (!dragsFiles(e)) return;

@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -89,6 +90,8 @@ type device struct {
 	// filesOff starts the daemon with Send files and Receive files off, as a new user's is (#765);
 	// otherwise both are on.
 	filesOff bool
+	// files, if set, is the settings.json to start with instead, to set the switches one by one.
+	files string
 	// filesPerDay and filesHeld are FilesPerDay and FilesHeld; zero takes the daemon's defaults.
 	filesPerDay, filesHeld int64
 	// muteGrace is MuteGrace. Zero takes none (-1): a mute holds from the first moment, so a test
@@ -237,7 +240,7 @@ func (d *device) start() {
 	if muteGrace == 0 {
 		muteGrace = -1
 	}
-	if !d.filesOff {
+	if !d.filesOff || d.files != "" {
 		// Send files and Receive files are off until a person turns them on (#765). The tests of
 		// files, and of everything else, run with them on, unless a test says, or set them itself.
 		settings := filepath.Join(d.gitDir, brand.StateDir, "settings.json")
@@ -245,7 +248,8 @@ func (d *device) start() {
 			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 				d.t.Fatal(err)
 			}
-			if err := os.WriteFile(settings, []byte(`{"sendFiles":true,"receiveFiles":true}`), 0o600); err != nil {
+			files := cmp.Or(d.files, `{"sendFiles":true,"receiveFiles":true,"pageSendFiles":true,"pageReceiveFiles":true}`)
+			if err := os.WriteFile(settings, []byte(files), 0o600); err != nil {
 				d.t.Fatal(err)
 			}
 		}

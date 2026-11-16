@@ -452,6 +452,9 @@ type SessionView struct {
 	// the hook, which runs after every tool call, never reported (#225). It isn't told of messages
 	// while it works.
 	HookOff bool `json:"hookOff,omitempty"`
+	// FilesOff, on a person, says they turned Receive files off on the page (#765): a message's
+	// text reaches them and its files don't.
+	FilesOff bool `json:"filesOff,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a

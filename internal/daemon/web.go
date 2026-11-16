@@ -235,7 +235,8 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
 	self.DND = d.dnd.Load()
 	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
-		Mode: d.modeView(), SendFiles: d.sendFiles.Load(), ReceiveFiles: d.recvFiles.Load()}
+		Mode: d.modeView(), SendFiles: d.agentSend.Load(), ReceiveFiles: d.agentRecv.on.Load(),
+		PageSendFiles: d.pageSend.Load(), PageReceiveFiles: d.pageRecv.on.Load()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
@@ -378,7 +379,7 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
 			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
 		for _, f := range m.e.Files {
-			if d.filesRefused(m.e) {
+			if d.refuses(&d.pageRecv, m.e) {
 				break // Receive files is off (#765)
 			}
 			msg.Files = append(msg.Files, web.File{Name: f.Name, Size: f.Size})
@@ -410,9 +411,11 @@ type pageSettings struct {
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
 	Mode        string              `json:"mode,omitempty"`
-	// SendFiles and ReceiveFiles are web.Settings's (#765): off unless saved on.
-	SendFiles    bool `json:"sendFiles,omitempty"`
-	ReceiveFiles bool `json:"receiveFiles,omitempty"`
+	// SendFiles, ReceiveFiles and their Page twins are web.Settings's (#765): off unless saved on.
+	SendFiles        bool `json:"sendFiles,omitempty"`
+	ReceiveFiles     bool `json:"receiveFiles,omitempty"`
+	PageSendFiles    bool `json:"pageSendFiles,omitempty"`
+	PageReceiveFiles bool `json:"pageReceiveFiles,omitempty"`
 	// Away is when the device last left online for another mode, kept so that going back
 	// releases what arrived since (mode.go), across restarts too.
 	Away time.Time `json:"away,omitzero"`
@@ -434,6 +437,7 @@ func (p pageSettings) clone() pageSettings {
 func (p pageSettings) view() web.Settings {
 	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
 		SessionBusy: maps.Clone(p.SessionBusy), Mode: p.Mode, SendFiles: p.SendFiles, ReceiveFiles: p.ReceiveFiles,
+		PageSendFiles: p.PageSendFiles, PageReceiveFiles: p.PageReceiveFiles,
 		DefaultMinutes: defaultWakeMinutes}
 }
 
@@ -460,8 +464,10 @@ func (d *Daemon) loadSettings() {
 	d.settings = read
 	d.hidden.Store(read.Mode == web.ModeInvisible)
 	d.dnd.Store(read.Mode == web.ModeDND)
-	d.sendFiles.Store(read.SendFiles)
-	d.setReceive(read.ReceiveFiles)
+	d.agentSend.Store(read.SendFiles)
+	d.agentRecv.set(read.ReceiveFiles)
+	d.pageSend.Store(read.PageSendFiles)
+	d.pageRecv.set(read.PageReceiveFiles)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -481,7 +487,7 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
 		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode,
-		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles}
+		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles, PageSendFiles: set.PageSendFiles, PageReceiveFiles: set.PageReceiveFiles}
 	if next.Mode == web.ModeOnline {
 		next.Mode = ""
 	}
@@ -506,10 +512,14 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	away := d.settings.Away
 	d.settings = next
-	d.sendFiles.Store(next.SendFiles)
-	if d.setReceive(next.ReceiveFiles) {
+	d.agentSend.Store(next.SendFiles)
+	d.pageSend.Store(next.PageSendFiles)
+	agents, page := d.agentRecv.set(next.ReceiveFiles), d.pageRecv.set(next.PageReceiveFiles)
+	if agents || page {
 		d.kickPresence() // teammates' senders, who and lookup say whether this device takes files
-		d.kickFiles()    // what waits for its files goes now, without them, if receiving went off
+	}
+	if agents {
+		d.kickFiles() // what waits for its files goes now, without them, if receiving went off
 	}
 	if next.Mode != was {
 		d.setMode(was, next.Mode, away)

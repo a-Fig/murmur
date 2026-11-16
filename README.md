@@ -117,7 +117,7 @@ used one of Murmur's tools.
 
 | Command                | What it does |
 | ---------------------- | ------------ |
-| `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. Its Settings sets this device's mode in the repo: online, do not disturb (messages to your agents wait), or invisible (off Murmur, as if offline). It also turns on sending and receiving files, which are off until you do. |
+| `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. Its Settings sets this device's mode in the repo: online, do not disturb (messages to your agents wait), or invisible (off Murmur, as if offline). It also turns on sending and receiving files, for you and for your agents apart, which are off until you do. |
 | `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
@@ -153,9 +153,9 @@ Someone removed from a public repo can still fetch it, and keeps reading until s
 GitHub Actions workflow that runs a pull request's code with a write token (`pull_request_target`):
 such a workflow gives a stranger's code the team key, and with it everything on the bus.
 
-**Files are off until you turn them on**, sending and receiving each, per repo, in `mur ui`'s
-Settings. An agent sends files only from the repo or the temp folder, and Murmur reads them for
-it, outside any sandbox the agent runs in.
+**Files are off until you turn them on**, sending and receiving each, for you and for your
+agents apart, per repo, in `mur ui`'s Settings. An agent sends files only from the repo or the
+temp folder, and Murmur reads them for it, outside any sandbox the agent runs in.
 
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.

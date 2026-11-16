@@ -301,12 +301,14 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
-	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect)
+	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect, nil)
 }
 
 // pushFrom is push from repo, which is d.repo or a copy of it that keeps its objects elsewhere
 // (bus.Repo.Scratch).
-func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string) error {
+//
+// still, if not nil, is asked once the turn is had: false, and nothing is pushed.
+func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string, still func() bool) error {
 	if !d.takePush(ctx) {
 		return ctx.Err()
 	}
@@ -318,8 +320,8 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if d.hidden.Load() {
 		return ErrInvisible
 	}
-	if sha != "" && strings.HasPrefix(ref, brand.FilesPrefix) && !d.sendFiles.Load() {
-		return errSendOff // turned off while this send waited its turn (#765); deleting old ones goes on
+	if still != nil && !still() {
+		return errSendOff // turned off while this send waited its turn (#765)
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
@@ -555,12 +557,10 @@ type Daemon struct {
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
 	// read without setMu by everything that writes to the bus or answers an agent.
 	hidden, dnd atomic.Bool
-	// sendFiles and recvFiles are the Send files and Receive files settings (#765), read without setMu.
-	sendFiles, recvFiles atomic.Bool
-	// recvOff is closed when Receive files goes off, to end the fetches under way (receiving), and
-	// made anew when it goes on. recvMu guards it, and orders the changes to recvFiles.
-	recvMu  sync.Mutex
-	recvOff chan struct{}
+	// The file switches (#765), read without setMu: Send files and Receive files for this device's
+	// agents, and for its person on the page, each its own (Tyler, 2026-11-16).
+	agentSend, pageSend atomic.Bool
+	agentRecv, pageRecv fileSwitch
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 

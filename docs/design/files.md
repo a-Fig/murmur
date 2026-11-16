@@ -10,21 +10,26 @@ attaches, pastes or drops files, and sees the ones a message carries ([below](#o
 
 ## Off until turned on
 
-Tyler, 2026-11-16 (#765): files have to be turned on both ways, in Settings. Each device has two
-switches for each repo, **Send files** and **Receive files**, kept in `settings.json` with the
-page's other settings, and both are off until its person turns them on, for anyone who used files
-on a nightly too.
+Tyler, 2026-11-16 (#765): files have to be turned on, each way, in Settings, and a person's own
+apart from their agents', so they can send and see files on the page while their agents don't.
+Each device has four switches for each repo, kept in `settings.json` with the page's other
+settings: **Send files** and **Receive files** for the person (`pageSendFiles`,
+`pageReceiveFiles`), and the same for the agents (`sendFiles`, `receiveFiles`). All four are off
+until the person turns them on, for anyone who used files on a nightly too.
 
-- **Send files off:** a `send` with files, an agent's or the page's, is refused before a file is
-  read or anything is pushed, and the agent is told its user can turn it on. The page's composer
-  shows no paperclip, and a paste or a drop of a file says it's off. `who` marks this device
-  `SENDS NO FILES`, so an agent knows before it tries.
-- **Receive files off:** a message from another device arrives as its text. Its files aren't
-  fetched, aren't given to a session and aren't on the page. A message that was waiting for its
-  files when the switch went off goes without them. The device's presence says it takes no files
-  (`FilesOff`), so the sender's `send` says which recipients get the text alone, and `who` and
-  `lookup` show it before a send. What a session sends another on the same device is there already
-  and fetched from nowhere, so it is shown.
+- **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
+  an agent's by the agents' switch, the page's by the person's, and checked again once the push's
+  turn comes. An agent is told its user can turn it on, and `who` marks the device `AGENTS SEND NO
+  FILES` so it knows before it tries. On the page the paperclip still shows: attaching, dropping
+  or pasting a file asks the person to turn theirs on, and goes on once they do.
+- **Receive files off:** a message from another device arrives as its text. With the agents'
+  off, its files aren't fetched for a session or given to one; with the person's off, they aren't
+  fetched for the page or shown on it. A fetch under way ends when its switch goes off, and a
+  message that was waiting for its files goes without them. The device's presence says whether its
+  agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
+  `send` says which recipients get the text alone, and `who` and `lookup` show it before a send.
+  What a session sends another on the same device is there already and fetched from nowhere, so it
+  is shown.
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
 
 ## How a file travels

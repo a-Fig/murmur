@@ -76,8 +76,10 @@ type State struct {
 	Mode string `json:"mode,omitempty"`
 	// SendFiles and ReceiveFiles are this device's file switches (Settings, #765), here as well so
 	// every open page follows a change made on another, and none saves back what it last saw.
-	SendFiles    bool `json:"sendFiles,omitempty"`
-	ReceiveFiles bool `json:"receiveFiles,omitempty"`
+	SendFiles        bool `json:"sendFiles,omitempty"`
+	ReceiveFiles     bool `json:"receiveFiles,omitempty"`
+	PageSendFiles    bool `json:"pageSendFiles,omitempty"`
+	PageReceiveFiles bool `json:"pageReceiveFiles,omitempty"`
 }
 
 // Receipt is how far one of the person's messages got with one recipient (#26).
@@ -272,6 +274,11 @@ type Settings struct {
 	// as its text, its files neither fetched nor shown.
 	SendFiles    bool `json:"sendFiles"`
 	ReceiveFiles bool `json:"receiveFiles"`
+	// PageSendFiles and PageReceiveFiles are the same for the person, on this page: what its
+	// composer sends, and whether it fetches and shows the files other devices send (Tyler,
+	// 2026-11-16). SendFiles and ReceiveFiles are the agents'.
+	PageSendFiles    bool `json:"pageSendFiles"`
+	PageReceiveFiles bool `json:"pageReceiveFiles"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
