@@ -1,9 +1,12 @@
 package gitx
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -137,4 +140,23 @@ func (t *tree) end() {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// outputFile is a file for a command's output that Windows deletes once its last handle is closed,
+// by this process or a child that inherited it. Its name is random, so no other process opens it.
+func outputFile() (*os.File, error) {
+	b := make([]byte, 8)
+	rand.Read(b)
+	path := filepath.Join(os.TempDir(), "mur-git-"+hex.EncodeToString(b))
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_TEMPORARY|windows.FILE_FLAG_DELETE_ON_CLOSE, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
 }

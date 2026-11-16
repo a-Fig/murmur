@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,12 @@ func TestRunTreeEndsEveryProcess(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	g := gitx.Git{Dir: dir}
+	if out, err := g.RunTree(context.Background(), "rev-parse", "--is-bare-repository"); err != nil || out != "true\n" {
+		t.Fatalf("RunTree's output: %q, %v", out, err)
+	}
+	if _, err := g.RunTree(context.Background(), "rev-parse", "--verify", "nothing"); err == nil || !strings.Contains(err.Error(), "nothing") {
+		t.Fatalf("RunTree's error, with what git said: %v", err)
+	}
 	for what, c := range map[string]struct {
 		alias string
 		stop  bool // ended by ctx while git runs; otherwise git exits, and RunTree with it

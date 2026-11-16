@@ -4,6 +4,7 @@ package gitx
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -36,4 +37,15 @@ func (t *tree) end() {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// outputFile is a file for a command's output that has no name: removed at once, it stays while
+// a process has it open.
+func outputFile() (*os.File, error) {
+	f, err := os.CreateTemp("", "mur-git-*")
+	if err != nil {
+		return nil, err
+	}
+	os.Remove(f.Name())
+	return f, nil
 }

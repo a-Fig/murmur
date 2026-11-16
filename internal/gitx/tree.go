@@ -30,17 +30,18 @@ func (g Git) RunTree(ctx context.Context, args ...string) (string, error) {
 	// Output goes to files, not pipes: a child that outlives git holds a pipe open, and Wait would
 	// wait for it before the tree could be ended (Sol review). With files, Wait returns when git
 	// does, and the tree is ended then.
-	stdout, err := os.CreateTemp("", "mur-git-out-*")
+	// Each goes when the last process that has it open lets go, whoever that is: where git's
+	// children can outlive it (no job), a file removed when RunTree returns would still be open
+	// (Sol review).
+	stdout, err := outputFile()
 	if err != nil {
 		return "", &Error{Args: args, Err: err}
 	}
-	defer os.Remove(stdout.Name())
 	defer stdout.Close()
-	stderr, err := os.CreateTemp("", "mur-git-err-*")
+	stderr, err := outputFile()
 	if err != nil {
 		return "", &Error{Args: args, Err: err}
 	}
-	defer os.Remove(stderr.Name())
 	defer stderr.Close()
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	t, err := startTree(cmd)
