@@ -140,7 +140,6 @@ func TestAHooklessSessionGetsWhatWaitedAsOneTurn(t *testing.T) {
 			t.Errorf("the turn's messages are out of order: %q", j.text)
 		}
 
-		d.handedTo = map[threadKey][]handed{}
 		d.finishPush(j, nil)
 		d.mu.Lock()
 		if n := len(d.st.Inbox["aaaaaa"]); n != 0 {

@@ -71,6 +71,14 @@ from it is in [a person on the page](people.md).
   two minutes at most. Tags with a meaning show as that meaning: `model:` beside the agent,
   `do-not-disturb` as the red dot, `hidden` as the fold, `human` on a person. There is no grouping
   by tag: a session can carry several, so groups would repeat it.
+- **A profile card** (2026-11-15, #689, Tyler's request). Clicking a face, or a sender's name in a
+  conversation, opens a card beside it, as a chat app does: the name and address, the state, agent,
+  model and tags, the status and branch, what you have in common (the groups you have posted in that
+  it is in, and your device), for a person the sessions they have messaged, a box that sends a direct
+  message from the card. It uses only presence and the messages the page has. A face that is part of
+  another control (the account chip, a group's pile) doesn't open it. Tyler chose the banner look
+  over a compact one. It has no way to a fuller view yet: the session's conversations, which #656
+  headed with its details, hold little more than the card does.
 - **Themes** (2026-11-09), kept in the browser: Dark (T3 Code's), Dim (the page's greys before it
   followed T3 Code), Light, and since 2026-11-10 Murmur (the website's palette; `docs/brand.md`).
   Each is a set of color tokens over one design, so a theme costs only its palette.

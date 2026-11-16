@@ -87,6 +87,7 @@ const ui = {
   tagInput: null, // the row key of the session whose tag field is open
   tagFilter: null, // a tag: the session lists show only the sessions with it
   tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
+  profile: null, // { name, x, top, from, draft, sent }: the profile card, open on that name (#689)
   selecting: false, // All sessions picks sessions, to tag them together
   selected: new Set(), // their addresses
   madeTags: new Set(), // tags made here, offered in the menu even once no session has them
@@ -469,7 +470,7 @@ function render() {
       gone = ui.tagMenu.from;
       ui.tagMenu = null;
     }
-    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu);
+    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile);
     kids = [
       h(
         "div",
@@ -489,6 +490,7 @@ function render() {
       ui.picker && pickerDialog(),
       ui.tagMenu && tagMenu(),
       ui.repoMenu && repoMenu(),
+      ui.profile && profileCard(),
     ].filter(Boolean);
   } finally {
     held.el = null;
@@ -521,6 +523,7 @@ function render() {
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
   fitComposers();
+  placeProfile();
   placeLive();
   announceShown();
   document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME; // tellApp says the same
@@ -797,11 +800,11 @@ function sidebarFoot() {
       ? h(
           "button",
           { class: "account-chip", title: "Someone else chose your name first. Choose a new one to send again.", "data-key": "account-chip", onclick: () => askForName(null) },
-          avatar(a.name),
+          avatar(a.name, false),
           h("span", { class: "account-name truncate" }, a.name),
           h("span", { class: "name-taken" }, "New name"),
         )
-      : h("button", { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") }, avatar(a.name), h("span", { class: "account-name truncate" }, a.name))
+      : h("button", { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") }, avatar(a.name, false), h("span", { class: "account-name truncate" }, a.name))
     : h("button", { class: "account-chip account-none", title: "Agents see your name, and send to it.", "data-key": "account-chip", onclick: () => askForName(null) }, h("span", { class: "avatar account-blank", "aria-hidden": "true" }, icon("user")), h("span", { class: "account-name truncate" }, "Choose your name"));
   return h(
     "div",
@@ -1136,7 +1139,7 @@ function quietFold(d) {
 
 // A face with its presence dot inside it, so it still fits the two-face pair of a DM.
 function dotted(name) {
-  const a = avatar(name);
+  const a = avatar(name, false);
   const p = findPerson(name);
   const f = findSession(name);
   const st = p ? (personOnline(p) ? "on" : "off") : f ? sessionState(f.device, f.session) : "off";
@@ -1927,7 +1930,7 @@ function membersButton(c) {
           render();
         },
       },
-      h("span", { class: "g-pile" }, pile.map((r) => avatar(r.name))),
+      h("span", { class: "g-pile" }, pile.map((r) => avatar(r.name, false))),
       h("span", null, plural(rows.length, "member")),
       icon("chevronDown", "g-members-chev"),
     ),
@@ -2460,6 +2463,235 @@ function tagMenu() {
   );
 }
 
+// The profile card (#689, Tyler's request): a click on a face or a sender's name opens a card next
+// to it, as a chat app shows when someone's name is clicked. It says who the session or person is,
+// how it is now, what you have in common, and has a box that sends a direct message without
+// leaving the card. Everything on it comes from presence and the messages the page already has.
+// The device's colour runs across its top, as a banner.
+const CARD_WIDTH = 320;
+
+// A face inside a control (a sidebar row, a session's row) opens the card rather than the control:
+// the listener runs in the capture phase, ahead of the control's own.
+document.addEventListener(
+  "click",
+  (e) => {
+    const t = e.target.closest?.("[data-profile]");
+    // Not where a face is the whole control (the collapsed sidebar's), nor under another dialog (the
+    // pickers, whose rows pick), nor while sessions are being picked to tag.
+    if (!t || !root.contains(t) || t.closest(".mini-face") || ui.setup || ui.picker || ui.tagMenu || ui.repoMenu) return;
+    if (ui.selecting && ui.view === "sessions") return;
+    e.preventDefault();
+    e.stopPropagation();
+    openProfile(t.dataset.profile, t);
+  },
+  true,
+);
+
+// The card opens beside what was clicked: to its right where there is room, else to its left. Its
+// height is known only once it is drawn, so placeProfile keeps it on the screen after each render.
+// A face clicked inside the card opens that name's card in the same place.
+function openProfile(name, anchor) {
+  const was = ui.profile;
+  const inCard = was && anchor.closest(".profile-card");
+  let x, top;
+  if (inCard) {
+    ({ x, top } = was);
+  } else {
+    // From a list (the sidebar, the conversations), beside the list rather than over its rows.
+    const r = anchor.getBoundingClientRect();
+    const right = anchor.closest(".sidebar, .chat-list")?.getBoundingClientRect().right ?? r.right;
+    x = right + 8 + CARD_WIDTH <= window.innerWidth - 8 ? right + 8 : Math.max(8, r.left - 8 - CARD_WIDTH);
+    top = r.top - 8;
+  }
+  // Closing gives the focus back to what opened it: the element, or its counterpart by key once a
+  // render has replaced it.
+  const opener = anchor.closest("button, a, [tabindex]") || anchor;
+  const from = inCard ? was.from : opener.closest("[data-key]")?.dataset.key || null;
+  const fromEl = inCard ? was.fromEl : opener;
+  ui.membersOpen = false; // the card takes the click the members panel would have closed on
+  ui.profile = { name, x, top, from, fromEl, draft: "", sent: null, shown: false };
+  render();
+  focusProfile();
+}
+
+function focusProfile() {
+  const card = root.querySelector(".profile-card");
+  (card?.querySelector('[data-key="pc-msg"]') || card)?.focus({ preventScroll: true }); // your own has no box
+}
+
+function closeProfile() {
+  const { from, fromEl } = ui.profile || {};
+  ui.profile = null;
+  render();
+  const back = fromEl?.isConnected ? fromEl : from ? root.querySelector(`[data-key="${CSS.escape(from)}"]`) : null;
+  back?.focus({ preventScroll: true });
+}
+
+function placeProfile() {
+  const card = ui.profile && root.querySelector(".profile-card");
+  if (!card) return;
+  if (ui.profile.shown) card.classList.add("pc-still"); // it pops in once, not on every render
+  ui.profile.shown = true;
+  card.style.left = Math.max(8, Math.min(ui.profile.x, window.innerWidth - card.offsetWidth - 8)) + "px";
+  card.style.top = Math.max(8, Math.min(ui.profile.top, window.innerHeight - card.offsetHeight - 8)) + "px";
+}
+
+// The groups you are in with a session: those it has the tag of that you have posted in. A person
+// is in a group only by posting in it, as the page's members list has it.
+function sharedGroups(s) {
+  if (!me() || !s) return [];
+  const mine = new Set();
+  for (const m of ui.messages) if (m.toKind === "group" && fromName(m) === myName()) mine.add(m.to);
+  return tagsOf(s).names.filter((n) => isGroupTag(n) && mine.has(n));
+}
+
+// The sessions a person has had direct messages with, newest first.
+function talkedWith(name) {
+  const out = [];
+  for (let i = ui.messages.length - 1; i >= 0 && out.length < 8; i--) {
+    const m = ui.messages[i];
+    if (m.toKind !== "session") continue;
+    const from = fromName(m);
+    const to = toName(m);
+    const other = from === name ? to : to === name ? from : null;
+    if (other && !isPerson(other) && !out.includes(other)) out.push(other);
+  }
+  return out;
+}
+
+// The card's box sends as the composer does, into the direct conversation with the name, which
+// lists it. One with no account yet chooses a name first, and the card comes back to send it.
+function sendFromCard() {
+  const p = ui.profile;
+  const text = p.draft.trim();
+  if (!text) return;
+  if (!me()) {
+    ui.profile = null;
+    return askForName(() => {
+      ui.profile = { ...p, draft: text, sent: null };
+      sendFromCard();
+      focusProfile();
+    });
+  }
+  const pair = [...new Set([myName(), p.name])].sort();
+  const key = dmKey(myName(), p.name);
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key, conversation: { key, kind: "dm", title: pair.join(" & "), pair }, to: p.name, text, status: "sending" };
+  ui.outbox.push(item);
+  p.draft = "";
+  p.sent = item;
+  // The field keeps its node while it has the focus, so it is emptied here, as the composer's is.
+  const field = root.querySelector('[data-key="pc-msg"]');
+  if (field) field.value = "";
+  deliver(item);
+}
+
+function profileCard() {
+  const p = ui.profile;
+  const name = p.name;
+  const f = findSession(name);
+  const person = findPerson(name);
+  const s = f?.session || null;
+  const d = f?.device || person?.device || deviceOfName(name);
+  const own = name === myName();
+  const human = !!person || own || isPerson(name);
+  const st = human ? (own || (person && personOnline(person)) ? "on" : "off") : s ? sessionState(d, s) : "settled";
+  const last = !s && !human ? settledSessions().find((r) => r.name === name)?.last : null;
+  const word = s ? stateWord(d, s) : human ? PERSON_TIPS[st] : last ? "Stopped " + ago(last) : "Not running";
+  // A person's device is named for them, so theirs goes by its machine.
+  const where = d ? (d.self ? "This device" : human ? host(d.id) : d.nick || d.owner || host(d.id)) : null;
+  const addr = s?.addr || null;
+  const tags = s ? tagsOf(s).names.filter((n) => !n.startsWith("model:")) : [];
+  const badges = [s?.agent, s && modelOf(s)].filter(Boolean);
+  const common = [...sharedGroups(s).map((g) => h("span", { class: "stag" }, g)), s && d?.self && h("span", { class: "pc-common-dev" }, icon("laptop"), "On your device")].filter(Boolean);
+  const talked = human ? talkedWith(name) : [];
+  const sent = p.sent;
+  const section = (label, ...kids) => h("div", { class: "pc-section" }, h("p", { class: "pc-label" }, label), ...kids);
+  const face = avatar(name, false);
+  face.classList.add("pc-avatar");
+  const card = h(
+    "div",
+    { class: "profile-card " + deviceColor(d), role: "dialog", "aria-modal": "true", "aria-label": name, tabindex: -1 },
+    h("div", { class: "pc-banner", "aria-hidden": "true" }),
+    h(
+      "div",
+      { class: "pc-head" },
+      h("span", { class: "pc-face" }, face, h("span", { class: "pres pres-" + st, title: s ? STATE_TIPS[st] : PERSON_TIPS[st] || "" })),
+      h(
+        "div",
+        { class: "pc-who" },
+        h("h2", { class: "pc-name name-line" }, h("span", { class: "truncate" }, name), human && humanTag()),
+        addr && h("p", { class: "pc-addr truncate", title: addr }, addr),
+        h("p", { class: "pc-state truncate" }, word, where && " · " + where),
+      ),
+    ),
+    (badges.length > 0 || tags.length > 0) && h("div", { class: "pc-badges" }, badges.map((b) => h("span", { class: "pc-badge" }, b)), tags.map((n) => h("span", { class: "stag", title: n }, n))),
+    s &&
+      (s.doing || s.branch) &&
+      section(
+        "Status",
+        s.doing && h("p", { class: "pc-doing" }, s.doing),
+        h(
+          "div",
+          { class: "pc-meta" },
+          s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
+          prFor(s) && prBadge(prFor(s), true, "pc-pr"),
+        ),
+      ),
+    common.length > 0 && section("In common", h("div", { class: "pc-common" }, common)),
+    talked.length > 0 && section("Talked with", h("div", { class: "pc-talked" }, talked.map((n) => h("span", { class: "pc-talked-one", title: n }, avatar(n), h("span", { class: "truncate" }, n))))),
+    !own &&
+      h(
+        "div",
+        { class: "pc-send" },
+        sent &&
+          h(
+            "p",
+            { class: "pc-sent" + (sent.status === "failed" ? " failed" : "") },
+            h("span", { class: "truncate", "data-announce": sent.status === "failed" ? "" : null }, sent.status === "failed" ? "Not sent: " + sent.error : sent.status === "sent" ? "Sent" : "Sending…"),
+            h("button", { class: "pc-link", "data-key": "pc-open-dm", onclick: () => ((ui.profile = null), startChat(name)) }, "Open conversation"),
+          ),
+        h(
+          "label",
+          { class: "pc-field" },
+          h("input", {
+            type: "text",
+            value: p.draft,
+            placeholder: "Message " + name,
+            "aria-label": "Message " + name,
+            autocomplete: "off",
+            "data-key": "pc-msg",
+            oninput: (e) => {
+              p.draft = e.target.value;
+              e.target.closest(".pc-field").querySelector(".pc-go").disabled = !p.draft.trim();
+            },
+            onkeydown: (e) => {
+              if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+              e.preventDefault();
+              sendFromCard();
+            },
+          }),
+          h("button", { class: "pc-go", "aria-label": "Send", disabled: !p.draft.trim(), "data-key": "pc-go", onclick: sendFromCard }, icon("arrowUp")),
+        ),
+      ),
+  );
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeProfile();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeProfile();
+        }
+      },
+    },
+    card,
+  );
+}
+
 // The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking
 // one moves this tab to that repo's page, whose daemon is started if it isn't running.
 function repoButton() {
@@ -2806,9 +3038,13 @@ function draftConversation() {
 // A face is filled with the color of the device it is on (#560), so a stack of faces says whose
 // machines they are. A session's shows a ghost; a person's, their initial (#579, Tyler). The
 // classes are in style.css: the page's content policy doesn't allow an inline style.
-function avatar(name) {
+// A face opens its name's profile card when clicked (#689), unless card is false: where the face
+// is part of a control that does something else (the account chip, a group's pile of faces).
+function avatar(name, card = true) {
   const color = "avatar dev-fill " + deviceColor(deviceOfName(name));
-  return isPerson(name) ? personFace(name, color) : ghostFace(name, color);
+  const face = isPerson(name) ? personFace(name, color) : ghostFace(name, color);
+  if (card && name) face.dataset.profile = name;
+  return face;
 }
 
 function personFace(name, cls) {
@@ -2894,7 +3130,7 @@ function groupIcon(c) {
   return h(
     "span",
     { class: "g-grid g-grid-" + Math.min(rows.length, 4), "aria-hidden": "true" },
-    shown.map((r) => avatar(r.name)),
+    shown.map((r) => avatar(r.name, false)),
     rows.length > 4 && h("span", { class: "avatar g-more" }, "+" + (rows.length - 3)),
   );
 }
@@ -3368,7 +3604,7 @@ function chatMessage(m, from, at, head) {
     h(
       "div",
       { class: "chat-msg-main" },
-      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
+      head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog", "data-key": "from-" + m.id }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
       messageText(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
@@ -5192,6 +5428,9 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
     e.preventDefault(); // the drawer under it stays open, as under the tag menu
     closeRepoMenu();
+  } else if (e.key === "Escape" && ui.profile && !e.defaultPrevented) {
+    e.preventDefault(); // as for the menus
+    closeProfile();
   }
 });
 window.addEventListener("hashchange", () => {
@@ -5212,7 +5451,7 @@ NARROW.addEventListener("change", () => {
   render();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
+  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu && !ui.profile) setDrawer(false);
 });
 // Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
 // can't be styled. The page's tip is only for what a person can't already read: a button that is

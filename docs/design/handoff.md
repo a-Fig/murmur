@@ -30,11 +30,15 @@ over.
   old one had unread, in the order it arrived. A message for everyone that comes in the second
   between the new session registering and finding its thread is handed over by the old session, and
   not again by the new one (#70, 2026-11-11): the daemon remembers, by event ID, what it handed each
-  thread in the last 30 minutes (up to 200 a thread, in memory only). Not covered: a new session
-  that registers before the daemon has seen the old one's connection close, when the thread may see
-  a message for everyone twice (#99). Handing the route over when the drop is seen was tried
-  (2026-10-30) and dropped: in three review rounds each version could strand a message to the old
-  session's name, where a repeat is all that happens now.
+  thread in the last 30 minutes (up to 200 a thread, in memory only). A new session that registers
+  before the daemon has seen the old one's connection close leaves the old one its route, as it was
+  still running, so both copies can be taken for a handoff at once (#99). The daemon also knows what
+  is on its way into each thread, and the second copy waits, with the hook leaving it alone: once
+  the first has been handed over it is taken out, and if that handoff failed it goes in
+  (2026-11-15). Handing the route over when the
+  drop is seen was tried (2026-10-30) and dropped: in three review rounds each version could strand
+  a message to the old session's name. A daemon restart forgets what was handed, and a repeat in
+  that window is what there was before.
 - **Codex under T3** gets its thread from `_meta.threadId`, which every Murmur tool takes, but its
   MCP servers start with a bare environment, so Codex's config must forward `T3CODE_CLI_PATH`
   (`env_vars`; worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29), which `mur join` writes with

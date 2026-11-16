@@ -29,6 +29,7 @@ func threadsDaemon(t *testing.T) *Daemon {
 	d.threadRead = map[threadKey]time.Time{}
 	d.threadWarned = map[threadKey]bool{}
 	d.peers = map[string]*peer{}
+	d.handedTo, d.handing = map[threadKey][]handed{}, map[handing]bool{}
 	d.kick, d.pushKick = make(chan struct{}, 1), make(chan struct{}, 1)
 	return d
 }
@@ -322,6 +323,67 @@ func TestHandoffChecksAgain(t *testing.T) {
 	d.finishPush(j, err)
 	if m.Pushing || m.PushFailed || m.Attempted || len(d.st.Inbox["aaaaaa"]) != 1 {
 		t.Errorf("the message after: %+v, inbox %d", m, len(d.st.Inbox["aaaaaa"]))
+	}
+}
+
+// Two sessions of one T3 thread with a copy of the same message (#99): while one copy is on its
+// way in, the other waits, and the hook leaves it alone though its session is at work. Once the
+// handoff is over, the record of it is gone whatever the outcome: a copy handed over takes the
+// other out (#470's record, for #70), and one that failed or was refused lets the other go in.
+func TestASecondCopyWaitsForTheHandoff(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{{"handed over", nil}, {"failed", errors.New("t3 failed")}, {"not now", errNotNow}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := threadsDaemon(t)
+			d.handing, d.handedTo = map[handing]bool{}, map[threadKey][]handed{}
+			d.introduced, d.pushWarned, d.pushing = map[string]map[string]bool{}, map[string]bool{}, map[string]bool{}
+			for _, id := range []string{"aaaaaa", "bbbbbb"} {
+				inT3(d, id, 0)
+				d.sessions[id].route.T3Thread = "thread-one"
+			}
+			ev := bus.Event{V: bus.Version, ID: "ev1", Type: bus.Message, From: "peer/cccccc", To: "*", Body: "b", At: time.Now()}
+			mb := &inMsg{Event: ev, Arrived: time.Now()}
+			d.st.Inbox = map[string][]*inMsg{"aaaaaa": {{Event: ev, Arrived: time.Now()}}, "bbbbbb": {mb}}
+			wake := wakeWithin(0)
+
+			d.mu.Lock()
+			ja := d.nextPushLocked("aaaaaa", wake)
+			jb := d.nextPushLocked("bbbbbb", wake)
+			// bbbbbb's turn starts, and its hook runs, before aaaaaa's handoff returns (#611).
+			k, b := threadKey{"", "thread-one"}, d.sessions["bbbbbb"]
+			b.hooked, b.busyAt, d.threads[k] = true, time.Now(), t3db.State{Busy: true}
+			queued := d.queuedForPushLocked("bbbbbb", mb, wake)
+			b.hooked, b.busyAt = false, time.Time{}
+			delete(d.threads, k)
+			d.mu.Unlock()
+			if ja == nil || jb != nil {
+				t.Fatalf("jobs taken: aaaaaa %v, bbbbbb %v; want only aaaaaa's", ja != nil, jb != nil)
+			}
+			if !queued {
+				t.Errorf("the hook may tell bbbbbb of the copy on its way in through aaaaaa")
+			}
+
+			d.finishPush(ja, tc.err)
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if len(d.handing) != 0 {
+				t.Errorf("still on its way in after the handoff: %v", d.handing)
+			}
+			next, _, _ := d.candidateLocked("bbbbbb", wake)
+			if tc.err == nil {
+				if len(d.st.Inbox["bbbbbb"]) != 0 || next != nil {
+					t.Errorf("bbbbbb's copy kept after aaaaaa's was handed over")
+				}
+				return
+			}
+			if next != mb || mb.PushFailed {
+				t.Errorf("bbbbbb's copy not offered after aaaaaa's %v: offered %v, failed %v", tc.err, next != nil, mb.PushFailed)
+			}
+		})
 	}
 }
 
