@@ -165,13 +165,15 @@ the turn took, so nothing waits for good.
   from before the turn is held only if it is still within them.
 - **Why not hand it to T3 as well:** T3 can't take back a queued message, so the agent could read it
   with `inbox` mid-turn and then get it again as a turn.
-- **Where the hook doesn't run** (Muse and OpenCode 1 in T3, as of 2026-11-16; Codex and Grok have
-  it since #225, Pi since #205, OpenCode 2 since #431, and OpenCode 1 outside T3 since #446, its
-  plugin doing nothing in T3), T3's database alone says the session is at work (#699): while it
+- **Where the hook doesn't run** (OpenCode 1 in T3, as of 2026-11-16, and a Muse session whose user
+  hasn't run join since #461; Codex and Grok have it since #225, Pi since #205, OpenCode 2 since
+  #431, OpenCode 1 outside T3 since #446, its plugin doing nothing in T3, and Muse since #461),
+  T3's database alone says the session is at work (#699): while it
   shows the thread's run going, and from a handoff until a read that began after it, at most a
   minute. The session's messages wait in the inbox meanwhile, where `inbox` finds them mid-turn, and
   when a read finds the run over, everything it has waiting goes in as one turn, each message as its
-  own turn would read, up to 256 KB. Until then each message went to `t3 thread send` at once, and T3
+  own turn would read, up to 256 KB. A session's first hook ends this: from then on it is held as
+  any hooked session is, and what waited during the run is held for the turn's end. Until then each message went to `t3 thread send` at once, and T3
   queued it as a turn of its own: on 2026-11-15 four messages to a busy Muse thread were four queued
   turns, and the agent could find none of them with `inbox`, as they had left it. Nothing tells such
   a session of a message mid-turn, so what came during the run goes in at its end whatever its age,
