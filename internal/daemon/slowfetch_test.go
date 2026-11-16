@@ -133,3 +133,57 @@ func TestLargeRefLeavesTheSyncsWorking(t *testing.T) {
 	})
 	eventually(t, "the event on the large ref", func() bool { return logged("through the large object") })
 }
+
+// A send answers once its push has landed, however long the sync that is running takes over a
+// fetch (#738): it used to wait for that sync, to queue its own event for this device's sessions,
+// with every other write to the log held behind it. The sync does that queueing itself now, so a
+// message to a session on the same device still arrives.
+func TestASendDoesNotWaitForASyncsSlowFetch(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	var out syncBuf
+	dumpLogOnFailure(t, &out)
+	const limit = 10 * time.Second
+	a := newDeviceWith(t, remote, func(d *device) {
+		d.logTo = &out
+		d.fetchLimit = limit
+		d.ownTipWait = 500 * time.Millisecond
+		d.stale = 5 * time.Minute
+	})
+	alice, _ := a.session("aaaaaa", "")
+	a.session("cccccc", "")
+	stallFetches(t, a.gitDir, "14")
+
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "zzz-0000/s", At: time.Now().UTC(),
+		To: "*", Subject: "through the large object"}
+	msg, err := bus.Encode(e, e.Line())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushLarge(t, remote, "refs/murmur/mesh/zzz-0000", msg)
+	time.Sleep(2 * time.Second) // a sync has listed the ref, and is in its fetch
+
+	start := time.Now()
+	if r := a.send("cccccc", alice, "sent during the fetch", ""); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	took := time.Since(start)
+	if !strings.Contains(out.String(), "the sync is taking long") {
+		t.Errorf("the send found no sync running, so this tested nothing")
+	}
+	// Waiting for the sync, it took what was left of the fetch's limit and then the ref's fetch
+	// alone, another limit.
+	if took > limit {
+		t.Errorf("the send took %s, with each fetch stalled for %s", took, limit)
+	}
+	eventually(t, "the fetch to run past its limit", func() bool {
+		return strings.Contains(out.String(), "zzz-0000 took over")
+	})
+	eventually(t, "the message to reach the session on the same device", func() bool {
+		return a.queuedFor(alice, "sent during the fetch")
+	})
+	// Until the stalled fetches are over: one left running holds the remote's files open.
+	eventually(t, "the large ref fetched", func() bool {
+		return strings.Contains(out.String(), "fetched refs/murmur/mesh/zzz-0000")
+	})
+}

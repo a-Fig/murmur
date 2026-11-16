@@ -47,6 +47,10 @@ type Options struct {
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
+	// OwnTipWait is how long a write to this device's log, once pushed, waits for a running sync
+	// before leaving the sync to queue it for this device's own sessions (leaveOwnTip): 2 s,
+	// longer than a sync takes when nothing is slow.
+	OwnTipWait time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -173,6 +177,9 @@ func (o *Options) defaults() {
 	}
 	if o.PollCap == 0 {
 		o.PollCap = 15 * time.Second
+	}
+	if o.OwnTipWait == 0 {
+		o.OwnTipWait = 2 * time.Second
 	}
 	if o.FetchLimit == 0 {
 		o.FetchLimit = 15 * time.Second
@@ -348,7 +355,7 @@ func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent
 const maxInbox = 200
 
 // Daemon is one running daemon. Lock order: syncMu, then advMu, then mu; or writeMu, then advMu,
-// then mu.
+// then mu. leaveOwnTip tries advMu with mu held, which never waits.
 type Daemon struct {
 	opt     Options
 	repo    *bus.Repo
@@ -540,10 +547,15 @@ type Daemon struct {
 
 	health health // what the page's health snapshot counts (health.go)
 
-	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
-	advMu   sync.Mutex // serializes processing of fetched refs
-	writeMu sync.Mutex // serializes appends to this device's log
-	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
+	syncMu sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
+	advMu  sync.Mutex // serializes processing of fetched refs
+	// syncing says a sync holds advMu, or is about to take it, and ownLater is the tip of this
+	// device's log that an append left for that sync to read (leaveOwnTip), "" if none. Both
+	// under mu.
+	syncing  bool
+	ownLater string
+	writeMu  sync.Mutex // serializes appends to this device's log
+	ownTip   string     // the remote's tip of this device's log, as last known; under writeMu
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
