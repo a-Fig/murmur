@@ -531,6 +531,12 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 	refused["a file in a folder a worktree's registration was pointed at"] = secret
+	if upper := filepath.Join(clone, ".GIT", "config"); func() bool { _, err := os.Stat(upper); return err == nil }() {
+		refused["a file in the git directory, spelled in other case"] = upper // Windows', macOS's
+	}
+	if alias := filepath.Join(temp, "alias"); os.Symlink(clone, alias) == nil {
+		refused["a file in the git directory, by a link to the clone"] = filepath.Join(alias, ".git", "config")
+	}
 	for what, path := range refused {
 		err := send(path)
 		if !strings.Contains(err, "isn't in this repo's clone or the temp folder") || !strings.Contains(err, "copy it into "+temp) {
