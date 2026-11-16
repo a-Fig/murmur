@@ -346,17 +346,20 @@ func (d *Daemon) filesFetchedLocked(id string) {
 // id, or the session that has taken id's name since (forwardLocked). A fetch can take minutes, and
 // a session that took the name meanwhile, as one that resumed the conversation in another process,
 // took what id had in its inbox then (adoptLocked), not what waited here: the message would land in
-// an inbox nobody reads (#703). "" if that session sent e or has muted its sender, as a message
-// that came for it would have skipped it (addressedLocked, queueLocked), and "" if it has gone off
-// the mesh meanwhile (a T3 thread settled, or found to be a delegate), as such a message would be
-// refused. A session that took id's T3 thread rather than its name is a recipient already
-// (takeFilesWaitLocked). Caller holds mu.
+// an inbox nobody reads (#703). A session that took id's T3 thread rather than its name is a
+// recipient already (takeFilesWaitLocked).
+//
+// "" if that session sent e, or has gone off the mesh meanwhile (a T3 thread settled, or found to be
+// a delegate), as a message that came for it then would be refused (addressedLocked, queueLocked).
+// "" too if a session the message was forwarded to has muted its sender. id's own mute was asked
+// when the message came, and stands as it was then: a message let through in a mute's grace (#466)
+// isn't dropped because the fetch outlasted the grace (Sol's review). Caller holds mu.
 func (d *Daemon) filesRecipientLocked(id string, e bus.Event) string {
 	to := id
 	if f := d.forwardLocked(bus.Addr(d.device, id)); f != "" {
 		_, to = bus.SplitAddr(f)
 	}
-	if e.From == bus.Addr(d.device, to) || d.offMeshLocked(to) || d.mutedHereLocked(to, e) {
+	if e.From == bus.Addr(d.device, to) || d.offMeshLocked(to) || to != id && d.mutedHereLocked(to, e) {
 		return ""
 	}
 	return to

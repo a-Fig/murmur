@@ -88,3 +88,28 @@ func TestFilesThatArriveForASettledThreadAreNotQueued(t *testing.T) {
 		t.Errorf("a settled thread was given %d, %d still waiting; want none and none", n, len(d.st.FilesWait))
 	}
 }
+
+// A message let through in a mute's grace (#466) and held for its files still goes in when the
+// fetch outlasts the grace: its recipient's mute was asked when it came.
+func TestFilesThatOutlastAMutesGraceStillArrive(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	d.st.Inbox, d.st.FilesWait = map[string][]*inMsg{}, map[string]*fileWait{}
+	d.opt.MuteGrace = 30 * time.Second
+	inT3(d, "bbbbbb", 0)
+	from := bus.Addr("there-0002", "aaaaaa")
+	d.st.Used = map[string]string{"brave-heron": from}
+	d.st.Mutes = map[string]map[string]time.Time{"name-bbbbbb": {"brave-heron": time.Now().Add(-time.Minute)}}
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, To: "dev/bbbbbb",
+		Subject: "a file", At: time.Now(), Files: []bus.File{{Name: "a.txt"}}}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.mutedHereLocked("bbbbbb", e) {
+		t.Fatal("the mute's grace hasn't run out, so this tests nothing")
+	}
+	d.st.FilesWait[e.ID] = &fileWait{Event: e, Since: time.Now(), For: []string{"bbbbbb"}}
+	d.filesFetchedLocked(e.ID)
+	if n := len(d.st.Inbox["bbbbbb"]); n != 1 {
+		t.Errorf("bbbbbb has %d, want the message its grace let through", n)
+	}
+}
