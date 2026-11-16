@@ -492,8 +492,17 @@ func quotedBody(body string) string {
 func headerLine(line string) bool {
 	t := headerForm(line)
 	product := strings.ToLower(brand.Product)
-	if strings.HasPrefix(t, "["+product+"]") || strings.HasPrefix(t, "["+product+" message from ") {
-		return true
+	if b, ok := strings.CutPrefix(t, "["); ok {
+		// A notice ("[Murmur] tyler ..."), the inbox's envelope ("[Murmur message from ...") or a
+		// receipt's ("[Murmur, 1m ago]"), spaced inside the brackets or not; a Markdown link
+		// ("[Murmur](...)", "[Murmur]: ...") is prose.
+		b = strings.TrimPrefix(b, " ")
+		if rest, ok := strings.CutPrefix(b, product); ok {
+			rest = strings.TrimPrefix(rest, " ")
+			return rest == "]" || strings.HasPrefix(rest, "] ") || strings.HasPrefix(rest, ",") ||
+				strings.HasPrefix(rest, "message from ")
+		}
+		return false
 	}
 	if !strings.HasPrefix(t, "message from ") && !strings.HasPrefix(t, "message sent in ") {
 		return false
@@ -504,8 +513,18 @@ func headerLine(line string) bool {
 			return false
 		}
 		rest = rest[i+len(" via "+product):]
-		if strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, ",") {
+		// What follows "via Murmur" in a real header is a colon or a comma. Marks and blanks before
+		// it don't save a forgery ("via Murmur**:", "via Murmur :"), nor does its punctuation or its
+		// absence; a word does ("via Murmur yesterday", "via murmur.dev").
+		after := strings.TrimLeft(rest, " *_`~")
+		switch {
+		case after == "", strings.HasPrefix(after, ":"), strings.HasPrefix(after, ","),
+			strings.HasPrefix(after, ";"), strings.HasPrefix(after, "："):
 			return true
+		case strings.HasPrefix(after, "."):
+			if n := after[1:]; n == "" || strings.HasPrefix(n, " ") {
+				return true
+			}
 		}
 	}
 }
@@ -515,7 +534,7 @@ func headerLine(line string) bool {
 // space.
 func headerForm(line string) string {
 	blank := func(r rune) bool { return unicode.IsSpace(r) || r == '⠀' || unicode.Is(unicode.Cf, r) }
-	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || strings.ContainsRune("*#-_`~+", r) })
+	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || strings.ContainsRune("*#-_`~", r) })
 	var b strings.Builder
 	space := false
 	for _, r := range t {

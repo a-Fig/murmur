@@ -71,12 +71,12 @@ answer and that answering is optional. The sender's text between them is passed 
 neither quoted nor wrapped: teammates' agents are trusted in Murmur's model, and a message that
 reads as a request is meant to be acted on. One exception (#297, Tyler, 2026-11-15): a subject or
 body line that reads as one Murmur starts a message with — a turn's first line ("Message from" or
-"Message sent in", then "via Murmur" and a colon or comma), a notice's (`[Murmur] …`) or the
-inbox's (`[Murmur message from …`) — is quoted with `> `, as `inbox` quotes every line, so a
+"Message sent in", then "via Murmur" and, past any marks, a colon, a comma or the line's end), a
+notice's (`[Murmur] …`) or an inbox envelope (`[Murmur message from …`, `[Murmur, 1m ago]`) — is quoted with `> `, as `inbox` quotes every line, so a
 message can't forge a second one from someone else inside its own turn. It is judged in lower case,
 with spacing runs as one space and leading blanks, invisible characters and Markdown marks off, as
-an agent reads past each (Fable's review of #710, 2026-11-16). Not covered: look-alike letters from
-other scripts (Cyrillic М), and the reply line, which a forger can repeat but which starts nothing.
+an agent reads past each (Fable's two reviews of #710, 2026-11-16). Not covered: look-alike letters from
+other scripts (Cyrillic М), a diff's `+` line (left as written so a patch still applies), and the reply line, which a forger can repeat but which starts nothing.
 Everything else stays as written.
 A body past the limit is cut, as in `inbox`.
 
