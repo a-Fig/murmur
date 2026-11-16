@@ -633,6 +633,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if d.readOnPromptLocked(id, req.Prompt) {
 			d.saveLocked() // a turn handed over has started (#611)
 		}
+		if s := d.sessions[id]; s != nil && s.sending != "" && req.Prompt != "" &&
+			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
+			s.sendingSeen = true // the turn a send still running hands it has begun (#677)
+		}
 		if d.dndLocked(id) {
 			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
 			// whole message and no hold for the turn's end, and don't count as unread for the hook.
