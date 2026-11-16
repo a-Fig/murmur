@@ -402,9 +402,9 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	var sha string
 	for try := 1; ; try++ {
 		fctx, cancel := context.WithTimeout(ctx, fileFetchLimit)
-		sha, err = repo.FetchFiles(fctx, ref)
+		sha, err = repo.FetchFiles(fctx, ref, bus.MaxPack)
 		cancel()
-		if err == nil || errors.Is(err, bus.ErrNoFile) || try == fileTries || ctx.Err() != nil {
+		if err == nil || errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) || try == fileTries || ctx.Err() != nil {
 			break
 		}
 		select {

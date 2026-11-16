@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -346,11 +347,17 @@ func (r *Repo) ReadPack(ctx context.Context, rev string, max int64) ([]byte, err
 }
 
 // FetchFiles fetches the commit a files ref holds on the remote and returns it. Nothing local
-// names it after, whatever the clone's own refspecs say (--refmap=): the objects are read once. ErrNoFile if the
-// ref isn't on the remote. The fetch asks for the ref by name, as not every server gives an object
-// asked for by its ID; a ref that moves between the listing and the fetch reads as files that
-// aren't there.
-func (r *Repo) FetchFiles(ctx context.Context, ref string) (string, error) {
+// names it after, whatever the clone's own refspecs say (--refmap=): the objects are read once.
+// ErrNoFile if the ref isn't on the remote. The fetch asks for the ref by name, as not every server
+// gives an object asked for by its ID; a ref that moves between the listing and the fetch reads as
+// files that aren't there.
+//
+// The fetch is stopped once what it has written passes what a pack of max bytes takes on the wire,
+// and ErrTooLarge returned (#707): anyone who can push could point a files ref at a gigabyte, and
+// every device it is for would download it, and only then find it too large. Git has no such limit
+// for a fetch (receive.maxInputSize is a push's), so the pack being written is watched: it is kept
+// as one pack, which grows as it arrives, rather than unpacked into objects in memory.
+func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, error) {
 	sha, err := r.RemoteRef(ctx, ref)
 	if err != nil {
 		return "", err
@@ -358,13 +365,78 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string) (string, error) {
 	if sha == "" {
 		return "", ErrNoFile
 	}
-	_, err = r.Git.Run(ctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
+	packs := filepath.Join(r.objectDir(), "pack")
+	had := map[string]bool{}
+	if ents, err := os.ReadDir(packs); err == nil {
+		for _, e := range ents {
+			had[e.Name()] = true
+		}
+	}
+	// What the fetch wrote: the pack, as it grows, and once it is done its index too.
+	fetched := func() (n int64, names []string) {
+		ents, _ := os.ReadDir(packs)
+		for _, e := range ents {
+			if had[e.Name()] {
+				continue
+			}
+			names = append(names, e.Name())
+			if info, err := e.Info(); err == nil {
+				n += info.Size()
+			}
+		}
+		return n, names
+	}
+	// Encrypted files don't compress, so a pack of max bytes takes about max on the wire: zlib's
+	// framing, the commit, the tree and the pack's index take far less than this allows over it.
+	limit := max + max/32 + 256<<10
+	fctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := make(chan struct{})
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		t := time.NewTicker(50 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if n, _ := fetched(); n > limit {
+					cancel(ErrTooLarge)
+					return
+				}
+			}
+		}
+	}()
+	_, err = r.Git.Run(fctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+		"-c", "fetch.unpackLimit=1", "-c", "core.bigFileThreshold=1m", "fetch", "--quiet",
 		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip="+brand.RefRoot+"*", r.Remote, ref)
+	close(stop)
+	<-watched
+	n, names := fetched()
+	if errors.Is(context.Cause(fctx), ErrTooLarge) || err == nil && n > limit {
+		// A fetch this fast was done before it could be stopped; either way none of it is kept.
+		for _, name := range names {
+			os.Remove(filepath.Join(packs, name))
+		}
+		return "", fmt.Errorf("%w: the files ref holds over %d bytes", ErrTooLarge, limit)
+	}
 	if err != nil {
 		return "", err
 	}
 	return sha, nil
+}
+
+// objectDir is where git writes this repo's objects: the scratch directory, if it is one.
+func (r *Repo) objectDir() string {
+	for i := len(r.Git.Env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(r.Git.Env[i], "GIT_OBJECT_DIRECTORY="); ok {
+			return v
+		}
+	}
+	return filepath.Join(r.Git.Dir, "objects")
 }
 
 // DeleteLocal removes a local ref, if it is there.
