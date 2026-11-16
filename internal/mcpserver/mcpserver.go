@@ -314,9 +314,12 @@ var agentAbove = func() bool {
 	return false
 }
 
-// agentPrograms are the agents' programs agentAbove looks for, by name.
+// agentPrograms are the agents' programs agentAbove looks for, by name. Antigravity, as T3 runs it,
+// is agy_acp_server, which runs localharness_external, which runs the agent's shell commands (the
+// release T3 downloads, 1.4.5: .exe on Windows, agy_acp_server.par elsewhere; 2026-11-16, #709).
 var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
-	"opencode": true, "pi": true, "gemini": true}
+	"opencode": true, "pi": true, "gemini": true,
+	"agy_acp_server": true, "agy_acp_server.par": true, "localharness_external": true}
 
 // passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
 // shells, and what runs a command for one.

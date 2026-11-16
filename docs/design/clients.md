@@ -216,6 +216,12 @@ from T3's bundled server. A whole turn with Murmur has not been run yet.
   commands have the variable. Whether its MCP servers have it too hasn't been seen. If they don't,
   the daemon pairs the hook's `conversationId` with the server among the hook's ancestors, as it
   does for Codex.
+- **Its programs** (#709, 2026-11-16). T3 downloads the release itself, into
+  `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`: `agy_acp_server` (`.exe` on Windows,
+  `.par` elsewhere) runs `localharness_external`, which runs the agent's shell commands. Both are
+  agents to the walk above a Claude Code server (`agentAbove`): a claude run from an Antigravity
+  thread's shell, under a T3 thread that is Claude's, isn't that thread, though it inherits
+  `T3CODE_THREAD_ID`. No `agy` or `antigravity` program is part of what T3 runs.
 - **The hook.** It is a `murmur` entry in `config/hooks.json`. Antigravity's payload doesn't name
   its event, so the command line does: `mur hook --event Stop antigravity`. It runs on two events:
   - `PreInvocation`, before each model call, stands for both `UserPromptSubmit` and `PostToolUse`.

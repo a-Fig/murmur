@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -124,4 +125,15 @@ func TestAServerWhoseThreadIsLiveIsASessionOfItsOwn(t *testing.T) {
 		asked := fd.askedAbout()
 		return len(asked) > 0 && asked[0] == "0d0d0d0d-aaaa-bbbb-cccc-ddddeeeeffff"
 	})
+}
+
+// Antigravity's programs, as T3 installs them, are agents to the walk above a server: a claude run
+// from an Antigravity thread's shell isn't the T3 thread whose variable it inherited (#709).
+func TestAntigravityIsAnAgentAbove(t *testing.T) {
+	dir := filepath.Join("home", ".t3", "tools", "antigravity-acp", "versions", "d24f4c73")
+	for _, name := range []string{"agy_acp_server.exe", "localharness_external.exe", "agy_acp_server.par", "localharness_external"} {
+		if exe := filepath.Join(dir, name); !agentPrograms[programName(exe)] {
+			t.Errorf("%s isn't taken for an agent", exe)
+		}
+	}
 }
