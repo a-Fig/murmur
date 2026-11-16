@@ -525,7 +525,7 @@ func (d *Daemon) noteOthersFilesLocked(e bus.Event, dev string) {
 // ageOthersFilesLocked adds to each note's age the time since the last call, as now, a reading of
 // the monotonic clock, says, and at most twice FilePrune. No wall clock goes into an age: one set
 // forward by weeks, as a clock is when it is put right, would make every note old at once. The
-// cap holds a machine asleep, which some monotonic clocks count, and the first call adds nothing,
+// cap holds a machine asleep, which Windows' monotonic clock counts, and the first call adds nothing,
 // so the time a daemon was down isn't counted. That only makes a ref wait longer. Caller holds mu.
 func (d *Daemon) ageOthersFilesLocked(now time.Time) {
 	if !d.othersAged.IsZero() {

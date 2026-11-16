@@ -84,8 +84,9 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   days before, since the event is written after the push. The 14 days are counted on the monotonic
   clock, at most two hours for each hourly prune, so no wall clock goes in: a clock set forward by
   weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
-  date. Time the daemon is down or asleep isn't counted, which only makes a ref wait longer: weeks
-  more on a team whose daemons run only while someone works. A ref no event this device read names
+  date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
+  monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
+  a team whose daemons run only while someone works. A ref no event this device read names
   still stays: one whose message failed after its push, one in a log it can't open, or one sent
   before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once for each**, since each gets a message of
