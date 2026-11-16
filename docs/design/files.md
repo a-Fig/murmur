@@ -35,7 +35,9 @@ send files yet (#570's second part).
   up the files of those behind it, not their text-only neighbours. The wait survives a restart
   (`state.json`). The message is queued for whoever holds each recipient's name when the fetch
   ends: a process that resumed the conversation meanwhile took only what was in the inbox, and the
-  message would otherwise reach the old session's, which nobody reads (#703).
+  message would otherwise reach the old session's, which nobody reads (#703). A session that takes
+  over the old one's T3 thread, which carries no name from one to the other, takes its place in the
+  wait, and a recipient gone off the mesh meanwhile (a settled thread) gets nothing.
 - **Nothing is left in the clone.** Git writes a files commit, and what a fetch of one brings, to
   a directory of the daemon's own (`GIT_OBJECT_DIRECTORY`, with the clone's objects as an
   alternate), which is deleted when the push or the read is done, and the fetch stores no ref. In
