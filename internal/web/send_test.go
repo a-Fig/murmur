@@ -17,7 +17,7 @@ type heldSource struct {
 	ended   chan error
 }
 
-func (f *heldSource) Send(ctx context.Context, to, text string) (Sent, error) {
+func (f *heldSource) Send(ctx context.Context, to, text string, files []Upload) (Sent, error) {
 	close(f.entered)
 	<-f.release
 	// The server notices the closed connection a moment after the client goes: a context that
@@ -27,7 +27,7 @@ func (f *heldSource) Send(ctx context.Context, to, text string) (Sent, error) {
 	case <-time.After(time.Second):
 	}
 	f.ended <- ctx.Err()
-	return f.fakeSource.Send(ctx, to, text)
+	return f.fakeSource.Send(ctx, to, text, files)
 }
 
 // A page closed or reloaded while its message is on its way doesn't take the message with it

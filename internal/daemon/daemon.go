@@ -539,6 +539,9 @@ type Daemon struct {
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
 	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
+	fileOne  chan struct{} // held for a fetch of a message's files (fetchFiles)
+	// fileMiss is the fetches for the page that failed, by files ref: when, and how. Guarded by mu.
+	fileMiss map[string]fileMiss
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
 	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
@@ -1171,7 +1174,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), fileKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		pushKick: make(chan struct{}, 1), fileKick: make(chan struct{}, 1), fileOne: make(chan struct{}, 1), fileMiss: map[string]fileMiss{}, markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},

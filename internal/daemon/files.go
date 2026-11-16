@@ -21,6 +21,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Files a message carries (#570, docs/design/files.md). The sender's daemon encrypts each and
@@ -102,81 +103,96 @@ func textOf(b []byte) (string, bool) {
 	return strings.ToValidUTF8(string(b), " "), true
 }
 
+// sendFile is a file to send with a message: what the sender called it, a path from an agent or a
+// name from the page, and what is in it.
+type sendFile struct {
+	name string
+	data []byte
+}
+
 // unixPath says whether path is a Unix shell's, as Git Bash's /tmp is, on Windows: it starts at a
 // root with a forward slash and names no drive. Two slashes are a share's, and full already.
 func unixPath(path string) bool {
 	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
 }
 
-// readSendFiles reads the files a send names and holds them to the limits. A text file is checked
-// for secrets as a body is; anything else can't be.
-func readSendFiles(paths []string) ([][]byte, []bus.File, error) {
+// readSendFiles reads the files an agent's send names, each no larger than a file may be.
+func readSendFiles(paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
-		return nil, nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
+		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
-	var total int64
-	data := make([][]byte, 0, len(paths))
-	files := make([]bus.File, 0, len(paths))
+	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
 		if !filepath.IsAbs(path) {
 			if unixPath(path) {
 				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
 				// drive, where another file of that name may be (#706).
-				return nil, nil, fmt.Errorf("%s isn't a full path on Windows: pass the Windows path, as `cygpath -w '%s'` prints it", path, path)
+				return nil, fmt.Errorf("%s isn't a full path on Windows: pass the Windows path, as `cygpath -w '%s'` prints it", path, path)
 			}
-			return nil, nil, fmt.Errorf("%s isn't a full path", path)
+			return nil, fmt.Errorf("%s isn't a full path", path)
 		}
 		info, err := os.Stat(path)
 		switch {
 		case err != nil:
-			return nil, nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
+			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		case !info.Mode().IsRegular():
-			return nil, nil, fmt.Errorf("%s isn't a file", path)
+			return nil, fmt.Errorf("%s isn't a file", path)
 		case info.Size() > bus.MaxFile:
-			return nil, nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
+			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
 		}
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
+			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		}
 		b, err := io.ReadAll(io.LimitReader(f, bus.MaxFile+1)) // it may have grown since the look
 		f.Close()
-		switch {
-		case err != nil:
-			return nil, nil, fmt.Errorf("can't read %s: %v", path, err)
-		case len(b) > bus.MaxFile:
-			return nil, nil, fmt.Errorf("%s is over %d MB, the most a file can be", path, bus.MaxFile>>20)
+		if err != nil {
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
 		}
-		if total += int64(len(b)); total > bus.MaxFilesTotal {
-			return nil, nil, fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
-		}
-		if text, ok := textOf(b); ok {
-			if err := scrub.Check(text); err != nil {
-				return nil, nil, fmt.Errorf("%s: %v", path, err)
-			}
-		}
-		data = append(data, b)
-		files = append(files, bus.File{Name: filepath.Base(path)})
+		files = append(files, sendFile{path, b})
 	}
-	return data, files, nil
+	return files, nil
 }
 
-// putFiles encrypts the files a send names and pushes them to a new files ref, and returns what
-// the event says of them and the ref's name. It keeps a copy of each where a receiver's would be,
-// so a session on this device, and the page, have them without a fetch.
-func (d *Daemon) putFiles(ctx context.Context, paths []string) (files []bus.File, at string, err error) {
-	data, files, err := readSendFiles(paths)
-	if err != nil {
+// checkSendFiles holds the files of a send to the limits. A text file is checked for secrets as a
+// body is; anything else can't be.
+func checkSendFiles(files []sendFile) error {
+	if len(files) > bus.MaxFiles {
+		return fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(files))
+	}
+	var total int64
+	for _, f := range files {
+		if len(f.data) > bus.MaxFile {
+			return fmt.Errorf("%s is %s, and a file can be at most %d MB", f.name, proto.Size(int64(len(f.data))), bus.MaxFile>>20)
+		}
+		if total += int64(len(f.data)); total > bus.MaxFilesTotal {
+			return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
+		}
+		if text, ok := textOf(f.data); ok {
+			if err := scrub.Check(text); err != nil {
+				return fmt.Errorf("%s: %v", f.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
+// event says of them and the ref's name. It keeps a copy of each where a receiver's would be, so a
+// session on this device, and the page, have them without a fetch.
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, err error) {
+	if err := checkSendFiles(in); err != nil {
 		return nil, "", err
 	}
 	at = bus.NewFilesAt()
-	sealed := make([][]byte, len(data))
-	for i, b := range data {
-		blob, f, err := bus.SealFile(b, at, i)
+	sealed := make([][]byte, len(in))
+	files = make([]bus.File, len(in))
+	for i, sf := range in {
+		blob, f, err := bus.SealFile(sf.data, at, i)
 		if err != nil {
 			return nil, "", err
 		}
-		f.Name = files[i].Name
+		f.Name = sf.name
 		sealed[i], files[i] = blob, f
 	}
 	files = bus.CleanFiles(files) // the names a receiver will save them under
@@ -204,7 +220,7 @@ func (d *Daemon) putFiles(ctx context.Context, paths []string) (files []bus.File
 	}
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
 	for i, f := range files {
-		if err := saveFile(dir, f.Name, data[i]); err != nil {
+		if err := saveFile(dir, f.Name, in[i].data); err != nil {
 			d.log.Printf("keeping a copy of %s, sent on files ref %s: %v", f.Name, at, err)
 		}
 	}
@@ -264,8 +280,7 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
 // the fetch is started and the message is queued when it ends, with or without them. Nothing is
-// held for a person: the page doesn't show files yet, and will ask for one when it shows it.
-// Caller holds mu.
+// held for a person: the page asks for a file when it shows it (fileOf). Caller holds mu.
 func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
 	if len(e.Files) == 0 || id == bus.PersonSession || d.filesHere(e) {
 		return false
@@ -316,7 +331,7 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			if !ok {
 				break
 			}
-			err := d.fetchFiles(ctx, e)
+			err := d.fetchFiles(ctx, e, fileTries)
 			if ctx.Err() != nil {
 				return // still waiting when the daemon next starts
 			}
@@ -341,6 +356,10 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 		}
 	}
 }
+
+// errFetchLater is a fetch of files that failed in a way another try might not: the remote
+// couldn't be reached, or the time ran out.
+var errFetchLater = errors.New("the files couldn't be fetched just now")
 
 // filesFetchedLocked queues the message with event ID id, whose files' fetch has ended, for the
 // sessions it waited for. Caller holds mu.
@@ -400,9 +419,35 @@ func (d *Daemon) takeFilesWaitLocked(to, from string) {
 }
 
 // fetchFiles brings the files of message e from its files ref and saves them. A fetch that fails
-// is tried again, as the network may be why; a ref that isn't there, or holds something else, is
-// not. What the fetch brings goes to a scratch directory, not the clone's objects.
-func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
+// is tried again, up to tries times, as the network may be why; a ref that isn't there, or holds
+// something else, is not. What the fetch brings goes to a scratch directory, not the clone's
+// objects.
+func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
+	release, err := d.holdFiles(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return d.fetchFilesHeld(ctx, e, tries)
+}
+
+// holdFiles waits for the one turn there is to fetch files, and returns what gives it back. One
+// at a time: the page asks for each file of a message as it shows it, and the loop may be fetching
+// for the same message. Whoever comes second finds the files here. A caller whose time runs out
+// while it waits gives up.
+func (d *Daemon) holdFiles(ctx context.Context) (release func(), err error) {
+	select {
+	case d.fileOne <- struct{}{}:
+		return func() { <-d.fileOne }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
+	}
+}
+
+// fetchFilesHeld is fetchFiles for a caller that holds the turn (holdFiles). What stops it is
+// errFetchLater unless it would stop every try: the ref isn't there, or what it holds isn't the
+// message's files.
+func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) error {
 	if d.filesHere(e) {
 		return nil
 	}
@@ -411,7 +456,7 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 	}
 	repo, done, err := d.scratch()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errFetchLater, err)
 	}
 	defer done()
 	ref := bus.FilesRef(e.FilesAt)
@@ -420,23 +465,30 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 		fctx, cancel := context.WithTimeout(ctx, fileFetchLimit)
 		sha, err = repo.FetchFiles(fctx, ref, bus.MaxPack)
 		cancel()
-		if err == nil || errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) || try == fileTries || ctx.Err() != nil {
+		if err == nil || errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) || try >= tries || ctx.Err() != nil {
 			break
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
 		case <-time.After(time.Duration(try) * 5 * time.Second):
 		}
 	}
-	if err != nil {
+	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", errFetchLater, err)
 	}
 	pack, err := repo.ReadPack(ctx, sha, bus.MaxPack)
-	if err != nil {
+	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
 	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", errFetchLater, err)
+	}
 	var failed []string
+	later := false // a file couldn't be saved, which a full disk does: the remote still has it
 	for i, f := range e.Files {
 		if !f.Readable() {
 			continue
@@ -447,16 +499,21 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 			plain, err = bus.OpenFile(blob, f, e.FilesAt, i)
 		}
 		if err == nil {
-			err = saveFile(d.filesDir(e), f.Name, plain)
+			if err = saveFile(d.filesDir(e), f.Name, plain); err != nil {
+				later = true
+			}
 		}
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", f.Name, err))
 		}
 	}
-	if len(failed) > 0 {
-		return errors.New(strings.Join(failed, "; "))
+	switch {
+	case len(failed) == 0:
+		return nil
+	case later:
+		return fmt.Errorf("%w: %s", errFetchLater, strings.Join(failed, "; "))
 	}
-	return nil
+	return errors.New(strings.Join(failed, "; "))
 }
 
 // pruneFiles deletes the copies of files kept longer than FileKeep, and from the remote the files
@@ -598,20 +655,19 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 }
 
 // noFilesNoteLocked tells the sender of message e, which carries files, which of its recipients
-// get the text alone, with no sign that there was more: those on a device whose daemon is from
-// before files, and a person, whose page doesn't show files yet. who is what the sender called a
-// person it sent to. Caller holds mu.
+// are on a device whose daemon is from before files: they get the text alone, with no sign that
+// there was more. who is what the sender called the one it sent to, if it sent to one. Caller
+// holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
-	if bus.IsPerson(e.To) {
-		// A person gets only what is sent to them, never a broadcast, so they are the one recipient.
-		return who + " reads this on " + brand.Product + "'s page, which doesn't show files yet: the text alone gets there."
-	}
-	to, _ := d.recipientsOfLocked(e)
+	to, direct := d.recipientsOfLocked(e)
 	var old []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
 		if p := d.peers[dev]; dev != d.device && p != nil && !p.locked && !p.pres.Files {
 			name, _, _ := d.sessionInfoLocked(addr)
+			if direct {
+				name = who
+			}
 			old = append(old, nameOr(name, addr))
 		}
 	}
@@ -619,10 +675,94 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	case 0:
 		return ""
 	case 1:
-		return old[0] + " is on a device that runs a " + brand.Product + " from before files, so it gets the text alone."
+		return old[0] + " is on a device that runs a " + brand.Product + " from before files, so the text alone gets there."
 	}
 	return strings.Join(old[:len(old)-1], ", ") + " and " + old[len(old)-1] + " are on devices that run a " +
-		brand.Product + " from before files, so they get the text alone."
+		brand.Product + " from before files, so the text alone gets there."
+}
+
+// fileMiss is a fetch for the page that failed: when, and how.
+type fileMiss struct {
+	at  time.Time
+	err error
+}
+
+// pageFetchAgain is how long the page's asks for a message's files go unanswered by a new fetch
+// after one failed. A message's pictures are asked for together, and each would otherwise wait out
+// a fetch that the one before it just saw fail.
+const pageFetchAgain = 20 * time.Second
+
+// pageFetch fetches the files of message e for the page. Once: the page asks again by itself, and
+// a person is looking at it meanwhile. Not at all if a fetch for the message failed a moment ago,
+// which it says again.
+func (d *Daemon) pageFetch(ctx context.Context, e bus.Event) error {
+	release, err := d.holdFiles(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	// Looked at with the turn held: the fetch that was waited for may be the one that failed.
+	d.mu.Lock()
+	miss, missed := d.fileMiss[e.FilesAt]
+	d.mu.Unlock()
+	if missed && time.Since(miss.at) < pageFetchAgain {
+		return miss.err
+	}
+	err = d.fetchFilesHeld(ctx, e, 1)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	switch {
+	case err == nil:
+		delete(d.fileMiss, e.FilesAt)
+	case ctx.Err() != nil:
+		// The page went, or its time ran out: that says nothing of the remote.
+	default:
+		d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
+		d.fileMiss[e.FilesAt] = fileMiss{time.Now(), err}
+	}
+	for at, m := range d.fileMiss { // few, and small, but not kept for good
+		if time.Since(m.at) > pageFetchAgain {
+			delete(d.fileMiss, at)
+		}
+	}
+	return err
+}
+
+// noFile is why the page can't have a file at all, in words to show (web.ErrNoFile).
+type noFile string
+
+func (e noFile) Error() string        { return string(e) }
+func (e noFile) Is(target error) bool { return target == web.ErrNoFile }
+
+// fileOf returns the index'th file of the message with that ID, for the page: its name and what is
+// in it, fetched first if it isn't here.
+func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []byte, error) {
+	d.mu.Lock()
+	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.e.ID == id })
+	var e bus.Event
+	if i >= 0 {
+		e = d.msgs[i].e
+	}
+	d.mu.Unlock()
+	if i < 0 || index >= len(e.Files) {
+		return "", nil, noFile("no such file")
+	}
+	f := e.Files[index]
+	gone := noFile(f.Name + " isn't here: it couldn't be fetched, or was sent more than a week ago")
+	if !f.Readable() || e.FilesAt == "" {
+		return "", nil, gone
+	}
+	path := filepath.Join(d.filesDir(e), f.Name)
+	if !fileExists(path) {
+		if err := d.pageFetch(ctx, e); errors.Is(err, errFetchLater) && !fileExists(path) {
+			return "", nil, errors.New(f.Name + " couldn't be fetched just now")
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, gone
+	}
+	return f.Name, data, nil
 }
 
 // fileViewsLocked is the files of message e as a session here is told of them: each with the path

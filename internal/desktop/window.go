@@ -48,6 +48,15 @@ func Run(ctx context.Context, opts Options) error {
 			opts.Instance.closingDown() // before it has gone, so no click is answered by it
 			a.w.Terminate()
 		},
+		// A file the page saves (#570) goes where a save panel says. Without this the web view
+		// cancels every download on macOS and Linux; on Windows it handles them itself.
+		OnDownload: func(name string) string {
+			path, err := a.w.SaveFile(glaze.FileDialogOptions{Filename: name})
+			if err != nil {
+				return ""
+			}
+			return path
+		},
 	})
 	after()
 	if err != nil {

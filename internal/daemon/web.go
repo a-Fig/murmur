@@ -377,6 +377,9 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	for _, m := range d.msgs[first:] {
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
 			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
+		for _, f := range m.e.Files {
+			msg.Files = append(msg.Files, web.File{Name: f.Name, Size: f.Size})
+		}
 		if msg.FromPerson {
 			// The name the message carries, or the one their device gives, if it is theirs.
 			name, _ := d.personSenderLocked(m.e)
