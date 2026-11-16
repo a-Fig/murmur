@@ -1198,6 +1198,7 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 // removed from wherever it is when it has been. A message s never needs from the other session
 // stays behind (see hadCopyLocked). Caller holds mu.
 func (d *Daemon) takeInboxLocked(s *session, from string) {
+	d.takeFilesWaitLocked(s.id, from)
 	old := d.st.Inbox[from]
 	if len(old) == 0 {
 		return
