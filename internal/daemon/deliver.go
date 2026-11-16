@@ -129,7 +129,7 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 // before each attempt.
 func (d *Daemon) pusher(ctx context.Context, id string) {
 	for {
-		if !d.consented() {
+		if !d.consented() || d.hidden.Load() {
 			d.mu.Lock()
 			delete(d.pushing, id)
 			d.mu.Unlock()
@@ -842,6 +842,9 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	if d.hidden.Load() {
+		return errNotNow // invisible: the message waits in the inbox until the device is back
+	}
 	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
 	// settled, its session idle past its wake setting, or at work again: asked again before each
 	// handoff.
@@ -1195,6 +1198,7 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 // removed from wherever it is when it has been. A message s never needs from the other session
 // stays behind (see hadCopyLocked). Caller holds mu.
 func (d *Daemon) takeInboxLocked(s *session, from string) {
+	d.takeFilesWaitLocked(s.id, from)
 	old := d.st.Inbox[from]
 	if len(old) == 0 {
 		return

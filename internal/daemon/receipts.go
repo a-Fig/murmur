@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -154,6 +155,10 @@ func (d *Daemon) receiptLoop(ctx context.Context) {
 		}
 		if ctx.Err() != nil {
 			return
+		}
+		if errors.Is(err, ErrInvisible) {
+			retry = markRetry // until the device is back, which kicks this loop
+			continue
 		}
 		d.log.Printf("writing a receipt: %v; trying again in %s", err, retry)
 		select {

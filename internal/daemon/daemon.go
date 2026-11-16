@@ -304,6 +304,9 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	if d.hidden.Load() {
+		return ErrInvisible
+	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
@@ -521,9 +524,15 @@ type Daemon struct {
 	writeMu sync.Mutex // serializes appends to this device's log
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
 
-	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
+	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
+	// change (setMode) takes mu inside it.
 	setMu    sync.Mutex
 	settings pageSettings
+	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
+	// read without setMu by everything that writes to the bus or answers an agent.
+	hidden, dnd atomic.Bool
+	// presenceGone says this device's presence has been deleted since it went invisible.
+	presenceGone atomic.Bool
 
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once

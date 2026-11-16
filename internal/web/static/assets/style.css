@@ -1141,6 +1141,28 @@ a.g-pr:hover {
   text-align: left;
 }
 
+/* The device isn't online (#681): a quiet line that leads to Settings. */
+.side-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 var(--sidebar-content-inset) 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--control-radius);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-align: left;
+}
+
+.side-mode svg,
+.dev-dnd svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
 /* A section's label in the sidebar (ui/collapsible-section-header.tsx). */
 .group-label {
   display: flex;

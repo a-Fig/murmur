@@ -57,11 +57,27 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
 // inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
-func (d *Daemon) dndLocked(id string) bool { return d.hasTagLocked(id, tags.DoNotDisturb) }
+func (d *Daemon) dndLocked(id string) bool { return d.dnd.Load() || d.ownDNDLocked(id) }
+
+// ownDNDLocked says session id is on do not disturb by its own tags and a human's marks, whatever
+// the device's mode. Taking that off is what releases its inbox (releaseLocked): one taken off
+// while the device is on do not disturb counts from then, so going back online releases it
+// (releaseSinceLocked). Caller holds mu.
+func (d *Daemon) ownDNDLocked(id string) bool {
+	st := d.st.Tags[d.tagKeyLocked(id)]
+	if st == nil {
+		return false
+	}
+	return tags.Has(tags.Effective(st.Self, d.modelTagsLocked(id), st.Human), tags.DoNotDisturb)
+}
 
 // hasTagLocked says session id on this device has tag name. A session that isn't registered at
-// the moment goes by the tags kept for its name. Caller holds mu.
+// the moment goes by the tags kept for its name. While the device is on do not disturb (mode.go)
+// every session has that tag, whatever a human marked and however many tags it has. Caller holds mu.
 func (d *Daemon) hasTagLocked(id, name string) bool {
+	if name == tags.DoNotDisturb && d.dnd.Load() {
+		return true
+	}
 	if s := d.sessions[id]; s != nil {
 		return tags.Has(d.tagsOfLocked(s), name)
 	}
@@ -74,7 +90,8 @@ func (d *Daemon) hasTagLocked(id, name string) bool {
 }
 
 // peerDNDLocked says the session at dev/sess is on do not disturb: by this device's own tags, or
-// by its device's presence. Caller holds mu.
+// by its device's presence, which says so for every session while the device is (#681). Caller
+// holds mu.
 func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 	if sess == "" || sess == proto.CLISession {
 		return false
@@ -83,7 +100,7 @@ func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 		return d.dndLocked(sess)
 	}
 	p := d.peers[dev]
-	return p != nil && tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb)
+	return p != nil && (p.pres.DND || tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb))
 }
 
 // releaseLocked lets what stayed queued in the inbox of the sessions kept by key go out by whichever
@@ -112,12 +129,20 @@ func (d *Daemon) releaseLocked(key string) {
 // the thread's. Caller holds mu.
 func (d *Daemon) derivedTagsLocked(id string) []string {
 	var out []string
+	if d.dnd.Load() {
+		out = append(out, tags.DoNotDisturb) // the device is on do not disturb (mode.go)
+	}
+	return append(out, d.modelTagsLocked(id)...)
+}
+
+// modelTagsLocked is session id's model tag, where T3 records the thread's model. Caller holds mu.
+func (d *Daemon) modelTagsLocked(id string) []string {
 	if st, ok := d.threadStateLocked(id); ok {
 		if t := tags.ModelTag(st.Model); t != "" {
-			out = append(out, t)
+			return []string{t}
 		}
 	}
-	return out
+	return nil
 }
 
 // tagsOfLocked is the tags session s has. Caller holds mu.
@@ -127,7 +152,15 @@ func (d *Daemon) tagsOfLocked(s *session) []tags.Tag {
 	if st := d.tagStateLocked(s); st != nil {
 		self, human = st.Self, st.Human
 	}
-	return tags.Effective(self, d.derivedTagsLocked(s.id), human)
+	ts := tags.Effective(self, d.derivedTagsLocked(s.id), human)
+	if d.dnd.Load() && !tags.Has(ts, tags.DoNotDisturb) {
+		// A human's mark can't take the device's do not disturb off a session, nor can the tag limit
+		// (hasTagLocked), so who, lookup and the page show it as send goes by it. First, and within
+		// the limit, as a peer reads no more than that many.
+		ts = append([]tags.Tag{{Name: tags.DoNotDisturb, Src: tags.SrcDerived}}, ts...)
+		ts = ts[:min(len(ts), tags.MaxPerSession)]
+	}
+	return ts
 }
 
 // peerTagsLocked is the tags of session sess in device p's presence, nil if it isn't there.
@@ -155,7 +188,7 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	if st == nil {
 		st = &tags.State{}
 	}
-	wasDND := tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb)
+	wasDND := d.ownDNDLocked(id)
 	next := *st
 	if err := next.SetSelf(req.Add, req.Remove); err != nil {
 		return fail(err.Error())
@@ -173,7 +206,7 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	}
 	d.putTagStateLocked(tagKeyOf(s.name, s.id), &next)
 	d.kickPresence()
-	if wasDND && !tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb) {
+	if wasDND && !d.ownDNDLocked(id) {
 		d.releaseLocked(tagKeyOf(s.name, s.id))
 	}
 	note := "tags set"
@@ -266,7 +299,7 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	if key == "" {
 		return fmt.Errorf("session %s isn't known here", bus.Addr(d.device, id))
 	}
-	wasDND := d.dndLocked(id)
+	wasDND := d.ownDNDLocked(id)
 	// Nothing is later than now, whatever a clock ahead or a forged commit says. So a change dated
 	// later can't hold off the next, and a click on this device's page, dated now, is the newest.
 	now := time.Now().UTC()
@@ -289,7 +322,7 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	}
 	d.putTagStateLocked(key, next)
 	d.kickPresence()
-	if wasDND && !d.dndLocked(id) {
+	if wasDND && !d.ownDNDLocked(id) {
 		d.releaseLocked(key)
 	}
 	d.log.Printf("%s changed the tags of session %s: %s", by, bus.Addr(d.device, id), tagChange(add, remove))
