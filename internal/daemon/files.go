@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -82,25 +83,116 @@ func (d *Daemon) scratch() (*bus.Repo, func(), error) {
 	}, nil
 }
 
-// textOf is a file's bytes as text, if it is text the secret check can read: UTF-16 with its mark,
-// as Windows PowerShell writes a redirected file, or anything with no zero byte in it, with
-// whatever isn't UTF-8 passed over, so one stray byte doesn't hide the rest.
-func textOf(b []byte) (string, bool) {
-	if len(b) >= 2 && len(b)%2 == 0 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
+// textsOf is what the secret check reads of a file's bytes. A file with no zero byte is read as
+// text, with what isn't UTF-8 passed over, so one stray byte doesn't hide the rest. UTF-16 with its
+// mark, as Windows PowerShell writes a redirected file, is decoded, and read as well as the bytes
+// themselves: a mark mustn't hide a key in the clear after it.
+//
+// A file with a zero byte was once taken for binary and not checked, but keys sit in the clear
+// between zero bytes in a .tar, a SQLite file or Linux's /proc/self/environ (#737). Its regions of
+// text are read, as `strings` reads a binary: as UTF-8, and as UTF-16 with no mark, either end
+// first, from either byte. A region is every character but a zero up to what can't be one, so a
+// name stays with its value on the next line or past a control character, and only a whole region
+// shorter than minRun is passed over. Reading only the regions keeps a binary quick: random bytes
+// break into short ones. Unread: what is compressed, as an image or a zip, which isn't unpacked,
+// and UTF-16 with no mark past U+2000 (CJK, say), where every pair of ASCII bytes would also read
+// as text.
+func textsOf(b []byte) []string {
+	var texts []string
+	if len(b) >= 2 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
 		var order binary.ByteOrder = binary.LittleEndian
 		if b[0] == 0xfe {
 			order = binary.BigEndian
 		}
-		units := make([]uint16, 0, len(b)/2-1)
-		for i := 2; i < len(b); i += 2 {
+		units := make([]uint16, 0, len(b)/2)
+		for i := 2; i+1 < len(b); i += 2 {
 			units = append(units, order.Uint16(b[i:]))
 		}
-		return string(utf16.Decode(units)), true
+		if last, ok := cutUnit(b[2:], order); ok {
+			units = append(units, uint16(last))
+		}
+		texts = append(texts, string(utf16.Decode(units)))
 	}
-	if slices.Contains(b, 0) {
-		return "", false
+	if !slices.Contains(b, 0) {
+		return append(texts, strings.ToValidUTF8(string(b), " "))
 	}
-	return strings.ToValidUTF8(string(b), " "), true
+	texts = append(texts, utf8Regions(b))
+	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
+		for off := range 2 {
+			texts = append(texts, utf16Regions(b[off:], order))
+		}
+	}
+	return texts
+}
+
+// minRun is the shortest region of text utf8Regions and utf16Regions keep: shorter than any secret
+// the check knows, with what names it.
+const minRun = 8
+
+// regions gathers regions of text, keeping those of minRun characters or more, a line each.
+type regions struct {
+	out strings.Builder
+	cur []rune
+}
+
+func (g *regions) add(r rune) { g.cur = append(g.cur, r) }
+
+func (g *regions) end() {
+	if len(g.cur) >= minRun {
+		g.out.WriteString(string(g.cur))
+		g.out.WriteByte('\n')
+	}
+	g.cur = g.cur[:0]
+}
+
+func (g *regions) String() string {
+	g.end()
+	return g.out.String()
+}
+
+// utf8Regions is b's regions of UTF-8: every character but a zero, up to a byte that isn't UTF-8.
+// U+FFFD written out in full is a character like any other.
+func utf8Regions(b []byte) string {
+	var g regions
+	for len(b) > 0 {
+		r, n := utf8.DecodeRune(b)
+		b = b[n:]
+		if r != 0 && (r != utf8.RuneError || n > 1) {
+			g.add(r)
+		} else {
+			g.end()
+		}
+	}
+	return g.String()
+}
+
+// utf16Regions is b's regions of UTF-16 in byte order order: every character but a zero below
+// U+2000, Latin, Greek and Cyrillic letters among them, and no pair of ASCII bytes, the lowest of
+// which, two spaces, is U+2020.
+func utf16Regions(b []byte, order binary.ByteOrder) string {
+	var g regions
+	for i := 0; i+1 < len(b); i += 2 {
+		if u := order.Uint16(b[i:]); u != 0 && u < 0x2000 {
+			g.add(rune(u))
+		} else {
+			g.end()
+		}
+	}
+	if last, ok := cutUnit(b, order); ok {
+		g.add(last)
+	}
+	return g.String()
+}
+
+// cutUnit is the character an odd byte at the end of UTF-16 b would be, if its other byte, cut
+// off, was a zero: an ASCII character's, little end first. A file cut short mustn't lose a key's
+// last letter.
+func cutUnit(b []byte, order binary.ByteOrder) (rune, bool) {
+	if len(b)%2 == 0 || order != binary.LittleEndian {
+		return 0, false
+	}
+	c := b[len(b)-1]
+	return rune(c), c != 0 && c < 0x80
 }
 
 // sendFile is a file to send with a message: what the sender called it, a path from an agent or a
@@ -154,8 +246,8 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 	return files, nil
 }
 
-// checkSendFiles holds the files of a send to the limits. A text file is checked for secrets as a
-// body is; anything else can't be.
+// checkSendFiles holds the files of a send to the limits, and checks each for secrets as a body is
+// (textsOf).
 func checkSendFiles(files []sendFile) error {
 	if len(files) > bus.MaxFiles {
 		return fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(files))
@@ -168,10 +260,8 @@ func checkSendFiles(files []sendFile) error {
 		if total += int64(len(f.data)); total > bus.MaxFilesTotal {
 			return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
 		}
-		if text, ok := textOf(f.data); ok {
-			if err := scrub.Check(text); err != nil {
-				return fmt.Errorf("%s: %v", f.name, err)
-			}
+		if err := scrub.Check(textsOf(f.data)...); err != nil {
+			return fmt.Errorf("%s: %v", f.name, err)
 		}
 	}
 	return nil
