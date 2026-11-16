@@ -129,6 +129,20 @@ func TestSendToAListNobodyGotIsAnError(t *testing.T) {
 	}
 }
 
+// A device's group is a group in a list too, though its tag can pass the length a group's has
+// (Sol's review of #628): the daemon would send it to the whole device.
+func TestALongDevicesGroupIsRefusedInAList(t *testing.T) {
+	f, res := callSend(t, "group:device-abcdefghijklmnopqrstuvwx-1234, quiet-otter")
+	for _, s := range f.sends() {
+		if strings.HasPrefix(s.To, "group:") {
+			t.Errorf("the device's group was sent to: %+v", f.sends())
+		}
+	}
+	if text := res.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "Not sent to group:device-abcdefghijklmnopqrstuvwx-1234: a list is for sessions") {
+		t.Errorf("result = %q", text)
+	}
+}
+
 // One recipient, even with a comma after it, is the send it always was.
 func TestSendToOneIsUnchanged(t *testing.T) {
 	f, res := callSend(t, "quiet-otter,")

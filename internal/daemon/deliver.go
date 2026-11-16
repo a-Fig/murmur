@@ -349,7 +349,7 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 		if !s.reconnect || d.routeOfLocked(id).T3Thread == "" {
 			return false
 		}
-		return st.Busy || !inT3 && time.Since(s.started) < reconnectHold
+		return runGoing(st) || !inT3 && time.Since(s.started) < reconnectHold
 	}
 	r := d.routeOfLocked(id)
 	read := d.threadRead[threadKey{r.T3Home, r.T3Thread}]
@@ -359,7 +359,7 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	case !inT3:
 		return s.stopSeen && !d.continuationLapsedLocked(s)
 	}
-	return st.Busy || !read.After(s.busyAt)
+	return runGoing(st) || !read.After(s.busyAt)
 }
 
 // runUnseen says T3 has a run of session s's thread going that the hook hasn't seen start, where
@@ -393,7 +393,9 @@ func runUnseen(s *session, st t3db.State, inT3 bool, read time.Time) bool {
 
 // runGoing says st shows a run going that a turn of the thread's session may be: runs T3 left
 // queued behind later ones (Left) aren't, or every turn's end would start a run the hook hasn't
-// seen, holding messages unseenHold each time.
+// seen, holding messages unseenHold each time. Everything that asks T3's database whether a
+// session is at work asks this, not st.Busy: a run left queued for days would otherwise keep a
+// reconnected session, or an interrupted turn, at work until its next hook (#655).
 func runGoing(st t3db.State) bool { return st.Busy && !st.Left }
 
 // closeGrace is how long after a turn's end a read of T3's database may still find the run Stop
@@ -631,9 +633,6 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		return nil
 	}
 	m.Pushing = true
-	// Remembered before the handoff, not after: the turn can start, and its prompt reach the
-	// daemon, while the client's command is still returning (#611). A handoff that fails forgets it.
-	d.awaitReadLocked(id, m.Event)
 	views := d.messageViewsLocked([]*inMsg{m}, true)
 	key := d.keyOfLocked(id)
 	views[0].Introduced = key != "" && d.introduced[key][m.Event.From]
@@ -641,8 +640,12 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		views[0].Explained = d.explainedLocked(id, m.Event.From) // recorded once it is handed over
 	}
 	views[0].GroupKnown = bus.IsGroup(m.Event.To) && d.explainedLocked(id, m.Event.To) // likewise
+	text := view.Turn(views[0])
+	// Remembered before the handoff, not after: the turn can start, and its prompt reach the
+	// daemon, while the client's command is still returning (#611). A handoff that fails forgets it.
+	d.awaitReadLocked(id, m.Event, text)
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msg: m, via: via,
-		route: route, text: view.Turn(views[0])}
+		route: route, text: text}
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only

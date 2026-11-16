@@ -1492,6 +1492,18 @@ a.g-pr:hover {
   height: 1.5rem;
   font-size: 0.6875rem;
 }
+.account-chip .avatar.account-blank {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted-foreground);
+}
+.account-chip .avatar.account-blank svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.account-none .account-name {
+  color: var(--muted-foreground);
+}
 
 /* A newer release (#240): small, there until it's dealt with, one click (T3 Code's update pill). */
 .menu-button.update {
@@ -1883,6 +1895,39 @@ a.g-pr:hover {
   flex-direction: column;
   gap: 0.125rem;
   min-width: 0;
+}
+/* The sessions list's name line: the name and its tags never shrink, as shrinking even a fraction of
+ * a pixel draws an ellipsis, and the agent text gives way. Where the row is narrow, the tags step
+ * aside, two, then one, then none (#631); the session's view lists them all. */
+.s-main {
+  container-type: inline-size;
+}
+.s-main .s-line.name-line > .s-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.s-main .s-line.name-line > .stags {
+  flex: 0 0 auto;
+}
+.s-main .s-line.name-line > .s-agent {
+  flex: 0 1 auto;
+}
+.stags > .more-after-1 {
+  display: none;
+}
+@container (max-width: 30rem) {
+  .s-line > .stags > .stag:nth-child(n + 2),
+  .s-line > .stags > .more-after-max {
+    display: none;
+  }
+  .s-line > .stags > .more-after-1 {
+    display: inline-block;
+  }
+}
+@container (max-width: 17rem) {
+  .s-line > .stags {
+    display: none;
+  }
 }
 .s-line {
   display: flex;
@@ -2446,11 +2491,10 @@ a.g-pr:hover {
   min-width: 0;
   flex-shrink: 1;
 }
+/* Beside a name, the chips come right after it, one or two and then "+N" (#631). In the sidebar the
+ * name and the chip share what room there is; a chip's text ends in an ellipsis rather than being
+ * cut mid-word. */
 .name-line:has(> .stags) > .truncate {
-  flex: 0 0 auto;
-  max-width: 100%;
-}
-.name-line:has(> .stags) > .s-agent {
   flex: 0 1 auto;
 }
 .stags {
@@ -2458,33 +2502,28 @@ a.g-pr:hover {
   align-items: center;
   gap: 0.25rem;
   min-width: 0;
-  overflow: hidden;
-  flex-shrink: 1;
-}
-/* Beside a name, the chips give way first: those that don't fit wrap onto a hidden second line, so
- * none shows cut in half, and the row's tooltip names them all. They take only the room the name and
- * the agent leave (a basis of 0), so the agent text never shrinks while there is room, not even by
- * the fraction of a pixel that would draw its ellipsis. */
-.name-line > .stags {
-  flex: 1 1 0;
-  min-width: 0;
-  flex-wrap: wrap;
-  height: 1rem;
+  flex: 0 1 auto;
 }
 .stag,
 .stag-more {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   flex-shrink: 0;
   height: 1rem;
+  line-height: 1rem;
   padding: 0 0.3125rem;
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--foreground) 7%, transparent);
   font-size: 0.6875rem;
   font-weight: 500;
-  line-height: 1;
   color: color-mix(in oklab, var(--foreground) 72%, transparent);
   white-space: nowrap;
+}
+.stag {
+  flex-shrink: 1;
+  min-width: 2rem;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .stag.on {
   background: color-mix(in oklab, var(--primary) 22%, transparent);
@@ -3265,7 +3304,7 @@ a.g-pr:hover {
   color: var(--muted-foreground);
 }
 
-/* With no conversation open in your messages: who you could talk to. */
+/* Only your conversations shown, and none yet: who you could talk to. */
 .start-pane {
   overflow-y: auto;
 }

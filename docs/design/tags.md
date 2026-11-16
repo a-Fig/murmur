@@ -126,6 +126,21 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   an add to such a device is refused.
 - **On the page** a group is a conversation a person can write to. A mute covers a group (#27;
   [mutes](mutes.md)).
+- **A device is a group** (#463, Tyler, 2026-11-12; built 2026-11-15): every agent's session on a
+  device has `group:device-<its ID>`, so there is one way to name several sessions. An ID that
+  starts with `device-` already, as those made since #330 do, gives `group:<its ID>`, which starts
+  the same way, so two devices can share one (`laptop-1a2b` and `device-laptop-1a2b`); a send to
+  such a tag is refused, and the sender is told to use the ID. `who` lists it
+  and searches by it, `lookup` shows it, and `send` to it is a send to the device. Some choices:
+  - *Nobody sets it, or takes it off.* Each reader adds it to a session from the device the session
+    runs on, as it shows the session. It is never kept, and never carried in presence: a presence
+    that claims one has it dropped on reading, so no device can put its sessions in another's group.
+    It isn't counted toward a session's 12, and can be longer than 40 (a device ID can be 40).
+  - *On the bus it is still the device.* A message to the group is written to the device's ID, so
+    every daemon delivers it as before, older ones too, and only to that device's sessions. The tag
+    is how a device is named, not a new way of addressing it.
+  - *A person's account isn't in it*, as a device's messages don't reach a person.
+  - *Not done yet:* the page still shows a device's conversation as it did and doesn't list the tag.
 
 ## Sending to a list
 

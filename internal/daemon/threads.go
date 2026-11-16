@@ -107,7 +107,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			continue
 		}
 		prev[k], d.threadRead[k] = d.threadRead[k], readAt[k]
-		if !st.Busy {
+		if !runGoing(st) {
 			// A session the hook has at work may have finished its turn without the Stop hook.
 			changed = true
 		}
@@ -141,7 +141,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	for _, s := range d.sessions {
 		if r := s.route; s.hooked && !s.busyAt.IsZero() && r.T3Thread != "" {
 			k := threadKey{r.T3Home, r.T3Thread}
-			if st, ok := read[k]; ok && !st.Busy && readAt[k].After(s.busyAt) {
+			if st, ok := read[k]; ok && !runGoing(st) && readAt[k].After(s.busyAt) {
 				d.endTurnLocked(s, wake)
 			}
 		}
@@ -389,7 +389,7 @@ func (d *Daemon) touchLocked(s *session, now time.Time) {
 
 // idleSinceLocked is when session id was last at work, as far as is known, and whether it is at
 // work now. A session the hook has at work is (see hookBusyLocked). A session in T3 goes by T3's
-// database: busy while a run is queued or running, else
+// database: busy while a run is going (runGoing), else
 // idle since its latest run. Any other session, or one in T3 whose thread hasn't been read, goes
 // by the session: its start, its last request or tool call, or when it stopped. A message
 // handed over as a turn counts too. Zero if nothing says. Caller holds mu.
@@ -399,7 +399,7 @@ func (d *Daemon) idleSinceLocked(id string) (since time.Time, busy bool) {
 	}
 	since = d.pushedAt[id]
 	if st, ok := d.threadStateLocked(id); ok {
-		if st.Busy {
+		if runGoing(st) {
 			return time.Time{}, true
 		}
 		return later(since, st.LastRun), false

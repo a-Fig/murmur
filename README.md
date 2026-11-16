@@ -80,7 +80,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `lookup` | One session in depth: the branches it has committed to, whether a message would reach it, and its recent messages. |
 | `status` | Sets the line others see next to your name. |
 | `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. A `group:` tag puts a session in a group chat. |
-| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device, or everyone. |
+| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device (`group:device-<ID>`), or everyone. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 

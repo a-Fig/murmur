@@ -7,9 +7,19 @@ func SetMaxWholeReply(n int) func() {
 	return func() { maxWholeReply = was }
 }
 
-// Holds is holds, for a test of how a prompt is matched to a turn (#611).
-func Holds(prompt, subject string) bool { return holds(prompt, subject) }
+// WhichTurn is which of turns, the texts of turns handed to one session in order, prompt is, or -1,
+// as the daemon matches them (#611, #651).
+func WhichTurn(prompt string, turns ...string) int {
+	list := make([]awaitingRead, len(turns))
+	for i, t := range turns {
+		list[i] = awaitingRead{Turn: turnStart(t)}
+	}
+	return whichTurn(prompt, list)
+}
 
 // CatchUpWindow is catchUpWindow, how long after the start what is read for a reconnecting session
 // is held for it.
 const CatchUpWindow = catchUpWindow
+
+// RefFileOK is refFileOK, for a test of what counts as a broken bus ref (#644).
+func RefFileOK(b []byte) bool { return refFileOK(b) }

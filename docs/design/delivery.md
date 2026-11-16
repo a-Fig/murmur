@@ -134,7 +134,9 @@ the turn took, so nothing waits for good.
     T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
     would ever tell the session of them.
   - A run counts only while the thread's newest run is queued or running. One T3 left queued
-    behind later runs would otherwise start the 15 minutes again at every turn's end.
+    behind later runs would otherwise start the 15 minutes again at every turn's end. The same
+    holds wherever T3's database says a session is at work: a session that reconnected after a
+    restart, a turn the hook saw start, and how long a session has been idle (#655).
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full

@@ -944,6 +944,7 @@ func Run(ctx context.Context, opt Options) error {
 	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
 	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
 	// asked for meanwhile cuts it short.
+	d.repairRefs() // a ref a crash left unreadable would fail this sync (#644)
 	sctx, scancel := context.WithTimeout(ctx, d.opt.FirstSyncLimit)
 	go func() {
 		select {
@@ -1260,6 +1261,68 @@ func clearStaleLocks(gitDir string, l *log.Logger) (removed bool) {
 		return nil
 	})
 	return removed
+}
+
+// clearBrokenRefs removes loose bus refs whose file holds no object ID (#644). A machine or
+// process killed while git wrote one can leave it full of null bytes (seen 2026-11-03, after a T3
+// restart). Git then fails every fetch in the clone with "bad object refs/murmur/…", the user's own
+// `git fetch` too, and the daemon receives nothing. Bus refs are copies of the remote's, which the
+// next sync writes again, so nothing is lost. The file is removed directly, as git may refuse to
+// delete a ref it can't read. A complete ref file is an object ID, or "ref: " for a symbolic one;
+// git writes it under a .lock and renames it into place, so a half-written one isn't seen here.
+func clearBrokenRefs(gitDir string, l *log.Logger) (removed []string) {
+	root := filepath.Join(gitDir, filepath.FromSlash(brand.RefRoot))
+	filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
+		if err != nil || e.IsDir() || strings.HasSuffix(path, ".lock") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil || refFileOK(b) {
+			return nil
+		}
+		if os.Remove(path) == nil {
+			l.Printf("removed %s, which held no object ID (%d bytes); the next sync writes it again", path, len(b))
+			if rel, err := filepath.Rel(gitDir, path); err == nil {
+				removed = append(removed, filepath.ToSlash(rel))
+			}
+		}
+		return nil
+	})
+	return removed
+}
+
+// repairRefs removes the bus refs clearBrokenRefs finds, and forgets what was fetched into them,
+// so the next sync fetches each again even if the remote's hasn't moved. It says whether it
+// removed any. Takes mu.
+func (d *Daemon) repairRefs() bool {
+	removed := clearBrokenRefs(d.opt.GitDir, d.log)
+	if len(removed) == 0 {
+		return false
+	}
+	d.mu.Lock()
+	for _, ref := range removed {
+		delete(d.known, ref)
+	}
+	d.mu.Unlock()
+	return true
+}
+
+// refFileOK says b is what git writes for a loose ref: an object ID (SHA-1 or SHA-256, in hex) or a
+// symbolic ref, with its newline.
+func refFileOK(b []byte) bool {
+	s := strings.TrimRight(string(b), "\r\n")
+	if strings.HasPrefix(s, "ref: ") {
+		return len(s) > len("ref: ")
+	}
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // consentLoop stops the daemon once the user's consent is gone.

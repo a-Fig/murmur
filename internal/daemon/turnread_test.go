@@ -1,7 +1,9 @@
 package daemon_test
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/daemon"
@@ -40,25 +42,87 @@ func TestATurnsMessageIsReadWhenItsPromptComes(t *testing.T) {
 	eventually(t, "read: the turn holding it started", pa.stateIs(id, bob, bus.MarkRead))
 }
 
-// The turn view.Turn renders holds the subject the daemon matches it by, whether it prints the
-// subject or, for a subject that only starts the body, the body.
-func TestATurnHoldsItsSubject(t *testing.T) {
-	for _, m := range []proto.MessageView{
-		{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: "Rerun CI?", Body: "It flaked."},
-		{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: "A long first line that the page cut…", Body: "A long first line that the page cut short, and went on."},
+// A turn's prompt marks its own message, not an older one whose subject starts the same (#651): a
+// turn for "Deploy" was cancelled, and the prompt of the turn for "Deploy now" has "Deploy" at the
+// start of a line.
+func TestATurnMarksOnlyItsOwnMessage(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	bobName := b.named(bob)
+	pa := a.page()
+	pa.choose("ada")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+	cancelled := pa.sendText(bobName, "Deploy")
+	eventually(t, "the first handoff", func() bool { return len(calls()) == 1 })
+	eventually(t, "the first handed over", pa.stateIs(cancelled, bob, bus.MarkHanded))
+	b.do(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob"}) // the turn never started
+
+	id := pa.sendText(bobName, "Deploy now")
+	eventually(t, "the second handoff", func() bool { return len(calls()) == 2 })
+	eventually(t, "the second handed over", pa.stateIs(id, bob, bus.MarkHanded))
+
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true, Prompt: calls()[1].Stdin})
+	eventually(t, "read: the turn for it started", pa.stateIs(id, bob, bus.MarkRead))
+	if r, _ := pa.receipt(cancelled, bob); r.State != bus.MarkHanded {
+		t.Fatalf("the cancelled turn's message is %+v, want still handed over", r)
+	}
+}
+
+// A prompt is matched to the turn view.Turn rendered, as the daemon handed it over: after a line a
+// client put before it, cut at the hook's 4 KB, or with its line ends changed. A prompt the user
+// typed, or another message's turn, isn't it, nor is a cut prompt that two turns could be.
+func TestAPromptIsMatchedToItsTurn(t *testing.T) {
+	msg := func(subject, body string) string {
+		return view.Turn(proto.MessageView{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: subject, Body: body})
+	}
+	// hook cuts a prompt as the hook does: at proto.MaxPrompt bytes, where a character starts.
+	hook := func(p string) string {
+		if len(p) <= proto.MaxPrompt {
+			return p
+		}
+		n := proto.MaxPrompt
+		for !utf8.RuneStart(p[n]) {
+			n--
+		}
+		return p[:n]
+	}
+	rerun := msg("Rerun CI?", "It flaked.")
+	cut := msg("A long first line that the page cut…", "A long first line that the page cut short, and went on.")
+	long := msg("Logs", strings.Repeat("é line of the log\n", 400))
+	longAgain := msg("Logs", strings.Repeat("é line of the log\n", 400)+"and one more")
+	deploy, deployNow := msg("Deploy", ""), msg("Deploy now", "")
+	// A line a client put first leaves room in the hook's 4 KB for the turn's header and "Deploy".
+	before := strings.Repeat("a", proto.MaxPrompt-len("Message from quiet-otter via Murmur:\n\nDeploy")-1) + "\n"
+	for _, c := range []struct {
+		name   string
+		prompt string
+		turns  []string
+		want   int
+	}{
+		{"the turn itself", rerun, []string{rerun}, 0},
+		{"a subject that starts the body", cut, []string{cut}, 0},
+		{"after a line a client put first", "[from T3]\n" + rerun, []string{rerun}, 0},
+		{"with Windows line ends, trimmed", strings.TrimSpace(strings.ReplaceAll(rerun, "\n", "\r\n")), []string{rerun}, 0},
+		{"cut at the hook's 4 KB", hook(long), []string{long}, 0},
+		{"two long turns that share their first 4 KB", hook(longAgain), []string{long, longAgain}, -1},
+		{"cut, after lines a client put first", hook("[from T3]\n" + long), []string{rerun, long}, 1},
+		{"the later of two whose subjects start the same", deployNow, []string{deploy, deployNow}, 1},
+		{"the earlier of them", deploy, []string{deploy, deployNow}, 0},
+		{"the oldest of two alike", rerun, []string{rerun, rerun}, 0},
+		{"the same subject, another body", msg("Rerun CI?", "It flaked again."), []string{rerun}, -1},
+		{"the user's own words", "run the tests", []string{msg("test", "")}, -1},
+		{"the user's words under a line like a header", "Message me later\ntest", []string{msg("test", "")}, -1},
+		{"the header alone", strings.SplitN(rerun, "\n", 2)[0], []string{rerun}, -1},
+		{"a turn's start, not cut", strings.SplitN(deployNow, "\n\n", 3)[0] + "\n\nDeploy", []string{deploy, deployNow}, -1},
+		{"cut where two turns still agree", hook(before + deployNow), []string{deploy, deployNow}, -1},
+		{"cut, where only one turn starts so", hook(before + deployNow), []string{rerun, deployNow}, 1},
 	} {
-		if !daemon.Holds(view.Turn(m), m.Subject) {
-			t.Errorf("the turn for %q isn't matched by its subject:\n%s", m.Subject, view.Turn(m))
+		if got := daemon.WhichTurn(c.prompt, c.turns...); got != c.want {
+			t.Errorf("%s: the prompt is taken for turn %d, want %d:\n%s", c.name, got, c.want, c.prompt)
 		}
-	}
-	// A prompt the user typed holds a short subject's words without being Murmur's turn.
-	short := proto.MessageView{From: "d/aaaaaa", FromName: "quiet-otter", To: "d/bbbbbb", Subject: "test"}
-	for _, prompt := range []string{"run the tests", "test\nthen push", "Message me later\ntest"} {
-		if daemon.Holds(prompt, short.Subject) {
-			t.Errorf("the user's prompt %q is taken for the turn of %q", prompt, short.Subject)
-		}
-	}
-	if !daemon.Holds("[from T3]\n"+view.Turn(short), short.Subject) {
-		t.Errorf("a turn after a line a client put before it isn't matched")
 	}
 }

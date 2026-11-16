@@ -80,7 +80,7 @@ func TestAFailedReadWaitsBeforeAskingAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(src, pageFunctions(t, "POLL_MS", "AuthError", "api", "unreadIds", "markOpenRead"))
+	write(src, pageFunctions(t, "POLL_MS", "AuthError", "api", "pageHidden", "unreadIds", "markOpenRead"))
 	harness := filepath.Join(dir, "harness.js")
 	write(harness, markReadHarness)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
