@@ -386,6 +386,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 func (d *Daemon) stoppedWithDaemonLocked(id string) {
 	delete(d.sessions, id)
 	d.st.Stopped[id] = time.Now().Round(0)
+	if d.st.Downed == nil {
+		d.st.Downed = map[string]bool{}
+	}
+	d.st.Downed[id] = true
 	d.saveLocked()
 }
 
@@ -1246,6 +1250,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 			d.dropStoppedLocked(h.ID)
 		} else {
 			delete(d.st.Stopped, h.ID)
+			delete(d.st.Downed, h.ID)
 			s.since = at
 		}
 		d.saveLocked()

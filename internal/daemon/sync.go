@@ -1788,7 +1788,8 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 }
 
 // pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
-// for them, and those left by sessions that didn't come back after a restart.
+// for them, and those left by sessions of a daemon that was killed, which records no stop for
+// them (one that stops does, #736), if they didn't come back after the restart.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1810,6 +1811,10 @@ func (d *Daemon) pruneInboxes() {
 	if time.Since(d.started) < 2*time.Minute {
 		return
 	}
+	if len(d.st.Downed) > 0 {
+		d.st.Downed = nil // nobody is waited for any longer (awaitedLocked)
+		d.saveLocked()
+	}
 	for id := range d.st.Inbox {
 		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && id != bus.PersonSession && d.sessions[id] == nil && !stopped {
 			delete(d.st.Inbox, id)
@@ -1824,7 +1829,7 @@ func (d *Daemon) pruneInboxes() {
 		}
 	}
 	// A thread is kept for a session while it can have messages: it is running or stopped within
-	// StoppedInbox. One that went down with a daemon and never came back has none.
+	// StoppedInbox. One that went down with a daemon that was killed, and never came back, has none.
 	for id := range d.st.T3Routes {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
 			delete(d.st.T3Routes, id)
@@ -1853,6 +1858,7 @@ func (d *Daemon) pruneInboxes() {
 // first; both come here, so what it gets back doesn't depend on which ran first. Caller holds mu.
 func (d *Daemon) dropStoppedLocked(id string) {
 	delete(d.st.Stopped, id)
+	delete(d.st.Downed, id)
 	delete(d.st.Inbox, id)
 	delete(d.st.Commits, id)
 	delete(d.st.T3Routes, id)

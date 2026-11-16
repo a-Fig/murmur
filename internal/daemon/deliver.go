@@ -84,6 +84,10 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 	// Messages kept over a restart never passed through addInboxLocked, which is what kicks: look at
 	// them once, before waiting for anything.
 	d.kickPush()
+	// And once more when sessions the last daemon's stop ended are no longer waited for
+	// (awaitedLocked): a run still going then changes nothing that would kick.
+	hold := time.AfterFunc(reconnectHold+time.Second, d.kickPush)
+	defer hold.Stop()
 	for {
 		// A continuation that lapses (see continueTurnLocked), or a handoff's hold (handedHold), is
 		// woken for too: nothing else may come to end it.
@@ -354,7 +358,7 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil {
-		return false
+		return d.awaitedLocked(id)
 	}
 	st, inT3 := d.threadStateLocked(id)
 	r := d.routeOfLocked(id)
@@ -555,6 +559,20 @@ func (d *Daemon) turnStartLocked(id string) time.Time {
 		return s.turnStart
 	}
 	return time.Time{}
+}
+
+// awaitedLocked says a session of T3 that isn't registered is one the last daemon's stop ended
+// (st.Downed), whose server may be about to reconnect (#736): for reconnectHold after this daemon
+// started, while its thread hasn't been read or T3 shows a run of it going. Its kept inbox is left alone
+// then, as a message handed over would be queued behind the run as a turn of its own (#607), or go
+// into a thread not yet known for a delegate's. Once registered it is held as any reconnected
+// session is (hookBusyLocked). Caller holds mu.
+func (d *Daemon) awaitedLocked(id string) bool {
+	if !d.st.Downed[id] || d.routeOfLocked(id).T3Thread == "" || time.Since(d.started) >= reconnectHold {
+		return false
+	}
+	st, read := d.threadStateLocked(id)
+	return !read || runGoing(st)
 }
 
 // reconnectHold is how long a session that reconnected after a restart, whose hook hasn't run
