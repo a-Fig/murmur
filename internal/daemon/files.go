@@ -20,6 +20,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
 	"github.com/a-Fig/murmur/internal/web"
@@ -208,13 +209,77 @@ func unixPath(path string) bool {
 	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
 }
 
-// readSendFiles reads the files an agent's send names, each no larger than a file may be.
-func readSendFiles(paths []string) ([]sendFile, error) {
+// sendRoots is the folders a send may read files from (#690): the clone's worktrees, the main one
+// among them, and the temp folder, each with its links resolved, and the clone's git directory,
+// which none of them may read inside. The daemon reads a file as the user, outside any sandbox the
+// agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise send anything
+// the user can read, ~/.ssh and cloud credentials among it, to the whole team. What an agent makes
+// as it works, screenshots, logs and diffs, is in the clone or in temp, and anything else it can
+// copy there first. The git directory is out: its config can hold a remote's credentials. So is
+// ~/.claude, where a screenshot pasted into Claude Code may be, as it also holds Claude Code's
+// credentials and every conversation.
+func (d *Daemon) sendRoots(ctx context.Context) (roots []string, gitDir string) {
+	add := func(dir string) {
+		if dir == "" {
+			return
+		}
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = real
+		}
+		roots = append(roots, filepath.Clean(dir))
+	}
+	if out, err := (gitx.Git{Dir: d.opt.GitDir}).Run(ctx, "", "worktree", "list", "--porcelain"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if dir, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "worktree "); ok {
+				add(filepath.FromSlash(dir))
+			}
+		}
+	} else {
+		d.log.Printf("listing the clone's worktrees, for where a send may read files: %v", err)
+	}
+	if d.opt.TempDir != "" {
+		add(d.opt.TempDir)
+	} else {
+		add(os.TempDir())
+		if runtime.GOOS != "windows" {
+			add("/tmp")
+		}
+	}
+	gitDir = d.opt.GitDir
+	if real, err := filepath.EvalSymlinks(gitDir); err == nil {
+		gitDir = real
+	}
+	return roots, filepath.Clean(gitDir)
+}
+
+// inDir says path is root or inside it. Windows' paths don't tell case apart.
+func inDir(path, root string) bool {
+	if runtime.GOOS == "windows" {
+		path, root = strings.ToLower(path), strings.ToLower(root)
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// sendTemp is the folder a refusal tells an agent to copy a file into.
+func (d *Daemon) sendTemp() string {
+	return cmp.Or(d.opt.TempDir, os.TempDir())
+}
+
+// readSendFiles reads the files an agent's send names, each no larger than a file may be, and only
+// from where sendRoots allows. A path is followed through its links first, and the file read is
+// the one it leads to, so a link in temp to ~/.ssh is refused.
+func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
 		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
 	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
+		if runtime.GOOS == "windows" && (strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//")) {
+			// A share, or a device path: opening it, or looking at it, would sign in to whatever
+			// host it names, as the user. Two slashes are a share's on Windows, never Git Bash's.
+			return nil, fmt.Errorf("%s is a network path, which send doesn't read: copy the file into %s and send it from there", path, d.sendTemp())
+		}
 		if !filepath.IsAbs(path) {
 			if unixPath(path) {
 				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
@@ -223,7 +288,20 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 			}
 			return nil, fmt.Errorf("%s isn't a full path", path)
 		}
-		info, err := os.Stat(path)
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	roots, gitDir := d.sendRoots(ctx)
+	for _, path := range paths {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
+		}
+		if !slices.ContainsFunc(roots, func(root string) bool { return inDir(real, root) }) || inDir(real, gitDir) {
+			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
+		}
+		info, err := os.Stat(real)
 		switch {
 		case err != nil:
 			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
@@ -232,7 +310,7 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 		case info.Size() > bus.MaxFile:
 			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
 		}
-		f, err := os.Open(path)
+		f, err := os.Open(real)
 		if err != nil {
 			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		}

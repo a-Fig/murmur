@@ -107,6 +107,17 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   is known to every teammate: one could push their own blob over it and send a message naming it,
   and a device that read theirs first would show their file under the real message. With the sums
   in the name, a directory holds only files that are what its message says.
+- **Where a send reads from** (#690, 2026-11-16). The daemon reads a file as the user, outside
+  any sandbox the agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise
+  send anything the user can read (`~/.ssh`, cloud credentials, other repos) to the whole team. It
+  reads only from the clone's worktrees and the temp folder (`os.TempDir`, and `/tmp` on macOS and
+  Linux), following links first, so a link in temp to `~/.ssh` is refused, and never from the
+  clone's git directory, whose config can hold a remote's credentials. A network path on Windows
+  (`\host\share`) is refused before it is looked at, as looking signs in to that host as the
+  user; so is Linux's `/proc`. `~/.claude` stays out though a screenshot pasted into Claude Code may
+  be there: it holds Claude Code's credentials and every conversation. A refusal says to copy the
+  file into the temp folder. The page's uploads aren't paths, and aren't limited. Left: a hard
+  link, which looks like the file it links to, and a path changed between the look and the read.
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.

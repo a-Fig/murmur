@@ -465,3 +465,58 @@ func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
 	a.stop()
 	eventually(t, "the files ref of a, gone, to leave the remote", func() bool { return listed() == "" })
 }
+
+// A send reads files only from the clone's worktrees and the temp folder, never its git directory,
+// and follows a link to where it leads before it looks (#690). A refusal says where to copy the file.
+func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	base := t.TempDir()
+	temp, outside := filepath.Join(base, "temp"), filepath.Join(base, "outside")
+	for _, dir := range []string{temp, outside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := newDeviceWith(t, remote, func(d *device) { d.tempDir = temp })
+	a.session("aaaaaa", "")
+	put := func(dir, name string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("contents of "+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	send := func(path string) string {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a file", Files: []string{path}}).Error
+	}
+	for what, path := range map[string]string{
+		"a file in temp":           put(temp, "shot.png"),
+		"a file in the clone":      put(filepath.Dir(a.gitDir), "notes.txt"),
+		"a file in temp, by a dot": filepath.Join(temp, "..", "temp", "shot.png"),
+	} {
+		if err := send(path); err != "" {
+			t.Errorf("%s: %s", what, err)
+		}
+	}
+	secret := put(outside, "id_ed25519")
+	refused := map[string]string{
+		"a file elsewhere":                secret,
+		"a file in the git directory":     put(a.gitDir, "config-copy"),
+		"a way out of temp by its parent": filepath.Join(temp, "..", "outside", "id_ed25519"),
+	}
+	if link := filepath.Join(temp, "key"); os.Symlink(secret, link) == nil {
+		refused["a link in temp to a file elsewhere"] = link
+	}
+	for what, path := range refused {
+		err := send(path)
+		if !strings.Contains(err, "isn't in this repo's clone or the temp folder") || !strings.Contains(err, "copy it into "+temp) {
+			t.Errorf("%s: %q, want it refused, saying to copy it into %s", what, err, temp)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		if err := send(`\\localhost\c$\Windows\win.ini`); !strings.Contains(err, "is a network path") {
+			t.Errorf("a network path: %q", err)
+		}
+	}
+}
