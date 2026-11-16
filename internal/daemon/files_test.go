@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +209,7 @@ func TestFilesASendRefuses(t *testing.T) {
 		why   string
 	}{
 		"a path that isn't full":    {[]string{"small.txt"}, "isn't a full path"},
+		"a Git Bash path":           {[]string{"/tmp/shot.png"}, "pass the Windows path, as `cygpath -w /tmp/shot.png` prints it"},
 		"a file that isn't there":   {[]string{filepath.Join(t.TempDir(), "nothing.txt")}, "can't read"},
 		"a directory":               {[]string{t.TempDir()}, "isn't a file"},
 		"too many files":            {nine, "at most 8 files"},
@@ -218,6 +220,9 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a key in UTF-16":           {[]string{writeFile(t, "ps.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n"))}, "ps.txt"},
 		"a key after a stray byte":  {[]string{writeFile(t, "latin.txt", []byte("caf\xe9 AKIAIOSFODNN7EXAMPLE\n"))}, "latin.txt"},
 	} {
+		if what == "a Git Bash path" && runtime.GOOS != "windows" {
+			continue // a full path everywhere else
+		}
 		r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: c.files})
 		if !strings.Contains(r.Error, "not sent") || !strings.Contains(r.Error, c.why) {
 			t.Errorf("%s: %q, want it not sent, saying %q", what, r.Error, c.why)
