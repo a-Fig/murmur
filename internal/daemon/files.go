@@ -246,12 +246,30 @@ func (d *Daemon) openSendRoots() *sendRoots {
 	if err == nil {
 		git, ok = s.open(gitDir)
 	}
-	if !ok {
-		d.log.Printf("looking at the git directory, for where a send may read files: %v", err)
-		return s
+	if ok {
+		defer git.r.Close()
+		s.git = git.id
+		d.addWorktrees(s, git, gitDir)
+	} else {
+		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
 	}
-	defer git.r.Close()
-	s.git = git.id
+	temps := []string{d.opt.TempDir}
+	if d.opt.TempDir == "" {
+		temps = []string{os.TempDir()}
+		if runtime.GOOS != "windows" {
+			temps = append(temps, "/tmp")
+		}
+	}
+	for _, dir := range temps {
+		if root, ok := s.open(dir); ok && !s.add(root) {
+			root.r.Close()
+		}
+	}
+	return s
+}
+
+// addWorktrees adds the clone's worktrees to s's roots.
+func (d *Daemon) addWorktrees(s *sendRoots, git sendRoot, gitDir string) {
 	// The main worktree holds the git directory, unless it was made with --separate-git-dir; each
 	// linked one is named by a registration, read through the git directory's handle, so a link
 	// there to a share is refused rather than followed. A registration's path can be relative to
@@ -303,19 +321,6 @@ func (d *Daemon) openSendRoots() *sendRoots {
 			root.r.Close()
 		}
 	}
-	temps := []string{d.opt.TempDir}
-	if d.opt.TempDir == "" {
-		temps = []string{os.TempDir()}
-		if runtime.GOOS != "windows" {
-			temps = append(temps, "/tmp")
-		}
-	}
-	for _, dir := range temps {
-		if root, ok := s.open(dir); ok && !s.add(root) {
-			root.r.Close()
-		}
-	}
-	return s
 }
 
 // add adds root, unless it is one already, or is the git directory or inside it: a registration an
@@ -323,6 +328,9 @@ func (d *Daemon) openSendRoots() *sendRoots {
 func (s *sendRoots) add(root sendRoot) bool {
 	if slices.ContainsFunc(s.roots, func(r sendRoot) bool { return os.SameFile(r.id, root.id) }) {
 		return false
+	}
+	if s.git != nil && os.SameFile(root.id, s.git) {
+		return false // its handle, though its path was swapped since it was looked at
 	}
 	for dir := root.path; ; dir = filepath.Dir(dir) {
 		if info, err := s.stat(dir); err == nil && os.SameFile(info, s.git) {
@@ -352,11 +360,18 @@ func (s *sendRoots) open(dir string) (sendRoot, bool) {
 	if err != nil {
 		return sendRoot{}, false
 	}
-	vol, rel, err := s.volume(path)
-	if err != nil {
-		return sendRoot{}, false
+	var r *os.Root
+	if runtime.GOOS == "windows" {
+		vol, rel, err := s.volume(path)
+		if err != nil {
+			return sendRoot{}, false
+		}
+		r, err = vol.OpenRoot(rel)
+	} else {
+		// No share to sign in to off Windows, and os.Root, from /, would need every folder above
+		// readable, where a lookup needs only search: a /home of mode 711 would refuse every send.
+		r, err = os.OpenRoot(path)
 	}
-	r, err := vol.OpenRoot(rel)
 	if err != nil {
 		return sendRoot{}, false
 	}
@@ -416,11 +431,26 @@ func (s *sendRoots) volume(path string) (*os.Root, string, error) {
 
 // stat looks at path, which has no links, through its volume's handle.
 func (s *sendRoots) stat(path string) (os.FileInfo, error) {
+	if runtime.GOOS != "windows" {
+		return os.Lstat(path) // see open
+	}
 	vol, rel, err := s.volume(path)
 	if err != nil {
 		return nil, err
 	}
 	return vol.Lstat(rel)
+}
+
+// readlink is where the link at path leads, read as stat looks.
+func (s *sendRoots) readlink(path string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return os.Readlink(path)
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return "", err
+	}
+	return vol.Readlink(rel)
 }
 
 // local is path with its links resolved, followed one part at a time through its volume's handle:
@@ -445,11 +475,7 @@ func (s *sendRoots) local(path string) (string, error) {
 			done = filepath.Dir(done)
 			continue
 		}
-		r, rel, err := s.volume(next)
-		if err != nil {
-			return "", err
-		}
-		info, err := r.Lstat(rel)
+		info, err := s.stat(next)
 		if err != nil {
 			return "", err
 		}
@@ -460,7 +486,7 @@ func (s *sendRoots) local(path string) (string, error) {
 		if hops++; hops > 40 {
 			return "", errors.New("too many links")
 		}
-		to, err := r.Readlink(rel)
+		to, err := s.readlink(next)
 		if err != nil {
 			return "", err
 		}
@@ -477,8 +503,8 @@ func (s *sendRoots) local(path string) (string, error) {
 	return done, nil
 }
 
-// isLink says info is a link, or a Windows junction, which os.Root follows as it does a link and
-// Go reports as irregular.
+// isLink says info is a link, or a Windows junction, which Go reports as irregular: local follows
+// both itself, a part at a time.
 func isLink(info os.FileInfo) bool {
 	return info.Mode()&os.ModeSymlink != 0 || runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0
 }

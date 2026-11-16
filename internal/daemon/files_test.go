@@ -668,3 +668,31 @@ func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 		t.Errorf("the new copy went too")
 	}
 }
+
+// A folder above the clone or temp that can be passed through but not listed, as a shared host's
+// /home of mode 711 is, doesn't stop a send (Fable's review of #768).
+func TestSendReadsFilesBelowAFolderThatCantBeListed(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("a folder's search-only mode is Unix's, and root ignores it")
+	}
+	t.Parallel()
+	remote := newRemote(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	temp := filepath.Join(locked, "temp")
+	if err := os.MkdirAll(temp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shot := filepath.Join(temp, "shot.png")
+	if err := os.WriteFile(shot, []byte("a picture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	a := newDeviceWith(t, remote, func(d *device) { d.tempDir = temp })
+	a.session("aaaaaa", "")
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a file", Files: []string{shot}}); r.Error != "" {
+		t.Errorf("a file in temp, below a folder that can't be listed: %s", r.Error)
+	}
+}
