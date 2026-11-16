@@ -15,9 +15,10 @@
 // the same moments, with a payload of Claude Code's shape whose session_id is the Pi session's
 // file, and reads its answer as Claude Code would (internal/join/pi.go, #205).
 //
-// OpenCode 2 has none either, and Murmur's plugin there does the same (`mur hook --agent opencode`),
-// with OpenCode's session ID, and says which sessions another session started
-// (internal/join/opencodeplugin.go, #431, #455).
+// OpenCode has none either, and Murmur's plugin there does the same (`mur hook --agent opencode`):
+// in OpenCode 2 with OpenCode's session ID, saying which sessions another session started (#431,
+// #455), and in OpenCode 1 with the ID the plugin gave the MCP server for the process's sessions,
+// which OpenCode 1 doesn't tell apart (#446; internal/join/opencodeplugin.go).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it

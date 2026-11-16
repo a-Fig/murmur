@@ -19,7 +19,7 @@ import (
 // AppKit works only on the process's first thread. Go starts the main goroutine there, and this
 // keeps it there before anything can move it, for `mur app` alone: no other command needs it.
 func init() {
-	if appCommand(os.Args[1:]) {
+	if appCommand(os.Args[1:]) || FromBundle() {
 		runtime.LockOSThread()
 	}
 }

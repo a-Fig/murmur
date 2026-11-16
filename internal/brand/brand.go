@@ -36,6 +36,10 @@ const (
 	Command = "mur"
 	// MCPServer is the MCP server's name; Claude Code shows its tools as mcp__<name>__<tool>.
 	MCPServer = Name
+	// AppID names the desktop app to the system (#616): its bundle identifier on macOS, its
+	// AppUserModelID on Windows, its .desktop file and icon on Linux. It is reverse DNS of the
+	// site's domain (ReportURL's).
+	AppID = "dev.afig." + Name
 
 	// JoinDoc and UseDoc are the pages the marker in a repo's AGENTS.md and CLAUDE.md sends an
 	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools

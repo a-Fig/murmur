@@ -147,3 +147,21 @@ func TestOpenCodeRouteNamesTheDefaultStateDirectory(t *testing.T) {
 		t.Errorf("route %+v, want the OpenCode program and %q", r, state)
 	}
 }
+
+// The refresh of OpenCode's plugin asks the OpenCode that started the server which version it is
+// (#446): that program, under either name OpenCode installs, and nothing for another parent.
+func TestOpenCodeClientIsTheOpenCodeThatStartedTheServer(t *testing.T) {
+	for exe, want := range map[string]bool{
+		abs(t, "opencode"):     true,
+		abs(t, "opencode2"):    true,
+		abs(t, "OpenCode.exe"): true,
+		abs(t, "node"):         false,
+		abs(t, "opencode-ai"):  false,
+		"opencode":             false,
+	} {
+		startedBy(t, 4242, exe)
+		if got := openCodeClient(); (got == exe) != want || (!want && got != "") {
+			t.Errorf("started by %s: %q", exe, got)
+		}
+	}
+}

@@ -102,8 +102,9 @@ your COO. Their source is in [`internal/skills`](internal/skills).
 | Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
+| OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |
-| OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
+| Muse Code               | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
 idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
@@ -117,7 +118,7 @@ used one of Murmur's tools.
 | Command                | What it does |
 | ---------------------- | ------------ |
 | `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. Its Settings sets this device's mode in the repo: online, do not disturb (messages to your agents wait), or invisible (off Murmur, as if offline). |
-| `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. On Linux, only in a build made with `-tags desktop`. |
+| `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |

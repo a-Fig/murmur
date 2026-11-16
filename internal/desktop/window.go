@@ -44,7 +44,10 @@ func Run(ctx context.Context, opts Options) error {
 		HideUntilLoaded:   true,
 		FrameAutosaveName: brand.Product,
 		AcceptsFirstMouse: true,
-		OnClose:           func() { a.w.Terminate() },
+		OnClose: func() {
+			opts.Instance.closingDown() // before it has gone, so no click is answered by it
+			a.w.Terminate()
+		},
 	})
 	after()
 	if err != nil {
@@ -75,12 +78,18 @@ func Run(ctx context.Context, opts Options) error {
 	go func() {
 		select {
 		case <-ctx.Done():
+			opts.Instance.closingDown()
 			w.Terminate()
 		case <-done:
 		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if opts.Instance != nil {
+		in := opts.Instance
+		in.onShow(func(gitDir string, reply func(bool)) { a.show(ctx, gitDir, opts.Switch, in.isClosing, reply) })
+		defer opts.Instance.closingDown() // before the web view is destroyed
+	}
 	if opts.Follow != nil {
 		go a.follow(ctx, opts.Follow)
 	}
@@ -101,6 +110,47 @@ type app struct {
 	unread int
 	dark   *bool // the frame's theme, once the page has said
 	front  *bool // what the page was last told of whether the window is in front; nil, not yet
+}
+
+// show brings the window forward, asked by a later `mur app`, and moves it to the repo at gitDir
+// when that asked for one, and then says whether it came forward. It does both on the UI thread,
+// so a close queued there first is seen, and the one asking opens a window of its own rather than
+// being told this one came. Any goroutine.
+func (a *app) show(ctx context.Context, gitDir string, to func(context.Context, string) string, closing func() bool, reply func(bool)) {
+	a.w.Dispatch(func() {
+		if ctx.Err() != nil || closing() {
+			reply(false)
+			return
+		}
+		a.raise()
+		reply(true)
+		if gitDir != "" && to != nil {
+			a.switchTo(ctx, gitDir, to)
+		}
+	})
+}
+
+// switchTo moves the window to the repo at gitDir, once its daemon is up. Any goroutine.
+func (a *app) switchTo(ctx context.Context, gitDir string, to func(context.Context, string) string) {
+	go func() {
+		page := to(ctx, gitDir)
+		if page == "" || ctx.Err() != nil {
+			return
+		}
+		a.mu.Lock()
+		a.host = hostOf(page)
+		a.mu.Unlock()
+		a.w.Dispatch(func() { a.w.Navigate(page) })
+	}()
+}
+
+// raise brings the window forward. On the UI thread.
+func (a *app) raise() {
+	if s, ok := a.native.(interface{ show() }); ok {
+		s.show() // Windows': restores a minimized window, and leaves a maximized one maximized
+		return
+	}
+	a.w.Raise()
 }
 
 // pageNote is what the page tells the window each time its title or unread count changes, and
