@@ -80,6 +80,12 @@ into some shard by itself. macOS does the same on two runners, `test-macos-daemo
 2026-11-12: the package was 1,154 s of `test-macos`'s 20 minutes, which made it the longest job.
 Linux runs the package whole, in about 6 minutes.
 
+**A test that hangs fails with its stack** (#727, 2026-11-16). Each job's `-timeout` is under half
+its limit (25 minutes in 60, and 30 in the daemon shards' 75), so a run and the retry of what failed
+both fit, and a hung test ends in Go's panic, which names it and prints every goroutine. Before,
+the shards' 50-minute `-timeout` outlasted the hour with a retry, and a hang on #723 was a job
+cancelled after 65 minutes with no log. Windows shard 1 takes about 20 minutes, the longest.
+
 Until 2026-11-01 some jobs ran on self-hosted machines, because GitHub's runners didn't start on
 this account while the repo was private: the macOS job on a machine of Tyler's that also did other
 work (until 2026-10-31), and the Linux job on a Spot VM in Google Cloud (project `t4-ci-3690`) that
