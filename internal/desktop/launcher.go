@@ -64,12 +64,18 @@ func InstallLauncher(exe, dir string) (where string, changed bool, err error) {
 func RemoveLauncher(dir string) (string, error) {
 	had := readStamp(dir)
 	where := launcherPath()
-	os.Remove(filepath.Join(dir, stampFile))
 	if where == "" || !exists(where) || had.Where != where && !ownsLauncher(where) {
+		os.Remove(filepath.Join(dir, stampFile))
 		return "", nil
 	}
+	// The record goes only once the launcher has, or a launcher that wouldn't go would be
+	// taken for someone else's from then on.
+	if err := os.RemoveAll(where); err != nil {
+		return where, err
+	}
 	removeLauncherFiles(dir)
-	return where, os.RemoveAll(where)
+	os.Remove(filepath.Join(dir, stampFile))
+	return where, nil
 }
 
 func readStamp(dir string) stamp {

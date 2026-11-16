@@ -16,7 +16,7 @@ func TestBringForward(t *testing.T) {
 	if BringForward(path, "") {
 		t.Fatal("brought forward with no window")
 	}
-	in, err := Claim(path)
+	in, err := Claim(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestBringForward(t *testing.T) {
 // A window that closes leaves a record another window wrote meanwhile.
 func TestCloseLeavesAnotherWindowsRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "window.json")
-	first, err := Claim(path)
+	first, err := Claim(path, "")
 	if err != nil || first == nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestClaimOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			in, err := Claim(path)
+			in, err := Claim(path, "")
 			if err != nil {
 				t.Error(err)
 			}
@@ -103,5 +103,27 @@ func TestClaimOnce(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("%d windows claimed", n)
+	}
+}
+
+// A repo asked for before the window is made isn't undone by a later click that asks for none,
+// and a window on its way out doesn't answer, so the one asking opens its own.
+func TestPendingAndClosing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "window.json")
+	in, err := Claim(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	BringForward(path, "/repos/b")
+	BringForward(path, "")
+	var got []string
+	in.onShow(func(gitDir string) { got = append(got, gitDir) })
+	if len(got) != 1 || got[0] != "/repos/b" {
+		t.Fatalf("shown %q", got)
+	}
+	in.closingDown()
+	if BringForward(path, "") {
+		t.Fatal("a closing window answered")
 	}
 }

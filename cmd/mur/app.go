@@ -97,7 +97,11 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		// A window that can't be made (no web view, no screen) fails within a second or two, and
 		// says why in the log: that is worth saying here, where someone is looking.
 		select {
-		case <-exited:
+		case err := <-exited:
+			if err == nil { // another window claimed first, and came forward
+				fmt.Fprintln(out, "Brought the open window forward.")
+				return nil
+			}
 			return fmt.Errorf("the window closed as it opened: %s", lastLine(logPath, start))
 		case <-time.After(appStartWait):
 		}
@@ -108,10 +112,13 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	// This process is the window: it says so before starting a daemon, which can take seconds,
 	// so a second click meanwhile finds it rather than opening another (Opus review). Two clicks
 	// at once both get this far; the second finds the first's claim here, and stops.
-	inst, err := desktop.Claim(window)
+	inst, err := desktop.Claim(window, asked)
 	if err != nil {
 		log.Printf("a second mur app will open a second window: %v", err)
 	} else if inst == nil {
+		if !*fromLauncher {
+			fmt.Fprintln(out, "Brought the open window forward.")
+		}
 		return nil
 	}
 	defer inst.Close()

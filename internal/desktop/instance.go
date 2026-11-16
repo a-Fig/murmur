@@ -47,15 +47,16 @@ type Instance struct {
 	show    func(gitDir string) // set once the window can come forward
 	asked   bool                // asked to before it could
 	pending string              // the repo last asked for then, or ""
+	closing bool                // the window has gone, or is going
 }
 
 // Claim opens the window's port and records it at path, unless a window is open already: then
-// that one comes forward, and Claim returns nil. Two launches at once each find no window before
+// that one comes forward, showing the repo at gitDir unless that is "", and Claim returns nil. Two launches at once each find no window before
 // either has claimed, so the finding and the claiming happen under a lock file beside the record.
-func Claim(path string) (*Instance, error) {
+func Claim(path, gitDir string) (*Instance, error) {
 	unlock := lockFile(path + ".lock")
 	defer unlock()
-	if BringForward(path, "") {
+	if BringForward(path, gitDir) {
 		return nil, nil
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -132,11 +133,17 @@ func (in *Instance) answer(c net.Conn) {
 		return
 	}
 	in.mu.Lock()
-	show := in.show
-	if show == nil {
-		in.asked, in.pending = true, req.GitDir
+	show, closing := in.show, in.closing
+	if show == nil && !closing {
+		in.asked = true
+		if req.GitDir != "" {
+			in.pending = req.GitDir // a later click on the launcher doesn't undo it
+		}
 	}
 	in.mu.Unlock()
+	if closing {
+		return // no "ok", so the one asking opens a window of its own
+	}
 	if show != nil {
 		show(req.GitDir)
 	}
@@ -156,12 +163,25 @@ func (in *Instance) onShow(show func(gitDir string)) {
 	}
 }
 
+// closingDown says the window is going: what is asked of it from now on isn't answered.
+func (in *Instance) closingDown() {
+	if in == nil {
+		return
+	}
+	in.mu.Lock()
+	in.show, in.closing = nil, true
+	in.mu.Unlock()
+}
+
 // Close closes the port and takes the record out, if it is still this window's: a second window
-// started meanwhile may have written its own.
+// started meanwhile may have written its own, and the lock keeps one from starting meanwhile.
 func (in *Instance) Close() {
 	if in == nil {
 		return
 	}
+	in.closingDown()
+	unlock := lockFile(in.path + ".lock")
+	defer unlock()
 	in.ln.Close()
 	if b, err := os.ReadFile(in.path); err == nil {
 		var now instance

@@ -83,6 +83,7 @@ func Run(ctx context.Context, opts Options) error {
 	defer cancel()
 	if opts.Instance != nil {
 		opts.Instance.onShow(func(gitDir string) { a.show(ctx, gitDir, opts.Switch) })
+		defer opts.Instance.closingDown() // before the web view is destroyed
 	}
 	if opts.Follow != nil {
 		go a.follow(ctx, opts.Follow)
