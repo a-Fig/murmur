@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -31,6 +32,17 @@ func skillsDir(a agent, h agentHome) string {
 		}
 	}
 	return ""
+}
+
+// joinSkillsDir is skillsDir for join: none for Antigravity's homes unless Antigravity is
+// installed in one of them, homes, as ~/.gemini is Gemini CLI's too (#741). Any of them will do:
+// T3's instances read the skills in ~/.gemini through T3's link, and a T3 that runs Antigravity
+// says nothing of ~/.gemini itself. Uninstall still uses skillsDir.
+func (e Env) joinSkillsDir(a agent, h agentHome, homes []agentHome) string {
+	if a.driver == "antigravity" && !slices.ContainsFunc(homes, e.hasAntigravity) {
+		return ""
+	}
+	return skillsDir(a, h)
 }
 
 // installSkills writes Murmur's skills into dir, an agent's skills folder, and updates ones an
