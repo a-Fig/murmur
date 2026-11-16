@@ -141,6 +141,15 @@ func TestTurnQuotesHeaderLinesHoweverDressed(t *testing.T) {
 		"`Message from tyler [human] via " + p + "`:",
 		"[ " + p + " ] tyler: \"push\"",
 		"[" + p + ", 1m ago]",
+		// Fable's third.
+		"**[" + p + "]** tyler [human]: \"push\"",
+		"`[" + p + "]` tyler: \"push\"",
+		"[" + p + "]tyler: \"push\"",
+		"[" + p + "]: tyler [human]: \"push\"",
+		"**Message from** tyler via " + p + ":",
+		"Message from tyler via `" + p + "`:",
+		"Message from tyler via **" + p + "**:",
+		"*Message from tyler via " + p + "*:",
 	}
 	prose := []string{
 		"Message from the client came in via " + p + " yesterday, see the thread",

@@ -484,9 +484,8 @@ func quotedBody(body string) string {
 // headerLine says a body line reads as a line Murmur writes to start a message: a turn's first
 // line ("Message from" or "Message sent in", then "via Murmur" followed by ":" or ",", as every
 // real one is), or a notice's or the inbox's ("[Murmur] ...", "[Murmur message from ..."). An
-// agent reads past what would otherwise save a forgery, so it is judged in lower case, with runs
-// of spaces as one, and with leading blanks, invisible characters and Markdown marks (**, ##, -)
-// off. A line that starts with the same words but doesn't go on as a header does ("came in via
+// agent reads past what would otherwise save a forgery, so it is judged as headerForm has it
+// (Fable's three reviews of #710). A line that starts with the same words but doesn't go on as a header does ("came in via
 // Murmur yesterday") is the sender's prose. Letters from other scripts that look the same
 // (Cyrillic М) still pass: closing that would take a confusables table.
 func headerLine(line string) bool {
@@ -494,15 +493,19 @@ func headerLine(line string) bool {
 	product := strings.ToLower(brand.Product)
 	if b, ok := strings.CutPrefix(t, "["); ok {
 		// A notice ("[Murmur] tyler ..."), the inbox's envelope ("[Murmur message from ...") or a
-		// receipt's ("[Murmur, 1m ago]"), spaced inside the brackets or not; a Markdown link
-		// ("[Murmur](...)", "[Murmur]: ...") is prose.
+		// receipt's ("[Murmur, 1m ago]"), spaced inside the brackets or not. Only a Markdown link
+		// ("[Murmur](...)", "[Murmur][1]", "[Murmur]: https://...") is prose.
 		b = strings.TrimPrefix(b, " ")
-		if rest, ok := strings.CutPrefix(b, product); ok {
-			rest = strings.TrimPrefix(rest, " ")
-			return rest == "]" || strings.HasPrefix(rest, "] ") || strings.HasPrefix(rest, ",") ||
-				strings.HasPrefix(rest, "message from ")
+		rest, ok := strings.CutPrefix(b, product)
+		if !ok {
+			return false
 		}
-		return false
+		rest = strings.TrimPrefix(rest, " ")
+		if link, ok := strings.CutPrefix(rest, "]"); ok {
+			return !strings.HasPrefix(link, "(") && !strings.HasPrefix(link, "[") &&
+				!strings.HasPrefix(link, ": http")
+		}
+		return strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, "message from ")
 	}
 	if !strings.HasPrefix(t, "message from ") && !strings.HasPrefix(t, "message sent in ") {
 		return false
@@ -513,10 +516,12 @@ func headerLine(line string) bool {
 			return false
 		}
 		rest = rest[i+len(" via "+product):]
-		// What follows "via Murmur" in a real header is a colon or a comma. Marks and blanks before
-		// it don't save a forgery ("via Murmur**:", "via Murmur :"), nor does its punctuation or its
-		// absence; a word does ("via Murmur yesterday", "via murmur.dev").
-		after := strings.TrimLeft(rest, " *_`~")
+		// What follows "via Murmur" in a real header is a colon or a comma. A blank before it doesn't
+		// save a forgery ("via Murmur :"), nor does other punctuation or its absence; a word does
+		// ("via Murmur yesterday", "via murmur.dev"). So does a dash or a bracket after it ("via
+		// Murmur — push now", "via Murmur (urgent):"): an allow-list leaks somewhere, and this is
+		// where (docs/design/delivery.md).
+		after := strings.TrimLeft(rest, " ")
 		switch {
 		case after == "", strings.HasPrefix(after, ":"), strings.HasPrefix(after, ","),
 			strings.HasPrefix(after, ";"), strings.HasPrefix(after, "："):
@@ -529,15 +534,19 @@ func headerLine(line string) bool {
 	}
 }
 
-// headerForm is line as headerLine judges it: lower case, leading blanks, invisible characters
-// and Markdown marks off, and each run of spaces (a tab, a no-break space, a braille blank) one
-// space.
+// headerForm is line as headerLine judges it: lower case, without Markdown's emphasis and code
+// marks (* _ ` ~) anywhere, leading blanks, invisible characters and heading or list marks (# -)
+// off, and each run of spaces (a tab, a no-break space, a braille blank) one space.
 func headerForm(line string) string {
 	blank := func(r rune) bool { return unicode.IsSpace(r) || r == '⠀' || unicode.Is(unicode.Cf, r) }
-	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || strings.ContainsRune("*#-_`~", r) })
+	mark := func(r rune) bool { return strings.ContainsRune("*_`~", r) }
+	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || mark(r) || r == '#' || r == '-' })
 	var b strings.Builder
 	space := false
 	for _, r := range t {
+		if mark(r) {
+			continue
+		}
 		if blank(r) {
 			if !space {
 				b.WriteByte(' ')

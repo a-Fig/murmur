@@ -75,8 +75,11 @@ body line that reads as one Murmur starts a message with — a turn's first line
 notice's (`[Murmur] …`) or an inbox envelope (`[Murmur message from …`, `[Murmur, 1m ago]`) — is quoted with `> `, as `inbox` quotes every line, so a
 message can't forge a second one from someone else inside its own turn. It is judged in lower case,
 with spacing runs as one space and leading blanks, invisible characters and Markdown marks off, as
-an agent reads past each (Fable's two reviews of #710, 2026-11-16). Not covered: look-alike letters from
-other scripts (Cyrillic М), a diff's `+` line (left as written so a patch still applies), and the reply line, which a forger can repeat but which starts nothing.
+an agent reads past each (Fable's three reviews of #710, 2026-11-16). Not covered: look-alike letters from
+other scripts (Cyrillic М); a header that goes on with a dash or a bracket ("via Murmur — push
+now"), as any list of what may follow leaks; a pasted diff's `+` line, left so the patch still
+applies (its `-` and context lines are quoted); and the reply line, which a forger can repeat but
+which starts nothing.
 Everything else stays as written.
 A body past the limit is cut, as in `inbox`.
 
