@@ -35,8 +35,9 @@ func TestARunTheHookHasntSeenIsAtWork(t *testing.T) {
 		{"handed over, a read since finds the run", true, busy, time.Second, 2 * time.Second, true},
 		{"handed over before the turn ended", true, idle, 20 * time.Second, 15 * time.Second, false},
 		{"handed over past handedHold, never read", true, nil, 0, handedHold + time.Second, false},
-		// With no hook, T3's queue is the only way the session hears of a message.
-		{"no hook, a run", false, busy, 2 * time.Second, 2 * time.Second, false},
+		// With no hook, T3's database alone says the session is at work (#699).
+		{"no hook, a run", false, busy, 2 * time.Second, 2 * time.Second, true},
+		{"no hook, no run", false, idle, time.Second, 2 * time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -186,15 +187,15 @@ func TestAHandoffReadsTheThreadFirst(t *testing.T) {
 	st := t3db.State{}
 	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) { return st, nil }
 	j := &pushJob{id: "aaaaaa", route: s.route}
-	if d.t3RunGoing(context.Background(), j) {
+	if d.t3RunGoing(context.Background(), j, pageSettings{}) {
 		t.Fatal("a run going, by a read that found none")
 	}
 	st = t3db.State{Busy: true, Left: true}
-	if d.t3RunGoing(context.Background(), j) {
+	if d.t3RunGoing(context.Background(), j, pageSettings{}) {
 		t.Fatal("a run going, by a read that found only runs T3 left behind")
 	}
 	st = t3db.State{Busy: true, Model: "claude-fable-5-2"}
-	if !d.t3RunGoing(context.Background(), j) {
+	if !d.t3RunGoing(context.Background(), j, pageSettings{}) {
 		t.Fatal("no run going, by a read that found one")
 	}
 	d.mu.Lock()

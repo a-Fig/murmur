@@ -152,6 +152,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 	}
 	d.noteUnseenLocked()
+	d.noteHooklessLocked(wake)
 	// The first read that began after a handoff ends the hold it put on the session (runUnseen): the
 	// next message may go, though nothing else the read found changed.
 	for _, s := range d.sessions {
