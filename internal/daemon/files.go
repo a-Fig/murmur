@@ -396,14 +396,15 @@ func (d *Daemon) refundUploadLocked(at string) bool {
 }
 
 // uploadLost says whether the push of files ref at, which ended with err, is known to have left
-// nothing on the remote. One never sent, for want of consent or by an invisible device, did. One
+// nothing on the remote. One never sent did: for want of consent, by an invisible device, or
+// because its time ran out before git was started for it (notPushedError). One
 // cut off at its time, or by the daemon stopping, may land yet, as what its git started can outlive
 // it: the prune looks, once that has had its time (pruneFiles). For any other the remote is asked,
 // one it refused included: "remote failed to report status" reads as a refusal, and is what a
 // push that landed says when the connection broke after.
 func (d *Daemon) uploadLost(ctx context.Context, at string, err error) bool {
 	switch {
-	case errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible):
+	case errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible), errors.As(err, new(notPushedError)):
 		return true
 	case ctx.Err() != nil, errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return false

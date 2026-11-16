@@ -29,6 +29,7 @@ func TestWhichFailedUploadsAreLost(t *testing.T) {
 		{bus.ErrRejected, there, false},
 		{ErrNoConsent, there, true},
 		{ErrInvisible, there, true},
+		{notPushedError{context.DeadlineExceeded}, there, true},
 		{fmt.Errorf("%w: signal: killed", context.DeadlineExceeded), gone, false},
 		{context.Canceled, gone, false},
 		{errors.New("the connection dropped"), gone, true},
@@ -43,11 +44,11 @@ func TestWhichFailedUploadsAreLost(t *testing.T) {
 	if d.uploadLost(stopped, gone, errors.New("killed")) {
 		t.Error("a push the daemon's stop cut off counts as lost")
 	}
-	// A push whose time ran out says so, whatever git said of how it ended.
+	// A push whose time had run out before it began says so, and that it was never sent.
 	late, cancel := context.WithTimeout(ctx, time.Millisecond)
 	defer cancel()
 	<-late.Done()
-	if _, err := tryFilesRef(t, d, late); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := tryFilesRef(t, d, late); !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, new(notPushedError)) {
 		t.Errorf("a push out of time ended with %v", err)
 	}
 }
