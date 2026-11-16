@@ -30,6 +30,7 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	wait := fs.Bool("wait", false, "stay until the window closes")
 	devtools := fs.Bool("devtools", false, "let the window open the web view's developer tools")
 	page := fs.String("page", "", "show this address and no clone's: the devserver's (internal/web/devserver), for work on the app")
+	fromLauncher := fs.Bool("from-launcher", false, "started from the app's launcher, which needs no putting in place and has no terminal to tell")
 	fs.Parse(args)
 	if !desktop.Supported {
 		return desktop.Run(ctx, desktop.Options{})
@@ -42,9 +43,25 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A window is open already: it comes forward, and no second one opens (#616). Macs start an
+	// app's bundle once, but a `mur app` typed in a terminal is another process.
+	window := filepath.Join(cfg, "window.json")
+	if (!*wait || *fromLauncher) && desktop.BringForward(window) {
+		if !*fromLauncher {
+			fmt.Fprintln(out, "Brought the open window forward.")
+		}
+		return nil
+	}
+	// Started from Murmur.app, this process is the window, so the Dock's icon is the bundle's.
+	if desktop.FromBundle() {
+		*wait = true
+	}
 	gitDir, err := appClone(ctx, *dir, cfg)
 	if err != nil {
 		return err
+	}
+	if !*wait && !*fromLauncher {
+		putLauncher(cfg, out) // once there is a repo for the app to show
 	}
 	if !*wait {
 		exe, err := os.Executable()
@@ -69,6 +86,9 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
+		if *fromLauncher {
+			return nil // nobody is at a terminal to be told it opened
+		}
 		// A window that can't be made (no web view, no screen) fails within a second or two, and
 		// says why in the log: that is worth saying here, where someone is looking.
 		select {
@@ -87,11 +107,28 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	f := &follower{cfg: cfg, gitDir: gitDir, page: pageOf}
 	f.remember()
 	return desktop.Run(ctx, desktop.Options{
-		Page:   addr,
-		Follow: f.follow,
-		Open:   browse,
-		Debug:  *devtools,
+		Page:     addr,
+		Follow:   f.follow,
+		Open:     browse,
+		Debug:    *devtools,
+		Instance: window,
 	})
+}
+
+// putLauncher puts the app's launcher in place for this mur (#616), or moves it here if mur has
+// moved, and says so when it did. Failing to is no reason not to open the window.
+func putLauncher(cfg string, out io.Writer) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	where, changed, err := desktop.InstallLauncher(exe, cfg)
+	switch {
+	case err != nil:
+		fmt.Fprintf(out, "Couldn't add the app's launcher: %v\n", err)
+	case changed:
+		fmt.Fprintf(out, "Added %s's launcher, to start it as any other app: %s\n", brand.Product, where)
+	}
 }
 
 // appStartWait is how long `mur app` watches the window's process before saying it opened.

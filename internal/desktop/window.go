@@ -56,6 +56,14 @@ func Run(ctx context.Context, opts Options) error {
 	w.SetSize(1280, 820, glaze.HintNone)
 	a.native = newNative(w)
 	defer a.native.close()
+	if opts.Instance != "" {
+		stop, err := listenInstance(opts.Instance, func() { w.Dispatch(a.raise) })
+		if err != nil {
+			log.Printf("a second mur app will open a second window: %v", err)
+		} else {
+			defer stop()
+		}
+	}
 
 	if err := w.Bind("murmurApp", a.fromPage); err != nil {
 		return err
@@ -101,6 +109,15 @@ type app struct {
 	unread int
 	dark   *bool // the frame's theme, once the page has said
 	front  *bool // what the page was last told of whether the window is in front; nil, not yet
+}
+
+// raise brings the window forward, asked by a later `mur app`. On the UI thread.
+func (a *app) raise() {
+	if s, ok := a.native.(interface{ show() }); ok {
+		s.show() // Windows': restores a minimized window, and leaves a maximized one maximized
+		return
+	}
+	a.w.Raise()
 }
 
 // pageNote is what the page tells the window each time its title or unread count changes, and

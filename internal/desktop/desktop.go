@@ -29,6 +29,9 @@ type Options struct {
 	Open func(url string) error
 	// Debug turns on the web view's developer tools.
 	Debug bool
+	// Instance is where the open window records itself, so a later `mur app` brings it forward
+	// rather than opening another (BringForward). "" records nothing.
+	Instance string
 }
 
 func hostOf(page string) string {

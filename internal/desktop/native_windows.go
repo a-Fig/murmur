@@ -22,8 +22,9 @@ import (
 
 // On Windows the window gets the app's icon (a Go binary carries none), an icon in the
 // notification area, and a dot on its taskbar button while something is unread. A notification
-// is a balloon from that icon, which Windows 10 and 11 show as a toast with the app's icon. A
-// toast of its own would need an AppUserModelID registered through a Start menu shortcut.
+// is a balloon from that icon, which Windows 10 and 11 show as a toast with the app's icon. The
+// Start menu shortcut (#616) registers the AppUserModelID a toast of its own needs; the balloon is
+// still what shows.
 
 var (
 	user32  = windows.NewLazySystemDLL("user32.dll")
@@ -116,6 +117,7 @@ type winNative struct {
 // to it. The runtime reads it as the web view is made; what it returns puts it back, so the
 // daemons and browsers the app starts don't inherit it.
 func beforeWindow() (after func()) {
+	setProcessAppID() // the Start menu shortcut's (launcher_windows.go)
 	const env = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 	if _, set := os.LookupEnv(env); set {
 		return func() {}
