@@ -290,7 +290,8 @@ type Issue struct {
 // the session's messaging socket, so none of this is logged, shown on the page or put on the bus.
 // Every field is optional.
 type Route struct {
-	// T3CLI is T3CODE_CLI_PATH, set for the agents T3 runs, and T3Home is T3CODE_HOME where the
+	// T3CLI is T3's command line: T3CODE_CLI_PATH, set for the agents T3's app runs, or for a
+	// thread of its headless server, which sets none, the `t3` on PATH (#780). T3Home is T3CODE_HOME where the
 	// agent has it. T3Thread is the T3 thread the session is, which is how a message reaches it
 	// through T3 (`t3 thread send`) even while the session's MCP server is away.
 	T3CLI    string `json:"t3Cli,omitempty"`

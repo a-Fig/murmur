@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -400,9 +401,15 @@ func nativeID(native string) string {
 // T3 runs (threadEnv), and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps
 // all of this to itself (see proto.Route).
 func routeFromEnv(agent string) proto.Route {
-	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
+	r := proto.Route{T3CLI: t3CLI(), T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
 	case isClaude(agent):
+		// A session T3 runs is reached through T3 only (see the daemon's viaOf): a line written to its
+		// messaging socket starts no turn, and the daemon would take the message as read. One whose
+		// T3 command line can't be found gets no socket, so its messages wait as notices (#780).
+		if r.T3CLI == "" && ranByThread() {
+			break
+		}
 		r.MsgSocket, r.MsgToken = os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")
 	case agent == "pi":
 		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
@@ -416,6 +423,32 @@ func routeFromEnv(agent string) proto.Route {
 	}
 	return r
 }
+
+// t3CLI is T3's command line, for a session T3 runs, or "". T3 names it in T3CODE_CLI_PATH, but
+// its headless server (`t3 serve`, 0.1.9, seen 2026-11-16) doesn't: it gives the Claude Code it
+// runs the thread's ID (threadEnv) and T3CODE_HOME, and its own `t3`, the one serving, is on PATH.
+// Taken for T3 without one, Claude Code's session was handed its messages through the messaging
+// socket, which starts no turn there, and they were lost (#780).
+func t3CLI() string {
+	if cli := os.Getenv("T3CODE_CLI_PATH"); cli != "" {
+		return cli
+	}
+	if !ranByThread() {
+		return ""
+	}
+	cli, err := lookT3("t3")
+	if err != nil {
+		return ""
+	}
+	return cli
+}
+
+// ranByThread says whether T3 runs this server's client as a thread: the client has the thread's
+// variable and no agent above it (see agentAbove).
+func ranByThread() bool { return os.Getenv(threadEnv) != "" && !agentAbove() }
+
+// lookT3 finds a program on PATH; a variable, so that tests needn't have T3.
+var lookT3 = exec.LookPath
 
 // parentProgram is the process that started this server and the program it runs. A variable, for
 // tests.
@@ -519,7 +552,7 @@ func agentName(flag string) string {
 			agent = "claude-code"
 		}
 	}
-	if os.Getenv("T3CODE_CLI_PATH") != "" {
+	if t3CLI() != "" {
 		agent += " in T3"
 	}
 	return agent

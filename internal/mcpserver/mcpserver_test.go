@@ -47,6 +47,8 @@ func TestMain(m *testing.M) {
 	}
 	// And under an agent, perhaps: the tests of T3's thread variable say whether one is above.
 	agentAbove = func() bool { return false }
+	// Nor a T3 on this machine's PATH: the tests of T3's headless server give theirs.
+	lookT3 = func(string) (string, error) { return "", exec.ErrNotFound }
 	// Servers publish their records here, not in the real user's config directory.
 	dir, err := os.MkdirTemp("", "murmur-sessions-")
 	if err != nil {
