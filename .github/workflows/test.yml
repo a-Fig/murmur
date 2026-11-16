@@ -161,10 +161,13 @@ jobs:
   # on Windows, where they are slowest, and two on macOS. A test added later lands in some shard on
   # its own, so none goes unrun.
   #
-  # go test's -timeout is kept to well under half the job's limit, here and in the jobs above: a
-  # run, and go-test-retry's run of what failed, must both fit, so a test that hangs ends in Go's
-  # panic, which names it and prints every goroutine, and not in the job's cancellation, which
-  # keeps no log (#727). Shard 1 on Windows takes about 20 minutes (2026-11-16), so 30 here.
+  # A test that hangs should end in Go's -timeout panic, which names it and prints every goroutine,
+  # not in the job's cancellation, which keeps no log (#727). A hang is never retried, so what must
+  # fit a job's limit is the longest run that doesn't hang, plus a retry of what failed, which may
+  # hang, plus setup; -timeout counts the test binary alone, not the build. The retry runs a few
+  # tests alone, so here it has its own 10 minutes (RETRY_TIMEOUT), and the first run 45: Windows
+  # shard 1's binary takes 1,154 s (2026-11-16), 45 + 10 + setup is within 75, and in the jobs
+  # above, whose tests take 3 to 8 minutes, 25 is.
   test-daemon:
     needs: changes
     if: needs.changes.outputs.level == 'full'
@@ -194,11 +197,12 @@ jobs:
       - name: go test -race (shard ${{ matrix.shard }} of ${{ matrix.of }})
         env:
           MURMUR_GIT_STATS: ${{ runner.temp }}/git-stats.txt
+          RETRY_TIMEOUT: 10m
         run: |
           names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} -v n=${{ matrix.of }} 'NR % n == k')
           test -n "$names"
           echo "$names" | wc -l
-          bash scripts/go-test-retry.sh -race -count=1 -timeout 30m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
+          bash scripts/go-test-retry.sh -race -count=1 -timeout 45m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
       - name: How git did (#513)
         if: always()
         run: |
