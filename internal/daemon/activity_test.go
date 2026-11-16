@@ -1,7 +1,10 @@
 package daemon_test
 
 import (
+	"fmt"
 	"net/url"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -152,5 +155,33 @@ func TestThePageIsToldOfCommits(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("%d commit activities on the session's own page, want 1: %+v", n, acts)
+	}
+}
+
+// An issue the hook says a session's call filed or closed (#510) shows on the session's own page as
+// its own, with its repository, which the page matches to GitHub's events: an issue in any
+// repository on GitHub, as gh in a clone lists its upstream's before its origin's, and once however
+// often it is said. A repository that couldn't be one on GitHub is dropped.
+func TestThePageIsToldOfIssuesASessionFiled(t *testing.T) {
+	a := newDevice(t, newRemote(t))
+	alice, _ := a.claudeSession("aaaaaa", "claude-feed-id", procP, filepath.Dir(a.gitDir))
+	aliceName := a.named(alice)
+	call := proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-feed-id", ClientPID: procP, Issues: []proto.Issue{
+		{Repo: "A-Fig/Feed", Number: 37}, {Repo: "someone/else", Number: 37}, {Repo: "a-Fig/feed", Number: 12, Closed: true},
+		{Repo: "a-Fig/feed?token=x", Number: 13}, {Repo: "../feed", Number: 14}}}
+	a.do(call)
+	a.do(call) // a hook that told it twice
+
+	var got []string
+	acts, _ := a.page().activity("")
+	for _, x := range acts {
+		if x.Kind == web.ActIssue {
+			got = append(got, fmt.Sprintf("%s %s %s#%d %s", x.Addr, x.Who, x.Repo, x.Issue, x.What))
+		}
+	}
+	want := []string{alice + " " + aliceName + " a-fig/feed#37 opened", alice + " " + aliceName + " someone/else#37 opened",
+		alice + " " + aliceName + " a-fig/feed#12 closed"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the session's page has the issues %q, want %q", got, want)
 	}
 }

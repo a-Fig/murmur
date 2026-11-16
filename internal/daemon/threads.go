@@ -137,16 +137,22 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		delete(d.threadWarned, k)
 	}
 	// A turn the hook saw start and no Stop end, as one the user interrupted, is over once a read
-	// that began after the hook last ran finds no run (#202).
+	// that began after the hook last ran finds no run (#202). Only a read the loop above kept: one a
+	// later read before a handoff stands over (t3RunGoing) may have found the run over while that
+	// one found the next going. It would end that turn, and the handoff that follows within
+	// closeGrace would take no read as the next turn's start, and queue its message behind the run
+	// (#713).
 	for _, s := range d.sessions {
 		if r := s.route; s.hooked && !s.busyAt.IsZero() && r.T3Thread != "" {
 			k := threadKey{r.T3Home, r.T3Thread}
-			if st, ok := read[k]; ok && !runGoing(st) && readAt[k].After(s.busyAt) {
+			_, kept := prev[k]
+			if st, ok := read[k]; ok && kept && !runGoing(st) && readAt[k].After(s.busyAt) {
 				d.endTurnLocked(s, wake)
 			}
 		}
 	}
 	d.noteUnseenLocked()
+	d.noteHooklessLocked(wake)
 	// The first read that began after a handoff ends the hold it put on the session (runUnseen): the
 	// next message may go, though nothing else the read found changed.
 	for _, s := range d.sessions {

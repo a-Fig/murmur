@@ -15,9 +15,12 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +37,11 @@ const (
 	sourceTimeout = 10 * time.Second
 	// sendTimeout is longer: a send returns when its push to the remote has landed.
 	sendTimeout = time.Minute
+	// maxUpload bounds a send with files: what a message's files may come to (bus.MaxFilesTotal),
+	// and room for the form around them. fileTimeout is how long a file may take to come: the
+	// daemon may have to fetch it first.
+	maxUpload   = 21 << 20
+	fileTimeout = 2 * time.Minute
 	// maxSubject is how much of a person's first line the subject takes (bus.OneLine's limit for
 	// a message's).
 	maxSubject   = 120
@@ -44,7 +52,7 @@ const (
 
 // contentPolicy lets the page load only its own assets and talk only to its own server.
 const contentPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; " +
-	"img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	"img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // Server serves the page and its API.
 type Server struct {
@@ -107,6 +115,7 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 	s.mux.HandleFunc("PUT /api/nick", s.putNick)
 	s.mux.HandleFunc("PUT /api/color", s.putColor)
 	s.mux.HandleFunc("POST /api/send", s.postSend)
+	s.mux.HandleFunc("GET /api/file", s.getFile)
 	s.mux.HandleFunc("POST /api/read", s.postRead)
 	s.mux.HandleFunc("GET /api/repos", s.getRepos)
 	s.mux.HandleFunc("POST /api/repos/open", s.postOpenRepo)
@@ -318,6 +327,11 @@ func CheckSettings(set Settings) error {
 			return errors.New("sessionWake " + name + ": when must be always, within or never, and minutes 0 to 1440, given only with within")
 		}
 	}
+	switch set.Mode {
+	case "", ModeOnline, ModeDND, ModeInvisible:
+	default:
+		return errors.New("mode: must be online, dnd or invisible")
+	}
 	if set.Busy != "" && !validBusy(set.Busy) {
 		return errors.New("busy: must be subject or whole")
 	}
@@ -471,25 +485,117 @@ type sendRequest struct {
 
 func (s *Server) postSend(w http.ResponseWriter, r *http.Request) {
 	var m sendRequest
-	if err := readJSON(w, r, &m); err != nil {
+	var files []Upload
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		var err error
+		if m, files, err = readUpload(w, r); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if err := readJSON(w, r, &m); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if m.To == "" || len(m.To) > maxNameLen*2 || strings.TrimSpace(m.Text) == "" {
+	if m.To == "" || len(m.To) > maxNameLen*2 || strings.TrimSpace(m.Text) == "" && len(files) == 0 {
 		writeError(w, http.StatusBadRequest, "a message needs a recipient and some text")
 		return
 	}
 	// Not cut short by the page going: a person who closes or reloads it while the push is on its
 	// way has sent the message, and the page told them so (#613). Cut short, git's push was killed
 	// and the message was lost without a word.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
+	timeout := sendTimeout
+	if len(files) > 0 {
+		timeout += fileTimeout // its files are pushed first, on a ref of their own
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
 	defer cancel()
-	sent, err := s.src.Send(ctx, m.To, m.Text)
+	sent, err := s.src.Send(ctx, m.To, m.Text, files)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, sent)
+}
+
+// readUpload reads a send with files (#570): a form with a "to", a "text" and a "file" part for
+// each file. JSON can't carry a file without making it a third larger, and a browser builds this
+// form itself.
+func readUpload(w http.ResponseWriter, r *http.Request) (m sendRequest, files []Upload, err error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
+	form, err := r.MultipartReader()
+	if err != nil {
+		return m, nil, errors.New("bad form: " + err.Error())
+	}
+	for {
+		part, err := form.NextPart()
+		if err == io.EOF {
+			return m, files, nil
+		}
+		if err != nil {
+			return m, nil, tooLarge(err)
+		}
+		limit := int64(maxRequest)
+		if part.FormName() == "file" {
+			limit = maxUpload
+		}
+		b, err := io.ReadAll(io.LimitReader(part, limit+1))
+		if err != nil {
+			return m, nil, tooLarge(err)
+		}
+		if int64(len(b)) > limit {
+			return m, nil, errors.New("not sent: the " + part.FormName() + " is too large")
+		}
+		switch part.FormName() {
+		case "to":
+			m.To = string(b)
+		case "text":
+			m.Text = string(b)
+		case "file":
+			files = append(files, Upload{Name: part.FileName(), Data: b})
+		default:
+			return m, nil, errors.New("bad form: a part called " + part.FormName())
+		}
+	}
+}
+
+// tooLarge says a send with files was over what one may be, in the words the daemon would use, if
+// that is what err is.
+func tooLarge(err error) error {
+	var max *http.MaxBytesError
+	if errors.As(err, &max) {
+		return errors.New("not sent: a message's files can come to at most 20 MB together")
+	}
+	return errors.New("bad form: " + err.Error())
+}
+
+// getFile gives one file of a message. It is never shown by the browser as what it claims to be:
+// it goes as bytes to save, and the page decides what to do with them (an image it shows through
+// an <img>, which runs nothing).
+func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	index, err := strconv.Atoi(r.URL.Query().Get("i"))
+	if id == "" || len(id) > maxNameLen || err != nil || index < 0 {
+		writeError(w, http.StatusBadRequest, "a file is asked for by its message's id and its place, i")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), fileTimeout)
+	defer cancel()
+	name, data, err := s.src.File(ctx, id, index)
+	if err != nil {
+		// 404 for a file that can't be had, which the page then stops asking for; 503 for one it
+		// can ask for again.
+		code := http.StatusServiceUnavailable
+		if errors.Is(err, ErrNoFile) {
+			code = http.StatusNotFound
+		}
+		writeError(w, code, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
 }
 
 type readRequest struct {

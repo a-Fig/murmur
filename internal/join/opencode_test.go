@@ -60,7 +60,7 @@ func TestRegisterOpenCodeV1(t *testing.T) {
 	before := "{\n  // mine\n  \"model\": \"x/y\",\n  \"permission\": {\n    \"murmur_*\": \"deny\",\n    \"*\": \"ask\"\n  }\n}\n"
 	write(t, path, before)
 	did, fresh, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb))
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 { // the server, the rule, and the plugin (#446)
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)
@@ -163,7 +163,8 @@ func TestRegisterOpenCodeMovesV2ToV1(t *testing.T) {
 }
 `)
 	did, fresh, err := sb.registerOpenCodeAt(context.Background(), openCodeHome(sb))
-	if err != nil || !fresh || len(did) != 3 || !strings.Contains(did[0], "moved") || !strings.Contains(did[0], "OpenCode 1") {
+	// Moved, registered, allowed, and the plugin (#446).
+	if err != nil || !fresh || len(did) != 4 || !strings.Contains(did[0], "moved") || !strings.Contains(did[0], "OpenCode 1") {
 		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	got := read(t, path)

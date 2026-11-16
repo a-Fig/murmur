@@ -16,7 +16,7 @@ import (
 // out of the log, which is sent to whoever helps debug a device.
 func TestAFailedWriteLogsNoSubject(t *testing.T) {
 	var out bytes.Buffer
-	d := &Daemon{log: log.New(&out, "", 0), device: "here-0001", bgCtx: context.Background(),
+	d := &Daemon{dir: t.TempDir(), log: log.New(&out, "", 0), device: "here-0001", bgCtx: context.Background(),
 		repo: &bus.Repo{Git: gitx.Git{Dir: filepath.Join(t.TempDir(), "no-such-git-dir")}}}
 	// With a team key, so the write gets as far as git, and fails there.
 	d.boxKey, d.teamKeys = bus.NewBoxKey(), bus.Keyring{}

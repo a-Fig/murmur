@@ -79,13 +79,16 @@ func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "not now") })
 	holds(t, "no handoff to a thread idle 10 minutes", time.Second, func() bool { return len(calls()) == 0 })
 
+	// bob has no hook, so its message waits for the run to end (#699), and then goes: bob was at
+	// work just now.
 	threads.set("thread-bob", t3db.State{Busy: true})
-	eventually(t, "handoff once the thread is at work", func() bool { return len(calls()) == 1 })
+	holds(t, "no handoff while the run goes", time.Second, func() bool { return len(calls()) == 0 })
+	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
+	eventually(t, "handoff once the thread has been at work", func() bool { return len(calls()) == 1 })
 	if !strings.Contains(calls()[0].Stdin, "not now") {
 		t.Errorf("the turn handed over: %q", calls()[0].Stdin)
 	}
 
-	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
 	a.send("aaaaaa", bob, "just now", "")
 	eventually(t, "handoff to a thread idle a moment", func() bool { return len(calls()) == 2 })
 }

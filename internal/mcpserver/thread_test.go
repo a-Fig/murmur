@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -124,4 +125,32 @@ func TestAServerWhoseThreadIsLiveIsASessionOfItsOwn(t *testing.T) {
 		asked := fd.askedAbout()
 		return len(asked) > 0 && asked[0] == "0d0d0d0d-aaaa-bbbb-cccc-ddddeeeeffff"
 	})
+}
+
+// The walk above a server takes a claude run from an Antigravity thread's shell, under a Claude T3
+// thread, for one with an agent above it (#709): the chain seen on Windows, 2026-11-16, and its
+// Linux shape. A T3 thread's own server, under T3's node, has none.
+func TestAgentInChain(t *testing.T) {
+	t3 := filepath.Join("home", ".t3", "tools", "antigravity-acp", "win32-x64", "versions", "d24f4c73")
+	for what, c := range map[string]struct {
+		chain []string // the client first, then its parents
+		want  bool
+	}{
+		"claude from Antigravity's shell, Windows": {[]string{"claude.exe", "powershell.exe",
+			filepath.Join(t3, "localharness_external.exe"), filepath.Join(t3, "agy_acp_server.exe"),
+			filepath.Join(t3, "agy_acp_server.exe"), "T3 Code (Beta).exe"}, true},
+		"claude from Antigravity's shell, Linux": {[]string{"claude", "bash",
+			filepath.Join(t3, "localharness_external"), filepath.Join(t3, "agy_acp_server.par")}, true},
+		"a T3 thread's own claude":     {[]string{"claude", "node", "T3 Code (Beta).exe"}, false},
+		"claude from a thread's shell": {[]string{"claude", "bash", "claude", "node"}, true},
+		"an unreadable parent":         {[]string{"claude", ""}, false},
+		"the client alone":             {[]string{"claude"}, false},
+	} {
+		got := agentInChain(len(c.chain), func(i int) (string, string, bool) {
+			return c.chain[i], "", c.chain[i] != ""
+		})
+		if got != c.want {
+			t.Errorf("%s: %v, want %v", what, got, c.want)
+		}
+	}
 }

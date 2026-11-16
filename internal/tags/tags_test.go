@@ -2,6 +2,7 @@ package tags
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -336,6 +337,36 @@ func TestAnOldHumanTagTakesNoPlace(t *testing.T) {
 	}
 }
 
+// A group a session set under the prefix before devices held it takes no place either (#705): it
+// isn't shown, can't be removed by hand, and goes with the session's next change.
+func TestAnOldDeviceGroupTakesNoPlace(t *testing.T) {
+	st := State{Self: []string{"group:device-lab"}}
+	for i := range MaxPerSession - 1 {
+		st.Self = append(st.Self, "t"+string(rune('a'+i)))
+	}
+	if err := st.SetSelf([]string{"twelfth"}, nil); err != nil {
+		t.Fatalf("the twelfth tag: %v", err)
+	}
+	if slices.Contains(st.Self, "group:device-lab") || len(st.Self) != MaxPerSession {
+		t.Errorf("Self: %v", st.Self)
+	}
+	st = State{Human: map[string]Mark{"group:device-lab": {On: true}}, Cleared: map[string]time.Time{"group:device-lab": time.Now()}}
+	if err := st.SetHuman(nil, []string{"reviewing"}, nil, "ada", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Human["group:device-lab"]; ok {
+		t.Errorf("a person's old mark is kept: %v", st.Human)
+	}
+	if _, ok := st.Cleared["group:device-lab"]; ok {
+		t.Errorf("an old clearing is kept: %v", st.Cleared)
+	}
+	for _, tag := range Effective([]string{"group:device-lab", "reviewing"}, nil, nil) {
+		if strings.HasPrefix(tag.Name, DevicePrefix) {
+			t.Errorf("Effective keeps %s", tag.Name)
+		}
+	}
+}
+
 // A change that fails leaves the state it was copied from as it was, old human tag and all.
 func TestAFailedChangeLeavesTheKeptStateAlone(t *testing.T) {
 	kept := State{Self: []string{"human", "reviewing"}, Human: map[string]Mark{Human: {On: true}}}
@@ -512,5 +543,24 @@ func TestALongDevicesGroupIsSearchable(t *testing.T) {
 	f, err := ParseFilter([]string{"-" + long})
 	if err != nil || f.Match(ts) {
 		t.Errorf("-%s: %v, matches %v", long, err, f.Match(ts))
+	}
+}
+
+// A group a team made under the prefix devices now hold (group:device-lab) is refused with why,
+// and the name to use instead: the same group without device- (#705).
+func TestOwnGroupHint(t *testing.T) {
+	for name, want := range map[string]string{
+		"group:device-lab":        " If it was a group your team made, names that start with group:device- are devices' now: use group:lab.",
+		"GROUP:Device-Lab":        " If it was a group your team made, names that start with group:device- are devices' now: use group:lab.",
+		"group:device-device-lab": "", // what it would suggest is a device's group too
+		"group:device-":           "",
+		"group:lab":               "",
+	} {
+		if got := OwnGroupHint(name); got != want {
+			t.Errorf("OwnGroupHint(%q) = %q, want %q", name, got, want)
+		}
+	}
+	if _, err := Clean([]string{"group:device-lab"}); err == nil || !strings.Contains(err.Error(), "use group:lab") {
+		t.Errorf("Clean of a group under the device prefix: %v", err)
 	}
 }

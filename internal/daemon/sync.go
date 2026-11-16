@@ -798,6 +798,7 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if !ok {
 			continue
 		}
+		d.noteOthersFilesLocked(e, dev) // history too: a gone device's refs are known only from it
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
 		}
@@ -936,6 +937,9 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 						}
 						stalled = true
 						return
+					}
+					if ok {
+						d.noteOthersFilesLocked(e, dev) // as readEventsLocked does
 					}
 					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
 						d.applyTagsEventLocked(e)
@@ -1452,6 +1456,9 @@ const maxUnwritten = 100
 // landed all the same (see Repo.Push), so a start or stop can be on the log twice: the Recent view
 // keeps one by its ID (recordActLocked), and the notes show the line twice.
 func (d *Daemon) appendSoon(e bus.Event) {
+	if d.hidden.Load() {
+		return // invisible: never written, then or later (mode.go)
+	}
 	d.mu.Lock()
 	d.st.Unwritten = append(d.st.Unwritten, e)
 	if n := len(d.st.Unwritten) - maxUnwritten; n > 0 {
@@ -1470,7 +1477,7 @@ func (d *Daemon) appendSoon(e bus.Event) {
 // it again (presenceLoop). Each is taken out once it has landed.
 func (d *Daemon) writeUnwritten() {
 	d.mu.Lock()
-	if d.unwriting || len(d.st.Unwritten) == 0 || d.bgCtx == nil || d.bgCtx.Err() != nil {
+	if d.unwriting || len(d.st.Unwritten) == 0 || d.bgCtx == nil || d.bgCtx.Err() != nil || d.hidden.Load() {
 		d.mu.Unlock()
 		return
 	}
@@ -1640,6 +1647,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	// Not cut short by shutdown: a push killed mid-flight can still land, after the goodbye.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
+	if d.hidden.Load() {
+		return d.hidePresence(ctx)
+	}
 	d.mu.Lock()
 	cwds := map[string]string{}
 	for id, s := range d.sessions {
@@ -1660,7 +1670,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

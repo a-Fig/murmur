@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/daemon"
+	"github.com/a-Fig/murmur/internal/desktop"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
@@ -82,7 +83,11 @@ Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {
-	dirs, args, err := leadingDirs(os.Args[1:])
+	argv := os.Args[1:]
+	if desktop.FromBundle() {
+		argv = []string{"app", "--from-launcher"} // started from Murmur.app, which passes nothing
+	}
+	dirs, args, err := leadingDirs(argv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usage)
 		os.Exit(2)
@@ -561,6 +566,16 @@ func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
 	report, err := join.Uninstall(ctx, env, *leave)
 	fmt.Fprint(out, report.String())
+	// The desktop app's launcher (#616), which `mur app` put in place.
+	if cfg, cerr := os.UserConfigDir(); cerr == nil {
+		where, lerr := desktop.RemoveLauncher(filepath.Join(cfg, brand.Name, "app"))
+		switch {
+		case lerr != nil:
+			fmt.Fprintf(out, "Couldn't take out the app's launcher, %s: %v\n", where, lerr)
+		case where != "":
+			fmt.Fprintf(out, "Took out the app's launcher: %s\n", where)
+		}
+	}
 	return err
 }
 

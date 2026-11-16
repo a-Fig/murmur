@@ -5,8 +5,8 @@ also a bad thing tbh... limits the potential of the agent." Until then Murmur ca
 couldn't send another a screenshot, a log or a diff.
 
 `send` takes `files`, a list of paths. The recipient's agent gets each as a path on its own machine,
-which it opens with its own tools; one that reads images sees the image. The page doesn't show or
-send files yet (#570's second part).
+which it opens with its own tools; one that reads images sees the image. A person on the page
+attaches, pastes or drops files, and sees the ones a message carries ([below](#on-the-page)).
 
 ## How a file travels
 
@@ -30,10 +30,14 @@ send files yet (#570's second part).
   its sessions fetches the ref, saves the files under `.git/murmur/files/`, never the working
   tree, and only then queues the message, so a path in a turn works when the agent
   reads it. It gets three tries of a minute each; then the message is queued without the files, and
-  the turn says which aren't there. A ref that isn't on the remote, or holds something else, costs
-  one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
+  the turn says which aren't there. A ref that isn't on the remote, holds something else, or holds
+  more than the limits allow, costs one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
   up the files of those behind it, not their text-only neighbours. The wait survives a restart
-  (`state.json`).
+  (`state.json`). The message is queued for whoever holds each recipient's name when the fetch
+  ends: a process that resumed the conversation meanwhile took only what was in the inbox, and the
+  message would otherwise reach the old session's, which nobody reads (#703). A session that takes
+  over the old one's T3 thread, which carries no name from one to the other, takes its place in the
+  wait, and a recipient gone off the mesh meanwhile (a settled thread) gets nothing.
 - **Nothing is left in the clone.** Git writes a files commit, and what a fetch of one brings, to
   a directory of the daemon's own (`GIT_OBJECT_DIRECTORY`, with the clone's objects as an
   alternate), which is deleted when the push or the read is done, and the fetch stores no ref. In
@@ -72,8 +76,19 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
   encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
-  file names, and a turn made from it later says the files aren't there. A sender that never runs
-  again leaves its refs.
+  file names, and a turn made from it later says the files aren't there.
+- **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
+  2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
+  included, and deletes one once it has itself run for 14 days since it first read of it, if the
+  ref's device's presence is stale or gone by then. Its own daemon, if it still runs, deleted it 7
+  days before, since the event is written after the push. The 14 days are counted on the monotonic
+  clock, at most two hours for each hourly prune, so no wall clock goes in: a clock set forward by
+  weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
+  date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
+  monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
+  a team whose daemons run only while someone works. A ref no event this device read names
+  still stays: one whose message failed after its push, one in a log it can't open, or one sent
+  before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once for each**, since each gets a message of
   its own (#520).
 - **A send with files has 90 seconds**, like any request, and its push holds the device's one
@@ -101,9 +116,20 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.
-- **Not checked: what a fetch brings.** A files ref holds whatever its pusher put there, and a
-  listing gives no sizes, so a fetch can't be capped before it runs; a `--filter` would make the
-  user's clone a partial clone for all its later fetches. Push access is already trusted with code.
+- **What a fetch brings** (#707, 2026-11-16). A files ref holds whatever its pusher put there, and a
+  listing gives no sizes, so a fetch can't be capped before it runs, and git has no limit for one
+  (`receive.maxInputSize` is a push's). A `--filter` would make the user's clone a partial clone
+  for all its later fetches. So the fetch is watched while it runs: it keeps what it receives as one
+  pack (`fetch.unpackLimit=1`), which grows on disk as it arrives, and is stopped once that passes
+  what a pack within the limits takes on the wire, a little over its size, as sealed files don't
+  compress. A fetch too quick to stop, as from a remote on the same disk, is measured when it ends.
+  Either way what it wrote is removed and the message queued without its files, after one try.
+  Stopping it ends its whole process tree, and waits for it, before anything is removed
+  (`gitx.RunTree`, #726): killing git alone left index-pack writing the pack, and over protocol 0
+  or 1 by HTTPS git-remote-https's own fetch-pack downloading. The tree is a job object on Windows,
+  which git is put in before it runs, so nothing it starts is outside, and a process group
+  elsewhere. Protocol 2 is asked for as well. Where there is no scratch directory the fetch isn't watched, and ReadPack's check
+  is all there is: another fetch or a gc may be writing there too, and a refusal is for good.
 
 ## Open, for Tyler
 
@@ -118,14 +144,46 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   before reading there, and a client that reads only inside its workspace can't. Saving under the
   session's own directory would put files in a working tree.
 
-## Older daemons, and people
+## On the page
+
+- **Sending.** The composer takes files from its paperclip, a paste or a drop anywhere on the page.
+  They go with the text as one form to `POST /api/send`, a part each, since JSON would carry them a
+  third larger. The daemon then treats them as an agent's: the same limits, the same secret check,
+  the same ref. The page holds a file to the limits before it uploads it. A message of files alone
+  has their names for its subject, because a message needs one.
+- **Showing.** The messages the page lists say each file's name and size. `GET /api/file` gives one
+  file, by its message's ID and its place. Nothing is fetched for a person until then: a message to
+  a person isn't held for its files, since the page can show it at once and fill a picture in.
+  PNG, JPEG, GIF and WebP are shown as pictures, asked for when their message is drawn; anything
+  else is a button that saves it. SVG is saved, not shown: it is a document.
+- **A fetch mustn't stall the page.** A browser gives a page six connections, and a file can wait
+  on a fetch from the remote, so the page asks for two files at a time and the polls and sends
+  keep theirs. The daemon fetches for the page once, not three times, and for 20 seconds after a
+  fetch fails it answers the message's other files without fetching again. It says 404 for a file
+  that can't be had, which the page shows as "Not here" until it is clicked, and 503 for one that
+  couldn't be fetched just now, which the page asks for again after 30 seconds.
+- **A file never runs.** The daemon sends every file as `application/octet-stream` with
+  `nosniff`, to be saved. A file opened by the browser as the page's own would run a teammate's
+  agent's HTML with the page's key in reach. A picture is shown through an `<img>` from an object
+  URL the page makes of the bytes, which runs nothing; the content policy allows `blob:` for images
+  only.
+- **What it costs.** An upload isn't `keepalive`, which a browser caps at 64 KiB: closing the page
+  before an upload ends loses the message, where a message of text alone still goes
+  ([page](page.md)). The page keeps what it fetched in memory, up to 96 MB, and lets go of the
+  oldest it isn't showing.
+- **The desktop app.** Its window asks where to save a file with a save panel (`OnDownload`,
+  [desktop](desktop.md)): without one the web view cancels every download on macOS and Linux.
+  Written from the web view's source and not tried on either (2026-11-15); Windows leaves
+  downloads to WebView2.
+
+## Older daemons
 
 Tyler's decision (2026-11-15): sent with a note, not refused. A daemon from before files ignores
 an event's `files` and gives its sessions the text, with no sign there was more. A device's
 presence says whether its daemon takes files (`files`, beside `groups` and `receipts`), and a
 sender is told which recipients' devices don't. Refusing would hold back the text for a gap the
-updater closes within an hour ([updating](updating.md)). A sender to a person is told the same
-until the page shows files.
+updater closes within an hour ([updating](updating.md)). A person whose page is served by such a
+daemon is among them.
 
 A client from before files talking to a newer daemon sends none. A newer client finds an older
 daemon by its protocol number (23) and replaces it, as for any request an older daemon can't serve.

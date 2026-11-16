@@ -66,7 +66,9 @@ names=$(printf '%s' "$failed" | paste -sd'|' -)
 echo
 echo "go-test-retry: retrying once: $(printf '%s' "$failed" | paste -sd' ' -)"
 
-# The retry replaces any -run of the first try, and keeps every other argument.
+# The retry replaces any -run of the first try, and keeps every other argument, but -timeout when
+# RETRY_TIMEOUT is set: the retry runs a few tests alone, in minutes, so a job's limit need only
+# fit the first run's -timeout and this one (#727).
 args=()
 skip=0
 for a in "$@"; do
@@ -74,9 +76,12 @@ for a in "$@"; do
   case "$a" in
     -run | -test.run) skip=1 ;;
     -run=* | -test.run=*) ;;
+    -timeout | -test.timeout) if [ -n "${RETRY_TIMEOUT:-}" ]; then skip=1; else args+=("$a"); fi ;;
+    -timeout=* | -test.timeout=*) [ -n "${RETRY_TIMEOUT:-}" ] || args+=("$a") ;;
     *) args+=("$a") ;;
   esac
 done
+if [ -n "${RETRY_TIMEOUT:-}" ]; then args=(-timeout "$RETRY_TIMEOUT" "${args[@]}"); fi # before the packages
 
 go test -run "^($names)\$" "${args[@]}"
 status=$?
