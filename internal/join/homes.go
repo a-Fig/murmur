@@ -56,7 +56,7 @@ var agents = []agent{
 	{driver: "muse", label: "Muse Code", t3Var: "XDG_CONFIG_HOME", sub: "muse",
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
 		removal:    museRemoval,
-		unregister: Env.unregisterMuseAt},
+		unregister: Env.unregisterMuse},
 	{driver: "pi", label: "Pi", t3Var: "PI_CODING_AGENT_DIR",
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
 		removal:    piRemoval,

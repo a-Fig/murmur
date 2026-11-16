@@ -257,7 +257,8 @@ func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 
 // Agents other than Claude Code that join installs the hook in, by the name their hook's command
 // line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
-// some fields of its own (#225), except Antigravity's, which has its own (antigravity.go). Pi's is
+// some fields of its own (#225) and Muse's with side sessions of its own (muse.go, #461), except
+// Antigravity's, which has its own (antigravity.go). Pi's is
 // run by Murmur's own extension, which gives the session's file for its ID (#205), and OpenCode's
 // by Murmur's plugin, with OpenCode's session ID (#431).
 const (
@@ -266,12 +267,13 @@ const (
 	Pi          = "pi"
 	OpenCode    = "opencode"
 	Antigravity = "antigravity"
+	Muse        = "muse"
 )
 
-// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode or
-// antigravity.
+// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode,
+// antigravity or muse.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
@@ -314,6 +316,12 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	if agent == Antigravity && !fromAntigravity(&in, event) {
 		return
+	}
+	if agent == Muse {
+		if museSideSession(in) {
+			return
+		}
+		fillUserDirs()
 	}
 	if in.SessionID == "" || !events[in.Event] {
 		return

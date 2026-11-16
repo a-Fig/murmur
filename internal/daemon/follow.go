@@ -274,7 +274,8 @@ func (d *Daemon) queuedAtLocked(to string) string {
 // agentHookSessionsLocked finds the live sessions the hook of an agent other than Claude Code
 // speaks for (req.Agent, #225): those whose conversation has the ID the hook reports, as their MCP
 // server learned it (the route's Native: Codex's thread ID from its first tool call, Grok's session
-// ID from its environment) or as an earlier hook of theirs taught the daemon (hookNative).
+// ID and Muse's from their environment) or as an earlier hook of theirs taught the daemon
+// (hookNative).
 //
 // Codex's MCP server learns its thread's ID only from a call to one of Murmur's tools, so a session
 // whose agent hasn't called one is found by its process instead: the agent that ran the hook started
@@ -322,12 +323,12 @@ func isAgent(sessionAgent, agent string) bool {
 var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true, proto.OpMute: true,
 	proto.OpSend: true, proto.OpInbox: true}
 
-// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi,
-// whose extension join writes runs it (#205). OpenCode isn't one, though join's plugin runs the
+// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225, #461),
+// and Pi, whose extension join writes runs it (#205). OpenCode isn't one, though join's plugin runs the
 // hook in OpenCode 2 and, outside T3, OpenCode 1 (#431, #446): join writes no plugin for an
 // OpenCode whose version it can't learn, and OpenCode 1's plugin does nothing in T3, so a session
 // there would be told to run join again, which changes nothing for it.
-var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity"}
+var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity", "muse"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs
 // the hook in, it called one of Murmur's tools more than hookGrace ago, and no hook of it has

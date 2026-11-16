@@ -74,7 +74,7 @@ func (d *Daemon) tellLocked(msg string, rec *sentRecord, late bool) {
 // message. It doesn't count as read: where the hook sends the turn's prompt, the mark moves on to
 // read once the turn starts (turnread.go), and a turn T3 holds in its queue hasn't been read (#654).
 // A recipient that never sends one stays handed over, so a sender asking it for read is told at
-// TellWait, with the message handed over as a turn: Pi, OpenCode, Grok and Muse, whose hooks send no
+// TellWait, with the message handed over as a turn: Pi, OpenCode and Grok, whose hooks send no
 // prompt, a session with no hook, and one on a device whose daemon is older than #611.
 func reached(state, want string) bool {
 	if state == bus.MarkHanded && want == bus.MarkDelivered {

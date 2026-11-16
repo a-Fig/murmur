@@ -47,6 +47,10 @@ type Options struct {
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
+	// OwnTipWait is how long a write to this device's log, once pushed, waits for a running sync
+	// before leaving the sync to queue it for this device's own sessions (leaveOwnTip): 2 s,
+	// longer than a sync takes when nothing is slow.
+	OwnTipWait time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -74,6 +78,11 @@ type Options struct {
 	// there. FilePrune is how often the daemon looks for files past it: an hour.
 	FileKeep  time.Duration
 	FilePrune time.Duration
+	// FilesPerDay is how many bytes of files this device uploads in 24 hours at most, and FilesHeld
+	// how many it keeps of the files it sent and fetched, the oldest going first past it (#739):
+	// 200 MB and 1 GB.
+	FilesPerDay int64
+	FilesHeld   int64
 	// MuteGrace is how long after a session mutes another it still gets that session's direct
 	// messages (see mutedHereLocked): 30 s. Negative: none.
 	MuteGrace time.Duration
@@ -169,6 +178,9 @@ func (o *Options) defaults() {
 	if o.PollCap == 0 {
 		o.PollCap = 15 * time.Second
 	}
+	if o.OwnTipWait == 0 {
+		o.OwnTipWait = 2 * time.Second
+	}
 	if o.FetchLimit == 0 {
 		o.FetchLimit = 15 * time.Second
 	}
@@ -213,6 +225,12 @@ func (o *Options) defaults() {
 	}
 	if o.FilePrune == 0 {
 		o.FilePrune = time.Hour
+	}
+	if o.FilesPerDay == 0 {
+		o.FilesPerDay = 200 << 20
+	}
+	if o.FilesHeld == 0 {
+		o.FilesHeld = 1 << 30
 	}
 	if o.MuteGrace == 0 {
 		o.MuteGrace = 30 * time.Second
@@ -337,7 +355,7 @@ func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent
 const maxInbox = 200
 
 // Daemon is one running daemon. Lock order: syncMu, then advMu, then mu; or writeMu, then advMu,
-// then mu.
+// then mu. leaveOwnTip tries advMu with mu held, which never waits.
 type Daemon struct {
 	opt     Options
 	repo    *bus.Repo
@@ -392,6 +410,15 @@ type Daemon struct {
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
 	othersAged time.Time            // when the notes of others' files refs were last aged (monotonic)
+	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
+	// of the same ones to take the same ref (reuseFilesLocked, #739).
+	uploads map[[32]byte]*recentUpload
+	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
+	// leaves alone (pinFilesDir).
+	filesBusy map[string]int
+	// filesEvicting is the directories holdFilesHeld is deleting, each closed when the delete is
+	// over, which pinFilesDir waits for.
+	filesEvicting map[string]chan struct{}
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time
@@ -520,10 +547,15 @@ type Daemon struct {
 
 	health health // what the page's health snapshot counts (health.go)
 
-	syncMu  sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
-	advMu   sync.Mutex // serializes processing of fetched refs
-	writeMu sync.Mutex // serializes appends to this device's log
-	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
+	syncMu sync.Mutex // serializes syncs, so an older listing is never applied after a newer one
+	advMu  sync.Mutex // serializes processing of fetched refs
+	// syncing says a sync holds advMu, or is about to take it, and ownLater is the tip of this
+	// device's log that an append left for that sync to read (leaveOwnTip), "" if none. Both
+	// under mu.
+	syncing  bool
+	ownLater string
+	writeMu  sync.Mutex // serializes appends to this device's log
+	ownTip   string     // the remote's tip of this device's log, as last known; under writeMu
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
@@ -877,6 +909,8 @@ type state struct {
 	// OthersFiles is the files refs other devices pushed, by name, as read of in their logs: deleted
 	// from the remote once their device is gone and they are well past FileKeep (#708).
 	OthersFiles map[string]othersFile `json:"othersFiles,omitempty"`
+	// Uploads is what this device pushed to files refs in the last day, for FilesPerDay (#739).
+	Uploads []fileUpload `json:"uploads,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
 	// until a prompt shows the turn started (#611, turnread.go).
 	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`

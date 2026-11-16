@@ -256,3 +256,6 @@ func readJSON(path string, v any) error {
 	}
 	return json.Unmarshal(b, v)
 }
+
+// Alive reports whether process pid is still running: what a record of a process is checked by.
+func Alive(pid int) bool { return alive(pid) }
