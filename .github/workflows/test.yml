@@ -98,7 +98,7 @@ jobs:
       # before the Go tests, which take most of the job. A change to site/ alone stops here.
       - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
       - if: env.GO == 'true'
-        run: bash scripts/go-test-retry.sh -race -count=1 -timeout 50m ./...
+        run: bash scripts/go-test-retry.sh -race -count=1 -timeout 25m ./...
 
   # macOS and Windows run `internal/daemon` apart from the other packages, in shards (below): alone
   # it took 1,154 s of this job's 20 minutes on 2026-11-12, and the others together about 4.
@@ -122,7 +122,7 @@ jobs:
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - run: go vet ./...
-      - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 50m
+      - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 25m
       # Releases are built without cgo, which on macOS puts purego's runtime shim (fakecgo) under
       # every command, since the desktop app's web view comes through purego. -race turns cgo on and
       # hides it, so the commands' own packages run again as releases are built, and a release-built
@@ -131,7 +131,7 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: |
-          bash scripts/go-test-retry.sh -count=1 -timeout 30m ./cmd/mur ./internal/client ./internal/hook ./internal/desktop
+          bash scripts/go-test-retry.sh -count=1 -timeout 20m ./cmd/mur ./internal/client ./internal/hook ./internal/desktop
           go build -trimpath -o "$RUNNER_TEMP/mur" ./cmd/mur
           "$RUNNER_TEMP/mur" help > /dev/null
           echo '{}' | "$RUNNER_TEMP/mur" hook
@@ -155,17 +155,25 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 50m
+      - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 25m
 
   # The daemon package's tests, dealt out by position in their sorted list to one runner each: four
   # on Windows, where they are slowest, and two on macOS. A test added later lands in some shard on
   # its own, so none goes unrun.
+  #
+  # A test that hangs should end in Go's -timeout panic, which names it and prints every goroutine,
+  # not in the job's cancellation, which keeps no log (#727). A hang is never retried, so what must
+  # fit a job's limit is the longest run that doesn't hang, plus a retry of what failed, which may
+  # hang, plus setup; -timeout counts the test binary alone, not the build. The retry runs a few
+  # tests alone, so here it has its own 10 minutes (RETRY_TIMEOUT), and the first run 45: Windows
+  # shard 1's binary takes 1,154 s (2026-11-16), 45 + 10 + setup is within 75, and in the jobs
+  # above, whose tests take 3 to 8 minutes, 25 is.
   test-daemon:
     needs: changes
     if: needs.changes.outputs.level == 'full'
     name: test-${{ matrix.os }}-daemon (${{ matrix.shard }})
     runs-on: ${{ matrix.os }}-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -189,11 +197,12 @@ jobs:
       - name: go test -race (shard ${{ matrix.shard }} of ${{ matrix.of }})
         env:
           MURMUR_GIT_STATS: ${{ runner.temp }}/git-stats.txt
+          RETRY_TIMEOUT: 10m
         run: |
           names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} -v n=${{ matrix.of }} 'NR % n == k')
           test -n "$names"
           echo "$names" | wc -l
-          bash scripts/go-test-retry.sh -race -count=1 -timeout 50m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
+          bash scripts/go-test-retry.sh -race -count=1 -timeout 45m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
       - name: How git did (#513)
         if: always()
         run: |
