@@ -128,7 +128,9 @@ address and no clone's, for working on the app against the devserver
 Added 2026-11-15 (#616). The app starts as any other app does, from a launcher `mur app` puts in
 place: each time it runs from a terminal and finds a repo to show, it adds the launcher, or moves
 it onto this `mur` if `mur` has moved (a record in `launcher.json`, beside `last.json`, saves
-looking each time). `mur uninstall` takes it out. `mur join` doesn't add it: an agent runs join,
+looking each time). `mur uninstall` takes it out, and then the app's folder, unless the window
+is open, which writes there; an uninstall that refuses (a repo still joined) leaves both (#746).
+`mur join` doesn't add it: an agent runs join,
 and a person's Start menu is theirs to change; the person who runs `mur app` wants the app.
 
 It touches only what is Murmur's (Opus review): a launcher of the same name that isn't (a bundle
