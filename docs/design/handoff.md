@@ -136,7 +136,8 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   wake setting limits that, as for an idle T3 thread.
 - *OpenCode's shared server only*, the one registered in `service.json` in OpenCode's state
   directory: `opencode api` would start the shared server to ask about a private server's session.
-  OpenCode 1 has no `api` command. Both are left to the inbox.
+  A private server's session is left to the inbox. OpenCode 1 has no `api` command; its plugin
+  opens a socket instead, as Pi's extension does ([clients](clients.md), "OpenCode 1's plugin").
 - *A failure* is handled as `t3 thread send`'s is. A Codex session has no way in until it has called
   a Murmur tool, which is how its server learns the thread.
 - *On the command line* the text is visible, for the second or so the command runs, to the machine's

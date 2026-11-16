@@ -785,6 +785,9 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesRecheck says a presence showed a name never seen here, and the registry is to be read
+	// again from its start, to see whether it lost that name (see notePresenceNameLocked).
+	NamesRecheck bool `json:"namesRecheck,omitempty"`
 	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
 	// (#268). One from before read their claims and passed over them, so reading on from its
 	// NamesGood would leave them unread for good: without this, the next read starts from the

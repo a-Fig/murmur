@@ -317,8 +317,9 @@ var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpS
 
 // hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225), and Pi,
 // whose extension join writes runs it (#205). OpenCode isn't one, though join's plugin runs the
-// hook in OpenCode 2 (#431): OpenCode 1 registers under the same name and can have no plugin, so
-// its sessions would be told to run join again, which changes nothing for them.
+// hook in OpenCode 2 and, outside T3, OpenCode 1 (#431, #446): join writes no plugin for an
+// OpenCode whose version it can't learn, and OpenCode 1's plugin does nothing in T3, so a session
+// there would be told to run join again, which changes nothing for it.
 var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs

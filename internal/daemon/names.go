@@ -81,6 +81,33 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 	return true
 }
 
+// notePresenceNameLocked records a session name another device's presence shows, as
+// noteNameLocked does. A name this daemon has never seen may be one the registry has lost: damaged
+// while the device holding the name can't push, and read here by a daemon that never knew it. Only
+// a history read from its start shows that, and only one listed after this presence: a sync's fetch
+// brings a presence as it is then, which can be newer than the registry it listed. So the next
+// sync, which lists after this one, reads the registry again from its start (see processNames).
+// Caller holds mu.
+func (d *Daemon) notePresenceNameLocked(name, addr string) bool {
+	if _, ok := d.st.Used[name]; !ok {
+		d.st.NamesRecheck = true
+	}
+	return d.noteNameLocked(name, addr)
+}
+
+// lacksNamesLocked says whether a name in use here, a session's or a person's, is missing from
+// held. Caller holds mu.
+func (d *Daemon) lacksNamesLocked(held map[string]string) bool {
+	for _, known := range []map[string]string{d.st.Used, d.st.PersonClaims} {
+		for name := range known {
+			if _, ok := held[name]; !ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // notePersonClaimLocked records that a person's name is claimed by addr. The first claim read
 // stands: a later one, here or from a registry rewritten since, changes nothing. It reports whether
 // anything changed. Caller holds mu.
@@ -155,12 +182,15 @@ func (d *Daemon) nameOnOthersLocked(name, addr string) bool {
 // holds what this daemon read before. Nothing read is ever forgotten; but the registry then no
 // longer holds every name for daemons that join later, so the next commit this daemon writes there
 // is a new root with a snapshot of every used name (see attemptName), and one is written without
-// waiting for a session to need a name, if the registry is missing any.
+// waiting for a session to need a name, if the registry is missing any. A presence showing a name
+// never seen here has the registry read again from its start, to see whether it lost the name
+// (see notePresenceNameLocked).
 func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip, good, checked, peopleRead := d.st.NamesTip, d.st.NamesGood, d.namesChecked, d.st.NamesPeople
+	recheck := d.st.NamesRecheck
 	d.mu.Unlock()
-	if checked && tip == sha {
+	if checked && tip == sha && !recheck {
 		return
 	}
 	d.mu.Lock()
@@ -276,7 +306,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 			switch {
 			case !desc:
 				disturbed = true
-			case peopleRead:
+			case peopleRead && !recheck:
 				from = good
 			default:
 				// Not damaged, but read by a daemon that passed over people's claims (see
@@ -337,19 +367,14 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		changed = changed || !d.st.NamesPeople
 		d.st.NamesPeople = true
 	}
-	if disturbed {
+	if disturbed || recheck {
 		// Only a history read from its start shows whether the registry holds every name. A
 		// read of what was added on top of a damaged one can't, so a repair still to be made
-		// stays to be made.
-		d.st.NamesRepair = false
-		for _, known := range []map[string]string{d.st.Used, d.st.PersonClaims} {
-			for name := range known {
-				if _, ok := read[name]; !ok {
-					d.st.NamesRepair = true
-					break
-				}
-			}
-		}
+		// stays to be made. A recheck is always read from the start.
+		d.st.NamesRepair = d.lacksNamesLocked(read)
+	}
+	if recheck {
+		d.st.NamesRecheck, changed = false, true
 	}
 	repair := d.st.NamesRepair
 	changed = changed || repair != wasRepair
@@ -742,6 +767,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			parent = "" // junk is never something to build on
 		}
 	}
+	held := map[string]string{} // every name a new root holds; none if the chain isn't one
 	if parent == "" || repair {
 		// A new root. The names set aside go in it as reservations again, first, so a daemon that
 		// joins later still knows whose they are; the rest of the used names go in the snapshot.
@@ -758,6 +784,12 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			used[name] = addr // a person's claim survives a repair, as a session's name does
 		}
 		parent, recs[0].Used = "", used
+		for name, addr := range used {
+			held[name] = addr
+		}
+		for _, r := range recs {
+			held[r.Name] = ""
+		}
 	}
 	if len(recs) == 0 {
 		return nil // nothing to record: a repair that a sync has meanwhile found unneeded
@@ -788,7 +820,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
 		// tip not yet read by a daemon that keeps people's claims isn't (see NamesPeople), unless
 		// this chain is a new root, which holds every name itself.
-		d.st.NamesTip, d.st.NamesRepair = sha, false
+		d.st.NamesTip = sha
+		// The repair is made only if every name in use now is in the root. One can be learned while
+		// the push is out, and a sync can then find the registry it read lacking it, with no newer
+		// tip to show for that: clearing the flag would lose the name.
+		if parent == "" && !d.lacksNamesLocked(held) {
+			d.st.NamesRepair = false
+		}
 		if d.st.NamesPeople || parent == "" {
 			d.st.NamesGood, d.st.NamesPeople = sha, true
 		}

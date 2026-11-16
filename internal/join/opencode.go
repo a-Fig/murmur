@@ -42,8 +42,10 @@ import (
 // 1.19.5's error names. The rest is the same for both:
 //
 //   - OpenCode starts one server process per server and directory, which every session there
-//     shares, and names the session in each call's _meta (see internal/mcpserver, sharedAgent). The
-//     process gets OpenCode's environment, T3CODE_CLI_PATH included when T3 started OpenCode.
+//     shares. OpenCode 2 names the session in each call's _meta (see internal/mcpserver,
+//     sharedAgent); OpenCode 1 names none, and its plugin names the process's sessions as one
+//     (opencodeplugin.go). The process gets OpenCode's environment, T3CODE_CLI_PATH included when
+//     T3 started OpenCode.
 //   - With both opencode.json and opencode.jsonc there, OpenCode reads the .jsonc last, and its
 //     entries win (Codex's review of #136, 2026-11-01): join writes there.
 //   - It watches its config: a server added while it runs connects within seconds, and a session
@@ -101,37 +103,48 @@ const openCodeVersionWait = 10 * time.Second
 
 var openCodeVersionRE = regexp.MustCompile(`(\d+)\.\d+\.\d+`)
 
-// openCodeShapeFor is the shape the OpenCode of h loads, asked of its command as T3 runs it, else
-// of the one on PATH: version 2's where `--version` says 2 or later (2.2.0 prints
-// "opencode v2.2.0"), or where the only command there is opencode2; version 1's otherwise, a
-// version join can't learn included.
+// openCodeShapeFor is the shape the OpenCode of h loads (openCodeMajorFor): version 2's from 2 on,
+// version 1's otherwise, a version join can't learn included.
 func (e Env) openCodeShapeFor(ctx context.Context, h agentHome) openCodeShape {
+	return openCodeShapeOf(e.openCodeMajorFor(ctx, h))
+}
+
+func openCodeShapeOf(major int) openCodeShape {
+	if major >= 2 {
+		return openCodeV2
+	}
+	return openCodeV1
+}
+
+// openCodeMajorFor is the major version of the OpenCode of h, asked of its command as T3 runs it,
+// else of the one on PATH (2.2.0 prints "opencode v2.2.0", 1.19.5 "1.19.5"). It is 2 where the
+// only command there is opencode2, or the command is called that, and 0 where join can't learn it.
+func (e Env) openCodeMajorFor(ctx context.Context, h agentHome) int {
 	bin := h.Bin
 	if bin == "" {
 		bin, _ = e.look("opencode")
 	}
 	if bin == "" {
 		if _, err := e.look("opencode2"); err == nil {
-			return openCodeV2
+			return 2
 		}
-		return openCodeV1
+		return 0
 	}
 	if e.Run != nil {
 		ctx, cancel := context.WithTimeout(ctx, openCodeVersionWait)
 		defer cancel()
 		if out, err := e.Run(ctx, bin, "--version"); err == nil {
 			if m := openCodeVersionRE.FindStringSubmatch(out); m != nil {
-				if major, _ := strconv.Atoi(m[1]); major >= 2 {
-					return openCodeV2
+				if major, _ := strconv.Atoi(m[1]); major > 0 {
+					return major
 				}
-				return openCodeV1
 			}
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(filepath.Base(bin)), "opencode2") {
-		return openCodeV2
+		return 2
 	}
-	return openCodeV1
+	return 0
 }
 
 // openCodeFile is the config file in dir join edits: opencode.jsonc if it is there, which OpenCode
@@ -149,9 +162,9 @@ func openCodeFile(dir string) (path, other string) {
 }
 
 // registerOpenCodeAt puts Murmur's server in OpenCode's config in h, in the shape its OpenCode
-// loads, and allows its tools; for OpenCode 2 it also writes Murmur's plugin there, which runs its
-// hook (opencodeplugin.go). OpenCode isn't touched where neither its command nor the directory is
-// there.
+// loads, and allows its tools; it also writes Murmur's plugin there, which runs its hook, in the
+// shape of that version's plugins (opencodeplugin.go). OpenCode isn't touched where neither its
+// command nor the directory is there.
 func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string, fresh bool, err error) {
 	if h.Dir == "" {
 		return nil, false, nil
@@ -159,22 +172,25 @@ func (e Env) registerOpenCodeAt(ctx context.Context, h agentHome) (did []string,
 	if !e.hasOpenCode() && h.Bin == "" && !isDir(h.Dir) {
 		return nil, false, nil
 	}
-	shape := e.openCodeShapeFor(ctx, h)
-	did, fresh, err = e.registerOpenCodeConfigAt(h, shape)
+	major := e.openCodeMajorFor(ctx, h)
+	did, fresh, err = e.registerOpenCodeConfigAt(h, openCodeShapeOf(major))
 	if err != nil {
 		return did, fresh, err
 	}
-	if !shape.v2() {
-		// OpenCode 1 loads plugins of another shape, and gets none: one join wrote for an OpenCode 2
-		// that was here before goes.
-		if gone, _, _ := removeOpenCodePlugin(h.Dir); gone {
-			did = append(did, h.Label+": removed "+brand.Product+"'s plugin, which is for OpenCode 2 ("+openCodePluginPath(h.Dir)+")")
-		}
+	var want, what string
+	switch {
+	case major >= 2:
+		want, what = openCodePlugin(e.Exe), "tells a session of its messages while it works"
+	case major == 1:
+		want, what = openCode1Plugin(e.Exe), "tells a session of its messages while it works, and gives it a turn when idle"
+	default:
+		// Each version's plugin is an error to the other, so where the version isn't known a plugin
+		// join wrote stays as it is, and none is added.
 		return did, fresh, nil
 	}
-	wrote, err := writeOpenCodePlugin(h.Dir, e.Exe)
+	wrote, err := writeOpenCodePlugin(h.Dir, want)
 	if wrote {
-		did = append(did, h.Label+": added "+brand.Product+"'s plugin, which tells a session of its messages while it works ("+openCodePluginPath(h.Dir)+")")
+		did = append(did, h.Label+": added "+brand.Product+"'s plugin, which "+what+" ("+openCodePluginPath(h.Dir)+")")
 	}
 	return did, fresh || wrote, err
 }

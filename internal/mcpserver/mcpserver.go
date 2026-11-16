@@ -64,12 +64,15 @@ type Options struct {
 // Run serves MCP on stdin and stdout until the client disconnects.
 func Run(ctx context.Context, opt Options) error {
 	if opt.Agent == "opencode" {
-		// As Pi's extension below: per user, and older after an update (#431).
-		if did, err := join.RefreshOpenCode(); err != nil {
-			fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
-		} else if did {
-			fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again\n")
-		}
+		// As Pi's extension below: per user, and older after an update (#431). In the background:
+		// asking OpenCode its version takes a second or more, and the server answers meanwhile.
+		go func() {
+			if did, err := join.RefreshOpenCode(ctx, openCodeClient()); err != nil {
+				fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
+			} else if did {
+				fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again (OpenCode 1 at its next start)\n")
+			}
+		}()
 	}
 	if opt.Agent == "pi" {
 		// Pi's extension is per user, like this server, and older after an update (#205).
@@ -259,8 +262,8 @@ func (s *server) sync(ctx context.Context) {
 // Claude Code's variables count only for Claude Code itself (the agent "claude-code", or none
 // given): Pi and OpenCode pass their own environment on to their MCP servers, and one started from
 // a Claude Code session has that session's CLAUDE_CODE_SESSION_ID, which isn't theirs (seen
-// 2026-11-01). The agents that give their session's ID in the environment (Muse, Pi, Grok; see
-// nativeEnv) are registered with it, and an ID made from it.
+// 2026-11-01). The agents that give their session's ID in the environment (Muse, Pi, Grok, and
+// OpenCode 1 through Murmur's plugin; see nativeEnv) are registered with it, and an ID made from it.
 func helloFor(agent, cwd string) proto.Hello {
 	var claude string
 	if isClaude(agent) {
@@ -358,9 +361,12 @@ func isClaude(agent string) bool { return agent == "" || agent == "claude-code" 
 // 2026-11-01); Grok sets GROK_SESSION_ID (read in its source, not seen run); Antigravity sets
 // ANTIGRAVITY_CONVERSATION_ID in what it runs (seen in a T3 thread's shell, 2026-11-15). Pi has no such
 // variable: the extension join writes for it registers the server with the session's file in
-// MURMUR_PI_SESSION_FILE, and the file's path is what T3 records (internal/join/pi.go).
+// MURMUR_PI_SESSION_FILE, and the file's path is what T3 records (internal/join/pi.go). OpenCode 1
+// names no session in a call, as OpenCode 2 does in its _meta, and the plugin join writes for it
+// gives the server MURMUR_OPENCODE_SESSION, an ID it makes for the process's sessions, which are
+// one to Murmur (internal/join/opencodeplugin.go).
 var nativeEnv = map[string]string{"muse": "MUSE_SESSION_ID", "pi": "MURMUR_PI_SESSION_FILE", "grok": "GROK_SESSION_ID",
-	"antigravity": "ANTIGRAVITY_CONVERSATION_ID"}
+	"opencode": "MURMUR_OPENCODE_SESSION", "antigravity": "ANTIGRAVITY_CONVERSATION_ID"}
 
 // nativeID is the session's Murmur ID made from its client's own: the same each time, so a server
 // that restarts within the conversation takes its session back, and hashed, since Muse's and
@@ -372,12 +378,12 @@ func nativeID(native string) string {
 }
 
 // routeFromEnv is what this process's environment says about reaching its client: inside T3, T3's
-// command line; in Claude Code, the messaging socket and the token for it; in Pi, the socket
-// Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go); for
-// Codex and OpenCode outside T3, the client's own program, whose command line takes a message
-// (#135, package clientcli). T3's thread is in the environment of most agents T3 runs (threadEnv),
-// and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps all of this to itself
-// (see proto.Route).
+// command line; in Claude Code, the messaging socket and the token for it; in Pi and OpenCode 1,
+// the socket Murmur's extension or plugin opens, which takes the same lines (internal/join/pi.go,
+// opencodeplugin.go); for Codex and OpenCode 2 outside T3, the client's own program, whose command
+// line takes a message (#135, package clientcli). T3's thread is in the environment of most agents
+// T3 runs (threadEnv), and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps
+// all of this to itself (see proto.Route).
 func routeFromEnv(agent string) proto.Route {
 	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
@@ -387,8 +393,11 @@ func routeFromEnv(agent string) proto.Route {
 		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
 	case agent == "codex" && r.T3CLI == "":
 		r.CodexCLI = clientProgram("codex")
-	case agent == "opencode" && r.T3CLI == "":
-		r.OpenCodeCLI, r.OpenCodeState = openCodeService()
+	case agent == "opencode":
+		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_OPENCODE_MESSAGING_SOCKET"), os.Getenv("MURMUR_OPENCODE_MESSAGING_TOKEN")
+		if r.T3CLI == "" {
+			r.OpenCodeCLI, r.OpenCodeState = openCodeService()
+		}
 	}
 	return r
 }
@@ -421,6 +430,17 @@ func programNamed(exe, name string) string {
 		return ""
 	}
 	return exe
+}
+
+// openCodeClient is the OpenCode program that started this server, whose version says which of
+// Murmur's plugins it loads: OpenCode 2's npm package installs it as opencode2 too. "" for a
+// server started by anything else.
+func openCodeClient() string {
+	_, exe := parentProgram()
+	if c := programNamed(exe, "opencode"); c != "" {
+		return c
+	}
+	return programNamed(exe, "opencode2")
 }
 
 // openCodeService is the OpenCode that started this server, if it is the background server every
@@ -593,8 +613,9 @@ func (s *server) newLink(ctx context.Context, c *client.Client, h proto.Hello) *
 }
 
 // sessionLinkFor is the link of the session a call to a shared server comes from, made and started
-// at the session's first call. A call that names no session (from an OpenCode too old to say) goes
-// by one link for the whole process, as a server of any other agent does. Sessions idle for
+// at the session's first call. A call that names no session (from OpenCode 1, which doesn't say)
+// goes by one link for the whole process, as a server of any other agent does, with the ID Murmur's
+// plugin gave the process, if it did (nativeEnv). Sessions idle for
 // sharedIdle are dropped on the way. It is nil when the server is off.
 func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
 	var native string

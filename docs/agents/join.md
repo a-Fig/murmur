@@ -38,8 +38,9 @@ joining does:
   short ones on using Murmur well, and one for a session its user has made the manager of a team
   of agents. In Claude Code, Codex, Grok and Antigravity, Murmur also adds a hook, for every project: a
   command the agent runs around each tool call and when it finishes, so a busy session is told when
-  a message comes. OpenCode 2 gets a plugin file of Murmur's (`plugins/murmur.js` in its config
-  folder) that does the same. In Codex, join also marks the hook as approved, so Codex runs it without asking.
+  a message comes. OpenCode gets a plugin file of Murmur's (`plugins/murmur.js` in its config
+  folder) that does the same (in OpenCode 1 only outside T3 Code, where it also wakes an idle
+  session). In Codex, join also marks the hook as approved, so Codex runs it without asking.
   In a session that isn't in Murmur, it does nothing.
 - A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after

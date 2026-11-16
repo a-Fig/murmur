@@ -102,8 +102,9 @@ your COO. Their source is in [`internal/skills`](internal/skills).
 | Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
+| OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |
-| OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
+| Muse Code               | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
 idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
