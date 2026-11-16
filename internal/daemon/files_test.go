@@ -465,3 +465,89 @@ func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
 	a.stop()
 	eventually(t, "the files ref of a, gone, to leave the remote", func() bool { return listed() == "" })
 }
+
+// The same files sent to several names, a message for each, go up once: every message names the
+// one files ref, and each recipient gets them (#739).
+func TestASendToSeveralUploadsTheFilesOnce(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	a.session("dddddd", "")
+	bob, _ := b.session("bbbbbb", "")
+	carol, _ := b.session("cccccc", "")
+	eventually(t, "a to see bob and carol", func() bool { return a.seesSession(bob) && a.seesSession(carol) })
+	log := writeFile(t, "build.log", bytes.Repeat([]byte("line\n"), 400))
+	send := func(from, to, path string) {
+		t.Helper()
+		if r := a.do(proto.Request{Op: proto.OpSend, Session: from, To: to, Subject: "files", Files: []string{path}}); r.Error != "" {
+			t.Fatalf("send to %s: %s", to, r.Error)
+		}
+	}
+	send("aaaaaa", bob, log)
+	// Another session's upload between the two doesn't make the second upload the log again.
+	send("dddddd", alice, writeFile(t, "other.txt", []byte("something else")))
+	send("aaaaaa", carol, log)
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 2 {
+		t.Errorf("files refs on the remote: %v, want two: the log's and the other's", refs)
+	}
+	for _, sess := range []string{"bbbbbb", "cccccc"} {
+		if m := inboxMessage(t, b, sess); len(m.Files) != 1 || !fileThere(m.Files[0].Path) {
+			t.Errorf("%s got %+v", sess, m.Files)
+		}
+	}
+}
+
+// A device uploads at most FilesPerDay of files in a day. Past it a send with new files is refused,
+// saying when it can go; the same files sent again take the ref already up, and cost nothing (#739).
+func TestFilesPastADaysUploadsAreRefused(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	a.session("aaaaaa", "")
+	first := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	send := func(path string) proto.Response {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: []string{path}})
+	}
+	if r := send(first); r.Error != "" {
+		t.Fatalf("the first: %s", r.Error)
+	}
+	if r := send(first); r.Error != "" {
+		t.Errorf("the same files again: %s", r.Error)
+	}
+	r := send(writeFile(t, "two.bin", bytes.Repeat([]byte{2}, 2000)))
+	if !strings.Contains(r.Error, "not sent: this device has sent") || !strings.Contains(r.Error, "in the last day") || !strings.Contains(r.Error, "it can send these after") {
+		t.Errorf("past the day's uploads: %q", r.Error)
+	}
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
+		t.Errorf("files refs on the remote: %v, want one", refs)
+	}
+}
+
+// A device keeps at most FilesHeld of files, the oldest message's going first (#739).
+func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filesHeld = 3000 })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	var paths []string
+	for i, name := range []string{"old.bin", "new.bin"} {
+		f := writeFile(t, name, bytes.Repeat([]byte{byte(i)}, 2000))
+		if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: name, Files: []string{f}}); r.Error != "" {
+			t.Fatalf("send %s: %s", name, r.Error)
+		}
+		m := inboxMessage(t, b, "bbbbbb")
+		if len(m.Files) != 1 {
+			t.Fatalf("%s: %+v", name, m.Files)
+		}
+		paths = append(paths, m.Files[0].Path)
+		time.Sleep(50 * time.Millisecond) // the two copies apart in time, on a coarse clock too
+	}
+	eventually(t, "the old copy to go", func() bool { return !fileThere(paths[0]) })
+	if !fileThere(paths[1]) {
+		t.Errorf("the new copy went too")
+	}
+}
