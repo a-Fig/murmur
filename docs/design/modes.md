@@ -16,7 +16,7 @@ session tag's rules apply to each of them:
 - Senders see the tag.
 
 Its own person's messages are the exception (#777, Tyler, 2026-11-16): one sent from the device's
-page to one of its sessions goes as usual, a turn or a notice, through the mode and a session's own
+page, to one session, a group or everyone, goes as usual, a turn or a notice, through the mode and a session's own
 tag alike, and the page doesn't say it waits. Some people talk to their own agents through Murmur,
 and do not disturb is for everyone else.
 

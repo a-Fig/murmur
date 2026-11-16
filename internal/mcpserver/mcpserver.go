@@ -1090,8 +1090,8 @@ func (s *server) tools(srv *mcp.Server) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +
 		"and can search who by. model:<your model> says which model you are (a session has one). do-not-disturb keeps messages to " +
-		"you queued in your inbox, all but your user's from this device's page: none comes as a turn or a notice until you read your inbox or take the tag off, " +
-		"when they come the usual way. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
+		"you queued in your inbox: none comes as a turn or a notice until you read your inbox or take the tag off, " +
+		"when they come the usual way; your user's, from this device's page, still come. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
 		"session that has it, so add it to join a group and remove it to leave. To start a group or bring others into one, give their names in for: " +
 		"they are added, and can leave the same way. A tag a human set on the page stands over yours, but you can always leave a group.",
 		InputSchema: objectSchema(map[string]*jsonschema.Schema{

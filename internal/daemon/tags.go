@@ -55,7 +55,7 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 }
 
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
-// inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
+// inbox, none is handed over as a turn, and the hook tells of none (see heldLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
 func (d *Daemon) dndLocked(id string) bool { return d.dnd.Load() || d.ownDNDLocked(id) }
 

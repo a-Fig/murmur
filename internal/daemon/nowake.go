@@ -11,7 +11,7 @@ import (
 )
 
 // Telling a sender that its message won't wake the recipient (#545). The recipient's device decides
-// whether a message from another agent goes into a session as a turn (wakesLocked); where the wake
+// whether a message from another agent goes into a session as a turn (mayWakeLocked); where the wake
 // setting keeps it out, the message waits for the session's next turn or its inbox, which `send`
 // and `lookup` say. Only the recipient's device knows its setting and how long the session has been
 // idle, so its presence carries the answer for each session (bus.SessionInfo.NoWake), and a change

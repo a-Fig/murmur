@@ -58,7 +58,7 @@ const (
 )
 
 // errNotNow is what a handoff ends with when, by the time of the handoff, the session may no
-// longer be woken (see wakesLocked).
+// longer be woken (see mayWakeLocked and heldLocked).
 var errNotNow = errors.New("the session may not be woken now")
 
 // How a message goes into a session.

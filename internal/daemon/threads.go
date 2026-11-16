@@ -448,19 +448,12 @@ func (p pageSettings) busyChoice(name string) string {
 	return cmp.Or(p.Busy, web.BusySubject)
 }
 
-// wakesLocked says whether a message may go into session id as a turn now. Not if it is off the
-// mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
-// unset choice means): if the session is busy, which needs no waking, or was last at work no
-// more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
-// waits; the read of its thread lets the handoffs look again. Nor, for a message do not disturb
-// holds (#198), while the session is on it: the handoffs ask heldLocked of each message, as this
-// device's person's get through (#777). Caller holds mu.
-func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
-	return !d.dndLocked(id) && d.mayWakeLocked(id, wake)
-}
-
-// mayWakeLocked is wakesLocked without do not disturb: whether the session could be woken once the
-// tag comes off. The daemon stays up for a thread it may wake so (see holdsRouteLocked): it is
+// mayWakeLocked says whether a message may go into session id as a turn now, as far as the session
+// goes: do not disturb is asked of each message (heldLocked). Not if it is off the mesh, nor if the
+// page says never. Always: yes. Within N minutes (the default, and what an unset choice means): if
+// the session is busy, which needs no waking, or was last at work no more than N minutes ago, 0
+// standing for defaultWakeMinutes. A session nothing is known of yet waits; the read of its thread
+// lets the handoffs look again. A session on do not disturb could be woken once the tag comes off. The daemon stays up for a thread it may wake so (see holdsRouteLocked): it is
 // the one to read the tag's removal from another device's page, and to hand over what waited.
 // Caller holds mu.
 func (d *Daemon) mayWakeLocked(id string, wake pageSettings) bool {
