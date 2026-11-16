@@ -348,9 +348,10 @@ func (d *Daemon) queuedForPushLocked(id string, m *inMsg, wake pageSettings) boo
 //
 // In T3 a turn can also start before the hook sees it (runUnseen).
 //
-// A session in T3 whose hook hasn't run (none runs for Muse or OpenCode 1) is at work by T3's
-// database alone (hooklessBusy): its messages wait in the inbox, where `inbox` finds them, and go
-// in together as one turn when the run ends (#699). Caller holds mu.
+// A session in T3 whose hook hasn't run (none runs for OpenCode 1 there, and none for Muse before
+// #461 or before its user runs join again) is at work by T3's database alone (hooklessBusy): its
+// messages wait in the inbox, where `inbox` finds them, and go in together as one turn when the
+// run ends (#699). Once its hook runs it is a hooked session like any other. Caller holds mu.
 func (d *Daemon) hookBusyLocked(id string) bool {
 	s := d.sessions[id]
 	if s == nil {
