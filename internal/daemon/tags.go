@@ -154,9 +154,11 @@ func (d *Daemon) tagsOfLocked(s *session) []tags.Tag {
 	}
 	ts := tags.Effective(self, d.derivedTagsLocked(s.id), human)
 	if d.dnd.Load() && !tags.Has(ts, tags.DoNotDisturb) {
-		// A human's mark can't take the device's do not disturb off a session (hasTagLocked), so
-		// who, lookup and the page show it as send goes by it.
-		ts = append(ts, tags.Tag{Name: tags.DoNotDisturb, Src: tags.SrcDerived})
+		// A human's mark can't take the device's do not disturb off a session, nor can the tag limit
+		// (hasTagLocked), so who, lookup and the page show it as send goes by it. First, and within
+		// the limit, as a peer reads no more than that many.
+		ts = append([]tags.Tag{{Name: tags.DoNotDisturb, Src: tags.SrcDerived}}, ts...)
+		ts = ts[:min(len(ts), tags.MaxPerSession)]
 	}
 	return ts
 }
