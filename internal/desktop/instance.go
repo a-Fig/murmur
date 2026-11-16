@@ -262,6 +262,25 @@ func (in *Instance) Close() {
 	}
 }
 
+// WindowOpen says a window is recorded at path and answers on its port. It asks nothing of it: a
+// connection that sends no request is closed unanswered.
+func WindowOpen(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var rec instance
+	if json.Unmarshal(b, &rec) != nil || rec.Addr == "" {
+		return false
+	}
+	c, err := net.DialTimeout("tcp", rec.Addr, time.Second)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
 // BringForward asks the window recorded at path, if one is open, to come forward, and to show
 // the repo at gitDir unless that is "", and says whether it did.
 func BringForward(path, gitDir string) bool {

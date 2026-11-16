@@ -129,7 +129,11 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 		r.Did = append(r.Did, "Removed the record of this machine's clones ("+record+")")
 	}
 
-	left := removeUserFolder(&r)
+	var left []string
+	if e.RemoveApp != nil {
+		left = e.RemoveApp(&r)
+	}
+	left = append(left, removeUserFolder(&r)...)
 
 	if len(r.Did) == 0 && len(r.Problems) == 0 && len(left) == 0 {
 		r.Did = []string{"Nothing to remove: " + brand.Product + " wasn't set up for any agent here"}
@@ -342,6 +346,9 @@ func removeUserFolder(r *Report) (left []string) {
 	}
 	if slices.Contains(names, "clones") {
 		why = append(why, "the record of the clones kept above")
+	}
+	if slices.Contains(names, "app") {
+		why = append(why, "the desktop app's files, kept above")
 	}
 	held := strings.Join(names, ", ")
 	if len(why) > 0 {

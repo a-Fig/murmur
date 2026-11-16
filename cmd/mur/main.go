@@ -564,18 +564,9 @@ func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	}
 	env.Version = version
 	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
+	env.RemoveApp = uninstallApp
 	report, err := join.Uninstall(ctx, env, *leave)
 	fmt.Fprint(out, report.String())
-	// The desktop app's launcher (#616), which `mur app` put in place.
-	if cfg, cerr := os.UserConfigDir(); cerr == nil {
-		where, lerr := desktop.RemoveLauncher(filepath.Join(cfg, brand.Name, "app"))
-		switch {
-		case lerr != nil:
-			fmt.Fprintf(out, "Couldn't take out the app's launcher, %s: %v\n", where, lerr)
-		case where != "":
-			fmt.Fprintf(out, "Took out the app's launcher: %s\n", where)
-		}
-	}
 	return err
 }
 
