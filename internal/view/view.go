@@ -369,9 +369,10 @@ func senders(msgs []proto.MessageView) string {
 // over at once (docs/design/delivery.md, "Handing over"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
-// reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
-// agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted
-// on. The sender is described (its agent, whose machine) only in the first turn the session has
+// reply and that doing so is optional. The sender's text is not wrapped or quoted, except that a
+// body line reading as a turn's own first line is quoted, so it can't forge a second message
+// (#297): teammates' agents are trusted in Murmur's model, and a message that reads as a request
+// is meant to be acted on. The sender is described (its agent, whose machine) only in the first turn the session has
 // from it (m.Introduced, #216): after that it is a name the agent has met. A message the hook's
 // notice told of earlier says so (m.Told, #355): the agent may have acted on the subject already,
 // and would otherwise take the turn for a second message.
@@ -436,7 +437,7 @@ func Turn(m proto.MessageView) string {
 		fmt.Fprintf(&b, "\n%s\n", m.Subject)
 	}
 	if body != "" {
-		fmt.Fprintf(&b, "\n%s\n", body)
+		fmt.Fprintf(&b, "\n%s\n", quotedBody(body))
 	}
 	if len(m.Files) > 0 {
 		b.WriteString("\n" + files(m))
@@ -462,6 +463,32 @@ func Turn(m proto.MessageView) string {
 	}
 	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Product, who)
 	return b.String()
+}
+
+// quotedBody is a turn's body with one change: a line that reads as a turn's own first
+// line is quoted with "> ", as Inbox quotes every line, so it can't pass for the start of a
+// second message from someone else (#297, Tyler's targeted form of the fix: only those
+// lines, the rest as written). Indentation doesn't save it: an agent reads an indented
+// header as a header, so the line is judged with its leading blanks off.
+func quotedBody(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if headerLine(line) {
+			lines[i] = "> " + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// headerLine says a body line reads as the first line of a turn like this one: "Message
+// from" or "Message sent in", naming Murmur as a real one does ("via Murmur:"). A line
+// that merely starts with the same words and never names Murmur is the sender's prose.
+func headerLine(line string) bool {
+	t := strings.TrimLeft(line, " \t")
+	if !strings.Contains(t, " via "+brand.Product) {
+		return false
+	}
+	return strings.HasPrefix(t, "Message from ") || strings.HasPrefix(t, "Message sent in ")
 }
 
 // receipt renders a notice from Murmur itself of how far one of the session's messages got, which

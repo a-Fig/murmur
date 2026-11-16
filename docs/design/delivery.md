@@ -69,7 +69,11 @@ The first and last lines are Murmur's. The first says a teammate's agent is spea
 so the agent treats the message as information rather than its user's typing; the last says how to
 answer and that answering is optional. The sender's text between them is passed on as written,
 neither quoted nor wrapped: teammates' agents are trusted in Murmur's model, and a message that
-reads as a request is meant to be acted on. A body past the limit is cut, as in `inbox`.
+reads as a request is meant to be acted on. One exception (#297, Tyler, 2026-11-15): a body line
+that reads as a turn's own first line — "Message from" or "Message sent in", naming Murmur as a
+real one does, even indented — is quoted with `> `, as `inbox` quotes every line, so a body can't
+forge a second message from someone else inside its own turn. Everything else stays as written.
+A body past the limit is cut, as in `inbox`.
 
 - **Who it is from, as the receiver knows it.** The first line is written when the message is
   queued, from what the receiving daemon then knows of the sender. A sync reads the registry and
