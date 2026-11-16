@@ -49,6 +49,11 @@ type Env struct {
 	// Progress is where a leave says it is still waiting for the daemon to stop, before the report;
 	// nil, as most tests leave it, says nothing.
 	Progress io.Writer
+	// RemoveApp, for uninstall, takes out the desktop app's launcher and its folder in Murmur's
+	// folder in the config directory (cmd/mur/app.go), adding to the report, and returns what it left
+	// for the user. It runs just before that folder is removed, which its own would otherwise keep
+	// (#746). nil, as tests leave it, does nothing.
+	RemoveApp func(r *Report) (left []string)
 }
 
 // EnvFromProcess is the environment of the running process.

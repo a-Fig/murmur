@@ -94,6 +94,17 @@ message to T3, so reading the file is running code as the user.
   a starter waits. A registration, `who`, `send` and `lookup` still wait for the sync, at most 10 s,
   so what they see includes the backlog.
 
+- **A send doesn't wait out a slow sync** (#738, 2026-11-16). After its push lands, a write to this
+  device's log queues its own event for the sessions on this device, which needs the lock a sync
+  holds through its fetches. One slow ref stretched that to most of a minute: a send that had
+  reached the remote answered its agent that much later, sometimes past the client's deadline, so
+  the agent took it for failed, and every other write to the log waited behind it. The write now
+  waits 2 s, longer than a sync takes when nothing is slow, then leaves the queueing to that sync
+  and answers. The cost: during a slow sync, what this device's own writes do here waits for the
+  sync's end. A message to a session on the same device reaches its inbox then, not when the send
+  answers, and a session just added to a group isn't yet counted in the note a send to that group
+  gets.
+
 ## Protocol numbers
 
 A manual upgrade replaces the binary and not the daemon already started from it, which would go on

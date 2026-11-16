@@ -117,7 +117,9 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,
   names and contents, within 10 minutes of their push takes that push's ref, once a message naming
   it has gone out. A ref whose message failed is left to the prune and taken by no other send, and
-  a send that took a ref and then failed leaves it be. Until then each message uploaded them again.
+  a send that took a ref and then failed leaves it be. A message whose push ended badly without
+  the remote refusing it may land yet, on Windows even after the push was killed, so its ref is
+  kept its full time (#745). Until then each message uploaded them again.
 - **200 MB of uploads a device a day** (`FilesPerDay`, #739), over the last 24 hours, counted in
   packs pushed, so a send to several counts once. Past it a send with files is refused, saying when
   it can go. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an

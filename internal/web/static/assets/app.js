@@ -4737,6 +4737,13 @@ function deviceMode() {
   return ui.state?.mode || "online";
 }
 
+// What each mode does: under the Settings row for the one that is on, and as each button's hint.
+const MODE_HELP = {
+  online: "Your agents here get messages as usual.",
+  dnd: "Teammates still see this device and its agents, but no message reaches them: messages wait until you're back online, and senders are told why.",
+  invisible: "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages wait until you're back online.",
+};
+
 // A quiet line in the sidebar while the device isn't online, which leads to Settings.
 function modeNote() {
   const mode = deviceMode();
@@ -5448,16 +5455,12 @@ function settingsPage() {
           settingsRow(
             "mode",
             "This device, in this repo",
-            {
-              online: "Your agents here get messages as usual.",
-              dnd: "Teammates still see this device and its agents, but no message reaches them: messages wait until you're back online, and senders are told why.",
-              invisible: "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages wait until you're back online.",
-            }[deviceMode()],
+            MODE_HELP[deviceMode()],
             h(
               "div",
               { class: "segmented", role: "group" },
               [["online", "Online"], ["dnd", "Do not disturb"], ["invisible", "Invisible"]].map(([v, label]) =>
-                h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
+                h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-tip": MODE_HELP[v], "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
               ),
             ),
           ),
