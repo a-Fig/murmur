@@ -161,8 +161,12 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		return err
 	}
 	remote := readable(listed)
+	d.mu.Lock()
+	d.syncing = true // an append may leave its tip to this sync from here on (leaveOwnTip)
+	d.mu.Unlock()
 	d.advMu.Lock()
 	defer d.advMu.Unlock()
+	defer d.readOwnLater(ctx)
 
 	var changed []string
 	d.mu.Lock()
@@ -1305,6 +1309,57 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	}
 }
 
+// leaveOwnTip takes advMu for an append to read sha, the tip of this device's log that it just
+// pushed, and says false; or, if a sync still holds advMu after OwnTipWait, leaves the tip for
+// that sync to read at its end, and says true. The wait is longer than a sync takes when nothing
+// is slow, so a send to a session on this device has nearly always queued its message by the time
+// it answers.
+//
+// A sync holds advMu through its fetches, which a slow ref stretches to most of a minute, and the
+// append holds writeMu: waiting that long kept a send that had already landed from answering its
+// agent, past the client's deadline at worst, with every other write to the log behind it (#738).
+// Reading the tip only queues the event for this device's own sessions, which the sync does as
+// well, later. Another holder of advMu has it briefly, and is waited for.
+func (d *Daemon) leaveOwnTip(sha string) bool {
+	for end := time.Now().Add(d.opt.OwnTipWait); ; time.Sleep(2 * time.Millisecond) {
+		d.mu.Lock()
+		// With mu held, so that a sync can't end between the two looks; TryLock never waits, so
+		// the lock order (advMu, then mu) isn't at stake.
+		if d.advMu.TryLock() {
+			d.mu.Unlock()
+			return false
+		}
+		if d.syncing && time.Now().After(end) {
+			d.ownLater = sha // read before syncing goes false (readOwnLater)
+			d.mu.Unlock()
+			return true
+		}
+		d.mu.Unlock()
+	}
+}
+
+// readOwnLater reads the tips of this device's log that appends left for this sync, at its end,
+// and lets the next append read its own again. It has a time of its own: the sync's may have run
+// out, and the events are on the remote already. Caller holds advMu.
+func (d *Daemon) readOwnLater(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	ref := d.meshRef()
+	for {
+		d.mu.Lock()
+		sha := d.ownLater
+		d.ownLater = ""
+		if sha == "" {
+			d.syncing = false
+			d.mu.Unlock()
+			return
+		}
+		d.known[ref] = sha
+		d.mu.Unlock()
+		d.advanceMesh(ctx, ref, sha, sha)
+	}
+}
+
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
@@ -1340,12 +1395,16 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
 				d.log.Printf("updating local %s: %v", ref, err)
 			}
-			d.advMu.Lock()
 			d.mu.Lock()
-			d.known[ref] = sha
 			if e.Type == bus.Message {
 				d.noteConversationLocked() // a message went out; the answer may come soon
 			}
+			d.mu.Unlock()
+			if d.leaveOwnTip(sha) {
+				return nil
+			}
+			d.mu.Lock()
+			d.known[ref] = sha
 			d.mu.Unlock()
 			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
 			d.advMu.Unlock()

@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -110,6 +111,9 @@ type device struct {
 	titleEvery time.Duration
 	// fetchLimit is FetchLimit; zero takes the daemon's default.
 	fetchLimit time.Duration
+	// ownTipWait is OwnTipWait; zero takes a minute, so that under the tests' load a send has
+	// always queued its message for this device's sessions when it answers, as the tests expect.
+	ownTipWait time.Duration
 	// firstSync is FirstSyncLimit; zero takes the daemon's default.
 	firstSync time.Duration
 	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
@@ -238,7 +242,7 @@ func (d *device) start() {
 	go func() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, OwnTipWait: cmp.Or(d.ownTipWait, time.Minute), FirstSyncLimit: d.firstSync,
 			SessionGrace: d.grace, StoppedInbox: d.keep, FileKeep: d.fileKeep, FilePrune: d.filePrune, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
