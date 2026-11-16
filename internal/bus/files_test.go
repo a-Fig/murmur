@@ -130,6 +130,29 @@ func TestCleanFiles(t *testing.T) {
 	}
 }
 
+// Names a disk may take for one file, as macOS does those that differ only in Unicode normalization,
+// are made distinct like names that differ only in case (#712). A combining accent is already cut
+// to '_' by FileName, so these are canonical twins made only of letters.
+func TestCleanFilesNormalization(t *testing.T) {
+	_, good, err := bus.SealFile([]byte("x"), "0123456789abcdef", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, twins := range [][2]string{
+		{"\uD55C.txt", "\u1112\u1161\u11AB.txt"}, // a Hangul syllable, and its jamo
+		{"\u00C5.txt", "\u212B.txt"},             // A with ring, and ANGSTROM SIGN
+		{"\u03AC.txt", "\u1F71.txt"},             // alpha with tonos, and with oxia
+		{"\u00E5.txt", "\u212B.txt"},             // and the case of one, the normalization of the other
+	} {
+		a, b := good, good
+		a.Name, b.Name = twins[0], twins[1]
+		got := bus.CleanFiles([]bus.File{a, b})
+		if got[0].Name != twins[0] || got[1].Name != "2-"+twins[1] {
+			t.Errorf("%+q and %+q came out %+q and %+q", twins[0], twins[1], got[0].Name, got[1].Name)
+		}
+	}
+}
+
 // A pack's length hides how many files it holds and their sizes: it is one of a few lengths near
 // what it holds, never under 4 KB, and each file is found in it by the sizes the event gives.
 func TestPackFiles(t *testing.T) {
