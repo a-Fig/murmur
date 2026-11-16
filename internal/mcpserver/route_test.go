@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"sync"
 	"testing"
 	"time"
@@ -38,17 +37,18 @@ func TestHelloCarriesTheRouteFromTheEnvironment(t *testing.T) {
 }
 
 // T3's headless server (`t3 serve`) sets no T3CODE_CLI_PATH, only the thread's ID and T3CODE_HOME
-// (#780). Its session is still T3's: the route has the `t3` on PATH, which the daemon uses ahead of
-// the messaging socket, as it does in T3's app. With no `t3` to be found it gets no socket, which
-// starts no turn there, so its messages wait as notices rather than being taken as read.
-func TestHeadlessT3IsFoundOnPath(t *testing.T) {
+// (#780). Its Claude Code session is still T3's: the route has the `t3` that serves, which the
+// daemon uses ahead of the messaging socket, as it does in T3's app. With no `t3` to be found it
+// gets no socket, which starts no turn there, so its messages wait as notices rather than being
+// taken as read.
+func TestHeadlessT3IsFound(t *testing.T) {
 	t.Setenv("T3CODE_CLI_PATH", "")
 	t.Setenv("T3CODE_HOME", "/home/u/.t3")
 	t.Setenv(threadEnv, "thread-1")
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
 	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
-	t.Cleanup(func() { lookT3 = func(string) (string, error) { return "", exec.ErrNotFound } })
-	lookT3 = func(name string) (string, error) { return "/home/u/.local/bin/" + name, nil }
+	t.Cleanup(func() { servingT3 = func() string { return "" } })
+	servingT3 = func() string { return "/home/u/.local/bin/t3" }
 	h := helloFor("claude-code", "/work")
 	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-1",
 		MsgSocket: "/tmp/claude.sock", MsgToken: "tok-1"}); h.Route != want {
@@ -58,17 +58,25 @@ func TestHeadlessT3IsFoundOnPath(t *testing.T) {
 		t.Errorf("hello %+v: want it registered by its thread, as in T3", h)
 	}
 
-	lookT3 = func(string) (string, error) { return "", exec.ErrNotFound }
-	if r := helloFor("claude-code", "/work").Route; r.MsgSocket != "" || r.T3CLI != "" {
-		t.Errorf("with no t3 on PATH: %+v, want no socket and no T3 command line", r)
+	servingT3 = func() string { return "" }
+	h = helloFor("claude-code", "/work")
+	if h.Route.MsgSocket != "" || h.Route.T3CLI != "" || h.ByThread || h.Agent != "claude-code" {
+		t.Errorf("with no t3 to be found: %+v, want no socket, no T3 command line, and not by its thread", h)
+	}
+
+	// Only Claude Code's thread is looked for: another agent with the variable keeps its own route.
+	servingT3 = func() string { return "/home/u/.local/bin/t3" }
+	t.Setenv("MURMUR_PI_MESSAGING_SOCKET", "/tmp/pi.sock")
+	t.Setenv("MURMUR_PI_MESSAGING_TOKEN", "tok-2")
+	if h := helloFor("pi", "/work"); h.Route.T3CLI != "" || h.Route.MsgSocket != "/tmp/pi.sock" || h.Agent != "pi" {
+		t.Errorf("pi with the thread's variable: %+v", h)
 	}
 
 	// A claude run from the thread's shell isn't the thread: it keeps its own socket, and isn't T3's.
 	agentAbove = func() bool { return true }
 	t.Cleanup(func() { agentAbove = func() bool { return false } })
-	lookT3 = func(name string) (string, error) { return "/home/u/.local/bin/" + name, nil }
-	if r := helloFor("claude-code", "/work").Route; r.MsgSocket != "/tmp/claude.sock" || r.T3CLI != "" {
-		t.Errorf("under the thread's agent: %+v", r)
+	if h := helloFor("claude-code", "/work"); h.Route.MsgSocket != "/tmp/claude.sock" || h.Route.T3CLI != "" || h.ByThread {
+		t.Errorf("under the thread's agent: %+v", h)
 	}
 }
 
