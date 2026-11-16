@@ -209,7 +209,7 @@ func TestFilesASendRefuses(t *testing.T) {
 		why   string
 	}{
 		"a path that isn't full":    {[]string{"small.txt"}, "isn't a full path"},
-		"a Git Bash path":           {[]string{"/tmp/shot.png"}, "pass the Windows path, as `cygpath -w /tmp/shot.png` prints it"},
+		"a Git Bash path":           {[]string{"/tmp/shot.png"}, "pass the Windows path, as `cygpath -w '/tmp/shot.png'` prints it"},
 		"a file that isn't there":   {[]string{filepath.Join(t.TempDir(), "nothing.txt")}, "can't read"},
 		"a directory":               {[]string{t.TempDir()}, "isn't a file"},
 		"too many files":            {nine, "at most 8 files"},

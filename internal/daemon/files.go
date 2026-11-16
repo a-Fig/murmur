@@ -98,10 +98,10 @@ func textOf(b []byte) (string, bool) {
 	return strings.ToValidUTF8(string(b), " "), true
 }
 
-// driveless says whether path starts at a root but names no drive, as a Unix shell's paths do on
-// Windows.
-func driveless(path string) bool {
-	return runtime.GOOS == "windows" && (strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) && !strings.HasPrefix(path, `\\`))
+// unixPath says whether path is a Unix shell's, as Git Bash's /tmp is, on Windows: it starts at a
+// root with a forward slash and names no drive. Two slashes are a share's, and full already.
+func unixPath(path string) bool {
+	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
 }
 
 // readSendFiles reads the files a send names and holds them to the limits. A text file is checked
@@ -115,10 +115,10 @@ func readSendFiles(paths []string) ([][]byte, []bus.File, error) {
 	files := make([]bus.File, 0, len(paths))
 	for _, path := range paths {
 		if !filepath.IsAbs(path) {
-			if driveless(path) {
+			if unixPath(path) {
 				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
 				// drive, where another file of that name may be (#706).
-				return nil, nil, fmt.Errorf("%s isn't a full path on Windows: pass the Windows path, as `cygpath -w %s` prints it", path, path)
+				return nil, nil, fmt.Errorf("%s isn't a full path on Windows: pass the Windows path, as `cygpath -w '%s'` prints it", path, path)
 			}
 			return nil, nil, fmt.Errorf("%s isn't a full path", path)
 		}
