@@ -149,10 +149,22 @@ the turn took, so nothing waits for good.
   from before the turn is held only if it is still within them.
 - **Why not hand it to T3 as well:** T3 can't take back a queued message, so the agent could read it
   with `inbox` mid-turn and then get it again as a turn.
-- **Where the hook doesn't run** (Muse and OpenCode 1 in T3, as of 2026-11-15), nothing says the
-  session is at work, so a message goes to T3 as before; without the handoff the session would hear
-  nothing at all. Codex and Grok have the hook since #225, Pi since #205, OpenCode 2 since #431, and
-  OpenCode 1 outside T3 since #446 (its plugin does nothing in T3).
+- **Where the hook doesn't run** (Muse and OpenCode 1 in T3, as of 2026-11-16; Codex and Grok have
+  it since #225, Pi since #205, OpenCode 2 since #431, and OpenCode 1 outside T3 since #446, its
+  plugin doing nothing in T3), T3's database alone says the session is at work (#699): while it
+  shows the thread's run going, and from a handoff until a read that began after it, at most a
+  minute. The session's messages wait in the inbox meanwhile, where `inbox` finds them mid-turn, and
+  when a read finds the run over, everything it has waiting goes in as one turn, each message as its
+  own turn would read, up to 256 KB. Until then each message went to `t3 thread send` at once, and T3
+  queued it as a turn of its own: on 2026-11-15 four messages to a busy Muse thread were four queued
+  turns, and the agent could find none of them with `inbox`, as they had left it. Nothing tells such
+  a session of a message mid-turn, so what came during the run goes in at its end whatever its age,
+  as T3's queue gave it before; what waited from before the run goes only while young enough. A
+  thread whose database has never been read holds nothing, and its messages go to T3 as before. No
+  15-minute cap, unlike a run no hook has shown going: no hook will come either way, and a message
+  T3 queued behind a run that never ends waits as long as one in the inbox, where `inbox` and the
+  page still have it. The one turn is for these sessions only: a hooked session that becomes idle
+  gets the rest of what waits by its hook, at its turn's end.
 - **Subagents.** A subagent's tool call carries its parent's `session_id`, with `agent_id` set
   (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as the notice would land in the
   subagent's context and not the session's (inferred, not seen; #188), and doesn't mark the session

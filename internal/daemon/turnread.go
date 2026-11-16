@@ -31,21 +31,28 @@ const maxAwaiting = 20
 // The text holds the sender, the subject and the body, so two messages share it only when nothing
 // tells their turns apart, or, for turns past 4 KB, nothing in their first 4 KB (whichTurn). An
 // entry saved before #651 has no text, matches no prompt, and goes after awaitingFor.
+//
+// Batch is the event ID of the first message of a turn that carries several (batchLocked, #699),
+// "" for a turn of one. Its first entry holds the turn's text and the others none, so one prompt
+// matches the turn once, and marks every message of it read.
 type awaitingRead struct {
-	ID   string    `json:"id"`
-	From string    `json:"from"`
-	Turn string    `json:"turn,omitempty"`
-	At   time.Time `json:"at"`
+	ID    string    `json:"id"`
+	From  string    `json:"from"`
+	Turn  string    `json:"turn,omitempty"`
+	Batch string    `json:"batch,omitempty"`
+	At    time.Time `json:"at"`
 }
 
 // awaitReadLocked remembers that message e is being handed to session id as a turn whose text is
-// turn, if it asked for receipts. It is done as the handoff begins, as the turn can start before
-// the client's command returns. Entries past awaitingFor go, for every session, so a session that
-// has gone leaves none behind for long. The caller saves the state. Caller holds mu.
-func (d *Daemon) awaitReadLocked(id string, e bus.Event, turn string) {
+// turn, if it asked for receipts, and says whether it did. batch is the turn's, if it carries
+// several messages (see awaitingRead.Batch), and then turn may be "", for all but its first entry.
+// It is done as the handoff begins, as the turn can start before the client's command returns.
+// Entries past awaitingFor go, for every session, so a session that has gone leaves none behind for
+// long. The caller saves the state. Caller holds mu.
+func (d *Daemon) awaitReadLocked(id string, e bus.Event, turn, batch string) bool {
 	turn = turnStart(turn)
-	if !e.Receipts || e.Type != bus.Message || turn == "" {
-		return
+	if !e.Receipts || e.Type != bus.Message || turn == "" && batch == "" {
+		return false
 	}
 	if d.st.AwaitingRead == nil {
 		d.st.AwaitingRead = map[string][]awaitingRead{}
@@ -59,13 +66,24 @@ func (d *Daemon) awaitReadLocked(id string, e bus.Event, turn string) {
 	}
 	list := d.st.AwaitingRead[id]
 	if slices.ContainsFunc(list, func(a awaitingRead) bool { return a.ID == e.ID }) {
-		return
+		return false
 	}
-	list = append(list, awaitingRead{ID: e.ID, From: e.From, Turn: turn, At: time.Now()})
+	list = append(list, awaitingRead{ID: e.ID, From: e.From, Turn: turn, Batch: batch, At: time.Now()})
 	if over := len(list) - maxAwaiting; over > 0 {
+		// An entry that holds a batch's text gives it to the first of its batch that stays: the rest
+		// would otherwise match no prompt (Sol's review of #701).
+		for _, gone := range list[:over] {
+			if gone.Batch == "" || gone.Turn == "" {
+				continue
+			}
+			if i := slices.IndexFunc(list[over:], func(a awaitingRead) bool { return a.Batch == gone.Batch }); i >= 0 {
+				list[over+i].Turn = gone.Turn
+			}
+		}
 		list = list[over:]
 	}
 	d.st.AwaitingRead[id] = list
+	return true
 }
 
 // forgetAwaitingLocked drops message msg from what session id waits on, as its handoff failed.
@@ -80,7 +98,8 @@ func (d *Daemon) forgetAwaitingLocked(id, msg string) {
 }
 
 // readOnPromptLocked marks read the message handed to session id as a turn that prompt is (whichTurn),
-// and forgets it. It says whether it marked one; the caller saves the state then. Caller holds mu.
+// or every message of it if it carried several, and forgets them. It says whether it marked one; the
+// caller saves the state then. Caller holds mu.
 func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	list := d.st.AwaitingRead[id]
 	if prompt == "" || len(list) == 0 {
@@ -90,9 +109,13 @@ func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	if i < 0 {
 		return false
 	}
-	a := list[i]
-	d.markLocked(id, bus.Event{Type: bus.Message, ID: a.ID, From: a.From, Receipts: true}, bus.MarkRead)
-	d.forgetAwaitingLocked(id, a.ID)
+	hit := list[i]
+	for _, a := range slices.Clone(list) { // forgetAwaitingLocked changes list in place
+		if a.ID == hit.ID || hit.Batch != "" && a.Batch == hit.Batch {
+			d.markLocked(id, bus.Event{Type: bus.Message, ID: a.ID, From: a.From, Receipts: true}, bus.MarkRead)
+			d.forgetAwaitingLocked(id, a.ID)
+		}
+	}
 	return true
 }
 

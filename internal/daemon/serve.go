@@ -588,7 +588,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	defer d.mu.Unlock()
 	var ids []string
 	if hookReq(req) {
-		for _, s := range d.touchHookLocked(req) {
+		sessions := d.touchHookLocked(req)
+		d.recordIssuesLocked(sessions, req.Issues)
+		for _, s := range sessions {
 			ids = append(ids, s.id)
 			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
 				// A /clear or a /resume is a new conversation, with a title of its own.
