@@ -524,6 +524,37 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 	if err := send(put(wt, "diff.txt")); err != "" {
 		t.Errorf("a file in a linked worktree: %s", err)
 	}
+	// One registered by relative paths, as git worktree add --relative-paths does.
+	wt2 := filepath.Join(base, "wt2")
+	gitOK(clone, "worktree", "add", "--detach", wt2)
+	reg := filepath.Join(a.gitDir, "worktrees", "wt2")
+	relTo := func(from, to string) []byte {
+		rel, err := filepath.Rel(from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []byte(filepath.ToSlash(rel) + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(reg, "gitdir"), relTo(reg, filepath.Join(wt2, ".git")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt2, ".git"), append([]byte("gitdir: "), relTo(wt2, reg)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := send(put(wt2, "rel.txt")); err != "" {
+		t.Errorf("a file in a worktree registered by relative paths: %s", err)
+	}
+	// A registration naming the git directory itself as a worktree, with a .git there to match.
+	if err := os.MkdirAll(filepath.Join(a.gitDir, "worktrees", "evil"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, "worktrees", "evil", "gitdir"), []byte(filepath.ToSlash(filepath.Join(a.gitDir, ".git"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, ".git"), []byte("gitdir: "+filepath.ToSlash(filepath.Join(a.gitDir, "worktrees", "evil"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused["the git directory's config, by a registration naming it as a worktree"] = filepath.Join(a.gitDir, "config")
 	if err := os.MkdirAll(filepath.Join(outside, ".git"), 0o700); err != nil {
 		t.Fatal(err)
 	}

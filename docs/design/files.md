@@ -114,9 +114,11 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
   Each folder is opened as an `os.Root`, and every later look and the read go through that
   handle, so the folder checked is the one read from even if its path becomes a link after. The
-  worktrees are found from their registrations in the git directory, read as files: `git worktree
-  list` looks at each one, which would sign in to a share one names. As an agent can write those,
-  a worktree counts only if its `.git`, looked at through its handle, leads back to this clone. A
+  worktrees are found from their registrations in the git directory, read as files through its
+  handle: `git worktree list` looks at each one, which would sign in to a share one names. A main
+  worktree whose git directory is elsewhere (`--separate-git-dir`) is found above a session's
+  folder. As an agent can write registrations, a worktree counts only if its `.git`, looked at
+  through its handle, leads back to this clone, and never if it is the git directory or inside it. A
   path's links are followed one part at a time, through its volume's handle, which refuses a link
   to a share instead of following it; the folder it lands in is found, and the git directory
   refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short
