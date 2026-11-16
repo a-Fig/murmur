@@ -189,6 +189,66 @@ func TestUninstallLeavesJoinedClonesOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// A clone whose git directory isn't .git, as --separate-git-dir makes, has no working tree that can
+// be found from it: uninstall --leave leaves it from its git directory, where it refused before,
+// and told the user to leave in a folder where that failed the same way (#749).
+func TestUninstallLeavesACloneWithASeparateGitDir(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store.git")
+	git(t, dir, "init", "-q", "--initial-branch=main", "--separate-git-dir="+store, "wt")
+	p := Place{GitDir: store}
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	c := clones.Clone{GitDir: store, Name: "separate"}
+	if c.Top() != store {
+		t.Fatalf("Top is %s: the test wants the git directory, which has no working tree", c.Top())
+	}
+	if err := clones.Add(record, c); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Uninstall(context.Background(), sb.Env, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if p.Joined() {
+		t.Error("the clone is still joined")
+	}
+	if s := r.String(); !strings.Contains(s, "separate: Removed the record that you joined") {
+		t.Errorf("report:\n%s", s)
+	}
+}
+
+// What uninstall's refusal says to do for such a clone works: `mur join --leave` in its git
+// directory, which it names (#749).
+func TestLeaveInASeparateGitDir(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store.git")
+	git(t, dir, "init", "-q", "--initial-branch=main", "--separate-git-dir="+store, "wt")
+	p := Place{GitDir: store}
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: store}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Uninstall(context.Background(), sb.Env, false); err == nil || !strings.Contains(err.Error(), store) {
+		t.Fatalf("the refusal doesn't name the git directory: %v", err)
+	}
+	if r, err := Leave(context.Background(), sb.Env, store); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if p.Joined() {
+		t.Error("the clone is still joined")
+	}
+	// Elsewhere, outside any clone, a leave still says there is none.
+	if _, err := Leave(context.Background(), sb.Env, t.TempDir()); err == nil {
+		t.Error("left a folder that is no clone")
+	}
+}
+
 func TestEditTOMLTables(t *testing.T) {
 	server := []string{"mcp_servers", "murmur"}
 	drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
