@@ -4132,7 +4132,7 @@ function incognitoNote() {
 async function setIncognito(on) {
   try {
     const base = ui.settings || (await api("/api/settings"));
-    saveSettings({ ...base, incognito: on });
+    saveSettings({ ...base, incognito: on }, true);
     queueSettings(async () => poll());
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
@@ -4444,7 +4444,10 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next) {
+function saveSettings(next, incognito = false) {
+  // Each save carries the whole settings: incognito comes from the daemon's state unless this save
+  // is the switch, so a page whose settings were loaded before it changed elsewhere can't undo it.
+  if (!incognito && ui.state) next = { ...next, incognito: !!ui.state.incognito };
   const seq = ++settingsSeq;
   ui.settings = next;
   render();

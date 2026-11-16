@@ -33,8 +33,9 @@ var incognitoText = brand.Product + " is off for this repo on this device: its p
 	"Nothing can be seen or sent until they turn it off, in Settings on `" + brand.Command + " ui`."
 
 // incognitoAnswer is the daemon's answer to an agent's request while incognito is on, and whether
-// it is one: a tool call is refused, the hook is answered with nothing, and a registration, a ping,
-// a stop and the CLI's own requests go on.
+// it is one: a tool call is refused, and a turn's end is answered with nothing and changes nothing
+// the daemon keeps. The hook's notices are answered in notices, once the hook is seen to run.
+// A registration, a ping, a stop and the CLI's own requests go on.
 func (d *Daemon) incognitoAnswer(req proto.Request) (proto.Response, bool) {
 	if !d.hidden.Load() {
 		return proto.Response{}, false
@@ -42,7 +43,7 @@ func (d *Daemon) incognitoAnswer(req proto.Request) (proto.Response, bool) {
 	switch {
 	case toolOps[req.Op]:
 		return fail(incognitoText), true
-	case req.Op == proto.OpNotices:
+	case req.Op == proto.OpTurnEnd:
 		return proto.Response{OK: true}, true
 	}
 	return proto.Response{}, false
@@ -56,6 +57,8 @@ func (d *Daemon) setIncognito(on bool) {
 		d.presenceGone.Store(false)
 	} else {
 		d.log.Printf("incognito: off, so this device is back")
+		d.kickNames() // what waited, without its own backoff to sit out
+		d.kickMarks()
 	}
 	d.kickPresence() // the presence loop deletes the presence, or pushes it again
 }

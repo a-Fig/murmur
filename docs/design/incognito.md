@@ -17,7 +17,7 @@ it was. Its names, keys and inbox are kept, and nothing needs joining again. The
   notices, a turn's end gives nothing waiting, and no message is handed over as a turn.
 - **Messages** to its sessions wait in the inbox until incognito is off, then arrive as usual. That
   covers messages sent just before the switch, and messages sent while it's on to a name someone
-  remembers. Nothing is lost.
+  remembers. A session that stops meanwhile keeps its inbox for a day, as any stopped session does.
 - **The person's page** keeps working: the daemon keeps fetching the bus. It shows the team without
   this device's agents, with a line in the sidebar saying why. Sending is off, and under a
   conversation the page offers to turn incognito off.
@@ -31,3 +31,6 @@ across daemon restarts.
   device exists, not that it is working now.
 - Commits and branches pushed to the repository itself are outside Murmur, and still show work.
 - Messages already on the bus stay there, with their receipts as far as they got.
+- Once incognito is off, some of what happened while it was on shows. Receipts for messages read
+  meanwhile carry when they were read, and sessions that started meanwhile show when they started
+  and were last active, with the commits credited to them.
