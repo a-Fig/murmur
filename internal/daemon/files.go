@@ -504,17 +504,11 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	d.pruneOthersFiles(ctx)
 }
 
-// othersFile is a files ref another device pushed, as read of in its log: whose, when this daemon
-// first read of it, by its own clock, and when its message was sent, by the sender's.
+// othersFile is a files ref another device pushed, as read of in its log: whose, and how long this
+// daemon has run since it first read of it (ageOthersFilesLocked).
 type othersFile struct {
-	Device string    `json:"device"`
-	Seen   time.Time `json:"seen"`
-	Sent   time.Time `json:"sent"`
-}
-
-// due says the ref is past keep both since it was first read of and since it was sent.
-func (f othersFile) due(keep time.Duration) bool {
-	return time.Since(f.Seen) > keep && !f.Sent.IsZero() && time.Since(f.Sent) > keep
+	Device string        `json:"device"`
+	Age    time.Duration `json:"age"`
 }
 
 // noteOthersFilesLocked notes the files ref message e names, read in dev's log, if dev is another
@@ -524,27 +518,45 @@ func (d *Daemon) noteOthersFilesLocked(e bus.Event, dev string) {
 		return
 	}
 	if _, ok := d.st.OthersFiles[e.FilesAt]; !ok {
-		d.st.OthersFiles[e.FilesAt] = othersFile{Device: dev, Seen: time.Now().Round(0), Sent: e.At}
+		d.st.OthersFiles[e.FilesAt] = othersFile{Device: dev}
 	}
 }
 
+// ageOthersFilesLocked adds to each note's age the time since the last call, as now, a reading of
+// the monotonic clock, says, and at most twice FilePrune. No wall clock goes into an age: one set
+// forward by weeks, as a clock is when it is put right, would make every note old at once. The
+// cap holds a machine asleep, which some monotonic clocks count, and the first call adds nothing,
+// so the time a daemon was down isn't counted. That only makes a ref wait longer. Caller holds mu.
+func (d *Daemon) ageOthersFilesLocked(now time.Time) {
+	if !d.othersAged.IsZero() {
+		step := min(max(now.Sub(d.othersAged), 0), 2*d.opt.FilePrune)
+		for at, f := range d.st.OthersFiles {
+			f.Age += step
+			d.st.OthersFiles[at] = f
+		}
+	}
+	d.othersAged = now
+}
+
 // pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
-// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes twice
-// FileKeep after this daemon first read of it, and after its message was sent. Its event was
-// written after it was pushed, so its own daemon, by then, would have deleted it a FileKeep before,
-// and no receiver can still need it. Each time alone fails in one way: what was first read is
-// dated by this clock, which may since have been set forward by weeks, and when it was sent by the
-// sender's, which may be wrong, or written by a teammate to name another's ref. Both must fail for
-// a ref to go early. The device being gone, its presence stale or off the remote, only spares a
-// live one's own prune the race. Every daemon here may delete the same ref: deleting one already
-// gone succeeds.
+// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes once
+// this daemon has run for twice FileKeep since it first read of it. Its event was written after it
+// was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
+// can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
+// is wrong, and for an event a teammate wrote to name another's ref. The device being gone, its
+// presence stale or off the remote, only spares a live one's own prune the race. Every daemon here
+// may delete the same ref: deleting one already gone succeeds.
 func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 	d.mu.Lock()
+	d.ageOthersFilesLocked(time.Now())
 	var due []string
 	for at, f := range d.st.OthersFiles {
-		if f.due(2 * d.opt.FileKeep) {
+		if f.Age > 2*d.opt.FileKeep {
 			due = append(due, at)
 		}
+	}
+	if len(d.st.OthersFiles) > 0 {
+		d.saveLocked()
 	}
 	d.mu.Unlock()
 	if len(due) == 0 {

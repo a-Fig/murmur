@@ -391,6 +391,7 @@ type Daemon struct {
 	slowCancel context.CancelFunc
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
+	othersAged time.Time            // when the notes of others' files refs were last aged (monotonic)
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time
