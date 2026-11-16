@@ -17,6 +17,9 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/a-Fig/murmur/internal/brand"
 )
 
@@ -145,15 +148,26 @@ func CleanFiles(in []File) []File {
 			f = File{Name: f.Name}
 		}
 		name := FileName(f.Name)
-		for n := 2; seen[strings.ToLower(name)]; n++ {
+		for n := 2; seen[sameFile(name)]; n++ {
 			// Through FileName again, which may cut it: a second clean then gives the same name.
 			name = FileName(strconv.Itoa(n) + "-" + FileName(f.Name))
 		}
-		seen[strings.ToLower(name)] = true
+		seen[sameFile(name)] = true
 		f.Name = name
 		out = append(out, f)
 	}
 	return out
+}
+
+// sameFile is what two names a disk may take for one file have in common: their case, as Windows
+// and macOS ignore it, and their Unicode normalization, as macOS does (#712). FileName leaves only
+// letters, digits and three marks, so a combining accent is already gone, but canonical twins of
+// letters stay: Hangul syllables and their jamo, Greek with oxia and with tonos, CJK compatibility
+// ideographs and their unified forms. APFS folds case fully, beyond what ToLower does: σ and ς,
+// µ and μ, ß and ss were each one file on macOS 12. ToLower stays inside, so no names an older
+// sender made distinct are taken for one here. A Caser isn't safe to share, so each call makes one.
+func sameFile(name string) string {
+	return norm.NFC.String(cases.Fold().String(strings.ToLower(norm.NFC.String(name))))
 }
 
 // Readable says the file's blob can be opened: cleanFiles left it its size, sum and key.

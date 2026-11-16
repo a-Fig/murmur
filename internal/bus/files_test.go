@@ -130,6 +130,33 @@ func TestCleanFiles(t *testing.T) {
 	}
 }
 
+// Names macOS takes for one file are made distinct (#712): those that differ only in Unicode
+// normalization, and in case as APFS folds it, beyond what ToLower does. A combining accent is
+// already cut to '_' by FileName, so these are twins made only of letters, none of which ToLower
+// alone makes distinct.
+func TestCleanFilesNormalization(t *testing.T) {
+	_, good, err := bus.SealFile([]byte("x"), "0123456789abcdef", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, twins := range [][2]string{
+		{"\uD55C.txt", "\u1112\u1161\u11AB.txt"}, // a Hangul syllable, and its jamo
+		{"\u03AC.txt", "\u1F71.txt"},             // alpha with tonos, and with oxia
+		{"\uF900.txt", "\u8C48.txt"},             // a CJK compatibility ideograph, and its unified form
+		{"\u03C3.txt", "\u03C2.txt"},             // sigma, and final sigma
+		{"\u00B5m.txt", "\u03BCm.txt"},           // MICRO SIGN, and mu
+		{"\u00DF.txt", "ss.txt"},                 // sharp s, and ss
+		{"\u1F71.txt", "\u0386.txt"},             // and the normalization of one, the case of the other
+	} {
+		a, b := good, good
+		a.Name, b.Name = twins[0], twins[1]
+		got := bus.CleanFiles([]bus.File{a, b})
+		if got[0].Name != twins[0] || got[1].Name != "2-"+twins[1] {
+			t.Errorf("%+q and %+q came out %+q and %+q", twins[0], twins[1], got[0].Name, got[1].Name)
+		}
+	}
+}
+
 // A pack's length hides how many files it holds and their sizes: it is one of a few lengths near
 // what it holds, never under 4 KB, and each file is found in it by the sizes the event gives.
 func TestPackFiles(t *testing.T) {
