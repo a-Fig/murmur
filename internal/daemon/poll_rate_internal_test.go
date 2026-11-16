@@ -135,7 +135,7 @@ func TestHandoffMovesTheConversation(t *testing.T) {
 		d.mu.Lock()
 		d.st.Inbox["bbbbbb"] = []*inMsg{m}
 		d.mu.Unlock()
-		return &pushJob{id: "bbbbbb", addr: d.device + "/bbbbbb", msg: m, via: "t3"}
+		return &pushJob{id: "bbbbbb", addr: d.device + "/bbbbbb", msgs: []*inMsg{m}, via: "t3"}
 	}
 	d.finishPush(job(), io.ErrUnexpectedEOF)
 	d.mu.Lock()

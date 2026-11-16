@@ -313,7 +313,7 @@ func TestHandoffChecksAgain(t *testing.T) {
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
 	m := &inMsg{Event: bus.Event{ID: "m"}, Arrived: time.Now(), Pushing: true}
 	d.st.Inbox = map[string][]*inMsg{"aaaaaa": {m}}
-	j := &pushJob{id: "aaaaaa", addr: "dev/aaaaaa", msg: m, via: viaT3,
+	j := &pushJob{id: "aaaaaa", addr: "dev/aaaaaa", msgs: []*inMsg{m}, via: viaT3,
 		route: proto.Route{T3CLI: "/no/such/t3", T3Thread: "thread-aaaaaa"}}
 	err := d.sendTurn(context.Background(), j)
 	if !errors.Is(err, errNotNow) {
@@ -434,7 +434,7 @@ func TestDelegateLeftoversAreCleared(t *testing.T) {
 	d.mu.Unlock()
 
 	// The handoff ends refused, at the handoff: the message goes.
-	j := &pushJob{id: "child1", msg: onItsWay}
+	j := &pushJob{id: "child1", msgs: []*inMsg{onItsWay}}
 	d.finishPush(j, errNotNow)
 	if len(d.st.Inbox["child1"]) != 0 {
 		t.Errorf("after the refused handoff: %d messages", len(d.st.Inbox["child1"]))
@@ -465,7 +465,7 @@ func TestRefusedHandoffLetsTheNewOwnerGo(t *testing.T) {
 	if got, _, _ := d.candidateLocked("newnew", always); got != nil {
 		t.Fatal("a message on its way was picked again")
 	}
-	d.finishPush(&pushJob{id: "oldold", addr: "dev/oldold", msg: m, via: viaT3}, errNotNow)
+	d.finishPush(&pushJob{id: "oldold", addr: "dev/oldold", msgs: []*inMsg{m}, via: viaT3}, errNotNow)
 	if m.Pushing || m.PushFailed {
 		t.Errorf("the message after the refusal: pushing=%v failed=%v", m.Pushing, m.PushFailed)
 	}
