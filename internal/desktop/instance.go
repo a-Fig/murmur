@@ -41,6 +41,14 @@ const maxRequest = 8 << 10
 // so a window that fails while being made sends the asker on to open its own.
 const waitForWindow = 30 * time.Second
 
+// showFunc brings the window forward, and moves it to the repo at gitDir unless that is "". It
+// returns at once, and calls reply once it is done, with whether the window came forward: on the
+// window's own thread, so a close already waiting there comes first (Sol review).
+type showFunc func(gitDir string, reply func(ok bool))
+
+// raiseWait is how long a window that has been made has to come forward.
+const raiseWait = 5 * time.Second
+
 // Instance is the window's claim to be the one window. Until the window is made, what is asked of
 // it waits for it.
 type Instance struct {
@@ -49,12 +57,12 @@ type Instance struct {
 	ln   net.Listener
 
 	mu      sync.Mutex
-	show    func(gitDir string) // set once the window can come forward; called holding mu
-	asked   bool                // asked to before it could
-	pending string              // the repo asked for then, or ""
-	shown   bool                // the window was made, and came forward for what was asked
-	closing bool                // the window has gone, or is going
-	ready   chan struct{}       // closed once the window is made, or isn't to be
+	show    showFunc      // set once the window can come forward
+	asked   bool          // asked to before it could
+	pending string        // the repo asked for then, or ""
+	shown   bool          // the window was made, and came forward for what was asked
+	closing bool          // the window has gone, or is going
+	ready   chan struct{} // closed once the window is made, or isn't to be
 	once    sync.Once
 }
 
@@ -152,23 +160,32 @@ func (in *Instance) answer(c net.Conn) {
 		return
 	}
 	in.mu.Lock()
-	switch {
+	switch show := in.show; {
 	case in.closing:
 		in.mu.Unlock()
 		return // no "ok", so the one asking opens a window of its own
-	case in.show != nil:
-		in.show(req.GitDir) // holding mu, so closingDown can't come between
+	case show != nil:
 		in.mu.Unlock()
+		done := make(chan bool, 1)
+		show(req.GitDir, func(ok bool) { done <- ok })
+		select {
+		case ok := <-done:
+			if !ok {
+				return
+			}
+		case <-time.After(raiseWait):
+			return
+		}
 	default:
 		in.asked = true
 		if req.GitDir != "" {
 			in.pending = req.GitDir // a later click on the launcher doesn't undo it
 		}
 		in.mu.Unlock()
-		c.SetDeadline(time.Now().Add(waitForWindow + 2*time.Second))
+		c.SetDeadline(time.Now().Add(waitForWindow + raiseWait + 2*time.Second))
 		select {
 		case <-in.ready:
-		case <-time.After(waitForWindow):
+		case <-time.After(waitForWindow + raiseWait):
 			return
 		}
 		in.mu.Lock()
@@ -183,17 +200,35 @@ func (in *Instance) answer(c net.Conn) {
 
 // onShow sets what bringing the window forward does, once it can, and does it now if it was
 // asked for already.
-func (in *Instance) onShow(show func(gitDir string)) {
+func (in *Instance) onShow(show showFunc) {
 	in.mu.Lock()
-	if !in.closing {
-		in.show, in.shown = show, true
-		if in.asked {
-			show(in.pending)
-		}
-		in.asked, in.pending = false, ""
+	if in.closing {
+		in.mu.Unlock()
+		return
 	}
+	in.show = show
+	asked, pending := in.asked, in.pending
+	in.asked, in.pending = false, ""
 	in.mu.Unlock()
-	in.once.Do(func() { close(in.ready) })
+	// What waited for the window is answered once it has come forward, or hasn't.
+	settle := func(ok bool) {
+		in.mu.Lock()
+		in.shown = ok
+		in.mu.Unlock()
+		in.once.Do(func() { close(in.ready) })
+	}
+	if asked {
+		show(pending, settle)
+	} else {
+		settle(true)
+	}
+}
+
+// isClosing says whether the window is going.
+func (in *Instance) isClosing() bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.closing
 }
 
 // closingDown says the window is going: what is asked of it from now on isn't answered, and what
@@ -243,7 +278,7 @@ func BringForward(path, gitDir string) bool {
 	}
 	defer c.Close()
 	allowForeground(rec.PID)
-	c.SetDeadline(time.Now().Add(waitForWindow + 3*time.Second))
+	c.SetDeadline(time.Now().Add(waitForWindow + raiseWait + 3*time.Second))
 	req, _ := json.Marshal(request{Key: rec.Key, GitDir: gitDir})
 	if _, err := c.Write(append(req, '\n')); err != nil {
 		return false

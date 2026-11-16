@@ -42,6 +42,10 @@ func InstallLauncher(exe, dir string) (where string, changed bool, err error) {
 	if want.Where == "" {
 		return "", false, nil
 	}
+	// Two `mur app`s at once would otherwise both replace it, one removing what the other put in
+	// place (Sol review).
+	unlock := lockFile(filepath.Join(dir, "launcher.lock"))
+	defer unlock()
 	had := readStamp(dir)
 	switch {
 	case had == want && exists(want.Where):

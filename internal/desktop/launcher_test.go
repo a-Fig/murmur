@@ -98,9 +98,20 @@ func TestInstallLauncher(t *testing.T) {
 	exe := filepath.Join(t.TempDir(), "mur.exe")
 	os.WriteFile(exe, nil, 0o755)
 
+	// Something of the person's beside where the launcher goes is left as it is (Sol review).
+	theirs := launcherPath() + ".new"
+	os.MkdirAll(filepath.Dir(theirs), 0o755)
+	os.WriteFile(theirs, []byte("theirs"), 0o644)
 	where, changed, err := InstallLauncher(exe, dir)
 	if err != nil || !changed || !exists(where) {
 		t.Fatalf("first install: %s, changed %v, %v", where, changed, err)
+	}
+	if b, _ := os.ReadFile(theirs); string(b) != "theirs" {
+		t.Fatal("removed what was beside the launcher")
+	}
+	os.Remove(theirs)
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(where), ".*")); len(left) > 0 {
+		t.Fatalf("left behind %q", left)
 	}
 	if _, changed, err := InstallLauncher(exe, dir); err != nil || changed {
 		t.Fatalf("second install changed it (%v) or failed: %v", changed, err)

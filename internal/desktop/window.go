@@ -86,7 +86,8 @@ func Run(ctx context.Context, opts Options) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if opts.Instance != nil {
-		opts.Instance.onShow(func(gitDir string) { a.show(ctx, gitDir, opts.Switch) })
+		in := opts.Instance
+		in.onShow(func(gitDir string, reply func(bool)) { a.show(ctx, gitDir, opts.Switch, in.isClosing, reply) })
 		defer opts.Instance.closingDown() // before the web view is destroyed
 	}
 	if opts.Follow != nil {
@@ -112,12 +113,25 @@ type app struct {
 }
 
 // show brings the window forward, asked by a later `mur app`, and moves it to the repo at gitDir
-// when that asked for one. Any goroutine.
-func (a *app) show(ctx context.Context, gitDir string, to func(context.Context, string) string) {
-	a.w.Dispatch(a.raise)
-	if gitDir == "" || to == nil {
-		return
-	}
+// when that asked for one, and then says whether it came forward. It does both on the UI thread,
+// so a close queued there first is seen, and the one asking opens a window of its own rather than
+// being told this one came. Any goroutine.
+func (a *app) show(ctx context.Context, gitDir string, to func(context.Context, string) string, closing func() bool, reply func(bool)) {
+	a.w.Dispatch(func() {
+		if ctx.Err() != nil || closing() {
+			reply(false)
+			return
+		}
+		a.raise()
+		reply(true)
+		if gitDir != "" && to != nil {
+			a.switchTo(ctx, gitDir, to)
+		}
+	})
+}
+
+// switchTo moves the window to the repo at gitDir, once its daemon is up. Any goroutine.
+func (a *app) switchTo(ctx context.Context, gitDir string, to func(context.Context, string) string) {
 	go func() {
 		page := to(ctx, gitDir)
 		if page == "" || ctx.Err() != nil {

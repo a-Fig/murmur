@@ -27,10 +27,11 @@ func TestBringForward(t *testing.T) {
 	early := make(chan bool)
 	go func() { early <- BringForward(path, "/repos/early") }()
 	waitAsked(t, in)
-	in.onShow(func(gitDir string) {
+	in.onShow(func(gitDir string, reply func(bool)) {
 		mu.Lock()
 		shown = append(shown, gitDir)
 		mu.Unlock()
+		reply(true)
 	})
 	if !<-early {
 		t.Fatal("a window asked for while it was being made didn't answer")
@@ -94,7 +95,7 @@ func TestClaimOnce(t *testing.T) {
 				t.Error(err)
 			}
 			if in != nil {
-				in.onShow(func(string) {}) // the window is made, as a real one soon is
+				in.onShow(func(_ string, reply func(bool)) { reply(true) }) // the window is made, as a real one soon is
 			}
 			got <- in
 		}()
@@ -143,7 +144,7 @@ func TestPendingAndClosing(t *testing.T) {
 	go func() { second <- BringForward(path, "") }()
 	time.Sleep(100 * time.Millisecond)
 	var got []string
-	in.onShow(func(gitDir string) { got = append(got, gitDir) })
+	in.onShow(func(gitDir string, reply func(bool)) { got = append(got, gitDir); reply(true) })
 	if !<-first || !<-second {
 		t.Fatal("not answered once the window was made")
 	}
@@ -170,5 +171,20 @@ func TestWindowThatFailsAnswersNo(t *testing.T) {
 	in.Close()
 	if <-asked {
 		t.Fatal("a window that never came was said to have come forward")
+	}
+}
+
+// A window whose own thread finds it closing when it comes to raise it says it didn't come
+// forward, so the one asking opens its own.
+func TestClosingOnTheWindowsThread(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "window.json")
+	in, err := Claim(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	in.onShow(func(_ string, reply func(bool)) { go reply(false) })
+	if BringForward(path, "") {
+		t.Fatal("told it came forward, though the window was closing")
 	}
 }

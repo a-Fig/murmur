@@ -23,9 +23,17 @@ func launcherPath() string {
 }
 
 func installLauncher(exe, dir, where string) error {
-	// Made beside the old one and moved into its place, so Finder never sees half a bundle.
-	tmp := where + ".new"
-	os.RemoveAll(tmp)
+	// Made beside the old one and moved into its place, so Finder never sees half a bundle, in a
+	// directory of its own, so nothing of the person's is in the way or removed (Sol review).
+	if err := os.MkdirAll(filepath.Dir(where), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp(filepath.Dir(where), "."+brand.Product+".app.*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp) // gone by then once it is in place
+	os.Chmod(tmp, 0o755)
 	tc := filepath.Join(tmp, "Contents")
 	if err := os.MkdirAll(filepath.Join(tc, "MacOS"), 0o755); err != nil {
 		return err
