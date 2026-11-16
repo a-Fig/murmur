@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -82,25 +84,116 @@ func (d *Daemon) scratch() (*bus.Repo, func(), error) {
 	}, nil
 }
 
-// textOf is a file's bytes as text, if it is text the secret check can read: UTF-16 with its mark,
-// as Windows PowerShell writes a redirected file, or anything with no zero byte in it, with
-// whatever isn't UTF-8 passed over, so one stray byte doesn't hide the rest.
-func textOf(b []byte) (string, bool) {
-	if len(b) >= 2 && len(b)%2 == 0 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
+// textsOf is what the secret check reads of a file's bytes. A file with no zero byte is read as
+// text, with what isn't UTF-8 passed over, so one stray byte doesn't hide the rest. UTF-16 with its
+// mark, as Windows PowerShell writes a redirected file, is decoded, and read as well as the bytes
+// themselves: a mark mustn't hide a key in the clear after it.
+//
+// A file with a zero byte was once taken for binary and not checked, but keys sit in the clear
+// between zero bytes in a .tar, a SQLite file or Linux's /proc/self/environ (#737). Its regions of
+// text are read, as `strings` reads a binary: as UTF-8, and as UTF-16 with no mark, either end
+// first, from either byte. A region is every character but a zero up to what can't be one, so a
+// name stays with its value on the next line or past a control character, and only a whole region
+// shorter than minRun is passed over. Reading only the regions keeps a binary quick: random bytes
+// break into short ones. Unread: what is compressed, as an image or a zip, which isn't unpacked,
+// and UTF-16 with no mark past U+2000 (CJK, say), where every pair of ASCII bytes would also read
+// as text.
+func textsOf(b []byte) []string {
+	var texts []string
+	if len(b) >= 2 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
 		var order binary.ByteOrder = binary.LittleEndian
 		if b[0] == 0xfe {
 			order = binary.BigEndian
 		}
-		units := make([]uint16, 0, len(b)/2-1)
-		for i := 2; i < len(b); i += 2 {
+		units := make([]uint16, 0, len(b)/2)
+		for i := 2; i+1 < len(b); i += 2 {
 			units = append(units, order.Uint16(b[i:]))
 		}
-		return string(utf16.Decode(units)), true
+		if last, ok := cutUnit(b[2:], order); ok {
+			units = append(units, uint16(last))
+		}
+		texts = append(texts, string(utf16.Decode(units)))
 	}
-	if slices.Contains(b, 0) {
-		return "", false
+	if !slices.Contains(b, 0) {
+		return append(texts, strings.ToValidUTF8(string(b), " "))
 	}
-	return strings.ToValidUTF8(string(b), " "), true
+	texts = append(texts, utf8Regions(b))
+	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
+		for off := range 2 {
+			texts = append(texts, utf16Regions(b[off:], order))
+		}
+	}
+	return texts
+}
+
+// minRun is the shortest region of text utf8Regions and utf16Regions keep: shorter than any secret
+// the check knows, with what names it.
+const minRun = 8
+
+// regions gathers regions of text, keeping those of minRun characters or more, a line each.
+type regions struct {
+	out strings.Builder
+	cur []rune
+}
+
+func (g *regions) add(r rune) { g.cur = append(g.cur, r) }
+
+func (g *regions) end() {
+	if len(g.cur) >= minRun {
+		g.out.WriteString(string(g.cur))
+		g.out.WriteByte('\n')
+	}
+	g.cur = g.cur[:0]
+}
+
+func (g *regions) String() string {
+	g.end()
+	return g.out.String()
+}
+
+// utf8Regions is b's regions of UTF-8: every character but a zero, up to a byte that isn't UTF-8.
+// U+FFFD written out in full is a character like any other.
+func utf8Regions(b []byte) string {
+	var g regions
+	for len(b) > 0 {
+		r, n := utf8.DecodeRune(b)
+		b = b[n:]
+		if r != 0 && (r != utf8.RuneError || n > 1) {
+			g.add(r)
+		} else {
+			g.end()
+		}
+	}
+	return g.String()
+}
+
+// utf16Regions is b's regions of UTF-16 in byte order order: every character but a zero below
+// U+2000, Latin, Greek and Cyrillic letters among them, and no pair of ASCII bytes, the lowest of
+// which, two spaces, is U+2020.
+func utf16Regions(b []byte, order binary.ByteOrder) string {
+	var g regions
+	for i := 0; i+1 < len(b); i += 2 {
+		if u := order.Uint16(b[i:]); u != 0 && u < 0x2000 {
+			g.add(rune(u))
+		} else {
+			g.end()
+		}
+	}
+	if last, ok := cutUnit(b, order); ok {
+		g.add(last)
+	}
+	return g.String()
+}
+
+// cutUnit is the character an odd byte at the end of UTF-16 b would be, if its other byte, cut
+// off, was a zero: an ASCII character's, little end first. A file cut short mustn't lose a key's
+// last letter.
+func cutUnit(b []byte, order binary.ByteOrder) (rune, bool) {
+	if len(b)%2 == 0 || order != binary.LittleEndian {
+		return 0, false
+	}
+	c := b[len(b)-1]
+	return rune(c), c != 0 && c < 0x80
 }
 
 // sendFile is a file to send with a message: what the sender called it, a path from an agent or a
@@ -154,8 +247,8 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 	return files, nil
 }
 
-// checkSendFiles holds the files of a send to the limits. A text file is checked for secrets as a
-// body is; anything else can't be.
+// checkSendFiles holds the files of a send to the limits, and checks each for secrets as a body is
+// (textsOf).
 func checkSendFiles(files []sendFile) error {
 	if len(files) > bus.MaxFiles {
 		return fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(files))
@@ -168,21 +261,143 @@ func checkSendFiles(files []sendFile) error {
 		if total += int64(len(f.data)); total > bus.MaxFilesTotal {
 			return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
 		}
-		if text, ok := textOf(f.data); ok {
-			if err := scrub.Check(text); err != nil {
-				return fmt.Errorf("%s: %v", f.name, err)
-			}
+		if err := scrub.Check(textsOf(f.data)...); err != nil {
+			return fmt.Errorf("%s: %v", f.name, err)
 		}
 	}
 	return nil
 }
 
+// fileUpload is a push of files this device made: when, and how many bytes went (#739).
+type fileUpload struct {
+	At    time.Time `json:"at"`
+	Bytes int64     `json:"bytes"`
+}
+
+// recentUpload is files this device pushed: the ref, what the event said of them, when, and
+// whether a message naming the ref has gone out.
+type recentUpload struct {
+	at    string
+	files []bus.File
+	when  time.Time
+	sent  bool
+}
+
+// uploadReuse is how long after a push a send of the same files takes the same ref.
+const uploadReuse = 10 * time.Minute
+
+// filesSum is a sum over the names and contents of the files of a send, in order.
+func filesSum(in []sendFile) [sha256.Size]byte {
+	h := sha256.New()
+	for _, f := range in {
+		fmt.Fprintf(h, "%d:%s:%d:", len(f.name), f.name, len(f.data))
+		h.Write(f.data)
+	}
+	var sum [sha256.Size]byte
+	h.Sum(sum[:0])
+	return sum
+}
+
+// reuseFilesLocked is the ref this device pushed the same files to within uploadReuse, and what
+// its event said of them. A send to several names is a message for each, and once uploaded the
+// files once for each (#739). A file is sealed to its ref and place, not its message, so every
+// message can name the one ref. Only a ref a message has gone out with is taken, and only while
+// the prune hasn't it due: one whose message failed is left for the prune to delete. Caller holds
+// mu.
+func (d *Daemon) reuseFilesLocked(sum [sha256.Size]byte) ([]bus.File, string, bool) {
+	for k, u := range d.uploads {
+		if time.Since(u.when) > uploadReuse {
+			delete(d.uploads, k)
+		}
+	}
+	u := d.uploads[sum]
+	if u == nil || !u.sent {
+		return nil, "", false
+	}
+	if pushed, ok := d.st.FileRefs[u.at]; !ok || time.Since(pushed) > d.opt.FileKeep-uploadReuse {
+		return nil, "", false
+	}
+	return slices.Clone(u.files), u.at, true
+}
+
+// filesSentLocked notes that a message naming files ref at went out, so a send of the same files
+// may take it. Caller holds mu.
+func (d *Daemon) filesSentLocked(at string) {
+	for _, u := range d.uploads {
+		if u.at == at {
+			u.sent = true
+		}
+	}
+}
+
+// filesUnsent lets go of files ref at, pushed for a message that then failed: nothing names it, so
+// it is off the remote at the next prune, and no other send takes it.
+func (d *Daemon) filesUnsent(at string) {
+	d.mu.Lock()
+	for k, u := range d.uploads {
+		if u.at == at {
+			delete(d.uploads, k)
+		}
+	}
+	d.mu.Unlock()
+	d.dropFileRef(at, true)
+}
+
+// uploadRoomLocked says whether this device may push size more bytes of files, by FilesPerDay over
+// the last 24 hours, and if it may, counts them as pushed; if not, it says why, with when it may.
+// The look and the count are one step, so two sends at once can't both take the last of the room.
+// Caller holds mu.
+func (d *Daemon) uploadRoomLocked(size int64) error {
+	now := time.Now()
+	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return now.Sub(u.At) >= 24*time.Hour })
+	var used int64
+	for _, u := range d.st.Uploads {
+		used += u.Bytes
+	}
+	over := used + size - d.opt.FilesPerDay
+	if over <= 0 {
+		// Counted before the push, which may land though it is said to fail.
+		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size})
+		return nil
+	}
+	when := now
+	for _, u := range d.st.Uploads { // oldest first: they are kept in the order made
+		if over -= u.Bytes; over <= 0 {
+			when = u.At.Add(24 * time.Hour)
+			break
+		}
+	}
+	// By the calendar, not 24 hours: across a spring clock change, 24 hours from 23:30 is 00:30 two
+	// days on.
+	at := when.Local().Format("15:04")
+	sameDay := func(a, b time.Time) bool { return a.Format(time.DateOnly) == b.Format(time.DateOnly) }
+	switch {
+	case sameDay(when.Local(), now.Local()):
+	case sameDay(when.Local(), now.Local().AddDate(0, 0, 1)):
+		at += " tomorrow"
+	default:
+		at += " on " + when.Local().Format("Mon Jan 2")
+	}
+	return fmt.Errorf("this device has sent %s of files in the last day, and sends at most %s a day; it can send these after %s",
+		proto.Size(used), proto.Size(d.opt.FilesPerDay), at)
+}
+
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
-// event says of them and the ref's name. It keeps a copy of each where a receiver's would be, so a
-// session on this device, and the page, have them without a fetch.
-func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, err error) {
+// event says of them and the ref's name. The same files sent again within uploadReuse, as a send
+// to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
+// where a receiver's would be, so a session on this device, and the page, have them without a
+// fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
+// with a ref not reused.
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, err error) {
 	if err := checkSendFiles(in); err != nil {
-		return nil, "", err
+		return nil, "", false, err
+	}
+	sum := filesSum(in)
+	d.mu.Lock()
+	files, at, ok := d.reuseFilesLocked(sum)
+	d.mu.Unlock()
+	if ok {
+		return files, at, true, nil
 	}
 	at = bus.NewFilesAt()
 	sealed := make([][]byte, len(in))
@@ -190,7 +405,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	for i, sf := range in {
 		blob, f, err := bus.SealFile(sf.data, at, i)
 		if err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
 		f.Name = sf.name
 		sealed[i], files[i] = blob, f
@@ -198,33 +413,46 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	files = bus.CleanFiles(files) // the names a receiver will save them under
 	pack, err := bus.PackFiles(sealed)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	repo, done, err := d.scratch()
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	defer done()
 	sha, err := repo.NewFilesCommit(ctx, pack)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	d.mu.Lock()
+	if err := d.uploadRoomLocked(int64(len(pack))); err != nil {
+		d.mu.Unlock()
+		return nil, "", false, err
+	}
 	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
 	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
 		// Left to the next prune to delete: a push can land and still be told it failed.
 		d.dropFileRef(at, true)
-		return nil, "", fmt.Errorf("its files didn't go out: %w", err)
+		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
 	}
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
+	unpin := d.pinFilesDir(dir)
+	defer unpin()
 	for i, f := range files {
 		if err := saveFile(dir, f.Name, in[i].data); err != nil {
 			d.log.Printf("keeping a copy of %s, sent on files ref %s: %v", f.Name, at, err)
 		}
 	}
-	return files, at, nil
+	d.mu.Lock()
+	if d.uploads == nil {
+		d.uploads = map[[sha256.Size]byte]*recentUpload{}
+	}
+	d.uploads[sum] = &recentUpload{at: at, files: slices.Clone(files), when: time.Now()}
+	d.mu.Unlock()
+	d.holdFilesHeld() // its own copies, pinned, stay
+	return files, at, false, nil
 }
 
 // dropFileRef forgets a files ref this device pushed, or with due set leaves it to the next prune
@@ -454,6 +682,10 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
 	}
+	// Whatever it saves, all or some, counts toward FilesHeld, whoever asked: the loop or the page.
+	// Its own directory is pinned while it writes, and through that look (defers run last first).
+	defer d.pinFilesDir(d.filesDir(e))()
+	defer d.holdFilesHeld()
 	repo, done, err := d.scratch()
 	if err != nil {
 		return fmt.Errorf("%w: %w", errFetchLater, err)
@@ -537,6 +769,7 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 			}
 		}
 	}
+	d.holdFilesHeld()
 	d.mu.Lock()
 	var due []string
 	for at, sent := range d.st.FileRefs {
@@ -559,6 +792,105 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 		d.dropFileRef(at, false)
 	}
 	d.pruneOthersFiles(ctx)
+}
+
+// holdFilesHeld deletes the files this device keeps, those it sent and those it fetched, a message's
+// at a time and the oldest first, until they come to FilesHeld (#739). FileKeep alone left no
+// bound: a loop sending a 20 MB log to everyone each minute would fill every teammate's disk by a
+// gigabyte an hour. A message whose files went is told of as one whose files can't be had. A
+// directory a send or a fetch is writing stays, though it counts (pinFilesDir): the caller's own,
+// as the page reads a file it fetched once the fetch is over, and another's. A file the page asks
+// for again is fetched again, and held to FilesHeld again.
+func (d *Daemon) holdFilesHeld() {
+	root := filepath.Join(d.dir, "files")
+	entries, _ := os.ReadDir(root)
+	type held struct {
+		name string
+		at   time.Time
+		size int64
+	}
+	var all []held
+	var total int64
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		h := held{name: entry.Name(), at: info.ModTime()}
+		filepath.WalkDir(filepath.Join(root, entry.Name()), func(_ string, f fs.DirEntry, err error) error {
+			if err == nil && !f.IsDir() {
+				if fi, err := f.Info(); err == nil {
+					h.size += fi.Size()
+				}
+			}
+			return nil
+		})
+		all = append(all, h)
+		total += h.size
+	}
+	if total <= d.opt.FilesHeld {
+		return
+	}
+	slices.SortFunc(all, func(a, b held) int { return cmp.Or(a.at.Compare(b.at), cmp.Compare(a.name, b.name)) })
+	for _, h := range all {
+		if total <= d.opt.FilesHeld {
+			break
+		}
+		// Claimed under mu, so no writer pins it until the delete is over (pinFilesDir waits), and
+		// deleted without it: every delivery takes mu, and deleting 20 MB, Defender scanning, takes a
+		// while.
+		path := filepath.Join(root, h.name)
+		d.mu.Lock()
+		if d.filesBusy[path] > 0 || d.filesEvicting[path] != nil {
+			d.mu.Unlock()
+			continue
+		}
+		if d.filesEvicting == nil {
+			d.filesEvicting = map[string]chan struct{}{}
+		}
+		done := make(chan struct{})
+		d.filesEvicting[path] = done
+		d.mu.Unlock()
+		err := os.RemoveAll(path)
+		d.mu.Lock()
+		delete(d.filesEvicting, path)
+		close(done)
+		d.mu.Unlock()
+		if err != nil {
+			d.log.Printf("deleting the files saved from files ref %s, past the %s kept: %v", h.name, proto.Size(d.opt.FilesHeld), err)
+			continue
+		}
+		total -= h.size
+	}
+}
+
+// pinFilesDir keeps holdFilesHeld off directory dir, which a send or a fetch is writing files to,
+// until the unpin it returns is called. A fetch that lost the first of its files to another's
+// eviction while it saved the rest would say it had them all (Sol's review of #760). A directory
+// being deleted is waited for: the writer then makes it afresh.
+func (d *Daemon) pinFilesDir(dir string) (unpin func()) {
+	if dir == "" {
+		return func() {}
+	}
+	d.mu.Lock()
+	for d.filesEvicting[dir] != nil {
+		done := d.filesEvicting[dir]
+		d.mu.Unlock()
+		<-done
+		d.mu.Lock()
+	}
+	defer d.mu.Unlock()
+	if d.filesBusy == nil {
+		d.filesBusy = map[string]int{}
+	}
+	d.filesBusy[dir]++
+	return func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.filesBusy[dir]--; d.filesBusy[dir] <= 0 {
+			delete(d.filesBusy, dir)
+		}
+	}
 }
 
 // othersFile is a files ref another device pushed, as read of in its log: whose, and how long this
@@ -766,7 +1098,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 }
 
 // fileViewsLocked is the files of message e as a session here is told of them: each with the path
-// it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep). Caller
+// it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld). Caller
 // holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 	if len(e.Files) == 0 {

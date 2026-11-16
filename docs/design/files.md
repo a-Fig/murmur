@@ -89,8 +89,20 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   a team whose daemons run only while someone works. A ref no event this device read names
   still stays: one whose message failed after its push, one in a log it can't open, or one sent
   before it first ran, as a new clone passes over the logs' history.
-- **A send to several recipients uploads the files once for each**, since each gets a message of
-  its own (#520).
+- **A send to several recipients uploads the files once** (#739, 2026-11-16). Each gets a message of
+  its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,
+  names and contents, within 10 minutes of their push takes that push's ref, once a message naming
+  it has gone out. A ref whose message failed is left to the prune and taken by no other send, and
+  a send that took a ref and then failed leaves it be. Until then each message uploaded them again.
+- **200 MB of uploads a device a day** (`FilesPerDay`, #739), over the last 24 hours, counted in
+  packs pushed, so a send to several counts once. Past it a send with files is refused, saying when
+  it can go. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an
+  hour on the remote, which shares the repo's size limits with the team's code.
+- **1 GB of files kept a device** (`FilesHeld`, #739), those it sent and those it fetched together.
+  Past it a message's files go, the oldest first, checked after each send and each fetch, the
+  page's included, and at each prune, the files just sent or fetched staying; such a message reads
+  as one whose files can't be had, and the page fetches them again if asked. Before, only the week bound them, and
+  every device fetches a message to everyone.
 - **A send with files has 90 seconds**, like any request, and its push holds the device's one
   push at a time for up to a minute, so the device's presence and other sends wait behind it.
 
@@ -110,9 +122,19 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
-- **Secrets.** A file that is text goes through the check a body does (`internal/scrub`): UTF-16
-  with its mark, as Windows PowerShell writes a redirected file, and anything with no zero byte. An
-  image or other binary can't be checked.
+- **Secrets.** Every file goes through the check a body does (`internal/scrub`). UTF-16 with its
+  mark, as Windows PowerShell writes a redirected file, is decoded, and its bytes are checked too. Of a
+  file with zero bytes, its regions of text are checked, as `strings` reads a binary: UTF-8, and
+  UTF-16 with no mark in either byte order. Keys sit in the clear between zero bytes in a `.tar`, a
+  SQLite file or `/proc/self/environ` (#737, from 2026-11-16; before, such a file went unchecked).
+  A region is every character but a zero, up to a byte that can't be one, so a name stays with its
+  value past a line break or a control character. Only a whole region under 8 characters is
+  skipped, so random bytes, which break into short regions, are quick: 10 MB took 0.4 s to check,
+  not 13 s, on Tyler's laptop (2026-11-16). Long text is slower, about 1 s a MB, as it is for a text
+  file. Unread: what is compressed, as an image or a
+  zip, which isn't unpacked, and UTF-16 with no mark past U+2000 (CJK, say). `publicKeyToken` with
+  16 hex digits, in every Windows program's manifest, is .NET's public assembly identity, not a
+  secret.
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.

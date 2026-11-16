@@ -29,6 +29,15 @@ func utf16File(text string) []byte {
 	return b
 }
 
+// utf16BE is text as UTF-16, big end first, with no mark.
+func utf16BE(text string) []byte {
+	var b []byte
+	for _, u := range utf16.Encode([]rune(text)) {
+		b = append(b, byte(u>>8), byte(u))
+	}
+	return b
+}
+
 // writeFile writes a file a test sends, in a directory of its own, and returns its full path.
 func writeFile(t *testing.T, name string, data []byte) string {
 	t.Helper()
@@ -313,6 +322,24 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a key in a file named png": {[]string{writeFile(t, "shot.png", []byte("AKIAIOSFODNN7EXAMPLE"))}, "shot.png"},
 		"a key in UTF-16":           {[]string{writeFile(t, "ps.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n"))}, "ps.txt"},
 		"a key after a stray byte":  {[]string{writeFile(t, "latin.txt", []byte("caf\xe9 AKIAIOSFODNN7EXAMPLE\n"))}, "latin.txt"},
+		// A zero byte once made a file binary, and unchecked (#737).
+		"a key in an environ":                  {[]string{writeFile(t, "environ", []byte("HOME=/root\x00GH=ghp_0123456789abcdefghijABCDEFGHIJ0123456789\x00"))}, "environ"},
+		"a key in a tar":                       {[]string{writeFile(t, "conf.tar", append(append(make([]byte, 512), "AWS=AKIAIOSFODNN7EXAMPLE\n"...), make([]byte, 512)...))}, "conf.tar"},
+		"a key in UTF-16 with no mark":         {[]string{writeFile(t, "le.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n")[2:])}, "le.txt"},
+		"a key in big-end UTF-16 with no mark": {[]string{writeFile(t, "be.txt", append([]byte{0}, utf16File("key AKIAIOSFODNN7EXAMPLE")[2:]...))}, "be.txt"},
+		// What Sol's review of #753 found getting through the first fix.
+		"a name on the line above its value": {[]string{writeFile(t, "split.bin", []byte("TOKEN=\nabc123abc123\x00"))}, "split.bin"},
+		"a bearer token on the next line":    {[]string{writeFile(t, "bearer.bin", []byte("Bearer\nabc123abc123abc123abc123\x00"))}, "bearer.bin"},
+		"a password with an accent":          {[]string{writeFile(t, "accent.bin", []byte("PASSWORD=abc123édef456\x00"))}, "accent.bin"},
+		"a big-end key before a CJK letter":  {[]string{writeFile(t, "cjk.bin", utf16BE("AKIAIOSFODNN7EXAMPLE中"))}, "cjk.bin"},
+		"a key in the clear after a mark":    {[]string{writeFile(t, "mark.txt", []byte("\xff\xfeAKIAIOSFODNN7EXAMPLE"))}, "mark.txt"},
+		// And what its second round found.
+		"a name a form feed above its value":  {[]string{writeFile(t, "ff.bin", []byte("TOKEN=\fabc123abc123\x00"))}, "ff.bin"},
+		"a URL password around a U+FFFD":      {[]string{writeFile(t, "fffd.bin", []byte("https://user:abc�def@host\x00"))}, "fffd.bin"},
+		"a URL password around a control":     {[]string{writeFile(t, "ctl.bin", []byte("https://user:abc\x01def@host\x00"))}, "ctl.bin"},
+		"a URL password in UTF-16, a control": {[]string{writeFile(t, "ctl16.bin", utf16File("https://user:abc\x01def@host")[2:])}, "ctl16.bin"},
+		"UTF-16 cut short":                    {[]string{writeFile(t, "cut.bin", utf16File("AKIAIOSFODNN7EXAMPLE")[2:41])}, "cut.bin"},
+		"UTF-16 with its mark, cut short":     {[]string{writeFile(t, "cutmark.txt", utf16File("AKIAIOSFODNN7EXAMPLE")[:41])}, "cutmark.txt"},
 	} {
 		if what == "a Git Bash path" && runtime.GOOS != "windows" {
 			continue // a full path everywhere else
@@ -437,4 +464,90 @@ func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
 	}
 	a.stop()
 	eventually(t, "the files ref of a, gone, to leave the remote", func() bool { return listed() == "" })
+}
+
+// The same files sent to several names, a message for each, go up once: every message names the
+// one files ref, and each recipient gets them (#739).
+func TestASendToSeveralUploadsTheFilesOnce(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	a.session("dddddd", "")
+	bob, _ := b.session("bbbbbb", "")
+	carol, _ := b.session("cccccc", "")
+	eventually(t, "a to see bob and carol", func() bool { return a.seesSession(bob) && a.seesSession(carol) })
+	log := writeFile(t, "build.log", bytes.Repeat([]byte("line\n"), 400))
+	send := func(from, to, path string) {
+		t.Helper()
+		if r := a.do(proto.Request{Op: proto.OpSend, Session: from, To: to, Subject: "files", Files: []string{path}}); r.Error != "" {
+			t.Fatalf("send to %s: %s", to, r.Error)
+		}
+	}
+	send("aaaaaa", bob, log)
+	// Another session's upload between the two doesn't make the second upload the log again.
+	send("dddddd", alice, writeFile(t, "other.txt", []byte("something else")))
+	send("aaaaaa", carol, log)
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 2 {
+		t.Errorf("files refs on the remote: %v, want two: the log's and the other's", refs)
+	}
+	for _, sess := range []string{"bbbbbb", "cccccc"} {
+		if m := inboxMessage(t, b, sess); len(m.Files) != 1 || !fileThere(m.Files[0].Path) {
+			t.Errorf("%s got %+v", sess, m.Files)
+		}
+	}
+}
+
+// A device uploads at most FilesPerDay of files in a day. Past it a send with new files is refused,
+// saying when it can go; the same files sent again take the ref already up, and cost nothing (#739).
+func TestFilesPastADaysUploadsAreRefused(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	a.session("aaaaaa", "")
+	first := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	send := func(path string) proto.Response {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: []string{path}})
+	}
+	if r := send(first); r.Error != "" {
+		t.Fatalf("the first: %s", r.Error)
+	}
+	if r := send(first); r.Error != "" {
+		t.Errorf("the same files again: %s", r.Error)
+	}
+	r := send(writeFile(t, "two.bin", bytes.Repeat([]byte{2}, 2000)))
+	if !strings.Contains(r.Error, "not sent: this device has sent") || !strings.Contains(r.Error, "in the last day") || !strings.Contains(r.Error, "it can send these after") {
+		t.Errorf("past the day's uploads: %q", r.Error)
+	}
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
+		t.Errorf("files refs on the remote: %v, want one", refs)
+	}
+}
+
+// A device keeps at most FilesHeld of files, the oldest message's going first (#739).
+func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filesHeld = 3000 })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	var paths []string
+	for i, name := range []string{"old.bin", "new.bin"} {
+		f := writeFile(t, name, bytes.Repeat([]byte{byte(i)}, 2000))
+		if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: name, Files: []string{f}}); r.Error != "" {
+			t.Fatalf("send %s: %s", name, r.Error)
+		}
+		m := inboxMessage(t, b, "bbbbbb")
+		if len(m.Files) != 1 {
+			t.Fatalf("%s: %+v", name, m.Files)
+		}
+		paths = append(paths, m.Files[0].Path)
+		time.Sleep(50 * time.Millisecond) // the two copies apart in time, on a coarse clock too
+	}
+	eventually(t, "the old copy to go", func() bool { return !fileThere(paths[0]) })
+	if !fileThere(paths[1]) {
+		t.Errorf("the new copy went too")
+	}
 }
