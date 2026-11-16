@@ -41,12 +41,11 @@ Every issue carries at least a kind label.
 
 - `bug` / `Feature` / `Task` / `question`: the kind, spelled exactly so. `question` is an open
   design question.
-- `priority:` is two ways to rank an open issue, and it carries one label of each (Tyler,
-  2026-11-16, #751):
-  - `priority: now` / `soon` / `future`: when it is done.
-  - `priority: low` / `med` / `high` / `xhigh`: how much it matters, whenever it is done.
-    Something that matters a lot and needs a design first is `future` and `high`. Issues from
-    before that day carry none of these until someone rates them.
+- `priority:` has two scales, and an open issue carries one label, from either: whoever files it
+  picks the scale that says more about it (Tyler, 2026-11-16, #751).
+  - `priority: now` / `soon` / `future` / `maybe never`: when it is done. `maybe never` is
+    parked: kept open in case it is worth coming back to.
+  - `priority: low` / `med` / `high` / `xhigh`: how much it matters.
 - `PR needed` / `non-PR needed`: where the work lives. `non-PR needed` means some of it is done by
   hand: a decision, an account, a test in the world.
 - `from: <Model>`: see Workflow.
