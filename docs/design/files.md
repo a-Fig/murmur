@@ -115,8 +115,11 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   file with zero bytes, its regions of text are checked, as `strings` reads a binary: UTF-8, and
   UTF-16 with no mark in either byte order. Keys sit in the clear between zero bytes in a `.tar`, a
   SQLite file or `/proc/self/environ` (#737, from 2026-11-16; before, such a file went unchecked).
-  A region runs over spaces and line breaks, and only a whole region under 8 characters is skipped,
-  so 10 MB of random bytes takes 0.1 s to check, not 13. Unread: what is compressed, as an image or a
+  A region is every character but a zero, up to a byte that can't be one, so a name stays with its
+  value past a line break or a control character. Only a whole region under 8 characters is
+  skipped, so random bytes, which break into short regions, are quick: 10 MB took 0.4 s to check,
+  not 13 s, on Tyler's laptop (2026-11-16). Long text is slower, about 1 s a MB, as it is for a text
+  file. Unread: what is compressed, as an image or a
   zip, which isn't unpacked, and UTF-16 with no mark past U+2000 (CJK, say). `publicKeyToken` with
   16 hex digits, in every Windows program's manifest, is .NET's public assembly identity, not a
   secret.

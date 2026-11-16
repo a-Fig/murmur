@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -92,11 +91,12 @@ func (d *Daemon) scratch() (*bus.Repo, func(), error) {
 // A file with a zero byte was once taken for binary and not checked, but keys sit in the clear
 // between zero bytes in a .tar, a SQLite file or Linux's /proc/self/environ (#737). Its regions of
 // text are read, as `strings` reads a binary: as UTF-8, and as UTF-16 with no mark, either end
-// first, from either byte. A region runs over spaces and line breaks, so a name stays with its
-// value on the next line, and only a whole region shorter than minRun is passed over. Reading only
-// the regions keeps a binary quick: all of 10 MB of random bytes took 13 s to check, and its
-// regions 0.1 s. Unread: what is compressed, as an image or a zip, which isn't unpacked, and UTF-16
-// with no mark past U+2000 (CJK, say), where every pair of ASCII bytes would also read as text.
+// first, from either byte. A region is every character but a zero up to what can't be one, so a
+// name stays with its value on the next line or past a control character, and only a whole region
+// shorter than minRun is passed over. Reading only the regions keeps a binary quick: random bytes
+// break into short ones. Unread: what is compressed, as an image or a zip, which isn't unpacked,
+// and UTF-16 with no mark past U+2000 (CJK, say), where every pair of ASCII bytes would also read
+// as text.
 func textsOf(b []byte) []string {
 	var texts []string
 	if len(b) >= 2 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
@@ -104,9 +104,12 @@ func textsOf(b []byte) []string {
 		if b[0] == 0xfe {
 			order = binary.BigEndian
 		}
-		units := make([]uint16, 0, len(b)/2-1)
+		units := make([]uint16, 0, len(b)/2)
 		for i := 2; i+1 < len(b); i += 2 {
 			units = append(units, order.Uint16(b[i:]))
+		}
+		if last, ok := cutUnit(b[2:], order); ok {
+			units = append(units, uint16(last))
 		}
 		texts = append(texts, string(utf16.Decode(units)))
 	}
@@ -125,11 +128,6 @@ func textsOf(b []byte) []string {
 // minRun is the shortest region of text utf8Regions and utf16Regions keep: shorter than any secret
 // the check knows, with what names it.
 const minRun = 8
-
-// isText says r is a character of text: one that prints, or a space or a line break.
-func isText(r rune) bool {
-	return unicode.IsPrint(r) || r == '\t' || r == '\n' || r == '\r'
-}
 
 // regions gathers regions of text, keeping those of minRun characters or more, a line each.
 type regions struct {
@@ -152,13 +150,14 @@ func (g *regions) String() string {
 	return g.out.String()
 }
 
-// utf8Regions is b's regions of UTF-8 text.
+// utf8Regions is b's regions of UTF-8: every character but a zero, up to a byte that isn't UTF-8.
+// U+FFFD written out in full is a character like any other.
 func utf8Regions(b []byte) string {
 	var g regions
 	for len(b) > 0 {
 		r, n := utf8.DecodeRune(b)
 		b = b[n:]
-		if r != utf8.RuneError && isText(r) {
+		if r != 0 && (r != utf8.RuneError || n > 1) {
 			g.add(r)
 		} else {
 			g.end()
@@ -167,19 +166,33 @@ func utf8Regions(b []byte) string {
 	return g.String()
 }
 
-// utf16Regions is b's regions of UTF-16 text in byte order order, of characters below U+2000:
-// Latin, Greek and Cyrillic letters among them, and no pair of ASCII bytes, the lowest of which,
-// two spaces, is U+2020.
+// utf16Regions is b's regions of UTF-16 in byte order order: every character but a zero below
+// U+2000, Latin, Greek and Cyrillic letters among them, and no pair of ASCII bytes, the lowest of
+// which, two spaces, is U+2020.
 func utf16Regions(b []byte, order binary.ByteOrder) string {
 	var g regions
 	for i := 0; i+1 < len(b); i += 2 {
-		if u := order.Uint16(b[i:]); u != 0 && u < 0x2000 && isText(rune(u)) {
+		if u := order.Uint16(b[i:]); u != 0 && u < 0x2000 {
 			g.add(rune(u))
 		} else {
 			g.end()
 		}
 	}
+	if last, ok := cutUnit(b, order); ok {
+		g.add(last)
+	}
 	return g.String()
+}
+
+// cutUnit is the character an odd byte at the end of UTF-16 b would be, if its other byte, cut
+// off, was a zero: an ASCII character's, little end first. A file cut short mustn't lose a key's
+// last letter.
+func cutUnit(b []byte, order binary.ByteOrder) (rune, bool) {
+	if len(b)%2 == 0 || order != binary.LittleEndian {
+		return 0, false
+	}
+	c := b[len(b)-1]
+	return rune(c), c != 0 && c < 0x80
 }
 
 // sendFile is a file to send with a message: what the sender called it, a path from an agent or a

@@ -333,6 +333,13 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a password with an accent":          {[]string{writeFile(t, "accent.bin", []byte("PASSWORD=abc123édef456\x00"))}, "accent.bin"},
 		"a big-end key before a CJK letter":  {[]string{writeFile(t, "cjk.bin", utf16BE("AKIAIOSFODNN7EXAMPLE中"))}, "cjk.bin"},
 		"a key in the clear after a mark":    {[]string{writeFile(t, "mark.txt", []byte("\xff\xfeAKIAIOSFODNN7EXAMPLE"))}, "mark.txt"},
+		// And what its second round found.
+		"a name a form feed above its value":  {[]string{writeFile(t, "ff.bin", []byte("TOKEN=\fabc123abc123\x00"))}, "ff.bin"},
+		"a URL password around a U+FFFD":      {[]string{writeFile(t, "fffd.bin", []byte("https://user:abc�def@host\x00"))}, "fffd.bin"},
+		"a URL password around a control":     {[]string{writeFile(t, "ctl.bin", []byte("https://user:abc\x01def@host\x00"))}, "ctl.bin"},
+		"a URL password in UTF-16, a control": {[]string{writeFile(t, "ctl16.bin", utf16File("https://user:abc\x01def@host")[2:])}, "ctl16.bin"},
+		"UTF-16 cut short":                    {[]string{writeFile(t, "cut.bin", utf16File("AKIAIOSFODNN7EXAMPLE")[2:41])}, "cut.bin"},
+		"UTF-16 with its mark, cut short":     {[]string{writeFile(t, "cutmark.txt", utf16File("AKIAIOSFODNN7EXAMPLE")[:41])}, "cutmark.txt"},
 	} {
 		if what == "a Git Bash path" && runtime.GOOS != "windows" {
 			continue // a full path everywhere else
