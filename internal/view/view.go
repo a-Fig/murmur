@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -482,13 +483,17 @@ func quotedBody(body string) string {
 
 // headerLine says a body line reads as the first line of a turn like this one: "Message
 // from" or "Message sent in", naming Murmur as a real one does ("via Murmur:"). A line
-// that merely starts with the same words and never names Murmur is the sender's prose.
+// that merely starts with the same words and never names Murmur is the sender's prose. Case
+// doesn't save it, nor any leading space or invisible character (a no-break or zero-width
+// space): an agent reads past both.
 func headerLine(line string) bool {
-	t := strings.TrimLeft(line, " \t")
-	if !strings.Contains(t, " via "+brand.Product) {
+	t := strings.ToLower(strings.TrimLeftFunc(line, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
+	}))
+	if !strings.Contains(t, " via "+strings.ToLower(brand.Product)) {
 		return false
 	}
-	return strings.HasPrefix(t, "Message from ") || strings.HasPrefix(t, "Message sent in ")
+	return strings.HasPrefix(t, "message from ") || strings.HasPrefix(t, "message sent in ")
 }
 
 // receipt renders a notice from Murmur itself of how far one of the session's messages got, which
