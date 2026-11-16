@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 )
 
@@ -166,5 +169,76 @@ func TestAHooklessTurnStopsAtMaxBatch(t *testing.T) {
 	defer d.mu.Unlock()
 	if got := d.batchLocked("aaaaaa", box[0], viaT3, wakeWithin(0)); len(got) != 1 {
 		t.Errorf("a turn of %d messages of half maxBatch each, want 1", len(got))
+	}
+}
+
+// A session taken for one with no hook, whose hook then first runs mid-run (Claude Code or Codex
+// before its first hook call), dates its turn from the run T3 had going: what came during it waited
+// in the inbox, and is held for the turn's end however long ago it came.
+func TestAFirstHookDatesTheTurnFromTheRunSeen(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	s.claudeSession = "claude-a"
+	s.runSeenAt = time.Now().Add(-20 * time.Minute)
+	seen := s.runSeenAt
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.touchHookLocked(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-a"})
+	if !s.hooked || !s.turnStart.Equal(seen) || !s.runSeenAt.IsZero() {
+		t.Errorf("hooked %v, turnStart %v, runSeenAt %v; want hooked, the run's start %v, zero", s.hooked, s.turnStart, s.runSeenAt, seen)
+	}
+}
+
+// A person's question wakes a session past its wake setting, and carries nothing else with it: a
+// turn that also holds an agent's message is refused at the handoff if the session may no longer
+// be woken for the agent's.
+func TestAPersonsQuestionCarriesNoAgentsMessagePastTheWakeSetting(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{LastRun: time.Now().Add(-time.Hour)}, time.Now()
+	ask := &inMsg{Event: bus.Event{ID: "ask", Type: bus.Message, From: "dev2/" + bus.PersonSession, To: "dev/aaaaaa"}, Arrived: time.Now(), Pushing: true}
+	agent := &inMsg{Event: bus.Event{ID: "agent", Type: bus.Message, From: "dev2/bbbbbb", To: "dev/aaaaaa"}, Arrived: time.Now(), Pushing: true}
+	d.st.Inbox = map[string][]*inMsg{"aaaaaa": {ask, agent}}
+	j := &pushJob{id: "aaaaaa", addr: "dev/aaaaaa", msgs: []*inMsg{ask, agent}, via: viaT3,
+		route: proto.Route{T3CLI: "/no/such/t3", T3Thread: "thread-aaaaaa"}}
+	if err := d.sendTurn(context.Background(), j); !errors.Is(err, errNotNow) {
+		t.Errorf("sendTurn = %v for a turn with an agent's message to a thread idle an hour, want errNotNow", err)
+	}
+}
+
+// One prompt is one turn, and a turn of several messages marks each of them read (#611, #699).
+func TestATurnOfSeveralMarksEachRead(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", 0)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{LastRun: time.Now()}, time.Now()
+	var box []*inMsg
+	for _, id := range []string{"one", "two", "three"} {
+		box = append(box, &inMsg{Event: bus.Event{ID: id, Type: bus.Message, From: "dev2/bbbbbb", To: "dev/aaaaaa",
+			Subject: "subject " + id, Body: strings.Repeat(id+" ", 2000), Receipts: id != "one"}, Arrived: time.Now()})
+	}
+	d.st.Inbox = map[string][]*inMsg{"aaaaaa": box}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	j := d.nextPushLocked("aaaaaa", wakeWithin(0))
+	if len(j.msgs) != 3 {
+		t.Fatalf("a turn of %d messages, want 3", len(j.msgs))
+	}
+	if !d.readOnPromptLocked("aaaaaa", j.text[:proto.MaxPrompt]) {
+		t.Fatal("the turn's prompt, as the hook cuts it, marked nothing")
+	}
+	read := map[string]bool{}
+	for _, m := range d.st.Marks {
+		if m.State == bus.MarkRead {
+			read[m.Msg] = true
+		}
+	}
+	if !read["two"] || !read["three"] || read["one"] || len(d.st.AwaitingRead["aaaaaa"]) != 0 {
+		t.Errorf("read %v, still waiting %+v; want two and three read, none waiting", read, d.st.AwaitingRead["aaaaaa"])
 	}
 }

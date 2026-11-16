@@ -732,12 +732,23 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 		}
 		explained[e.To] = true
 		texts[i] = view.Turn(views[i])
-		// Remembered before the handoff, not after: the turn can start, and its prompt reach the
-		// daemon, while the client's command is still returning (#611). A handoff that fails forgets it.
-		d.awaitReadLocked(id, e, texts[i])
+	}
+	text := strings.Join(texts, "\n")
+	// Remembered before the handoff, not after: the turn can start, and its prompt reach the daemon,
+	// while the client's command is still returning (#611). A handoff that fails forgets it. The
+	// messages of one turn are read together, by the one prompt that turn is (see awaitingRead.Batch).
+	if len(msgs) == 1 {
+		d.awaitReadLocked(id, msgs[0].Event, text, "")
+	} else {
+		turn := text
+		for _, m := range msgs {
+			if d.awaitReadLocked(id, m.Event, turn, msgs[0].Event.ID) {
+				turn = "" // the first that waits holds the turn's text
+			}
+		}
 	}
 	return &pushJob{id: id, addr: bus.Addr(d.device, id), key: key, conv: d.conversationLocked(id), explainKey: d.explainKeyLocked(id), msgs: msgs, via: via,
-		route: route, text: strings.Join(texts, "\n")}
+		route: route, text: text}
 }
 
 // maxBatch is how much text one turn of several messages may carry (batchLocked): a message past
@@ -822,7 +833,11 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	// handoff.
 	wake := d.wakeSnapshot()
 	d.mu.Lock()
-	ok := (d.wakesLocked(j.id, wake) || slices.ContainsFunc(j.msgs, personAsks) && d.personWakesLocked(j.id, wake)) && !d.hookBusyLocked(j.id)
+	// A person's question wakes the session past its wake setting, but carries nothing else with it:
+	// a turn of several goes only if each of its messages may (batchLocked chose them under the
+	// settings then).
+	allAsk := !slices.ContainsFunc(j.msgs, func(m *inMsg) bool { return !personAsks(m) })
+	ok := (d.wakesLocked(j.id, wake) || allAsk && d.personWakesLocked(j.id, wake)) && !d.hookBusyLocked(j.id)
 	d.mu.Unlock()
 	if !ok {
 		return errNotNow
