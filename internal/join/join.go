@@ -290,11 +290,17 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 // join put in each working tree. The MCP server and the hooks stay with the agents, which is per
 // user, and do nothing in a repo that hasn't joined.
 func Leave(ctx context.Context, e Env, dir string) (Report, error) {
-	var r Report
 	p, err := Locate(ctx, dir)
 	if err != nil {
-		return r, err
+		return Report{}, err
 	}
+	return e.leavePlace(ctx, p)
+}
+
+// leavePlace is Leave for p. A Place with no Top, a git directory whose working tree can't be found
+// from it, is left all the same but for the hooks an older join put in its working trees.
+func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
+	var r Report
 	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
 
 	// The consent first, so everything that checks it stops from here on, including a server that
@@ -309,13 +315,15 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 			problem("taking this clone off the record of this machine's clones", err)
 		}
 	}
-	trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
-	r.Notes = append(r.Notes, notes...)
-	for _, t := range trees {
-		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
-	}
-	if err != nil {
-		problem("hook", err)
+	if p.Top != "" {
+		trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
+		r.Notes = append(r.Notes, notes...)
+		for _, t := range trees {
+			r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
+		}
+		if err != nil {
+			problem("hook", err)
+		}
 	}
 	// A daemon asked to stop holds the clone's lock until it has finished its work and said goodbye,
 	// which may take client.StopWait, and so may one still starting, which sees the consent gone
