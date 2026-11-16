@@ -406,6 +406,9 @@ type Daemon struct {
 	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
 	// of the same ones to take the same ref (reuseFilesLocked, #739).
 	uploads map[[32]byte]*recentUpload
+	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
+	// leaves alone (pinFilesDir).
+	filesBusy map[string]int
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time

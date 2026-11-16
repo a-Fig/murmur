@@ -277,9 +277,16 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 			break
 		}
 	}
+	// By the calendar, not 24 hours: across a spring clock change, 24 hours from 23:30 is 00:30 two
+	// days on.
 	at := when.Local().Format("15:04")
-	if y, m, day := when.Local().Date(); y != now.Local().Year() || m != now.Local().Month() || day != now.Local().Day() {
+	sameDay := func(a, b time.Time) bool { return a.Format(time.DateOnly) == b.Format(time.DateOnly) }
+	switch {
+	case sameDay(when.Local(), now.Local()):
+	case sameDay(when.Local(), now.Local().AddDate(0, 0, 1)):
 		at += " tomorrow"
+	default:
+		at += " on " + when.Local().Format("Mon Jan 2")
 	}
 	return fmt.Errorf("this device has sent %s of files in the last day, and sends at most %s a day; it can send these after %s",
 		proto.Size(used), proto.Size(d.opt.FilesPerDay), at)
@@ -341,6 +348,8 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
 	}
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
+	unpin := d.pinFilesDir(dir)
+	defer unpin()
 	for i, f := range files {
 		if err := saveFile(dir, f.Name, in[i].data); err != nil {
 			d.log.Printf("keeping a copy of %s, sent on files ref %s: %v", f.Name, at, err)
@@ -352,7 +361,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	}
 	d.uploads[sum] = &recentUpload{at: at, files: slices.Clone(files), when: time.Now()}
 	d.mu.Unlock()
-	d.holdFilesHeld(dir)
+	d.holdFilesHeld() // its own copies, pinned, stay
 	return files, at, false, nil
 }
 
@@ -584,7 +593,9 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 		return bus.ErrNoFile
 	}
 	// Whatever it saves, all or some, counts toward FilesHeld, whoever asked: the loop or the page.
-	defer d.holdFilesHeld(d.filesDir(e))
+	// Its own directory is pinned while it writes, and through that look (defers run last first).
+	defer d.pinFilesDir(d.filesDir(e))()
+	defer d.holdFilesHeld()
 	repo, done, err := d.scratch()
 	if err != nil {
 		return fmt.Errorf("%w: %w", errFetchLater, err)
@@ -668,7 +679,7 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 			}
 		}
 	}
-	d.holdFilesHeld("")
+	d.holdFilesHeld()
 	d.mu.Lock()
 	var due []string
 	for at, sent := range d.st.FileRefs {
@@ -696,11 +707,11 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 // holdFilesHeld deletes the files this device keeps, those it sent and those it fetched, a message's
 // at a time and the oldest first, until they come to FilesHeld (#739). FileKeep alone left no
 // bound: a loop sending a 20 MB log to everyone each minute would fill every teammate's disk by a
-// gigabyte an hour. A message whose files went is told of as one whose files can't be had. The
-// directory keep, the files just sent or fetched, stays, though it counts: the page reads a file
-// it fetched once the fetch is over. A file the page asks for again is fetched again, and held to
-// FilesHeld again.
-func (d *Daemon) holdFilesHeld(keep string) {
+// gigabyte an hour. A message whose files went is told of as one whose files can't be had. A
+// directory a send or a fetch is writing stays, though it counts (pinFilesDir): the caller's own,
+// as the page reads a file it fetched once the fetch is over, and another's. A file the page asks
+// for again is fetched again, and held to FilesHeld again.
+func (d *Daemon) holdFilesHeld() {
 	root := filepath.Join(d.dir, "files")
 	entries, _ := os.ReadDir(root)
 	type held struct {
@@ -735,14 +746,45 @@ func (d *Daemon) holdFilesHeld(keep string) {
 		if total <= d.opt.FilesHeld {
 			break
 		}
-		if filepath.Join(root, h.name) == keep {
+		// Looked at and deleted under mu, so no writer pins it in between (pinFilesDir).
+		d.mu.Lock()
+		path := filepath.Join(root, h.name)
+		var err error
+		if d.filesBusy[path] == 0 {
+			err = os.RemoveAll(path)
+		}
+		busy := d.filesBusy[path] > 0
+		d.mu.Unlock()
+		if busy {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(root, h.name)); err != nil {
+		if err != nil {
 			d.log.Printf("deleting the files saved from files ref %s, past the %s kept: %v", h.name, proto.Size(d.opt.FilesHeld), err)
 			continue
 		}
 		total -= h.size
+	}
+}
+
+// pinFilesDir keeps holdFilesHeld off directory dir, which a send or a fetch is writing files to,
+// until the unpin it returns is called. A fetch that lost the first of its files to another's
+// eviction while it saved the rest would say it had them all (Sol's review of #760).
+func (d *Daemon) pinFilesDir(dir string) (unpin func()) {
+	if dir == "" {
+		return func() {}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.filesBusy == nil {
+		d.filesBusy = map[string]int{}
+	}
+	d.filesBusy[dir]++
+	return func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.filesBusy[dir]--; d.filesBusy[dir] <= 0 {
+			delete(d.filesBusy, dir)
+		}
 	}
 }
 
