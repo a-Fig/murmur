@@ -749,7 +749,7 @@ type state struct {
 	// Downed is the stopped sessions that were still connected when the daemon stopped (#736):
 	// their servers may reconnect to the next daemon, which waits a little for them before it
 	// hands their threads anything (awaitedLocked). A session leaves it when it registers or its
-	// stop runs out, and the next daemon empties it once it has stopped waiting.
+	// stop runs out, and the next daemon takes it out once it has stopped waiting.
 	Downed map[string]bool `json:"downed,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`

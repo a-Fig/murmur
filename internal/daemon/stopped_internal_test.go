@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 )
 
@@ -17,13 +18,30 @@ func TestWhatASessionEndedByTheDaemonsStopHasOutlivesTheSweep(t *testing.T) {
 	d.st.T3Routes = map[string]t3Route{"aaaaaa": {CLI: "t3", Thread: "th-a"}, "ghost": {CLI: "t3", Thread: "th-g"}}
 	d.st.Inbox["aaaaaa"], d.st.Inbox["ghost"] = []*inMsg{{}}, []*inMsg{{}}
 	d.st.Commits["aaaaaa"] = []commitRec{{SHA: "c1"}}
+	d.started = time.Now().Add(-3 * time.Minute)
 	d.stoppedWithDaemonLocked("aaaaaa")
-	d.started = time.Now().Add(-3 * time.Minute) // the next daemon, past waiting for anyone
+	marked := d.st.Downed["aaaaaa"]
 	d.mu.Unlock()
+	if !marked {
+		t.Fatal("the session isn't marked as ended by the daemon's stop")
+	}
+	// A sweep as the daemon stops, after a push its stop cut short, leaves the mark for the next
+	// daemon.
+	d.pruneInboxes()
+	d.mu.Lock()
+	marked = d.st.Downed["aaaaaa"]
+	d.st.Stopped["aaaaaa"] = time.Now().Add(-5 * time.Minute) // the next daemon, three minutes old
+	d.mu.Unlock()
+	if !marked {
+		t.Fatal("the stopping daemon's own sweep took the mark off")
+	}
 
 	d.pruneInboxes()
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.st.Downed["aaaaaa"] {
+		t.Error("the next daemon still waits for the session, two minutes on")
+	}
 	if _, ok := d.st.Stopped["aaaaaa"]; !ok || d.sessions["aaaaaa"] != nil {
 		t.Fatalf("the session isn't recorded as stopped")
 	}
@@ -47,7 +65,7 @@ func TestAThreadWhoseSessionMayReconnectIsLeftAlone(t *testing.T) {
 	d.st.T3Routes = map[string]t3Route{"bbbbbb": {CLI: "t3", Thread: "th-b"}}
 	d.st.Stopped["bbbbbb"], d.st.Stopped["dddddd"] = time.Now(), time.Now()
 	d.st.T3Routes["dddddd"] = t3Route{CLI: "t3", Thread: "th-d"}
-	d.st.Downed = map[string]bool{"bbbbbb": true}
+	d.st.Downed = map[string]bool{"bbbbbb": true, "cccccc": true}
 	k := threadKey{"", "th-b"}
 	d.threads = map[threadKey]t3db.State{}
 
@@ -66,6 +84,11 @@ func TestAThreadWhoseSessionMayReconnectIsLeftAlone(t *testing.T) {
 	d.started = time.Now().Add(-2 * reconnectHold)
 	if d.hookBusyLocked("bbbbbb") {
 		t.Error("the thread was still held after the daemon's first minute")
+	}
+	// Back, it is no longer waited for.
+	d.newSessionLocked(&proto.Hello{ID: "bbbbbb", Cwd: "."}, "test", "", "bbbbbb")
+	if d.st.Downed["bbbbbb"] {
+		t.Error("a session that registered again is still marked")
 	}
 	d.started = time.Now()
 	if d.hookBusyLocked("cccccc") {
