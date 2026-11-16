@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -272,3 +274,56 @@ func TestFetchFilesCapsTheDownload(t *testing.T) {
 		t.Fatalf("the fetched pack: %d bytes, %v", len(b), err)
 	}
 }
+
+// A files ref over the limit on a remote that sends slowly, as one across a network does, is
+// stopped while it arrives, rather than downloaded whole and refused after (#707).
+func TestFetchFilesStopsASlowDownload(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh to slow the remote with")
+	}
+	ctx := context.Background()
+	remote := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	there := &bus.Repo{Git: gitx.Git{Dir: remote}}
+	pack := make([]byte, 16<<20)
+	rand.Read(pack)
+	sha, err := there.NewFilesCommit(ctx, pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := bus.FilesRef("0123456789abcdef")
+	if out, err := exec.Command("git", "--git-dir="+remote, "update-ref", ref, sha).CombinedOutput(); err != nil {
+		t.Fatalf("update-ref: %v: %s", err, out)
+	}
+	// 256 KiB every 100 ms: the whole ref would take over six seconds.
+	slow := filepath.Join(t.TempDir(), "slow.sh")
+	os.WriteFile(slow, []byte(slowUploadPack), 0o755)
+	local := t.TempDir()
+	for _, args := range [][]string{{"init", "-q", "--bare", local}, {"--git-dir=" + local, "remote", "add", "slow", remote}, {"--git-dir=" + local, "config", "remote.slow.uploadpack", "sh " + filepath.ToSlash(slow)}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	scratch := t.TempDir()
+	here := (&bus.Repo{Git: gitx.Git{Dir: local}, Remote: "slow"}).Scratch(scratch)
+	start := time.Now()
+	if _, err := here.FetchFiles(ctx, ref, 64<<10); !errors.Is(err, bus.ErrTooLarge) {
+		t.Fatalf("a slow ref over the limit: %v", err)
+	}
+	took := time.Since(start)
+	t.Logf("stopped after %v", took)
+	if took > 4*time.Second {
+		t.Fatalf("took %v: the fetch wasn't stopped as it arrived", took)
+	}
+}
+
+// slowUploadPack is git-upload-pack with what it sends passed on 256 KiB every 100 ms at most.
+const slowUploadPack = `chunk=$(mktemp)
+git-upload-pack "$@" | while dd bs=262144 count=1 of="$chunk" 2>/dev/null && [ -s "$chunk" ]; do
+	cat "$chunk" || break # the fetch has gone, as a network's sender finds
+	sleep 0.1
+done
+rm -f "$chunk"
+`

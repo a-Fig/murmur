@@ -365,26 +365,44 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, e
 	if sha == "" {
 		return "", ErrNoFile
 	}
-	packs := filepath.Join(r.objectDir(), "pack")
+	objects, own := r.objectDir()
+	packs := filepath.Join(objects, "pack")
 	had := map[string]bool{}
 	if ents, err := os.ReadDir(packs); err == nil {
 		for _, e := range ents {
 			had[e.Name()] = true
 		}
 	}
-	// What the fetch wrote: the pack, as it grows, and once it is done its index too.
+	// What the fetch wrote: the pack, as it grows, and once it is done its index too. In the
+	// clone's own objects, which another fetch or a gc may be writing to as well, only a pack still
+	// being written is counted, and nothing is removed: a pack that is done may be theirs.
 	fetched := func() (n int64, names []string) {
 		ents, _ := os.ReadDir(packs)
 		for _, e := range ents {
-			if had[e.Name()] {
+			if had[e.Name()] || !own && !strings.HasPrefix(e.Name(), "tmp_") {
 				continue
 			}
-			names = append(names, e.Name())
-			if info, err := e.Info(); err == nil {
+			// Stat by path: on Windows a listing's size lags a file being written to.
+			if info, err := os.Stat(filepath.Join(packs, e.Name())); err == nil {
 				n += info.Size()
+			}
+			if own {
+				names = append(names, e.Name())
 			}
 		}
 		return n, names
+	}
+	removeFetched := func(names []string) {
+		for _, name := range names {
+			p := filepath.Join(packs, name)
+			// On Windows a file git is still closing can't be removed for a moment.
+			for try := 0; try < 10; try++ {
+				if err := os.Remove(p); err == nil || errors.Is(err, os.ErrNotExist) {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
 	}
 	// Encrypted files don't compress, so a pack of max bytes takes about max on the wire: zlib's
 	// framing, the commit, the tree and the pack's index take far less than this allows over it.
@@ -409,34 +427,37 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, e
 			}
 		}
 	}()
-	_, err = r.Git.Run(fctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+	// Protocol 2, as a fetch stopped over protocol 0 or 1 by HTTPS goes on: git-remote-https feeds
+	// a fetch-pack of its own, which doesn't notice the fetch it was for has gone.
+	_, err = r.Git.Run(fctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "protocol.version=2",
 		"-c", "fetch.unpackLimit=1", "-c", "core.bigFileThreshold=1m", "fetch", "--quiet",
 		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip="+brand.RefRoot+"*", r.Remote, ref)
 	close(stop)
 	<-watched
 	n, names := fetched()
-	if errors.Is(context.Cause(fctx), ErrTooLarge) || err == nil && n > limit {
-		// A fetch this fast was done before it could be stopped; either way none of it is kept.
-		for _, name := range names {
-			os.Remove(filepath.Join(packs, name))
-		}
+	// Too large whether it was stopped for it, done before it could be, or ended otherwise (a
+	// timeout) past the limit; and nothing of a fetch that failed is kept.
+	if errors.Is(context.Cause(fctx), ErrTooLarge) || n > limit {
+		removeFetched(names)
 		return "", fmt.Errorf("%w: the files ref holds over %d bytes", ErrTooLarge, limit)
 	}
 	if err != nil {
+		removeFetched(names)
 		return "", err
 	}
 	return sha, nil
 }
 
-// objectDir is where git writes this repo's objects: the scratch directory, if it is one.
-func (r *Repo) objectDir() string {
+// objectDir is where git writes this repo's objects, and whether they are a scratch directory's,
+// which nothing but this repo writes to (Scratch).
+func (r *Repo) objectDir() (string, bool) {
 	for i := len(r.Git.Env) - 1; i >= 0; i-- {
 		if v, ok := strings.CutPrefix(r.Git.Env[i], "GIT_OBJECT_DIRECTORY="); ok {
-			return v
+			return v, true
 		}
 	}
-	return filepath.Join(r.Git.Dir, "objects")
+	return filepath.Join(r.Git.Dir, "objects"), false
 }
 
 // DeleteLocal removes a local ref, if it is there.

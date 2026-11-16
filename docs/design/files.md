@@ -113,6 +113,9 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   what a pack within the limits takes on the wire, a little over its size, as sealed files don't
   compress. A fetch too quick to stop, as from a remote on the same disk, is measured when it ends.
   Either way what it wrote is removed and the message queued without its files, after one try.
+  The fetch is on protocol 2: stopped on 0 or 1 over HTTPS, git-remote-https's own fetch-pack goes
+  on downloading. Where there is no scratch directory, only a pack still being written counts and
+  nothing is removed, as another fetch or a gc may be writing there too.
 
 ## Open, for Tyler
 
