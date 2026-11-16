@@ -14,6 +14,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables | One process per session, with `MUSE_SESSION_ID` | The same ID |
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
+| Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy_acp_server` per thread, with `ANTIGRAVITY_CONVERSATION_ID` in what it runs | The same ID (seen, 2026-11-15) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older
@@ -140,3 +141,31 @@ grok`. Both take Claude Code's payload and answers.
 - **In every repo.** Both hooks are per user. Where Murmur isn't joined the hook finds no daemon and
   prints nothing, which cost 70–100 ms a tool call on the laptop (2026-11-08), plus the shell the
   agent starts it in.
+
+## Antigravity
+
+Added 2026-11-15 (#650), at Tyler's request. Seen in T3 probe threads on Tyler's laptop with
+Antigravity's harness 1.4.5. The rest comes from the documentation built into that harness and
+from T3's bundled server. A whole turn with Murmur has not been run yet.
+
+- **Homes.** T3 runs each Antigravity instance with a home of its own,
+  `userdata/providers/antigravity/<sha256 of the instance ID>`, as its `GEMINI_HOME`. T3 says this
+  isolates credentials, hooks and MCP servers, and nothing in its settings moves it. Join writes
+  there and in `~/.gemini`. Antigravity under T3 doesn't read a project's
+  `.agents/mcp_config.json` (tried, 2026-11-15).
+- **Which session.** T3 doesn't set `T3CODE_THREAD_ID` for Antigravity (pingdotgg/t3code#34024).
+  Antigravity sets `ANTIGRAVITY_CONVERSATION_ID` in what it runs, and T3 keeps that ID as the
+  thread's provider session, so the server finds its thread as Grok's and Muse's do. Its shell
+  commands have the variable. Whether its MCP servers have it too hasn't been seen. If they don't,
+  the daemon pairs the hook's `conversationId` with the server among the hook's ancestors, as it
+  does for Codex.
+- **The hook.** It is a `murmur` entry in `config/hooks.json`. Antigravity's payload doesn't name
+  its event, so the command line does: `mur hook --event Stop antigravity`. It runs on two events:
+  - `PreInvocation`, before each model call, stands for both `UserPromptSubmit` and `PostToolUse`.
+    `PostToolUse`'s answer is ignored. Its notices go back as a system message (`injectSteps`), and
+    its `lastUserInput` is the prompt #611 matches.
+  - `Stop` keeps a turn going with `"decision": "continue"`, only when `terminationReason` is
+    `NO_TOOL_CALL`.
+
+  Every answer is a JSON object, `{}` when there is nothing to say. Hooks run with `cmd /c` on
+  Windows, so a path with a space is double-quoted.

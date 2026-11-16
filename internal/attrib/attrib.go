@@ -34,7 +34,7 @@ type Ref struct {
 	SHA    string
 	Branch string
 	Time   time.Time
-	tips   []string // commit and annotated-tag object names, then detached HEADs, deduplicated
+	tips   []string // every ref's object name, then detached HEADs, deduplicated
 	gitDir string   // the worktree's git directory where Head found it itself, "" where git did
 }
 
@@ -94,16 +94,27 @@ func readHEADFile(path string) (symref, sha string, ok bool) {
 		}
 		return target, "", true
 	}
-	if (len(text) == 40 || len(text) == 64) && strings.Trim(text, "0123456789abcdef") == "" {
+	if objectID(text) {
 		return "", text, true
 	}
 	return "", "", false
 }
 
+// objectID says whether s is spelled as git writes a full object ID: 40 lowercase hex digits for
+// SHA-1, 64 for SHA-256. It says nothing of whether the object is in the clone.
+func objectID(s string) bool {
+	return (len(s) == 40 || len(s) == 64) && strings.Trim(s, "0123456789abcdef") == ""
+}
+
 // headFromFile completes a Ref from what the HEAD file said, with one for-each-ref: the tips, and
 // the commit HEAD's branch is at. A branch that isn't among the refs is unborn, as headByGit has
-// it; a branch at anything but a commit, or one that is itself a symbolic ref (git names the branch
-// at the end of the chain), is left to git to read.
+// it; one that is itself a symbolic ref (git names the branch at the end of the chain) is left to
+// git to read. HEAD's ref is taken as a commit unchecked, as a detached HEAD file's ID is: both ref
+// backends refuse to write anything else to a branch, and checking would mean reading the object,
+// which scanRefs avoids (#540). HEAD can name any ref under refs/, so one pointed by hand at an
+// annotated tag gives the tag object here where headByGit gives its commit. Nothing is credited
+// differently: git log peels a tag on either side, and git commit on such a HEAD fails ("cannot
+// lock ref 'HEAD'"), finding the tag object where it expected the commit it peeled to.
 func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha string, ref Ref) (Ref, error) {
 	head, err := scanRefs(ctx, worktree, symref, &ref)
 	if err != nil {
@@ -117,14 +128,7 @@ func headFromFile(ctx context.Context, worktree, gitDir, commonDir, symref, sha 
 		if head.symref != "" {
 			return headByGit(ctx, worktree, Ref{Time: ref.Time})
 		}
-		switch head.objectType {
-		case "":
-			// Unborn: a symbolic HEAD whose branch does not exist yet.
-		case "commit":
-			ref.SHA = head.objectName
-		default:
-			return headByGit(ctx, worktree, Ref{Time: ref.Time})
-		}
+		ref.SHA = head.objectName // "" when unborn: a symbolic HEAD whose branch does not exist yet
 	}
 	ref.gitDir = gitDir
 	return ref, nil
@@ -185,7 +189,7 @@ func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) 
 	// Each worktree is a block of lines ended by a blank one; a detached one has a "detached" line
 	// after its "HEAD <sha>". -z would keep a path with a newline in it from reading as lines of
 	// its own, but needs git 2.36, and mur supports 2.31; such a path could at most add a tip,
-	// which only keeps more out.
+	// which only keeps more out, and addTips drops one that isn't an object ID.
 	var shas []string
 	var sha string
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
@@ -203,13 +207,16 @@ func detachedHeadsByGit(ctx context.Context, worktree string) ([]string, error) 
 
 // addTips adds detached HEADs to ref's tips, sorted, so both ways of finding them record the same
 // list, and leaving out any already there.
+//
+// It keeps only full object IDs, since each tip goes to NewCommits's git log as a revision, where
+// anything else would be read as an expression or refused. And it leaves out the all-zero ID, which
+// git before 2.44 writes into a new worktree's HEAD for a moment during `git worktree add`: it names
+// no commit. A tip can still name an object this clone lacks, which only git can tell; NewCommits
+// skips it there rather than spend a process per Head checking (#540).
 func addTips(ref *Ref, shas []string) {
 	slices.Sort(shas)
 	for _, sha := range slices.Compact(shas) {
-		// git before 2.44 writes the all-zero ID into a new worktree's HEAD for a moment during
-		// `git worktree add`. It names no commit, and as a tip it would make NewCommits's git log
-		// fail with "bad object", so the call would be credited nothing.
-		if strings.Trim(sha, "0") == "" {
+		if !objectID(sha) || strings.Trim(sha, "0") == "" {
 			continue
 		}
 		if !slices.Contains(ref.tips, sha) {
@@ -238,7 +245,7 @@ func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 	addTips(&ref, detached)
 	sha, err := gitx.RunIn(ctx, worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if err != nil {
-		if exitCode(err, 1) && branch != "" && head.objectType == "" {
+		if exitCode(err, 1) && branch != "" && head.objectName == "" {
 			return ref, nil // A symbolic HEAD whose branch does not exist yet is unborn.
 		}
 		return Ref{}, err
@@ -249,12 +256,18 @@ func headByGit(ctx context.Context, worktree string, ref Ref) (Ref, error) {
 
 // refLine is one ref as for-each-ref lists it. symref is the ref it names, if it is a symbolic ref;
 // its object is then the one at the end of the chain.
-type refLine struct{ objectType, objectName, symref string }
+type refLine struct{ objectName, symref string }
 
 // scanRefs records every ref tip in ref, and returns the line of the ref named branch, if there is
 // one (empty when branch is "" or doesn't exist).
+//
+// The format asks only for what the refs themselves hold. A field such as %(objecttype) has git
+// read every ref's object, and one ref at an object the clone lacks, such as a branch whose commit
+// was lost, then fails the whole scan with "missing object", so Head failed in every worktree of
+// the clone (#540). Reading no object also makes the scan cheaper. So every ref's object is a tip,
+// whatever it is: git log passes over a tree, a blob and an object the clone lacks.
 func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, error) {
-	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objecttype)%00%(objectname)%00%(symref)")
+	out, err := gitx.RunIn(ctx, worktree, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)")
 	if err != nil {
 		return refLine{}, err
 	}
@@ -265,21 +278,18 @@ func scanRefs(ctx context.Context, worktree, branch string, ref *Ref) (refLine, 
 			continue
 		}
 		fields := strings.Split(strings.TrimSuffix(line, "\r"), "\x00")
-		if len(fields) != 4 {
+		if len(fields) != 3 {
 			return refLine{}, fmt.Errorf("unexpected git for-each-ref output: %q", line)
 		}
 		if branch != "" && fields[0] == branch {
-			head = refLine{fields[1], fields[2], fields[3]}
+			head = refLine{fields[1], fields[2]}
 		}
-		switch fields[1] {
-		case "commit", "tag":
-			// An annotated tag is kept as the tag object, not peeled here: git log peels it,
-			// tags of tags included, and ignores one that ends at a tree or blob. Peeling each
-			// with rev-parse cost a process per tag, over a minute for 1,000 release tags.
-			if !seen[fields[2]] {
-				seen[fields[2]] = true
-				ref.tips = append(ref.tips, fields[2])
-			}
+		// An annotated tag is kept as the tag object, not peeled here: git log peels it, tags of
+		// tags included, and ignores one that ends at a tree or blob. Peeling each with rev-parse
+		// cost a process per tag, over a minute for 1,000 release tags.
+		if objectID(fields[1]) && !seen[fields[1]] {
+			seen[fields[1]] = true
+			ref.tips = append(ref.tips, fields[1])
 		}
 	}
 	return head, nil
@@ -338,8 +348,15 @@ func NewCommits(ctx context.Context, worktree string, before, after Ref) ([]Comm
 	for _, tip := range before.tips {
 		exclude.WriteString("^" + tip + "\n")
 	}
+	// --ignore-missing has git skip a revision that isn't an object in the clone, instead of
+	// failing the whole call with "bad object"; a tree or blob it passes over anyway. A tip can be
+	// one: a worktree's HEAD file naming a commit the clone lacks, from a corrupt or hand-copied
+	// entry, would otherwise stop every call in every worktree of the clone being credited (#540).
+	// A commit the clone lacks keeps nothing out anyway, since git can't read its parents. An
+	// after.SHA the clone lacks is skipped too, leaving no commits. git reads stdin's revisions where
+	// --stdin stands among the arguments, so the flag comes before it.
 	repo := gitx.Git{Dir: strings.TrimSpace(gitDir)}
-	out, err := repo.Run(ctx, exclude.String(), "log", "--stdin", "--reverse", "--topo-order", "--no-show-signature", "--encoding=UTF-8", "--format=%H%x00%ct%x00%s", "-z", "--end-of-options", after.SHA, "--")
+	out, err := repo.Run(ctx, exclude.String(), "log", "--ignore-missing", "--stdin", "--reverse", "--topo-order", "--no-show-signature", "--encoding=UTF-8", "--format=%H%x00%ct%x00%s", "-z", "--end-of-options", after.SHA, "--")
 	if err != nil {
 		return nil, err
 	}

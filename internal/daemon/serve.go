@@ -288,6 +288,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if d.routeChildLocked(s) && taken {
 		d.kickPresence()
 	}
+	if d.readHeldPromptsLocked(s) {
+		d.saveLocked() // a turn handed over started while the session was away (#658)
+	}
 	_, kid := d.kids[s.id]
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
@@ -595,6 +598,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 	} else {
 		ids = []string{req.Session}
+	}
+	if hookReq(req) && !slices.ContainsFunc(ids, d.liveLocked) {
+		d.holdPromptLocked(req) // its session may be on its way back (#658)
 	}
 	var self string
 	var fresh []*inMsg

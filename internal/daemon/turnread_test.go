@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -124,5 +125,56 @@ func TestAPromptIsMatchedToItsTurn(t *testing.T) {
 		if got := daemon.WhichTurn(c.prompt, c.turns...); got != c.want {
 			t.Errorf("%s: the prompt is taken for turn %d, want %d:\n%s", c.name, got, c.want, c.prompt)
 		}
+	}
+}
+
+// A daemon that restarts knows a session only once its MCP server says hello again, and a turn
+// handed over before the restart can start in that time. Its prompt still marks its message read
+// once the session is back (#658): it was dropped, and the message stayed handed over, its
+// sender's tell_me waiting out its 30 minutes. Claude Code's hook names the session by its ID;
+// Codex's by its thread's, which its server knows as its route's Native.
+func TestATurnThatStartsWhileItsDaemonRestartsIsRead(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, claude, agent string
+		native              string
+	}{
+		{name: "claude", claude: "claude-bob"},
+		{name: "codex", agent: "codex", native: "codex-thread"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			remote := newRemote(t)
+			exe, calls := useFakeT3(t)
+			a, b := newDevice(t, remote), newDevice(t, remote)
+			route := proto.Route{T3CLI: exe, T3Thread: "thread-bob", Native: c.native}
+			bob, _ := b.sessionRoute("bbbbbb", c.claude, route)
+			bobName := b.named(bob)
+			pa := a.page()
+			pa.choose("ada")
+			eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+			id := pa.sendText(bobName, "Can you rerun CI?")
+			eventually(t, "the handoff", func() bool { return len(calls()) > 0 })
+			eventually(t, "handed over", pa.stateIs(id, bob, bus.MarkHanded))
+			turn := calls()[0].Stdin
+
+			b.restart()
+			hook := proto.Request{Op: proto.OpNotices, ClaudeSession: c.claude, Whole: true, Prompt: turn}
+			if c.agent != "" {
+				hook.Agent, hook.ClaudeSession = c.agent, c.native
+			}
+			b.do(hook)
+			if !pa.stateIs(id, bob, bus.MarkHanded)() {
+				t.Fatal("marked before bob was back")
+			}
+			conn, _, err := b.c.Hello(context.Background(), proto.Hello{ID: "bbbbbb", Agent: "test",
+				ClaudeSession: c.claude, Route: route, Reconnect: true})
+			if err != nil {
+				t.Fatalf("bob's hello after the restart: %v", err)
+			}
+			t.Cleanup(func() { conn.Close() })
+			eventually(t, "read: the turn started while bob reconnected", pa.stateIs(id, bob, bus.MarkRead))
+		})
 	}
 }

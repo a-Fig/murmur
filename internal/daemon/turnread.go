@@ -96,6 +96,65 @@ func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	return true
 }
 
+// heldPrompt is a prompt the hook sent while no session of its client was connected, and when.
+// claude is the conversation's ID: Claude Code's session ID, or, where agent is set, the ID of
+// another agent's conversation (Codex's thread, Grok's session), which its session knows as its
+// route's Native.
+type heldPrompt struct {
+	claude, prompt string
+	pid            int
+	agent          bool
+	at             time.Time
+}
+
+// holdPromptLocked keeps a prompt that found no connected session of its client. A daemon that
+// restarts knows a session only once its MCP server says hello again, and one in its grace isn't
+// connected; a turn handed over before can start in that time, and its prompt would be lost, the
+// message left handed over (#658). It is kept for SessionGrace, as long as a session has to come
+// back, and matched when one of its client does (readHeldPromptsLocked). It is kept in memory
+// only: a daemon that restarts again in that minute loses it. Caller holds mu.
+func (d *Daemon) holdPromptLocked(req proto.Request) {
+	if req.Prompt == "" || req.Subagent || (req.ClaudeSession == "" && req.ClientPID == 0) {
+		return
+	}
+	d.heldPrompts = slices.DeleteFunc(d.heldPrompts, func(h heldPrompt) bool {
+		return time.Since(h.at) > d.opt.SessionGrace
+	})
+	d.heldPrompts = append(d.heldPrompts, heldPrompt{claude: req.ClaudeSession, prompt: req.Prompt,
+		pid: req.ClientPID, agent: req.Agent != "", at: time.Now()})
+	if over := len(d.heldPrompts) - maxAwaiting; over > 0 {
+		d.heldPrompts = d.heldPrompts[over:]
+	}
+}
+
+// readHeldPromptsLocked matches the prompts held for session s's client, now it is connected,
+// against what s waits on. One that marks a message read goes; one that marks nothing waits out
+// SessionGrace, as the session it is for may not be the first of its client to come back (two
+// servers in one process, or a second process resumed on the conversation). It says whether it
+// marked one read; the caller saves the state then. Caller holds mu.
+func (d *Daemon) readHeldPromptsLocked(s *session) bool {
+	read := false
+	d.heldPrompts = slices.DeleteFunc(d.heldPrompts, func(h heldPrompt) bool {
+		if time.Since(h.at) > d.opt.SessionGrace {
+			return true
+		}
+		if !h.of(s) || !d.readOnPromptLocked(s.id, h.prompt) {
+			return false
+		}
+		read = true
+		return true
+	})
+	return read
+}
+
+// of says whether h was sent by session s's client. Caller holds mu.
+func (h heldPrompt) of(s *session) bool {
+	if h.agent {
+		return h.claude != "" && (h.claude == s.route.Native || h.claude == s.hookNative)
+	}
+	return (h.claude != "" && h.claude == s.claudeSession) || (h.pid != 0 && h.pid == s.clientPID)
+}
+
 // whichTurn is where in list the turn that prompt is stands, or -1. A prompt is one turn, so it is
 // one entry at most: the oldest it holds whole, as the client takes turns in the order they were
 // handed over. The hook cuts a prompt at proto.MaxPrompt bytes, and a client may put lines before
