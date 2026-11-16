@@ -19,6 +19,7 @@ func TestBlocks(t *testing.T) {
 		"hf token hf_" + "abcdefghijklmnopqrstuvwxyzABCDEFGH",
 		"gitlab glpat-" + "abcdefghij0123456789",
 		"npm npm_" + "abcdefghijklmnopqrstuvwxyz0123456789",
+		"publicKeyToken=Tr0ub4dor3xyz1", // the name is .NET's only for its 16 hex digits (#737)
 	} {
 		if Check(s) == nil {
 			t.Errorf("not blocked: %q", s)
@@ -58,7 +59,8 @@ func TestPasses(t *testing.T) {
 		"hf_short",
 		"glpat-x",
 		"run npm_install before the tests",
-		"npm_" + "abcdefghijklmnopqrstuvwxyz012345", // 32 characters: too short for a token
+		`<assemblyIdentity name="Microsoft.Windows.Common-Controls" publicKeyToken="6595b64144ccf1df"/>`, // every Windows program's manifest (#737)
+		"npm_" + "abcdefghijklmnopqrstuvwxyz012345",                                                      // 32 characters: too short for a token
 		"sk-or-v1-abc",
 	} {
 		if err := Check(s); err != nil {

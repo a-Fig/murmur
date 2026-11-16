@@ -29,6 +29,15 @@ func utf16File(text string) []byte {
 	return b
 }
 
+// utf16BE is text as UTF-16, big end first, with no mark.
+func utf16BE(text string) []byte {
+	var b []byte
+	for _, u := range utf16.Encode([]rune(text)) {
+		b = append(b, byte(u>>8), byte(u))
+	}
+	return b
+}
+
 // writeFile writes a file a test sends, in a directory of its own, and returns its full path.
 func writeFile(t *testing.T, name string, data []byte) string {
 	t.Helper()
@@ -313,6 +322,24 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a key in a file named png": {[]string{writeFile(t, "shot.png", []byte("AKIAIOSFODNN7EXAMPLE"))}, "shot.png"},
 		"a key in UTF-16":           {[]string{writeFile(t, "ps.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n"))}, "ps.txt"},
 		"a key after a stray byte":  {[]string{writeFile(t, "latin.txt", []byte("caf\xe9 AKIAIOSFODNN7EXAMPLE\n"))}, "latin.txt"},
+		// A zero byte once made a file binary, and unchecked (#737).
+		"a key in an environ":                  {[]string{writeFile(t, "environ", []byte("HOME=/root\x00GH=ghp_0123456789abcdefghijABCDEFGHIJ0123456789\x00"))}, "environ"},
+		"a key in a tar":                       {[]string{writeFile(t, "conf.tar", append(append(make([]byte, 512), "AWS=AKIAIOSFODNN7EXAMPLE\n"...), make([]byte, 512)...))}, "conf.tar"},
+		"a key in UTF-16 with no mark":         {[]string{writeFile(t, "le.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n")[2:])}, "le.txt"},
+		"a key in big-end UTF-16 with no mark": {[]string{writeFile(t, "be.txt", append([]byte{0}, utf16File("key AKIAIOSFODNN7EXAMPLE")[2:]...))}, "be.txt"},
+		// What Sol's review of #753 found getting through the first fix.
+		"a name on the line above its value": {[]string{writeFile(t, "split.bin", []byte("TOKEN=\nabc123abc123\x00"))}, "split.bin"},
+		"a bearer token on the next line":    {[]string{writeFile(t, "bearer.bin", []byte("Bearer\nabc123abc123abc123abc123\x00"))}, "bearer.bin"},
+		"a password with an accent":          {[]string{writeFile(t, "accent.bin", []byte("PASSWORD=abc123édef456\x00"))}, "accent.bin"},
+		"a big-end key before a CJK letter":  {[]string{writeFile(t, "cjk.bin", utf16BE("AKIAIOSFODNN7EXAMPLE中"))}, "cjk.bin"},
+		"a key in the clear after a mark":    {[]string{writeFile(t, "mark.txt", []byte("\xff\xfeAKIAIOSFODNN7EXAMPLE"))}, "mark.txt"},
+		// And what its second round found.
+		"a name a form feed above its value":  {[]string{writeFile(t, "ff.bin", []byte("TOKEN=\fabc123abc123\x00"))}, "ff.bin"},
+		"a URL password around a U+FFFD":      {[]string{writeFile(t, "fffd.bin", []byte("https://user:abc�def@host\x00"))}, "fffd.bin"},
+		"a URL password around a control":     {[]string{writeFile(t, "ctl.bin", []byte("https://user:abc\x01def@host\x00"))}, "ctl.bin"},
+		"a URL password in UTF-16, a control": {[]string{writeFile(t, "ctl16.bin", utf16File("https://user:abc\x01def@host")[2:])}, "ctl16.bin"},
+		"UTF-16 cut short":                    {[]string{writeFile(t, "cut.bin", utf16File("AKIAIOSFODNN7EXAMPLE")[2:41])}, "cut.bin"},
+		"UTF-16 with its mark, cut short":     {[]string{writeFile(t, "cutmark.txt", utf16File("AKIAIOSFODNN7EXAMPLE")[:41])}, "cutmark.txt"},
 	} {
 		if what == "a Git Bash path" && runtime.GOOS != "windows" {
 			continue // a full path everywhere else
