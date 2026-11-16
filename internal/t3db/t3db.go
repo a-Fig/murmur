@@ -105,7 +105,10 @@ func TitleOf(ctx context.Context, cli, home, thread string) (string, error) {
 // provider's subagent thread, with relationshipToParent "subagent", and on no thread a user started
 // (T3 0.1.x, 2026-11-07: 624 children, 287 user threads, no exceptions). Last, the model the thread
 // runs: payload modelSelection.model, the client's own ID for it (claude-opus-5-5; T3 0.1.x,
-// 2026-11-08). And whether its newest run, by when it was asked for, is queued or running.
+// 2026-11-08). And whether its newest run, by when it was asked for, is queued or running, counting
+// only runs that started or may yet: a message queued behind a running turn and then cancelled
+// ends without starting (payload startedAt null; 229 of 6,400 runs, T3 0.1.x, 2026-11-16), and the
+// turn it waited behind is still going.
 const stateQuery = `
 SELECT
   COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.settledOverride') END, ''),
@@ -117,7 +120,9 @@ SELECT
     WHERE r.thread_id = t.thread_id),
   COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.modelSelection.model') END, ''),
   COALESCE((SELECT r.status IN ('queued', 'running') FROM orchestration_v2_projection_runs r
-    WHERE r.thread_id = t.thread_id ORDER BY r.requested_at DESC LIMIT 1), 0)
+    WHERE r.thread_id = t.thread_id AND (r.status IN ('queued', 'running')
+      OR (json_valid(r.payload_json) AND json_extract(r.payload_json, '$.startedAt') IS NOT NULL))
+    ORDER BY r.requested_at DESC LIMIT 1), 0)
 FROM orchestration_v2_projection_threads t
 WHERE t.thread_id = ?`
 
