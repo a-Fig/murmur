@@ -2610,7 +2610,7 @@ function profileCard() {
   face.classList.add("pc-avatar");
   const card = h(
     "div",
-    { class: "profile-card " + deviceColor(d), role: "dialog", "aria-modal": "true", "aria-label": name, tabindex: -1 },
+    { class: "profile-card " + deviceColor(d), role: "dialog", "aria-modal": "true", "aria-label": name, tabindex: -1, "data-key": "pc-card" },
     h("div", { class: "pc-banner", "aria-hidden": "true" }),
     h(
       "div",
