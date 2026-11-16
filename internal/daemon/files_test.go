@@ -445,18 +445,24 @@ func TestASendToSeveralUploadsTheFilesOnce(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
-	a.session("aaaaaa", "")
+	alice, _ := a.session("aaaaaa", "")
+	a.session("dddddd", "")
 	bob, _ := b.session("bbbbbb", "")
 	carol, _ := b.session("cccccc", "")
 	eventually(t, "a to see bob and carol", func() bool { return a.seesSession(bob) && a.seesSession(carol) })
 	log := writeFile(t, "build.log", bytes.Repeat([]byte("line\n"), 400))
-	for _, to := range []string{bob, carol} {
-		if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: to, Subject: "the log", Files: []string{log}}); r.Error != "" {
+	send := func(from, to, path string) {
+		t.Helper()
+		if r := a.do(proto.Request{Op: proto.OpSend, Session: from, To: to, Subject: "files", Files: []string{path}}); r.Error != "" {
 			t.Fatalf("send to %s: %s", to, r.Error)
 		}
 	}
-	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
-		t.Errorf("files refs on the remote: %v, want one", refs)
+	send("aaaaaa", bob, log)
+	// Another session's upload between the two doesn't make the second upload the log again.
+	send("dddddd", alice, writeFile(t, "other.txt", []byte("something else")))
+	send("aaaaaa", carol, log)
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 2 {
+		t.Errorf("files refs on the remote: %v, want two: the log's and the other's", refs)
 	}
 	for _, sess := range []string{"bbbbbb", "cccccc"} {
 		if m := inboxMessage(t, b, sess); len(m.Files) != 1 || !fileThere(m.Files[0].Path) {

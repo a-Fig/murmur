@@ -403,9 +403,9 @@ type Daemon struct {
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
 	othersAged time.Time            // when the notes of others' files refs were last aged (monotonic)
-	// lastUpload is the files this device last pushed, for the next send of the same ones to take
-	// the same ref (reuseFilesLocked, #739).
-	lastUpload *recentUpload
+	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
+	// of the same ones to take the same ref (reuseFilesLocked, #739).
+	uploads map[[32]byte]*recentUpload
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time

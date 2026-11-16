@@ -184,13 +184,13 @@ type fileUpload struct {
 	Bytes int64     `json:"bytes"`
 }
 
-// recentUpload is the files this device last pushed: their sum (filesSum), the ref, what the event
-// said of them, and when.
+// recentUpload is files this device pushed: the ref, what the event said of them, when, and
+// whether a message naming the ref has gone out.
 type recentUpload struct {
-	sum   [sha256.Size]byte
 	at    string
 	files []bus.File
 	when  time.Time
+	sent  bool
 }
 
 // uploadReuse is how long after a push a send of the same files takes the same ref.
@@ -209,22 +209,54 @@ func filesSum(in []sendFile) [sha256.Size]byte {
 }
 
 // reuseFilesLocked is the ref this device pushed the same files to within uploadReuse, and what
-// its event said of them, if there is one and it is still on the remote. A send to several names
-// is a message for each, and once uploaded the files once for each (#739). A file is sealed to its
-// ref and place, not its message, so every message can name the one ref. Caller holds mu.
+// its event said of them. A send to several names is a message for each, and once uploaded the
+// files once for each (#739). A file is sealed to its ref and place, not its message, so every
+// message can name the one ref. Only a ref a message has gone out with is taken, and only while
+// the prune hasn't it due: one whose message failed is left for the prune to delete. Caller holds
+// mu.
 func (d *Daemon) reuseFilesLocked(sum [sha256.Size]byte) ([]bus.File, string, bool) {
-	u := d.lastUpload
-	if u == nil || u.sum != sum || time.Since(u.when) > uploadReuse {
+	for k, u := range d.uploads {
+		if time.Since(u.when) > uploadReuse {
+			delete(d.uploads, k)
+		}
+	}
+	u := d.uploads[sum]
+	if u == nil || !u.sent {
 		return nil, "", false
 	}
-	if _, ok := d.st.FileRefs[u.at]; !ok {
+	if pushed, ok := d.st.FileRefs[u.at]; !ok || time.Since(pushed) > d.opt.FileKeep-uploadReuse {
 		return nil, "", false
 	}
 	return slices.Clone(u.files), u.at, true
 }
 
+// filesSentLocked notes that a message naming files ref at went out, so a send of the same files
+// may take it. Caller holds mu.
+func (d *Daemon) filesSentLocked(at string) {
+	for _, u := range d.uploads {
+		if u.at == at {
+			u.sent = true
+		}
+	}
+}
+
+// filesUnsent lets go of files ref at, pushed for a message that then failed: nothing names it, so
+// it is off the remote at the next prune, and no other send takes it.
+func (d *Daemon) filesUnsent(at string) {
+	d.mu.Lock()
+	for k, u := range d.uploads {
+		if u.at == at {
+			delete(d.uploads, k)
+		}
+	}
+	d.mu.Unlock()
+	d.dropFileRef(at, true)
+}
+
 // uploadRoomLocked says whether this device may push size more bytes of files, by FilesPerDay over
-// the last 24 hours, and if not, why, with when it may. Caller holds mu.
+// the last 24 hours, and if it may, counts them as pushed; if not, it says why, with when it may.
+// The look and the count are one step, so two sends at once can't both take the last of the room.
+// Caller holds mu.
 func (d *Daemon) uploadRoomLocked(size int64) error {
 	now := time.Now()
 	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return now.Sub(u.At) >= 24*time.Hour })
@@ -234,6 +266,8 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 	}
 	over := used + size - d.opt.FilesPerDay
 	if over <= 0 {
+		// Counted before the push, which may land though it is said to fail.
+		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size})
 		return nil
 	}
 	when := now
@@ -243,24 +277,30 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 			break
 		}
 	}
+	at := when.Local().Format("15:04")
+	if y, m, day := when.Local().Date(); y != now.Local().Year() || m != now.Local().Month() || day != now.Local().Day() {
+		at += " tomorrow"
+	}
 	return fmt.Errorf("this device has sent %s of files in the last day, and sends at most %s a day; it can send these after %s",
-		proto.Size(used), proto.Size(d.opt.FilesPerDay), when.Local().Format("15:04"))
+		proto.Size(used), proto.Size(d.opt.FilesPerDay), at)
 }
 
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
 // event says of them and the ref's name. The same files sent again within uploadReuse, as a send
-// to several names does, take the ref already pushed. It keeps a copy of each where a receiver's
-// would be, so a session on this device, and the page, have them without a fetch.
-func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, err error) {
+// to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
+// where a receiver's would be, so a session on this device, and the page, have them without a
+// fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
+// with a ref not reused.
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, err error) {
 	if err := checkSendFiles(in); err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	sum := filesSum(in)
 	d.mu.Lock()
 	files, at, ok := d.reuseFilesLocked(sum)
 	d.mu.Unlock()
 	if ok {
-		return files, at, nil
+		return files, at, true, nil
 	}
 	at = bus.NewFilesAt()
 	sealed := make([][]byte, len(in))
@@ -268,7 +308,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	for i, sf := range in {
 		blob, f, err := bus.SealFile(sf.data, at, i)
 		if err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
 		f.Name = sf.name
 		sealed[i], files[i] = blob, f
@@ -276,33 +316,29 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	files = bus.CleanFiles(files) // the names a receiver will save them under
 	pack, err := bus.PackFiles(sealed)
 	if err != nil {
-		return nil, "", err
-	}
-	d.mu.Lock()
-	err = d.uploadRoomLocked(int64(len(pack)))
-	d.mu.Unlock()
-	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	repo, done, err := d.scratch()
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	defer done()
 	sha, err := repo.NewFilesCommit(ctx, pack)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	d.mu.Lock()
+	if err := d.uploadRoomLocked(int64(len(pack))); err != nil {
+		d.mu.Unlock()
+		return nil, "", false, err
+	}
 	d.st.FileRefs[at] = time.Now().Round(0)
-	// Counted before the push, which may land though it is said to fail.
-	d.st.Uploads = append(d.st.Uploads, fileUpload{At: time.Now().Round(0), Bytes: int64(len(pack))})
 	d.saveLocked()
 	d.mu.Unlock()
 	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
 		// Left to the next prune to delete: a push can land and still be told it failed.
 		d.dropFileRef(at, true)
-		return nil, "", fmt.Errorf("its files didn't go out: %w", err)
+		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
 	}
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
 	for i, f := range files {
@@ -311,10 +347,13 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		}
 	}
 	d.mu.Lock()
-	d.lastUpload = &recentUpload{sum: sum, at: at, files: slices.Clone(files), when: time.Now()}
+	if d.uploads == nil {
+		d.uploads = map[[sha256.Size]byte]*recentUpload{}
+	}
+	d.uploads[sum] = &recentUpload{at: at, files: slices.Clone(files), when: time.Now()}
 	d.mu.Unlock()
-	d.holdFilesHeld()
-	return files, at, nil
+	d.holdFilesHeld(dir)
+	return files, at, false, nil
 }
 
 // dropFileRef forgets a files ref this device pushed, or with due set leaves it to the next prune
@@ -427,8 +466,6 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			}
 			if err != nil {
 				d.log.Printf("message %s is queued without its files: %v", e.ID, err)
-			} else {
-				d.holdFilesHeld()
 			}
 			d.mu.Lock()
 			d.filesFetchedLocked(e.ID)
@@ -546,6 +583,8 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
 	}
+	// Whatever it saves, all or some, counts toward FilesHeld, whoever asked: the loop or the page.
+	defer d.holdFilesHeld(d.filesDir(e))
 	repo, done, err := d.scratch()
 	if err != nil {
 		return fmt.Errorf("%w: %w", errFetchLater, err)
@@ -629,7 +668,7 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 			}
 		}
 	}
-	d.holdFilesHeld()
+	d.holdFilesHeld("")
 	d.mu.Lock()
 	var due []string
 	for at, sent := range d.st.FileRefs {
@@ -657,8 +696,11 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 // holdFilesHeld deletes the files this device keeps, those it sent and those it fetched, a message's
 // at a time and the oldest first, until they come to FilesHeld (#739). FileKeep alone left no
 // bound: a loop sending a 20 MB log to everyone each minute would fill every teammate's disk by a
-// gigabyte an hour. A message whose files went is told of as one whose files can't be had.
-func (d *Daemon) holdFilesHeld() {
+// gigabyte an hour. A message whose files went is told of as one whose files can't be had. The
+// directory keep, the files just sent or fetched, stays, though it counts: the page reads a file
+// it fetched once the fetch is over. A file the page asks for again is fetched again, and held to
+// FilesHeld again.
+func (d *Daemon) holdFilesHeld(keep string) {
 	root := filepath.Join(d.dir, "files")
 	entries, _ := os.ReadDir(root)
 	type held struct {
@@ -693,8 +735,11 @@ func (d *Daemon) holdFilesHeld() {
 		if total <= d.opt.FilesHeld {
 			break
 		}
+		if filepath.Join(root, h.name) == keep {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(root, h.name)); err != nil {
-			d.log.Printf("deleting the files saved from files ref %s, past the %d MB kept: %v", h.name, d.opt.FilesHeld>>20, err)
+			d.log.Printf("deleting the files saved from files ref %s, past the %s kept: %v", h.name, proto.Size(d.opt.FilesHeld), err)
 			continue
 		}
 		total -= h.size

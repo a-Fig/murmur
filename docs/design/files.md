@@ -91,15 +91,17 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once** (#739, 2026-11-16). Each gets a message of
   its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,
-  names and contents, within 10 minutes of the last push takes that push's ref. Until then each
-  message uploaded them again.
+  names and contents, within 10 minutes of their push takes that push's ref, once a message naming
+  it has gone out. A ref whose message failed is left to the prune and taken by no other send, and
+  a send that took a ref and then failed leaves it be. Until then each message uploaded them again.
 - **200 MB of uploads a device a day** (`FilesPerDay`, #739), over the last 24 hours, counted in
   packs pushed, so a send to several counts once. Past it a send with files is refused, saying when
   it can go. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an
   hour on the remote, which shares the repo's size limits with the team's code.
 - **1 GB of files kept a device** (`FilesHeld`, #739), those it sent and those it fetched together.
-  Past it a message's files go, the oldest first, checked after each send and fetch and at each
-  prune; such a message reads as one whose files can't be had. Before, only the week bound them, and
+  Past it a message's files go, the oldest first, checked after each send and each fetch, the
+  page's included, and at each prune, the files just sent or fetched staying; such a message reads
+  as one whose files can't be had, and the page fetches them again if asked. Before, only the week bound them, and
   every device fetches a message to everyone.
 - **A send with files has 90 seconds**, like any request, and its push holds the device's one
   push at a time for up to a minute, so the device's presence and other sends wait behind it.
