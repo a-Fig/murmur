@@ -1,6 +1,7 @@
 // Package skills holds the agent skills `mur join` installs for each agent that reads them: a basic
-// one on when Murmur is worth a turn, a pro one on coordinating over several messages, and a
-// manager one, followed only when the user makes the session the manager of a team of agents. The
+// one on when Murmur is worth a turn, a pro one on coordinating over several messages, a manager
+// one, followed only when the user makes the session the manager of a team of agents, and one the
+// person calls to see which Murmur name a session has. The
 // tools' descriptions and the MCP server's instructions say what each tool does; these carry the
 // judgment of when to use them, loaded only when an agent needs it.
 package skills

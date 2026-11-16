@@ -107,7 +107,7 @@ func TestInitJoinAndLeave(t *testing.T) {
 
 	// The skills, for each agent that reads them, beside its config.
 	for _, dir := range []string{filepath.Dir(b.claudeSettings()), filepath.Dir(b.codexConfig())} {
-		for _, name := range []string{"murmur", "murmur-pro", "murmur-manager"} {
+		for _, name := range []string{"murmur", "murmur-pro", "murmur-manager", "murmur-name"} {
 			if !strings.Contains(readFile(t, filepath.Join(dir, "skills", name, "SKILL.md")), "name: "+name) {
 				t.Errorf("no %s skill in %s", name, dir)
 			}

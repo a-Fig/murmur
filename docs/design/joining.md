@@ -41,7 +41,7 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 | Permission for its tools | `mcp__murmur` in `permissions.allow` of Claude Code's `settings.json` | user |
 | The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME"]` and `default_tools_approval_mode = "approve"` | user |
 | The MCP server, for OpenCode, Muse Code, Pi and Grok | see [other agents](clients.md) | user |
-| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
+| The skills, `murmur`, `murmur-pro`, `murmur-manager` and `murmur-name` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
 | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` | `settings.json` in each Claude Code home ([Claude Code's hook is per user](clients.md#claude-codes-hook-is-per-user)) | user |
 | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved | `hooks.json` in each Codex home, its trust in `config.toml` there ([Codex's and Grok's hook](clients.md#codexs-and-groks-hook)) | user |
 | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
@@ -50,7 +50,9 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
   how to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a
   team of agents as its user's COO (#548); a model may load it on its own, so it opens by saying to
-  follow it only when the user has made the session the manager in words. A SKILL.md of the same name without the skills'
+  follow it only when the user has made the session the manager in words. The fourth,
+  `murmur-name`, is for the person: typed as `/murmur-name`, it has the session say its Murmur
+  name, status and tags, so they can tell which of their open sessions a teammate means (#421). A SKILL.md of the same name without the skills'
   marker comment is the user's own and is left alone. They cost every session of those agents their
   descriptions' worth of context in any repo, so each description says it applies only where the
   repo has the Murmur section. The folders are from each agent's documentation, not tried in a
