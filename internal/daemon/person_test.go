@@ -270,8 +270,13 @@ func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
 	if !strings.Contains(calls()[0].Stdin, "a question for you") {
 		t.Errorf("what went in first: %s", calls()[0].Stdin)
 	}
-	// The thread is at work now, as far as the wake setting goes, so what was waiting follows.
-	eventually(t, "what was waiting to follow", func() bool { return len(calls()) == 3 })
+	// The thread is at work now, as far as the wake setting goes, so what was waiting follows: as
+	// one turn, as bob has no hook (#699).
+	eventually(t, "what was waiting to follow", func() bool { return len(calls()) == 2 })
+	if in := calls()[1].Stdin; !strings.Contains(in, "from an agent") || !strings.Contains(in, "to everyone") {
+		t.Errorf("what followed: %s", in)
+	}
+	holds(t, "nothing more", 800*time.Millisecond, func() bool { return len(calls()) == 2 })
 
 	pb := b.page()
 	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"never"}}`); code != http.StatusOK {

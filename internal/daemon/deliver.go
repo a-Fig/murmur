@@ -757,7 +757,8 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 const maxBatch = 256 << 10
 
 // batchLocked is what goes into session id as one turn, starting with first, its next message
-// (candidateLocked): first alone, unless the session is in T3 with no hook of its own seen. Such a
+// (candidateLocked): first alone, unless the session is in T3, with its thread read, and no hook of
+// its own seen. Such a
 // session is told of nothing while it works, so what came meanwhile waited for the run to end
 // (hooklessBusy), and goes in now as one turn, with what else may go: four messages are one turn,
 // not four in T3's queue (#699). A hooked session gets the rest by its hook, at its turn's end.
@@ -767,7 +768,9 @@ const maxBatch = 256 << 10
 func (d *Daemon) batchLocked(id string, first *inMsg, via string, wake pageSettings) []*inMsg {
 	out := []*inMsg{first}
 	s := d.sessions[id]
-	if via != viaT3 || s == nil || s.hooked {
+	if _, inT3 := d.threadStateLocked(id); via != viaT3 || s == nil || s.hooked || !inT3 {
+		// A thread never read held nothing (hooklessBusy), and its messages go one a turn, as
+		// before #699.
 		return out
 	}
 	personOnly := !d.wakesLocked(id, wake)
