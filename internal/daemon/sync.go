@@ -819,6 +819,11 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if e.Type == bus.Receipt {
 			d.applyReceiptLocked(e) // in any mode: a mark is news to its sender however late it is read
 		}
+		if e.Type == bus.Message && e.FilesAt != "" && dev != d.device {
+			if _, ok := d.st.OthersFiles[e.FilesAt]; !ok {
+				d.st.OthersFiles[e.FilesAt] = othersFile{Device: dev, Seen: time.Now().Round(0)} // saved with the cursor
+			}
+		}
 		if e.Type == bus.Message {
 			// The name a message carries is shown only if it is its sender's (personSenderLocked),
 			// and never recorded: see notePersonLocked.

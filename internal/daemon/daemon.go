@@ -861,6 +861,9 @@ type state struct {
 	// sessions here that wait for their files to be fetched before they are queued, by ID.
 	FileRefs  map[string]time.Time `json:"fileRefs,omitempty"`
 	FilesWait map[string]*fileWait `json:"filesWait,omitempty"`
+	// OthersFiles is the files refs other devices pushed, by name, as read of in their logs: deleted
+	// from the remote once their device is gone and they are well past FileKeep (#708).
+	OthersFiles map[string]othersFile `json:"othersFiles,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
 	// until a prompt shows the turn started (#611, turnread.go).
 	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`
@@ -1473,7 +1476,7 @@ func (d *Daemon) loadState() error {
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
 		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
-		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}}
+		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}, OthersFiles: map[string]othersFile{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1505,6 +1508,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.FilesWait == nil {
 		d.st.FilesWait = map[string]*fileWait{}
+	}
+	if d.st.OthersFiles == nil {
+		d.st.OthersFiles = map[string]othersFile{}
 	}
 	if d.st.Used == nil {
 		d.st.Used = map[string]string{}

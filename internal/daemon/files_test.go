@@ -302,3 +302,32 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 	eventually(t, "the files ref to leave the remote", func() bool { return listed() == "" })
 	eventually(t, "the sender's copy to go", func() bool { return len(saved()) == 0 })
 }
+
+// A files ref whose device has gone, as a deleted clone's has, is deleted from the remote by a
+// device that read of it (#708), and only once that device is gone: a live one deletes its own.
+func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "for a while", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
+
+	// b, with a time to keep files that has long passed, leaves the ref of a, which is live.
+	b.fileKeep, b.filePrune = time.Millisecond, 200*time.Millisecond
+	b.restart()
+	eventually(t, "b to see alice", func() bool { return b.seesSession(alice) })
+	time.Sleep(time.Second)
+	if listed() == "" {
+		t.Fatal("b deleted the files ref of a live device")
+	}
+	a.stop()
+	eventually(t, "the files ref of a, gone, to leave the remote", func() bool { return listed() == "" })
+}
