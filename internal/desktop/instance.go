@@ -166,6 +166,7 @@ func (in *Instance) answer(c net.Conn) {
 		return // no "ok", so the one asking opens a window of its own
 	case show != nil:
 		in.mu.Unlock()
+		c.SetDeadline(time.Now().Add(raiseWait + 2*time.Second)) // or a slow raise's "ok" is lost
 		done := make(chan bool, 1)
 		show(req.GitDir, func(ok bool) { done <- ok })
 		select {
