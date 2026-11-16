@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,15 @@ func (d *device) turnEnd(claude string) {
 	if r := d.do(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: claude}); r.Error != "" {
 		d.t.Fatalf("turnend: %s", r.Error)
 	}
+}
+
+// handedOver says device d has noted the message called subject handed to its session as a turn.
+// The stand-in t3 records its call before it returns, and the daemon notes the handoff after, so
+// seeing the call isn't enough: a hook's turn end that came between the two would leave the
+// handoff the newest sign of a turn and, with T3's database unreadable here, hold the session's
+// next message for handedHold, past any wait (#677, seen on a loaded macOS runner).
+func handedOver(d *device, subject string) bool {
+	return logHas(d, fmt.Sprintf("handed %q", subject))
 }
 
 func viewSubjects(ms []proto.MessageView) []string {
@@ -87,7 +97,7 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 	holds(t, "nothing handed to T3 while at work", time.Second, func() bool { return len(calls()) == 0 })
 
 	b.turnEnd("claude-bob")
-	eventually(t, "the first as a turn", func() bool { return len(calls()) == 1 })
+	eventually(t, "the first as a turn", func() bool { return len(calls()) == 1 && handedOver(b, "first") })
 	holds(t, "the second not queued behind it", time.Second, func() bool { return len(calls()) == 1 })
 	b.finishedATurn("claude-bob") // the turn the first started
 	eventually(t, "the second as a turn", func() bool { return len(calls()) == 2 })
@@ -136,7 +146,7 @@ func TestAnIdleSessionIsWokenAndAnUntoldMessageWaitsForTheTurnEnd(t *testing.T) 
 	b.hookNotices("claude-bob")
 	b.turnEnd("claude-bob")
 	a.send("aaaaaa", bob, "while idle", "its body")
-	eventually(t, "the idle session woken", func() bool { return len(calls()) == 1 })
+	eventually(t, "the idle session woken", func() bool { return len(calls()) == 1 && handedOver(b, "while idle") })
 
 	b.hookNotices("claude-bob") // the turn it was woken for
 	a.send("aaaaaa", bob, "late in the turn", "its body")

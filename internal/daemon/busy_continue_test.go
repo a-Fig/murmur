@@ -172,7 +172,7 @@ func TestContinuationsStopAtClaudeCodesCap(t *testing.T) {
 			t.Fatalf("the ninth Stop in a row gave %v", got)
 		}
 	}
-	eventually(t, "the ninth handed over as a turn", func() bool { return len(calls()) == 1 })
+	eventually(t, "the ninth handed over as a turn", func() bool { return len(calls()) == 1 && handedOver(b, "message 9") })
 
 	b.hookNotices("claude-bob") // a new turn
 	a.send("aaaaaa", bob, "after a tool call", "its body")
