@@ -570,7 +570,7 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			d.filesFetchedLocked(e.ID)
 			d.mu.Unlock()
 		}
-		// The first time round, and when the device is back from invisible with a prune owed.
+		// The first time round, and when the device is out of invisible with a prune owed.
 		if !pruned || d.pruneOwed.Load() && !d.hidden.Load() {
 			pruned = true
 			d.pruneFiles(ctx)
@@ -774,10 +774,18 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	// An invisible device writes nothing to the bus (mode.go), and deleting a ref is a write: one
 	// that shows, by when it lands, that the device is running. The deletes were refused one by
 	// one, a line in the log for each ref at every prune, and the refs stayed (#789). They are
-	// left for the prune that runs when the device is back online (setMode). The copies kept
-	// here, above, go on time either way.
-	d.pruneOwed.Store(d.hidden.Load())
-	if d.pruneOwed.Load() {
+	// left for the prune fileLoop runs once the device is out of invisible, which setMode wakes
+	// it for. The copies kept here, above, go on time either way, and the refs of other devices
+	// age on: the daemon runs, which is what their age counts.
+	hidden := d.hidden.Load()
+	d.pruneOwed.Store(hidden)
+	if hidden {
+		d.mu.Lock()
+		d.ageOthersFilesLocked(time.Now())
+		if len(d.st.OthersFiles) > 0 {
+			d.saveLocked()
+		}
+		d.mu.Unlock()
 		return
 	}
 	d.mu.Lock()
@@ -793,6 +801,10 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 		// Deleting a ref that is already gone succeeds: the look after a refused push finds it at
 		// "", which is what was asked for.
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			if errors.Is(err, ErrInvisible) {
+				d.pruneOwed.Store(true) // the device went invisible meanwhile
+				return
+			}
 			d.log.Printf("deleting files ref %s from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return
@@ -986,6 +998,10 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			continue
 		}
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			if errors.Is(err, ErrInvisible) {
+				d.pruneOwed.Store(true) // the device went invisible meanwhile
+				return
+			}
 			d.log.Printf("deleting files ref %s, of a device that is gone, from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return

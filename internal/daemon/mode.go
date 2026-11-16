@@ -78,7 +78,7 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 	if was == web.ModeInvisible {
 		d.kickNames() // what waited, without its own backoff to sit out
 		d.kickMarks()
-		d.kickFiles() // the prune of files refs that was passed over meanwhile (pruneFiles)
+		d.kickFiles() // for the prune of files refs that was passed over meanwhile (pruneFiles)
 	}
 	if now == web.ModeOnline {
 		d.mu.Lock()
