@@ -1611,7 +1611,7 @@ function sessionCard(d, s) {
     h(
       "span",
       { class: "s-meta" },
-      h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
+      h("span", { class: "s-col-branch" + (s.branch === "main" || s.branch === "master" ? " default" : "") }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
