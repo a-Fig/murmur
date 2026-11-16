@@ -266,9 +266,22 @@ type Request struct {
 	Cwd       string `json:"cwd,omitempty"`
 	GitDir    string `json:"gitDir,omitempty"`
 
+	// Issues is, on the hook's OpNotices after a tool call, the GitHub issues the call filed or
+	// closed, as the hook read them from the call's input and output (#510). The daemon keeps those
+	// in its own repository for the page's Recent view. An older daemon ignores it, and the page
+	// names the issue's GitHub login, as before: no new Protocol number.
+	Issues []Issue `json:"issues,omitempty"`
+
 	// Route is what an OpRoute carries: what the session's MCP server has learned about how to
 	// reach it.
 	Route *Route `json:"route,omitempty"`
+}
+
+// Issue is a GitHub issue a tool call filed, or with Closed closed. Repo is its owner/name.
+type Issue struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Closed bool   `json:"closed,omitempty"`
 }
 
 // Route is how a message can be put into a session's own conversation, as a turn the agent acts

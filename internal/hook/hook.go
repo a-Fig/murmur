@@ -3,7 +3,8 @@
 // subject) to the agent's context, with how many are unread; or, where the page's setting says to,
 // each message whole, as its turn would read (#204). Before and after each
 // tool call that could run a command it also tells the daemon, which finds the commits the call
-// made (#21). Those calls and prompts tell the daemon the session is at work. At the end of a turn
+// made (#21); after any call, it tells the daemon of a GitHub issue the call filed or closed
+// (#510). Those calls and prompts tell the daemon the session is at work. At the end of a turn
 // (Stop) the hook asks for what the session was told of and hasn't read, and anything that came
 // during the turn, and if there is any it keeps the turn going with it, as each message's turn
 // would read; if not, the session is idle (#202).
@@ -60,6 +61,14 @@ type input struct {
 	Event          string `json:"hook_event_name"`
 	Cwd            string `json:"cwd"`
 	ToolName       string `json:"tool_name"`
+	// ToolInput and ToolResponse are what a tool call was given and gave back, on PostToolUse. The
+	// hook reads them only for a call that may have filed or closed a GitHub issue (issues.go).
+	// ToolNameCamel and ToolInputCamel are Grok's spellings; it gives tool_response under Claude
+	// Code's name as well as its own toolResult.
+	ToolInput      json.RawMessage `json:"tool_input"`
+	ToolResponse   json.RawMessage `json:"tool_response"`
+	ToolNameCamel  string          `json:"toolName"`
+	ToolInputCamel json.RawMessage `json:"toolInput"`
 	// ToolUseID is on PreToolUse, PostToolUse and PostToolUseFailure alike, and the same for one
 	// call: it is what pairs the two ends (measured on Claude Code 2.1.312, 2026-10-29).
 	ToolUseID string `json:"tool_use_id"`
@@ -295,8 +304,13 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in); err != nil {
 		return
 	}
-	if in.SessionID == "" && agent == Grok {
-		in.SessionID = in.SessionIDCamel
+	if agent == Grok {
+		if in.SessionID == "" {
+			in.SessionID = in.SessionIDCamel
+		}
+		if in.ToolName == "" {
+			in.ToolName, in.ToolInput = in.ToolNameCamel, in.ToolInputCamel
+		}
 	}
 	if agent == Antigravity && !fromAntigravity(&in, event) {
 		return
@@ -370,6 +384,9 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		}
 		if agent == "" {
 			r.Transcript = in.TranscriptPath
+		}
+		if in.Event == postTool {
+			r.Issues = issuesOf(in)
 		}
 		resp, err = c.Do(nctx, r)
 		ncancel()

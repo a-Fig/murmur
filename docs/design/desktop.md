@@ -122,6 +122,60 @@ foreground, `--devtools` lets the web view open its developer tools, and `--page
 address and no clone's, for working on the app against the devserver
 (`go run ./internal/web/devserver`).
 
+## The launcher
+
+Added 2026-11-15 (#616). The app starts as any other app does, from a launcher `mur app` puts in
+place: each time it runs from a terminal and finds a repo to show, it adds the launcher, or moves
+it onto this `mur` if `mur` has moved (a record in `launcher.json`, beside `last.json`, saves
+looking each time). `mur uninstall` takes it out. `mur join` doesn't add it: an agent runs join,
+and a person's Start menu is theirs to change; the person who runs `mur app` wants the app.
+
+It touches only what is Murmur's (Opus review): a launcher of the same name that isn't (a bundle
+whose Info.plist names another identifier, a `.desktop` file for another icon, any `Murmur.lnk` no
+record of ours names) is neither replaced nor taken out. A launcher the person deleted stays
+deleted until `mur` moves. A `mur` in a temporary directory, as `go run` and test builds are, puts
+none in place, so working on the app never points the real launcher at a binary that goes.
+
+- **Windows:** `Murmur.lnk` in the user's Start menu (found through `APPDATA`), with the app's icon
+  as an `.ico` beside `last.json`. It runs `conhost.exe --headless mur.exe app`: `mur` is a console
+  program, and a shortcut straight to it opens a console window for as long as `mur app` takes to
+  start the window, which `--headless` doesn't (checked 2026-11-15). The shortcut carries the app's
+  AppUserModelID (`brand.AppID`), and the window's process takes the same one, so its taskbar button
+  is the shortcut's, and pinning it pins the app. It is written through the shell's ShellLink object
+  with plain system calls, as the rest of the window's Windows code is.
+- **macOS:** `Murmur.app` in `~/Applications`, where Launchpad and Spotlight find it. Its executable
+  is a symbolic link to the installed `mur`, so `mur`'s self-update, which replaces the binary where
+  it is, updates the app too, as a copy wouldn't. LaunchServices starts the link with the bundle's
+  path as `argv[0]` and no arguments (checked on macOS 12), which is how `mur` knows to be the
+  window (`FromBundle`): it runs the window in that process, so the Dock's icon is the bundle's.
+- **Linux:** `dev.afig.murmur.desktop` in the user's applications and the icon in their hicolor
+  theme, under `XDG_DATA_HOME`, in a build with the app (`-tags desktop`).
+
+**One window.** A launcher clicked twice, or `mur app` typed while the app is open, brings the open
+window forward rather than opening a second. The window's process listens on a loopback port and
+records it, with its process and a random key, in `window.json`; a later `mur app` that reaches it
+asks it to come forward and stops. A `mur app` typed in a joined repo, or given one with `-C`, also
+moves the window to that repo, as it would have opened there. The process claims the port as it
+starts, before the seconds a daemon can take to start, so a second click in that time finds it;
+two clicks at once look for a window and claim under a lock file (`window.json.lock`), so the
+second finds the first. A click while the window is being made waits for it, up to 30 s, and
+is told it came forward only once it has, so a window that fails while starting leaves the next
+click to open one. On
+Windows the later `mur app` first lets the window's process take the foreground, which Windows
+otherwise gives only to the process the person just started. A window that ends without closing (a
+crash) leaves its record, which the next launch can't reach, and it opens a new window.
+
+**What it leaves for later:** the notifications are still a balloon on Windows and Script Editor's
+on macOS. The AppUserModelID is what a toast of its own needs, and the bundle what macOS's own
+notifications need; both are code still to write. A `mur app` typed in a terminal on macOS runs the
+plain binary, not the bundle, so its Dock icon is `mur`'s until the window is started from the
+bundle. A launcher started where no repo has joined fails without saying so, as there is no
+terminal to say it in. A taskbar pin of the shortcut outlives `mur uninstall`, and stops working.
+Not yet seen on macOS: the window opening from the bundle (the test machine has no joined repo),
+and what privacy prompts a bundle that starts git and a daemon on repos in `~/Documents` or
+`~/Desktop` brings, which macOS asks of the bundle, not of Terminal, and may ask again after an
+update, as each build is signed anew.
+
 ## What it costs (2026-11-15)
 
 Measured on the Windows 11 laptop (15 GB of RAM, other agents keeping the CPU between 40 and 100%)
@@ -163,10 +217,5 @@ would take:
 
 ## What it doesn't do
 
-- No launcher (#616): it starts from a terminal. A Start menu shortcut, an app bundle and a
-  `.desktop` file would let it start like an app, and a bundle would make macOS's notifications
-  Murmur's.
-- One window per `mur app`: a second one opens a second window, with a second icon in the
-  notification area.
 - A notification brings the window up, on Windows, but doesn't open its conversation.
 - WebView2 keeps its data in `%APPDATA%\mur.exe`, which `mur uninstall` doesn't remove.

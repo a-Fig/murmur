@@ -279,3 +279,33 @@ func TestARunLeftBehindIsNoTurn(t *testing.T) {
 		})
 	}
 }
+
+// A read that a later one, taken just before a handoff, stands over doesn't end the turn: it may
+// have found the run over while the later read found the next one going. Ending the turn there
+// would make the handoff that follows within closeGrace ignore that later read, and queue its
+// message behind the run (#713).
+func TestAStaleIdleReadDoesntEndTheTurn(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	s.hooked, s.stopSeen, s.busyAt = true, true, time.Now().Add(-10*time.Second)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, time.Now().Add(-5*time.Second)
+	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) {
+		// While this read runs, a handoff's read begins later and finds a run going.
+		d.mu.Lock()
+		d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, time.Now().Add(time.Second)
+		d.mu.Unlock()
+		return t3db.State{}, nil // this read found none
+	}
+	d.refreshThreads(context.Background())
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s.busyAt.IsZero() || !s.endedAt.IsZero() {
+		t.Errorf("the turn ended by a read a later one stands over: busyAt %v, endedAt %v", s.busyAt, s.endedAt)
+	}
+	if !d.threads[k].Busy {
+		t.Errorf("the stale read replaced the later one: %+v", d.threads[k])
+	}
+}
