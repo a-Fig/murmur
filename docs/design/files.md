@@ -30,10 +30,14 @@ attaches, pastes or drops files, and sees the ones a message carries ([below](#o
   its sessions fetches the ref, saves the files under `.git/murmur/files/`, never the working
   tree, and only then queues the message, so a path in a turn works when the agent
   reads it. It gets three tries of a minute each; then the message is queued without the files, and
-  the turn says which aren't there. A ref that isn't on the remote, or holds something else, costs
-  one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
+  the turn says which aren't there. A ref that isn't on the remote, holds something else, or holds
+  more than the limits allow, costs one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
   up the files of those behind it, not their text-only neighbours. The wait survives a restart
-  (`state.json`).
+  (`state.json`). The message is queued for whoever holds each recipient's name when the fetch
+  ends: a process that resumed the conversation meanwhile took only what was in the inbox, and the
+  message would otherwise reach the old session's, which nobody reads (#703). A session that takes
+  over the old one's T3 thread, which carries no name from one to the other, takes its place in the
+  wait, and a recipient gone off the mesh meanwhile (a settled thread) gets nothing.
 - **Nothing is left in the clone.** Git writes a files commit, and what a fetch of one brings, to
   a directory of the daemon's own (`GIT_OBJECT_DIRECTORY`, with the clone's objects as an
   alternate), which is deleted when the push or the read is done, and the fetch stores no ref. In
@@ -72,8 +76,19 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
   encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
-  file names, and a turn made from it later says the files aren't there. A sender that never runs
-  again leaves its refs.
+  file names, and a turn made from it later says the files aren't there.
+- **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
+  2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
+  included, and deletes one once it has itself run for 14 days since it first read of it, if the
+  ref's device's presence is stale or gone by then. Its own daemon, if it still runs, deleted it 7
+  days before, since the event is written after the push. The 14 days are counted on the monotonic
+  clock, at most two hours for each hourly prune, so no wall clock goes in: a clock set forward by
+  weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
+  date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
+  monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
+  a team whose daemons run only while someone works. A ref no event this device read names
+  still stays: one whose message failed after its push, one in a log it can't open, or one sent
+  before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once for each**, since each gets a message of
   its own (#520).
 - **A send with files has 90 seconds**, like any request, and its push holds the device's one
@@ -101,9 +116,20 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.
-- **Not checked: what a fetch brings.** A files ref holds whatever its pusher put there, and a
-  listing gives no sizes, so a fetch can't be capped before it runs; a `--filter` would make the
-  user's clone a partial clone for all its later fetches. Push access is already trusted with code.
+- **What a fetch brings** (#707, 2026-11-16). A files ref holds whatever its pusher put there, and a
+  listing gives no sizes, so a fetch can't be capped before it runs, and git has no limit for one
+  (`receive.maxInputSize` is a push's). A `--filter` would make the user's clone a partial clone
+  for all its later fetches. So the fetch is watched while it runs: it keeps what it receives as one
+  pack (`fetch.unpackLimit=1`), which grows on disk as it arrives, and is stopped once that passes
+  what a pack within the limits takes on the wire, a little over its size, as sealed files don't
+  compress. A fetch too quick to stop, as from a remote on the same disk, is measured when it ends.
+  Either way what it wrote is removed and the message queued without its files, after one try.
+  Stopping it ends its whole process tree, and waits for it, before anything is removed
+  (`gitx.RunTree`, #726): killing git alone left index-pack writing the pack, and over protocol 0
+  or 1 by HTTPS git-remote-https's own fetch-pack downloading. The tree is a job object on Windows,
+  which git is put in before it runs, so nothing it starts is outside, and a process group
+  elsewhere. Protocol 2 is asked for as well. Where there is no scratch directory the fetch isn't watched, and ReadPack's check
+  is all there is: another fetch or a gc may be writing there too, and a refusal is for good.
 
 ## Open, for Tyler
 

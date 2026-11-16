@@ -71,6 +71,14 @@ from it is in [a person on the page](people.md).
   two minutes at most. Tags with a meaning show as that meaning: `model:` beside the agent,
   `do-not-disturb` as the red dot, `hidden` as the fold, `human` on a person. There is no grouping
   by tag: a session can carry several, so groups would repeat it.
+- **A profile card** (2026-11-15, #689, Tyler's request). Clicking a face, or a sender's name in a
+  conversation, opens a card beside it, as a chat app does: the name and address, the state, agent,
+  model and tags, the status and branch, what you have in common (the groups you have posted in that
+  it is in, and your device), for a person the sessions they have messaged, and a box that sends a
+  direct message from the card. It uses only presence and the messages the page has. A face that is
+  part of another control (the account chip, a group's pile) doesn't open it. Tyler chose the banner
+  look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
+  which #656 headed with its details, hold little more than the card does.
 - **Themes** (2026-11-09), kept in the browser: Dark (T3 Code's), Dim (the page's greys before it
   followed T3 Code), Light, and since 2026-11-10 Murmur (the website's palette; `docs/brand.md`).
   Each is a set of color tokens over one design, so a theme costs only its palette.
@@ -89,6 +97,28 @@ from it is in [a person on the page](people.md).
   - *Who did it.* Agents on one machine share their user's GitHub login, so a pull request is named
     for the session on its branch, and for the login only when no session is. GitHub's list says who
     opened one, not who merged or closed it.
+  - *An issue's session* (2026-11-15, #510, Tyler's request). An issue has no branch, so the hook
+    looks at each tool call for one it filed or closed: a shell command that runs `gh issue create`
+    or `gh issue close` where a command starts, outside quotes and comments, read from what gh
+    printed, or GitHub's MCP server creating or closing one, read from the address in its result. A
+    command whose output holds more filed or closed issues than it ran creates or closes reports
+    none, as something else printed them (a `gh issue list` beside it, a grep of this code). The
+    daemon keeps the issue's repository and number and which it was as the session's activity, and
+    the page names that session on GitHub's event of the same number in the same repository, read
+    from the event's address: `quiet-otter filed issue #37`, `quiet-otter closed issue #37`, a close
+    only if it was about when GitHub's was (an issue reopened and closed again was closed last by
+    someone else). The page's listing is of the repository gh picks in the clone, which can be an
+    `upstream` remote and not the bus's, so the daemon keeps an issue of any repository on GitHub
+    and the page matches. One GitHub hasn't listed yet shows on its own, if it is in the listing's
+    repository. Matching by time and login was set aside as a guess that goes wrong with two
+    sessions at work, and a marker in the issue as something every agent would have to write. What
+    it costs: a hook decodes the call's output only for those calls, and nothing of it but the
+    issue's repository and number, and whether it was closed, leaves the hook. It is known only on
+    the session's own device, like a commit's count. Not covered, so the login stays: Pi and
+    OpenCode, whose plugins pass the hook no tool output; an issue filed another way (`gh api`, the
+    website); a loop that runs one `gh issue create` or `gh issue close` for several issues; a call
+    that fails after its create, which Claude Code ends as `PostToolUseFailure`, whose output the
+    hook doesn't read; and a Codex call still running when it yields, which has no output yet.
   - *What it doesn't have.* The newest 600 entries are kept in memory. After a restart, starts and
     stops come back from the bus with the messages and pull requests from GitHub, but a status, tag
     or commit from before is gone: only a file could keep them, which isn't built. Two status

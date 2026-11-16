@@ -471,6 +471,84 @@ func TestNameOnlyInPresenceIsUsed(t *testing.T) {
 	eventually(t, "the registry to hold both", func() bool { return readRegistry(t, remote).holdsNames(an, pick.name) })
 }
 
+// A name only a presence shows, lost from the registry while the device holding it can't push, is
+// written back by a daemon that joins then, though it has no session of its own to name and so no
+// push of its own to make. Otherwise, once that presence is gone, a daemon joining later doesn't
+// know the name is taken, and may give it out again (#40).
+func TestNameOnlyInPresenceIsWrittenBack(t *testing.T) {
+	t.Parallel()
+	damage := map[string]func(t *testing.T, remote, before string){
+		"deleted": func(t *testing.T, remote, _ string) {
+			work, _ := junkTree(t)
+			git(t, work, "push", "-q", remote, ":refs/murmur/names")
+		},
+		// A history Murmur could have written, read in full by a daemon new to it: nothing in it
+		// looks damaged.
+		"rewound": func(t *testing.T, remote, before string) {
+			work, _ := registryCommits(t, remote)
+			git(t, work, "push", "-q", "--force", remote, before+":refs/murmur/names")
+		},
+	}
+	cases := []struct {
+		name, damage string
+		pool         int // a's; 0 is none
+	}{
+		{"deleted", "deleted", 0},
+		{"rewound", "rewound", 0},
+		// As in production, where a joiner sets names aside at once. Its first push of them is a
+		// plain commit on the rewound tip, which doesn't bring the name back by itself.
+		{"rewound, with a pool", "rewound", 10},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			seed := uint64(71 + 2*i)
+			remote := newRemote(t)
+			// Another writer's name first, so the registry has an earlier commit to be rewound to.
+			rec := bus.NameRecord{V: bus.Version, Name: nthName(t, 999, 1), Device: "peer-0001", Session: "x", At: time.Now().UTC()}
+			msg, err := bus.Encode(rec, rec.Subject())
+			if err != nil {
+				t.Fatal(err)
+			}
+			pushMessage(t, remote, "refs/murmur/names", msg)
+			_, before := registryCommits(t, remote)
+
+			pick := draws(t, seed, 1)[0]
+			b := newDeviceWith(t, remote, func(d *device) { d.names = seededNames(seed) })
+			bob, _ := b.session("bbbbbb", "claude-bob")
+			if got := b.named(bob); got != pick.name {
+				t.Fatalf("b is named %s, want %s", got, pick.name)
+			}
+			eventually(t, "b's presence with the name", func() bool {
+				if git(t, remote, "for-each-ref", "refs/murmur/presence/"+b.self()) == "" {
+					return false
+				}
+				return strings.Contains(openedPresence(t, remote, b), pick.name)
+			})
+			b.pushOffline(remote, true)
+			damage[tc.damage](t, remote, before[0])
+
+			// No session, so no name of its own to take: the presence is all a has to go by.
+			a := newDeviceWith(t, remote, func(d *device) { d.stale, d.noKey, d.pool = time.Minute, true, tc.pool })
+			eventually(t, "the registry to hold b's name again", func() bool {
+				return readRegistry(t, remote).holdsNames(pick.name)
+			})
+			a.stop()
+
+			work, _ := junkTree(t)
+			git(t, work, "push", "-q", remote, ":refs/murmur/presence/"+b.self())
+			c := newDeviceWith(t, remote, func(d *device) {
+				d.names = offering(seededNames(seed+1), pick) // would pick b's name first
+			})
+			carol, _ := c.session("cccccc", "claude-carol")
+			if got := c.named(carol); got == pick.name {
+				t.Fatalf("c took %s, which b has", got)
+			}
+			noNameTwice(t, readRegistry(t, remote))
+		})
+	}
+}
+
 // Without the remote a session works, its name pending, and it gets one soon after the remote is
 // back, with no hello to prompt it: not only when a retry delay that grew while the remote was out
 // of reach runs out.

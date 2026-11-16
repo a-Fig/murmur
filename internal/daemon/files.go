@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -74,7 +75,11 @@ func (d *Daemon) scratch() (*bus.Repo, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return d.repo.Scratch(dir), func() { os.RemoveAll(dir) }, nil
+	return d.repo.Scratch(dir), func() {
+		if err := os.RemoveAll(dir); err != nil {
+			d.log.Printf("a files scratch directory is left, for pruning to remove: %v", err)
+		}
+	}, nil
 }
 
 // textOf is a file's bytes as text, if it is text the secret check can read: UTF-16 with its mark,
@@ -105,6 +110,12 @@ type sendFile struct {
 	data []byte
 }
 
+// unixPath says whether path is a Unix shell's, as Git Bash's /tmp is, on Windows: it starts at a
+// root with a forward slash and names no drive. Two slashes are a share's, and full already.
+func unixPath(path string) bool {
+	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
+}
+
 // readSendFiles reads the files an agent's send names, each no larger than a file may be.
 func readSendFiles(paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
@@ -113,6 +124,11 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
 		if !filepath.IsAbs(path) {
+			if unixPath(path) {
+				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
+				// drive, where another file of that name may be (#706).
+				return nil, fmt.Errorf("%s isn't a full path on Windows: pass the Windows path, as `cygpath -w '%s'` prints it", path, path)
+			}
 			return nil, fmt.Errorf("%s isn't a full path", path)
 		}
 		info, err := os.Stat(path)
@@ -323,13 +339,7 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 				d.log.Printf("message %s is queued without its files: %v", e.ID, err)
 			}
 			d.mu.Lock()
-			if w := d.st.FilesWait[e.ID]; w != nil {
-				delete(d.st.FilesWait, e.ID)
-				for _, id := range w.For {
-					d.queueInboxLocked(id, w.Event)
-				}
-				d.saveLocked()
-			}
+			d.filesFetchedLocked(e.ID)
 			d.mu.Unlock()
 		}
 		if !pruned {
@@ -350,6 +360,63 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 // errFetchLater is a fetch of files that failed in a way another try might not: the remote
 // couldn't be reached, or the time ran out.
 var errFetchLater = errors.New("the files couldn't be fetched just now")
+
+// filesFetchedLocked queues the message with event ID id, whose files' fetch has ended, for the
+// sessions it waited for. Caller holds mu.
+func (d *Daemon) filesFetchedLocked(id string) {
+	w := d.st.FilesWait[id]
+	if w == nil {
+		return
+	}
+	delete(d.st.FilesWait, id)
+	for _, sess := range w.For {
+		if to := d.filesRecipientLocked(sess, w.Event); to != "" {
+			d.queueInboxLocked(to, w.Event)
+		}
+	}
+	d.saveLocked()
+}
+
+// filesRecipientLocked is where message e, which waited for its files for session id, goes now:
+// id, or the session that has taken id's name since (forwardLocked). A fetch can take minutes, and
+// a session that took the name meanwhile, as one that resumed the conversation in another process,
+// took what id had in its inbox then (adoptLocked), not what waited here: the message would land in
+// an inbox nobody reads (#703). A session that took id's T3 thread rather than its name is a
+// recipient already (takeFilesWaitLocked).
+//
+// "" if that session sent e, or has gone off the mesh meanwhile (a T3 thread settled, or found to be
+// a delegate), as a message that came for it then would be refused (addressedLocked, queueLocked).
+// "" too if a session the message was forwarded to has muted its sender. id's own mute was asked
+// when the message came, and stands as it was then: a message let through in a mute's grace (#466)
+// isn't dropped because the fetch outlasted the grace (Sol's review). Caller holds mu.
+func (d *Daemon) filesRecipientLocked(id string, e bus.Event) string {
+	to := id
+	if f := d.forwardLocked(bus.Addr(d.device, id)); f != "" {
+		_, to = bus.SplitAddr(f)
+	}
+	if e.From == bus.Addr(d.device, to) || d.offMeshLocked(to) || to != id && d.mutedHereLocked(to, e) {
+		return ""
+	}
+	return to
+}
+
+// takeFilesWaitLocked makes session to a recipient, in from's place, of each message that waits
+// for its files for from: to has taken from's T3 thread (takeInboxLocked), and with it what from
+// had unread, which a message still waiting for its files is too. A route taken over this way
+// carries no name from one to the other, so forwardLocked wouldn't find to when the fetch ends
+// (#703). The caller saves the state. Caller holds mu.
+func (d *Daemon) takeFilesWaitLocked(to, from string) {
+	for _, w := range d.st.FilesWait {
+		i := slices.Index(w.For, from)
+		if i < 0 {
+			continue
+		}
+		w.For = slices.Delete(w.For, i, i+1)
+		if !slices.Contains(w.For, to) {
+			w.For = append(w.For, to)
+		}
+	}
+}
 
 // fetchFiles brings the files of message e from its files ref and saves them. A fetch that fails
 // is tried again, up to tries times, as the network may be why; a ref that isn't there, or holds
@@ -396,9 +463,9 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	var sha string
 	for try := 1; ; try++ {
 		fctx, cancel := context.WithTimeout(ctx, fileFetchLimit)
-		sha, err = repo.FetchFiles(fctx, ref)
+		sha, err = repo.FetchFiles(fctx, ref, bus.MaxPack)
 		cancel()
-		if err == nil || errors.Is(err, bus.ErrNoFile) || try >= tries || ctx.Err() != nil {
+		if err == nil || errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) || try >= tries || ctx.Err() != nil {
 			break
 		}
 		select {
@@ -407,7 +474,7 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 		case <-time.After(time.Duration(try) * 5 * time.Second):
 		}
 	}
-	if errors.Is(err, bus.ErrNoFile) {
+	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
 	}
 	if err != nil {
@@ -450,7 +517,7 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 }
 
 // pruneFiles deletes the copies of files kept longer than FileKeep, and from the remote the files
-// refs this device pushed that long ago.
+// refs this device pushed that long ago, and those of devices that are gone (pruneOthersFiles).
 func (d *Daemon) pruneFiles(ctx context.Context) {
 	// Scratch directories nothing deleted: a daemon stopped mid-work left them, or Windows wouldn't
 	// let one go while a scanner still held a file in it. Only old ones: a send can be using one
@@ -490,6 +557,100 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 			continue
 		}
 		d.dropFileRef(at, false)
+	}
+	d.pruneOthersFiles(ctx)
+}
+
+// othersFile is a files ref another device pushed, as read of in its log: whose, and how long this
+// daemon has run since it first read of it (ageOthersFilesLocked).
+type othersFile struct {
+	Device string        `json:"device"`
+	Age    time.Duration `json:"age"`
+}
+
+// noteOthersFilesLocked notes the files ref message e names, read in dev's log, if dev is another
+// device. It is saved with the log's cursor. Caller holds mu.
+func (d *Daemon) noteOthersFilesLocked(e bus.Event, dev string) {
+	if e.Type != bus.Message || e.FilesAt == "" || dev == d.device {
+		return
+	}
+	if _, ok := d.st.OthersFiles[e.FilesAt]; !ok {
+		d.st.OthersFiles[e.FilesAt] = othersFile{Device: dev}
+	}
+}
+
+// ageOthersFilesLocked adds to each note's age the time since the last call, as now, a reading of
+// the monotonic clock, says, and at most twice FilePrune. No wall clock goes into an age: one set
+// forward by weeks, as a clock is when it is put right, would make every note old at once. The
+// cap holds a machine asleep, which Windows' monotonic clock counts, and the first call adds nothing,
+// so the time a daemon was down isn't counted. That only makes a ref wait longer. Caller holds mu.
+func (d *Daemon) ageOthersFilesLocked(now time.Time) {
+	if !d.othersAged.IsZero() {
+		step := min(max(now.Sub(d.othersAged), 0), 2*d.opt.FilePrune)
+		for at, f := range d.st.OthersFiles {
+			f.Age += step
+			d.st.OthersFiles[at] = f
+		}
+	}
+	d.othersAged = now
+}
+
+// pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
+// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes once
+// this daemon has run for twice FileKeep since it first read of it. Its event was written after it
+// was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
+// can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
+// is wrong, and for an event a teammate wrote to name another's ref. The device being gone, its
+// presence stale or off the remote, only spares a live one's own prune the race. Every daemon here
+// may delete the same ref: deleting one already gone succeeds.
+func (d *Daemon) pruneOthersFiles(ctx context.Context) {
+	d.mu.Lock()
+	d.ageOthersFilesLocked(time.Now())
+	var due []string
+	for at, f := range d.st.OthersFiles {
+		if f.Age > 2*d.opt.FileKeep {
+			due = append(due, at)
+		}
+	}
+	if len(d.st.OthersFiles) > 0 {
+		d.saveLocked()
+	}
+	d.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	listed, err := d.repo.ListRemote(ctx)
+	if err != nil {
+		d.log.Printf("listing the remote's files refs: %v", err)
+		return
+	}
+	forget := func(at string) {
+		d.mu.Lock()
+		delete(d.st.OthersFiles, at)
+		d.saveLocked()
+		d.mu.Unlock()
+	}
+	slices.Sort(due)
+	for _, at := range due {
+		if listed[bus.FilesRef(at)] == "" {
+			forget(at) // its own daemon, or another here, deleted it
+			continue
+		}
+		d.mu.Lock()
+		p := d.peers[d.st.OthersFiles[at].Device]
+		live := d.lastPollOK.IsZero() || p != nil && !d.staleLocked(p)
+		d.mu.Unlock()
+		if live {
+			continue
+		}
+		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			d.log.Printf("deleting files ref %s, of a device that is gone, from the remote: %v", at, err)
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+		forget(at)
 	}
 }
 

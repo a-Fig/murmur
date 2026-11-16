@@ -214,7 +214,11 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		self.Person = &web.Person{Name: d.st.Person, Addr: d.personAddr(), LastActive: d.lastPage, Tags: tags.Person()}
 	}
 	live := d.liveNamesLocked()
+	hidden := d.hidden.Load()
 	for _, ss := range d.sortedSessionsLocked() {
+		if hidden {
+			break // invisible: this device's agents are off Murmur, and the page doesn't show them
+		}
 		if !ss.dropped.IsZero() && live[ss.name] {
 			continue // its name went to the session that took over, which stands for the conversation
 		}
@@ -229,11 +233,13 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	}
 	colors := d.colorsLocked()
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
-	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
+	self.DND = d.dnd.Load()
+	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
+		Mode: d.modeView()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
-			LastSeen: p.lastChange, Color: colors[id].Color, Picked: colors[id].Picked}
+			LastSeen: p.lastChange, Color: colors[id].Color, Picked: colors[id].Picked, DND: p.pres.DND}
 		for _, ps := range p.pres.Sessions {
 			if ps.ID == proto.CLISession {
 				continue // V1 daemons list their CLI
@@ -400,6 +406,10 @@ type pageSettings struct {
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
+	Mode        string              `json:"mode,omitempty"`
+	// Away is when the device last left online for another mode, kept so that going back
+	// releases what arrived since (mode.go), across restarts too.
+	Away time.Time `json:"away,omitzero"`
 }
 
 // defaultSettings are what stands with no settings.json, and what one from before a setting
@@ -417,7 +427,7 @@ func (p pageSettings) clone() pageSettings {
 
 func (p pageSettings) view() web.Settings {
 	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
-		SessionBusy: maps.Clone(p.SessionBusy), DefaultMinutes: defaultWakeMinutes}
+		SessionBusy: maps.Clone(p.SessionBusy), Mode: p.Mode, DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -441,6 +451,8 @@ func (d *Daemon) loadSettings() {
 		return
 	}
 	d.settings = read
+	d.hidden.Store(read.Mode == web.ModeInvisible)
+	d.dnd.Store(read.Mode == web.ModeDND)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -459,7 +471,10 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 		return web.Settings{}, err
 	}
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
-		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy)}
+		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode}
+	if next.Mode == web.ModeOnline {
+		next.Mode = ""
+	}
 	if len(next.SessionWake) == 0 {
 		next.SessionWake = nil
 	}
@@ -468,10 +483,22 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	was := d.settings.Mode
+	switch {
+	case next.Mode == "":
+	case was == "":
+		next.Away = time.Now()
+	default:
+		next.Away = d.settings.Away // from one mode to the other: still away since then
+	}
 	if err := writeJSON(d.settingsPath(), next); err != nil {
 		return web.Settings{}, fmt.Errorf("saving settings: %w", err)
 	}
+	away := d.settings.Away
 	d.settings = next
+	if next.Mode != was {
+		d.setMode(was, next.Mode, away)
+	}
 	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil
 }

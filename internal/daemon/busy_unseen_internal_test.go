@@ -35,8 +35,9 @@ func TestARunTheHookHasntSeenIsAtWork(t *testing.T) {
 		{"handed over, a read since finds the run", true, busy, time.Second, 2 * time.Second, true},
 		{"handed over before the turn ended", true, idle, 20 * time.Second, 15 * time.Second, false},
 		{"handed over past handedHold, never read", true, nil, 0, handedHold + time.Second, false},
-		// With no hook, T3's queue is the only way the session hears of a message.
-		{"no hook, a run", false, busy, 2 * time.Second, 2 * time.Second, false},
+		// With no hook, T3's database alone says the session is at work (#699).
+		{"no hook, a run", false, busy, 2 * time.Second, 2 * time.Second, true},
+		{"no hook, no run", false, idle, time.Second, 2 * time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -186,15 +187,15 @@ func TestAHandoffReadsTheThreadFirst(t *testing.T) {
 	st := t3db.State{}
 	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) { return st, nil }
 	j := &pushJob{id: "aaaaaa", route: s.route}
-	if d.t3RunGoing(context.Background(), j) {
+	if d.t3RunGoing(context.Background(), j, pageSettings{}) {
 		t.Fatal("a run going, by a read that found none")
 	}
 	st = t3db.State{Busy: true, Left: true}
-	if d.t3RunGoing(context.Background(), j) {
+	if d.t3RunGoing(context.Background(), j, pageSettings{}) {
 		t.Fatal("a run going, by a read that found only runs T3 left behind")
 	}
 	st = t3db.State{Busy: true, Model: "claude-fable-5-2"}
-	if !d.t3RunGoing(context.Background(), j) {
+	if !d.t3RunGoing(context.Background(), j, pageSettings{}) {
 		t.Fatal("no run going, by a read that found one")
 	}
 	d.mu.Lock()
@@ -276,5 +277,35 @@ func TestARunLeftBehindIsNoTurn(t *testing.T) {
 				s.hooked, s.stopSeen, s.busyAt = true, true, now.Add(-30*time.Second)
 			})
 		})
+	}
+}
+
+// A read that a later one, taken just before a handoff, stands over doesn't end the turn: it may
+// have found the run over while the later read found the next one going. Ending the turn there
+// would make the handoff that follows within closeGrace ignore that later read, and queue its
+// message behind the run (#713).
+func TestAStaleIdleReadDoesntEndTheTurn(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", time.Hour)
+	s := d.sessions["aaaaaa"]
+	s.hooked, s.stopSeen, s.busyAt = true, true, time.Now().Add(-10*time.Second)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, time.Now().Add(-5*time.Second)
+	d.opt.ThreadState = func(context.Context, string, string, string) (t3db.State, error) {
+		// While this read runs, a handoff's read begins later and finds a run going.
+		d.mu.Lock()
+		d.threads[k], d.threadRead[k] = t3db.State{Busy: true}, time.Now().Add(time.Second)
+		d.mu.Unlock()
+		return t3db.State{}, nil // this read found none
+	}
+	d.refreshThreads(context.Background())
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s.busyAt.IsZero() || !s.endedAt.IsZero() {
+		t.Errorf("the turn ended by a read a later one stands over: busyAt %v, endedAt %v", s.busyAt, s.endedAt)
+	}
+	if !d.threads[k].Busy {
+		t.Errorf("the stale read replaced the later one: %+v", d.threads[k])
 	}
 }

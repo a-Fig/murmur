@@ -45,6 +45,24 @@ func TestIsCommit(t *testing.T) {
 	if got, err := broken.IsCommit(ctx, commit); err == nil {
 		t.Errorf("a git that can't run answered %v", got)
 	}
+
+	// The same through a git that is kept between reads.
+	kept := &bus.Repo{Git: r.Git}
+	kept.KeepReader()
+	t.Cleanup(kept.Close)
+	for _, c := range []struct {
+		what, sha string
+		want      bool
+	}{{"a commit", commit, true}, {"a tree", tree, false}, {"a missing object", strings.Repeat("0", 39) + "1", false}} {
+		if got, err := kept.IsCommit(ctx, c.sha); err != nil || got != c.want {
+			t.Errorf("a kept git, %s: got %v, %v; want %v", c.what, got, err, c.want)
+		}
+	}
+	broken.KeepReader()
+	t.Cleanup(broken.Close)
+	if got, err := broken.IsCommit(ctx, commit); err == nil {
+		t.Errorf("a kept git that can't run answered %v", got)
+	}
 }
 
 // A leased push is a compare-and-swap: it lands only if the remote ref holds what it expects. Of

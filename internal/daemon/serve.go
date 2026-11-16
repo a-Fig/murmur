@@ -408,6 +408,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 	}
 	d.mu.Unlock()
+	if r, ok := d.invisibleAnswer(req); ok {
+		return r
+	}
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
 		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
 	}
@@ -585,7 +588,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	defer d.mu.Unlock()
 	var ids []string
 	if hookReq(req) {
-		for _, s := range d.touchHookLocked(req) {
+		sessions := d.touchHookLocked(req)
+		d.recordIssuesLocked(sessions, req.Issues)
+		for _, s := range sessions {
 			ids = append(ids, s.id)
 			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
 				// A /clear or a /resume is a new conversation, with a title of its own.
@@ -601,6 +606,9 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	}
 	if hookReq(req) && !slices.ContainsFunc(ids, d.liveLocked) {
 		d.holdPromptLocked(req) // its session may be on its way back (#658)
+	}
+	if d.hidden.Load() {
+		return proto.Response{OK: true} // invisible: the hook is seen to run, and told nothing
 	}
 	var self string
 	var fresh []*inMsg
@@ -799,7 +807,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.mu.Unlock()
 		switch len(found) {
 		case 0:
-			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group", tags.Normalize(to)))
+			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group.%s", tags.Normalize(to), tags.OwnGroupHint(to)))
 		case 1:
 			to, toDevice = found[0], true
 		default:
@@ -951,7 +959,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		case offline:
 			return refuse(proto.RefusedRecipient, "not sent: "+why)
 		case (known || sleeping) && dnd:
-			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
+			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or do not disturb comes off, with no notice or turn."
 		case known && noWake != "":
 			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
 		case known && hookOff:
@@ -1167,7 +1175,8 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // whoLocked lists every device and session, or with a filter the sessions whose tags match it and
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
-	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now()}
+	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now(),
+		DND: d.dnd.Load()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -1191,7 +1200,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
-			Stale: d.staleLocked(p)}
+			Stale: d.staleLocked(p), DND: p.pres.DND}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed

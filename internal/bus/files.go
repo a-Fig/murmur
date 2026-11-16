@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -346,11 +347,17 @@ func (r *Repo) ReadPack(ctx context.Context, rev string, max int64) ([]byte, err
 }
 
 // FetchFiles fetches the commit a files ref holds on the remote and returns it. Nothing local
-// names it after, whatever the clone's own refspecs say (--refmap=): the objects are read once. ErrNoFile if the
-// ref isn't on the remote. The fetch asks for the ref by name, as not every server gives an object
-// asked for by its ID; a ref that moves between the listing and the fetch reads as files that
-// aren't there.
-func (r *Repo) FetchFiles(ctx context.Context, ref string) (string, error) {
+// names it after, whatever the clone's own refspecs say (--refmap=): the objects are read once.
+// ErrNoFile if the ref isn't on the remote. The fetch asks for the ref by name, as not every server
+// gives an object asked for by its ID; a ref that moves between the listing and the fetch reads as
+// files that aren't there.
+//
+// The fetch is stopped once what it has written passes what a pack of max bytes takes on the wire,
+// and ErrTooLarge returned (#707): anyone who can push could point a files ref at a gigabyte, and
+// every device it is for would download it, and only then find it too large. Git has no such limit
+// for a fetch (receive.maxInputSize is a push's), so the pack being written is watched: it is kept
+// as one pack, which grows as it arrives, rather than unpacked into objects in memory.
+func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, error) {
 	sha, err := r.RemoteRef(ctx, ref)
 	if err != nil {
 		return "", err
@@ -358,13 +365,122 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string) (string, error) {
 	if sha == "" {
 		return "", ErrNoFile
 	}
-	_, err = r.Git.Run(ctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
+	objects, own := r.objectDir()
+	packs := filepath.Join(objects, "pack")
+	had := map[string]bool{}
+	if ents, err := os.ReadDir(packs); err == nil {
+		for _, e := range ents {
+			had[e.Name()] = true
+		}
+	}
+	// What the fetch wrote: the pack, as it grows, and once it is done its index too. Only in a
+	// scratch directory, which nothing else writes to: in the clone's own objects another fetch or
+	// a gc may be writing as well, and a refusal is for good, so there the size is left to ReadPack.
+	fetched := func() (n int64, names []string) {
+		if !own {
+			return 0, nil
+		}
+		var writing, done int64
+		ents, _ := os.ReadDir(packs)
+		for _, e := range ents {
+			if had[e.Name()] {
+				continue
+			}
+			names = append(names, e.Name())
+			// Stat by path: on Windows a listing's size lags a file being written to.
+			info, err := os.Stat(filepath.Join(packs, e.Name()))
+			switch {
+			case err != nil:
+			case strings.HasPrefix(e.Name(), "tmp_"):
+				writing += info.Size()
+			default:
+				done += info.Size()
+			}
+		}
+		// Git finishes a pack by linking it to its name before it removes the temporary one, so for a
+		// moment it is there twice; the fetch writes one pack.
+		if writing > done {
+			return writing, names
+		}
+		return done, names
+	}
+	// removeFetched removes what the fetch wrote, once every process of it has gone (RunTree), so
+	// nothing is still writing, and says what it couldn't remove.
+	removeFetched := func(names []string) error {
+		var errs []error
+		for _, name := range names {
+			p := filepath.Join(packs, name)
+			var err error
+			// On Windows a file can't be removed for a moment after the process that had it open ends.
+			for try := 0; try < 10; try++ {
+				if err = os.Remove(p); err == nil || errors.Is(err, os.ErrNotExist) {
+					err = nil
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("what the fetch wrote is left: %w", errors.Join(errs...))
+		}
+		return nil
+	}
+	// Encrypted files don't compress, so a pack of max bytes takes about max on the wire: zlib's
+	// framing, the commit, the tree and the pack's index take far less than this allows over it.
+	limit := max + max/32 + 256<<10
+	fctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := make(chan struct{})
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		t := time.NewTicker(50 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if n, _ := fetched(); n > limit {
+					cancel(ErrTooLarge)
+					return
+				}
+			}
+		}
+	}()
+	// RunTree, as stopping git alone leaves its children: index-pack writing the pack, and over
+	// protocol 0 or 1 by HTTPS a fetch-pack of git-remote-https's own, downloading (#726). Protocol
+	// 2 is asked for too, which leaves less to stop.
+	_, err = r.Git.RunTree(fctx, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "protocol.version=2",
+		"-c", "fetch.unpackLimit=1", "-c", "core.bigFileThreshold=1m", "fetch", "--quiet",
 		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip="+brand.RefRoot+"*", r.Remote, ref)
+	close(stop)
+	<-watched
+	n, names := fetched()
+	// Too large whether it was stopped for it, done before it could be, or ended otherwise (a
+	// timeout) past the limit; and nothing of a fetch that failed is kept.
+	if errors.Is(context.Cause(fctx), ErrTooLarge) || n > limit {
+		return "", errors.Join(fmt.Errorf("%w: the files ref holds over %d bytes", ErrTooLarge, limit), removeFetched(names))
+	}
 	if err != nil {
-		return "", err
+		return "", errors.Join(err, removeFetched(names))
 	}
 	return sha, nil
+}
+
+// objectDir is where git writes this repo's objects, and whether they are a scratch directory's,
+// which nothing but this repo writes to (Scratch).
+func (r *Repo) objectDir() (string, bool) {
+	for i := len(r.Git.Env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(r.Git.Env[i], "GIT_OBJECT_DIRECTORY="); ok {
+			return v, true
+		}
+	}
+	return filepath.Join(r.Git.Dir, "objects"), false
 }
 
 // DeleteLocal removes a local ref, if it is there.

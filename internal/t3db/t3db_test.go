@@ -393,7 +393,7 @@ func TestTitleOfGivesUpOnALockedDatabase(t *testing.T) {
 const stateSchema = `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, title TEXT,
 	archived_at TEXT, deleted_at TEXT, payload_json TEXT);
 CREATE TABLE orchestration_v2_projection_runs (run_id TEXT PRIMARY KEY, thread_id TEXT, status TEXT,
-	requested_at TEXT, completed_at TEXT)`
+	requested_at TEXT, completed_at TEXT, ordinal INTEGER)`
 
 func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 	home := t.TempDir()
@@ -408,14 +408,20 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 			('busy', 't', NULL, NULL, '{"modelSelection":{"instanceId":"claude_personal","model":"claude-opus-5-5"}}'),
 			('new', 't', NULL, NULL, 'not json'),
 			('child', 't', NULL, NULL, '{"lineage":{"parentThreadId":"idle","relationshipToParent":"subagent","rootThreadId":"idle"}}'),
-			('left', 't', NULL, NULL, '{}')`,
+			('left', 't', NULL, NULL, '{}'),
+			('cancelled', 't', NULL, NULL, '{}'),
+			('tied', 't', NULL, NULL, '{}')`,
 		`INSERT INTO orchestration_v2_projection_runs VALUES
-			('r1', 'idle', 'completed', '2026-11-07T22:00:00.000Z', '2026-11-07T22:05:00.000Z'),
-			('r2', 'idle', 'interrupted', '2026-11-07T22:28:36.290Z', '2026-11-07T22:29:10.318Z'),
-			('r3', 'busy', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z'),
-			('r4', 'busy', 'running', '2026-11-07T22:30:00.000Z', NULL),
-			('r5', 'left', 'queued', '2026-11-03T06:10:16.275Z', NULL),
-			('r6', 'left', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z')`,
+			('r1', 'idle', 'completed', '2026-11-07T22:00:00.000Z', '2026-11-07T22:05:00.000Z', 1),
+			('r2', 'idle', 'interrupted', '2026-11-07T22:28:36.290Z', '2026-11-07T22:29:10.318Z', 2),
+			('r3', 'busy', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z', 3),
+			('r4', 'busy', 'running', '2026-11-07T22:30:00.000Z', NULL, 4),
+			('r5', 'left', 'queued', '2026-11-03T06:10:16.275Z', NULL, 5),
+			('r6', 'left', 'completed', '2026-11-07T21:00:00.000Z', '2026-11-07T21:01:00.000Z', 6),
+			('r7', 'cancelled', 'running', '2026-11-07T22:00:00.000Z', NULL, 1),
+			('r8', 'cancelled', 'cancelled', '2026-11-07T22:10:00.000Z', '2026-11-07T22:11:00.000Z', 2),
+			('r9', 'tied', 'completed', '2026-11-07T23:00:00.000Z', '2026-11-07T23:05:00.000Z', 1),
+			('r10', 'tied', 'running', '2026-11-07T23:00:00.000Z', NULL, 2)`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatal(err)
@@ -438,6 +444,10 @@ func TestStateOfReadsSettledAndTheLatestRun(t *testing.T) {
 		"new":      {},
 		"child":    {Parent: "idle"},
 		"left":     {Busy: true, Left: true, LastRun: at("2026-11-07T21:01:00.000Z")},
+		// A follow-up taken out of the queue leaves the run going a turn (#672), and of two runs
+		// asked for at once, the later by T3's ordinal is the newest.
+		"cancelled": {Busy: true, LastRun: at("2026-11-07T22:11:00.000Z")},
+		"tied":      {Busy: true, LastRun: at("2026-11-07T23:05:00.000Z")},
 	}
 	ctx := context.Background()
 	for thread, w := range want {
@@ -460,7 +470,7 @@ func TestStateOfFailsOnATimeItCannotRead(t *testing.T) {
 	for _, s := range []string{
 		stateSchema,
 		`INSERT INTO orchestration_v2_projection_threads VALUES ('a', 't', NULL, NULL, '{}')`,
-		`INSERT INTO orchestration_v2_projection_runs VALUES ('r', 'a', 'completed', 'yesterday', 'yesterday')`,
+		`INSERT INTO orchestration_v2_projection_runs VALUES ('r', 'a', 'completed', 'yesterday', 'yesterday', 1)`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatal(err)

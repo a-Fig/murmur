@@ -178,6 +178,9 @@ func Who(r proto.Response) string {
 		default:
 			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", id, who, Ago(d.LastSeen))
 		}
+		if d.DND {
+			b.WriteString("  ON DO NOT DISTURB: its person paused messages to every session on it; they wait in the inbox until it is back online\n")
+		}
 		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
 		}
@@ -715,7 +718,7 @@ func Lookup(r proto.Response) string {
 		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
 	}
 	if tags.Has(d.Tags, tags.DoNotDisturb) {
-		b.WriteString("  do not disturb: a message to it is queued in its inbox, with no notice or turn, until it reads its inbox or turns do not disturb off\n")
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, with no notice or turn, until it reads its inbox or do not disturb comes off\n")
 	} else if d.NoWake != "" {
 		why := "waking is off for it on " + brand.Command + " ui"
 		if d.NoWake == bus.NoWakeIdle {

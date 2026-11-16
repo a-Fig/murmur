@@ -304,6 +304,9 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	if d.hidden.Load() {
+		return ErrInvisible
+	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
@@ -388,6 +391,7 @@ type Daemon struct {
 	slowCancel context.CancelFunc
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
+	othersAged time.Time            // when the notes of others' files refs were last aged (monotonic)
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time
@@ -478,8 +482,10 @@ type Daemon struct {
 	threadRead   map[threadKey]time.Time
 	threadWarned map[threadKey]bool
 	// handedTo is, for each T3 thread, the messages lately handed to it as a turn, oldest first, so
-	// another session's copy of one is not handed to it again (see noteHandedLocked).
+	// another session's copy of one is not handed to it again (see noteHandedLocked), and handing
+	// the messages on their way into one now, so another copy isn't handed over at the same time.
 	handedTo map[threadKey][]handed
+	handing  map[handing]bool
 	// The sessions another session started, where T3 doesn't say so (codexkids.go): kids the
 	// sessions here that are one, kidNative the children a hook named, by their client's ID,
 	// with their parent's, codexLin who started each Codex thread read so far, and codexWarned
@@ -519,9 +525,15 @@ type Daemon struct {
 	writeMu sync.Mutex // serializes appends to this device's log
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
 
-	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
+	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
+	// change (setMode) takes mu inside it.
 	setMu    sync.Mutex
 	settings pageSettings
+	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
+	// read without setMu by everything that writes to the bus or answers an agent.
+	hidden, dnd atomic.Bool
+	// presenceGone says this device's presence has been deleted since it went invisible.
+	presenceGone atomic.Bool
 
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
@@ -600,10 +612,13 @@ type session struct {
 	// continuations how many times in a row it did, which Claude Code caps (stopBlockCap).
 	// endedAt is when its turn last ended (Stop, or T3's database), handedAt when a message last
 	// went to its T3 thread as a turn, and unseenAt when a read after endedAt first found a run of
-	// the thread going: a turn the hook hasn't seen start yet (see runUnseen, #607).
+	// the thread going: a turn the hook hasn't seen start yet (see runUnseen, #607). runSeenAt is,
+	// for a session in T3 with no hook, when the run its thread has going began, zero when none is
+	// (see noteHooklessLocked, #699).
 	hooked, stopSeen, stopContinues bool
 	busyAt, turnStart, continuedAt  time.Time
 	endedAt, handedAt, unseenAt     time.Time
+	runSeenAt                       time.Time
 	toldUnread, continuations       int
 	// hookSeen says a hook of the session has reported, a subagent's included; toolCalled is when
 	// the session first called one of Murmur's tools (see hookOffLocked, #225). hookNative is the
@@ -785,6 +800,9 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesRecheck says a presence showed a name never seen here, and the registry is to be read
+	// again from its start, to see whether it lost that name (see notePresenceNameLocked).
+	NamesRecheck bool `json:"namesRecheck,omitempty"`
 	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
 	// (#268). One from before read their claims and passed over them, so reading on from its
 	// NamesGood would leave them unread for good: without this, the next read starts from the
@@ -847,6 +865,9 @@ type state struct {
 	// sessions here that wait for their files to be fetched before they are queued, by ID.
 	FileRefs  map[string]time.Time `json:"fileRefs,omitempty"`
 	FilesWait map[string]*fileWait `json:"filesWait,omitempty"`
+	// OthersFiles is the files refs other devices pushed, by name, as read of in their logs: deleted
+	// from the remote once their device is gone and they are well past FileKeep (#708).
+	OthersFiles map[string]othersFile `json:"othersFiles,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
 	// until a prompt shows the turn started (#611, turnread.go).
 	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`
@@ -900,6 +921,10 @@ func Run(ctx context.Context, opt Options) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	// From here the daemon's reads of commits share a git (#623). Deferred first, so it is closed
+	// last: the goodbye and whatever else runs on the way out can still read.
+	d.repo.KeepReader()
+	defer d.repo.Close()
 	clearStaleTemp(d.opt.GitDir, d.log) // a daemon stopped mid-fetch leaves no one else to do it
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1148,7 +1173,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
-		handedTo: map[threadKey][]handed{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
@@ -1455,7 +1480,7 @@ func (d *Daemon) loadState() error {
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
 		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
-		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}}
+		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}, OthersFiles: map[string]othersFile{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1487,6 +1512,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.FilesWait == nil {
 		d.st.FilesWait = map[string]*fileWait{}
+	}
+	if d.st.OthersFiles == nil {
+		d.st.OthersFiles = map[string]othersFile{}
 	}
 	if d.st.Used == nil {
 		d.st.Used = map[string]string{}

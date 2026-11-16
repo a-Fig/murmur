@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -64,12 +65,15 @@ type Options struct {
 // Run serves MCP on stdin and stdout until the client disconnects.
 func Run(ctx context.Context, opt Options) error {
 	if opt.Agent == "opencode" {
-		// As Pi's extension below: per user, and older after an update (#431).
-		if did, err := join.RefreshOpenCode(); err != nil {
-			fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
-		} else if did {
-			fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again\n")
-		}
+		// As Pi's extension below: per user, and older after an update (#431). In the background:
+		// asking OpenCode its version takes a second or more, and the server answers meanwhile.
+		go func() {
+			if did, err := join.RefreshOpenCode(ctx, openCodeClient()); err != nil {
+				fmt.Fprintf(os.Stderr, brand.Command+" mcp: couldn't update its OpenCode plugin: %v\n", err)
+			} else if did {
+				fmt.Fprintf(os.Stderr, brand.Command+" mcp: updated its OpenCode plugin, which OpenCode loads again (OpenCode 1 at its next start)\n")
+			}
+		}()
 	}
 	if opt.Agent == "pi" {
 		// Pi's extension is per user, like this server, and older after an update (#205).
@@ -259,8 +263,8 @@ func (s *server) sync(ctx context.Context) {
 // Claude Code's variables count only for Claude Code itself (the agent "claude-code", or none
 // given): Pi and OpenCode pass their own environment on to their MCP servers, and one started from
 // a Claude Code session has that session's CLAUDE_CODE_SESSION_ID, which isn't theirs (seen
-// 2026-11-01). The agents that give their session's ID in the environment (Muse, Pi, Grok; see
-// nativeEnv) are registered with it, and an ID made from it.
+// 2026-11-01). The agents that give their session's ID in the environment (Muse, Pi, Grok, and
+// OpenCode 1 through Murmur's plugin; see nativeEnv) are registered with it, and an ID made from it.
 func helloFor(agent, cwd string) proto.Hello {
 	var claude string
 	if isClaude(agent) {
@@ -294,13 +298,22 @@ const threadEnv = "T3CODE_THREAD_ID"
 // stops at isn't seen; on one daemon the thread's address being in use catches it.
 var agentAbove = func() bool {
 	pids := proc.Ancestors(os.Getppid(), 10)
-	for _, pid := range pids[min(1, len(pids)):] {
-		exe, err := proc.Exe(pid)
-		if err != nil {
+	return agentInChain(len(pids), func(i int) (exe, comm string, ok bool) {
+		exe, err := proc.Exe(pids[i])
+		return exe, commOf(pids[i]), err == nil
+	})
+}
+
+// agentInChain is agentAbove's walk over n processes, the client first, each read by at: its
+// program's path, its comm (or ""), and whether it could be read. The client itself is skipped.
+func agentInChain(n int, at func(i int) (exe, comm string, ok bool)) bool {
+	for i := min(1, n); i < n; i++ {
+		exe, comm, ok := at(i)
+		if !ok {
 			return false
 		}
 		name := programName(exe)
-		if agentPrograms[name] || agentPrograms[commOf(pid)] {
+		if agentPrograms[name] || agentPrograms[comm] {
 			return true
 		}
 		if !passThrough[name] {
@@ -310,9 +323,14 @@ var agentAbove = func() bool {
 	return false
 }
 
-// agentPrograms are the agents' programs agentAbove looks for, by name.
+// agentPrograms are the agents' programs agentAbove looks for, by name. Antigravity, as T3 runs it
+// (release 1.4.5), is agy_acp_server, whose localharness_external runs the agent's shell commands:
+// seen on Windows, 2026-11-16 (#709), as powershell under localharness_external.exe under
+// agy_acp_server.exe. Elsewhere T3's agy_acp_server is agy_acp_server.par, not listed: what runs it,
+// and so the name the walk would read, hasn't been seen; localharness_external, a native program
+// there too, is reached first.
 var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
-	"opencode": true, "pi": true, "gemini": true}
+	"opencode": true, "pi": true, "gemini": true, "agy_acp_server": true, "localharness_external": true}
 
 // passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
 // shells, and what runs a command for one.
@@ -358,9 +376,12 @@ func isClaude(agent string) bool { return agent == "" || agent == "claude-code" 
 // 2026-11-01); Grok sets GROK_SESSION_ID (read in its source, not seen run); Antigravity sets
 // ANTIGRAVITY_CONVERSATION_ID in what it runs (seen in a T3 thread's shell, 2026-11-15). Pi has no such
 // variable: the extension join writes for it registers the server with the session's file in
-// MURMUR_PI_SESSION_FILE, and the file's path is what T3 records (internal/join/pi.go).
+// MURMUR_PI_SESSION_FILE, and the file's path is what T3 records (internal/join/pi.go). OpenCode 1
+// names no session in a call, as OpenCode 2 does in its _meta, and the plugin join writes for it
+// gives the server MURMUR_OPENCODE_SESSION, an ID it makes for the process's sessions, which are
+// one to Murmur (internal/join/opencodeplugin.go).
 var nativeEnv = map[string]string{"muse": "MUSE_SESSION_ID", "pi": "MURMUR_PI_SESSION_FILE", "grok": "GROK_SESSION_ID",
-	"antigravity": "ANTIGRAVITY_CONVERSATION_ID"}
+	"opencode": "MURMUR_OPENCODE_SESSION", "antigravity": "ANTIGRAVITY_CONVERSATION_ID"}
 
 // nativeID is the session's Murmur ID made from its client's own: the same each time, so a server
 // that restarts within the conversation takes its session back, and hashed, since Muse's and
@@ -372,12 +393,12 @@ func nativeID(native string) string {
 }
 
 // routeFromEnv is what this process's environment says about reaching its client: inside T3, T3's
-// command line; in Claude Code, the messaging socket and the token for it; in Pi, the socket
-// Murmur's extension opens in the session, which takes the same lines (internal/join/pi.go); for
-// Codex and OpenCode outside T3, the client's own program, whose command line takes a message
-// (#135, package clientcli). T3's thread is in the environment of most agents T3 runs (threadEnv),
-// and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps all of this to itself
-// (see proto.Route).
+// command line; in Claude Code, the messaging socket and the token for it; in Pi and OpenCode 1,
+// the socket Murmur's extension or plugin opens, which takes the same lines (internal/join/pi.go,
+// opencodeplugin.go); for Codex and OpenCode 2 outside T3, the client's own program, whose command
+// line takes a message (#135, package clientcli). T3's thread is in the environment of most agents
+// T3 runs (threadEnv), and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps
+// all of this to itself (see proto.Route).
 func routeFromEnv(agent string) proto.Route {
 	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
@@ -387,8 +408,11 @@ func routeFromEnv(agent string) proto.Route {
 		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
 	case agent == "codex" && r.T3CLI == "":
 		r.CodexCLI = clientProgram("codex")
-	case agent == "opencode" && r.T3CLI == "":
-		r.OpenCodeCLI, r.OpenCodeState = openCodeService()
+	case agent == "opencode":
+		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_OPENCODE_MESSAGING_SOCKET"), os.Getenv("MURMUR_OPENCODE_MESSAGING_TOKEN")
+		if r.T3CLI == "" {
+			r.OpenCodeCLI, r.OpenCodeState = openCodeService()
+		}
 	}
 	return r
 }
@@ -421,6 +445,17 @@ func programNamed(exe, name string) string {
 		return ""
 	}
 	return exe
+}
+
+// openCodeClient is the OpenCode program that started this server, whose version says which of
+// Murmur's plugins it loads: OpenCode 2's npm package installs it as opencode2 too. "" for a
+// server started by anything else.
+func openCodeClient() string {
+	_, exe := parentProgram()
+	if c := programNamed(exe, "opencode"); c != "" {
+		return c
+	}
+	return programNamed(exe, "opencode2")
 }
 
 // openCodeService is the OpenCode that started this server, if it is the background server every
@@ -593,8 +628,9 @@ func (s *server) newLink(ctx context.Context, c *client.Client, h proto.Hello) *
 }
 
 // sessionLinkFor is the link of the session a call to a shared server comes from, made and started
-// at the session's first call. A call that names no session (from an OpenCode too old to say) goes
-// by one link for the whole process, as a server of any other agent does. Sessions idle for
+// at the session's first call. A call that names no session (from OpenCode 1, which doesn't say)
+// goes by one link for the whole process, as a server of any other agent does, with the ID Murmur's
+// plugin gave the process, if it did (nativeEnv). Sessions idle for
 // sharedIdle are dropped on the way. It is nil when the server is off.
 func (s *server) sessionLinkFor(req *mcp.CallToolRequest) *link {
 	var native string
@@ -767,6 +803,76 @@ func recipients(to string) []string {
 	return out
 }
 
+// stringList is a tool argument that holds a list of strings. A harness may send it as a
+// string instead of an array — Muse sends the JSON array written into a string
+// (#698) — and the SDK validates arguments against the tool's schema before the handler
+// runs, so the affected tools carry a schema that lets a string through (listArgSchema)
+// and this type does the parsing the validation cannot: a JSON array in the string, or
+// values separated by commas, or one value, parsed as recipients parses send's to.
+type stringList []string
+
+func (l *stringList) UnmarshalJSON(b []byte) error {
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err == nil {
+		*l = arr
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*l = recipients(s)
+	return nil
+}
+
+// pathList is a tool argument that holds send's files. As stringList, but a path may
+// hold a comma, so a string that is not a JSON array is one path, never values to split.
+type pathList []string
+
+func (l *pathList) UnmarshalJSON(b []byte) error {
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err == nil {
+		*l = arr
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if t := strings.TrimSpace(s); strings.HasPrefix(t, "[") && json.Unmarshal([]byte(t), &arr) == nil {
+		*l = arr
+	} else if s != "" {
+		*l = pathList{s}
+	}
+	return nil
+}
+
+// listArgSchema is the schema of a stringList or pathList argument: an array of strings,
+// or the same list as a string, or null, which the generated schema allowed and the
+// types above read as no list. The description stays the argument's own, so an agent
+// reading the tools learns both shapes from it.
+func listArgSchema(description string) *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Description: description,
+		AnyOf: []*jsonschema.Schema{
+			{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
+			{Type: "string"},
+			{Type: "null"},
+		},
+	}
+}
+
+// objectSchema is an input schema that refuses any property it doesn't name, as the
+// generated schemas do: a typo in an argument is an error, not quietly dropped.
+func objectSchema(properties map[string]*jsonschema.Schema, required ...string) *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:                 "object",
+		Properties:           properties,
+		Required:             required,
+		AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
+	}
+}
+
 // sendEach sends one message to each of several recipients, as a send to each would (#520): every
 // one gets an ordinary message of its own, and none is told who else got it. So the daemon needs
 // nothing new, and an older one takes a list too. A group or everyone can't be in a list: a message
@@ -920,13 +1026,15 @@ func result(render func(proto.Response) string, resp proto.Response, err error) 
 
 type (
 	noInput struct{}
-	whoIn   struct {
-		Tags []string `json:"tags,omitempty" jsonschema:"list only sessions with every one of these tags; -tag for those without it, and a * at the end for any tag that starts so (model:opus*)"`
+	// who, tags and send name their argument descriptions in their tools' schemas (see
+	// tools), not here, so the two can't drift apart (#700 review).
+	whoIn struct {
+		Tags stringList `json:"tags,omitempty"`
 	}
 	tagsIn struct {
-		Add    []string `json:"add,omitempty" jsonschema:"tags to put on yourself: lowercase letters, digits and . _ : / - (reviewing, model:opus-5.5, do-not-disturb, group:ui)"`
-		Remove []string `json:"remove,omitempty" jsonschema:"tags to take off yourself"`
-		For    []string `json:"for,omitempty" jsonschema:"other sessions to add to a group, by name from who: add then holds group: tags only, and goes to them, not to you unless you list your own name too"`
+		Add    stringList `json:"add,omitempty"`
+		Remove stringList `json:"remove,omitempty"`
+		For    stringList `json:"for,omitempty"`
 	}
 	muteIn struct {
 		Name   string `json:"name,omitempty" jsonschema:"the name of the session to mute (quiet-otter, from who); leave it out to list whom you have muted"`
@@ -940,11 +1048,11 @@ type (
 		Messages int    `json:"messages,omitempty" jsonschema:"how many of its latest messages to show, 10 if not given"`
 	}
 	sendIn struct {
-		To      string   `json:"to" jsonschema:"a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's group (group:device-…, from who) for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"`
-		Subject string   `json:"subject" jsonschema:"one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"`
-		Body    string   `json:"body,omitempty" jsonschema:"the rest of the message"`
-		TellMe  string   `json:"tell_me,omitempty" jsonschema:"read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"`
-		Files   []string `json:"files,omitempty" jsonschema:"paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together"`
+		To      string   `json:"to"`
+		Subject string   `json:"subject"`
+		Body    string   `json:"body,omitempty"`
+		TellMe  string   `json:"tell_me,omitempty"`
+		Files   pathList `json:"files,omitempty"`
 	}
 )
 
@@ -955,9 +1063,12 @@ func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +
 		"session, its name, agent and branch, when it was last active and what it is doing, and which one is you. " +
 		"Lists the 20 most recently active sessions, with their tags. Use it to find who to message; give tags to list " +
-		"only the sessions that have them."},
+		"only the sessions that have them.",
+		InputSchema: objectSchema(map[string]*jsonschema.Schema{
+			"tags": listArgSchema("list only sessions with every one of these tags; -tag for those without it, and a * at the end for any tag that starts so (model:opus*). An array, or the same list as a string."),
+		})},
 		func(ctx context.Context, req *mcp.CallToolRequest, in whoIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpWho, Tags: in.Tags})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpWho, Tags: []string(in.Tags)})
 			return result(view.Who, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "lookup", Description: "Look up everything known about one other session, by its name from who " +
@@ -982,9 +1093,14 @@ func (s *server) tools(srv *mcp.Server) {
 		"you queued in your inbox: none comes as a turn or a notice until you read your inbox or take the tag off, " +
 		"when they come the usual way. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
 		"session that has it, so add it to join a group and remove it to leave. To start a group or bring others into one, give their names in for: " +
-		"they are added, and can leave the same way. A tag a human set on the page stands over yours, but you can always leave a group."},
+		"they are added, and can leave the same way. A tag a human set on the page stands over yours, but you can always leave a group.",
+		InputSchema: objectSchema(map[string]*jsonschema.Schema{
+			"add":    listArgSchema("tags to put on yourself: lowercase letters, digits and . _ : / - (reviewing, model:opus-5.5, do-not-disturb, group:ui). An array, or the same list as a string."),
+			"remove": listArgSchema("tags to take off yourself. An array, or the same list as a string."),
+			"for":    listArgSchema("other sessions to add to a group, by name from who: add then holds group: tags only, and goes to them, not to you unless you list your own name too. An array, or the same list as a string."),
+		})},
 		func(ctx context.Context, req *mcp.CallToolRequest, in tagsIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpTags, Add: in.Add, Remove: in.Remove, For: in.For})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpTags, Add: []string(in.Add), Remove: []string(in.Remove), For: []string(in.For)})
 			return result(view.Tags, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "send", Description: "Send a message to another agent by its name (quiet-otter, from who), to a group (group:ui: " +
@@ -993,10 +1109,17 @@ func (s *server) tools(srv *mcp.Server) {
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
 		"not told who else got it, and the result says what became of each. files sends files along, which the recipient gets as paths on its own machine: " +
-		"a text file is checked for secrets as the body is, and an image or other binary can't be. Message to coordinate, not to chat."},
+		"a text file is checked for secrets as the body is, and an image or other binary can't be. Message to coordinate, not to chat.",
+		InputSchema: objectSchema(map[string]*jsonschema.Schema{
+			"to":      {Type: "string", Description: "a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's group (group:device-…, from who) for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"},
+			"subject": {Type: "string", Description: "one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},
+			"body":    {Type: "string", Description: "the rest of the message"},
+			"tell_me": {Type: "string", Description: "read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"},
+			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
+		}, "to", "subject")},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)
-			files := fullPaths(in.Files)
+			files := fullPaths([]string(in.Files))
 			tell := strings.TrimSpace(in.TellMe)
 			if len(to) > 1 {
 				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body, tell, files)
