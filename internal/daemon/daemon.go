@@ -344,7 +344,7 @@ func (d *Daemon) consented() bool { return d.opt.Consent == nil || d.opt.Consent
 const maxInbox = 200
 
 // Daemon is one running daemon. Lock order: syncMu, then advMu, then mu; or writeMu, then advMu,
-// then mu.
+// then mu. leaveOwnTip tries advMu with mu held, which never waits.
 type Daemon struct {
 	opt     Options
 	repo    *bus.Repo

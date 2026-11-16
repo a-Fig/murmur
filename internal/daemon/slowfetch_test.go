@@ -168,6 +168,9 @@ func TestASendDoesNotWaitForASyncsSlowFetch(t *testing.T) {
 		t.Fatalf("send: %+v", r)
 	}
 	took := time.Since(start)
+	if !strings.Contains(out.String(), "the sync is taking long") {
+		t.Errorf("the send found no sync running, so this tested nothing")
+	}
 	// Waiting for the sync, it took what was left of the fetch's limit and then the ref's fetch
 	// alone, another limit.
 	if took > limit {

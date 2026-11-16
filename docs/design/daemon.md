@@ -100,8 +100,10 @@ message to T3, so reading the file is running code as the user.
   reached the remote answered its agent that much later, sometimes past the client's deadline, so
   the agent took it for failed, and every other write to the log waited behind it. The write now
   waits 2 s, longer than a sync takes when nothing is slow, then leaves the queueing to that sync
-  and answers. The cost: during a slow sync, a message to a session on the same device reaches
-  its inbox when the sync ends, not when the send answers.
+  and answers. The cost: during a slow sync, what this device's own writes do here waits for the
+  sync's end. A message to a session on the same device reaches its inbox then, not when the send
+  answers, and a session just added to a group isn't yet counted in the note a send to that group
+  gets.
 
 ## Protocol numbers
 

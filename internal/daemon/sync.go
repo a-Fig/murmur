@@ -166,7 +166,14 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	d.mu.Unlock()
 	d.advMu.Lock()
 	defer d.advMu.Unlock()
-	defer d.readOwnLater(ctx)
+	defer func() {
+		// Not through a panic, which may have left mu locked: the daemon should die of it, not
+		// hang here holding advMu.
+		if p := recover(); p != nil {
+			panic(p)
+		}
+		d.readOwnLater(ctx)
+	}()
 
 	var changed []string
 	d.mu.Lock()
@@ -1329,7 +1336,12 @@ func (d *Daemon) leaveOwnTip(sha string) bool {
 			d.mu.Unlock()
 			return false
 		}
-		if d.syncing && time.Now().After(end) {
+		// A tip already left says this sync is a slow one: the writes behind it don't each wait
+		// their own OwnTipWait to learn that again.
+		if d.syncing && (d.ownLater != "" || time.Now().After(end)) {
+			if d.ownLater == "" {
+				d.log.Printf("the sync is taking long: it reads this device's own writes when it ends")
+			}
 			d.ownLater = sha // read before syncing goes false (readOwnLater)
 			d.mu.Unlock()
 			return true
