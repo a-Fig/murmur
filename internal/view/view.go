@@ -178,6 +178,9 @@ func Who(r proto.Response) string {
 		default:
 			fmt.Fprintf(&b, "\n%s (%s, seen %s)\n", id, who, Ago(d.LastSeen))
 		}
+		if d.DND {
+			b.WriteString("  ON DO NOT DISTURB: its person paused messages to every session on it; they wait in the inbox until it is back online\n")
+		}
 		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
 		}

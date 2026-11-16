@@ -1451,7 +1451,7 @@ const maxUnwritten = 100
 // keeps one by its ID (recordActLocked), and the notes show the line twice.
 func (d *Daemon) appendSoon(e bus.Event) {
 	if d.hidden.Load() {
-		return // incognito: never written, then or later (incognito.go)
+		return // invisible: never written, then or later (mode.go)
 	}
 	d.mu.Lock()
 	d.st.Unwritten = append(d.st.Unwritten, e)
@@ -1664,7 +1664,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

@@ -693,7 +693,7 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		return ErrNoConsent
 	}
 	if d.hidden.Load() {
-		return errNotNow // incognito: the message waits in the inbox until it is off
+		return errNotNow // invisible: the message waits in the inbox until the device is back
 	}
 	// A job can wait for a slot (pushSem) or for its retry, and in that time the thread can be
 	// settled, its session idle past its wake setting, or at work again: asked again before each

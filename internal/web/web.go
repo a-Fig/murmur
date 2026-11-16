@@ -318,6 +318,11 @@ func CheckSettings(set Settings) error {
 			return errors.New("sessionWake " + name + ": when must be always, within or never, and minutes 0 to 1440, given only with within")
 		}
 	}
+	switch set.Mode {
+	case "", ModeOnline, ModeDND, ModeInvisible:
+	default:
+		return errors.New("mode: must be online, dnd or invisible")
+	}
 	if set.Busy != "" && !validBusy(set.Busy) {
 		return errors.New("busy: must be subject or whole")
 	}

@@ -305,7 +305,7 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 		return ErrNoConsent
 	}
 	if d.hidden.Load() {
-		return ErrIncognito
+		return ErrInvisible
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
@@ -525,10 +525,10 @@ type Daemon struct {
 	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
 	setMu    sync.Mutex
 	settings pageSettings
-	// hidden is settings.Incognito, read without setMu by everything that writes to the bus or
-	// answers an agent (incognito.go).
-	hidden atomic.Bool
-	// presenceGone says this device's presence has been deleted since it went incognito.
+	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
+	// read without setMu by everything that writes to the bus or answers an agent.
+	hidden, dnd atomic.Bool
+	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 
 	kick     chan struct{}

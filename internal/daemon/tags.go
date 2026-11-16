@@ -112,6 +112,9 @@ func (d *Daemon) releaseLocked(key string) {
 // the thread's. Caller holds mu.
 func (d *Daemon) derivedTagsLocked(id string) []string {
 	var out []string
+	if d.dnd.Load() {
+		out = append(out, tags.DoNotDisturb) // the device is on do not disturb (mode.go)
+	}
 	if st, ok := d.threadStateLocked(id); ok {
 		if t := tags.ModelTag(st.Model); t != "" {
 			out = append(out, t)

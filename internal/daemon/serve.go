@@ -408,7 +408,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 	}
 	d.mu.Unlock()
-	if r, ok := d.incognitoAnswer(req); ok {
+	if r, ok := d.invisibleAnswer(req); ok {
 		return r
 	}
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
@@ -606,7 +606,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		d.holdPromptLocked(req) // its session may be on its way back (#658)
 	}
 	if d.hidden.Load() {
-		return proto.Response{OK: true} // incognito: the hook is seen to run, and told nothing
+		return proto.Response{OK: true} // invisible: the hook is seen to run, and told nothing
 	}
 	var self string
 	var fresh []*inMsg
@@ -1163,7 +1163,8 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // whoLocked lists every device and session, or with a filter the sessions whose tags match it and
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
-	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now()}
+	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now(),
+		DND: d.dnd.Load()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -1187,7 +1188,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
-			Stale: d.staleLocked(p)}
+			Stale: d.staleLocked(p), DND: p.pres.DND}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed

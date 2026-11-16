@@ -1141,8 +1141,8 @@ a.g-pr:hover {
   text-align: left;
 }
 
-/* Incognito is on (#681): a quiet line that leads to Settings. */
-.side-incognito {
+/* The device isn't online (#681): a quiet line that leads to Settings. */
+.side-mode {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1156,7 +1156,8 @@ a.g-pr:hover {
   text-align: left;
 }
 
-.side-incognito svg {
+.side-mode svg,
+.dev-dnd svg {
   flex: none;
   width: 0.875rem;
   height: 0.875rem;

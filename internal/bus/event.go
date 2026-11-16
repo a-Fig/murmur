@@ -422,6 +422,9 @@ type Presence struct {
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
 	// before the field sees them only as gone, and the writer drops what it sends them.
 	Offline []string `json:"offline,omitempty"`
+	// DND says the device's person put it on do not disturb (#681): its sessions carry the
+	// do-not-disturb tag while it lasts, and this says why.
+	DND bool `json:"dnd,omitempty"`
 	// Groups says the device's daemon gives its sessions what is sent to a group they are in, and
 	// takes an agent's add to one (#184). A sender is told of a member whose device doesn't.
 	Groups bool `json:"groups,omitempty"`
