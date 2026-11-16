@@ -1120,7 +1120,22 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 	return e.To == "*" || e.To == d.device || d.forwardLocked(e.To) == addr
 }
 
+// addInboxLocked queues message e for session id, once its files, if it carries any, are saved
+// here (holdForFilesLocked). Caller holds mu.
 func (d *Daemon) addInboxLocked(id string, e bus.Event) {
+	for _, m := range d.st.Inbox[id] {
+		if m.Event.ID == e.ID {
+			return
+		}
+	}
+	if d.holdForFilesLocked(id, e) {
+		return
+	}
+	d.queueInboxLocked(id, e)
+}
+
+// queueInboxLocked puts message e in session id's inbox. Caller holds mu.
+func (d *Daemon) queueInboxLocked(id string, e bus.Event) {
 	for _, m := range d.st.Inbox[id] {
 		if m.Event.ID == e.ID {
 			return
@@ -1203,7 +1218,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
-		pres.Groups, pres.Receipts = false, false
+		pres.Groups, pres.Receipts, pres.Files = false, false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1643,7 +1658,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

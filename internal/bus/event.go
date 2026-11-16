@@ -134,6 +134,12 @@ type Event struct {
 	Receipts bool `json:"receipts,omitempty"`
 	// Marks is a receipt's marks.
 	Marks []Mark `json:"marks,omitempty"`
+	// Files is the files a message carries (#570). A daemon from before files ignores them and gives
+	// its sessions the text alone.
+	Files []File `json:"files,omitempty"`
+	// FilesAt names the ref the message's files are on (FilesRef). It is random and inside the
+	// encrypted event, so the ref itself says nothing of the message or its sender.
+	FilesAt string `json:"filesAt,omitempty"`
 
 	// tags: the tags the human added and removed. To is the session. group.add: Add is the groups
 	// an agent added the session to.
@@ -226,6 +232,10 @@ func (e *Event) Clean() {
 		e.Receipts = false
 	}
 	e.Marks = cleanMarks(e.Type, e.Marks)
+	e.Files = cleanFiles(e.Type, e.Files)
+	if len(e.Files) == 0 || !validFilesAt(e.FilesAt) {
+		e.FilesAt = "" // with files, they read as files that can't be had
+	}
 }
 
 // cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's
@@ -418,6 +428,9 @@ type Presence struct {
 	// Receipts says the device's daemon writes marks for the messages that ask for them (#26). A
 	// sender shows a recipient on a device without it as sending no receipts, not as unread.
 	Receipts bool `json:"receipts,omitempty"`
+	// Files says the device's daemon fetches the files a message carries and gives its sessions
+	// their paths (#570). A sender is told of a recipient whose device doesn't.
+	Files bool `json:"files,omitempty"`
 	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
 	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
 	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
@@ -426,7 +439,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups and Receipts, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups, Receipts and Files, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that

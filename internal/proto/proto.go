@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/tags"
@@ -95,7 +96,8 @@ const (
 //	    none for its person's messages, so an upgraded mur replaces it where it may.
 //	22: a hello's ByThread (#642): the daemon may register a T3 thread at the address its name
 //	    already has. One of 21 or less would register it at a new one.
-const Protocol = 22
+//	23: a send's Files (#570): a daemon of 22 or less would send the message without them.
+const Protocol = 23
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
@@ -179,8 +181,11 @@ type Request struct {
 	// or "read" (#276), or "" for nothing. A daemon from before it ignores it, and its reply has no
 	// Telling, which is how the sender learns it won't be told.
 	TellMe string `json:"tellMe,omitempty"`
-	Doing  string `json:"doing,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	// Files is, for OpSend, the full paths of the files to send with the message (#570). The daemon
+	// reads them: it runs as the same user, on the same machine.
+	Files []string `json:"files,omitempty"`
+	Doing string   `json:"doing,omitempty"`
+	Limit int      `json:"limit,omitempty"`
 
 	// Collaborators is, for OpRotate, the repo's collaborators as the CLI listed them, or nil if it
 	// couldn't; Force rotates whatever the list says.
@@ -523,6 +528,27 @@ type MessageView struct {
 	// Receipt says this is a notice from Murmur itself, not a message from anyone: how far one of
 	// the session's messages got, which it asked to be told (#276). Nobody can be answered.
 	Receipt bool `json:"receipt,omitempty"`
+	// Files is the files the message carries (#570).
+	Files []FileView `json:"files,omitempty"`
+}
+
+// FileView is one file a message carries, as the session it is for is told of it: Path is where
+// it is saved on this machine, "" if it isn't (it couldn't be fetched, or was kept its time).
+type FileView struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Path string `json:"path,omitempty"`
+}
+
+// Size is a file's size as people read one: 812 bytes, 14 KB, 2.3 MB.
+func Size(n int64) string {
+	switch {
+	case n < 1<<10:
+		return strconv.FormatInt(n, 10) + " bytes"
+	case n < 1<<20:
+		return strconv.FormatInt((n+512)>>10, 10) + " KB"
+	}
+	return strconv.FormatFloat(float64(n)/(1<<20), 'f', 1, 64) + " MB"
 }
 
 // EventView is one line of `log`.

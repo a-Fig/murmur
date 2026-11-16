@@ -81,6 +81,14 @@ type input struct {
 	// Prompt is, on UserPromptSubmit, what the turn begins with (Claude Code, and Codex, whose
 	// payload takes Claude Code's shape). Pi's and OpenCode's extensions send none.
 	Prompt string `json:"prompt"`
+	// Antigravity's own payload (#650), in camelCase: the conversation's ID, the workspace it runs
+	// in (the hook runs in the folder of hooks.json), the turn's prompt, and, on Stop, why the turn
+	// ended, NO_TOOL_CALL at a turn's ordinary end (its harness's documentation, 1.4.5).
+	ConversationID    string   `json:"conversationId"`
+	WorkspacePaths    []string `json:"workspacePaths"`
+	LastUserInput     string   `json:"lastUserInput"`
+	TerminationReason string   `json:"terminationReason"`
+	InvocationNum     int      `json:"invocationNum"`
 }
 
 type output struct {
@@ -299,18 +307,21 @@ func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 
 // Agents other than Claude Code that join installs the hook in, by the name their hook's command
 // line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
-// some fields of its own (#225). Pi's is run by Murmur's own extension, which gives the session's
-// file for its ID (#205), and OpenCode's by Murmur's plugin, with OpenCode's session ID (#431).
+// some fields of its own (#225), except Antigravity's, which has its own (antigravity.go). Pi's is
+// run by Murmur's own extension, which gives the session's file for its ID (#205), and OpenCode's
+// by Murmur's plugin, with OpenCode's session ID (#431).
 const (
-	Codex    = "codex"
-	Grok     = "grok"
-	Pi       = "pi"
-	OpenCode = "opencode"
+	Codex       = "codex"
+	Grok        = "grok"
+	Pi          = "pi"
+	OpenCode    = "opencode"
+	Antigravity = "antigravity"
 )
 
-// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi or opencode.
+// KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode or
+// antigravity.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
@@ -321,7 +332,20 @@ func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 // RunFor is Run for agent, "" for Claude Code. It does nothing for an agent it doesn't know, rather
 // than take another agent's hook for Claude Code's. Another agent's hook brackets no tool call, as
 // join installs it on no PreToolUse (#225), and sends no transcript, which is Claude Code's format.
-func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
+func RunFor(agent string, stdin io.Reader, stdout io.Writer) { RunForEvent(agent, "", stdin, stdout) }
+
+// RunForEvent is RunFor with the event its command line names, for an agent whose payload doesn't:
+// Antigravity, whose hook answers every event with a JSON object, {} where it has nothing to say.
+func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
+	if agent == Antigravity {
+		w := &written{w: stdout}
+		stdout = w
+		defer func() {
+			if !w.any {
+				io.WriteString(w.w, "{}\n")
+			}
+		}()
+	}
 	defer func() { recover() }()
 	if !KnownAgent(agent) {
 		return
@@ -332,6 +356,9 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	}
 	if in.SessionID == "" && agent == Grok {
 		in.SessionID = in.SessionIDCamel
+	}
+	if agent == Antigravity && !fromAntigravity(&in, event) {
+		return
 	}
 	if in.SessionID == "" || !events[in.Event] {
 		return
@@ -417,6 +444,10 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	if text == "" {
 		return
 	}
+	if agent == Antigravity {
+		json.NewEncoder(stdout).Encode(antigravitySteps(text))
+		return
+	}
 	var out output
 	out.HookSpecificOutput.HookEventName = in.Event
 	out.HookSpecificOutput.AdditionalContext = text
@@ -445,7 +476,11 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	if err != nil || len(resp.Read) == 0 || !who.Continues {
 		return
 	}
-	json.NewEncoder(stdout).Encode(stopOutput{Decision: "block", Reason: view.Hook(resp.Read, nil, 0)})
+	decision := "block"
+	if agent == Antigravity {
+		decision = "continue" // its word for not stopping
+	}
+	json.NewEncoder(stdout).Encode(stopOutput{Decision: decision, Reason: view.Hook(resp.Read, nil, 0)})
 }
 
 // identify is what every request of the hook carries to say whose it is: the conversation's ID and,

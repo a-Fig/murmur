@@ -55,9 +55,12 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   sender has been told; meanwhile it counts toward the cap of 200. The page shows no ticks for it.
   The sender is told once: when every recipient whose
   device writes marks has got that far, or after `TellWait` (30 minutes) with where it is with each.
-  A message handed over as a turn counts as got that far: the turn holds it whole, and it is how an
-  idle session in T3 gets a message, but its mark never goes past handed over, so asking for read
-  would otherwise always wait the 30 minutes. The notice says which recipients got it as a turn.
+  A message handed over as a turn counts as delivered: the client holds the turn whole, and it is
+  how an idle session in T3 gets a message. The notice says which recipients got it as a turn. It
+  doesn't count as read, as the turn may still wait in T3's queue: the mark becomes read once the
+  turn's prompt comes (#611), and the sender is told then (#654). A recipient that sends no prompt
+  stays handed over, so asking it for read waits the 30 minutes: Pi, OpenCode, Grok and Muse, a
+  session with no hook, and a device whose daemon is older than #611.
   A message with nobody to wait for (every recipient's device too old, or nobody there) is told so in
   `send`'s result, and nothing is kept.
 - **The telling is a notice from Murmur itself**, in the sender's inbox: a message from this device's
@@ -67,6 +70,8 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   call, or at the end of a turn, or when it reads its inbox; one the hook told of while the agent
   worked goes in at the turn's end, as any message does (#202). An older daemon passes over
   `tell_me`; its reply then has no `Telling`, and the MCP server tells the sender it won't be told.
+  A sender replaced since it sent (a T3 thread's new session) is told in the session that holds its
+  name now, as a message for it would be (#659).
 - **Left for later.** Receipts in an agent's `send` result, `lookup` and `who`, on demand (#605; Tyler,
   #26, 2026-11-09). Delivered is marked where the daemon sees the hook fetch a notice, as far as it
   can see, and whether the agent's context took it is unknown. A recipient idle, on do not disturb or

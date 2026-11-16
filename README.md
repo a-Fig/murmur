@@ -27,7 +27,7 @@ repo's own git remote: no server, no accounts.
 
 Same agents, same speed, and the repo stays coherent.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code, Pi and Grok**, in
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok and Antigravity**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Install
@@ -100,6 +100,8 @@ In Claude Code Murmur's hook answers it at once, with no turn, while the daemon 
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
+| Antigravity (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |

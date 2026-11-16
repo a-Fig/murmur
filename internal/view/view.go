@@ -284,6 +284,7 @@ func Inbox(r proto.Response) string {
 				b.WriteString("> " + line + "\n")
 			}
 		}
+		b.WriteString(files(m))
 		reply := m.From
 		if m.FromName != "" {
 			reply = m.FromName // a name is an address
@@ -300,6 +301,28 @@ func Inbox(r proto.Response) string {
 		default:
 			fmt.Fprintf(&b, "(Reply to %s.)\n", reply)
 		}
+	}
+	return b.String()
+}
+
+// files renders the files a message carries (#570), a line each: where it is saved on this machine,
+// which is what the agent opens, and its size. One that isn't here says so.
+func files(m proto.MessageView) string {
+	if len(m.Files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(m.Files) == 1 {
+		b.WriteString("File, saved on this machine:\n")
+	} else {
+		b.WriteString("Files, saved on this machine:\n")
+	}
+	for _, f := range m.Files {
+		if f.Path == "" {
+			fmt.Fprintf(&b, "- %s (%s): not here. It couldn't be fetched, or was sent more than a week ago.\n", f.Name, proto.Size(f.Size))
+			continue
+		}
+		fmt.Fprintf(&b, "- %s (%s)\n", f.Path, proto.Size(f.Size))
 	}
 	return b.String()
 }
@@ -415,6 +438,9 @@ func Turn(m proto.MessageView) string {
 	if body != "" {
 		fmt.Fprintf(&b, "\n%s\n", body)
 	}
+	if len(m.Files) > 0 {
+		b.WriteString("\n" + files(m))
+	}
 	if bus.IsGroup(m.To) && m.GroupKnown {
 		// The session has had the long line below from this group (Tyler, 2026-11-12).
 		fmt.Fprintf(&b, "\nReply with %s's `send` to %s or %s, if a reply is needed.\n", brand.Product, m.To, who)
@@ -488,7 +514,14 @@ func Notices(msgs []proto.MessageView, unread int) string {
 		case m.FromAgent != "":
 			who += " (" + m.FromAgent + ")"
 		}
-		fmt.Fprintf(&b, "[%s] %s: %q\n", brand.Product, who, m.Subject)
+		with := ""
+		switch n := len(m.Files); {
+		case n == 1:
+			with = ", with a file"
+		case n > 1:
+			with = fmt.Sprintf(", with %d files", n)
+		}
+		fmt.Fprintf(&b, "[%s] %s: %q%s\n", brand.Product, who, m.Subject, with)
 	}
 	if len(msgs) == 0 {
 		b.WriteString("[" + brand.Product + "] ")

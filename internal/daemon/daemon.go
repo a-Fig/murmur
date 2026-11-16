@@ -69,6 +69,11 @@ type Options struct {
 	SessionGrace time.Duration
 	// StoppedInbox is how long a stopped session's inbox is kept for it to come back to: 24 h.
 	StoppedInbox time.Duration
+	// FileKeep is how long a sender leaves a message's files on the remote, and how long a receiver
+	// keeps its copies (#570): 7 days. The remote holds a ref's objects for as long as the ref is
+	// there. FilePrune is how often the daemon looks for files past it: an hour.
+	FileKeep  time.Duration
+	FilePrune time.Duration
 	// MuteGrace is how long after a session mutes another it still gets that session's direct
 	// messages (see mutedHereLocked): 30 s. Negative: none.
 	MuteGrace time.Duration
@@ -203,6 +208,12 @@ func (o *Options) defaults() {
 	if o.StoppedInbox == 0 {
 		o.StoppedInbox = 24 * time.Hour
 	}
+	if o.FileKeep == 0 {
+		o.FileKeep = 7 * 24 * time.Hour
+	}
+	if o.FilePrune == 0 {
+		o.FilePrune = time.Hour
+	}
 	if o.MuteGrace == 0 {
 		o.MuteGrace = 30 * time.Second
 	}
@@ -279,6 +290,12 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
+	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect)
+}
+
+// pushFrom is push from repo, which is d.repo or a copy of it that keeps its objects elsewhere
+// (bus.Repo.Scratch).
+func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string) error {
 	if !d.takePush(ctx) {
 		return ctx.Err()
 	}
@@ -289,7 +306,7 @@ func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	err := d.repo.Push(ctx, sha, ref, mode, expect)
+	err := repo.Push(ctx, sha, ref, mode, expect)
 	d.health.pushed(ctx, ref, err)
 	return err
 }
@@ -354,9 +371,12 @@ type Daemon struct {
 	recent     []proto.EventView
 	lastActive time.Time
 	mode       syncMode
-	pending    []bus.Event     // what arrived while down, for sessions that reconnect
-	heldTags   []bus.Event     // changes to tags read then for sessions not known yet (holdForLocked)
-	caughtUp   map[string]bool // sessions already given pending
+	pending    []bus.Event // what arrived while down, for sessions that reconnect
+	heldTags   []bus.Event // changes to tags read then for sessions not known yet (holdForLocked)
+	// heldPrompts are turns' prompts that came while no session of their client was connected, kept
+	// for the session's return (holdPromptLocked).
+	heldPrompts []heldPrompt
+	caughtUp    map[string]bool // sessions already given pending
 	// backlog lists the mesh refs the first listing showed that haven't been read yet: they are
 	// read under the mode the daemon started in, and the mode turns normal once all have been.
 	// nil until that listing.
@@ -506,6 +526,7 @@ type Daemon struct {
 	kick     chan struct{}
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
+	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
 	pushSem  chan struct{} // bounds the handoffs running at once
 	nameKick chan struct{} // wakes nameLoop, the only user of nameSrc
@@ -817,6 +838,12 @@ type state struct {
 	// sender asked to be told (#276).
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+
+	// FileRefs is the files refs this device pushed, by name (bus.FilesRef), and when (#570,
+	// files.go): each is deleted from the remote FileKeep after. FilesWait is the messages for
+	// sessions here that wait for their files to be fetched before they are queued, by ID.
+	FileRefs  map[string]time.Time `json:"fileRefs,omitempty"`
+	FilesWait map[string]*fileWait `json:"filesWait,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
 	// until a prompt shows the turn started (#611, turnread.go).
 	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`
@@ -998,6 +1025,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
+			d.fileLoop(ctx)
+		}()
+		d.bg.Add(1)
+		go func() {
+			defer d.bg.Done()
 			d.teamLoop(ctx)
 		}()
 		d.bg.Add(1)
@@ -1109,7 +1141,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		pushKick: make(chan struct{}, 1), fileKick: make(chan struct{}, 1), markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
@@ -1419,7 +1451,8 @@ func (d *Daemon) loadState() error {
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
-		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}}
+		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
+		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1445,6 +1478,12 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.Stopped == nil {
 		d.st.Stopped = map[string]time.Time{}
+	}
+	if d.st.FileRefs == nil {
+		d.st.FileRefs = map[string]time.Time{}
+	}
+	if d.st.FilesWait == nil {
+		d.st.FilesWait = map[string]*fileWait{}
 	}
 	if d.st.Used == nil {
 		d.st.Used = map[string]string{}

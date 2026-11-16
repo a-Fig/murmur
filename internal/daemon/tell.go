@@ -57,20 +57,30 @@ func (d *Daemon) tellLocked(msg string, rec *sentRecord, late bool) {
 	}
 	rec.Told = true
 	delete(d.st.Sent, msg)
-	dev, sess := bus.SplitAddr(rec.Asker)
+	// The sender may have been replaced since it sent (a T3 thread's new session, #659): the notice
+	// goes to the session that holds its name now, as a message for it would.
+	to := d.queuedAtLocked(rec.Asker)
+	dev, sess := bus.SplitAddr(to)
 	if dev != d.device || sess == "" {
 		return
 	}
 	subject, body := tellText(rec, waited, short, d.labelerLocked())
 	d.addInboxLocked(sess, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
-		From: bus.Addr(d.device, bus.ReceiptFrom), To: rec.Asker, At: time.Now().UTC(), Subject: subject, Body: body})
+		From: bus.Addr(d.device, bus.ReceiptFrom), To: to, At: time.Now().UTC(), Subject: subject, Body: body})
 }
 
-// reached says a recipient at state has got as far as want. A message handed over as a turn counts:
-// the turn holds it whole, and is the way an idle session in T3 gets a message, but Murmur can't
-// see the turn start, so it stays handed over and is never marked read (receipts.md).
+// reached says a recipient at state has got as far as want. A message handed over as a turn counts
+// as delivered: the client has the turn whole, and it is the way an idle session in T3 gets a
+// message. It doesn't count as read: where the hook sends the turn's prompt, the mark moves on to
+// read once the turn starts (turnread.go), and a turn T3 holds in its queue hasn't been read (#654).
+// A recipient that never sends one stays handed over, so a sender asking it for read is told at
+// TellWait, with the message handed over as a turn: Pi, OpenCode, Grok and Muse, whose hooks send no
+// prompt, a session with no hook, and one on a device whose daemon is older than #611.
 func reached(state, want string) bool {
-	return state == bus.MarkHanded || state != "" && bus.MarkRank(state) >= bus.MarkRank(want)
+	if state == bus.MarkHanded && want == bus.MarkDelivered {
+		return true
+	}
+	return state != "" && bus.MarkRank(state) >= bus.MarkRank(want)
 }
 
 // tellText is the subject and body of the notice tellLocked gives: whether the message got as far
@@ -78,7 +88,7 @@ func reached(state, want string) bool {
 func tellText(rec *sentRecord, waited []string, short int, label func(string) string) (subject, body string) {
 	verb := map[string]string{bus.MarkDelivered: "been told of", bus.MarkRead: "read"}[rec.Tell]
 	if short == 0 && slices.ContainsFunc(waited, func(a string) bool { return rec.Marks[a].State == bus.MarkHanded }) {
-		verb = "got" // some as a turn, which the body says (reached)
+		verb = "got" // some as a turn, which the body says; only for delivered (reached)
 	}
 	about := "your message " + strconv.Quote(bus.OneLine(rec.Subject, 60))
 	switch {

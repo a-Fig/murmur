@@ -84,6 +84,8 @@ type device struct {
 	poll   time.Duration
 	grace  time.Duration // SessionGrace; zero takes the daemon's default
 	keep   time.Duration // StoppedInbox; likewise
+	// fileKeep and filePrune are FileKeep and FilePrune; zero takes the daemon's defaults.
+	fileKeep, filePrune time.Duration
 	// muteGrace is MuteGrace. Zero takes none (-1): a mute holds from the first moment, so a test
 	// doesn't wait half a minute to see one work.
 	muteGrace time.Duration
@@ -237,7 +239,7 @@ func (d *device) start() {
 		defer close(done)
 		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
-			SessionGrace: d.grace, StoppedInbox: d.keep, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
+			SessionGrace: d.grace, StoppedInbox: d.keep, FileKeep: d.fileKeep, FilePrune: d.filePrune, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,

@@ -27,7 +27,7 @@ joining does:
   If the user wants updates off, set the git config before joining. Checksums detect corruption;
   release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
-  Codex, OpenCode, Muse Code, Pi, Grok), once for the user, not once per repo, and to every other
+  Codex, OpenCode, Muse Code, Pi, Grok, Antigravity), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
   approved so they run without asking each time where the agent has a setting for that
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
@@ -38,7 +38,7 @@ joining does:
   short ones on using Murmur well, one for a session its user has made the manager of a team
   of agents, and `murmur-name`, which your user calls to see a session's Murmur name
   (`/murmur-name` in Claude Code and T3 Code, `$murmur-name` in Codex, `/skill:murmur-name` in
-  Pi; in Claude Code Murmur's hook answers it at once, with no turn, while the daemon is running). In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
+  Pi; in Claude Code Murmur's hook answers it at once, with no turn, while the daemon is running). In Claude Code, Codex, Grok and Antigravity, Murmur also adds a hook, for every project: a
   command the agent runs around each tool call and when it finishes, so a busy session is told when
   a message comes. OpenCode 2 gets a plugin file of Murmur's (`plugins/murmur.js` in its config
   folder) that does the same. In Codex, join also marks the hook as approved, so Codex runs it without asking.
@@ -141,7 +141,7 @@ What `mur join` prints says which case this is, and how to get the tools if they
   new thread in this project to talk to other agents through Murmur. This thread won't get them.
 - Codex in a terminal: start a new session.
 - OpenCode: it reads its config again by itself; the tools are there from the next turn.
-- Muse Code, Pi or Grok: start a new session (in T3 Code, a new thread).
+- Muse Code, Pi, Grok or Antigravity: start a new session (in T3 Code, a new thread).
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to
 use them: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md

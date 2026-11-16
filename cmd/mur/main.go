@@ -105,8 +105,8 @@ func main() {
 	case "hook":
 		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
 		// does nothing.
-		if agent, ok := hookAgent(args); ok {
-			hook.RunFor(agent, os.Stdin, os.Stdout)
+		if agent, event, ok := hookAgent(args); ok {
+			hook.RunForEvent(agent, event, os.Stdin, os.Stdout)
 		}
 	case "mcp":
 		err = runMCP(ctx, args)
@@ -172,23 +172,25 @@ func leadingDirs(args []string) (dirs, rest []string, err error) {
 // named, as join writes it for Codex and Grok (`mur hook codex`, #225) or as Pi's extension runs it
 // (`mur hook --agent pi`, #205). ok is false for arguments it can't read or an agent the hook doesn't
 // know.
-func hookAgent(args []string) (agent string, ok bool) {
+func hookAgent(args []string) (agent, event string, ok bool) {
 	fs := flag.NewFlagSet(brand.Command+" hook", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	a := fs.String("agent", "", "")
+	// --event names the event for an agent whose payload doesn't: Antigravity's.
+	e := fs.String("event", "", "")
 	if fs.Parse(args) != nil {
-		return "", false
+		return "", "", false
 	}
 	switch {
 	case fs.NArg() == 1 && *a == "":
 		*a = fs.Arg(0)
 	case fs.NArg() != 0:
-		return "", false
+		return "", "", false
 	}
 	if !hook.KnownAgent(*a) {
-		return "", false
+		return "", "", false
 	}
-	return *a, true
+	return *a, *e, true
 }
 
 func flags(name string) (*flag.FlagSet, *string) {
@@ -600,7 +602,7 @@ func runStop(ctx context.Context, args []string, out io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	stopped, err := client.Stop(ctx, gitDir)
+	stopped, err := client.StopWaiting(ctx, gitDir)
 	if err != nil {
 		return err
 	}

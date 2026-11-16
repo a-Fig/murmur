@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,7 @@ func withAgents(sb *sandbox) {
 	sb.MuseDir = filepath.Join(sb.root, "config", "muse")
 	sb.PiDir = filepath.Join(sb.root, "pi", "agent")
 	sb.GrokHome = filepath.Join(sb.root, "grok")
+	sb.GeminiHome = filepath.Join(sb.root, "gemini")
 }
 
 // OpenCode 2's JSONC config gets the server and the allow rule, its comments and layout kept; once.
@@ -45,18 +47,18 @@ func TestRegisterOpenCodeKeepsTheConfig(t *testing.T) {
 	}
 }
 
-// A machine without OpenCode, or Muse, Pi or Grok, gets none of their files.
+// A machine without OpenCode, or Muse, Pi, Grok or Antigravity, gets none of their files.
 func TestOtherAgentsSkipAMachineWithoutThem(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
-	for _, d := range []string{"opencode", "muse", "pi", "grok"} {
+	for _, d := range []string{"opencode", "muse", "pi", "grok", "antigravity"} {
 		a := agents[agentIndex(d)]
 		did, fresh, err := a.register(sb.Env, context.Background(), sb.defaultHome(a))
 		if err != nil || fresh || len(did) != 0 {
 			t.Errorf("%s: did=%q fresh=%v err=%v", d, did, fresh, err)
 		}
 	}
-	for _, dir := range []string{sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome} {
+	for _, dir := range []string{sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, sb.GeminiHome} {
 		if exists(dir) {
 			t.Errorf("created %s", dir)
 		}
@@ -244,6 +246,87 @@ func TestRegisterGrok(t *testing.T) {
 	}
 	if r := grokRemoval(sb.Env, h); !strings.Contains(r, path) || !strings.Contains(r, "murmur.json") {
 		t.Errorf("removal: %q", r)
+	}
+}
+
+// Antigravity gets the server in config/mcp_config.json and the hook in config/hooks.json, beside
+// the user's own entries, once (#650).
+func TestRegisterAntigravity(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	mcp := filepath.Join(sb.GeminiHome, "config", "mcp_config.json")
+	hooks := filepath.Join(sb.GeminiHome, "config", "hooks.json")
+	if err := os.MkdirAll(filepath.Join(sb.GeminiHome, "antigravity"), 0o755); err != nil { // what Antigravity makes there
+		t.Fatal(err)
+	}
+	write(t, mcp, "{\n  \"mcpServers\": {\"other\": {\"command\": \"o\"}}\n}\n")
+	write(t, hooks, "{\n  \"lint\": {\"PostToolUse\": []}\n}\n")
+	h := sb.defaultHome(agents[agentIndex("antigravity")])
+	did, fresh, err := sb.registerAntigravityAt(h)
+	if err != nil || !fresh || len(did) != 2 {
+		t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
+	}
+	var servers struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(read(t, mcp)), &servers); err != nil {
+		t.Fatal(err)
+	}
+	if s := servers.MCPServers["murmur"]; s.Command != sb.Exe || strings.Join(s.Args, " ") != "mcp --agent antigravity" || servers.MCPServers["other"].Command != "o" {
+		t.Errorf("mcp_config.json: %+v", servers.MCPServers)
+	}
+	var hookFile map[string]map[string][]struct {
+		Type, Command string
+		Timeout       int
+	}
+	if err := json.Unmarshal([]byte(read(t, hooks)), &hookFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := hookFile["lint"]; !ok {
+		t.Errorf("the user's hook went: %s", read(t, hooks))
+	}
+	ours := hookFile["murmur"]
+	if len(ours) != 2 {
+		t.Fatalf("join's hook: %+v", ours)
+	}
+	for _, event := range []string{"PreInvocation", "Stop"} {
+		hs := ours[event]
+		if len(hs) != 1 || hs[0].Type != "command" || hs[0].Timeout != 30 || !strings.HasSuffix(hs[0].Command, " hook --event "+event+" antigravity") {
+			t.Errorf("%s: %+v", event, hs)
+		}
+	}
+	if did, fresh, err := sb.registerAntigravityAt(h); err != nil || fresh || len(did) != 0 {
+		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
+	}
+	if r := antigravityRemoval(sb.Env, h); !strings.Contains(r, mcp) || !strings.Contains(r, hooks) {
+		t.Errorf("removal: %q", r)
+	}
+}
+
+// ~/.gemini alone is Gemini CLI's too: without the agy command or a folder only Antigravity makes,
+// join tells no one Antigravity was set up, and writes nothing there.
+func TestGeminiCLIsHomeIsNoAntigravity(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	write(t, filepath.Join(sb.GeminiHome, "settings.json"), "{}")
+	did, fresh, err := sb.registerAntigravityAt(sb.defaultHome(agents[agentIndex("antigravity")]))
+	if err != nil || fresh || len(did) != 0 || exists(filepath.Join(sb.GeminiHome, "config")) {
+		t.Errorf("did=%q fresh=%v err=%v", did, fresh, err)
+	}
+}
+
+// The hook's command line runs under cmd /c on Windows, which takes no PowerShell quoting.
+func TestAntigravityHookCommand(t *testing.T) {
+	if got := antigravityHookCommand("mur", "Stop"); got != "mur hook --event Stop antigravity" && got != "'mur' hook --event Stop antigravity" {
+		t.Errorf("got %q", got)
+	}
+	if runtime.GOOS == "windows" {
+		if got := antigravityHookCommand(`C:\no such dir\with space\mur.exe`, "Stop"); got != `"C:\no such dir\with space\mur.exe" hook --event Stop antigravity` {
+			t.Errorf("got %q", got)
+		}
 	}
 }
 
