@@ -1810,6 +1810,9 @@ func (d *Daemon) pruneInboxes() {
 	if time.Since(d.started) < 2*time.Minute {
 		return
 	}
+	if d.pruneSessionNamesLocked(time.Now()) {
+		d.saveLocked()
+	}
 	for id := range d.st.Inbox {
 		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && id != bus.PersonSession && d.sessions[id] == nil && !stopped {
 			delete(d.st.Inbox, id)

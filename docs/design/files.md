@@ -86,7 +86,10 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
   date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
   monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
-  a team whose daemons run only while someone works. A ref no event this device read names
+  a team whose daemons run only while someone works. The note of a ref that is off the remote
+  already goes at the next prune, whatever its age (#747): the prune lists the remote, and a ref is
+  pushed before the event that names it, so one not listed was deleted. A ref no event this device
+  read names
   still stays: one whose message failed after its push, one in a log it can't open, or one sent
   before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once** (#739, 2026-11-16). Each gets a message of

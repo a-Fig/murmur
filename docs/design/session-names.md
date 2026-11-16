@@ -117,6 +117,14 @@ names routes by it all the same.
   a message to the name waits for any of them (2026-10-29). The name sent to isn't on message
   events, so the receiving daemon can't tell which name was used; putting it there is a bus format
   change, Tyler's to decide (2026-10-29).
+- **A long-gone session's name is forgotten after 30 days** (#747, 2026-11-16). The daemon keeps the
+  name each of its sessions took last, to label a stopped session and to pass a message for an old
+  address on to the name's holder. T3 makes a new session for a thread each time its MCP server
+  restarts, so that record only grew, and the whole of `state.json` is written at every save. An
+  entry now goes 30 days after its session last took the name, unless the session runs, its inbox
+  is kept, it holds the name, or it is the session the registry has the name down for. The cost:
+  after that the session's old messages show its address on the page and in `lookup`, and a
+  message sent to that address is dropped, as one to any session that is gone.
 - **V1 daemons** don't read the registry, and their presence has no names. Their sessions show
   without one and are reached at `device/session`.
 

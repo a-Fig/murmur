@@ -819,6 +819,11 @@ type state struct {
 	// (see forwardLocked).
 	NameHolders  map[string]string `json:"nameHolders,omitempty"`
 	SessionNames map[string]string `json:"sessionNames,omitempty"`
+	// NamesSeen is when each session in SessionNames last took its name, to the hour: one long
+	// gone, that nothing else points at, is forgotten sessionNameKeep after it
+	// (pruneSessionNamesLocked). T3 makes a new session for a thread each time its MCP server
+	// restarts, so without that SessionNames only grew (#747).
+	NamesSeen map[string]time.Time `json:"namesSeen,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.

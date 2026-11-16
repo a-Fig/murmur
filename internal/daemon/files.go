@@ -928,7 +928,10 @@ func (d *Daemon) ageOthersFilesLocked(now time.Time) {
 }
 
 // pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
-// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes once
+// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A note whose ref
+// is off the remote already goes at once, whatever its age: a ref is pushed before the event that
+// names it, so one not listed has been deleted, and the note had nothing left to do but wait out
+// twice FileKeep of this daemon's running, most of a year for one that runs an hour a day (#747). A ref goes once
 // this daemon has run for twice FileKeep since it first read of it. Its event was written after it
 // was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
 // can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
@@ -944,11 +947,12 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			due = append(due, at)
 		}
 	}
-	if len(d.st.OthersFiles) > 0 {
+	notes := len(d.st.OthersFiles)
+	if notes > 0 {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if len(due) == 0 {
+	if notes == 0 {
 		return
 	}
 	listed, err := d.repo.ListRemote(ctx)
@@ -956,6 +960,18 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 		d.log.Printf("listing the remote's files refs: %v", err)
 		return
 	}
+	d.mu.Lock()
+	gone := false
+	for at := range d.st.OthersFiles {
+		if listed[bus.FilesRef(at)] == "" {
+			delete(d.st.OthersFiles, at) // its own daemon, or another here, deleted it
+			gone = true
+		}
+	}
+	if gone {
+		d.saveLocked()
+	}
+	d.mu.Unlock()
 	forget := func(at string) {
 		d.mu.Lock()
 		delete(d.st.OthersFiles, at)

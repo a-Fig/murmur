@@ -81,7 +81,55 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		d.st.SessionNames = map[string]string{}
 	}
 	d.st.NameHolders[name], d.st.SessionNames[s.id] = s.id, name
+	if d.st.NamesSeen == nil {
+		d.st.NamesSeen = map[string]time.Time{}
+	}
+	d.st.NamesSeen[s.id] = time.Now().UTC().Truncate(time.Hour)
 	d.saveLocked()
+}
+
+// sessionNameKeep is how long the name of a session that is gone is remembered once nothing else
+// points at it: long enough that the page's history, and a teammate's agent that kept its address,
+// have moved on.
+const sessionNameKeep = 30 * 24 * time.Hour
+
+// pruneSessionNamesLocked forgets the name each long-gone session took last (#747), and says
+// whether it forgot any. One is kept while its session runs or its inbox is kept, while it is the
+// name's holder (NameHolders), and while it is the session the registry has the name down for,
+// which forwardLocked starts from. Past that, the name only labels the session's old messages on
+// the page and in lookup, and forwards a message sent to its old address: after sessionNameKeep
+// those show the address, and such a message is dropped as one to any session that is gone. A
+// session with no time noted, from a state.json older than NamesSeen, counts from now. Caller holds
+// mu.
+func (d *Daemon) pruneSessionNamesLocked(now time.Time) bool {
+	changed := false
+	for id := range d.st.NamesSeen {
+		if _, ok := d.st.SessionNames[id]; !ok {
+			delete(d.st.NamesSeen, id)
+			changed = true
+		}
+	}
+	for id, name := range d.st.SessionNames {
+		_, stopped := d.st.Stopped[id]
+		if d.sessions[id] != nil || stopped || d.st.NameHolders[name] == id || d.st.Used[name] == bus.Addr(d.device, id) {
+			continue
+		}
+		seen, ok := d.st.NamesSeen[id]
+		switch {
+		case !ok:
+			if d.st.NamesSeen == nil {
+				d.st.NamesSeen = map[string]time.Time{}
+			}
+			d.st.NamesSeen[id] = now.UTC().Truncate(time.Hour)
+		case now.Sub(seen) > sessionNameKeep:
+			delete(d.st.SessionNames, id)
+			delete(d.st.NamesSeen, id)
+		default:
+			continue
+		}
+		changed = true
+	}
+	return changed
 }
 
 // adoptLocked moves into s's inbox the inboxes kept for sessions stopped within StoppedInbox whose
