@@ -96,12 +96,13 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   a send that took a ref and then failed leaves it be. Until then each message uploaded them again.
 - **200 MB of uploads a device a day** (`FilesPerDay`, #739), over the last 24 hours, counted in
   packs pushed, so a send to several counts once. Past it a send with files is refused, saying when
-  it can go. A pack is counted before its push, which can land and still report failure, and taken
-  off the count once the remote is known not to have it (#788): at once when the remote refused it
-  or, asked after a push that failed some other way, lists no such ref; at the next prune for a
-  push cut off at its time limit, whose git may still be running. Without that, a dozen tries at a
-  15 MB recording over a bad connection uploaded nothing and stopped file sends for a day. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an
-  hour on the remote, which shares the repo's size limits with the team's code.
+  it can go. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an
+  hour on the remote, which shares the repo's size limits with the team's code. A pack is counted
+  before its push, which can land and still report failure, and taken off the count once the
+  remote is known not to have it (#788): at once when the remote, asked after the failed push,
+  lists no such ref; at a prune six minutes or more after the push began, for one cut off at its
+  time limit, since what its git started may still be sending. Before that, a dozen tries at a
+  15 MB recording over a bad connection uploaded nothing and stopped file sends for a day.
 - **1 GB of files kept a device** (`FilesHeld`, #739), those it sent and those it fetched together.
   Past it a message's files go, the oldest first, checked after each send and each fetch, the
   page's included, and at each prune, the files just sent or fetched staying; such a message reads

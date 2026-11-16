@@ -396,19 +396,24 @@ func (d *Daemon) refundUploadLocked(at string) bool {
 }
 
 // uploadLost says whether the push of files ref at, which ended with err, is known to have left
-// nothing on the remote. One the remote refused, or that was never sent, did. One cut off at its
-// time, or by the daemon stopping, may land yet, as its git can outlive it: the prune looks before
-// it deletes the ref (pruneFiles). For any other, as a connection that dropped, the remote is
-// asked.
+// nothing on the remote. One never sent, for want of consent or by an invisible device, did. One
+// cut off at its time, or by the daemon stopping, may land yet, as what its git started can outlive
+// it: the prune looks, once that has had its time (pruneFiles). For any other the remote is asked,
+// one it refused included: "remote failed to report status" reads as a refusal, and is what a
+// push that landed says when the connection broke after.
 func (d *Daemon) uploadLost(ctx context.Context, at string, err error) bool {
 	switch {
-	case errors.Is(err, bus.ErrRejected), errors.Is(err, bus.ErrRefused), errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible):
+	case errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible):
 		return true
 	case ctx.Err() != nil, errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return false
 	}
 	return d.filesRefGone(ctx, at)
 }
+
+// uploadSettle is how long after an upload began the prune leaves its ref be, if the push failed:
+// the push's own time, and five minutes for what it started to end.
+const uploadSettle = pushTimeout + 5*time.Minute
 
 // filesRefGone says whether the remote, asked now, has no files ref at. A remote that can't be
 // asked says nothing.
@@ -480,6 +485,15 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		d.dropFileRef(at, true) // which saves
 		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
 	}
+	// It went up, and stays counted whatever becomes of the ref: a prune that found it gone, its
+	// message having failed, would take for never landed what an earlier delete took away.
+	d.mu.Lock()
+	for i := range d.st.Uploads {
+		if d.st.Uploads[i].Ref == at {
+			d.st.Uploads[i].Ref = ""
+		}
+	}
+	d.mu.Unlock()
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
 	unpin := d.pinFilesDir(dir)
 	defer unpin()
@@ -825,10 +839,17 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	for _, at := range due {
 		// A push that was cut off, and so stayed counted in the day's uploads, is taken off the
 		// count if it never landed (#788). Looked at before the delete, which leaves no ref
-		// either way.
+		// either way, and not until uploadSettle after the push began: what a killed git started
+		// may be sending still, and a ref that landed after the look would be on the remote
+		// uncounted, and after the delete, for good.
 		d.mu.Lock()
-		counted := slices.ContainsFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+		i := slices.IndexFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+		counted := i >= 0
+		early := counted && time.Since(d.st.Uploads[i].At) < uploadSettle
 		d.mu.Unlock()
+		if early {
+			continue // at the next prune
+		}
 		if counted && d.filesRefGone(ctx, at) {
 			d.mu.Lock()
 			if d.refundUploadLocked(at) {
