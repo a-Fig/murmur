@@ -1,6 +1,7 @@
 ---
 name: murmur-name
-description: Only when the user types /murmur-name, or asks which Murmur name this session has. Says this session's Murmur name, status and tags.
+description: Says this session's Murmur name, status and tags.
+disable-model-invocation: true
 ---
 
 <!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->
@@ -18,5 +19,5 @@ and tags. Answer with one line and stop:
 - A name still pending: say so, and give the device/session address `who` shows, which reaches you
   until the name lands.
 - No status, or no tags: leave that part out.
-- No Murmur tools in this session: say it hasn't joined Murmur, and that `mur join`, run in the
-  repo, sets it up.
+- No Murmur tools in this session: say it isn't in Murmur here, and that in a repo that uses
+  Murmur, `mur join` sets it up.

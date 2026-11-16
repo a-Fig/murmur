@@ -50,12 +50,21 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
   how to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a
   team of agents as its user's COO (#548); a model may load it on its own, so it opens by saying to
-  follow it only when the user has made the session the manager in words. The fourth,
-  `murmur-name`, is for the person: typed as `/murmur-name`, it has the session say its Murmur
-  name, status and tags, so they can tell which of their open sessions a teammate means (#421). A SKILL.md of the same name without the skills'
+  follow it only when the user has made the session the manager in words. A SKILL.md of the same name without the skills'
   marker comment is the user's own and is left alone. They cost every session of those agents their
-  descriptions' worth of context in any repo, so each description says it applies only where the
-  repo has the Murmur section. The folders are from each agent's documentation, not tried in a
+  descriptions' worth of context in any repo, so each of the first three's says it applies only
+  where the repo has the Murmur section.
+- **`murmur-name` is for the person** (#421): called in a session, it has the session say its
+  Murmur name, status and tags, so they can tell which of their open sessions a teammate means.
+  It is `/murmur-name` in Claude Code and T3 Code, `$murmur-name` in Codex, which refuses a slash
+  command it doesn't know, and `/skill:murmur-name` in Pi; OpenCode documents no way to call a
+  skill, and there the person asks. Its frontmatter has `disable-model-invocation: true`, which
+  keeps its description out of the model's context in Claude Code, Pi and OpenCode, so the
+  description is written for the person who sees it in a command menu. Codex ignores the field and
+  lists it. The cost: asked in their own words, a session answers from `who` without the skill.
+  The forms and the field are from each agent's documentation and source (2026-11-15); only
+  Claude Code's were tried.
+- **The skills' folders** are from each agent's documentation, not tried in a
   session (2026-11-08). OpenCode also reads `~/.claude/skills`, so beside Claude Code it sees each
   skill twice.
 - **Edited, never replaced.** A client that isn't installed is skipped. Other servers, settings and
