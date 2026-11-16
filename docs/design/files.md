@@ -113,8 +113,11 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   what a pack within the limits takes on the wire, a little over its size, as sealed files don't
   compress. A fetch too quick to stop, as from a remote on the same disk, is measured when it ends.
   Either way what it wrote is removed and the message queued without its files, after one try.
-  The fetch is on protocol 2: stopped on 0 or 1 over HTTPS, git-remote-https's own fetch-pack goes
-  on downloading. Where there is no scratch directory the fetch isn't watched, and ReadPack's check
+  Stopping it ends its whole process tree, and waits for it, before anything is removed
+  (`gitx.RunTree`, #726): killing git alone left index-pack writing the pack, and over protocol 0
+  or 1 by HTTPS git-remote-https's own fetch-pack downloading. The tree is a job object on Windows,
+  which git is put in before it runs, so nothing it starts is outside, and a process group
+  elsewhere. Protocol 2 is asked for as well. Where there is no scratch directory the fetch isn't watched, and ReadPack's check
   is all there is: another fetch or a gc may be writing there too, and a refusal is for good.
 
 ## Open, for Tyler
