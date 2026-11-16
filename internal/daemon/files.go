@@ -387,7 +387,7 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 // to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
 // where a receiver's would be, so a session on this device, and the page, have them without a
 // fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
-// with a ref not reused.
+// with a ref not reused, unless its push may land yet (unsureError).
 func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, err error) {
 	if err := checkSendFiles(in); err != nil {
 		return nil, "", false, err

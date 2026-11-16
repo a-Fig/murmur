@@ -1043,7 +1043,10 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		if len(e.Files) > 0 && !filesReused && !unsure {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
-		if e.Receipts && !unsure {
+		// A record kept only to tell an agent how far its message got goes either way: the agent
+		// is told it wasn't sent, and a notice half an hour on that nobody has read it would be
+		// about a message it has likely sent again.
+		if e.Receipts && (!unsure || tellMe != "") {
 			d.mu.Lock()
 			delete(d.st.Sent, e.ID)
 			d.saveLocked()

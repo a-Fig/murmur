@@ -308,7 +308,7 @@ func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, e
 // (bus.Repo.Scratch).
 func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string) error {
 	if !d.takePush(ctx) {
-		return ctx.Err()
+		return notPushedError{ctx.Err()}
 	}
 	defer d.donePush()
 	// After the wait, which can be a push or two long: a leave may have landed meanwhile.
@@ -318,12 +318,22 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if d.hidden.Load() {
 		return ErrInvisible
 	}
+	if err := ctx.Err(); err != nil {
+		return notPushedError{err} // git isn't started for it
+	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
 	d.health.pushed(ctx, ref, err)
 	return err
 }
+
+// notPushedError is what a push ends with when its time ran out, or the daemon stopped, before
+// git was started for it: nothing was sent, which the same error from a push under way doesn't
+// say (pushRefused). It reads as what it wraps.
+type notPushedError struct{ error }
+
+func (e notPushedError) Unwrap() error { return e.error }
 
 // pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
 const pushTimeout = time.Minute

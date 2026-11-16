@@ -1384,7 +1384,7 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 // or it was never sent.
 func pushRefused(err error) bool {
 	return errors.Is(err, bus.ErrRejected) || errors.Is(err, bus.ErrRefused) ||
-		errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible)
+		errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || errors.As(err, new(notPushedError))
 }
 
 // unsureError is what a write to this device's log ends with when its push ended badly without
