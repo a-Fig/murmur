@@ -163,10 +163,10 @@ func personAsks(m *inMsg) bool {
 }
 
 // personWakesLocked says session id may be woken for a person's message, however long it has been
-// idle. Do not disturb and a wake setting of Never are a human's choices too, and hold. Caller holds
-// mu.
+// idle. A wake setting of Never is a human's choice too, and holds, as do not disturb does for any
+// message it holds, which the callers pass over (heldLocked). Caller holds mu.
 func (d *Daemon) personWakesLocked(id string, wake pageSettings) bool {
-	return !d.dndLocked(id) && !d.offMeshLocked(id) && wake.choice(d.sessionNameLocked(id)).When != web.WakeNever
+	return !d.offMeshLocked(id) && wake.choice(d.sessionNameLocked(id)).When != web.WakeNever
 }
 
 func (d *Daemon) personLogPath() string { return filepath.Join(d.dir, "person-messages.jsonl") }

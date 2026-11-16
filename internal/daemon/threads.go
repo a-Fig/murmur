@@ -452,8 +452,9 @@ func (p pageSettings) busyChoice(name string) string {
 // mesh, nor if the page says never. Always: yes. Within N minutes (the default, and what an
 // unset choice means): if the session is busy, which needs no waking, or was last at work no
 // more than N minutes ago, 0 standing for defaultWakeMinutes. A session nothing is known of yet
-// waits; the read of its thread lets the handoffs look again. Nor while it is on do not disturb
-// (#198). Caller holds mu.
+// waits; the read of its thread lets the handoffs look again. Nor, for a message do not disturb
+// holds (#198), while the session is on it: the handoffs ask heldLocked of each message, as this
+// device's person's get through (#777). Caller holds mu.
 func (d *Daemon) wakesLocked(id string, wake pageSettings) bool {
 	return !d.dndLocked(id) && d.mayWakeLocked(id, wake)
 }

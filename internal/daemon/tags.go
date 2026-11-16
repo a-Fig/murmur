@@ -59,6 +59,19 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
 func (d *Daemon) dndLocked(id string) bool { return d.dnd.Load() || d.ownDNDLocked(id) }
 
+// heldLocked says do not disturb holds message m in session id's inbox: the session is on it
+// (dndLocked), and m isn't from this device's own person. Their message goes through as usual, as
+// a turn or a notice, through the device's mode and the session's own tag alike (#777, Tyler,
+// 2026-11-16: "I don't see when I would want DND to block my own messages"). A person on another
+// device is held as anyone is: nothing ties one person's devices together. Caller holds mu.
+func (d *Daemon) heldLocked(id string, m *inMsg) bool {
+	return d.dndLocked(id) && !d.passesDND(m)
+}
+
+// passesDND says do not disturb never holds message m, on any session of this device: it is from
+// this device's person (#777).
+func (d *Daemon) passesDND(m *inMsg) bool { return m.Event.From == d.personAddr() }
+
 // ownDNDLocked says session id is on do not disturb by its own tags and a human's marks, whatever
 // the device's mode. Taking that off is what releases its inbox (releaseLocked): one taken off
 // while the device is on do not disturb counts from then, so going back online releases it

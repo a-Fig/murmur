@@ -15,6 +15,11 @@ session tag's rules apply to each of them:
 - An agent can still read its inbox and use every tool.
 - Senders see the tag.
 
+Its own person's messages are the exception (#777, Tyler, 2026-11-16): one sent from the device's
+page to one of its sessions goes as usual, a turn or a notice, through the mode and a session's own
+tag alike, and the page doesn't say it waits. Some people talk to their own agents through Murmur,
+and do not disturb is for everyone else.
+
 The device's presence also says it is on do not disturb, so `who` and the page say why on the
 device's own line, and senders on other devices hold to it even if a session's tags don't show it.
 Neither a person taking the tag off a session nor the limit on a session's tags lifts it: the

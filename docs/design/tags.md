@@ -15,7 +15,10 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   and doesn't keep the turn going with them (#213). `inbox` gives them as usual. When the tag comes
   off, each goes out once, by whichever route applies then, and counts as arriving at that moment,
   so one older than the 15-minute limit on turns is still handed over as one. `send` isn't refused;
-  the sender is told the message is queued.
+  the sender is told the message is queued. A message from the device's own person, sent from its
+  page to one of its sessions, isn't held (#777, Tyler, 2026-11-16: "I don't see when I would want
+  DND to block my own messages"); nothing ties a person's devices together, so one they send from
+  another device is held as anyone's is.
 - **Where a tag comes from**, highest first: a person on the page, the session itself (the `tags`
   tool), or the daemon, which derives a T3 session's model from the thread's `modelSelection.model`
   in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session outside T3 sets its

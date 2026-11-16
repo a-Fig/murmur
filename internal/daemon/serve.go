@@ -637,11 +637,6 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
 			s.sendingSeen = true // the turn a send still running hands it has begun (#677)
 		}
-		if d.dndLocked(id) {
-			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
-			// whole message and no hold for the turn's end, and don't count as unread for the hook.
-			continue
-		}
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
@@ -650,7 +645,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		printsWhole := hookReq(req) && req.Whole
 		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
-			if m.Pushing {
+			if m.Pushing || d.heldLocked(id, m) {
+				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
+				// whole message and no hold for the turn's end, and doesn't count as unread for the
+				// hook. Its own person's messages go through (#777).
 				continue
 			}
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
@@ -936,7 +934,8 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
-		dnd := d.peerDNDLocked(dev, sess)
+		// Do not disturb doesn't hold a message from this device's person to its own sessions (#777).
+		dnd := d.peerDNDLocked(dev, sess) && !(dev == d.device && from == d.personAddr())
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
 		noWake := d.peerNoWakeLocked(dev, sess, wake)
 		// A T3 thread T3 stopped while it was idle has no session, but its route is kept and a message
