@@ -326,13 +326,20 @@ func TestGeminiCLIsHomeGetsNoSkills(t *testing.T) {
 	write(t, filepath.Join(sb.GeminiHome, "settings.json"), "{}")
 	a := agents[agentIndex("antigravity")]
 	h := sb.defaultHome(a)
-	if dir := sb.joinSkillsDir(a, h); dir != "" {
+	alone := []agentHome{h}
+	if dir := sb.joinSkillsDir(a, h, alone); dir != "" {
 		t.Errorf("skills for Gemini CLI's home, at %s", dir)
+	}
+	// Antigravity run only by T3, whose instances read ~/.gemini's skills through T3's link.
+	t3 := agentHome{Dir: t.TempDir(), T3Own: true}
+	want := filepath.Join(sb.GeminiHome, "config", "skills")
+	if dir := sb.joinSkillsDir(a, h, []agentHome{h, t3}); dir != want {
+		t.Errorf("with T3's Antigravity: %q, want %q", dir, want)
 	}
 	if err := os.MkdirAll(filepath.Join(sb.GeminiHome, "antigravity"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if dir, want := sb.joinSkillsDir(a, h), filepath.Join(sb.GeminiHome, "config", "skills"); dir != want {
+	if dir := sb.joinSkillsDir(a, h, alone); dir != want {
 		t.Errorf("Antigravity's skills: %q, want %q", dir, want)
 	}
 }

@@ -191,7 +191,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			}
 			// The home exists once registering found the agent installed, even where it then
 			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
-			if dir := e.joinSkillsDir(a, h); dir != "" && isDir(h.Dir) {
+			if dir := e.joinSkillsDir(a, h, byAgent[i]); dir != "" && isDir(h.Dir) {
 				did, notes, err := installSkills(dir, h.Label)
 				r.Did, r.Notes = append(r.Did, did...), append(r.Notes, notes...)
 				if err != nil {
