@@ -84,7 +84,7 @@ func TestADeviceIsAGroup(t *testing.T) {
 	// A group a team made under the prefix before devices had groups is no device's, and the
 	// sender is told the name to use for one of their own (#705).
 	r = a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "group:device-lab", Subject: "to the lab"})
-	if !strings.Contains(r.Error, "no device in presence has the group group:device-lab") || !strings.Contains(r.Error, "such as group:lab") {
+	if !strings.Contains(r.Error, "no device in presence has the group group:device-lab") || !strings.Contains(r.Error, "use group:lab") {
 		t.Errorf("sending to an old group under the device prefix: %q", r.Error)
 	}
 }

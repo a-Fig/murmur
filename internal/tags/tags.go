@@ -104,15 +104,17 @@ func DevicesOfGroup(name string) []string {
 	return []string{"device-" + rest, rest}
 }
 
-// OwnGroupHint is what to say to someone who names a group under DevicePrefix as one of their own:
-// a group a team made before devices had groups (group:device-lab) has no members once its devices
-// update, as the prefix is theirs (#705). It suggests the name without device-, or is "".
+// OwnGroupHint is what to say to someone who names a group under DevicePrefix: a group a team made
+// before devices had groups (group:device-lab) has no members once its devices update, as the
+// prefix is theirs (#705). The name may be a device's ID, mistyped or of a device that has gone,
+// so it says what to do if it was a team's group, without saying it was one. It suggests the name
+// without device-, or is "".
 func OwnGroupHint(name string) string {
 	rest, ok := strings.CutPrefix(Normalize(name), DevicePrefix)
 	if !ok || !IsGroup(GroupPrefix+rest) || strings.HasPrefix(GroupPrefix+rest, DevicePrefix) {
 		return ""
 	}
-	return fmt.Sprintf(" A group of your own needs a name that doesn't start with %s, such as %s%s.", DevicePrefix, GroupPrefix, rest)
+	return fmt.Sprintf(" If it was a group your team made, names that start with %s are devices' now: use %s%s.", DevicePrefix, GroupPrefix, rest)
 }
 
 // WithDevice is ts with the tag of device's group added, as a derived tag: what a reader shows of
@@ -212,23 +214,33 @@ type State struct {
 	Picked  map[string]time.Time `json:"picked,omitempty"`
 }
 
-// dropHuman takes away a Human tag kept from before it was Murmur's alone (#267): it isn't shown, and
-// can't be removed by hand, so it would take a place under MaxPerSession for good.
+// dropReserved takes away tags kept from before they were Murmur's alone: Human (#267), and a
+// group a team made under DevicePrefix before devices held it (#705). Neither is shown, and
+// neither can be removed by hand, so each would take a place under MaxPerSession for good.
 //
 // It copies what it changes: a caller's copy of a State shares its slice and maps with the one kept,
 // and a change that then fails mustn't have touched that.
-func (st *State) dropHuman() {
-	if slices.Contains(st.Self, Human) {
-		st.Self = slices.DeleteFunc(slices.Clone(st.Self), func(t string) bool { return t == Human })
+func (st *State) dropReserved() {
+	if slices.ContainsFunc(st.Self, reserved) {
+		st.Self = slices.DeleteFunc(slices.Clone(st.Self), reserved)
 	}
-	if _, ok := st.Human[Human]; ok {
-		st.Human = maps.Clone(st.Human)
-		delete(st.Human, Human)
+	st.Human = dropReservedKeys(st.Human)
+	st.Cleared = dropReservedKeys(st.Cleared)
+}
+
+// reserved says t is a tag only Murmur gives, which a session or a person can't hold.
+func reserved(t string) bool { return t == Human || strings.HasPrefix(t, DevicePrefix) }
+
+// dropReservedKeys is m without reserved tags, copied if it changes.
+func dropReservedKeys[V any](m map[string]V) map[string]V {
+	for t := range m {
+		if reserved(t) {
+			m = maps.Clone(m)
+			maps.DeleteFunc(m, func(t string, _ V) bool { return reserved(t) })
+			return m
+		}
 	}
-	if _, ok := st.Cleared[Human]; ok {
-		st.Cleared = maps.Clone(st.Cleared)
-		delete(st.Cleared, Human)
-	}
+	return m
 }
 
 // Empty says there is nothing to keep.
@@ -346,7 +358,7 @@ func Clean(in []string) (names []string, err error) {
 // its family (a second model: tag replaces the first). It fails, and changes nothing, if the
 // session would have more than MaxPerSession.
 func (st *State) SetSelf(add, remove []string) error {
-	st.dropHuman()
+	st.dropReserved()
 	add, err := Clean(add)
 	if err != nil {
 		return err
@@ -404,7 +416,7 @@ func (st *State) Left(remove []string, at time.Time) (left []string) {
 			continue
 		}
 		if len(left) == 0 {
-			// A caller's copy of a State shares its maps with the one kept (see dropHuman).
+			// A caller's copy of a State shares its maps with the one kept (see dropReserved).
 			st.Human, st.Cleared = maps.Clone(st.Human), maps.Clone(st.Cleared)
 			if st.Cleared == nil {
 				st.Cleared = map[string]time.Time{}
@@ -433,7 +445,7 @@ func (st *State) Left(remove []string, at time.Time) (left []string) {
 // by the human's latest choice about it (#251): a change older than that, by more than clockAllowance,
 // leaves the tag as it is. The session's own changes carry no time, and a human's beat them anyway.
 func (st *State) SetHuman(base []string, add, remove []string, by string, at time.Time) error {
-	st.dropHuman()
+	st.dropReserved()
 	base = slices.DeleteFunc(slices.Clone(base), func(t string) bool { return t == Human })
 	add, err := Clean(add)
 	if err != nil {
@@ -536,7 +548,8 @@ func Effective(self, derived []string, human map[string]Mark) []Tag {
 			delete(src, t)
 		}
 	}
-	delete(src, Human) // a session's, or a human's mark, kept from before it was Murmur's (see Human)
+	// A session's tag, or a human's mark, kept from before it was Murmur's (see dropReserved).
+	maps.DeleteFunc(src, func(t, _ string) bool { return reserved(t) })
 	out := make([]Tag, 0, len(src))
 	for t, s := range src {
 		out = append(out, Tag{Name: t, Src: s})
