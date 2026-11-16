@@ -32,7 +32,10 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   just taking the next prompt, keeps a prompt the user typed while T3 held Murmur's turn in its queue
   from counting. Matching the whole text, not the subject, keeps a cancelled turn for "Deploy" from
   taking the mark of the turn for "Deploy now" (#651). At most 20 a session are remembered, for a
-  day.
+  day. What a session waits on moves with its inbox to the session that replaces it, a T3
+  thread's new server or the next holder of its name, as the turn can start under that one (#744,
+  2026-11-16). The mark is still made as the first session's, the one the sender has the message
+  down for.
 - **Marks are batched.** They wait 3 s (`ReceiptGather`) and go out as one `receipt` event on the
   recipient's own log, at most one per device every 15 s (`ReceiptGap`), keeping only each message's
   furthest state. Without the gap, a message to ten sessions on five devices could cost twenty
