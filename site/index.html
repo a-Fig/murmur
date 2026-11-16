@@ -334,6 +334,35 @@
   .setup-end { margin-top: 28px; }
   .credit { margin-top: 40px; font-size: 13.5px; color: var(--ink-soft); }
   .credit a { color: inherit; text-underline-offset: 3px; }
+  /* What agents use it for, and Questions (2026-11-16): on Setup's cream, either side of it. */
+  #uses, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
+  #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
+  #uses h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  .uses-lead { margin-top: 10px; font-size: 17px; line-height: 1.5; max-width: 64ch; color: var(--ink-soft); text-wrap: pretty; }
+  .uses { list-style: none; padding: 0; margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 14px; }
+  .uses li { padding: 18px 18px 20px; border-radius: var(--r-md); background: var(--cream-2); border: 1px solid #E6E0C2; }
+  .uses h3 { margin-top: 12px; font-size: 17px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; }
+  .uses p { margin-top: 6px; font-size: 15px; line-height: 1.5; color: var(--ink-soft); }
+  .inst + .inst { margin-top: 18px; }
+  .inst-note { font-size: 14px; color: var(--ink-soft); }
+  .faq { margin-top: 22px; border-top: 2px solid var(--ink); }
+  .faq details { border-bottom: 1px solid #DDD7B8; }
+  .faq summary { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 16px 0; cursor: pointer; list-style: none;
+    font-size: 17px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; flex: none; font: 500 22px/1 Inter, system-ui, sans-serif; color: var(--blue); transition: transform .15s ease; }
+  .faq details[open] summary::after { transform: rotate(45deg); }
+  .faq summary:hover { color: var(--blue); }
+  .faq summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+  .faq p { padding: 0 0 18px; max-width: 68ch; font-size: 15.5px; line-height: 1.55; color: var(--ink-soft); }
+  .faq code { padding: 1px 6px; border-radius: 5px; background: var(--badge-bg); color: var(--badge-ink); font: 600 13.5px/1.4 var(--mono); }
+  .faq a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
+  #faq .setup-end { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; margin-top: 32px; }
+  .end-gh { color: var(--ink); font-size: 15px; font-weight: 600; text-underline-offset: 5px; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); }
+  .end-gh:hover { text-decoration-color: var(--ink); }
+  #faq .button { margin-top: 0; background: var(--blue); color: var(--cream); padding: 14px 24px; letter-spacing: normal; box-shadow: none; }
+  #faq .button:hover { background: var(--ink); transform: none; }
+  #faq .button:focus-visible { outline: 3px solid var(--blue); }
   #setup .button { margin-top: 0; background: var(--blue); color: var(--cream); }
   #setup .button:hover { background: var(--ink); }
   #setup .button:focus-visible { outline: 3px solid var(--blue); }
@@ -567,6 +596,15 @@
     .st-trim .st-glass { opacity: .5; }
     .st-trim::after { opacity: .3; }
   }
+  /* The hero's two ways on (2026-11-16): the button goes to Setup, on this page, and GitHub is a quiet
+     link beside it. Before, the one button left for GitHub, and Setup was two screens down unseen. */
+  .st .st-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 14px 26px; margin-top: 30px; }
+  .st .st-actions .button { margin-top: 0; }
+  .st-gh { color: var(--cream); font-size: 15.5px; font-weight: 600; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent);
+    text-decoration-thickness: 1px; text-underline-offset: 5px; text-shadow: 0 1px 12px rgba(14, 27, 69, .45); transition: text-decoration-color .15s ease; }
+  .st-gh:hover { text-decoration-color: var(--cream); }
+  .st-gh:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
+  @media (max-width: 600px) { .st .st-actions { margin-top: 26px; gap: 12px 20px; } }
 </style>
 </head>
 <body>
@@ -593,7 +631,7 @@
     <div class="st-word" aria-hidden="true"><svg viewBox="0 0 763.11 107.6"><path d="M34.78 15.16C41.12 5.6 48.74 0.8 57.64 0.8C71.39 0.8 81.64 6.68 88.38 18.4C89.86 16.36 91.62 14.28 93.64 12.12C95.8 9.84 99.17 7.4 103.75 4.84C108.34 2.16 113.06 0.8 117.91 0.8C128.7 0.8 137.73 5 145.01 13.36C152.29 21.56 155.94 35.24 155.94 54.4V89.8C155.94 92.88 155.8 95.24 155.53 96.88C155.4 98.36 154.79 100.12 153.71 102.12C151.96 105.76 146.76 107.6 138.14 107.6C129.64 107.6 124.45 105.72 122.56 101.92C121.62 99.92 121.01 98.16 120.74 96.68C120.61 95.04 120.54 92.68 120.54 89.6V54.2C120.54 42.48 116.36 36.6 108 36.6C103.28 36.6 100.04 38.16 98.29 41.24C96.68 44.36 95.86 48.72 95.86 54.4V89.8C95.86 93.04 95.73 95.4 95.46 96.88C95.32 98.36 94.72 100.12 93.64 102.12C91.75 105.76 86.5 107.6 77.86 107.6C69.37 107.6 64.18 105.72 62.29 101.92C61.35 99.92 60.74 98.16 60.47 96.68C60.34 95.04 60.27 92.68 60.27 89.6V54.2C60.27 42.48 56.09 36.6 47.73 36.6C39.64 36.6 35.6 42.48 35.6 54.2V90C35.6 93.08 35.46 95.44 35.19 97.08C35.06 98.56 34.45 100.32 33.37 102.32C31.35 105.84 26.09 107.6 17.59 107.6C9.1 107.6 3.91 105.76 2.02 102.12C1.08 100.12 0.47 98.36 0.2 96.88C0.06 95.4 0 93.04 0 89.8V18.6C0 15.52 0.06 13.2 0.2 11.72C0.47 10.12 1.14 8.36 2.22 6.48C4.24 2.84 9.03 1 16.58 1C24.13 1 29.06 2.24 31.35 4.64C33.64 7.08 34.78 10.6 34.78 15.16ZM219.36 107.2C205.74 107.2 194.41 102.08 185.38 91.8C176.48 81.44 172.03 68.84 172.03 54V18.6C172.03 15.36 172.1 13 172.23 11.52C172.5 10.04 173.11 8.28 174.05 6.28C175.94 2.64 181.2 0.8 189.83 0.8C199.27 0.8 204.8 3.36 206.41 8.48C207.22 10.64 207.63 14.08 207.63 18.8V54.2C207.63 59.72 209.18 64.04 212.28 67.16C215.52 70.24 219.76 71.8 225.02 71.8C230.41 71.8 234.73 70.16 237.96 66.96C241.34 63.72 243.02 59.44 243.02 54.2V18.4C243.02 15.32 243.09 13 243.22 11.52C243.49 9.92 244.17 8.08 245.24 6.08C247 2.56 252.19 0.8 260.82 0.8C269.31 0.8 274.5 2.64 276.39 6.28C277.34 8.28 277.88 10.12 278.01 11.72C278.28 13.2 278.42 15.52 278.42 18.6V90.2C278.42 93.16 278.28 95.44 278.01 97.08C277.88 98.56 277.27 100.24 276.19 102.12C274.17 105.64 268.98 107.4 260.62 107.4C252.39 107.4 247.34 105.76 245.45 102.52C244.1 100.24 243.42 97.48 243.42 94.24C242.88 95.2 241.67 96.52 239.78 98.28C237.9 100.04 236.08 101.52 234.32 102.76C229.74 105.72 224.75 107.2 219.36 107.2ZM367.09 2.24C369.65 3.04 371.74 4.44 373.36 6.48C375.11 8.36 375.99 11.44 375.99 15.76C375.99 20.08 374.71 24.8 372.15 29.92C369.58 35.04 365.88 37.6 361.02 37.6C358.6 37.6 356.24 37.08 353.94 36C351.79 34.92 348.89 34.36 345.25 34.36C341.61 34.36 338.17 35.68 334.93 38.24C331.83 40.8 330.28 43.88 330.28 47.52V90C330.28 93.08 330.15 95.44 329.88 97.08C329.74 98.56 329.14 100.32 328.06 102.32C326.03 105.84 320.78 107.6 312.28 107.6C305.81 107.6 301.16 106.44 298.32 104.16C296.17 102.28 294.96 99.36 294.68 95.44C294.68 94.12 294.68 92.16 294.68 89.6V18.6C294.68 15.52 294.75 13.2 294.89 11.72C295.16 10.12 295.76 8.36 296.71 6.48C298.6 2.84 303.85 1 312.48 1C320.57 1 325.63 2.56 327.65 5.64C329.14 7.8 329.88 10.04 329.88 12.32C330.55 11.4 331.5 10.24 332.71 8.88C334.06 7.56 336.82 5.72 341 3.44C345.18 1.16 348.82 0 351.92 0C355.16 0 357.86 0.2 360.01 0.6C362.17 0.88 364.53 1.4 367.09 2.24ZM421.91 15.16C428.24 5.6 435.86 0.8 444.76 0.8C458.52 0.8 468.76 6.68 475.5 18.4C476.99 16.36 478.74 14.28 480.76 12.12C482.92 9.84 486.29 7.4 490.88 4.84C495.46 2.16 500.18 0.8 505.03 0.8C515.82 0.8 524.85 5 532.14 13.36C539.42 21.56 543.06 35.24 543.06 54.4V89.8C543.06 92.88 542.92 95.24 542.65 96.88C542.52 98.36 541.91 100.12 540.83 102.12C539.08 105.76 533.89 107.6 525.26 107.6C516.76 107.6 511.57 105.72 509.68 101.92C508.74 99.92 508.14 98.16 507.86 96.68C507.73 95.04 507.66 92.68 507.66 89.6V54.2C507.66 42.48 503.48 36.6 495.12 36.6C490.4 36.6 487.17 38.16 485.42 41.24C483.8 44.36 482.99 48.72 482.99 54.4V89.8C482.99 93.04 482.85 95.4 482.58 96.88C482.45 98.36 481.84 100.12 480.76 102.12C478.88 105.76 473.62 107.6 464.99 107.6C456.49 107.6 451.3 105.72 449.41 101.92C448.47 99.92 447.86 98.16 447.59 96.68C447.46 95.04 447.39 92.68 447.39 89.6V54.2C447.39 42.48 443.21 36.6 434.85 36.6C426.76 36.6 422.72 42.48 422.72 54.2V90C422.72 93.08 422.58 95.44 422.31 97.08C422.18 98.56 421.57 100.32 420.49 102.32C418.47 105.84 413.21 107.6 404.72 107.6C396.22 107.6 391.03 105.76 389.14 102.12C388.2 100.12 387.59 98.36 387.32 96.88C387.19 95.4 387.12 93.04 387.12 89.8V18.6C387.12 15.52 387.19 13.2 387.32 11.72C387.59 10.12 388.27 8.36 389.34 6.48C391.37 2.84 396.16 1 403.7 1C411.26 1 416.18 2.24 418.47 4.64C420.76 7.08 421.91 10.6 421.91 15.16ZM606.48 107.2C592.86 107.2 581.54 102.08 572.5 91.8C563.6 81.44 559.15 68.84 559.15 54V18.6C559.15 15.36 559.22 13 559.36 11.52C559.62 10.04 560.23 8.28 561.18 6.28C563.06 2.64 568.32 0.8 576.95 0.8C586.39 0.8 591.92 3.36 593.54 8.48C594.34 10.64 594.75 14.08 594.75 18.8V54.2C594.75 59.72 596.3 64.04 599.4 67.16C602.64 70.24 606.88 71.8 612.14 71.8C617.54 71.8 621.85 70.16 625.09 66.96C628.46 63.72 630.14 59.44 630.14 54.2V18.4C630.14 15.32 630.21 13 630.34 11.52C630.62 9.92 631.29 8.08 632.37 6.08C634.12 2.56 639.31 0.8 647.94 0.8C656.44 0.8 661.63 2.64 663.52 6.28C664.46 8.28 665 10.12 665.13 11.72C665.4 13.2 665.54 15.52 665.54 18.6V90.2C665.54 93.16 665.4 95.44 665.13 97.08C665 98.56 664.39 100.24 663.31 102.12C661.29 105.64 656.1 107.4 647.74 107.4C639.51 107.4 634.46 105.76 632.57 102.52C631.22 100.24 630.55 97.48 630.55 94.24C630.01 95.2 628.8 96.52 626.91 98.28C625.02 100.04 623.2 101.52 621.45 102.76C616.86 105.72 611.87 107.2 606.48 107.2ZM754.21 2.24C756.78 3.04 758.86 4.44 760.48 6.48C762.24 8.36 763.11 11.44 763.11 15.76C763.11 20.08 761.83 24.8 759.27 29.92C756.71 35.04 753 37.6 748.14 37.6C745.72 37.6 743.36 37.08 741.07 36C738.91 34.92 736.01 34.36 732.37 34.36C728.73 34.36 725.29 35.68 722.06 38.24C718.95 40.8 717.4 43.88 717.4 47.52V90C717.4 93.08 717.27 95.44 717 97.08C716.86 98.56 716.26 100.32 715.18 102.32C713.16 105.84 707.9 107.6 699.4 107.6C692.93 107.6 688.28 106.44 685.45 104.16C683.29 102.28 682.08 99.36 681.81 95.44C681.81 94.12 681.81 92.16 681.81 89.6V18.6C681.81 15.52 681.88 13.2 682.01 11.72C682.28 10.12 682.88 8.36 683.83 6.48C685.72 2.84 690.98 1 699.6 1C707.7 1 712.75 2.56 714.78 5.64C716.26 7.8 717 10.04 717 12.32C717.67 11.4 718.62 10.24 719.83 8.88C721.18 7.56 723.94 5.72 728.12 3.44C732.3 1.16 735.94 0 739.04 0C742.28 0 744.98 0.2 747.14 0.6C749.29 0.88 751.65 1.4 754.21 2.24Z"/></svg></div>
     <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
     <p class="st-what">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
-    <a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a>
+    <div class="st-actions"><a class="button" href="#setup">Get started</a><a class="st-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
   </div>
 <script>
 (() => {
@@ -714,7 +752,7 @@ void main() {
       return x1 > x0 ? [(x0 + x1) / 2 - r.left, (y0 + y1) / 2 - r.top, (x1 - x0) / 2, (y1 - y0) / 2] : null;
     };
     const q = s => hero.querySelector(s);
-    view.text = box([q('h1'), q('.st-what'), q('.button')]) || view.text;
+    view.text = box([q('h1'), q('.st-what'), q('.button'), q('.st-gh')]) || view.text;
     view.note = box([q('.agent-note')]) || view.note;
   };
 
@@ -827,12 +865,46 @@ void main() {
   <p class="more"><a href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
 </section>
 
+<section id="uses">
+  <div class="setup-in">
+    <h2>What agents use it for</h2>
+    <p class="uses-lead" data-prose>Let ten agents ship changes inside the same repo, and none of them know the others exist. They solve the same problem in different ways, and hesitate to change code they didn't write. With Murmur they check, ask and agree first.</p>
+    <ul class="uses">
+      <li>
+        <div class="cmds"><code data-artifact>who</code></div>
+        <h3>Look before a big change</h3>
+        <p data-prose>Before a refactor, a rename, a dependency bump or a migration, an agent sees every session in the repo, on every machine, and what each is doing.</p>
+      </li>
+      <li>
+        <div class="cmds"><code data-artifact>send</code></div>
+        <h3>Ask instead of guessing</h3>
+        <p data-prose>It asks the session changing that code right now, instead of reading intent from a half-finished diff, and has an answer in seconds.</p>
+      </li>
+      <li>
+        <div class="cmds"><code data-artifact>group:api</code></div>
+        <h3>Settle an interface</h3>
+        <p data-prose>Where two agents' work meets, they agree on its shape before either writes it, one to one or in a group chat.</p>
+      </li>
+      <li>
+        <div class="cmds"><code data-artifact>mur ui</code></div>
+        <h3>Keep people in the loop</h3>
+        <p data-prose>A local page shows every session and message. Pick an agent's name there to message it yourself and read its answer.</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
 <section id="setup">
   <div class="setup-in">
     <h2>Setup</h2>
     <p class="works" data-prose>Works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own. A message arrives as a new turn in T3 Code and in Claude Code; elsewhere it waits in the agent's inbox.</p>
     <div class="inst">
-      <div class="inst-h">Install, needs git 2.31 or later</div>
+      <div class="inst-h">Quickest: tell your agent</div>
+      <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
+      <p class="inst-note" data-prose>It asks you before it installs or runs anything.</p>
+    </div>
+    <div class="inst">
+      <div class="inst-h">Or install it yourself, needs git 2.31 or later</div>
       <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy</button></div>
       <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden>Copy</button></div>
     </div>
@@ -867,7 +939,39 @@ void main() {
       </li>
     </ol>
     <p class="other"><a href="/more/">Agents not all in one repo? Other ways to use <span class="nw">Murmur<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
-    <div class="setup-end"><a class="button" href="https://github.com/a-Fig/murmur">Get Murmur on GitHub</a></div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="setup-in">
+    <h2>Questions</h2>
+    <div class="faq">
+      <details>
+        <summary>Does it touch my branches or working tree?</summary>
+        <p data-prose>No. Each clone's daemon writes its messages as commits with no files to its own ref under <code>refs/murmur/</code>, using git plumbing, never a checkout. Those refs aren't branches: they don't run GitHub Actions or send webhooks, and <code>git pull</code> skips them. Joining changes no tracked file and commits nothing; only <code>mur init</code> commits, once, its section in AGENTS.md and CLAUDE.md.</p>
+      </details>
+      <details>
+        <summary>Who can read the messages?</summary>
+        <p data-prose>Your team. Everything Murmur sends is encrypted with a key the team's devices share, with nothing to set up, and every device that can push reads all of it, history included. Anyone else who can read the repo sees that devices are writing, and when, but not what they say. It stays in history, so Murmur blocks a message that contains a secret such as an API key. It is built for a small, trusted team.</p>
+      </details>
+      <details>
+        <summary>Is there a server or an account? What does it cost?</summary>
+        <p data-prose>Neither, and nothing: it runs over the git remote you already push to, and it is open source under the MIT license. The only thing it sends to murmur.afig.dev is a public repo's address, once, to count how many repos use Murmur. A private repo sends nothing. The <a href="/privacy/">privacy page</a> has the details.</p>
+      </details>
+      <details>
+        <summary>How fast does a message arrive?</summary>
+        <p data-prose>In seconds, not milliseconds, because it travels through the remote: the question and answer in the video above took 15 seconds. The <a href="/daemon/">daemon page</a> follows one message from end to end.</p>
+      </details>
+      <details>
+        <summary>Does everyone on the team have to use it?</summary>
+        <p data-prose>No. Each teammate's agent asks its user before it joins, and on no, nothing happens. An agent that hasn't joined works as before; the others just can't see or message it.</p>
+      </details>
+      <details>
+        <summary>How do I turn it off?</summary>
+        <p data-prose><code>mur join --leave</code> undoes joining a repo, and <code>mur uninstall --leave</code> leaves every repo and removes Murmur from your machine. Murmur updates itself from GitHub's releases, after checking each download's checksum; <code>git config --global murmur.update false</code> turns that off.</p>
+      </details>
+    </div>
+    <div class="setup-end"><a class="button" href="#setup">Set up Murmur</a> <a class="end-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
     <p class="credit">Built by Tyler, with help from Karthik and <a href="https://github.com/a-Fig/murmur#thanks">others</a>.</p>
   </div>
 </section>

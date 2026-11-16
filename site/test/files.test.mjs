@@ -180,3 +180,13 @@ test('the tests and package.json are not published with the site', () => {
   const ignored = read('.assetsignore').split('\n');
   assert.ok(ignored.includes('test') && ignored.includes('package.json'));
 });
+
+test('the home page\'s links within the page each lead to a section on it, and the hero leads to Setup', () => {
+  const html = read('index.html');
+  const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]));
+  const anchors = [...html.matchAll(/<a [^>]*href="#([^"]+)"/g)].map(m => m[1]);
+  assert.ok(anchors.length > 0);
+  for (const id of anchors) assert.ok(ids.has(id), `#${id} has no element`);
+  const hero = /<main class="st[^"]*">([\s\S]*?)<\/main>/.exec(html)?.[1] ?? '';
+  assert.match(hero, /<a class="button" href="#setup">/, 'the hero\'s button goes to Setup');
+});
