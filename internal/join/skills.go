@@ -33,6 +33,17 @@ func skillsDir(a agent, h agentHome) string {
 	return ""
 }
 
+// joinSkillsDir is skillsDir for join: none for an Antigravity home where Antigravity isn't
+// installed, as ~/.gemini is Gemini CLI's too (#741). Registering already asks hasAntigravity
+// (#650); the skills went in for any home whose folder was there, and the report said Antigravity
+// had them. Uninstall still takes them out of skillsDir, an earlier join's included.
+func (e Env) joinSkillsDir(a agent, h agentHome) string {
+	if a.driver == "antigravity" && !e.hasAntigravity(h) {
+		return ""
+	}
+	return skillsDir(a, h)
+}
+
 // installSkills writes Murmur's skills into dir, an agent's skills folder, and updates ones an
 // older mur wrote. A SKILL.md of the same name without skills.Marker is a user's own, and is left
 // alone with a note. Only called for an agent that is installed, whose home exists.

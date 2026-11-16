@@ -318,6 +318,25 @@ func TestGeminiCLIsHomeIsNoAntigravity(t *testing.T) {
 	}
 }
 
+// Nor do the skills go there, though the folder is (#741): only once Antigravity's own folder says
+// it is installed.
+func TestGeminiCLIsHomeGetsNoSkills(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	write(t, filepath.Join(sb.GeminiHome, "settings.json"), "{}")
+	a := agents[agentIndex("antigravity")]
+	h := sb.defaultHome(a)
+	if dir := sb.joinSkillsDir(a, h); dir != "" {
+		t.Errorf("skills for Gemini CLI's home, at %s", dir)
+	}
+	if err := os.MkdirAll(filepath.Join(sb.GeminiHome, "antigravity"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if dir, want := sb.joinSkillsDir(a, h), filepath.Join(sb.GeminiHome, "config", "skills"); dir != want {
+		t.Errorf("Antigravity's skills: %q, want %q", dir, want)
+	}
+}
+
 // The hook's command line runs under cmd /c on Windows, which takes no PowerShell quoting.
 func TestAntigravityHookCommand(t *testing.T) {
 	if got := antigravityHookCommand("mur", "Stop"); got != "mur hook --event Stop antigravity" && got != "'mur' hook --event Stop antigravity" {
