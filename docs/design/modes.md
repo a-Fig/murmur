@@ -16,8 +16,16 @@ session tag's rules apply to each of them:
 - Senders see the tag.
 
 The device's presence also says it is on do not disturb, so `who` and the page say why on the
-device's own line. Going back online lets the waiting messages through, as taking the tag off does.
-A session that has the tag itself keeps it.
+device's own line, and senders on other devices hold to it even if a session's tags don't show it.
+Neither a person taking the tag off a session nor the limit on a session's tags lifts it: the
+daemon checks the mode itself. A session that has the tag itself keeps it afterwards.
+
+## Going back online
+
+Going back online, from either mode, lets through what arrived since the device left online, as
+taking the tag off does: each message counts as arriving now, so an idle session gets it as a turn.
+What waited from before keeps the fate it had. When the device left online is kept in
+`settings.json` beside the mode, so a restart in between doesn't change this.
 
 ## Invisible
 

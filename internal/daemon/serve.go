@@ -951,7 +951,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		case offline:
 			return refuse(proto.RefusedRecipient, "not sent: "+why)
 		case (known || sleeping) && dnd:
-			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
+			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or do not disturb comes off, with no notice or turn."
 		case known && noWake != "":
 			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
 		case known && hookOff:

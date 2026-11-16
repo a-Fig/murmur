@@ -404,6 +404,9 @@ type pageSettings struct {
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
 	Mode        string              `json:"mode,omitempty"`
+	// Away is when the device last left online for another mode, kept so that going back
+	// releases what arrived since (mode.go), across restarts too.
+	Away time.Time `json:"away,omitzero"`
 }
 
 // defaultSettings are what stands with no settings.json, and what one from before a setting
@@ -477,13 +480,21 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	was := d.settings.Mode
+	switch {
+	case next.Mode == "":
+	case was == "":
+		next.Away = time.Now()
+	default:
+		next.Away = d.settings.Away // from one mode to the other: still away since then
+	}
 	if err := writeJSON(d.settingsPath(), next); err != nil {
 		return web.Settings{}, fmt.Errorf("saving settings: %w", err)
 	}
-	was := d.settings.Mode
+	away := d.settings.Away
 	d.settings = next
 	if next.Mode != was {
-		d.setMode(was, next.Mode)
+		d.setMode(was, next.Mode, away)
 	}
 	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil

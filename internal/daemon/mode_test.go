@@ -106,12 +106,20 @@ func TestDoNotDisturbHoldsEveryMessageToTheDevice(t *testing.T) {
 		t.Errorf("who on do not disturb: %s", r.Error)
 	}
 
+	// A person taking the tag off the session doesn't beat the device's mode.
+	if code, body := p.call("POST", "/api/tags", p.token, `{"addr":"`+alice+`","remove":["`+tags.DoNotDisturb+`"]}`); code != 200 && code != 204 {
+		t.Fatalf("taking the tag off alice: %d %s", code, body)
+	}
+
 	b.send("bbbbbb", alice, "held", "")
 	eventually(t, "the message to reach a", func() bool { return a.queuedFor(alice, "held") })
 	if r := a.hookNotices("claude-a"); len(r.Messages) > 0 || r.Unread > 0 {
 		t.Errorf("the hook told of a message on do not disturb: %+v", r)
 	}
 
+	// Through invisible on the way back, what waited is still let go once online.
+	p.mode("invisible")
+	eventually(t, "b to drop a", func() bool { return !b.lists(a.self()) })
 	p.mode("online")
 	eventually(t, "b to see a online", func() bool {
 		s, ok := b.whoEntry(alice)

@@ -4139,6 +4139,7 @@ function modeNote() {
 async function setMode(mode) {
   try {
     const base = ui.settings || (await api("/api/settings"));
+    if (ui.state) ui.state.mode = mode; // shown at once; the poll after the save has the daemon's
     saveSettings({ ...base, mode }, true);
     queueSettings(async () => poll());
   } catch (e) {
@@ -4781,12 +4782,12 @@ function settingsPage() {
               online: "Your agents here get messages as usual.",
               dnd: "Teammates still see this device and its agents, but no message reaches them: messages wait until you're back online, and senders are told why.",
               invisible: "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages wait until you're back online.",
-            }[set.mode || "online"],
+            }[deviceMode()],
             h(
               "div",
               { class: "segmented", role: "group" },
               [["online", "Online"], ["dnd", "Do not disturb"], ["invisible", "Invisible"]].map(([v, label]) =>
-                h("button", { "aria-pressed": (set.mode || "online") === v ? "true" : "false", "data-key": "mode-" + v, onclick: () => (set.mode || "online") !== v && setMode(v) }, label),
+                h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
               ),
             ),
           ),

@@ -60,8 +60,12 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 func (d *Daemon) dndLocked(id string) bool { return d.hasTagLocked(id, tags.DoNotDisturb) }
 
 // hasTagLocked says session id on this device has tag name. A session that isn't registered at
-// the moment goes by the tags kept for its name. Caller holds mu.
+// the moment goes by the tags kept for its name. While the device is on do not disturb (mode.go)
+// every session has that tag, whatever a human marked and however many tags it has. Caller holds mu.
 func (d *Daemon) hasTagLocked(id, name string) bool {
+	if name == tags.DoNotDisturb && d.dnd.Load() {
+		return true
+	}
 	if s := d.sessions[id]; s != nil {
 		return tags.Has(d.tagsOfLocked(s), name)
 	}
@@ -74,7 +78,8 @@ func (d *Daemon) hasTagLocked(id, name string) bool {
 }
 
 // peerDNDLocked says the session at dev/sess is on do not disturb: by this device's own tags, or
-// by its device's presence. Caller holds mu.
+// by its device's presence, which says so for every session while the device is (#681). Caller
+// holds mu.
 func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 	if sess == "" || sess == proto.CLISession {
 		return false
@@ -83,7 +88,7 @@ func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 		return d.dndLocked(sess)
 	}
 	p := d.peers[dev]
-	return p != nil && tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb)
+	return p != nil && (p.pres.DND || tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb))
 }
 
 // releaseLocked lets what stayed queued in the inbox of the sessions kept by key go out by whichever

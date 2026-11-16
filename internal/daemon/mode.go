@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -16,14 +18,17 @@ import (
 //   - Online is Murmur as it is otherwise.
 //   - Do not disturb keeps the device and its agents in sight, but no message reaches the agents:
 //     every session carries the do-not-disturb tag while it lasts (derivedTagsLocked), which holds
-//     its messages in the inbox with no turn and no notice, and tells their senders why. Going
-//     online again releases them, as taking the tag off does.
+//     its messages in the inbox with no turn and no notice, and tells their senders why. Neither a
+//     human's mark nor the tag limit can take it off a session (hasTagLocked).
 //   - Invisible takes the device off Murmur, as if it were offline. Its presence is deleted, as a
 //     goodbye deletes it, and nothing more is written to the bus (push refuses), nor are its
 //     sessions' starts and stops kept to be written later. Its agents' Murmur tools say Murmur is
 //     off here, the hook gives no notices, and no message is handed over as a turn: they wait in
 //     the inbox until the device is back. The daemon keeps fetching the bus, and the page shows the
 //     team without this device's agents, and sends nothing.
+//
+// Going back online releases what arrived since the device left online, through either mode, as
+// taking the tag off does.
 
 // ErrInvisible is what a write to the bus ends with while the device is invisible.
 var ErrInvisible = errors.New("this device is invisible in this repo, so it writes nothing to " + brand.Product)
@@ -60,11 +65,10 @@ func (d *Daemon) modeView() string {
 	return web.ModeOnline
 }
 
-// setMode acts on the mode's change from was to now, once settings.json has it.
-func (d *Daemon) setMode(was, now string) {
-	if now == "" {
-		now = web.ModeOnline
-	}
+// setMode acts on the mode's change from was to now, once settings.json has it. away is when the
+// device last left online.
+func (d *Daemon) setMode(was, now string, away time.Time) {
+	was, now = cmp.Or(was, web.ModeOnline), cmp.Or(now, web.ModeOnline)
 	d.hidden.Store(now == web.ModeInvisible)
 	d.dnd.Store(now == web.ModeDND)
 	d.log.Printf("mode: %s", now)
@@ -75,28 +79,33 @@ func (d *Daemon) setMode(was, now string) {
 		d.kickNames() // what waited, without its own backoff to sit out
 		d.kickMarks()
 	}
-	if was == web.ModeDND {
+	if now == web.ModeOnline {
 		d.mu.Lock()
-		d.releaseAllLocked()
+		d.releaseSinceLocked(away)
 		d.mu.Unlock()
 	}
 	d.kickPresence() // the presence loop deletes the presence, or pushes it as it now is
 	d.kickPush()
 }
 
-// releaseAllLocked lets what do not disturb held in every inbox go, as releaseLocked does for one
-// session's: a session still on do not disturb by its own tag keeps holding its own. Caller holds
-// mu.
-func (d *Daemon) releaseAllLocked() {
-	keys := map[string]bool{}
-	for id := range d.st.Inbox {
-		if !d.dndLocked(id) {
-			keys[d.tagKeyLocked(id)] = true
+// releaseSinceLocked lets go what arrived in any inbox since away, as releaseLocked does for one
+// session's: each counts as arriving now. What arrived before the device left online keeps the
+// fate it had, and a session still on do not disturb by its own tag keeps holding its own. Caller
+// holds mu.
+func (d *Daemon) releaseSinceLocked(away time.Time) {
+	now := time.Now()
+	for id, box := range d.st.Inbox {
+		if d.dndLocked(id) {
+			continue
+		}
+		for _, m := range box {
+			if !m.Noticed && !m.Pushing && !m.Attempted && !m.Arrived.Before(away) {
+				m.Released, m.PushFailed = now, false
+			}
 		}
 	}
-	for key := range keys {
-		d.releaseLocked(key)
-	}
+	d.saveLocked()
+	d.kickPush()
 }
 
 // hidePresence deletes this device's presence once after it became invisible, in turn with the

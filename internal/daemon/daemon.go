@@ -522,7 +522,8 @@ type Daemon struct {
 	writeMu sync.Mutex // serializes appends to this device's log
 	ownTip  string     // the remote's tip of this device's log, as last known; under writeMu
 
-	// setMu guards settings and settings.json. It is taken alone, never with another lock held.
+	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
+	// change (setMode) takes mu inside it.
 	setMu    sync.Mutex
 	settings pageSettings
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),

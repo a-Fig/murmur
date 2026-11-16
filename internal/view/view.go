@@ -718,7 +718,7 @@ func Lookup(r proto.Response) string {
 		b.WriteString("  reachable: a message sent now reaches its inbox at once (queued, not yet seen by the agent)\n")
 	}
 	if tags.Has(d.Tags, tags.DoNotDisturb) {
-		b.WriteString("  do not disturb: a message to it is queued in its inbox, with no notice or turn, until it reads its inbox or turns do not disturb off\n")
+		b.WriteString("  do not disturb: a message to it is queued in its inbox, with no notice or turn, until it reads its inbox or do not disturb comes off\n")
 	} else if d.NoWake != "" {
 		why := "waking is off for it on " + brand.Command + " ui"
 		if d.NoWake == bus.NoWakeIdle {
