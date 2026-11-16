@@ -60,6 +60,7 @@ func TestExecQuote(t *testing.T) {
 		"/opt/my apps/mur":         `"/opt/my apps/mur"`,
 		`/a"b$c` + "`d":            `"/a\\"b\\$c\\` + "`" + `d"`,
 		`/a\b`:                     `"/a\\\\b"`,
+		"/opt/100%/mur":            `"/opt/100%%/mur"`,
 	} {
 		if got := execQuote(in); got != want {
 			t.Errorf("execQuote(%q) = %s, want %s", in, got, want)
@@ -72,10 +73,16 @@ func TestExecQuote(t *testing.T) {
 
 // The launcher is put in place once, left as it is while it is right, made again when mur moves,
 // and taken out. Each system's home for it is pointed at a temporary directory first.
-func TestInstallLauncher(t *testing.T) {
+// testHome points each system's home for the launcher at a temporary directory, and lets a
+// launcher point at a build in one, which is what the test has.
+func testHome(t *testing.T) {
+	t.Helper()
 	if !Supported {
 		t.Skip("this build has no app")
 	}
+	was := devBuild
+	devBuild = func(string) bool { return false }
+	t.Cleanup(func() { devBuild = was })
 	home := t.TempDir()
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	t.Setenv("HOME", home)
@@ -83,6 +90,10 @@ func TestInstallLauncher(t *testing.T) {
 	if want := launcherPath(); !strings.HasPrefix(want, home) {
 		t.Fatalf("the launcher would go to %s, outside the test's home", want)
 	}
+}
+
+func TestInstallLauncher(t *testing.T) {
+	testHome(t)
 	dir := t.TempDir()
 	exe := filepath.Join(t.TempDir(), "mur.exe")
 	os.WriteFile(exe, nil, 0o755)
@@ -106,5 +117,41 @@ func TestInstallLauncher(t *testing.T) {
 	}
 	if got, err := RemoveLauncher(dir); err != nil || got != where || exists(where) {
 		t.Fatalf("remove: %s, %v; still there: %v", got, err, exists(where))
+	}
+}
+
+// A launcher the person took out stays out, until mur moves; one of the same name that isn't
+// Murmur's is neither replaced nor taken out; a build in a temporary directory gets none.
+func TestLauncherLeavesWhatIsntOurs(t *testing.T) {
+	testHome(t)
+	dir := t.TempDir()
+	exe := filepath.Join(t.TempDir(), "mur.exe")
+	os.WriteFile(exe, nil, 0o755)
+
+	where, _, err := InstallLauncher(exe, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(where)
+	if got, changed, err := InstallLauncher(exe, dir); got != "" || changed || err != nil || exists(where) {
+		t.Fatalf("a launcher the person took out came back: %s, %v, %v", got, changed, err)
+	}
+
+	os.Remove(filepath.Join(dir, stampFile))
+	os.WriteFile(where, []byte("someone else's"), 0o644)
+	if _, _, err := InstallLauncher(exe, dir); err == nil {
+		t.Fatal("put Murmur's launcher over someone else's")
+	}
+	if got, err := RemoveLauncher(dir); got != "" || err != nil {
+		t.Fatalf("took out someone else's launcher: %s, %v", got, err)
+	}
+	if b, _ := os.ReadFile(where); string(b) != "someone else's" {
+		t.Fatal("someone else's launcher changed")
+	}
+
+	os.Remove(where)
+	devBuild = func(string) bool { return true }
+	if got, _, _ := InstallLauncher(exe, dir); got != "" || exists(where) {
+		t.Fatal("a temporary build got a launcher")
 	}
 }

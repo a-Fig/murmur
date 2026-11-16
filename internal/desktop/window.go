@@ -56,14 +56,6 @@ func Run(ctx context.Context, opts Options) error {
 	w.SetSize(1280, 820, glaze.HintNone)
 	a.native = newNative(w)
 	defer a.native.close()
-	if opts.Instance != "" {
-		stop, err := listenInstance(opts.Instance, func() { w.Dispatch(a.raise) })
-		if err != nil {
-			log.Printf("a second mur app will open a second window: %v", err)
-		} else {
-			defer stop()
-		}
-	}
 
 	if err := w.Bind("murmurApp", a.fromPage); err != nil {
 		return err
@@ -89,6 +81,9 @@ func Run(ctx context.Context, opts Options) error {
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if opts.Instance != nil {
+		opts.Instance.onShow(func(gitDir string) { a.show(ctx, gitDir, opts.Switch) })
+	}
 	if opts.Follow != nil {
 		go a.follow(ctx, opts.Follow)
 	}
@@ -111,7 +106,26 @@ type app struct {
 	front  *bool // what the page was last told of whether the window is in front; nil, not yet
 }
 
-// raise brings the window forward, asked by a later `mur app`. On the UI thread.
+// show brings the window forward, asked by a later `mur app`, and moves it to the repo at gitDir
+// when that asked for one. Any goroutine.
+func (a *app) show(ctx context.Context, gitDir string, to func(context.Context, string) string) {
+	a.w.Dispatch(a.raise)
+	if gitDir == "" || to == nil {
+		return
+	}
+	go func() {
+		page := to(ctx, gitDir)
+		if page == "" || ctx.Err() != nil {
+			return
+		}
+		a.mu.Lock()
+		a.host = hostOf(page)
+		a.mu.Unlock()
+		a.w.Dispatch(func() { a.w.Navigate(page) })
+	}()
+}
+
+// raise brings the window forward. On the UI thread.
 func (a *app) raise() {
 	if s, ok := a.native.(interface{ show() }); ok {
 		s.show() // Windows': restores a minimized window, and leaves a maximized one maximized

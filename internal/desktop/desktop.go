@@ -29,9 +29,12 @@ type Options struct {
 	Open func(url string) error
 	// Debug turns on the web view's developer tools.
 	Debug bool
-	// Instance is where the open window records itself, so a later `mur app` brings it forward
-	// rather than opening another (BringForward). "" records nothing.
-	Instance string
+	// Instance is the window's claim to be the one window (Claim), so a later `mur app` brings it
+	// forward rather than opening another (BringForward). Nil claims nothing.
+	Instance *Instance
+	// Switch is given the repo a later `mur app` asked for and returns the address of its page,
+	// or "" to leave the window where it is.
+	Switch func(ctx context.Context, gitDir string) string
 }
 
 func hostOf(page string) string {

@@ -44,9 +44,14 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	// A window is open already: it comes forward, and no second one opens (#616). Macs start an
-	// app's bundle once, but a `mur app` typed in a terminal is another process.
+	// app's bundle once, but a `mur app` typed in a terminal is another process. One typed in a
+	// joined repo, or given one with -C, moves the window to that repo, as it would open there.
 	window := filepath.Join(cfg, "window.json")
-	if (!*wait || *fromLauncher) && desktop.BringForward(window) {
+	asked := ""
+	if gitDir, err := client.FindGitDir(ctx, *dir); err == nil && join.Joined(gitDir) && !*fromLauncher {
+		asked = gitDir
+	}
+	if (!*wait || *fromLauncher) && desktop.BringForward(window, asked) {
 		if !*fromLauncher {
 			fmt.Fprintln(out, "Brought the open window forward.")
 		}
@@ -100,6 +105,16 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	}
 
+	// This process is the window: it says so before starting a daemon, which can take seconds,
+	// so a second click meanwhile finds it rather than opening another (Opus review). Two clicks
+	// at once both get this far; the second finds the first's claim here, and stops.
+	inst, err := desktop.Claim(window)
+	if err != nil {
+		log.Printf("a second mur app will open a second window: %v", err)
+	} else if inst == nil {
+		return nil
+	}
+	defer inst.Close()
 	addr, err := pageOf(ctx, gitDir)
 	if err != nil {
 		return err
@@ -111,7 +126,8 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		Follow:   f.follow,
 		Open:     browse,
 		Debug:    *devtools,
-		Instance: window,
+		Instance: inst,
+		Switch:   f.switchTo,
 	})
 }
 
@@ -256,6 +272,25 @@ func (f *follower) follow(ctx context.Context, host string) string {
 	}
 	f.failed = ""
 	if u, err := url.Parse(page); err != nil || u.Host == host {
+		return ""
+	}
+	return page
+}
+
+// switchTo is desktop.Options.Switch: it moves the window to the clone at gitDir, which a later
+// `mur app` asked for, and returns its page, or "" when the window shows that clone already.
+func (f *follower) switchTo(ctx context.Context, gitDir string) string {
+	f.mu.Lock()
+	same := gitDir == f.gitDir
+	f.gitDir = gitDir
+	f.mu.Unlock()
+	if same {
+		return ""
+	}
+	f.remember()
+	page, err := f.page(ctx, gitDir)
+	if err != nil {
+		log.Printf("the page of %s: %v", gitDir, err)
 		return ""
 	}
 	return page

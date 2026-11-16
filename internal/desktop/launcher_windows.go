@@ -20,8 +20,9 @@ import (
 // app's AppUserModelID, which the window's process takes too (beforeWindow), so the window's
 // taskbar button is the shortcut's: pinned, it starts the app.
 
-// launcherPath is the shortcut's path. The Start menu is found through APPDATA, as Windows' own
-// shell does for the user's, so a test that points APPDATA elsewhere keeps it out of the real one.
+// launcherPath is the shortcut's path. The Start menu is the Programs folder under APPDATA: where
+// it is unless folder redirection moved it, and what a test can point elsewhere, which the shell's
+// known folder (FOLDERID_Programs) doesn't follow.
 func launcherPath() string {
 	base := os.Getenv("APPDATA")
 	if base == "" {
@@ -51,6 +52,13 @@ func installLauncher(exe, dir, where string) error {
 		appID:  brand.AppID,
 	})
 }
+
+// ownsLauncher says a shortcut no record of ours names is Murmur's: on Windows that would mean
+// reading it back through COM, so a stranger's Murmur.lnk is never taken for ours.
+func ownsLauncher(string) bool { return false }
+
+// removeLauncherFiles takes out the icon the shortcut used.
+func removeLauncherFiles(dir string) { os.Remove(filepath.Join(dir, brand.Product+".ico")) }
 
 type shortcut struct {
 	target, args, dir, icon, desc, appID string
@@ -89,7 +97,10 @@ const (
 	swShowMinNoActive       = 7
 )
 
-// call calls method i of the COM object at obj, and turns a failed HRESULT into an error.
+// call calls method i of the COM object at obj, and turns a failed HRESULT into an error. Every
+// pointer in args must be to memory the garbage collector neither frees nor moves until the call
+// returns: heap memory the caller keeps alive (see writeShortcut), never a variable on the stack,
+// which moves when the stack grows.
 func call(obj unsafe.Pointer, i int, name string, args ...uintptr) error {
 	vtbl := *(**[32]uintptr)(obj)
 	hr, _, _ := syscall.SyscallN(vtbl[i], append([]uintptr{uintptr(obj)}, args...)...)
@@ -105,13 +116,12 @@ func release(obj unsafe.Pointer) {
 	}
 }
 
-func wide(s string) uintptr {
-	p, _ := windows.UTF16PtrFromString(s)
-	return uintptr(unsafe.Pointer(p))
-}
-
 // writeShortcut writes a .lnk through the shell's ShellLink object (IShellLinkW), with the
 // AppUserModelID set through its property store, as Windows' own documentation does it.
+//
+// What COM is given a pointer to is made with new or as a string's UTF-16 copy, both on the heap,
+// where the garbage collector doesn't move them, and kept alive in keep until the end: a pointer
+// held only as a uintptr is no reference, and the memory under it could be freed (Opus review).
 func writeShortcut(path string, s shortcut) error {
 	runtime.LockOSThread() // COM's apartment is the thread's
 	defer runtime.UnlockOSThread()
@@ -119,12 +129,25 @@ func writeShortcut(path string, s shortcut) error {
 	if int32(hr) >= 0 {
 		defer procCoUninitialize.Call()
 	}
-	var link unsafe.Pointer
-	hr, _, _ = procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidShellLink)), 0, clsctxInproc, uintptr(unsafe.Pointer(&iidShellLinkW)), uintptr(unsafe.Pointer(&link)))
-	if int32(hr) < 0 || link == nil {
+	var keep []any
+	defer func() { runtime.KeepAlive(keep) }()
+	str := func(v string) uintptr {
+		p, _ := windows.UTF16PtrFromString(v)
+		keep = append(keep, p)
+		return uintptr(unsafe.Pointer(p))
+	}
+	out := func() *unsafe.Pointer { // where COM writes an interface pointer
+		p := new(unsafe.Pointer)
+		keep = append(keep, p)
+		return p
+	}
+
+	link := out()
+	hr, _, _ = procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidShellLink)), 0, clsctxInproc, uintptr(unsafe.Pointer(&iidShellLinkW)), uintptr(unsafe.Pointer(link)))
+	if int32(hr) < 0 || *link == nil {
 		return fmt.Errorf("making a shortcut: HRESULT 0x%08X", uint32(hr))
 	}
-	defer release(link)
+	defer release(*link)
 	// IShellLinkW: SetPath 20, SetArguments 11, SetWorkingDirectory 9, SetDescription 7,
 	// SetIconLocation 17, SetShowCmd 15.
 	steps := []struct {
@@ -132,47 +155,48 @@ func writeShortcut(path string, s shortcut) error {
 		name string
 		args []uintptr
 	}{
-		{20, "SetPath", []uintptr{wide(s.target)}},
-		{11, "SetArguments", []uintptr{wide(s.args)}},
-		{9, "SetWorkingDirectory", []uintptr{wide(s.dir)}},
-		{7, "SetDescription", []uintptr{wide(s.desc)}},
-		{17, "SetIconLocation", []uintptr{wide(s.icon), 0}},
+		{20, "SetPath", []uintptr{str(s.target)}},
+		{11, "SetArguments", []uintptr{str(s.args)}},
+		{9, "SetWorkingDirectory", []uintptr{str(s.dir)}},
+		{7, "SetDescription", []uintptr{str(s.desc)}},
+		{17, "SetIconLocation", []uintptr{str(s.icon), 0}},
 		// conhost --headless shows nothing; minimized, nothing shows should a Windows not know it.
 		{15, "SetShowCmd", []uintptr{swShowMinNoActive}},
 	}
 	for _, st := range steps {
-		if err := call(link, st.i, st.name, st.args...); err != nil {
+		if err := call(*link, st.i, st.name, st.args...); err != nil {
 			return err
 		}
 	}
 
-	var store unsafe.Pointer
-	if err := call(link, 0, "QueryInterface", uintptr(unsafe.Pointer(&iidPropertyStore)), uintptr(unsafe.Pointer(&store))); err != nil || store == nil {
+	store := out()
+	if err := call(*link, 0, "QueryInterface", uintptr(unsafe.Pointer(&iidPropertyStore)), uintptr(unsafe.Pointer(store))); err != nil || *store == nil {
 		return errShortcutInterface
 	}
-	defer release(store)
-	id, _ := windows.UTF16PtrFromString(s.appID)
-	v := propVariant{vt: vtLPWSTR, val: uintptr(unsafe.Pointer(id))}
-	if err := call(store, 6, "SetValue", uintptr(unsafe.Pointer(&pkeyAppUserModelID)), uintptr(unsafe.Pointer(&v))); err != nil {
+	defer release(*store)
+	v := new(propVariant)
+	keep = append(keep, v)
+	v.vt, v.val = vtLPWSTR, str(s.appID)
+	if err := call(*store, 6, "SetValue", uintptr(unsafe.Pointer(&pkeyAppUserModelID)), uintptr(unsafe.Pointer(v))); err != nil {
 		return err
 	}
-	if err := call(store, 7, "Commit"); err != nil {
+	if err := call(*store, 7, "Commit"); err != nil {
 		return err
 	}
-	runtime.KeepAlive(id)
 
-	var file unsafe.Pointer
-	if err := call(link, 0, "QueryInterface", uintptr(unsafe.Pointer(&iidPersistFile)), uintptr(unsafe.Pointer(&file))); err != nil || file == nil {
+	file := out()
+	if err := call(*link, 0, "QueryInterface", uintptr(unsafe.Pointer(&iidPersistFile)), uintptr(unsafe.Pointer(file))); err != nil || *file == nil {
 		return errShortcutInterface
 	}
-	defer release(file)
-	return call(file, 6, "Save", wide(path), 1) // IPersistFile::Save
+	defer release(*file)
+	return call(*file, 6, "Save", str(path), 1) // IPersistFile::Save
 }
 
 // setProcessAppID gives this process the app's AppUserModelID, the shortcut's, before it makes a
 // window, so Windows counts the window as the shortcut's.
 func setProcessAppID() {
-	procSetProcessAppID.Call(wide(brand.AppID))
+	id, _ := windows.UTF16PtrFromString(brand.AppID)
+	procSetProcessAppID.Call(uintptr(unsafe.Pointer(id)))
 }
 
 // allowForeground lets process pid take the foreground, which Windows gives only to a process the

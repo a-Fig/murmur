@@ -5,6 +5,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
 )
@@ -17,7 +18,7 @@ func dataHome() string {
 		return d
 	}
 	home, err := os.UserHomeDir()
-	if err != nil {
+	if err != nil || filepath.Clean(home) == "/" {
 		return ""
 	}
 	return filepath.Join(home, ".local", "share")
@@ -31,8 +32,21 @@ func launcherPath() string {
 	return filepath.Join(d, "applications", brand.AppID+".desktop")
 }
 
+func iconPath() string {
+	return filepath.Join(dataHome(), "icons", "hicolor", "256x256", "apps", brand.AppID+".png")
+}
+
+// ownsLauncher says the .desktop file at where is Murmur's: it names the app's icon.
+func ownsLauncher(where string) bool {
+	b, err := os.ReadFile(where)
+	return err == nil && strings.Contains(string(b), "\nIcon="+brand.AppID+"\n")
+}
+
+// removeLauncherFiles takes out the icon the .desktop file used.
+func removeLauncherFiles(string) { os.Remove(iconPath()) }
+
 func installLauncher(exe, dir, where string) error {
-	icon := filepath.Join(dataHome(), "icons", "hicolor", "256x256", "apps", brand.AppID+".png")
+	icon := iconPath()
 	if err := os.MkdirAll(filepath.Dir(icon), 0o755); err != nil {
 		return err
 	}

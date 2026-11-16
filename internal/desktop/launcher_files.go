@@ -89,7 +89,8 @@ func desktopEntry(exe string) string {
 }
 
 // execQuote quotes an argument for a .desktop file's Exec key: in double quotes, with ", `, $ and
-// \ escaped, and the backslashes doubled again, as the key's value is itself unescaped once.
+// \ escaped, the backslashes doubled again, as the key's value is itself unescaped once, and a % as
+// %%, which would otherwise start a field code such as %f.
 func execQuote(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -99,6 +100,8 @@ func execQuote(s string) string {
 			b.WriteString(`\\`)
 		case '\\':
 			b.WriteString(`\\\`)
+		case '%':
+			b.WriteByte('%')
 		}
 		b.WriteRune(r)
 	}

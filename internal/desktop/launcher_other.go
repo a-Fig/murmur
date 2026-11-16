@@ -8,6 +8,10 @@ func launcherPath() string { return "" }
 
 func installLauncher(exe, dir, where string) error { return nil }
 
+func ownsLauncher(string) bool { return false }
+
+func removeLauncherFiles(string) {}
+
 // FromBundle says whether this process is the app started from its macOS bundle: never here.
 func FromBundle() bool { return false }
 

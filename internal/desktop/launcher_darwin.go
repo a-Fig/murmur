@@ -16,8 +16,8 @@ import (
 
 func launcherPath() string {
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	if err != nil || filepath.Clean(home) == "/" {
+		return "" // a service account's: /Applications is everyone's
 	}
 	return filepath.Join(home, "Applications", brand.Product+".app")
 }
@@ -48,6 +48,14 @@ func installLauncher(exe, dir, where string) error {
 	}
 	return nil
 }
+
+// ownsLauncher says the bundle at where is Murmur's: its Info.plist names the app's identifier.
+func ownsLauncher(where string) bool {
+	b, err := os.ReadFile(filepath.Join(where, "Contents", "Info.plist"))
+	return err == nil && strings.Contains(string(b), "<string>"+brand.AppID+"</string>")
+}
+
+func removeLauncherFiles(string) {} // the bundle holds its own icon
 
 // FromBundle says whether this process was started from Murmur.app: its executable is the
 // bundle's, which LaunchServices starts with no arguments (or a -psn_ one, before macOS 10.9).

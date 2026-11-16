@@ -130,6 +130,12 @@ it onto this `mur` if `mur` has moved (a record in `launcher.json`, beside `last
 looking each time). `mur uninstall` takes it out. `mur join` doesn't add it: an agent runs join,
 and a person's Start menu is theirs to change; the person who runs `mur app` wants the app.
 
+It touches only what is Murmur's (Opus review): a launcher of the same name that isn't (a bundle
+whose Info.plist names another identifier, a `.desktop` file for another icon, any `Murmur.lnk` no
+record of ours names) is neither replaced nor taken out. A launcher the person deleted stays
+deleted until `mur` moves. A `mur` in a temporary directory, as `go run` and test builds are, puts
+none in place, so working on the app never points the real launcher at a binary that goes.
+
 - **Windows:** `Murmur.lnk` in the user's Start menu (found through `APPDATA`), with the app's icon
   as an `.ico` beside `last.json`. It runs `conhost.exe --headless mur.exe app`: `mur` is a console
   program, and a shortcut straight to it opens a console window for as long as `mur app` takes to
@@ -146,18 +152,27 @@ and a person's Start menu is theirs to change; the person who runs `mur app` wan
   theme, under `XDG_DATA_HOME`, in a build with the app (`-tags desktop`).
 
 **One window.** A launcher clicked twice, or `mur app` typed while the app is open, brings the open
-window forward rather than opening a second. The window listens on a loopback port and records it,
-with its process and a random key, in `window.json`; a later `mur app` that reaches it asks it to
-come forward and stops. On Windows it first lets the window's process take the foreground, which
-Windows otherwise gives only to the process the person just started. A window that ends without
-closing (a crash) leaves its record, which the next launch can't reach, and it opens a new window.
+window forward rather than opening a second. The window's process listens on a loopback port and
+records it, with its process and a random key, in `window.json`; a later `mur app` that reaches it
+asks it to come forward and stops. A `mur app` typed in a joined repo, or given one with `-C`, also
+moves the window to that repo, as it would have opened there. The process claims the port as it
+starts, before the seconds a daemon can take to start, so a second click in that time finds it;
+two clicks at once look for a window and claim under a lock file (`window.json.lock`), so the
+second finds the first. On
+Windows the later `mur app` first lets the window's process take the foreground, which Windows
+otherwise gives only to the process the person just started. A window that ends without closing (a
+crash) leaves its record, which the next launch can't reach, and it opens a new window.
 
 **What it leaves for later:** the notifications are still a balloon on Windows and Script Editor's
 on macOS. The AppUserModelID is what a toast of its own needs, and the bundle what macOS's own
 notifications need; both are code still to write. A `mur app` typed in a terminal on macOS runs the
 plain binary, not the bundle, so its Dock icon is `mur`'s until the window is started from the
 bundle. A launcher started where no repo has joined fails without saying so, as there is no
-terminal to say it in.
+terminal to say it in. A taskbar pin of the shortcut outlives `mur uninstall`, and stops working.
+Not yet seen on macOS: the window opening from the bundle (the test machine has no joined repo),
+and what privacy prompts a bundle that starts git and a daemon on repos in `~/Documents` or
+`~/Desktop` brings, which macOS asks of the bundle, not of Terminal, and may ask again after an
+update, as each build is signed anew.
 
 ## What it costs (2026-11-15)
 
