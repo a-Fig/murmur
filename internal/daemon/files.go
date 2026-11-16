@@ -82,10 +82,17 @@ func (d *Daemon) scratch() (*bus.Repo, func(), error) {
 	}, nil
 }
 
-// textOf is a file's bytes as text, if it is text the secret check can read: UTF-16 with its mark,
-// as Windows PowerShell writes a redirected file, or anything with no zero byte in it, with
-// whatever isn't UTF-8 passed over, so one stray byte doesn't hide the rest.
-func textOf(b []byte) (string, bool) {
+// textsOf is what the secret check reads of a file's bytes. UTF-16 with its mark, as Windows
+// PowerShell writes a redirected file, is decoded. A file with no zero byte is read as text, with
+// what isn't UTF-8 passed over, so one stray byte doesn't hide the rest.
+//
+// A file with a zero byte was once taken for binary and not checked, but keys sit in the clear
+// between zero bytes in a .tar, a SQLite file or Linux's /proc/self/environ (#737). Its runs of
+// printable ASCII are read, as `strings` reads a binary, and its runs of UTF-16 with no mark. Every
+// key the check knows is printable ASCII. Reading only the runs keeps a binary quick: all of 10 MB
+// of random bytes took 13 s to check, and its runs 0.1 s. Only what is compressed, as an image or a
+// zip, stays unread.
+func textsOf(b []byte) []string {
 	if len(b) >= 2 && len(b)%2 == 0 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff) {
 		var order binary.ByteOrder = binary.LittleEndian
 		if b[0] == 0xfe {
@@ -95,12 +102,61 @@ func textOf(b []byte) (string, bool) {
 		for i := 2; i < len(b); i += 2 {
 			units = append(units, order.Uint16(b[i:]))
 		}
-		return string(utf16.Decode(units)), true
+		return []string{string(utf16.Decode(units))}
 	}
-	if slices.Contains(b, 0) {
-		return "", false
+	if !slices.Contains(b, 0) {
+		return []string{strings.ToValidUTF8(string(b), " ")}
 	}
-	return strings.ToValidUTF8(string(b), " "), true
+	return []string{printableRuns(b), utf16Runs(b, 0) + utf16Runs(b, 1)}
+}
+
+// utf16Runs is b's runs of printable ASCII as UTF-16 with its low byte first, from offset off (0
+// or 1), of minRun characters or more, a line each: what `strings -el` reads. From offset 1 that
+// is also UTF-16 with its high byte first, whose last character, at the end of b, has no zero
+// after it.
+func utf16Runs(b []byte, off int) string {
+	var out strings.Builder
+	var run []byte
+	flush := func() {
+		if len(run) >= minRun {
+			out.Write(run)
+			out.WriteByte('\n')
+		}
+		run = run[:0]
+	}
+	for i := off; i < len(b); i += 2 {
+		if printable(b[i]) && (i+1 == len(b) || b[i+1] == 0) {
+			run = append(run, b[i])
+			continue
+		}
+		flush()
+	}
+	flush()
+	return out.String()
+}
+
+// minRun is the shortest run of printable bytes printableRuns keeps: shorter than any secret the
+// check knows, with what names it.
+const minRun = 8
+
+// printable says c is printable ASCII, or a tab.
+func printable(c byte) bool { return c >= 0x20 && c < 0x7f || c == '\t' }
+
+// printableRuns is b's runs of printable ASCII of minRun bytes or more, a line each.
+func printableRuns(b []byte) string {
+	var out strings.Builder
+	start := 0
+	for i := 0; i <= len(b); i++ {
+		if i < len(b) && printable(b[i]) {
+			continue
+		}
+		if i-start >= minRun {
+			out.Write(b[start:i])
+			out.WriteByte('\n')
+		}
+		start = i + 1
+	}
+	return out.String()
 }
 
 // sendFile is a file to send with a message: what the sender called it, a path from an agent or a
@@ -154,8 +210,8 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 	return files, nil
 }
 
-// checkSendFiles holds the files of a send to the limits. A text file is checked for secrets as a
-// body is; anything else can't be.
+// checkSendFiles holds the files of a send to the limits, and checks each for secrets as a body is
+// (textsOf).
 func checkSendFiles(files []sendFile) error {
 	if len(files) > bus.MaxFiles {
 		return fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(files))
@@ -168,10 +224,8 @@ func checkSendFiles(files []sendFile) error {
 		if total += int64(len(f.data)); total > bus.MaxFilesTotal {
 			return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
 		}
-		if text, ok := textOf(f.data); ok {
-			if err := scrub.Check(text); err != nil {
-				return fmt.Errorf("%s: %v", f.name, err)
-			}
+		if err := scrub.Check(textsOf(f.data)...); err != nil {
+			return fmt.Errorf("%s: %v", f.name, err)
 		}
 	}
 	return nil

@@ -313,6 +313,11 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a key in a file named png": {[]string{writeFile(t, "shot.png", []byte("AKIAIOSFODNN7EXAMPLE"))}, "shot.png"},
 		"a key in UTF-16":           {[]string{writeFile(t, "ps.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n"))}, "ps.txt"},
 		"a key after a stray byte":  {[]string{writeFile(t, "latin.txt", []byte("caf\xe9 AKIAIOSFODNN7EXAMPLE\n"))}, "latin.txt"},
+		// A zero byte once made a file binary, and unchecked (#737).
+		"a key in an environ":                  {[]string{writeFile(t, "environ", []byte("HOME=/root\x00GH=ghp_0123456789abcdefghijABCDEFGHIJ0123456789\x00"))}, "environ"},
+		"a key in a tar":                       {[]string{writeFile(t, "conf.tar", append(append(make([]byte, 512), "AWS=AKIAIOSFODNN7EXAMPLE\n"...), make([]byte, 512)...))}, "conf.tar"},
+		"a key in UTF-16 with no mark":         {[]string{writeFile(t, "le.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n")[2:])}, "le.txt"},
+		"a key in big-end UTF-16 with no mark": {[]string{writeFile(t, "be.txt", append([]byte{0}, utf16File("key AKIAIOSFODNN7EXAMPLE")[2:]...))}, "be.txt"},
 	} {
 		if what == "a Git Bash path" && runtime.GOOS != "windows" {
 			continue // a full path everywhere else

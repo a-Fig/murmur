@@ -110,9 +110,12 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
-- **Secrets.** A file that is text goes through the check a body does (`internal/scrub`): UTF-16
-  with its mark, as Windows PowerShell writes a redirected file, and anything with no zero byte. An
-  image or other binary can't be checked.
+- **Secrets.** Every file goes through the check a body does (`internal/scrub`). UTF-16 with its
+  mark, as Windows PowerShell writes a redirected file, is decoded first. Of a file with zero bytes,
+  its runs of printable ASCII and of UTF-16 with no mark are checked, as `strings` reads a binary,
+  since keys sit in the clear between zero bytes in a `.tar`, a SQLite file or `/proc/self/environ`
+  (#737, from 2026-11-16; before, such a file went unchecked). Only the runs, so 10 MB of random
+  bytes takes 0.1 s, not 13. What is compressed, as an image or a zip, can't be read.
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.
