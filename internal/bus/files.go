@@ -373,24 +373,36 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, e
 			had[e.Name()] = true
 		}
 	}
-	// What the fetch wrote: the pack, as it grows, and once it is done its index too. In the
-	// clone's own objects, which another fetch or a gc may be writing to as well, only a pack still
-	// being written is counted, and nothing is removed: a pack that is done may be theirs.
+	// What the fetch wrote: the pack, as it grows, and once it is done its index too. Only in a
+	// scratch directory, which nothing else writes to: in the clone's own objects another fetch or
+	// a gc may be writing as well, and a refusal is for good, so there the size is left to ReadPack.
 	fetched := func() (n int64, names []string) {
+		if !own {
+			return 0, nil
+		}
+		var writing, done int64
 		ents, _ := os.ReadDir(packs)
 		for _, e := range ents {
-			if had[e.Name()] || !own && !strings.HasPrefix(e.Name(), "tmp_") {
+			if had[e.Name()] {
 				continue
 			}
+			names = append(names, e.Name())
 			// Stat by path: on Windows a listing's size lags a file being written to.
-			if info, err := os.Stat(filepath.Join(packs, e.Name())); err == nil {
-				n += info.Size()
-			}
-			if own {
-				names = append(names, e.Name())
+			info, err := os.Stat(filepath.Join(packs, e.Name()))
+			switch {
+			case err != nil:
+			case strings.HasPrefix(e.Name(), "tmp_"):
+				writing += info.Size()
+			default:
+				done += info.Size()
 			}
 		}
-		return n, names
+		// Git finishes a pack by linking it to its name before it removes the temporary one, so for a
+		// moment it is there twice; the fetch writes one pack.
+		if writing > done {
+			return writing, names
+		}
+		return done, names
 	}
 	removeFetched := func(names []string) {
 		for _, name := range names {

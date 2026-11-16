@@ -8,9 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -297,32 +297,45 @@ func TestFetchFilesStopsASlowDownload(t *testing.T) {
 	if out, err := exec.Command("git", "--git-dir="+remote, "update-ref", ref, sha).CombinedOutput(); err != nil {
 		t.Fatalf("update-ref: %v: %s", err, out)
 	}
-	// 256 KiB every 100 ms: the whole ref would take over six seconds.
-	slow := filepath.Join(t.TempDir(), "slow.sh")
-	os.WriteFile(slow, []byte(slowUploadPack), 0o755)
+	// At most 256 KiB every 100 ms, less where a pipe gives less at a time: the whole ref would take
+	// six seconds or more. The script counts what it passes on.
+	dir := t.TempDir()
+	slow := filepath.Join(dir, "slow.sh")
+	if err := os.WriteFile(slow, []byte(slowUploadPack), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	local := t.TempDir()
-	for _, args := range [][]string{{"init", "-q", "--bare", local}, {"--git-dir=" + local, "remote", "add", "slow", remote}, {"--git-dir=" + local, "config", "remote.slow.uploadpack", "sh " + filepath.ToSlash(slow)}} {
+	for _, args := range [][]string{{"init", "-q", "--bare", local}, {"--git-dir=" + local, "remote", "add", "slow", remote}, {"--git-dir=" + local, "config", "remote.slow.uploadpack", "sh '" + filepath.ToSlash(slow) + "'"}} {
 		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
 	scratch := t.TempDir()
 	here := (&bus.Repo{Git: gitx.Git{Dir: local}, Remote: "slow"}).Scratch(scratch)
-	start := time.Now()
 	if _, err := here.FetchFiles(ctx, ref, 64<<10); !errors.Is(err, bus.ErrTooLarge) {
 		t.Fatalf("a slow ref over the limit: %v", err)
 	}
-	took := time.Since(start)
-	t.Logf("stopped after %v", took)
-	if took > 4*time.Second {
-		t.Fatalf("took %v: the fetch wasn't stopped as it arrived", took)
+	b, _ := os.ReadFile(filepath.Join(dir, "sent"))
+	sent, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatalf("what the remote sent: %q", b)
+	}
+	t.Logf("the remote sent %d of %d bytes", sent, len(pack))
+	if sent > 4<<20 {
+		t.Fatalf("the remote sent %d bytes: the fetch wasn't stopped as it arrived", sent)
 	}
 }
 
-// slowUploadPack is git-upload-pack with what it sends passed on 256 KiB every 100 ms at most.
+// slowUploadPack is git upload-pack with what it sends passed on at most 256 KiB every 100 ms,
+// stopping when the fetch has gone, as a sender across a network finds. It writes how many bytes
+// it passed on to "sent" beside itself.
 const slowUploadPack = `chunk=$(mktemp)
-git-upload-pack "$@" | while dd bs=262144 count=1 of="$chunk" 2>/dev/null && [ -s "$chunk" ]; do
-	cat "$chunk" || break # the fetch has gone, as a network's sender finds
+sent=0
+echo 0 > "$(dirname "$0")/sent"
+git upload-pack "$@" | while dd bs=262144 count=1 of="$chunk" 2>/dev/null && [ -s "$chunk" ]; do
+	cat "$chunk" || break
+	sent=$((sent + $(wc -c < "$chunk")))
+	echo $sent > "$(dirname "$0")/sent"
 	sleep 0.1
 done
 rm -f "$chunk"
