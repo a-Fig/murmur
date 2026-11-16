@@ -23,25 +23,37 @@ func TestRunTreeEndsEveryProcess(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	g := gitx.Git{Dir: dir}
-	for what, alias := range map[string]string{
+	for what, c := range map[string]struct {
+		alias string
+		stop  bool // ended by ctx while git runs; otherwise git exits, and RunTree with it
+	}{
 		// git runs the alias through sh, which runs the loop: git's grandchild, then.
-		"stopped": `!f() { while :; do echo . >> "$1"; sleep 0.1; done; }; f`,
-		// The loop runs on after git has exited.
-		"left behind": `!f() { (while :; do echo . >> "$1"; sleep 0.1; done) & }; f`,
+		"stopped": {`!f() { while :; do echo . >> "$1"; sleep 0.1; done; }; f`, true},
+		// The loop runs on after git has exited, holding git's output open; git waits until it has
+		// written, so the test sees it stopped and not merely not yet begun.
+		"left behind": {`!f() { (while :; do echo . >> "$1"; sleep 0.1; done) & sleep 0.5; }; f`, false},
 	} {
 		t.Run(what, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "log")
 			ctx, cancel := context.WithCancelCause(context.Background())
-			stop := errors.New("stopped by the test")
-			time.AfterFunc(time.Second, func() { cancel(stop) })
 			defer cancel(nil)
-			start := time.Now()
-			_, err := g.RunTree(ctx, "-c", "alias.loop="+alias, "loop", filepath.ToSlash(log))
-			if what == "stopped" && !errors.Is(err, stop) {
-				t.Fatalf("RunTree: %v, want the context's cause", err)
+			stop := errors.New("stopped by the test")
+			if c.stop {
+				time.AfterFunc(time.Second, func() { cancel(stop) })
 			}
-			if took := time.Since(start); took > 8*time.Second {
+			start := time.Now()
+			_, err := g.RunTree(ctx, "-c", "alias.loop="+c.alias, "loop", filepath.ToSlash(log))
+			took := time.Since(start)
+			switch {
+			case c.stop && !errors.Is(err, stop):
+				t.Fatalf("RunTree: %v, want the context's cause", err)
+			case !c.stop && err != nil:
+				t.Fatalf("RunTree of a git that exited: %v", err)
+			case c.stop && took > 8*time.Second, !c.stop && took > 3*time.Second:
 				t.Fatalf("RunTree took %v", took)
+			}
+			if !c.stop && size(log) == 0 {
+				t.Fatal("the loop never wrote")
 			}
 			waitGrown(t, log)
 			before := size(log)

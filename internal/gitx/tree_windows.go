@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -11,7 +12,13 @@ import (
 
 // A tree is a job object: git is put in it before it runs, and every process it starts is in it
 // too, so ending the job ends them all. Killing git alone, as exec does, leaves its children.
-type tree struct{ job windows.Handle }
+type tree struct {
+	job windows.Handle
+	git *os.Process // ended on its own where there is no job
+}
+
+// useJob is false in a test of what RunTree does where no job can be made.
+var useJob = true
 
 // basicAccounting is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, which x/sys doesn't have.
 type basicAccounting struct {
@@ -20,14 +27,18 @@ type basicAccounting struct {
 }
 
 // startTree starts git suspended, so it can start nothing before it is in the job, puts it in a
-// new job, and lets it run. A job that can't be made, or git put in it, is gone without: git runs
-// as Run's would, and end can end only git.
+// new job, and lets it run. A job that can't be made, or git put in it (a job this process is in
+// may forbid one inside it), is gone without: end then ends git alone, as Run does, and its
+// children are left as Run leaves them. Refusing to run would leave no files fetch at all there.
 func startTree(cmd *exec.Cmd) (*tree, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
-	job, jerr := windows.CreateJobObject(nil, nil)
+	job, jerr := windows.Handle(0), error(syscall.EINVAL)
+	if useJob {
+		job, jerr = windows.CreateJobObject(nil, nil)
+	}
 	if jerr == nil {
 		// Closing the job's last handle ends what is in it: should this process die, its fetch dies.
 		info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
@@ -44,7 +55,7 @@ func startTree(cmd *exec.Cmd) (*tree, error) {
 		}
 		return nil, err
 	}
-	t := &tree{}
+	t := &tree{git: cmd.Process}
 	pid := uint32(cmd.Process.Pid)
 	if job != 0 {
 		if p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, pid); err == nil {
@@ -96,9 +107,11 @@ func resume(pid uint32) error {
 	return nil
 }
 
-// end ends every process in the job and waits until none is left, for at most treeGone.
+// end ends every process in the job and waits until none is left, for at most treeGone; with no
+// job, it ends git, whose Wait RunTree is in.
 func (t *tree) end() {
 	if t.job == 0 {
+		t.git.Kill()
 		return
 	}
 	defer windows.CloseHandle(t.job)

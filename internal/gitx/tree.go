@@ -1,8 +1,8 @@
 package gitx
 
 import (
-	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"time"
@@ -27,11 +27,22 @@ func (g Git) RunTree(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), g.Env...)
 	hideWindow(cmd)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	// Wait waits for whoever holds the output pipes, which the tree's ending closes; this is for a
-	// process that got out of the tree (where the system lets one).
-	cmd.WaitDelay = treeGone
+	// Output goes to files, not pipes: a child that outlives git holds a pipe open, and Wait would
+	// wait for it before the tree could be ended (Sol review). With files, Wait returns when git
+	// does, and the tree is ended then.
+	stdout, err := os.CreateTemp("", "mur-git-out-*")
+	if err != nil {
+		return "", &Error{Args: args, Err: err}
+	}
+	defer os.Remove(stdout.Name())
+	defer stdout.Close()
+	stderr, err := os.CreateTemp("", "mur-git-err-*")
+	if err != nil {
+		return "", &Error{Args: args, Err: err}
+	}
+	defer os.Remove(stderr.Name())
+	defer stderr.Close()
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	t, err := startTree(cmd)
 	if err != nil {
 		return "", &Error{Args: args, Err: err}
@@ -46,8 +57,18 @@ func (g Git) RunTree(ctx context.Context, args ...string) (string, error) {
 		<-waited
 		err = context.Cause(ctx)
 	}
+	out, errb := readBack(stdout), readBack(stderr)
 	if err != nil {
-		return out.String(), &Error{Args: args, Stderr: errb.String(), Err: err}
+		return out, &Error{Args: args, Stderr: errb, Err: err}
 	}
-	return out.String(), nil
+	return out, nil
+}
+
+// readBack is what a command wrote to f.
+func readBack(f *os.File) string {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return ""
+	}
+	b, _ := io.ReadAll(f)
+	return string(b)
 }
