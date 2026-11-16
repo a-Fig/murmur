@@ -54,6 +54,7 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   daemon keeps it in `Sent` like a person's, with the state asked about and who asked, until the
   sender has been told; meanwhile it is counted apart from the person's 200 (#748, 2026-11-16):
   sharing them, a busy half hour pushed out a record still waited on, and its sender never heard.
+  Past 2,000 waited on at once, the oldest's sender is told early where its message is.
   The page shows no ticks for it.
   The sender is told once: when every recipient whose
   device writes marks has got that far, or after `TellWait` (30 minutes) with where it is with each.

@@ -260,7 +260,8 @@ func (d *Daemon) recordSentLocked(e bus.Event) {
 // waits to be told of past maxTells. The two are counted apart (#748): sharing the 200, a busy
 // half hour of the person's messages and other agents' pushed out a record whose sender was still
 // waiting, and it never heard, not even at the timeout. One that is waited on goes when its sender
-// is told, TellWait after it was sent at the latest (tellLoop), so maxTells is only a backstop.
+// is told, TellWait after it was sent at the latest (tellLoop), so maxTells is only a backstop,
+// and one it lets go of is told then, early, where its message is: none goes unheard.
 // just is the record being added, which the caller may yet mark as waited on: it is kept. Caller
 // holds mu.
 func (d *Daemon) trimSentLocked(just string) {
@@ -274,16 +275,19 @@ func (d *Daemon) trimSentLocked(just string) {
 			kept = append(kept, id)
 		}
 	}
-	for list, room := range map[*[]string]int{&kept: maxSent - 1, &waiting: maxTells} {
-		ids := *list
+	oldest := func(ids []string, room int) []string {
 		over := len(ids) - room
 		if over <= 0 {
-			continue
+			return nil
 		}
 		sort.Slice(ids, func(i, j int) bool { return d.st.Sent[ids[i]].At.Before(d.st.Sent[ids[j]].At) })
-		for _, id := range ids[:over] {
-			delete(d.st.Sent, id)
-		}
+		return ids[:over]
+	}
+	for _, id := range oldest(kept, maxSent-1) {
+		delete(d.st.Sent, id)
+	}
+	for _, id := range oldest(waiting, maxTells) {
+		d.tellLocked(id, d.st.Sent[id], true) // tells its sender, and lets go of it
 	}
 }
 
