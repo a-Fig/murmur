@@ -5,8 +5,8 @@ also a bad thing tbh... limits the potential of the agent." Until then Murmur ca
 couldn't send another a screenshot, a log or a diff.
 
 `send` takes `files`, a list of paths. The recipient's agent gets each as a path on its own machine,
-which it opens with its own tools; one that reads images sees the image. The page doesn't show or
-send files yet (#570's second part).
+which it opens with its own tools; one that reads images sees the image. A person on the page
+attaches, pastes or drops files, and sees the ones a message carries ([below](#on-the-page)).
 
 ## How a file travels
 
@@ -110,9 +110,19 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
-- **Secrets.** A file that is text goes through the check a body does (`internal/scrub`): UTF-16
-  with its mark, as Windows PowerShell writes a redirected file, and anything with no zero byte. An
-  image or other binary can't be checked.
+- **Secrets.** Every file goes through the check a body does (`internal/scrub`). UTF-16 with its
+  mark, as Windows PowerShell writes a redirected file, is decoded, and its bytes are checked too. Of a
+  file with zero bytes, its regions of text are checked, as `strings` reads a binary: UTF-8, and
+  UTF-16 with no mark in either byte order. Keys sit in the clear between zero bytes in a `.tar`, a
+  SQLite file or `/proc/self/environ` (#737, from 2026-11-16; before, such a file went unchecked).
+  A region is every character but a zero, up to a byte that can't be one, so a name stays with its
+  value past a line break or a control character. Only a whole region under 8 characters is
+  skipped, so random bytes, which break into short regions, are quick: 10 MB took 0.4 s to check,
+  not 13 s, on Tyler's laptop (2026-11-16). Long text is slower, about 1 s a MB, as it is for a text
+  file. Unread: what is compressed, as an image or a
+  zip, which isn't unpacked, and UTF-16 with no mark past U+2000 (CJK, say). `publicKeyToken` with
+  16 hex digits, in every Windows program's manifest, is .NET's public assembly identity, not a
+  secret.
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.
@@ -144,14 +154,46 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   before reading there, and a client that reads only inside its workspace can't. Saving under the
   session's own directory would put files in a working tree.
 
-## Older daemons, and people
+## On the page
+
+- **Sending.** The composer takes files from its paperclip, a paste or a drop anywhere on the page.
+  They go with the text as one form to `POST /api/send`, a part each, since JSON would carry them a
+  third larger. The daemon then treats them as an agent's: the same limits, the same secret check,
+  the same ref. The page holds a file to the limits before it uploads it. A message of files alone
+  has their names for its subject, because a message needs one.
+- **Showing.** The messages the page lists say each file's name and size. `GET /api/file` gives one
+  file, by its message's ID and its place. Nothing is fetched for a person until then: a message to
+  a person isn't held for its files, since the page can show it at once and fill a picture in.
+  PNG, JPEG, GIF and WebP are shown as pictures, asked for when their message is drawn; anything
+  else is a button that saves it. SVG is saved, not shown: it is a document.
+- **A fetch mustn't stall the page.** A browser gives a page six connections, and a file can wait
+  on a fetch from the remote, so the page asks for two files at a time and the polls and sends
+  keep theirs. The daemon fetches for the page once, not three times, and for 20 seconds after a
+  fetch fails it answers the message's other files without fetching again. It says 404 for a file
+  that can't be had, which the page shows as "Not here" until it is clicked, and 503 for one that
+  couldn't be fetched just now, which the page asks for again after 30 seconds.
+- **A file never runs.** The daemon sends every file as `application/octet-stream` with
+  `nosniff`, to be saved. A file opened by the browser as the page's own would run a teammate's
+  agent's HTML with the page's key in reach. A picture is shown through an `<img>` from an object
+  URL the page makes of the bytes, which runs nothing; the content policy allows `blob:` for images
+  only.
+- **What it costs.** An upload isn't `keepalive`, which a browser caps at 64 KiB: closing the page
+  before an upload ends loses the message, where a message of text alone still goes
+  ([page](page.md)). The page keeps what it fetched in memory, up to 96 MB, and lets go of the
+  oldest it isn't showing.
+- **The desktop app.** Its window asks where to save a file with a save panel (`OnDownload`,
+  [desktop](desktop.md)): without one the web view cancels every download on macOS and Linux.
+  Written from the web view's source and not tried on either (2026-11-15); Windows leaves
+  downloads to WebView2.
+
+## Older daemons
 
 Tyler's decision (2026-11-15): sent with a note, not refused. A daemon from before files ignores
 an event's `files` and gives its sessions the text, with no sign there was more. A device's
 presence says whether its daemon takes files (`files`, beside `groups` and `receipts`), and a
 sender is told which recipients' devices don't. Refusing would hold back the text for a gap the
-updater closes within an hour ([updating](updating.md)). A sender to a person is told the same
-until the page shows files.
+updater closes within an hour ([updating](updating.md)). A person whose page is served by such a
+daemon is among them.
 
 A client from before files talking to a newer daemon sends none. A newer client finds an older
 daemon by its protocol number (23) and replaces it, as for any request an older daemon can't serve.

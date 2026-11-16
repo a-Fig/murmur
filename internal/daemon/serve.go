@@ -649,6 +649,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		if d.readOnPromptLocked(id, req.Prompt) {
 			d.saveLocked() // a turn handed over has started (#611)
 		}
+		if s := d.sessions[id]; s != nil && s.sending != "" && req.Prompt != "" &&
+			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
+			s.sendingSeen = true // the turn a send still running hands it has begun (#677)
+		}
 		if d.dndLocked(id) {
 			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
 			// whole message and no hold for the turn's end, and don't count as unread for the hook.
@@ -799,6 +803,12 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 }
 
 func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto.Response {
+	return d.sendWith(ctx, from, req, nil)
+}
+
+// sendWith is send with files that aren't paths for the daemon to read (req.Files): the page's
+// person's, which the browser uploaded.
+func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, uploads []sendFile) proto.Response {
 	to := strings.TrimSpace(req.To)
 	// A device's group is the device (#463): the message goes on the bus to the device, as one sent
 	// to its ID does, so every daemon delivers it, older ones too, and only to that device's
@@ -995,10 +1005,14 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: body}
-	if len(req.Files) > 0 {
+	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		files, at, err := d.putFiles(ctx, req.Files)
+		read, err := readSendFiles(req.Files)
+		if err != nil {
+			return refuse(proto.RefusedSend, "not sent: "+err.Error())
+		}
+		files, at, err := d.putFiles(ctx, append(read, uploads...))
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}

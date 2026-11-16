@@ -883,6 +883,11 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	switch j.via {
 	case viaT3:
 		return d.attempt(j.msgs, func() error {
+			d.mu.Lock()
+			if s := d.sessions[j.id]; s != nil {
+				s.sending, s.sendingSeen = turnStart(j.text), false
+			}
+			d.mu.Unlock()
 			return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
 		})
 	case viaSocket:
@@ -979,6 +984,11 @@ func (d *Daemon) markAttempted(msgs []*inMsg, v bool) error {
 func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	seen := false // a prompt that is this turn came while the send ran (sendingSeen)
+	if s := d.sessions[j.id]; s != nil && j.via == viaT3 {
+		seen = s.sendingSeen
+		s.sending, s.sendingSeen = "", false
+	}
 	for _, m := range j.msgs {
 		m.Pushing = false
 		if j.via == viaT3 {
@@ -1029,8 +1039,21 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), m.Event.To)
 	}
-	if s := d.sessions[j.id]; s != nil && j.via == viaT3 {
-		s.handedAt = time.Now() // a turn the hook hasn't seen start (runUnseen, hooklessBusy)
+	// A turn the hook hasn't seen start (runUnseen, hooklessBusy), unless it has: T3 can take a while
+	// to answer, and the turn can begin, and even end, before the send returns (#677). Holding the
+	// session after that held its next message for handedHold, a turn it had already had, wherever
+	// T3's database couldn't be read. Only a prompt that is this turn says so (seen): a tool
+	// call or a Stop may be of an earlier turn T3's database had ended, and a read of the database
+	// that ended a turn may have seen an older run go before T3 queued this one. A client whose hook
+	// sends no prompt keeps the hold.
+	//
+	// The prompt is told by its text, which a turn needn't have alone: an earlier turn of the same
+	// text, a person pasting the whole turn, or turns alike in their first MaxPrompt bytes, starting
+	// while the send runs with this one queued behind, are taken for it (Sol's review). The next
+	// message may then queue behind this one in T3, as before #607. Telling them apart for certain
+	// would take an ID in the turn's text, which agents read.
+	if s := d.sessions[j.id]; s != nil && j.via == viaT3 && !seen {
+		s.handedAt = time.Now()
 	}
 	d.saveLocked()
 	delete(d.pushWarned, j.id)

@@ -41,9 +41,14 @@ type Source interface {
 	// SetColor picks this device's colour (#573), 1 to bus.Colors, or with 0 lets it be chosen, and
 	// returns the account. An error says why the colour won't do: another device has it.
 	SetColor(ctx context.Context, color int) (Account, error)
-	// Send sends text as this device's person to a name, a device/session address, a device or "*".
-	// It returns once the message is on the remote; an error means it wasn't sent, and says why.
-	Send(ctx context.Context, to, text string) (Sent, error)
+	// Send sends text as this device's person to a name, a device/session address, a device or "*",
+	// with files if any (#570). It returns once the message is on the remote; an error means it
+	// wasn't sent, and says why.
+	Send(ctx context.Context, to, text string, files []Upload) (Sent, error)
+	// File returns the index'th file of the message with that ID, fetching it if it isn't on this
+	// device yet. An error says why it can't be had, in words to show: one that is ErrNoFile if
+	// asking again won't help, any other if it might (the remote couldn't be reached).
+	File(ctx context.Context, id string, index int) (name string, data []byte, err error)
 	// MarkRead takes these messages out of the person's unread.
 	MarkRead(ctx context.Context, ids []string) error
 	// Health is how this device is doing with the remote and its sessions (health.go).
@@ -204,6 +209,25 @@ type Message struct {
 	// FromPerson and ToPerson say that end is a person, not an agent's session.
 	FromPerson bool `json:"fromPerson,omitempty"`
 	ToPerson   bool `json:"toPerson,omitempty"`
+	// Files is the files the message carries (#570), which the page asks for one at a time
+	// (/api/file) when it shows them.
+	Files []File `json:"files,omitempty"`
+}
+
+// File is one file a message carries, as the page lists it.
+type File struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// ErrNoFile is what a Source's File error is when the file can't be had at all: its message has
+// no such file, or it is gone from the remote. The page says so and stops asking.
+var ErrNoFile = errors.New("no such file")
+
+// Upload is a file a person sends with a message from the page.
+type Upload struct {
+	Name string
+	Data []byte
 }
 
 // Message.ToKind values.

@@ -2,6 +2,9 @@ package daemon_test
 
 import (
 	"bytes"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // utf16File is text as Windows PowerShell writes a redirected file: UTF-16, little end first, after
@@ -21,6 +25,15 @@ func utf16File(text string) []byte {
 	b := []byte{0xff, 0xfe}
 	for _, u := range utf16.Encode([]rune(text)) {
 		b = append(b, byte(u), byte(u>>8))
+	}
+	return b
+}
+
+// utf16BE is text as UTF-16, big end first, with no mark.
+func utf16BE(text string) []byte {
+	var b []byte
+	for _, u := range utf16.Encode([]rune(text)) {
+		b = append(b, byte(u>>8), byte(u))
 	}
 	return b
 }
@@ -177,16 +190,106 @@ func TestFilesForASessionOnTheSameDevice(t *testing.T) {
 	}
 }
 
-// A person reads on the page, which doesn't show files yet, so a sender is told they get the text
-// alone, and nothing is held back from their inbox while files are fetched.
-func TestFilesSentToAPerson(t *testing.T) {
+// sendFiles sends as the page's person, with files, as a browser does: a form with a part for
+// each. It returns how the daemon answered.
+func (p *page) sendFiles(to, text string, files ...web.Upload) (int, string) {
+	p.t.Helper()
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	w.WriteField("to", to)
+	w.WriteField("text", text)
+	for _, u := range files {
+		part, err := w.CreateFormFile("file", u.Name)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		part.Write(u.Data)
+	}
+	w.Close()
+	req, err := http.NewRequest("POST", p.base+"/api/send", &b)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		p.t.Fatalf("sending files to %s: %v", to, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+// A person on the page gets an agent's files and sends their own (#570). The page lists what a
+// message carries and gives each file when it is asked for, which is when the daemon fetches it:
+// nothing waits on a fetch for a person. A file the person uploads reaches an agent as an agent's
+// does, and is checked as one is.
+func TestFilesToAndFromThePage(t *testing.T) {
 	t.Parallel()
-	a := newDevice(t, newRemote(t))
-	a.session("aaaaaa", "")
-	a.page().choose("ada-lovelace")
-	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "ada-lovelace", Subject: "the chart", Files: []string{writeFile(t, "chart.png", []byte{0x89, 0x00})}})
-	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace reads this on Murmur's page, which doesn't show files yet") {
-		t.Fatalf("send: %+v", r)
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	bobName := b.named(bob)
+	pa := a.page()
+	pa.choose("ada-lovelace")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+
+	// From an agent to the person.
+	chart := []byte{0x89, 'P', 'N', 'G', 0, 1, 2}
+	var r proto.Response
+	eventually(t, "bob's device to know ada", func() bool {
+		r = b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "the chart", Files: []string{writeFile(t, "chart.png", chart)}})
+		return r.Error == ""
+	})
+	if strings.Contains(r.Note, "text alone") {
+		t.Errorf("the sender was told ada gets no files: %q", r.Note)
+	}
+	var m web.Message
+	eventually(t, "the page to list the message", func() (ok bool) {
+		m, ok = pa.messageWith("the chart")
+		return ok
+	})
+	if len(m.Files) != 1 || m.Files[0].Name != "chart.png" || m.Files[0].Size != int64(len(chart)) {
+		t.Fatalf("the files the page lists: %+v", m.Files)
+	}
+	if code, body := pa.call("GET", "/api/file?id="+m.ID+"&i=0", pa.token, ""); code != http.StatusOK || body != string(chart) {
+		t.Errorf("the file, asked for: %d %q", code, body)
+	}
+	if code, _ := pa.call("GET", "/api/file?id="+m.ID+"&i=1", pa.token, ""); code != http.StatusNotFound {
+		t.Errorf("a file the message hasn't got: %d, want 404", code)
+	}
+
+	// From the person to an agent, with nothing written: two files of one name, as two pasted
+	// screenshots are. The subject is the names they were sent under.
+	notes, more := []byte("what I see on my screen\n"), []byte("and after a reload\n")
+	code, body := pa.sendFiles(bobName, "", web.Upload{Name: "my notes.txt", Data: notes}, web.Upload{Name: "my notes.txt", Data: more})
+	if code != http.StatusOK {
+		t.Fatalf("the person's send: %d %s", code, body)
+	}
+	const names = "my_notes.txt, 2-my_notes.txt"
+	got := inboxMessage(t, b, "bbbbbb")
+	if got.Subject != names || len(got.Files) != 2 || got.Files[0].Name+", "+got.Files[1].Name != names {
+		t.Fatalf("what bob got: %+v", got)
+	}
+	for i, want := range [][]byte{notes, more} {
+		if saved, err := os.ReadFile(got.Files[i].Path); err != nil || !bytes.Equal(saved, want) {
+			t.Errorf("bob's copy of %s: %q, %v", got.Files[i].Name, saved, err)
+		}
+	}
+	// The person's own page shows them too, from the copies the send kept.
+	mine, ok := pa.messageWith(names)
+	if !ok || len(mine.Files) != 2 {
+		t.Fatalf("the person's own message on the page: %+v, %v", mine, ok)
+	}
+	if code, body := pa.call("GET", "/api/file?id="+mine.ID+"&i=1", pa.token, ""); code != http.StatusOK || body != string(more) {
+		t.Errorf("the person's own file, asked for: %d %q", code, body)
+	}
+
+	// A key in a file the person attached stops the send, as one in an agent's does.
+	code, body = pa.sendFiles(bobName, "my settings", web.Upload{Name: "env.txt", Data: []byte("AWS=AKIAIOSFODNN7EXAMPLE\n")})
+	if code != http.StatusBadRequest || !strings.Contains(body, "env.txt") {
+		t.Errorf("a key in an attached file: %d %s", code, body)
 	}
 }
 
@@ -219,6 +322,24 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a key in a file named png": {[]string{writeFile(t, "shot.png", []byte("AKIAIOSFODNN7EXAMPLE"))}, "shot.png"},
 		"a key in UTF-16":           {[]string{writeFile(t, "ps.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n"))}, "ps.txt"},
 		"a key after a stray byte":  {[]string{writeFile(t, "latin.txt", []byte("caf\xe9 AKIAIOSFODNN7EXAMPLE\n"))}, "latin.txt"},
+		// A zero byte once made a file binary, and unchecked (#737).
+		"a key in an environ":                  {[]string{writeFile(t, "environ", []byte("HOME=/root\x00GH=ghp_0123456789abcdefghijABCDEFGHIJ0123456789\x00"))}, "environ"},
+		"a key in a tar":                       {[]string{writeFile(t, "conf.tar", append(append(make([]byte, 512), "AWS=AKIAIOSFODNN7EXAMPLE\n"...), make([]byte, 512)...))}, "conf.tar"},
+		"a key in UTF-16 with no mark":         {[]string{writeFile(t, "le.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n")[2:])}, "le.txt"},
+		"a key in big-end UTF-16 with no mark": {[]string{writeFile(t, "be.txt", append([]byte{0}, utf16File("key AKIAIOSFODNN7EXAMPLE")[2:]...))}, "be.txt"},
+		// What Sol's review of #753 found getting through the first fix.
+		"a name on the line above its value": {[]string{writeFile(t, "split.bin", []byte("TOKEN=\nabc123abc123\x00"))}, "split.bin"},
+		"a bearer token on the next line":    {[]string{writeFile(t, "bearer.bin", []byte("Bearer\nabc123abc123abc123abc123\x00"))}, "bearer.bin"},
+		"a password with an accent":          {[]string{writeFile(t, "accent.bin", []byte("PASSWORD=abc123édef456\x00"))}, "accent.bin"},
+		"a big-end key before a CJK letter":  {[]string{writeFile(t, "cjk.bin", utf16BE("AKIAIOSFODNN7EXAMPLE中"))}, "cjk.bin"},
+		"a key in the clear after a mark":    {[]string{writeFile(t, "mark.txt", []byte("\xff\xfeAKIAIOSFODNN7EXAMPLE"))}, "mark.txt"},
+		// And what its second round found.
+		"a name a form feed above its value":  {[]string{writeFile(t, "ff.bin", []byte("TOKEN=\fabc123abc123\x00"))}, "ff.bin"},
+		"a URL password around a U+FFFD":      {[]string{writeFile(t, "fffd.bin", []byte("https://user:abc�def@host\x00"))}, "fffd.bin"},
+		"a URL password around a control":     {[]string{writeFile(t, "ctl.bin", []byte("https://user:abc\x01def@host\x00"))}, "ctl.bin"},
+		"a URL password in UTF-16, a control": {[]string{writeFile(t, "ctl16.bin", utf16File("https://user:abc\x01def@host")[2:])}, "ctl16.bin"},
+		"UTF-16 cut short":                    {[]string{writeFile(t, "cut.bin", utf16File("AKIAIOSFODNN7EXAMPLE")[2:41])}, "cut.bin"},
+		"UTF-16 with its mark, cut short":     {[]string{writeFile(t, "cutmark.txt", utf16File("AKIAIOSFODNN7EXAMPLE")[:41])}, "cutmark.txt"},
 	} {
 		if what == "a Git Bash path" && runtime.GOOS != "windows" {
 			continue // a full path everywhere else
@@ -277,17 +398,30 @@ func TestMessageArrivesWithoutFilesThatCannotBeHad(t *testing.T) {
 	}
 }
 
+func fileThere(path string) bool {
+	_, err := os.Stat(path)
+	return path != "" && err == nil
+}
+
 // A sender takes a message's files off the remote once they are past their time, and its own
-// copies with them.
+// copies with them. A receiver deletes its copies too.
 func TestFilesLeaveTheRemote(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDevice(t, remote)
+	a, b := newDevice(t, remote), newDevice(t, remote)
 	a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "for a while", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
 	if r.Error != "" {
 		t.Fatalf("send: %s", r.Error)
 	}
+	got := inboxMessage(t, b, "bbbbbb")
+	if len(got.Files) != 1 || !fileThere(got.Files[0].Path) {
+		t.Fatalf("what the receiver got: %+v", got.Files)
+	}
+	b.fileKeep, b.filePrune = time.Millisecond, 300*time.Millisecond
+	b.restart()
+	eventually(t, "the receiver's copy to go", func() bool { return !fileThere(got.Files[0].Path) })
 	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
 	saved := func() []string {
 		got, _ := filepath.Glob(filepath.Join(a.gitDir, "murmur", "files", "*", "a.txt"))

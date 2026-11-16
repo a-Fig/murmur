@@ -1998,6 +1998,36 @@ a.g-pr:hover {
 .s-row.stale .s-doing {
   color: var(--muted-foreground);
 }
+/* Where the list is narrow (about a 960px window), the name and status line get the room first
+ * (#764): the columns and gaps tighten, a default branch (main, master) steps aside as the one most
+ * rows share, and "Message" keeps only its icon. The page has no default-branch name, so those two
+ * stand for it. Full width is untouched, and phones keep their own layout below. */
+.s-row {
+  container: srow / inline-size;
+}
+@media (min-width: 768px) {
+  @container srow (max-width: 50rem) {
+    .s-meta {
+      grid-template-columns: 6rem 2.75rem 3.25rem 6rem 2rem;
+      gap: 0.5rem;
+    }
+    .s-col-branch.default {
+      visibility: hidden;
+    }
+    .s-col-act .btn {
+      padding: 0;
+      width: 2rem;
+    }
+    .s-col-act .btn-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+}
 .g-search {
   display: flex;
   height: 2rem;
@@ -3019,6 +3049,149 @@ a.g-pr:hover {
 .receipt-mark[data-state="sending"] {
   cursor: default;
 }
+/* A message's files (#570): pictures as tiles of one height, so a picture that loads moves nothing
+ * below it, and other files as buttons that save them. */
+.msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  max-width: 100%;
+  margin-top: 0.375rem;
+}
+.chat-msg-own > .msg-files {
+  justify-content: flex-end;
+  max-width: 80%;
+  margin-top: 0;
+}
+.msg-picture {
+  display: block;
+  height: 11rem;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  cursor: zoom-in;
+}
+.msg-picture-img {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: cover;
+}
+.msg-picture-wait {
+  width: 16rem;
+  cursor: default;
+  animation: picture-wait 1.4s ease-in-out infinite;
+}
+@keyframes picture-wait {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-picture-wait {
+    animation: none;
+  }
+}
+.msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  height: 2.25rem;
+  padding: 0 0.75rem 0 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  font-size: 0.8125rem;
+  color: var(--foreground);
+  transition: background-color 0.15s var(--ease);
+}
+.msg-file:hover {
+  background: var(--accent);
+}
+.msg-file > .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.msg-file-name {
+  font-weight: 500;
+}
+.msg-file-size {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.msg-file-missing {
+  border-style: dashed;
+}
+.msg-file-missing > .msg-file-name {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+/* In Recent, where an item is a button onto its conversation: the names alone. */
+.msg-files-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  margin-top: 0.125rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.msg-files-line > .icon {
+  flex-shrink: 0;
+  width: 0.8125rem;
+  height: 0.8125rem;
+}
+
+/* A picture, opened. */
+.scrim.viewer-scrim {
+  align-items: center;
+  padding: 1rem;
+}
+.viewer {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--popover);
+  box-shadow: var(--shadow-dialog);
+  animation: pop-in 0.2s var(--ease);
+}
+.viewer-img {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(100vh - 6.5rem);
+  object-fit: contain;
+  background: var(--muted);
+}
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+}
+.viewer-name {
+  font-weight: 500;
+}
+.viewer-size {
+  flex-shrink: 0;
+  margin-right: auto;
+  color: var(--muted-foreground);
+}
+
 .chat-msg-failed > .chat-bubble {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--destructive) 45%, transparent);
 }
@@ -3197,6 +3370,85 @@ a.g-pr:hover {
   color: var(--warning-foreground);
   font-size: 0.75rem;
   font-weight: 500;
+}
+/* The files the next message takes (#570), over what is written. */
+.composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0.625rem 0.625rem 0;
+}
+.composer-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  max-width: 100%;
+  height: 2rem;
+  padding: 0 0.25rem 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  font-size: 0.75rem;
+}
+.composer-file > .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.composer-file-thumb {
+  flex-shrink: 0;
+  width: 1.375rem;
+  height: 1.375rem;
+  margin-left: -0.1875rem;
+  border-radius: var(--radius-sm, 0.25rem);
+  object-fit: cover;
+}
+.composer-file-name {
+  max-width: 14rem;
+  font-weight: 500;
+}
+.composer-file-size {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.composer-file-x,
+.composer-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--control-radius);
+  color: var(--muted-foreground);
+  transition:
+    background-color 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.composer-file-x {
+  width: 1.375rem;
+  height: 1.375rem;
+}
+.composer-attach {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.composer-file-x:hover,
+.composer-attach:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.composer-file-x > .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.composer-attach > .icon {
+  width: 0.9375rem;
+  height: 0.9375rem;
+}
+/* A file is being dragged over the page: this is where it lands. */
+.composer.composer-drop {
+  box-shadow: 0 0 0 2px var(--ring);
 }
 .composer-input {
   display: block;

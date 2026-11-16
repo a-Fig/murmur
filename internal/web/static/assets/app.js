@@ -106,6 +106,8 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
+  fileNote: null, // why a file wasn't attached: { key, text }, key the conversation's
+  viewer: null, // the picture that is open: { file, name, size, from }, from the key of what opened it
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
   drawer: false, // on a phone, whether the sidebar's drawer is open
 };
@@ -176,10 +178,12 @@ function appSaysFront(front) {
   if (back && ui.token && ui.conn !== "denied") poll();
 }
 
+// init.raw asks for the response itself, for what isn't JSON (a file). A body that isn't text is a
+// form, which the browser gives its own content type.
 async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
-  if (init.body) headers["Content-Type"] = "application/json";
+  if (typeof init.body === "string") headers["Content-Type"] = "application/json";
   // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
   // app's window is someone waiting for messages, minimized or not: it keeps the daemon running,
   // though hidden it doesn't count as someone looking.
@@ -189,8 +193,9 @@ async function api(path, init = {}) {
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || res.status + " " + res.statusText);
+    throw Object.assign(new Error(body.error || res.status + " " + res.statusText), { status: res.status });
   }
+  if (init.raw) return res;
   return res.status === 204 ? null : res.json();
 }
 
@@ -470,7 +475,7 @@ function render() {
       gone = ui.tagMenu.from;
       ui.tagMenu = null;
     }
-    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile);
+    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer);
     kids = [
       h(
         "div",
@@ -491,6 +496,7 @@ function render() {
       ui.tagMenu && tagMenu(),
       ui.repoMenu && repoMenu(),
       ui.profile && profileCard(),
+      ui.viewer && viewerDialog(),
     ].filter(Boolean);
   } finally {
     held.el = null;
@@ -1605,7 +1611,7 @@ function sessionCard(d, s) {
     h(
       "span",
       { class: "s-meta" },
-      h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
+      h("span", { class: "s-col-branch" + (s.branch === "main" || s.branch === "master" ? " default" : "") }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
@@ -1896,7 +1902,8 @@ function recentItem(m, at) {
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
       ),
-      messageText(m),
+      !filesOnly(m) && messageText(m),
+      m.files?.length > 0 && h("div", { class: "msg-files-line" }, icon("paperclip"), h("span", { class: "truncate" }, m.files.map((f) => f.name).join(", "))),
     ),
   );
 }
@@ -3541,6 +3548,235 @@ function messageText(m) {
   return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
 }
 
+// Files with a message (#570, docs/design/files.md).
+
+// What the daemon takes with one message (internal/bus/files.go).
+const MAX_FILES = 8;
+const MAX_FILE = 10 << 20;
+const MAX_FILES_TOTAL = 20 << 20;
+// What the page shows as a picture, by the end of its name. Not SVG, which is a document.
+const PICTURES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+const FETCHED_KEEP = 96 << 20; // how many bytes of what was fetched the page holds on to
+const FETCH_AGAIN = 30000; // how long before a picture that couldn't be fetched is asked for again
+// How many files are asked for at once. A browser gives a page six connections, and each of these
+// can wait on a fetch from the remote while the polls and a send need theirs.
+const FETCH_AT_ONCE = 2;
+let fetchSlots = FETCH_AT_ONCE;
+const fetchWaits = [];
+
+async function inFetchSlot(run) {
+  if (fetchSlots) fetchSlots--;
+  else await new Promise((go) => fetchWaits.push(go));
+  try {
+    return await run();
+  } finally {
+    const next = fetchWaits.shift();
+    if (next) next();
+    else fetchSlots++;
+  }
+}
+
+// A message's files as the page has them, by "id:place": { state, url, size, why, at, done }, where
+// state is "loading", "here", "gone" (it can't be had: a 404) or "failed" (not just now).
+// A picture's entry keeps the elements that show it, so the renders polling causes don't load it
+// again. A file the person attached is an entry too, from the moment it is attached.
+const fetched = new Map();
+const attached = new Map(); // a conversation's key → the files its next message takes
+
+function pictureType(name) {
+  return PICTURES[name.slice(name.lastIndexOf(".") + 1).toLowerCase()];
+}
+
+function fileSize(n) {
+  if (n < 1024) return plural(n, "byte");
+  if (n < 1 << 20) return Math.round(n / 1024) + " KB";
+  return (n / (1 << 20)).toFixed(1) + " MB";
+}
+
+// Asks the daemon for one file of a message, once. A file that isn't on this machine is fetched
+// from the remote first, which takes a moment. again asks once more for one that wasn't had.
+function fetchFile(id, i, name, again) {
+  const key = id + ":" + i;
+  let f = fetched.get(key);
+  const retry = f && (f.state === "failed" || f.state === "gone") && (again || (f.state === "failed" && Date.now() - f.at > FETCH_AGAIN));
+  if (f && !retry) return f;
+  f = { state: "loading" };
+  fetched.set(key, f);
+  f.done = inFetchSlot(async () => (await api("/api/file?id=" + encodeURIComponent(id) + "&i=" + i, { raw: true })).blob())
+    .then((blob) => {
+      // The daemon sends every file as bytes to save; a picture is shown as the kind its name says.
+      const type = pictureType(name);
+      f.url = URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
+      f.size = blob.size;
+      f.state = "here";
+      trimFetched(f);
+    })
+    .catch((e) => {
+      if (e instanceof AuthError) {
+        fetched.delete(key);
+        return deny(e.token);
+      }
+      f.state = e.status === 404 ? "gone" : "failed";
+      f.why = e.message; // it starts with the file's name, which stays as it is
+      f.at = Date.now();
+    })
+    .then(render);
+  return f;
+}
+
+// Lets go of the oldest of what was fetched, past FETCHED_KEEP, except what the page is showing.
+function trimFetched(keep) {
+  let total = 0;
+  for (const f of fetched.values()) total += f.size || 0;
+  for (const [key, f] of fetched) {
+    if (total <= FETCHED_KEEP) break;
+    if (f === keep || f.state !== "here" || f.el?.isConnected || ui.viewer?.file === f) continue;
+    URL.revokeObjectURL(f.url);
+    fetched.delete(key);
+    total -= f.size;
+  }
+}
+
+function saveFile(name, url) {
+  const a = h("a", { href: url, download: name, hidden: true });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+// A message of files alone, sent from a page, has their names for its text: the daemon gave it
+// them, since a message needs a subject. The files say as much.
+function filesOnly(m) {
+  return !!m.files?.length && m.fromPerson && personText(m) === m.files.map((f) => f.name).join(", ");
+}
+
+// Under a message's text: its pictures, shown, and its other files, each a button that saves it.
+function messageFiles(m) {
+  if (!m.files?.length) return null;
+  return fileList(m.id, m.files, (i, load, again) => (load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i)));
+}
+
+// fileAt gives the entry of the file in a place: as it is, or, with load, fetched if it wasn't.
+function fileList(id, files, fileAt) {
+  return h(
+    "div",
+    { class: "msg-files" },
+    files.map((f, i) => {
+      const key = "file-" + id + "-" + i;
+      const picture = !!pictureType(f.name);
+      const got = fileAt(i, picture); // a picture is fetched to be shown, anything else when it is asked for
+      const state = got?.state;
+      if (picture && state === "here") {
+        got.el ||= h("img", { class: "msg-picture-img", src: got.url, alt: "" });
+        return h("button", { class: "msg-picture", title: f.name, "aria-label": "Open " + f.name, "data-key": key, onclick: () => openViewer(got, f, key) }, got.el);
+      }
+      if (picture && state === "loading") return h("div", { class: "msg-picture msg-picture-wait", role: "img", "aria-label": f.name + ", loading" });
+      const missing = state === "gone" || state === "failed";
+      const open = () => {
+        if (fileAt(i)?.state === "loading") return;
+        const file = fileAt(i, true, true);
+        render();
+        file.done.then(() => file.state === "here" && !picture && saveFile(f.name, file.url));
+      };
+      return h(
+        "button",
+        { class: "msg-file" + (missing ? " msg-file-missing" : ""), title: missing ? got.why : "Save " + f.name, "aria-busy": state === "loading" ? "true" : null, "data-key": key, onclick: open },
+        icon(state === "here" ? "download" : "file"),
+        h("span", { class: "msg-file-name truncate" }, f.name),
+        h("span", { class: "msg-file-size" }, state === "loading" ? "Fetching…" : state === "gone" ? "Not here" : state === "failed" ? "Couldn't load" : fileSize(f.size)),
+      );
+    }),
+  );
+}
+
+// A picture, opened: as large as the window lets it be.
+function openViewer(file, f, from) {
+  ui.viewer = { file, name: f.name, size: f.size, from };
+  render();
+  root.querySelector('[data-key="viewer-close"]')?.focus();
+}
+
+function closeViewer() {
+  const from = ui.viewer?.from;
+  if (ui.viewer) ui.viewer.file.big = null;
+  ui.viewer = null;
+  render();
+  refocus(from);
+}
+
+function viewerDialog() {
+  const v = ui.viewer;
+  v.file.big ||= h("img", { class: "viewer-img", src: v.file.url, alt: v.name });
+  return h(
+    "div",
+    {
+      class: "scrim viewer-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeViewer();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeViewer();
+        }
+      },
+    },
+    h(
+      "div",
+      { class: "viewer", role: "dialog", "aria-modal": "true", "aria-label": v.name },
+      v.file.big,
+      h(
+        "div",
+        { class: "viewer-bar" },
+        h("span", { class: "viewer-name truncate" }, v.name),
+        h("span", { class: "viewer-size" }, fileSize(v.size)),
+        h("button", { class: "btn btn-ghost btn-sm", "data-key": "viewer-save", onclick: () => saveFile(v.name, v.file.url) }, icon("download"), "Save"),
+        h("button", { class: "btn btn-outline btn-sm", "data-key": "viewer-close", onclick: closeViewer }, "Close"),
+      ),
+    ),
+  );
+}
+
+// Adds files to a conversation's next message, held to what a message takes: the daemon would
+// refuse the rest only once they had been uploaded.
+function attach(key, files) {
+  const list = attached.get(key) || [];
+  let note = "";
+  for (const file of files) {
+    const total = list.reduce((n, a) => n + a.size, 0);
+    if (list.length >= MAX_FILES) note = "A message takes " + MAX_FILES + " files at most.";
+    else if (!file.size) note = file.name + " is empty.";
+    else if (file.size > MAX_FILE) note = file.name + " is " + fileSize(file.size) + ". A file can be " + (MAX_FILE >> 20) + " MB at most.";
+    else if (total + file.size > MAX_FILES_TOTAL) note = "A message's files can come to " + (MAX_FILES_TOTAL >> 20) + " MB at most.";
+    else {
+      // Shown or saved as a fetched file is: a picture by its name, anything else as bytes,
+      // whatever kind the browser took it for.
+      const blob = new Blob([file], { type: pictureType(file.name) || "application/octet-stream" });
+      list.push({ state: "here", file, name: file.name, size: file.size, url: URL.createObjectURL(blob), done: Promise.resolve() });
+    }
+  }
+  if (list.length) attached.set(key, list);
+  ui.fileNote = note ? { key, text: note } : null;
+  render();
+  if (!NARROW.matches) composers.get(key)?.focus({ preventScroll: true });
+}
+
+function detach(key, a) {
+  const list = (attached.get(key) || []).filter((x) => x !== a);
+  URL.revokeObjectURL(a.url);
+  if (list.length) attached.set(key, list);
+  else attached.delete(key);
+  ui.fileNote = null;
+  render();
+  composers.get(key)?.focus({ preventScroll: true });
+}
+
+function pickFiles(key) {
+  const input = h("input", { type: "file", multiple: true });
+  input.addEventListener("change", () => attach(key, [...input.files]));
+  input.click();
+}
+
 // A message the person wrote that isn't among the messages yet. It looks written at once, as a
 // chat app's does (#613): a clock while its push to the remote is on its way, which took 2.4 to
 // 4.7 s from a Windows laptop on 2026-11-15, then the tick for sent. The daemon finishes the push
@@ -3550,7 +3786,8 @@ function pendingMessage(item, head) {
   return h(
     "article",
     { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : ""), "data-cid": item.cid },
-    h("div", { class: "chat-bubble rich" }, rich(item.text)),
+    item.text && h("div", { class: "chat-bubble rich" }, rich(item.text)),
+    item.files?.length > 0 && fileList("out-" + item.cid, item.files, (i) => item.files[i]),
     failed
       ? h(
           "div",
@@ -3635,7 +3872,8 @@ function chatMessage(m, from, at, head) {
     return h(
       "article",
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
-      h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      !filesOnly(m) && h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      messageFiles(m),
       h("div", { class: "chat-msg-meta" }, time, copyButton(copy), receiptMark(m)),
     );
   }
@@ -3650,7 +3888,8 @@ function chatMessage(m, from, at, head) {
       "div",
       { class: "chat-msg-main" },
       head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog", "data-key": "from-" + m.id }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
-      messageText(m),
+      !filesOnly(m) && messageText(m),
+      messageFiles(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
   );
@@ -4355,6 +4594,17 @@ function composerFor(key, send, onchange) {
     fit(el);
     onchange();
   };
+  // A pasted file is attached: a screenshot, most often. What also comes as text, plain and rich
+  // both, is pasted as text: a spreadsheet's cells come as a picture too. One of the two isn't
+  // enough to go by: a file copied in a file manager brings its name as plain text, and a picture
+  // copied in a browser brings an <img> as rich text.
+  el.onpaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    const types = e.clipboardData?.types || [];
+    if (!files.length || (types.includes("text/html") && types.includes("text/plain"))) return;
+    e.preventDefault();
+    attach(key, files);
+  };
   el.onkeydown = (e) => {
     // On a phone Enter is a new line, and the button sends.
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !NARROW.matches) {
@@ -4475,11 +4725,12 @@ function composer(c, target) {
       if (hint?.lastChild) hint.lastChild.textContent = " to send";
     }
     const btn = root.querySelector(".composer-send");
-    if (btn) btn.disabled = !el.value.trim();
+    if (btn) btn.disabled = !el.value.trim() && !attached.has(key);
   });
   el.placeholder = "Message " + target.label;
   el.setAttribute("aria-label", "Message " + target.label);
   const armed = ui.armed === key;
+  const files = attached.get(key) || [];
   const who =
     c.kind === "dm"
       ? [statusDot(target.to), h("span", { class: "truncate" }, target.to)]
@@ -4491,13 +4742,30 @@ function composer(c, target) {
       "div",
       { class: "composer" + (armed ? " composer-armed" : "") },
       armed && h("p", { class: "composer-warn", "data-announce": "" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
+      ui.fileNote?.key === key && h("p", { class: "composer-warn", "data-announce": "" }, ui.fileNote.text),
+      files.length > 0 &&
+        h(
+          "div",
+          { class: "composer-files" },
+          files.map((a, i) =>
+            h(
+              "span",
+              { class: "composer-file" },
+              pictureType(a.name) ? (a.thumb ||= h("img", { class: "composer-file-thumb", src: a.url, alt: "" })) : icon("file"),
+              h("span", { class: "composer-file-name truncate" }, a.name),
+              h("span", { class: "composer-file-size" }, fileSize(a.size)),
+              h("button", { class: "composer-file-x", title: "Remove", "aria-label": "Remove " + a.name, "data-key": "detach-" + key + "-" + i, onclick: () => detach(key, a) }, icon("x")),
+            ),
+          ),
+        ),
       el,
       h(
         "div",
         { class: "composer-bar" },
+        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => pickFiles(key) }, icon("paperclip")),
         h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: () => openPicker() }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
-        h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+        h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() && !files.length, "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
       ),
     ),
   );
@@ -4505,7 +4773,8 @@ function composer(c, target) {
 
 function sendFrom(c, target, el, big) {
   const text = el.value.trim();
-  if (!text) return;
+  const files = attached.get(c.key) || [];
+  if (!text && !files.length) return;
   if (big && ui.armed !== c.key) {
     ui.armed = c.key;
     render();
@@ -4513,9 +4782,11 @@ function sendFrom(c, target, el, big) {
   }
   ui.armed = null;
   const { messages, ...conversation } = c; // not the messages: this can outlive them
-  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, status: "sending" };
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, files, status: "sending" };
   ui.outbox.push(item);
   ui.notes.delete(c.key);
+  attached.delete(c.key);
+  ui.fileNote = null;
   el.value = "";
   toEnd = true;
   deliver(item);
@@ -4550,9 +4821,24 @@ async function deliver(item) {
     // and a UTF-16 unit is at most 3 bytes of UTF-8.
     item.posted = true;
     render();
-    const body = JSON.stringify({ to: item.to, text: item.text });
-    const sent = await api("/api/send", { method: "POST", body, keepalive: body.length * 3 < 60000 });
+    let body = JSON.stringify({ to: item.to, text: item.text });
+    let keepalive = body.length * 3 < 60000;
+    if (item.files?.length) {
+      // With files it goes as a form, a part for each. Too large for keepalive: closing the page
+      // before the upload ends loses the message.
+      body = new FormData();
+      body.append("to", item.to);
+      body.append("text", item.text);
+      for (const a of item.files) body.append("file", a.file, a.name);
+      keepalive = false;
+    }
+    const sent = await api("/api/send", { method: "POST", body, keepalive });
     item.id = sent.id;
+    // The message's files are these, in this order: the page has them without asking the daemon.
+    if (item.files?.length) {
+      item.files.forEach((a, i) => fetched.set(sent.id + ":" + i, a));
+      trimFetched(); // held to FETCHED_KEEP as fetched files are: a page that only sends would keep them all
+    }
     if (missed.length) ui.notes.set(item.key, { id: sent.id, text: "Couldn't add " + namesOf(missed) + " to " + item.to + ", so they didn't get this: " + missed[0].msg, warn: true });
     else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
@@ -4577,7 +4863,8 @@ function editFailed(item) {
   // It may have been all that listed its conversation, which the text is going back into.
   ui.restored = item.conversation;
   const el = composers.get(item.key);
-  if (el) el.value = el.value ? item.text + "\n" + el.value : item.text;
+  if (el) el.value = el.value && item.text ? item.text + "\n" + el.value : item.text || el.value;
+  if (item.files?.length) attached.set(item.key, [...item.files, ...(attached.get(item.key) || [])]);
   render();
   focusComposer();
 }
@@ -5351,7 +5638,7 @@ let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
 
 function hasUnsent() {
-  return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
+  return ui.outbox.length > 0 || attached.size > 0 || [...composers.values()].some((el) => el.value.trim());
 }
 
 // The state as far as the page shows it, for poll's signature. This device's lastSeen and its
@@ -5537,9 +5824,41 @@ async function start() {
   poll();
 }
 
+// A file dropped anywhere on the page goes with the open conversation's next message. Left to the
+// browser, a dropped file opens in place of the page.
+let dropTimer = 0;
+function dragsFiles(e) {
+  return [...(e.dataTransfer?.types || [])].includes("Files");
+}
+function dropsHere() {
+  return ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer ? null : root.querySelector(".composer");
+}
+document.addEventListener("dragover", (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  const box = dropsHere();
+  e.dataTransfer.dropEffect = box ? "copy" : "none";
+  if (!box) return;
+  // No event says a drag has left the window for good: the mark goes when dragover stops coming.
+  box.classList.add("composer-drop");
+  clearTimeout(dropTimer);
+  dropTimer = setTimeout(() => root.querySelector(".composer-drop")?.classList.remove("composer-drop"), 200);
+});
+document.addEventListener("drop", (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  const key = dropsHere()?.querySelector(".composer-input")?.dataset.composer;
+  // A folder comes as a file that can't be read.
+  const files = [...e.dataTransfer.items].filter((it) => it.kind === "file" && !it.webkitGetAsEntry?.()?.isDirectory).map((it) => it.getAsFile());
+  if (key && files.length) attach(key, files.filter(Boolean));
+});
+
 // Escape closes the tag menu wherever the focus is, even on the page's body.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
+  if (e.key === "Escape" && ui.viewer && !e.defaultPrevented) {
+    e.preventDefault(); // a click on the picture leaves the focus on the page's body
+    closeViewer();
+  } else if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
     e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
     closeTagMenu();
   } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
