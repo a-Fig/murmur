@@ -130,8 +130,8 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 	}
 
 	var left []string
-	if e.RemoveApp != nil {
-		left = e.RemoveApp(&r)
+	if e.RemoveApp != nil && os.Getenv(clones.DirEnv) == "" && os.Getenv(brand.SessionsDirEnv) == "" {
+		left = e.RemoveApp(&r) // not where a test named its own folders, as removeUserFolder
 	}
 	left = append(left, removeUserFolder(&r)...)
 

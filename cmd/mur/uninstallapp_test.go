@@ -12,14 +12,18 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 )
 
-// configIn points the user's config directory at dir, for os.UserConfigDir on each system.
+// configIn points the user's config directory at dir, for os.UserConfigDir on each system, and
+// the home and data directories with it, where the launcher is looked for: a real one of the
+// developer's must not be taken for the test's (Opus review).
 func configIn(t *testing.T, dir string) string {
 	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
 	switch runtime.GOOS {
 	case "windows":
 		t.Setenv("APPDATA", dir)
 	case "darwin":
-		t.Setenv("HOME", dir)
 		dir = filepath.Join(dir, "Library", "Application Support")
 	default:
 		t.Setenv("XDG_CONFIG_HOME", dir)

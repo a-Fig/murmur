@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/here"
 )
 
 // One window at a time (#616): a launcher clicked twice, or `mur app` typed while the app is open,
@@ -262,15 +264,17 @@ func (in *Instance) Close() {
 	}
 }
 
-// WindowOpen says a window is recorded at path and answers on its port. It asks nothing of it: a
-// connection that sends no request is closed unanswered.
+// WindowOpen says a window is recorded at path, its process still runs, and something answers on
+// its port. It asks nothing of it: a connection that sends no request is closed unanswered. A
+// window that crashed leaves its record, and another program may take its port since: the process
+// is asked after too, so both must have happened (Opus review).
 func WindowOpen(path string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	var rec instance
-	if json.Unmarshal(b, &rec) != nil || rec.Addr == "" {
+	if json.Unmarshal(b, &rec) != nil || rec.Addr == "" || rec.Key == "" || !here.Alive(rec.PID) {
 		return false
 	}
 	c, err := net.DialTimeout("tcp", rec.Addr, time.Second)

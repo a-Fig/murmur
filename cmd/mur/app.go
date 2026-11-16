@@ -206,9 +206,14 @@ func uninstallApp(r *join.Report) (left []string) {
 	if desktop.WindowOpen(filepath.Join(dir, "window.json")) {
 		return []string{brand.Product + "'s app, whose window is open, and its files (" + dir + "): close the window, then run uninstall again."}
 	}
+	// A window just starting, between its start and its record, isn't found: on Windows its log,
+	// which it writes to, then keeps the folder, and the report has the error; elsewhere the folder
+	// goes and the window runs with no record. Rare enough to leave (Opus review).
 	if err := os.RemoveAll(dir); err != nil {
 		r.Problems = append(r.Problems, "removing the app's files ("+dir+"): "+err.Error())
+		return nil
 	}
+	r.Did = append(r.Did, "Removed the desktop app's files ("+dir+")")
 	return nil
 }
 
