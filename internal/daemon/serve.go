@@ -994,6 +994,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		return refuse(proto.RefusedSend, "not sent: sending files is off in this repo. Your user can turn on Send files in "+
 			brand.Product+"'s Settings; or send the text alone.")
 	}
+	filesReused := false // the files took a ref an earlier message went out with (putFiles)
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
@@ -1001,10 +1002,11 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
-		files, at, err := d.putFiles(ctx, append(read, uploads...))
+		files, at, reused, err := d.putFiles(ctx, append(read, uploads...))
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
+		filesReused = reused
 		e.Files, e.FilesAt = files, at
 		d.mu.Lock()
 		note = strings.TrimSpace(note + " " + d.noFilesNoteLocked(e, nameOr(toName, to)))
@@ -1039,8 +1041,8 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.mu.Unlock()
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
-		if len(e.Files) > 0 {
-			d.dropFileRef(e.FilesAt, true) // nothing names them: off the remote at the next prune
+		if len(e.Files) > 0 && !filesReused {
+			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
 		if e.Receipts {
 			d.mu.Lock()
@@ -1055,6 +1057,11 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 			about = proto.RefusedRecipient
 		}
 		return refuse(about, "not sent: "+err.Error())
+	}
+	if len(e.Files) > 0 {
+		d.mu.Lock()
+		d.filesSentLocked(e.FilesAt) // a send of the same files may take its ref now
+		d.mu.Unlock()
 	}
 	note = strings.TrimSpace(renamed + " " + note)
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the

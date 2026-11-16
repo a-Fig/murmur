@@ -1998,6 +1998,36 @@ a.g-pr:hover {
 .s-row.stale .s-doing {
   color: var(--muted-foreground);
 }
+/* Where the list is narrow (about a 960px window), the name and status line get the room first
+ * (#764): the columns and gaps tighten, a default branch (main, master) steps aside as the one most
+ * rows share, and "Message" keeps only its icon. The page has no default-branch name, so those two
+ * stand for it. Full width is untouched, and phones keep their own layout below. */
+.s-row {
+  container: srow / inline-size;
+}
+@media (min-width: 768px) {
+  @container srow (max-width: 50rem) {
+    .s-meta {
+      grid-template-columns: 6rem 2.75rem 3.25rem 6rem 2rem;
+      gap: 0.5rem;
+    }
+    .s-col-branch.default {
+      visibility: hidden;
+    }
+    .s-col-act .btn {
+      padding: 0;
+      width: 2rem;
+    }
+    .s-col-act .btn-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+}
 .g-search {
   display: flex;
   height: 2rem;
