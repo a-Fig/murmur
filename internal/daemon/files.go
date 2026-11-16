@@ -368,11 +368,24 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 	return true
 }
 
+// filesRefused says message e is from another device and this device takes no files: its person
+// turned Receive files off (#765, Tyler, 2026-11-16). Its text arrives, and its files are neither
+// fetched nor shown, to a session or on the page. What a session of this device sends one of its
+// own is here already, and no download.
+func (d *Daemon) filesRefused(e bus.Event) bool {
+	dev, _ := bus.SplitAddr(e.From)
+	return len(e.Files) > 0 && dev != d.device && !d.recvFiles.Load()
+}
+
+// errReceiveOff is why a message waiting for its files went without them: Receive files was turned
+// off meanwhile.
+var errReceiveOff = errors.New("Receive files is off")
+
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
 // the fetch is started and the message is queued when it ends, with or without them. Nothing is
 // held for a person: the page asks for a file when it shows it (fileOf). Caller holds mu.
 func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
-	if len(e.Files) == 0 || id == bus.PersonSession || d.filesHere(e) {
+	if len(e.Files) == 0 || id == bus.PersonSession || d.filesRefused(e) || d.filesHere(e) {
 		return false
 	}
 	w := d.st.FilesWait[e.ID]
@@ -421,7 +434,10 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			if !ok {
 				break
 			}
-			err := d.fetchFiles(ctx, e, fileTries)
+			err := errReceiveOff
+			if !d.filesRefused(e) {
+				err = d.fetchFiles(ctx, e, fileTries)
+			}
 			if ctx.Err() != nil {
 				return // still waiting when the daemon next starts
 			}
@@ -750,25 +766,48 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 // holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	to, direct := d.recipientsOfLocked(e)
-	var old []string
+	var old, off []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
-		if p := d.peers[dev]; dev != d.device && p != nil && !p.locked && !p.pres.Files {
-			name, _, _ := d.sessionInfoLocked(addr)
-			if direct {
-				name = who
-			}
+		p := d.peers[dev]
+		if dev == d.device || p == nil || p.locked {
+			continue
+		}
+		name, _, _ := d.sessionInfoLocked(addr)
+		if direct {
+			name = who
+		}
+		switch {
+		case !p.pres.Files:
 			old = append(old, nameOr(name, addr))
+		case p.pres.FilesOff: // its person turned Receive files off (#765)
+			off = append(off, nameOr(name, addr))
 		}
 	}
+	var notes []string
 	switch len(old) {
 	case 0:
-		return ""
 	case 1:
-		return old[0] + " is on a device that runs a " + brand.Product + " from before files, so the text alone gets there."
+		notes = append(notes, old[0]+" is on a device that runs a "+brand.Product+" from before files, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(old)+" are on devices that run a "+brand.Product+" from before files, so the text alone gets there.")
 	}
-	return strings.Join(old[:len(old)-1], ", ") + " and " + old[len(old)-1] + " are on devices that run a " +
-		brand.Product + " from before files, so the text alone gets there."
+	switch len(off) {
+	case 0:
+	case 1:
+		notes = append(notes, off[0]+" takes no files: Receive files is off on its device, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(off)+" take no files: Receive files is off on their devices, so the text alone gets there.")
+	}
+	return strings.Join(notes, " ")
+}
+
+// andList is names joined as a sentence lists them: "a, b and c".
+func andList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // fileMiss is a fetch for the page that failed: when, and how.
@@ -834,7 +873,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 		e = d.msgs[i].e
 	}
 	d.mu.Unlock()
-	if i < 0 || index >= len(e.Files) {
+	if i < 0 || index >= len(e.Files) || d.filesRefused(e) {
 		return "", nil, noFile("no such file")
 	}
 	f := e.Files[index]
@@ -859,7 +898,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 // it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep). Caller
 // holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
-	if len(e.Files) == 0 {
+	if len(e.Files) == 0 || d.filesRefused(e) {
 		return nil
 	}
 	views := make([]proto.FileView, 0, len(e.Files))

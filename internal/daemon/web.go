@@ -378,6 +378,9 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
 			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
 		for _, f := range m.e.Files {
+			if d.filesRefused(m.e) {
+				break // Receive files is off (#765)
+			}
 			msg.Files = append(msg.Files, web.File{Name: f.Name, Size: f.Size})
 		}
 		if msg.FromPerson {
@@ -407,6 +410,9 @@ type pageSettings struct {
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
 	Mode        string              `json:"mode,omitempty"`
+	// SendFiles and ReceiveFiles are web.Settings's (#765): off unless saved on.
+	SendFiles    bool `json:"sendFiles,omitempty"`
+	ReceiveFiles bool `json:"receiveFiles,omitempty"`
 	// Away is when the device last left online for another mode, kept so that going back
 	// releases what arrived since (mode.go), across restarts too.
 	Away time.Time `json:"away,omitzero"`
@@ -427,7 +433,8 @@ func (p pageSettings) clone() pageSettings {
 
 func (p pageSettings) view() web.Settings {
 	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
-		SessionBusy: maps.Clone(p.SessionBusy), Mode: p.Mode, DefaultMinutes: defaultWakeMinutes}
+		SessionBusy: maps.Clone(p.SessionBusy), Mode: p.Mode, SendFiles: p.SendFiles, ReceiveFiles: p.ReceiveFiles,
+		DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -453,6 +460,8 @@ func (d *Daemon) loadSettings() {
 	d.settings = read
 	d.hidden.Store(read.Mode == web.ModeInvisible)
 	d.dnd.Store(read.Mode == web.ModeDND)
+	d.sendFiles.Store(read.SendFiles)
+	d.recvFiles.Store(read.ReceiveFiles)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -471,7 +480,8 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 		return web.Settings{}, err
 	}
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
-		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode}
+		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode,
+		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles}
 	if next.Mode == web.ModeOnline {
 		next.Mode = ""
 	}
@@ -496,6 +506,11 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	away := d.settings.Away
 	d.settings = next
+	d.sendFiles.Store(next.SendFiles)
+	if d.recvFiles.Swap(next.ReceiveFiles) != next.ReceiveFiles {
+		d.kickPresence() // teammates' senders, who and lookup say whether this device takes files
+		d.kickFiles()    // what waits for its files goes now, without them, if receiving went off
+	}
 	if next.Mode != was {
 		d.setMode(was, next.Mode, away)
 	}

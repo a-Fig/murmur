@@ -532,6 +532,8 @@ type Daemon struct {
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
 	// read without setMu by everything that writes to the bus or answers an agent.
 	hidden, dnd atomic.Bool
+	// sendFiles and recvFiles are the Send files and Receive files settings (#765), read without setMu.
+	sendFiles, recvFiles atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 

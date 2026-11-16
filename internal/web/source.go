@@ -262,6 +262,12 @@ type Settings struct {
 	// Mode is this device's mode in this repo (#681): ModeOnline ("" too), ModeDND, where the
 	// device and its agents are seen but no message reaches them, or ModeInvisible, as if offline.
 	Mode string `json:"mode,omitempty"`
+	// SendFiles and ReceiveFiles say this device sends and takes the files a message carries, in
+	// this repo (#765, Tyler, 2026-11-16): both off until its person turns them on. With sending
+	// off, a send with files is refused; with receiving off, a message from another device arrives
+	// as its text, its files neither fetched nor shown.
+	SendFiles    bool `json:"sendFiles"`
+	ReceiveFiles bool `json:"receiveFiles"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`

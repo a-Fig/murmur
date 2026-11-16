@@ -3739,7 +3739,18 @@ function viewerDialog() {
 
 // Adds files to a conversation's next message, held to what a message takes: the daemon would
 // refuse the rest only once they had been uploaded.
+// Send files is on for this device, in this repo (#765): off, the composer takes no files, and the
+// daemon would refuse them.
+function sendsFiles() {
+  return !!ui.settings?.sendFiles;
+}
+
 function attach(key, files) {
+  if (!sendsFiles()) {
+    ui.fileNote = { key, text: "Sending files is off. Turn on Send files in Settings." };
+    render();
+    return;
+  }
   const list = attached.get(key) || [];
   let note = "";
   for (const file of files) {
@@ -4762,7 +4773,7 @@ function composer(c, target) {
       h(
         "div",
         { class: "composer-bar" },
-        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => pickFiles(key) }, icon("paperclip")),
+        sendsFiles() && h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => pickFiles(key) }, icon("paperclip")),
         h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: () => openPicker() }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
         h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() && !files.length, "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
@@ -5360,6 +5371,42 @@ function settingsPage() {
         ),
       ),
     );
+    // Files are off both ways until the person turns them on, per repo (#765, Tyler, 2026-11-16).
+    const onOff = (key, on, save) =>
+      h(
+        "div",
+        { class: "segmented", role: "group" },
+        [[false, "Off"], [true, "On"]].map(([v, label]) =>
+          h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + "-" + (v ? "on" : "off"), onclick: () => on !== v && save(v) }, label),
+        ),
+      );
+    sections.push(
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Files")),
+        h(
+          "div",
+          { class: "group" },
+          settingsRow(
+            "send-files",
+            "Send files",
+            set.sendFiles
+              ? "You and your agents here can send files with a message: screenshots, logs, diffs. An agent's come only from this repo or the temp folder."
+              : "A message with files isn't sent. Your agents are told you can turn this on.",
+            onOff("send-files", !!set.sendFiles, (v) => saveSettings({ ...ui.settings, sendFiles: v })),
+          ),
+          settingsRow(
+            "receive-files",
+            "Receive files",
+            set.receiveFiles
+              ? "Files that come with a message are downloaded into this repo's .git folder, for your agents and this page."
+              : "Messages arrive without their files, which aren't downloaded. Senders are told this device takes no files.",
+            onOff("receive-files", !!set.receiveFiles, (v) => saveSettings({ ...ui.settings, receiveFiles: v })),
+          ),
+        ),
+      ),
+    );
     // A session is shown by its address until its name lands, and the daemon keeps these settings
     // by name: one saved under the address would never apply, so the session isn't offered (#43).
     const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/"));
@@ -5831,7 +5878,7 @@ function dragsFiles(e) {
   return [...(e.dataTransfer?.types || [])].includes("Files");
 }
 function dropsHere() {
-  return ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer ? null : root.querySelector(".composer");
+  return ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer || !sendsFiles() ? null : root.querySelector(".composer");
 }
 document.addEventListener("dragover", (e) => {
   if (!dragsFiles(e)) return;

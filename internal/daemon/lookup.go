@@ -147,6 +147,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 	} else if p := d.peers[dev]; p != nil {
 		det.Host, det.Owner = p.pres.Host, p.pres.Owner
 		det.DeviceSeen, det.Stale = p.lastChange, d.staleLocked(p)
+		det.FilesOff = p.pres.Files && p.pres.FilesOff
 		for _, s := range p.pres.Sessions {
 			if s.ID != sess {
 				continue

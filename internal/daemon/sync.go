@@ -1224,7 +1224,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
-		pres.Groups, pres.Receipts, pres.Files = false, false, false
+		pres.Groups, pres.Receipts, pres.Files, pres.FilesOff = false, false, false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1670,7 +1670,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, DND: d.dnd.Load()}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.recvFiles.Load(), DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must

@@ -989,6 +989,11 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: body}
+	if (len(req.Files) > 0 || len(uploads) > 0) && !d.sendFiles.Load() {
+		// Before anything is read (#765, Tyler, 2026-11-16).
+		return refuse(proto.RefusedSend, "not sent: sending files is off in this repo. Your user can turn on Send files in "+
+			brand.Product+"'s Settings; or send the text alone.")
+	}
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
@@ -1180,7 +1185,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now(),
-		DND: d.dnd.Load()}
+		DND: d.dnd.Load(), FilesOff: !d.recvFiles.Load(), SendFilesOff: !d.sendFiles.Load()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -1204,7 +1209,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
-			Stale: d.staleLocked(p), DND: p.pres.DND}
+			Stale: d.staleLocked(p), DND: p.pres.DND, FilesOff: p.pres.Files && p.pres.FilesOff}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed

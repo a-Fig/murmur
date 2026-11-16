@@ -86,6 +86,9 @@ type device struct {
 	keep   time.Duration // StoppedInbox; likewise
 	// fileKeep and filePrune are FileKeep and FilePrune; zero takes the daemon's defaults.
 	fileKeep, filePrune time.Duration
+	// filesOff starts the daemon with Send files and Receive files off, as a new user's is (#765);
+	// otherwise both are on.
+	filesOff bool
 	// muteGrace is MuteGrace. Zero takes none (-1): a mute holds from the first moment, so a test
 	// doesn't wait half a minute to see one work.
 	muteGrace time.Duration
@@ -231,6 +234,19 @@ func (d *device) start() {
 	muteGrace := d.muteGrace
 	if muteGrace == 0 {
 		muteGrace = -1
+	}
+	if !d.filesOff {
+		// Send files and Receive files are off until a person turns them on (#765). The tests of
+		// files, and of everything else, run with them on, unless a test says, or set them itself.
+		settings := filepath.Join(d.gitDir, brand.StateDir, "settings.json")
+		if _, err := os.Stat(settings); os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+				d.t.Fatal(err)
+			}
+			if err := os.WriteFile(settings, []byte(`{"sendFiles":true,"receiveFiles":true}`), 0o600); err != nil {
+				d.t.Fatal(err)
+			}
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
