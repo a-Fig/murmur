@@ -460,7 +460,7 @@ func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event) error {
 }
 
 // pruneFiles deletes the copies of files kept longer than FileKeep, and from the remote the files
-// refs this device pushed that long ago.
+// refs this device pushed that long ago, and those of devices that are gone (pruneOthersFiles).
 func (d *Daemon) pruneFiles(ctx context.Context) {
 	// Scratch directories nothing deleted: a daemon stopped mid-work left them, or Windows wouldn't
 	// let one go while a scanner still held a file in it. Only old ones: a send can be using one
@@ -500,6 +500,100 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 			continue
 		}
 		d.dropFileRef(at, false)
+	}
+	d.pruneOthersFiles(ctx)
+}
+
+// othersFile is a files ref another device pushed, as read of in its log: whose, and how long this
+// daemon has run since it first read of it (ageOthersFilesLocked).
+type othersFile struct {
+	Device string        `json:"device"`
+	Age    time.Duration `json:"age"`
+}
+
+// noteOthersFilesLocked notes the files ref message e names, read in dev's log, if dev is another
+// device. It is saved with the log's cursor. Caller holds mu.
+func (d *Daemon) noteOthersFilesLocked(e bus.Event, dev string) {
+	if e.Type != bus.Message || e.FilesAt == "" || dev == d.device {
+		return
+	}
+	if _, ok := d.st.OthersFiles[e.FilesAt]; !ok {
+		d.st.OthersFiles[e.FilesAt] = othersFile{Device: dev}
+	}
+}
+
+// ageOthersFilesLocked adds to each note's age the time since the last call, as now, a reading of
+// the monotonic clock, says, and at most twice FilePrune. No wall clock goes into an age: one set
+// forward by weeks, as a clock is when it is put right, would make every note old at once. The
+// cap holds a machine asleep, which Windows' monotonic clock counts, and the first call adds nothing,
+// so the time a daemon was down isn't counted. That only makes a ref wait longer. Caller holds mu.
+func (d *Daemon) ageOthersFilesLocked(now time.Time) {
+	if !d.othersAged.IsZero() {
+		step := min(max(now.Sub(d.othersAged), 0), 2*d.opt.FilePrune)
+		for at, f := range d.st.OthersFiles {
+			f.Age += step
+			d.st.OthersFiles[at] = f
+		}
+	}
+	d.othersAged = now
+}
+
+// pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
+// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes once
+// this daemon has run for twice FileKeep since it first read of it. Its event was written after it
+// was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
+// can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
+// is wrong, and for an event a teammate wrote to name another's ref. The device being gone, its
+// presence stale or off the remote, only spares a live one's own prune the race. Every daemon here
+// may delete the same ref: deleting one already gone succeeds.
+func (d *Daemon) pruneOthersFiles(ctx context.Context) {
+	d.mu.Lock()
+	d.ageOthersFilesLocked(time.Now())
+	var due []string
+	for at, f := range d.st.OthersFiles {
+		if f.Age > 2*d.opt.FileKeep {
+			due = append(due, at)
+		}
+	}
+	if len(d.st.OthersFiles) > 0 {
+		d.saveLocked()
+	}
+	d.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	listed, err := d.repo.ListRemote(ctx)
+	if err != nil {
+		d.log.Printf("listing the remote's files refs: %v", err)
+		return
+	}
+	forget := func(at string) {
+		d.mu.Lock()
+		delete(d.st.OthersFiles, at)
+		d.saveLocked()
+		d.mu.Unlock()
+	}
+	slices.Sort(due)
+	for _, at := range due {
+		if listed[bus.FilesRef(at)] == "" {
+			forget(at) // its own daemon, or another here, deleted it
+			continue
+		}
+		d.mu.Lock()
+		p := d.peers[d.st.OthersFiles[at].Device]
+		live := d.lastPollOK.IsZero() || p != nil && !d.staleLocked(p)
+		d.mu.Unlock()
+		if live {
+			continue
+		}
+		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			d.log.Printf("deleting files ref %s, of a device that is gone, from the remote: %v", at, err)
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+		forget(at)
 	}
 }
 

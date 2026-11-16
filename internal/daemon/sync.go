@@ -798,6 +798,7 @@ func (d *Daemon) readEventsLocked(ref, dev string, commits []bus.Commit, mode sy
 		if !ok {
 			continue
 		}
+		d.noteOthersFilesLocked(e, dev) // history too: a gone device's refs are known only from it
 		if junked && e.At.Before(hidden.Add(-time.Minute)) {
 			continue // history the junk hid when this device first looked
 		}
@@ -936,6 +937,9 @@ func (d *Daemon) readGivenUpTags(ctx context.Context, ref, sha, listed string) b
 						}
 						stalled = true
 						return
+					}
+					if ok {
+						d.noteOthersFilesLocked(e, dev) // as readEventsLocked does
 					}
 					if ok && e.Type == bus.Tags && !(junked && e.At.Before(hidden.Add(-time.Minute))) {
 						d.applyTagsEventLocked(e)

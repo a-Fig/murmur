@@ -76,8 +76,19 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
   encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
-  file names, and a turn made from it later says the files aren't there. A sender that never runs
-  again leaves its refs.
+  file names, and a turn made from it later says the files aren't there.
+- **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
+  2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
+  included, and deletes one once it has itself run for 14 days since it first read of it, if the
+  ref's device's presence is stale or gone by then. Its own daemon, if it still runs, deleted it 7
+  days before, since the event is written after the push. The 14 days are counted on the monotonic
+  clock, at most two hours for each hourly prune, so no wall clock goes in: a clock set forward by
+  weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
+  date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
+  monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
+  a team whose daemons run only while someone works. A ref no event this device read names
+  still stays: one whose message failed after its push, one in a log it can't open, or one sent
+  before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once for each**, since each gets a message of
   its own (#520).
 - **A send with files has 90 seconds**, like any request, and its push holds the device's one
