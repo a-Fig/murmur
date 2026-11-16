@@ -1308,6 +1308,12 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
+	return d.appendEventIf(ctx, e, nil)
+}
+
+// appendEventIf is appendEvent, asking still once each push's turn is had: a message with files
+// isn't sent if Send files went off while it waited (#765).
+func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool) error {
 	if err := d.awaitEpoch(ctx); err != nil {
 		return err
 	}
@@ -1331,9 +1337,9 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			return err
 		}
 		if lease == "" {
-			err = d.push(ctx, sha, ref, bus.FastForward, "")
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
 		} else {
-			err = d.push(ctx, sha, ref, bus.Lease, lease)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, still)
 		}
 		if err == nil {
 			d.ownTip = sha

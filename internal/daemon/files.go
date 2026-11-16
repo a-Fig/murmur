@@ -401,6 +401,9 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool)
 	files, at, ok := d.reuseFilesLocked(sum)
 	d.mu.Unlock()
 	if ok {
+		if still != nil && !still() {
+			return nil, "", false, errSendOff
+		}
 		return files, at, true, nil
 	}
 	at = bus.NewFilesAt()
@@ -1164,8 +1167,9 @@ func (d *Daemon) pageFetch(ctx context.Context, e bus.Event) error {
 	switch {
 	case err == nil:
 		delete(d.fileMiss, e.FilesAt)
-	case ctx.Err() != nil:
-		// The page went, or its time ran out: that says nothing of the remote.
+	case ctx.Err() != nil, errors.Is(err, errReceiveOff):
+		// The page went, or its time ran out, or Receive files went off: that says nothing of the
+		// remote.
 	default:
 		d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
 		d.fileMiss[e.FilesAt] = fileMiss{time.Now(), err}

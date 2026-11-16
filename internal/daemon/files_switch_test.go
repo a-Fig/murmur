@@ -115,6 +115,20 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	if code, body := pa.call("GET", "/api/file?id="+m.ID+"&i=0", pa.token, ""); code != 200 || body != "a chart" {
 		t.Errorf("the person's file, asked for: %d %q", code, body)
 	}
+
+	// A save names the switches it sets; one from a page that hadn't seen them change leaves them.
+	if code, body := pa.call("PUT", "/api/settings", pa.token, `{"wake":{"when":"within"},"pageSendFiles":false,"pageReceiveFiles":false}`); code != 200 {
+		t.Fatalf("a save naming no switch: %d %s", code, body)
+	}
+	if _, body := pa.call("GET", "/api/settings", pa.token, ""); !strings.Contains(body, `"pageSendFiles":true`) || !strings.Contains(body, `"pageReceiveFiles":true`) {
+		t.Errorf("a save naming no switch changed them: %s", body)
+	}
+	if code, body := pa.call("PUT", "/api/settings", pa.token, `{"wake":{"when":"within"},"pageReceiveFiles":false,"filesSet":["pageReceiveFiles"]}`); code != 200 {
+		t.Fatalf("a save naming one switch: %d %s", code, body)
+	}
+	if _, body := pa.call("GET", "/api/settings", pa.token, ""); !strings.Contains(body, `"pageSendFiles":true`) || !strings.Contains(body, `"pageReceiveFiles":false`) {
+		t.Errorf("a save naming pageReceiveFiles: %s", body)
+	}
 }
 
 // A person who turned Receive files off is shown so to a sender, and told of when sent to.

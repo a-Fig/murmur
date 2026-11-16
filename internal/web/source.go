@@ -279,6 +279,10 @@ type Settings struct {
 	// 2026-11-16). SendFiles and ReceiveFiles are the agents'.
 	PageSendFiles    bool `json:"pageSendFiles"`
 	PageReceiveFiles bool `json:"pageReceiveFiles"`
+	// FilesSet names the file switches a save sets (sendFiles, pageReceiveFiles, ...); the daemon
+	// keeps the rest as they are, so a page that hasn't yet seen another's change can't undo it
+	// (Sol's review of #769). Only a save carries it.
+	FilesSet []string `json:"filesSet,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`

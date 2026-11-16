@@ -1047,7 +1047,11 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.saveLocked()
 		d.mu.Unlock()
 	}
-	if err := d.appendEvent(ctx, e); err != nil {
+	var still func() bool
+	if len(e.Files) > 0 {
+		still = sends
+	}
+	if err := d.appendEventIf(ctx, e, still); err != nil {
 		if len(e.Files) > 0 && !filesReused {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}

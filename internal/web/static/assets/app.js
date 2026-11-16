@@ -5117,6 +5117,8 @@ function saveSettings(next, modeChange = false, filesChange = "") {
   // elsewhere can't undo it.
   if (!modeChange && ui.state) next = { ...next, mode: deviceMode() };
   if (ui.state) for (const k of FILE_SWITCHES) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
+  // The daemon takes only the switch this save changes, and keeps the others as it has them.
+  next = { ...next, filesSet: filesChange ? [filesChange] : [] };
   if (filesChange && ui.state) ui.state[filesChange] = !!next[filesChange]; // as setMode does
   const seq = ++settingsSeq;
   ui.settings = next;

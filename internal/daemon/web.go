@@ -499,6 +499,20 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	// The file switches this save doesn't name stay as they are.
+	for _, sw := range []struct {
+		name      string
+		next, cur *bool
+	}{
+		{"sendFiles", &next.SendFiles, &d.settings.SendFiles},
+		{"receiveFiles", &next.ReceiveFiles, &d.settings.ReceiveFiles},
+		{"pageSendFiles", &next.PageSendFiles, &d.settings.PageSendFiles},
+		{"pageReceiveFiles", &next.PageReceiveFiles, &d.settings.PageReceiveFiles},
+	} {
+		if !slices.Contains(set.FilesSet, sw.name) {
+			*sw.next = *sw.cur
+		}
+	}
 	was := d.settings.Mode
 	switch {
 	case next.Mode == "":
@@ -515,6 +529,11 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	d.agentSend.Store(next.SendFiles)
 	d.pageSend.Store(next.PageSendFiles)
 	agents, page := d.agentRecv.set(next.ReceiveFiles), d.pageRecv.set(next.PageReceiveFiles)
+	if page && next.PageReceiveFiles {
+		d.mu.Lock()
+		clear(d.fileMiss) // a fetch the switch's going off ended isn't one to wait out
+		d.mu.Unlock()
+	}
 	if agents || page {
 		d.kickPresence() // teammates' senders, who and lookup say whether this device takes files
 	}
