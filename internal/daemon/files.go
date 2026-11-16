@@ -308,13 +308,7 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 				d.log.Printf("message %s is queued without its files: %v", e.ID, err)
 			}
 			d.mu.Lock()
-			if w := d.st.FilesWait[e.ID]; w != nil {
-				delete(d.st.FilesWait, e.ID)
-				for _, id := range w.For {
-					d.queueInboxLocked(id, w.Event)
-				}
-				d.saveLocked()
-			}
+			d.filesFetchedLocked(e.ID)
 			d.mu.Unlock()
 		}
 		if !pruned {
@@ -330,6 +324,40 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			d.pruneFiles(ctx)
 		}
 	}
+}
+
+// filesFetchedLocked queues the message with event ID id, whose files' fetch has ended, for the
+// sessions it waited for. Caller holds mu.
+func (d *Daemon) filesFetchedLocked(id string) {
+	w := d.st.FilesWait[id]
+	if w == nil {
+		return
+	}
+	delete(d.st.FilesWait, id)
+	for _, sess := range w.For {
+		if to := d.filesRecipientLocked(sess, w.Event); to != "" {
+			d.queueInboxLocked(to, w.Event)
+		}
+	}
+	d.saveLocked()
+}
+
+// filesRecipientLocked is where message e, which waited for its files for session id, goes now:
+// id, or the session that has taken id's name since (forwardLocked). A fetch can take minutes, and
+// a session that took the name meanwhile, as one that resumed the conversation in another process,
+// took what id had in its inbox then (adoptLocked), not what waited here: the message would land in
+// an inbox nobody reads (#703). "" if that session sent e or has muted its sender, as a message
+// that came for it would have skipped it (addressedLocked, queueLocked). Caller holds mu.
+func (d *Daemon) filesRecipientLocked(id string, e bus.Event) string {
+	f := d.forwardLocked(bus.Addr(d.device, id))
+	if f == "" {
+		return id
+	}
+	_, to := bus.SplitAddr(f)
+	if e.From == f || d.mutedHereLocked(to, e) {
+		return ""
+	}
+	return to
 }
 
 // fetchFiles brings the files of message e from its files ref and saves them. A fetch that fails
