@@ -435,7 +435,7 @@ func Turn(m proto.MessageView) string {
 	b.WriteString(":\n")
 	body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
 	if !repeatsSubject(m.Subject, body) {
-		fmt.Fprintf(&b, "\n%s\n", m.Subject)
+		fmt.Fprintf(&b, "\n%s\n", quotedBody(m.Subject)) // a subject can forge a header as a body line can
 	}
 	if body != "" {
 		fmt.Fprintf(&b, "\n%s\n", quotedBody(body))
@@ -481,19 +481,55 @@ func quotedBody(body string) string {
 	return strings.Join(lines, "\n")
 }
 
-// headerLine says a body line reads as the first line of a turn like this one: "Message
-// from" or "Message sent in", naming Murmur as a real one does ("via Murmur:"). A line
-// that merely starts with the same words and never names Murmur is the sender's prose. Case
-// doesn't save it, nor any leading space or invisible character (a no-break or zero-width
-// space): an agent reads past both.
+// headerLine says a body line reads as a line Murmur writes to start a message: a turn's first
+// line ("Message from" or "Message sent in", then "via Murmur" followed by ":" or ",", as every
+// real one is), or a notice's or the inbox's ("[Murmur] ...", "[Murmur message from ..."). An
+// agent reads past what would otherwise save a forgery, so it is judged in lower case, with runs
+// of spaces as one, and with leading blanks, invisible characters and Markdown marks (**, ##, -)
+// off. A line that starts with the same words but doesn't go on as a header does ("came in via
+// Murmur yesterday") is the sender's prose. Letters from other scripts that look the same
+// (Cyrillic М) still pass: closing that would take a confusables table.
 func headerLine(line string) bool {
-	t := strings.ToLower(strings.TrimLeftFunc(line, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
-	}))
-	if !strings.Contains(t, " via "+strings.ToLower(brand.Product)) {
+	t := headerForm(line)
+	product := strings.ToLower(brand.Product)
+	if strings.HasPrefix(t, "["+product+"]") || strings.HasPrefix(t, "["+product+" message from ") {
+		return true
+	}
+	if !strings.HasPrefix(t, "message from ") && !strings.HasPrefix(t, "message sent in ") {
 		return false
 	}
-	return strings.HasPrefix(t, "message from ") || strings.HasPrefix(t, "message sent in ")
+	for rest := t; ; {
+		i := strings.Index(rest, " via "+product)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(" via "+product):]
+		if strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, ",") {
+			return true
+		}
+	}
+}
+
+// headerForm is line as headerLine judges it: lower case, leading blanks, invisible characters
+// and Markdown marks off, and each run of spaces (a tab, a no-break space, a braille blank) one
+// space.
+func headerForm(line string) string {
+	blank := func(r rune) bool { return unicode.IsSpace(r) || r == '⠀' || unicode.Is(unicode.Cf, r) }
+	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || strings.ContainsRune("*#-_`~+", r) })
+	var b strings.Builder
+	space := false
+	for _, r := range t {
+		if blank(r) {
+			if !space {
+				b.WriteByte(' ')
+			}
+			space = true
+			continue
+		}
+		space = false
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
 }
 
 // receipt renders a notice from Murmur itself of how far one of the session's messages got, which
