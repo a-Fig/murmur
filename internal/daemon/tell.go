@@ -57,13 +57,16 @@ func (d *Daemon) tellLocked(msg string, rec *sentRecord, late bool) {
 	}
 	rec.Told = true
 	delete(d.st.Sent, msg)
-	dev, sess := bus.SplitAddr(rec.Asker)
+	// The sender may have been replaced since it sent (a T3 thread's new session, #659): the notice
+	// goes to the session that holds its name now, as a message for it would.
+	to := d.queuedAtLocked(rec.Asker)
+	dev, sess := bus.SplitAddr(to)
 	if dev != d.device || sess == "" {
 		return
 	}
 	subject, body := tellText(rec, waited, short, d.labelerLocked())
 	d.addInboxLocked(sess, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
-		From: bus.Addr(d.device, bus.ReceiptFrom), To: rec.Asker, At: time.Now().UTC(), Subject: subject, Body: body})
+		From: bus.Addr(d.device, bus.ReceiptFrom), To: to, At: time.Now().UTC(), Subject: subject, Body: body})
 }
 
 // reached says a recipient at state has got as far as want. A message handed over as a turn counts

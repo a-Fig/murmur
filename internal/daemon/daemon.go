@@ -791,6 +791,9 @@ type state struct {
 	NamesTip    string `json:"namesTip,omitempty"`
 	NamesGood   string `json:"namesGood,omitempty"`
 	NamesRepair bool   `json:"namesRepair,omitempty"`
+	// NamesRecheck says a presence showed a name never seen here, and the registry is to be read
+	// again from its start, to see whether it lost that name (see notePresenceNameLocked).
+	NamesRecheck bool `json:"namesRecheck,omitempty"`
 	// NamesPeople says the registry was read from its start by a daemon that keeps people's claims
 	// (#268). One from before read their claims and passed over them, so reading on from its
 	// NamesGood would leave them unread for good: without this, the next read starts from the
@@ -906,6 +909,10 @@ func Run(ctx context.Context, opt Options) error {
 	if !d.consented() {
 		return ErrNoConsent
 	}
+	// From here the daemon's reads of commits share a git (#623). Deferred first, so it is closed
+	// last: the goodbye and whatever else runs on the way out can still read.
+	d.repo.KeepReader()
+	defer d.repo.Close()
 	clearStaleTemp(d.opt.GitDir, d.log) // a daemon stopped mid-fetch leaves no one else to do it
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

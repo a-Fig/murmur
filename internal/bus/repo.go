@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -61,6 +62,42 @@ type Repo struct {
 
 	treeMu    sync.Mutex // the daemon's goroutines all write through one Repo
 	emptyTree string
+
+	reader *gitx.Reader // set by KeepReader; nil reads with a git for each read
+}
+
+// ReaderLinger is how long the git that KeepReader keeps stays after its last read. The daemon
+// looks at the remote every 3 s while a conversation is going, so the reads of one conversation
+// share a git, and a daemon nobody is writing to has none.
+const ReaderLinger = 5 * time.Second
+
+// KeepReader has the Repo read commits through one git that stays running between reads
+// (gitx.Reader), in place of two started for every read. Call it before the Repo is used, and
+// Close when done with it. Where the git installed can't do that, reads go on as they did.
+func (r *Repo) KeepReader() { r.reader = r.Git.NewReader(ReaderLinger) }
+
+// Close ends the git KeepReader keeps, if there is one, and waits for it to be gone.
+func (r *Repo) Close() {
+	if r.reader != nil {
+		r.reader.Close()
+	}
+}
+
+// ask puts a question to the kept reader: Info, or Contents of objects up to max bytes. With no
+// reader, or one that can't answer (gitx.ErrNoReader), ok is false and the caller starts a git.
+func (r *Repo) ask(ctx context.Context, names []string, contents bool, max int64) (objs []gitx.Object, ok bool, err error) {
+	if r.reader == nil || len(names) == 0 {
+		return nil, false, nil
+	}
+	if contents {
+		objs, err = r.reader.Contents(ctx, names, max)
+	} else {
+		objs, err = r.reader.Info(ctx, names)
+	}
+	if errors.Is(err, gitx.ErrNoReader) {
+		return nil, false, nil
+	}
+	return objs, true, err
 }
 
 // EmptyTree returns the ID of git's empty tree, which every bus commit carries: bus commits
@@ -275,6 +312,9 @@ func (r *Repo) UpdateLocal(ctx context.Context, ref, sha string) error {
 // object that isn't here) is not, and nothing can be built on it. Any other failure is an error:
 // callers build over what isn't a commit, which on a passing fault would drop what is there.
 func (r *Repo) IsCommit(ctx context.Context, sha string) (bool, error) {
+	if objs, ok, err := r.ask(ctx, []string{sha}, false, 0); ok {
+		return err == nil && objs[0].Type == "commit", err
+	}
 	out, err := r.Git.Run(ctx, "", "cat-file", "-t", sha)
 	if err == nil {
 		return strings.TrimSpace(out) == "commit", nil
@@ -494,7 +534,7 @@ func (r *Repo) commitsAmong(ctx context.Context, shas []string) (commits, missin
 	var names []string
 	seen := map[string]bool{}
 	for _, sha := range shas {
-		if !seen[sha] && isObjectName(sha) {
+		if !seen[sha] && gitx.IsObjectName(sha) {
 			seen[sha] = true
 			names = append(names, sha)
 		}
@@ -502,14 +542,24 @@ func (r *Repo) commitsAmong(ctx context.Context, shas []string) (commits, missin
 	if len(names) == 0 {
 		return nil, nil, nil
 	}
-	out, err := r.Git.Run(ctx, strings.Join(names, "\n")+"\n", "cat-file", "--batch-check=%(objectname) %(objecttype)")
-	if err != nil {
-		return nil, nil, err
-	}
 	kind := map[string]string{}
-	for _, line := range strings.Split(out, "\n") {
-		if f := strings.Fields(line); len(f) == 2 {
-			kind[f[0]] = f[1] // for an object that isn't here, git prints its name and "missing"
+	if objs, ok, err := r.ask(ctx, names, false, 0); err != nil {
+		return nil, nil, err
+	} else if ok {
+		for _, o := range objs {
+			if kind[o.Name] = o.Type; o.Missing {
+				kind[o.Name] = "missing"
+			}
+		}
+	} else {
+		out, err := r.Git.Run(ctx, strings.Join(names, "\n")+"\n", "cat-file", "--batch-check=%(objectname) %(objecttype)")
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if f := strings.Fields(line); len(f) == 2 {
+				kind[f[0]] = f[1] // for an object that isn't here, git prints its name and "missing"
+			}
 		}
 	}
 	for _, sha := range names {
@@ -523,21 +573,20 @@ func (r *Repo) commitsAmong(ctx context.Context, shas []string) (commits, missin
 	return commits, missing, nil
 }
 
-// isObjectName says s is a full object name as git prints one: 40 hex digits, or 64 with SHA-256.
-func isObjectName(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
-		return false
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 // sizes asks git how large each commit is, without reading it.
 func (r *Repo) sizes(ctx context.Context, shas []string) (map[string]int64, error) {
+	if objs, ok, err := r.ask(ctx, shas, false, 0); err != nil {
+		return nil, err
+	} else if ok {
+		sizes := make(map[string]int64, len(objs))
+		for _, o := range objs {
+			if o.Type != "commit" {
+				return nil, fmt.Errorf("not a commit here: %s", o.Name)
+			}
+			sizes[o.Name] = o.Size
+		}
+		return sizes, nil
+	}
 	out, err := r.Git.Run(ctx, strings.Join(shas, "\n")+"\n", "cat-file",
 		"--batch-check=%(objectname) %(objecttype) %(objectsize)")
 	if err != nil {
@@ -572,9 +621,28 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 		}
 	}
 	read := map[string]Commit{}
-	if len(small) > 0 {
-		out, err := r.Git.Run(ctx, strings.Join(small, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
-			"--no-show-signature", "--no-color", "--format=%H%x00%ct%x00%B%x1e", "--")
+	var byLog []string // those git log is asked for
+	objs, kept, err := r.ask(ctx, small, true, max)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range objs {
+		if o.Type != "commit" {
+			return nil, fmt.Errorf("unreadable commit %s", o.Name)
+		}
+		at, message, ok := parseCommit(o.Data)
+		if !ok {
+			byLog = append(byLog, o.Name)
+			continue
+		}
+		read[o.Name] = Commit{SHA: o.Name, Time: at, Message: message}
+	}
+	if !kept {
+		byLog = small
+	}
+	if len(byLog) > 0 {
+		out, err := r.Git.Run(ctx, strings.Join(byLog, "\n")+"\n", "log", "--stdin", "--no-walk=unsorted",
+			"--no-show-signature", "--no-color", "--encoding=UTF-8", "--format=%H%x00%ct%x00%B%x1e", "--")
 		if err != nil {
 			return nil, err
 		}
@@ -601,6 +669,39 @@ func (r *Repo) readCommits(ctx context.Context, shas []string, sizes map[string]
 		commits = append(commits, c)
 	}
 	return commits, nil
+}
+
+// parseCommit takes from a commit object, as git stores it, what `git log` prints as %ct and %B:
+// when it was committed by its writer's clock (the Unix epoch if it doesn't say), and its message,
+// which is everything after the first empty line.
+//
+// Two kinds of commit git log reads differently, and for them ok is false, so that the caller asks
+// git log: one that names an encoding, which log converts its message from (a record written by
+// hand in Latin-1 still decodes, to other text, if it isn't converted), and one with a NUL in it,
+// which log cuts the message at, as readCommits does at the byte it parts log's records with.
+// Murmur writes none of these.
+//
+// git log is asked for UTF-8 (--encoding), which is what it gives unless the user's
+// i18n.logOutputEncoding says otherwise: with that set to Latin-1, a message read by log came
+// converted to it, and one read here didn't.
+func parseCommit(raw []byte) (at time.Time, message string, ok bool) {
+	if bytes.IndexByte(raw, 0) >= 0 || bytes.Contains(raw, []byte(recordSep)) {
+		return time.Time{}, "", false
+	}
+	head, body, _ := strings.Cut(string(raw), "\n\n")
+	var secs int64
+	for _, line := range strings.Split(head, "\n") {
+		if strings.HasPrefix(line, "encoding ") {
+			return time.Time{}, "", false
+		}
+		if who, found := strings.CutPrefix(line, "committer "); found && secs == 0 {
+			// "Name <email> 1794789106 -0800", and a name can hold anything but '<', '>' and a newline.
+			if f := strings.Fields(who[strings.LastIndex(who, ">")+1:]); len(f) > 0 {
+				secs, _ = strconv.ParseInt(f[0], 10, 64)
+			}
+		}
+	}
+	return time.Unix(secs, 0), body, true
 }
 
 // Roots returns the commits with no parent in sha's history that aren't in not's ("" for none).

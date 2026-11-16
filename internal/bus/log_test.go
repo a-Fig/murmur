@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -19,6 +20,18 @@ func logRepo(t *testing.T) *bus.Repo {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	return &bus.Repo{Git: gitx.Git{Dir: dir}, Name: "test", Email: "test@example.invalid"}
+}
+
+// readWays runs a test of reading both ways a Repo reads: with a git started for each read, and
+// through one that is kept (KeepReader).
+func readWays(t *testing.T, test func(t *testing.T, r *bus.Repo)) {
+	t.Run("a git for each read", func(t *testing.T) { test(t, logRepo(t)) })
+	t.Run("a kept git", func(t *testing.T) {
+		r := logRepo(t)
+		r.KeepReader()
+		t.Cleanup(r.Close) // before the directory goes, which a git still running would hold
+		test(t, r)
+	})
 }
 
 // chain commits msgs one on another, and returns their SHAs, oldest first.
@@ -49,8 +62,9 @@ func readLog(t *testing.T, r *bus.Repo, from, to string, max int64) (pages [][]b
 
 // A long history comes a page at a time, oldest first, each commit once and whole, and a read from
 // the middle has only what came after.
-func TestLogReadsALongHistoryInPages(t *testing.T) {
-	r := logRepo(t)
+func TestLogReadsALongHistoryInPages(t *testing.T) { readWays(t, testLogReadsALongHistoryInPages) }
+
+func testLogReadsALongHistoryInPages(t *testing.T, r *bus.Repo) {
 	r.Page = 7
 	var msgs []string
 	for i := range 50 {
@@ -91,7 +105,10 @@ func TestLogReadsALongHistoryInPages(t *testing.T) {
 // passes over it and its cursor moves past it, and what follows it is read as usual. ReadCommit
 // refuses it.
 func TestLogPassesOverACommitOverTheLimit(t *testing.T) {
-	r := logRepo(t)
+	readWays(t, testLogPassesOverACommitOverTheLimit)
+}
+
+func testLogPassesOverACommitOverTheLimit(t *testing.T, r *bus.Repo) {
 	const max = 4 << 10
 	huge := "huge\n\n{\"body\":\"" + strings.Repeat("x", 4*max) + "\"}\n"
 	shas := chain(t, r, "", "before\n\n{}\n", huge, "after\n\n{}\n")
@@ -122,8 +139,9 @@ func TestLogPassesOverACommitOverTheLimit(t *testing.T) {
 }
 
 // An error from the page stops the read, and is what Log returns.
-func TestLogStopsAtAPageError(t *testing.T) {
-	r := logRepo(t)
+func TestLogStopsAtAPageError(t *testing.T) { readWays(t, testLogStopsAtAPageError) }
+
+func testLogStopsAtAPageError(t *testing.T, r *bus.Repo) {
 	r.Page = 2
 	shas := chain(t, r, "", "a\n\n{}\n", "b\n\n{}\n", "c\n\n{}\n", "d\n\n{}\n")
 	stop := errors.New("stop")
@@ -141,7 +159,10 @@ func TestLogStopsAtAPageError(t *testing.T) {
 // commit it read stands for everything before it: a read resumed from there repeats nothing. A
 // merge's other side, which Murmur never writes, isn't read.
 func TestLogResumedPastAMergeRepeatsNothing(t *testing.T) {
-	r := logRepo(t)
+	readWays(t, testLogResumedPastAMergeRepeatsNothing)
+}
+
+func testLogResumedPastAMergeRepeatsNothing(t *testing.T, r *bus.Repo) {
 	ctx := context.Background()
 	root := chain(t, r, "", "root\n\n{}\n")[0]
 	a := chain(t, r, root, "a\n\n{}\n")[0]
@@ -201,7 +222,10 @@ func datedChain(t *testing.T, r *bus.Repo, start int, msgs ...string) []string {
 // Recent reads back across logs, newest first by when each commit was written, says which log each
 // is in, and stops at its limit or when its caller has enough.
 func TestRecentReadsAcrossLogsNewestFirst(t *testing.T) {
-	r := logRepo(t)
+	readWays(t, testRecentReadsAcrossLogsNewestFirst)
+}
+
+func testRecentReadsAcrossLogsNewestFirst(t *testing.T, r *bus.Repo) {
 	r.Page = 2
 	a := datedChain(t, r, 0, "a0\n\n{}\n", "a1\n\n{}\n", "a2\n\n{}\n") // minutes 0, 1, 2
 	b := datedChain(t, r, 1, "b0\n\n{}\n", "b1\n\n{}\n", "b2\n\n{}\n") // minutes 1, 2, 3
@@ -288,7 +312,10 @@ func TestRecentReadsAcrossLogsNewestFirst(t *testing.T) {
 // Recent hands over everything in one page, however many commits, where Log pages by LogPage: its
 // caller waits on no cursor, and each page costs git commands.
 func TestRecentReadsALongHistoryInOnePage(t *testing.T) {
-	r := logRepo(t)
+	readWays(t, testRecentReadsALongHistoryInOnePage)
+}
+
+func testRecentReadsALongHistoryInOnePage(t *testing.T, r *bus.Repo) {
 	ctx := context.Background()
 	// Written by one git, as a commit at a time would take a minute: every commit on the branch
 	// has the one before as its parent, and no files.
@@ -329,7 +356,10 @@ func TestRecentReadsALongHistoryInOnePage(t *testing.T) {
 
 // Recent marks a commit over the limit and leaves it unread, as Log does.
 func TestRecentPassesOverACommitOverTheLimit(t *testing.T) {
-	r := logRepo(t)
+	readWays(t, testRecentPassesOverACommitOverTheLimit)
+}
+
+func testRecentPassesOverACommitOverTheLimit(t *testing.T, r *bus.Repo) {
 	const max = 4 << 10
 	huge := "huge\n\n{\"body\":\"" + strings.Repeat("x", 4*max) + "\"}\n"
 	shas := chain(t, r, "", "before\n\n{}\n", huge, "after\n\n{}\n")
@@ -349,4 +379,109 @@ func TestRecentPassesOverACommitOverTheLimit(t *testing.T) {
 			t.Errorf("commit %s: oversize %v, message of %d bytes", c.SHA, c.Oversize, len(c.Message))
 		}
 	}
+}
+
+// A commit read through a kept git is, to the byte, what `git log` gave for it: its message, its
+// time and its size, whatever shape the message has. So is one read after the kept git is closed,
+// which is how a Repo reads where git has no --batch-command.
+func TestAKeptGitReadsWhatGitLogDid(t *testing.T) {
+	each := logRepo(t)
+	msgs := []string{
+		"subject\n\n{\"body\":\"text\"}\n",
+		"no newline at its end",
+		"\n\nblank lines first\n",
+		"trailing blank lines\n\n\n",
+		"a\r\nb\r\n",
+		"committer someone <else@example.invalid> 5 +0000\n\ncommitter again\n",
+		"tabs\tand spaces  \n \n",
+		"Ünïcödé ✓ 日本語\n\n{\"emoji\":\"🐝\"}\n",
+		strings.Repeat("a long line ", 5000) + "\n",
+		"",
+	}
+	shas := datedChain(t, each, 7, msgs...)
+	// One written by hand, with a header that runs over several lines and a name with odd spacing.
+	raw := "tree " + emptyTree(t, each) + "\nparent " + shas[0] +
+		"\nauthor A  U Thor <a@example.invalid> 1700000000 +0000" +
+		"\ncommitter  C O  Mitter  <c@example.invalid> 1700009999 -0730" +
+		"\ngpgsig -----BEGIN-----\n \n line two\n -----END-----\n\nsigned by hand\n\nbody\n"
+	cmd := exec.Command("git", "--git-dir="+each.Git.Dir, "hash-object", "-t", "commit", "-w", "--stdin")
+	cmd.Stdin = strings.NewReader(raw)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("writing a commit by hand: %v", err)
+	}
+	shas = append(shas, strings.TrimSpace(string(out)))
+	// Two that git log reads differently from what the object holds: a message in another
+	// encoding, which it converts, and one with a NUL in it, which it cuts there.
+	for _, raw := range []string{
+		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
+			"\ncommitter c <c@example.invalid> 1700000001 +0000\nencoding ISO-8859-1\n\ncaf\xe9\n\n{\"body\":\"\xe9t\xe9\"}\n",
+		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
+			"\ncommitter c <c@example.invalid> 1700000002 +0000\n\nbefore\x00after\n",
+		// And one with the byte readCommits parts git log's records with, where it cuts too.
+		"tree " + emptyTree(t, each) + "\nauthor a <a@example.invalid> 1700000000 +0000" +
+			"\ncommitter c <c@example.invalid> 1700000003 +0000\n\nbefore\x1eafter\n",
+	} {
+		cmd := exec.Command("git", "--git-dir="+each.Git.Dir, "hash-object", "-t", "commit", "-w", "--literally", "--stdin")
+		cmd.Stdin = strings.NewReader(raw)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("writing a commit by hand: %v", err)
+		}
+		shas = append(shas, strings.TrimSpace(string(out)))
+	}
+
+	// A user whose git log prints Latin-1 reads the same bytes as anyone, either way.
+	each.Git.Env = []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=i18n.logOutputEncoding", "GIT_CONFIG_VALUE_0=ISO-8859-1"}
+	kept := &bus.Repo{Git: each.Git, Name: each.Name, Email: each.Email, Page: 4}
+	kept.KeepReader()
+	t.Cleanup(kept.Close)
+	closed := &bus.Repo{Git: each.Git, Name: each.Name, Email: each.Email}
+	closed.KeepReader()
+	closed.Close()
+
+	ctx := context.Background()
+	for i, sha := range shas {
+		want, err := each.ReadCommit(ctx, sha, bus.MaxRecord)
+		if err != nil {
+			t.Fatalf("commit %d, a git for each read: %v", i, err)
+		}
+		if want.Time.IsZero() || want.Time.Unix() == 0 || want.Size == 0 || !utf8.ValidString(want.Message) {
+			t.Fatalf("commit %d read as %+v", i, want)
+		}
+		for name, r := range map[string]*bus.Repo{"a kept git": kept, "a closed one": closed} {
+			got, err := r.ReadCommit(ctx, sha, bus.MaxRecord)
+			if err != nil {
+				t.Fatalf("commit %d, %s: %v", i, name, err)
+			}
+			if got.SHA != want.SHA || got.Message != want.Message || !got.Time.Equal(want.Time) || got.Size != want.Size {
+				t.Errorf("commit %d, %s: read %q at %v, %d bytes; git log gave %q at %v, %d bytes",
+					i, name, got.Message, got.Time, got.Size, want.Message, want.Time, want.Size)
+			}
+		}
+	}
+	// And a page at a time, as a log is read.
+	var paged []bus.Commit
+	for _, p := range readLog(t, kept, "", shas[len(msgs)-1], bus.MaxRecord) {
+		paged = append(paged, p...)
+	}
+	for _, p := range readLog(t, each, "", shas[len(msgs)-1], bus.MaxRecord) { // one page: 10 commits
+		if len(p) != len(msgs) || len(paged) != len(msgs) {
+			t.Fatalf("read %d and %d commits, want %d", len(p), len(paged), len(msgs))
+		}
+		for j, want := range p {
+			if got := paged[j]; got.Message != want.Message || !got.Time.Equal(want.Time) || got.Size != want.Size {
+				t.Errorf("commit %d of the log: read %q, git log gave %q", j, got.Message, want.Message)
+			}
+		}
+	}
+}
+
+func emptyTree(t *testing.T, r *bus.Repo) string {
+	t.Helper()
+	tree, err := r.EmptyTree(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
 }

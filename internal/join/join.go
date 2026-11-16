@@ -34,6 +34,7 @@ type Env struct {
 	MuseDir     string // Muse Code's, with its settings.json
 	PiDir       string // Pi's agent directory
 	GrokHome    string // Grok's home, with its config.toml
+	GeminiHome  string // Antigravity's home, with its config/mcp_config.json
 	Home        string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
 	T3Settings  string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
 	Getenv      func(string) string
@@ -81,6 +82,9 @@ func EnvFromProcess() (Env, error) {
 	e.PiDir = piDir(os.Getenv, home)
 	if e.GrokHome = os.Getenv("GROK_HOME"); e.GrokHome == "" {
 		e.GrokHome = filepath.Join(home, ".grok")
+	}
+	if e.GeminiHome = os.Getenv("GEMINI_HOME"); e.GeminiHome == "" {
+		e.GeminiHome = filepath.Join(home, ".gemini")
 	}
 	return e, nil
 }
@@ -385,7 +389,8 @@ func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
 // just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse and Pi
-// read their servers when a session starts, and Grok is believed to (its documentation).
+// read their servers when a session starts, and Grok and Antigravity are believed to (their
+// documentation).
 func othersAdvice(labels []string) string {
 	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
 	if slices.Contains(labels, "OpenCode") {

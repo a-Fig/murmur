@@ -124,6 +124,19 @@ address once ([counting use](counting.md)).
   bus ref brings the branch's whole history (540 KB against 12 KB for a 200-commit branch). Offering
   the remote's `HEAD` too would avoid that, at a request more per presence fetch, so it was left
   out.
+- **Commits are read through one git** (2026-11-15, #623). Reading a commit took two gits, a
+  `cat-file` for its size and a `log` for its message, and asking whether one is here took a third.
+  Each does a millisecond of work, and on Windows costs 110 to 240 ms to start. The daemon now puts
+  these questions to one `git cat-file --batch-command` (`gitx.Reader`), started by the first read
+  and ended 5 s after the last (`bus.ReaderLinger`), so the reads around a conversation share it and
+  an idle daemon keeps none. Three two-device tests on a Windows laptop went from 2,576 gits to
+  1,726, and from 69 s to 56 s. The size is still asked before the commit, so one over the limit is
+  never read. `--batch-command` came in git 2.36: on an older git the first try fails, and reads go
+  on with a git each. A reader that has run a while is not believed when it says an object is
+  missing: a new git is asked, as a wrong "missing" would have a daemon build over history that is
+  there. It isn't kept for the daemon's whole life because a Git for Windows that can't delete a
+  pack another process has open asks its user whether to try again; git 2.53 deleted packs under a
+  live reader, and older ones weren't tried.
 - **A ref too slow to fetch** (2026-11-08, #15). Anyone with push access can put a large object on a
   bus ref, and a fetch that used up a sync's minute failed every sync while it stayed. Each fetch in
   a sync now has 15 s (`FetchLimit`). A ref that runs past it is fetched outside the syncs, one at a

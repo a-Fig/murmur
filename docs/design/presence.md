@@ -57,7 +57,9 @@ tool calls for them.
   HEAD, branch, every ref tip and every worktree's detached HEAD); at the call's end it snapshots
   again and credits the commits between the two to the sessions the hook speaks for. A commit made
   in that worktree during the call by a person or another session is credited too: git can't say who
-  made it, and this was accepted.
+  made it, and this was accepted. A tip that isn't an object in the clone, such as a branch or a
+  worktree HEAD file naming a lost commit, is skipped; until #540 it failed the snapshot or the end's
+  `git log` in every worktree.
 - **Pairing.** The two ends of a call share a `tool_use_id`, as does a call that fails, which fires
   `PostToolUseFailure` instead (seen on Claude Code 2.1.312, 2026-10-29), so `git commit && git
   push` with a failed push is still credited. A snapshot is dropped after an hour, and the oldest

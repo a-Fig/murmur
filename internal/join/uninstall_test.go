@@ -21,7 +21,7 @@ func uninstallSandbox(t *testing.T) (*sandbox, string) {
 	t.Helper()
 	sb := newSandbox(t, true)
 	withAgents(sb)
-	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "PI_CODING_AGENT_DIR"} {
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "GEMINI_HOME", "PI_CODING_AGENT_DIR"} {
 		t.Setenv(k, filepath.Join(sb.root, "home"))
 	}
 	record := filepath.Join(sb.root, "clones")
@@ -35,7 +35,7 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	sb, _ := uninstallSandbox(t)
 	withOpenCode(t, sb, "opencode v2.2.0")
 	ctx := context.Background()
-	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome} {
+	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, filepath.Join(sb.GeminiHome, "antigravity")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -102,6 +102,11 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	grok := read(t, filepath.Join(sb.GrokHome, "config.toml"))
 	if strings.Contains(grok, brand.MCPServer) || !strings.Contains(grok, `allow = ["Bash(ls)"]`) {
 		t.Errorf("Grok's config.toml:\n%s", grok)
+	}
+	for _, f := range []string{"mcp_config.json", "hooks.json"} {
+		if agy := read(t, filepath.Join(sb.GeminiHome, "config", f)); strings.Contains(agy, brand.MCPServer) {
+			t.Errorf("Antigravity's %s:\n%s", f, agy)
+		}
 	}
 	if muse := read(t, filepath.Join(sb.MuseDir, "settings.json")); strings.Contains(muse, brand.MCPServer) || !strings.Contains(muse, `"other"`) {
 		t.Errorf("Muse's settings.json:\n%s", muse)

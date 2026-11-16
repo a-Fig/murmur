@@ -351,7 +351,9 @@ func readFirstContext(ctx context.Context, limit time.Duration) (context.Context
 // the turn from what this daemon knows of the sender then, so what was fetched with the message
 // about its sender is read first. In the refs' own order, mesh/ before names and presence/, a turn
 // could go out without a name the same sync had brought (docs/design/delivery.md, "Who it
-// is from, as the receiver knows it").
+// is from, as the receiver knows it"). The registry before presence also keeps a presence's new
+// name from being checked against a listing older than it: the recheck it asks for is made by the
+// next sync's registry, listed after the presence was read (#40, see notePresenceNameLocked).
 func readOrder(remote map[string]string) []string {
 	rank := func(ref string) int {
 		switch {
@@ -1262,12 +1264,12 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			}
 			continue
 		}
-		if s.Name != "" && d.noteNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+		if s.Name != "" && d.notePresenceNameLocked(s.Name, bus.Addr(dev, s.ID)) {
 			seen = true
 		}
 	}
 	for name, id := range pres.Names { // the same, from a presence this device can't open
-		if d.noteNameLocked(name, bus.Addr(dev, id)) {
+		if d.notePresenceNameLocked(name, bus.Addr(dev, id)) {
 			seen = true
 		}
 	}

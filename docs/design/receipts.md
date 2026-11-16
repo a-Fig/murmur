@@ -70,6 +70,8 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   call, or at the end of a turn, or when it reads its inbox; one the hook told of while the agent
   worked goes in at the turn's end, as any message does (#202). An older daemon passes over
   `tell_me`; its reply then has no `Telling`, and the MCP server tells the sender it won't be told.
+  A sender replaced since it sent (a T3 thread's new session) is told in the session that holds its
+  name now, as a message for it would be (#659).
 - **Left for later.** Receipts in an agent's `send` result, `lookup` and `who`, on demand (#605; Tyler,
   #26, 2026-11-09). Delivered is marked where the daemon sees the hook fetch a notice, as far as it
   can see, and whether the agent's context took it is unknown. A recipient idle, on do not disturb or

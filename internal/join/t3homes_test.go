@@ -107,6 +107,12 @@ func TestJoinRegistersInEveryHomeT3Runs(t *testing.T) {
 	write(t, filepath.Join(sb.root, ".codex-work", "config.toml"), "model = \"x\"\n")
 
 	write(t, filepath.Join(sb.root, "muse", "muse.cmd"), "@echo off\n") // Muse is found by T3's binaryPath
+	// T3's own home for its Antigravity instance, named by the instance ID's SHA-256, as on Tyler's
+	// laptop (2026-11-15), and there once T3 has run it (#650).
+	agyHome := filepath.Join(sb.root, ".t3", "userdata", "providers", "antigravity", "ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32")
+	if err := os.MkdirAll(agyHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	byAgent, notes := sb.homes()
 	count := func(driver string) (n int) {
@@ -117,7 +123,7 @@ func TestJoinRegistersInEveryHomeT3Runs(t *testing.T) {
 		}
 		return n
 	}
-	if count("claudeAgent") != 3 || count("codex") != 2 || count("muse") != 1 || count("opencode") != 0 || count("grok") != 1 {
+	if count("claudeAgent") != 3 || count("codex") != 2 || count("muse") != 1 || count("opencode") != 0 || count("grok") != 1 || count("antigravity") != 1 {
 		t.Fatalf("homes %+v", byAgent)
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), `Pi as T3 Code's "Pi" is turned off`) {
@@ -142,6 +148,15 @@ func TestJoinRegistersInEveryHomeT3Runs(t *testing.T) {
 		if !strings.Contains(read(t, filepath.Join(dir, "settings.json")), allowRule) {
 			t.Errorf("%s doesn't allow the tools", dir)
 		}
+	}
+	if got := read(t, filepath.Join(agyHome, "config", "mcp_config.json")); !strings.Contains(got, `"murmur"`) {
+		t.Errorf("T3's Antigravity home's mcp_config.json:\n%s", got)
+	}
+	if exists(filepath.Join(agyHome, "config", "skills")) {
+		t.Error("join made T3's Antigravity home's skills folder, which T3 links to the user's")
+	}
+	if got := read(t, filepath.Join(agyHome, "config", "hooks.json")); !strings.Contains(got, "--event Stop antigravity") {
+		t.Errorf("T3's Antigravity home's hooks.json:\n%s", got)
 	}
 	if got := read(t, filepath.Join(sb.root, ".codex-work", "config.toml")); !strings.HasPrefix(got, "model = \"x\"\n") || !strings.Contains(got, "[mcp_servers.murmur]") {
 		t.Errorf("the T3 Codex home's config.toml:\n%s", got)
