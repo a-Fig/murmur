@@ -111,13 +111,18 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   any sandbox the agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise
   send anything the user can read (`~/.ssh`, cloud credentials, other repos) to the whole team. It
   reads only from the clone's worktrees and the temp folder (`os.TempDir`, and `/tmp` on macOS and
-  Linux), following links first, so a link in temp to `~/.ssh` is refused, and never from the
-  clone's git directory, whose config can hold a remote's credentials. A network path on Windows
-  (`\host\share`) is refused before it is looked at, as looking signs in to that host as the
-  user; so is Linux's `/proc`. `~/.claude` stays out though a screenshot pasted into Claude Code may
-  be there: it holds Claude Code's credentials and every conversation. A refusal says to copy the
-  file into the temp folder. The page's uploads aren't paths, and aren't limited. Left: a hard
-  link, which looks like the file it links to, and a path changed between the look and the read.
+  Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
+  A worktree counts only if its `.git` leads back to this clone, as git's list of them is in the
+  git directory, which an agent can write. A path's links are followed one part at a time, each
+  looked at only if it is inside one of those folders, and the file is opened through an `os.Root`
+  on its folder, which refuses a link out even one swapped in after the look; so a link in temp to
+  `~/.ssh` is refused. A network path on Windows (`\\host\share`, `\/host/share`, `\\?\`), or a
+  link to one, is refused before it is looked at, as looking signs in to that host as the user.
+  `~/.claude` stays out though a screenshot pasted into Claude Code may be there: it holds Claude
+  Code's credentials and every conversation. A refusal says to copy the file into the temp folder.
+  The page's uploads aren't paths, and aren't limited. Left: a hard link, which looks like the file
+  it links to, and a link into the git directory swapped in, inside the main worktree, between the
+  look and the read, which only an agent that can read that directory could make.
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.

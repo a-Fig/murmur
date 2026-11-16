@@ -507,7 +507,30 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 	}
 	if link := filepath.Join(temp, "key"); os.Symlink(secret, link) == nil {
 		refused["a link in temp to a file elsewhere"] = link
+		if os.Symlink(filepath.Join("..", "outside"), filepath.Join(temp, "out")) == nil {
+			refused["a relative link in temp to a folder elsewhere"] = filepath.Join(temp, "out", "id_ed25519")
+		}
+		if os.Symlink(filepath.Join(temp, "shot.png"), filepath.Join(temp, "shot-link.png")) == nil {
+			if err := send(filepath.Join(temp, "shot-link.png")); err != "" {
+				t.Errorf("a link in temp to a file in temp: %s", err)
+			}
+		}
 	}
+	// A linked worktree's files are sent. A worktree's registration is in the git directory, which
+	// an agent can write; pointing it at a folder elsewhere doesn't make that folder one.
+	clone := filepath.Dir(a.gitDir)
+	wt := filepath.Join(base, "wt")
+	gitOK(clone, "worktree", "add", "--detach", wt)
+	if err := send(put(wt, "diff.txt")); err != "" {
+		t.Errorf("a file in a linked worktree: %s", err)
+	}
+	if err := os.MkdirAll(filepath.Join(outside, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, "worktrees", "wt", "gitdir"), []byte(filepath.ToSlash(filepath.Join(outside, ".git"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused["a file in a folder a worktree's registration was pointed at"] = secret
 	for what, path := range refused {
 		err := send(path)
 		if !strings.Contains(err, "isn't in this repo's clone or the temp folder") || !strings.Contains(err, "copy it into "+temp) {
@@ -515,8 +538,10 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 		}
 	}
 	if runtime.GOOS == "windows" {
-		if err := send(`\\localhost\c$\Windows\win.ini`); !strings.Contains(err, "is a network path") {
-			t.Errorf("a network path: %q", err)
+		for _, path := range []string{`\\localhost\c$\Windows\win.ini`, `\/localhost/c$/Windows/win.ini`, `\\?\C:\Windows\win.ini`} {
+			if err := send(path); !strings.Contains(err, "is a network path") {
+				t.Errorf("%s: %q, want it refused as a network path", path, err)
+			}
 		}
 	}
 }

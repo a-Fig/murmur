@@ -218,38 +218,160 @@ func unixPath(path string) bool {
 // copy there first. The git directory is out: its config can hold a remote's credentials. So is
 // ~/.claude, where a screenshot pasted into Claude Code may be, as it also holds Claude Code's
 // credentials and every conversation.
-func (d *Daemon) sendRoots(ctx context.Context) (roots []string, gitDir string) {
-	add := func(dir string) {
-		if dir == "" {
-			return
+//
+// Each folder is there as it is spelled and with its links resolved, as a path may come either way
+// (/tmp and /private/tmp on macOS). Git's list of worktrees is in the git directory, which an agent
+// can write, so a worktree counts only if its .git leads back to this clone: a line naming ~ there
+// doesn't make ~ one (Sol's review of #768).
+func (d *Daemon) sendRoots(ctx context.Context) (roots, gitDirs []string) {
+	both := func(list *[]string, dir string) {
+		*list = append(*list, filepath.Clean(dir))
+		if real, err := filepath.EvalSymlinks(dir); err == nil && real != filepath.Clean(dir) {
+			*list = append(*list, real)
 		}
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			dir = real
-		}
-		roots = append(roots, filepath.Clean(dir))
 	}
-	if out, err := (gitx.Git{Dir: d.opt.GitDir}).Run(ctx, "", "worktree", "list", "--porcelain"); err == nil {
-		for _, line := range strings.Split(out, "\n") {
-			if dir, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "worktree "); ok {
-				add(filepath.FromSlash(dir))
+	both(&gitDirs, d.opt.GitDir)
+	if out, err := (gitx.Git{Dir: d.opt.GitDir}).Run(ctx, "", "worktree", "list", "--porcelain", "-z"); err == nil {
+		// -z ends each line with a NUL, as a path can hold a newline, and a record with an empty one.
+		var dir string
+		var stale bool
+		for _, line := range append(strings.Split(out, "\x00"), "") {
+			switch {
+			case strings.HasPrefix(line, "worktree "):
+				dir, stale = filepath.FromSlash(strings.TrimPrefix(line, "worktree ")), false
+			case line == "bare" || line == "prunable" || strings.HasPrefix(line, "prunable "):
+				stale = true
+			case line == "":
+				if dir != "" && !stale && d.ownWorktree(dir) {
+					both(&roots, dir)
+				}
+				dir = ""
 			}
 		}
 	} else {
 		d.log.Printf("listing the clone's worktrees, for where a send may read files: %v", err)
 	}
 	if d.opt.TempDir != "" {
-		add(d.opt.TempDir)
+		both(&roots, d.opt.TempDir)
 	} else {
-		add(os.TempDir())
+		both(&roots, os.TempDir())
 		if runtime.GOOS != "windows" {
-			add("/tmp")
+			both(&roots, "/tmp")
 		}
 	}
-	gitDir = d.opt.GitDir
-	if real, err := filepath.EvalSymlinks(gitDir); err == nil {
-		gitDir = real
+	return roots, gitDirs
+}
+
+// ownWorktree says dir's .git is this clone's git directory, or a file that points into its
+// worktrees folder: what git makes for the main worktree and for a linked one.
+func (d *Daemon) ownWorktree(dir string) bool {
+	if netPath(dir) {
+		return false
 	}
-	return roots, filepath.Clean(gitDir)
+	git := filepath.Join(dir, ".git")
+	info, err := os.Lstat(git)
+	if err != nil {
+		return false
+	}
+	target := git
+	if info.Mode().IsRegular() {
+		b, err := os.ReadFile(git)
+		ptr, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+		if err != nil || !ok || netPath(ptr) {
+			return false
+		}
+		if !filepath.IsAbs(ptr) {
+			ptr = filepath.Join(dir, ptr)
+		}
+		target = ptr
+	} else if !info.IsDir() {
+		return false
+	}
+	same := func(a, b string) bool {
+		ia, err1 := os.Stat(a)
+		ib, err2 := os.Stat(b)
+		return err1 == nil && err2 == nil && os.SameFile(ia, ib)
+	}
+	return same(target, d.opt.GitDir) || same(filepath.Dir(target), filepath.Join(d.opt.GitDir, "worktrees"))
+}
+
+// netPath says path, on Windows, names a share or a device rather than a drive: \\host\share,
+// \/host/share, \\?\ and \\.\ among them. Looking at a share signs in to its host as the user.
+func netPath(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	vol := filepath.VolumeName(path)
+	return vol != "" && !(len(vol) == 2 && vol[1] == ':')
+}
+
+var errOutside = errors.New("outside where send reads")
+
+// resolveSend follows path's links one part at a time, each looked at through an os.Root on the
+// root it is in, and says which root the file it leads to is in and where. A part outside every
+// root is never looked at, nor is a link to a share, so neither a link nor a race reaches a network
+// host or a file elsewhere.
+func resolveSend(path string, roots []string, open func(string) (*os.Root, error)) (root, rel string, err error) {
+	cur := filepath.Clean(path)
+	for hops := 0; hops < 40; hops++ {
+		i := slices.IndexFunc(roots, func(r string) bool { return inDir(cur, r) })
+		if i < 0 {
+			return "", "", errOutside
+		}
+		root = roots[i]
+		rel = relIn(root, cur)
+		r, err := open(root)
+		if err != nil {
+			return "", "", err
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		done, linked := ".", false
+		for j, part := range parts {
+			if part == "." {
+				continue
+			}
+			next := filepath.Join(done, part)
+			info, err := r.Lstat(next)
+			if err != nil {
+				return "", "", err
+			}
+			if info.Mode()&os.ModeSymlink == 0 && !isReparseLink(info) {
+				done = next
+				continue
+			}
+			to, err := r.Readlink(next)
+			if err != nil {
+				return "", "", err
+			}
+			if netPath(to) {
+				return "", "", errOutside
+			}
+			if !filepath.IsAbs(to) {
+				to = filepath.Join(root, done, to)
+			}
+			cur, linked = filepath.Join(append([]string{to}, parts[j+1:]...)...), true
+			break
+		}
+		if !linked {
+			return root, done, nil
+		}
+	}
+	return "", "", errors.New("too many links")
+}
+
+// isReparseLink says info is a Windows junction, which os.Root follows as it does a link, and which
+// Go reports as irregular rather than as a link.
+func isReparseLink(info os.FileInfo) bool {
+	return runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0
+}
+
+// relIn is path from root, which inDir says it is in.
+func relIn(root, path string) string {
+	if runtime.GOOS == "windows" {
+		root, path = strings.ToLower(root), strings.ToLower(path)
+	}
+	rel, _ := filepath.Rel(root, path)
+	return rel
 }
 
 // inDir says path is root or inside it. Windows' paths don't tell case apart.
@@ -275,7 +397,7 @@ func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile,
 	}
 	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
-		if runtime.GOOS == "windows" && (strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//")) {
+		if netPath(path) {
 			// A share, or a device path: opening it, or looking at it, would sign in to whatever
 			// host it names, as the user. Two slashes are a share's on Windows, never Git Bash's.
 			return nil, fmt.Errorf("%s is a network path, which send doesn't read: copy the file into %s and send it from there", path, d.sendTemp())
@@ -292,27 +414,61 @@ func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile,
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	roots, gitDir := d.sendRoots(ctx)
+	roots, gitDirs := d.sendRoots(ctx)
+	opened := map[string]*os.Root{}
+	defer func() {
+		for _, r := range opened {
+			r.Close()
+		}
+	}()
+	open := func(dir string) (*os.Root, error) {
+		if r := opened[dir]; r != nil {
+			return r, nil
+		}
+		r, err := os.OpenRoot(dir)
+		if err == nil {
+			opened[dir] = r
+		}
+		return r, err
+	}
+	outside := func(path string) error {
+		return fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
+	}
 	for _, path := range paths {
-		real, err := filepath.EvalSymlinks(path)
+		root, rel, err := resolveSend(path, roots, open)
+		switch {
+		case errors.Is(err, errOutside):
+			return nil, outside(path)
+		case err != nil:
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
+		case slices.ContainsFunc(gitDirs, func(g string) bool { return inDir(filepath.Join(root, rel), g) }):
+			return nil, outside(path)
+		}
+		// Opened through the root, the file can't be one outside it even if a part of its path
+		// became a link since the look: os.Root refuses a link that leads out. A link swapped in
+		// to the git directory, inside the main worktree, is left; an agent that can make one there
+		// can read that directory itself.
+		r, _ := open(root)
+		if info, err := r.Lstat(rel); err != nil {
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
+		} else if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s isn't a file", path) // and opening a pipe would wait for a writer
+		}
+		f, err := r.Open(rel)
 		if err != nil {
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
 		}
-		if !slices.ContainsFunc(roots, func(root string) bool { return inDir(real, root) }) || inDir(real, gitDir) {
-			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
-		}
-		info, err := os.Stat(real)
+		info, err := f.Stat()
 		switch {
 		case err != nil:
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
+			f.Close()
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
 		case !info.Mode().IsRegular():
+			f.Close()
 			return nil, fmt.Errorf("%s isn't a file", path)
 		case info.Size() > bus.MaxFile:
+			f.Close()
 			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
-		}
-		f, err := os.Open(real)
-		if err != nil {
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		}
 		b, err := io.ReadAll(io.LimitReader(f, bus.MaxFile+1)) // it may have grown since the look
 		f.Close()
