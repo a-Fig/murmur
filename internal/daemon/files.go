@@ -381,6 +381,46 @@ func (d *Daemon) filesRefused(e bus.Event) bool {
 // off meanwhile.
 var errReceiveOff = errors.New("Receive files is off")
 
+// errSendOff is why a send's files didn't go out: Send files was turned off while it waited.
+var errSendOff = errors.New("sending files is off in this repo")
+
+// receiving is ctx, ended as soon as Receive files goes off, so a fetch under way, or waiting to
+// retry, stops then rather than minutes later (Sol's review of #769).
+func (d *Daemon) receiving(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	d.recvMu.Lock()
+	off, on := d.recvOff, d.recvFiles.Load()
+	d.recvMu.Unlock()
+	if !on {
+		cancel()
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-off:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+// setReceive turns Receive files on or off, and says whether it changed. Off ends every fetch that
+// receiving started.
+func (d *Daemon) setReceive(on bool) bool {
+	d.recvMu.Lock()
+	defer d.recvMu.Unlock()
+	if d.recvFiles.Swap(on) == on {
+		return false
+	}
+	if on {
+		d.recvOff = make(chan struct{})
+	} else {
+		close(d.recvOff)
+	}
+	return true
+}
+
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
 // the fetch is started and the message is queued when it ends, with or without them. Nothing is
 // held for a person: the page asks for a file when it shows it (fileOf). Caller holds mu.
@@ -557,6 +597,15 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	if d.filesHere(e) {
 		return nil
 	}
+	// Checked again here, after the wait for the turn, and the fetch ends if it goes off.
+	if d.filesRefused(e) {
+		return errReceiveOff
+	}
+	if dev, _ := bus.SplitAddr(e.From); dev != d.device {
+		var stop context.CancelFunc
+		ctx, stop = d.receiving(ctx)
+		defer stop()
+	}
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
 	}
@@ -576,9 +625,15 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 		}
 		select {
 		case <-ctx.Done():
+			if d.filesRefused(e) {
+				return errReceiveOff
+			}
 			return fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
 		case <-time.After(time.Duration(try) * 5 * time.Second):
 		}
+	}
+	if d.filesRefused(e) {
+		return errReceiveOff
 	}
 	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
@@ -596,6 +651,9 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	var failed []string
 	later := false // a file couldn't be saved, which a full disk does: the remote still has it
 	for i, f := range e.Files {
+		if d.filesRefused(e) {
+			return errReceiveOff
+		}
 		if !f.Readable() {
 			continue
 		}
@@ -890,6 +948,9 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", nil, gone
+	}
+	if d.filesRefused(e) {
+		return "", nil, noFile("no such file") // went off while it was fetched
 	}
 	return f.Name, data, nil
 }

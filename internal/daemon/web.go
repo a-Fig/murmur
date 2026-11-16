@@ -235,7 +235,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
 	self.DND = d.dnd.Load()
 	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
-		Mode: d.modeView()}
+		Mode: d.modeView(), SendFiles: d.sendFiles.Load(), ReceiveFiles: d.recvFiles.Load()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
@@ -461,7 +461,7 @@ func (d *Daemon) loadSettings() {
 	d.hidden.Store(read.Mode == web.ModeInvisible)
 	d.dnd.Store(read.Mode == web.ModeDND)
 	d.sendFiles.Store(read.SendFiles)
-	d.recvFiles.Store(read.ReceiveFiles)
+	d.setReceive(read.ReceiveFiles)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -507,7 +507,7 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	away := d.settings.Away
 	d.settings = next
 	d.sendFiles.Store(next.SendFiles)
-	if d.recvFiles.Swap(next.ReceiveFiles) != next.ReceiveFiles {
+	if d.setReceive(next.ReceiveFiles) {
 		d.kickPresence() // teammates' senders, who and lookup say whether this device takes files
 		d.kickFiles()    // what waits for its files goes now, without them, if receiving went off
 	}

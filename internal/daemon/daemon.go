@@ -307,6 +307,9 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if d.hidden.Load() {
 		return ErrInvisible
 	}
+	if strings.HasPrefix(ref, brand.FilesPrefix) && !d.sendFiles.Load() {
+		return errSendOff // turned off while this send waited its turn (#765)
+	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
@@ -534,6 +537,10 @@ type Daemon struct {
 	hidden, dnd atomic.Bool
 	// sendFiles and recvFiles are the Send files and Receive files settings (#765), read without setMu.
 	sendFiles, recvFiles atomic.Bool
+	// recvOff is closed when Receive files goes off, to end the fetches under way (receiving), and
+	// made anew when it goes on. recvMu guards it, and orders the changes to recvFiles.
+	recvMu  sync.Mutex
+	recvOff chan struct{}
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 

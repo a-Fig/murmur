@@ -74,6 +74,10 @@ type State struct {
 	// Mode is this device's mode in this repo (Settings.Mode): while it is ModeInvisible the page
 	// shows none of its agents, and sends nothing.
 	Mode string `json:"mode,omitempty"`
+	// SendFiles and ReceiveFiles are this device's file switches (Settings, #765), here as well so
+	// every open page follows a change made on another, and none saves back what it last saw.
+	SendFiles    bool `json:"sendFiles,omitempty"`
+	ReceiveFiles bool `json:"receiveFiles,omitempty"`
 }
 
 // Receipt is how far one of the person's messages got with one recipient (#26).

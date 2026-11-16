@@ -3650,10 +3650,43 @@ function filesOnly(m) {
   return !!m.files?.length && m.fromPerson && personText(m) === m.files.map((f) => f.name).join(", ");
 }
 
+// The file switches as the daemon has them, changed here or on another page. Receive files off
+// drops what this page fetched from other devices, and their files aren't shown (#765).
+function followFileSwitches(state) {
+  const set = ui.settings;
+  if (!set) return;
+  if (settingsSaving || stateAskedAt < settingsAt) {
+    // A save of this page's is on its way, or this state was asked for before one was answered:
+    // the page's are newer.
+    state.sendFiles = !!set.sendFiles;
+    state.receiveFiles = !!set.receiveFiles;
+    return;
+  }
+  for (const k of ["sendFiles", "receiveFiles"]) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
+  if (state.receiveFiles) return;
+  for (const [key, f] of fetched) {
+    if (!f.remote) continue;
+    fetched.delete(key);
+    if (f.url) URL.revokeObjectURL(f.url);
+    if (ui.viewer?.file === f) ui.viewer = null;
+  }
+}
+
+// fromElsewhere says message m came from another device, whose files Receive files governs.
+function fromElsewhere(m) {
+  return !!m.fromAddr && !!ui.state?.device && !m.fromAddr.startsWith(ui.state.device + "/");
+}
+
 // Under a message's text: its pictures, shown, and its other files, each a button that saves it.
 function messageFiles(m) {
   if (!m.files?.length) return null;
-  return fileList(m.id, m.files, (i, load, again) => (load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i)));
+  if (fromElsewhere(m) && !ui.settings?.receiveFiles) return null;
+  const remote = fromElsewhere(m);
+  return fileList(m.id, m.files, (i, load, again) => {
+    const f = load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i);
+    if (f) f.remote = remote;
+    return f;
+  });
 }
 
 // fileAt gives the entry of the file in a place: as it is, or, with load, fetched if it wasn't.
@@ -5021,6 +5054,8 @@ function busyControl(key, busy, onChange, withDefault) {
 let settingsQueue = Promise.resolve();
 let settingsSeq = 0; // the newest save asked for
 let confirmed = null; // the settings as the daemon last gave them
+let settingsSaving = 0; // saves asked for and not yet answered
+let settingsAt = 0; // when the last one was answered
 
 function queueSettings(job) {
   const token = ui.token;
@@ -5029,13 +5064,17 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next, modeChange = false) {
-  // Each save carries the whole settings: the mode comes from the daemon's state unless this save
-  // changes it, so a page whose settings were loaded before it changed elsewhere can't undo it.
+function saveSettings(next, modeChange = false, filesChange = "") {
+  // Each save carries the whole settings: the mode and the file switches come from the daemon's
+  // state unless this save changes them, so a page whose settings were loaded before they changed
+  // elsewhere can't undo it.
   if (!modeChange && ui.state) next = { ...next, mode: deviceMode() };
+  if (ui.state) for (const k of ["sendFiles", "receiveFiles"]) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
+  if (filesChange && ui.state) ui.state[filesChange] = !!next[filesChange]; // as setMode does
   const seq = ++settingsSeq;
   ui.settings = next;
   render();
+  settingsSaving++;
   queueSettings(async () => {
     try {
       const saved = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
@@ -5053,6 +5092,11 @@ function saveSettings(next, modeChange = false) {
     }
     render();
   });
+  settingsQueue = settingsQueue.finally(() => {
+    settingsSaving--;
+    settingsAt = Date.now();
+  });
+  if (filesChange) queueSettings(async () => poll()); // the poll after the save has the daemon's
 }
 
 function settingsRow(key, title, description, control, extraClass = "") {
@@ -5394,7 +5438,7 @@ function settingsPage() {
             set.sendFiles
               ? "You and your agents here can send files with a message: screenshots, logs, diffs. An agent's come only from this repo or the temp folder."
               : "A message with files isn't sent. Your agents are told you can turn this on.",
-            onOff("send-files", !!set.sendFiles, (v) => saveSettings({ ...ui.settings, sendFiles: v })),
+            onOff("send-files", !!set.sendFiles, (v) => saveSettings({ ...ui.settings, sendFiles: v }, false, "sendFiles")),
           ),
           settingsRow(
             "receive-files",
@@ -5402,7 +5446,7 @@ function settingsPage() {
             set.receiveFiles
               ? "Files that come with a message are downloaded into this repo's .git folder, for your agents and this page."
               : "Messages arrive without their files, which aren't downloaded. Senders are told this device takes no files.",
-            onOff("receive-files", !!set.receiveFiles, (v) => saveSettings({ ...ui.settings, receiveFiles: v })),
+            onOff("receive-files", !!set.receiveFiles, (v) => saveSettings({ ...ui.settings, receiveFiles: v }, false, "receiveFiles")),
           ),
         ),
       ),
@@ -5748,6 +5792,7 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    followFileSwitches(state);
     forgetJoins();
     // Someone else claimed this name first (#268): ask for another, once per page, unless something
     // is already being asked.
