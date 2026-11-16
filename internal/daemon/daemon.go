@@ -409,6 +409,9 @@ type Daemon struct {
 	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
 	// leaves alone (pinFilesDir).
 	filesBusy map[string]int
+	// filesEvicting is the directories holdFilesHeld is deleting, each closed when the delete is
+	// over, which pinFilesDir waits for.
+	filesEvicting map[string]chan struct{}
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time

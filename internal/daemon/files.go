@@ -746,18 +746,26 @@ func (d *Daemon) holdFilesHeld() {
 		if total <= d.opt.FilesHeld {
 			break
 		}
-		// Looked at and deleted under mu, so no writer pins it in between (pinFilesDir).
-		d.mu.Lock()
+		// Claimed under mu, so no writer pins it until the delete is over (pinFilesDir waits), and
+		// deleted without it: every delivery takes mu, and deleting 20 MB, Defender scanning, takes a
+		// while.
 		path := filepath.Join(root, h.name)
-		var err error
-		if d.filesBusy[path] == 0 {
-			err = os.RemoveAll(path)
-		}
-		busy := d.filesBusy[path] > 0
-		d.mu.Unlock()
-		if busy {
+		d.mu.Lock()
+		if d.filesBusy[path] > 0 || d.filesEvicting[path] != nil {
+			d.mu.Unlock()
 			continue
 		}
+		if d.filesEvicting == nil {
+			d.filesEvicting = map[string]chan struct{}{}
+		}
+		done := make(chan struct{})
+		d.filesEvicting[path] = done
+		d.mu.Unlock()
+		err := os.RemoveAll(path)
+		d.mu.Lock()
+		delete(d.filesEvicting, path)
+		close(done)
+		d.mu.Unlock()
 		if err != nil {
 			d.log.Printf("deleting the files saved from files ref %s, past the %s kept: %v", h.name, proto.Size(d.opt.FilesHeld), err)
 			continue
@@ -768,12 +776,19 @@ func (d *Daemon) holdFilesHeld() {
 
 // pinFilesDir keeps holdFilesHeld off directory dir, which a send or a fetch is writing files to,
 // until the unpin it returns is called. A fetch that lost the first of its files to another's
-// eviction while it saved the rest would say it had them all (Sol's review of #760).
+// eviction while it saved the rest would say it had them all (Sol's review of #760). A directory
+// being deleted is waited for: the writer then makes it afresh.
 func (d *Daemon) pinFilesDir(dir string) (unpin func()) {
 	if dir == "" {
 		return func() {}
 	}
 	d.mu.Lock()
+	for d.filesEvicting[dir] != nil {
+		done := d.filesEvicting[dir]
+		d.mu.Unlock()
+		<-done
+		d.mu.Lock()
+	}
 	defer d.mu.Unlock()
 	if d.filesBusy == nil {
 		d.filesBusy = map[string]int{}
