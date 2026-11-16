@@ -4835,7 +4835,10 @@ async function deliver(item) {
     const sent = await api("/api/send", { method: "POST", body, keepalive });
     item.id = sent.id;
     // The message's files are these, in this order: the page has them without asking the daemon.
-    (item.files || []).forEach((a, i) => fetched.set(sent.id + ":" + i, a));
+    if (item.files?.length) {
+      item.files.forEach((a, i) => fetched.set(sent.id + ":" + i, a));
+      trimFetched(); // held to FETCHED_KEEP as fetched files are: a page that only sends would keep them all
+    }
     if (missed.length) ui.notes.set(item.key, { id: sent.id, text: "Couldn't add " + namesOf(missed) + " to " + item.to + ", so they didn't get this: " + missed[0].msg, warn: true });
     else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
@@ -5635,7 +5638,7 @@ let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
 
 function hasUnsent() {
-  return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
+  return ui.outbox.length > 0 || attached.size > 0 || [...composers.values()].some((el) => el.value.trim());
 }
 
 // The state as far as the page shows it, for poll's signature. This device's lastSeen and its
