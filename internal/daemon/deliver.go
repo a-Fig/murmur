@@ -162,6 +162,8 @@ type pushJob struct {
 	via   string
 	route proto.Route
 	text  string
+	// sentAt is when its last attempt began to hand the turn to T3, for finishPush.
+	sentAt time.Time
 }
 
 // wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
@@ -865,6 +867,7 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	switch j.via {
 	case viaT3:
 		return d.attempt(j.msgs, func() error {
+			j.sentAt = time.Now()
 			return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
 		})
 	case viaSocket:
@@ -1011,8 +1014,13 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), m.Event.To)
 	}
-	if s := d.sessions[j.id]; s != nil && j.via == viaT3 {
-		s.handedAt = time.Now() // a turn the hook hasn't seen start (runUnseen, hooklessBusy)
+	// A turn the hook hasn't seen start (runUnseen, hooklessBusy), unless it has: the session was
+	// idle when the send began, so a turn the hook saw start or end since is the one it handed over.
+	// T3 can take a while to answer, and its turn can begin, and even end, before the send returns
+	// (#677). Holding the session after that held its next message for handedHold, a turn it had
+	// already had, wherever T3's database couldn't be read.
+	if s := d.sessions[j.id]; s != nil && j.via == viaT3 && !s.busyAt.After(j.sentAt) && !s.endedAt.After(j.sentAt) {
+		s.handedAt = time.Now()
 	}
 	d.saveLocked()
 	delete(d.pushWarned, j.id)

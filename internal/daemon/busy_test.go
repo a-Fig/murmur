@@ -2,6 +2,8 @@ package daemon_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +101,38 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 		return len(inbox) == 0 && len(notices) == 0
 	})
 	holds(t, "no more turns", time.Second, func() bool { return len(calls()) == 2 })
+}
+
+// A turn the hook sees start and end while `t3 thread send` is still handing it over is the one the
+// send started: the next message goes when it ends, not after the minute a handoff holds the
+// session for a turn the hook hasn't seen (#677). A T3 slow to answer, as on a loaded machine, left
+// the send returning after the turn's end, and the hold then covered a turn already over.
+func TestATurnSeenBeforeItsHandoffReturnsHoldsNothing(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(exe), fakeT3Sleep), []byte("3s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.finishedATurn("claude-bob")
+	a.send("aaaaaa", bob, "first", "its body")
+	eventually(t, "the first handed to T3", func() bool { return len(calls()) == 1 })
+	b.finishedATurn("claude-bob") // the turn the first started, over before the send returns
+	a.send("aaaaaa", bob, "second", "its body")
+	// Well within the minute of the hold, which the second waited out before.
+	for end := time.Now().Add(30 * time.Second); len(calls()) < 2; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the second wasn't handed over within 30 s of the turn's end")
+		}
+	}
+	if !strings.Contains(calls()[1].Stdin, "second") {
+		t.Errorf("the second turn: %q", calls()[1].Stdin)
+	}
 }
 
 // A message the agent read with inbox during its turn is not given to it again when the turn ends.
