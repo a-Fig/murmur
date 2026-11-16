@@ -841,6 +841,11 @@ type state struct {
 	// (see forwardLocked).
 	NameHolders  map[string]string `json:"nameHolders,omitempty"`
 	SessionNames map[string]string `json:"sessionNames,omitempty"`
+	// ThreadLeft is, by session ID, the name key of the Codex thread the session gave up to
+	// another process that went on with it (yieldThreadLocked, #568). Kept so that the session,
+	// registering again after a daemon restart with the thread it still knows, doesn't take the
+	// thread's name back.
+	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.

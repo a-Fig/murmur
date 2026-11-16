@@ -1947,6 +1947,7 @@ func (d *Daemon) dropStoppedLocked(id string) {
 	delete(d.st.Inbox, id)
 	delete(d.st.Commits, id)
 	delete(d.st.T3Routes, id)
+	delete(d.st.ThreadLeft, id)
 	d.dropPendingKeyLocked(id)
 }
 

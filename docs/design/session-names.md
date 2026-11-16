@@ -45,6 +45,23 @@ names routes by it all the same.
   keeps that ID across resume and compaction and gives a new one on `/new`, `/clear` and a fork,
   which is the life a name should have. So a Codex CLI session whose MCP server restarts has a new
   name until its first tool call, and then takes the thread's name back, as a T3 thread does.
+- **A Codex thread that moves between programs keeps its name** (#568, 2026-11-16). Codex keeps the
+  thread ID when another program resumes a thread, as the app does one begun in the command line
+  (read in openai/codex at 5cb38e7; the app is closed source and wasn't run), and each program
+  starts an MCP server of its own for it. With the first program closed, the thread's key is free
+  and the name comes back at the first tool call, as above. With it still open there were two live
+  sessions of one key, and the later kept the name it registered with, so the conversation showed
+  a new name for having moved. Now the session whose tool call showed the thread last takes the
+  key and the name, with what the other had unread, and the other gets a new name and keeps it
+  (`ThreadLeft` in the state file, so a daemon restart doesn't hand the name back to whichever
+  registers second). Only between client processes: two MCP servers of one Codex process on one
+  thread are still two sessions, the later with a name of its own.
+  - *Cost.* A person who goes back to the first program and carries on there talks to a session
+    with the new name: its server said the thread once and says nothing more, so the daemon can't
+    see the conversation return. If the app forks a thread instead of resuming it, the thread ID
+    is new, and so is the name, as for any fork.
+  - *Not covered.* Until its first Murmur tool call the second program's session shows the name it
+    registered with, as a restarted server's does.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer
