@@ -1036,10 +1036,17 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.mu.Unlock()
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
-		if len(e.Files) > 0 && !filesReused {
+		// Unless the push may land yet (unsureError): the message would then name files that are
+		// gone, and its receipts would have nothing to be kept in. The files go when their time
+		// is up, as any message's do.
+		unsure := errors.As(err, new(unsureError))
+		if len(e.Files) > 0 && !filesReused && !unsure {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
-		if e.Receipts {
+		// A record kept only to tell an agent how far its message got goes either way: the agent
+		// is told it wasn't sent, and a notice half an hour on that nobody has read it would be
+		// about a message it has likely sent again.
+		if e.Receipts && (!unsure || tellMe != "") {
 			d.mu.Lock()
 			delete(d.st.Sent, e.ID)
 			d.saveLocked()
