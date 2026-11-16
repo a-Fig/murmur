@@ -424,6 +424,9 @@ func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, e
 func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error) {
 	d := s.d
 	d.pageCalled(ctx)
+	if d.hidden.Load() {
+		return web.Sent{}, errors.New("this device is invisible: go online in Settings to send")
+	}
 	d.awaitFirstSync(ctx) // as send does for a session: the names it resolves, and its push
 	d.mu.Lock()
 	named, takenBy := d.st.Person != "", d.nameTakenByLocked()

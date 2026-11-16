@@ -66,6 +66,9 @@ type State struct {
 	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
 	// the page asks for every few seconds, and not on the message.
 	Receipts map[string][]Receipt `json:"receipts,omitempty"`
+	// Mode is this device's mode in this repo (Settings.Mode): while it is ModeInvisible the page
+	// shows none of its agents, and sends nothing.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Receipt is how far one of the person's messages got with one recipient (#26).
@@ -156,6 +159,8 @@ type Device struct {
 	// bus.Colors-1. Picked says its person picked it; otherwise it was chosen for them.
 	Color  int  `json:"color"`
 	Picked bool `json:"picked,omitempty"`
+	// DND says the device is on do not disturb (Settings.Mode): its sessions get no message yet.
+	DND bool `json:"dnd,omitempty"`
 }
 
 // Session is one agent session.
@@ -230,6 +235,9 @@ type Settings struct {
 	Busy string `json:"busy"`
 	// SessionBusy overrides Busy for single sessions on this device, by name.
 	SessionBusy map[string]string `json:"sessionBusy,omitempty"`
+	// Mode is this device's mode in this repo (#681): ModeOnline ("" too), ModeDND, where the
+	// device and its agents are seen but no message reaches them, or ModeInvisible, as if offline.
+	Mode string `json:"mode,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
@@ -242,6 +250,13 @@ type Wake struct {
 	// 0 means Settings.DefaultMinutes.
 	Minutes int `json:"minutes,omitempty"`
 }
+
+// The device's modes (Settings.Mode, #681).
+const (
+	ModeOnline    = "online"
+	ModeDND       = "dnd"
+	ModeInvisible = "invisible"
+)
 
 // Wake.When values.
 const (

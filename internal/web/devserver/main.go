@@ -428,8 +428,15 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 		}
 	}
 	colors := f.colorsLocked()
+	st.Mode = f.settings.Mode
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
+		if d.Self {
+			d.DND = st.Mode == web.ModeDND
+			if st.Mode == web.ModeInvisible {
+				d.Sessions = nil // as the daemon does: this device's agents are off Murmur (#681)
+			}
+		}
 		d.Color, d.Picked = colors[d.ID].Color, colors[d.ID].Picked
 		st.Devices = append(st.Devices, d)
 	}
@@ -520,8 +527,11 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 // seconds later, as an agent does, going active first so the page can show it working.
 func (f *fixtures) Send(ctx context.Context, to, text string) (web.Sent, error) {
 	f.mu.Lock()
-	takenBy := f.account.Taken
+	takenBy, invisible := f.account.Taken, f.settings.Mode == web.ModeInvisible
 	f.mu.Unlock()
+	if invisible {
+		return web.Sent{}, errors.New("this device is invisible: go online in Settings to send")
+	}
 	if takenBy != "" {
 		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
 	}

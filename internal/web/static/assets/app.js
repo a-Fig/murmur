@@ -718,6 +718,7 @@ function sidebar() {
         navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", "data-key": "notice", "data-announce": "", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
+      modeNote(),
       peopleGroup(),
       tagsGroup(),
       devs.map((d) => deviceGroup(d)),
@@ -756,6 +757,7 @@ function deviceGroup(d) {
         h("span", { class: "dev-name truncate" }, deviceLabel(d)),
         h("span", { class: "dev-host truncate" }, host(d.id)),
       ),
+      d.dnd && h("span", { class: "dev-you dev-dnd", title: "Do not disturb: messages to its agents wait" }, icon("bellOff")),
       d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
       h("span", { class: "menu-count" }, live.length),
     ),
@@ -4395,8 +4397,50 @@ function targetOf(c) {
   return { to: other, label: other, count: 1 };
 }
 
+// The device's mode in this repo (#681): online, dnd (do not disturb) or invisible.
+function deviceMode() {
+  return ui.state?.mode || "online";
+}
+
+// A quiet line in the sidebar while the device isn't online, which leads to Settings.
+function modeNote() {
+  const mode = deviceMode();
+  if (mode === "online") return null;
+  return h(
+    "button",
+    { class: "side-mode", title: "Open Settings", "data-key": "mode-note", onclick: () => go("settings") },
+    icon(mode === "invisible" ? "eyeOff" : "bellOff"),
+    h("span", null, mode === "invisible" ? "Invisible: your agents here are off " + NAME : "Do not disturb: messages to your agents here wait"),
+  );
+}
+
+// setMode saves the mode, from the daemon's settings if the page hasn't loaded them.
+async function setMode(mode) {
+  try {
+    const base = ui.settings || (await api("/api/settings"));
+    if (ui.state) ui.state.mode = mode; // shown at once; the poll after the save has the daemon's
+    saveSettings({ ...base, mode }, true);
+    queueSettings(async () => poll());
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.notice = e.message;
+    render();
+  }
+}
+
 // Under a conversation: somewhere to write, or, under one between two others, a way to either.
 function paneFoot(c) {
+  if (deviceMode() === "invisible")
+    return h(
+      "div",
+      { class: "pane-foot" },
+      h(
+        "div",
+        { class: "pane-foot-card" },
+        h("span", { class: "pane-foot-note" }, "You're invisible, so nothing is sent from here."),
+        h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-online", onclick: () => setMode("online") }, icon("eye"), "Go online"),
+      ),
+    );
   const target = targetOf(c);
   if (target) return composer(c, target);
   if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
@@ -4687,7 +4731,10 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next) {
+function saveSettings(next, modeChange = false) {
+  // Each save carries the whole settings: the mode comes from the daemon's state unless this save
+  // changes it, so a page whose settings were loaded before it changed elsewhere can't undo it.
+  if (!modeChange && ui.state) next = { ...next, mode: deviceMode() };
   const seq = ++settingsSeq;
   ui.settings = next;
   render();
@@ -4999,6 +5046,33 @@ function settingsPage() {
   const sections = [ui.state ? accountSection() : null, themeSection()];
   if (ui.settings) {
     const set = ui.settings;
+    sections.push(
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Mode")),
+        h(
+          "div",
+          { class: "group" },
+          settingsRow(
+            "mode",
+            "This device, in this repo",
+            {
+              online: "Your agents here get messages as usual.",
+              dnd: "Teammates still see this device and its agents, but no message reaches them: messages wait until you're back online, and senders are told why.",
+              invisible: "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages wait until you're back online.",
+            }[deviceMode()],
+            h(
+              "div",
+              { class: "segmented", role: "group" },
+              [["online", "Online"], ["dnd", "Do not disturb"], ["invisible", "Invisible"]].map(([v, label]) =>
+                h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
     // A session is shown by its address until its name lands, and the daemon keeps these settings
     // by name: one saved under the address would never apply, so the session isn't offered (#43).
     const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/"));

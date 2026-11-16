@@ -416,10 +416,13 @@ type Device struct {
 	Owner string `json:"owner,omitempty"`
 	// Nick is what the device is called (#190): the nickname its user gave it, else the name of its
 	// person. "" if it has neither.
-	Nick     string        `json:"nick,omitempty"`
-	Self     bool          `json:"self,omitempty"`
-	Stale    bool          `json:"stale,omitempty"`
-	LastSeen time.Time     `json:"lastSeen"` // when this daemon last saw its presence change
+	Nick     string    `json:"nick,omitempty"`
+	Self     bool      `json:"self,omitempty"`
+	Stale    bool      `json:"stale,omitempty"`
+	LastSeen time.Time `json:"lastSeen"` // when this daemon last saw its presence change
+	// DND says the device's person put it on do not disturb (#681): no message reaches its sessions
+	// until it is back online.
+	DND      bool          `json:"dnd,omitempty"`
 	Sessions []SessionView `json:"sessions"`
 }
 
