@@ -1034,10 +1034,14 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.mu.Unlock()
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
-		if len(e.Files) > 0 {
+		// Unless the push may land yet (unsureError): the message would then name files that are
+		// gone, and its receipts would have nothing to be kept in. The files go when their time
+		// is up, as any message's do.
+		unsure := errors.As(err, new(unsureError))
+		if len(e.Files) > 0 && !unsure {
 			d.dropFileRef(e.FilesAt, true) // nothing names them: off the remote at the next prune
 		}
-		if e.Receipts {
+		if e.Receipts && !unsure {
 			d.mu.Lock()
 			delete(d.st.Sent, e.ID)
 			d.saveLocked()

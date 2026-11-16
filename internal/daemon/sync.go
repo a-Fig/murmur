@@ -1335,6 +1335,9 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		} else {
 			err = d.push(ctx, sha, ref, bus.Lease, lease)
 		}
+		if err != nil && !pushRefused(err) {
+			err = unsureError{err}
+		}
 		if err == nil {
 			d.ownTip = sha
 			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
@@ -1376,6 +1379,23 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		d.ownTip = tip
 	}
 }
+
+// pushRefused says a push that ended with err is known not to have landed: the remote refused it,
+// or it was never sent.
+func pushRefused(err error) bool {
+	return errors.Is(err, bus.ErrRejected) || errors.Is(err, bus.ErrRefused) ||
+		errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible)
+}
+
+// unsureError is what a write to this device's log ends with when its push ended badly without
+// the remote having refused it: it may land yet. The push looks at the remote before it gives up
+// (bus.Repo.Push), but that look can fail as the push did, and on Windows a push killed at its
+// time limit leaves its children running (internal/gitx/tree_windows.go says so of a fetch), so
+// it can land after the look. What was made for the event, its files and its receipt record, is
+// kept then, as the event may be on the bus (#745).
+type unsureError struct{ error }
+
+func (e unsureError) Unwrap() error { return e.error }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather
 // than build on: not a commit, or one this daemon's own tip already contains. A failure to tell
