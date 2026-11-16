@@ -836,6 +836,11 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 			kept = append(kept, l)
 		}
 	}
+	// A file that ended in a dropped table with no newline after it ends in the last kept line, whose
+	// CRLF went with what followed it: its \r alone would be a lone CR, which TOML forbids (#783).
+	if n := len(kept); n > 0 && drop[len(lines)-1] {
+		kept[n-1] = strings.TrimSuffix(kept[n-1], "\r")
+	}
 	return strings.Join(kept, "\n"), dropped, nil
 }
 

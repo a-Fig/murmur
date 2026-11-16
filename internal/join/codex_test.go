@@ -105,6 +105,12 @@ func TestCodexEditKeepsCRLF(t *testing.T) {
 		if again, changed := edit(t, got); changed || again != got {
 			t.Errorf("a second edit changed it: %q", again)
 		}
+		// Uninstall gives the file back without Murmur's table, ending as it did, without a lone CR.
+		server := []string{"mcp_servers", "murmur"}
+		drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
+		if out, _, err := editTOMLTables(got, "config.toml", [][]string{server}, drop); err != nil || out != "x = 1" {
+			t.Errorf("uninstall after it: %q %v", out, err)
+		}
 	}
 }
 
