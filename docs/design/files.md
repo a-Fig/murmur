@@ -30,8 +30,8 @@ send files yet (#570's second part).
   its sessions fetches the ref, saves the files under `.git/murmur/files/`, never the working
   tree, and only then queues the message, so a path in a turn works when the agent
   reads it. It gets three tries of a minute each; then the message is queued without the files, and
-  the turn says which aren't there. A ref that isn't on the remote, or holds something else, costs
-  one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
+  the turn says which aren't there. A ref that isn't on the remote, holds something else, or holds
+  more than the limits allow, costs one try. Messages are fetched for one at a time, in the order they came, so one slow fetch holds
   up the files of those behind it, not their text-only neighbours. The wait survives a restart
   (`state.json`). The message is queued for whoever holds each recipient's name when the fetch
   ends: a process that resumed the conversation meanwhile took only what was in the inbox, and the
@@ -105,9 +105,17 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.
-- **Not checked: what a fetch brings.** A files ref holds whatever its pusher put there, and a
-  listing gives no sizes, so a fetch can't be capped before it runs; a `--filter` would make the
-  user's clone a partial clone for all its later fetches. Push access is already trusted with code.
+- **What a fetch brings** (#707, 2026-11-16). A files ref holds whatever its pusher put there, and a
+  listing gives no sizes, so a fetch can't be capped before it runs, and git has no limit for one
+  (`receive.maxInputSize` is a push's). A `--filter` would make the user's clone a partial clone
+  for all its later fetches. So the fetch is watched while it runs: it keeps what it receives as one
+  pack (`fetch.unpackLimit=1`), which grows on disk as it arrives, and is stopped once that passes
+  what a pack within the limits takes on the wire, a little over its size, as sealed files don't
+  compress. A fetch too quick to stop, as from a remote on the same disk, is measured when it ends.
+  Either way what it wrote is removed and the message queued without its files, after one try.
+  The fetch is on protocol 2: stopped on 0 or 1 over HTTPS, git-remote-https's own fetch-pack goes
+  on downloading. Where there is no scratch directory the fetch isn't watched, and ReadPack's check
+  is all there is: another fetch or a gc may be writing there too, and a refusal is for good.
 
 ## Open, for Tyler
 
