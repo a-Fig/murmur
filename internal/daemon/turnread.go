@@ -70,6 +70,16 @@ func (d *Daemon) awaitReadLocked(id string, e bus.Event, turn, batch string) boo
 	}
 	list = append(list, awaitingRead{ID: e.ID, From: e.From, Turn: turn, Batch: batch, At: time.Now()})
 	if over := len(list) - maxAwaiting; over > 0 {
+		// An entry that holds a batch's text gives it to the first of its batch that stays: the rest
+		// would otherwise match no prompt (Sol's review of #701).
+		for _, gone := range list[:over] {
+			if gone.Batch == "" || gone.Turn == "" {
+				continue
+			}
+			if i := slices.IndexFunc(list[over:], func(a awaitingRead) bool { return a.Batch == gone.Batch }); i >= 0 {
+				list[over+i].Turn = gone.Turn
+			}
+		}
 		list = list[over:]
 	}
 	d.st.AwaitingRead[id] = list

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -240,5 +241,34 @@ func TestATurnOfSeveralMarksEachRead(t *testing.T) {
 	}
 	if !read["two"] || !read["three"] || read["one"] || len(d.st.AwaitingRead["aaaaaa"]) != 0 {
 		t.Errorf("read %v, still waiting %+v; want two and three read, none waiting", read, d.st.AwaitingRead["aaaaaa"])
+	}
+}
+
+// A turn of more messages than are kept waiting for their prompt (maxAwaiting) still marks those
+// kept read: the entry holding the turn's text, trimmed, gives it to the first that stays.
+func TestATurnOfMoreThanMaxAwaitingMarksTheKeptRead(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	inT3(d, "aaaaaa", 0)
+	k := threadKey{"", "thread-aaaaaa"}
+	d.threads[k], d.threadRead[k] = t3db.State{LastRun: time.Now()}, time.Now()
+	var box []*inMsg
+	for i := range maxAwaiting + 1 {
+		id := fmt.Sprintf("m%02d", i)
+		box = append(box, &inMsg{Event: bus.Event{ID: id, Type: bus.Message, From: "dev2/bbbbbb", To: "dev/aaaaaa",
+			Subject: "subject " + id, Receipts: true}, Arrived: time.Now()})
+	}
+	d.st.Inbox = map[string][]*inMsg{"aaaaaa": box}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	j := d.nextPushLocked("aaaaaa", wakeWithin(0))
+	if len(j.msgs) != maxAwaiting+1 || len(d.st.AwaitingRead["aaaaaa"]) != maxAwaiting {
+		t.Fatalf("a turn of %d, %d waiting; want %d, %d", len(j.msgs), len(d.st.AwaitingRead["aaaaaa"]), maxAwaiting+1, maxAwaiting)
+	}
+	if !d.readOnPromptLocked("aaaaaa", j.text) {
+		t.Fatal("the turn's prompt marked nothing")
+	}
+	if n := len(d.st.AwaitingRead["aaaaaa"]); n != 0 {
+		t.Errorf("%d still waiting after the turn's prompt", n)
 	}
 }
