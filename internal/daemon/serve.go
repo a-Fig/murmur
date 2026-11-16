@@ -333,9 +333,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.mu.Lock()
 	d.lastActive = time.Now()
 	if ctx.Err() != nil {
-		// The daemon is stopping. The session may reconnect to the next one, so its inbox is
-		// kept; the goodbye deletes this device's presence.
-		delete(d.sessions, h.ID)
+		d.stoppedWithDaemonLocked(h.ID)
 		d.mu.Unlock()
 		return
 	}
@@ -351,7 +349,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	case <-ctx.Done():
 		d.mu.Lock()
 		if s.takeover == takeover {
-			delete(d.sessions, h.ID)
+			d.stoppedWithDaemonLocked(h.ID)
 		}
 		d.mu.Unlock()
 		return
@@ -375,6 +373,24 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
+}
+
+// stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
+// then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
+// does any session back from stopped (newSessionLocked). One that doesn't, a thread left open on
+// a laptop shut overnight, is then a stopped session like any other: its inbox, credited commits
+// and T3 route are kept for StoppedInbox, and what is sent meanwhile is queued for it
+// (keptSinceLocked). Unrecorded, the next daemon's pruneInboxes took all of that two minutes
+// after it started. No stop goes on the log: the goodbye deletes this device's presence, and a
+// session that reconnects never stopped as far as anyone else knows. Caller holds mu.
+func (d *Daemon) stoppedWithDaemonLocked(id string) {
+	delete(d.sessions, id)
+	d.st.Stopped[id] = time.Now().Round(0)
+	if d.st.Downed == nil {
+		d.st.Downed = map[string]bool{}
+	}
+	d.st.Downed[id] = true
+	d.saveLocked()
 }
 
 // liveLocked says whether session id is connected: the CLI always is, a session in its grace or
@@ -1264,6 +1280,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 			d.dropStoppedLocked(h.ID)
 		} else {
 			delete(d.st.Stopped, h.ID)
+			delete(d.st.Downed, h.ID)
 			s.since = at
 		}
 		d.saveLocked()
