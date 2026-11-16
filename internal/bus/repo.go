@@ -270,8 +270,14 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	if lerr == nil && now == sha {
 		return false, nil
 	}
-	if refused == "" {
-		return false, err // network, auth: nothing was decided
+	if refused == "" || strings.Contains(refused, "[remote failure]") {
+		// Network, auth: nothing was decided. Nor by a remote that took the pack and then failed
+		// to say what it did with it ("remote failed to report status"), which is the push most
+		// likely to have landed: it is no refusal (#745).
+		if err == nil {
+			err = fmt.Errorf("push to %s: %s", ref, refused)
+		}
+		return false, err
 	}
 	_, reason, rejected := strings.Cut(refused, "[remote rejected]")
 	if !rejected {
