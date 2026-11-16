@@ -76,7 +76,9 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
   encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
-  file names, and a turn made from it later says the files aren't there.
+  file names, and a turn made from it later says the files aren't there. An invisible device
+  deletes nothing from the remote, as it writes nothing there (`modes.md`): its refs past their
+  time go when it is back online (#789).
 - **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
   2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
   included, and deletes one once it has itself run for 14 days since it first read of it, if the

@@ -54,7 +54,9 @@ Invisible takes the device off Murmur in the repo, as if it were offline.
 - The device still has a team-key grant, and its key data is on the team ref. They show that the
   device exists, not that it is working now.
 - Commits and branches pushed to the repository itself are outside Murmur, and still show work.
-- Messages already on the bus stay there, with their receipts as far as they got.
+- Messages already on the bus stay there, with their receipts as far as they got. So do the files
+  the device sent, past their 7 days: deleting a files ref is a write, and its timing would show
+  the daemon running. They are deleted when the device is back online (#789).
 - Once the device is back online, some of what happened while it was invisible shows. Receipts for
   messages read meanwhile carry when they were read, and sessions that started meanwhile show when
   they started and were last active, with the commits credited to them.

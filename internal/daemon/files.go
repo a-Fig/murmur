@@ -570,7 +570,8 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			d.filesFetchedLocked(e.ID)
 			d.mu.Unlock()
 		}
-		if !pruned {
+		// The first time round, and when the device is back from invisible with a prune owed.
+		if !pruned || d.pruneOwed.Load() && !d.hidden.Load() {
 			pruned = true
 			d.pruneFiles(ctx)
 			continue // a message may have come meanwhile
@@ -770,6 +771,15 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 		}
 	}
 	d.holdFilesHeld()
+	// An invisible device writes nothing to the bus (mode.go), and deleting a ref is a write: one
+	// that shows, by when it lands, that the device is running. The deletes were refused one by
+	// one, a line in the log for each ref at every prune, and the refs stayed (#789). They are
+	// left for the prune that runs when the device is back online (setMode). The copies kept
+	// here, above, go on time either way.
+	d.pruneOwed.Store(d.hidden.Load())
+	if d.pruneOwed.Load() {
+		return
+	}
 	d.mu.Lock()
 	var due []string
 	for at, sent := range d.st.FileRefs {
