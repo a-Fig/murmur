@@ -18,6 +18,10 @@ type linuxNative struct{}
 
 func beforeWindow() (after func()) { return func() {} }
 
+// systemTellsFront: Linux desktops share no way to say which window is in front, so the page
+// isn't told, and goes by its own document.hidden (#638).
+const systemTellsFront = false
+
 func newNative(glaze.WebView) native { return linuxNative{} }
 
 func (linuxNative) badge(int) {}

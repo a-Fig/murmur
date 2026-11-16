@@ -127,6 +127,9 @@ func beforeWindow() (after func()) {
 // The window procedure is installed once per process, and its callback can't be freed.
 var current *winNative
 
+// systemTellsFront: Windows says which window is in front, so the page is told (#638).
+const systemTellsFront = true
+
 func newNative(w glaze.WebView) native {
 	n := &winNative{w: w, hwnd: windows.HWND(w.Window())}
 	n.big = iconFrom(iconPNG)

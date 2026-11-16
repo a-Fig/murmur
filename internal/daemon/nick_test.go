@@ -101,6 +101,10 @@ func TestANicknameIsNoAddress(t *testing.T) {
 	if want := "not sent: tyler is device " + b.self() + "'s nickname, and a nickname is no address. Send to a session's name from who, or to " + b.self() + " for every session on the device."; r.Error != want {
 		t.Errorf("a send to the nickname: %+v\nwant the error %q", r, want)
 	}
+	if r.Refused != proto.RefusedRecipient {
+		// About this recipient alone, so a list sends on to the rest (#653).
+		t.Errorf("the nickname's refusal is marked %q, want %q", r.Refused, proto.RefusedRecipient)
+	}
 	if r := b.do(proto.Request{Op: proto.OpSend, To: "tyler", Subject: "by my own nickname"}); !strings.Contains(r.Error, "tyler is device "+b.self()+"'s nickname") {
 		t.Errorf("a send to its own device's nickname: %+v", r)
 	}

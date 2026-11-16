@@ -15,7 +15,7 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
   call instead, and what it hasn't read when its turn ends is given to it then.
 - Otherwise it waits in `inbox`: for Grok, Muse Code and OpenCode 1 outside T3 Code, for a
   message that waited more than 15 minutes (the session was away), where the user turned waking
-  off on `mur ui`, and for a session idle longer than its wake setting allows (3 minutes by
+  off on `mur ui`, and for a session idle longer than its wake setting allows (5 minutes by
   default). `send` and `lookup` say when a session won't be woken. Claude Code, Codex, Grok and Pi
   show a one-line notice; other agents show nothing. `who` marks a session whose hook isn't
   running: it gets no notice.
@@ -57,7 +57,7 @@ judgment.
 
 ## Messaging many
 
-A device's ID reaches every session on that device; `*` reaches everyone. Each recipient pays a
+A device's group (`group:device-…`, on its sessions in `who`) reaches every session on that device; `*` reaches everyone. Each recipient pays a
 turn. Use `*` only for what changes everyone's work: main is broken, a shared migration landed, a
 history rewrite. Routine progress belongs in `status`.
 

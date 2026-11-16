@@ -3,6 +3,7 @@
 package desktop
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,10 @@ type fakeView struct {
 	mu       sync.Mutex
 	titles   []string
 	navigate []string
+	evals    []string
 }
+
+func (v *fakeView) Eval(js string) { v.mu.Lock(); v.evals = append(v.evals, js); v.mu.Unlock() }
 
 func (v *fakeView) Dispatch(f func()) { f() }
 func (v *fakeView) SetTitle(t string) { v.mu.Lock(); v.titles = append(v.titles, t); v.mu.Unlock() }
@@ -102,5 +106,28 @@ func TestClip(t *testing.T) {
 	}
 	if got := clip("ok", 5); got != "ok" {
 		t.Fatalf("clip: %q", got)
+	}
+}
+
+// The window tells its page whether it is in front each time that changes, and tells a new document
+// again, which hasn't been told (#638).
+func TestTheWindowTellsThePageWhetherItIsInFront(t *testing.T) {
+	v := &fakeView{}
+	n := &fakeNative{front: true}
+	a := &app{w: v, native: n}
+	a.tellFront()
+	a.tellFront()
+	n.front = false
+	a.tellFront()
+	a.tellFront()
+	a.here("127.0.0.1:9")
+	a.tellFront()
+	want := []string{
+		"window.murmurFront && window.murmurFront(true)",
+		"window.murmurFront && window.murmurFront(false)",
+		"window.murmurFront && window.murmurFront(false)",
+	}
+	if !slices.Equal(v.evals, want) {
+		t.Errorf("told the page %q, want %q", v.evals, want)
 	}
 }

@@ -459,3 +459,58 @@ func TestASessionLeavesAGroupAHumanPutItIn(t *testing.T) {
 		t.Error("a human's add after the session left didn't put it back")
 	}
 }
+
+// A device's group (#463) is Murmur's to give: nobody sets or removes it, a presence can't claim
+// one, and a reader adds the one for the device a session is on.
+func TestADevicesGroupIsGivenOnlyByWhereTheSessionRuns(t *testing.T) {
+	if _, err := Clean([]string{"group:device-laptop-1a2b"}); err == nil {
+		t.Error("Clean took a device's group")
+	}
+	if _, err := Groups([]string{"group:device-laptop-1a2b"}); err == nil {
+		t.Error("Groups took a device's group, to add to")
+	}
+	read := CleanRead([]Tag{{Name: "reviewing"}, {Name: "group:device-other-9f9f", Src: SrcDerived}})
+	if !slices.Equal(Names(read), []string{"reviewing"}) {
+		t.Errorf("a presence's claim was read: %v", read)
+	}
+	got := WithDevice(read, "laptop-1a2b")
+	if !slices.Equal(Names(got), []string{"reviewing", "group:device-laptop-1a2b"}) || got[1].Src != SrcDerived {
+		t.Errorf("WithDevice gave %+v", got)
+	}
+	if again := WithDevice(got, "laptop-1a2b"); len(again) != 2 {
+		t.Errorf("a second WithDevice gave %+v", again)
+	}
+	if got := DevicesOfGroup(" Group:Device-Laptop-1A2B "); !slices.Equal(got, []string{"device-laptop-1a2b", "laptop-1a2b"}) {
+		t.Errorf("DevicesOfGroup: %q", got)
+	}
+	if got := DevicesOfGroup("group:ui"); got != nil {
+		t.Errorf("group:ui read as a device's group: %q", got)
+	}
+	// An ID made since #330 starts with device- already.
+	if g := DeviceGroup("device-3f2a9c1e"); g != "group:device-3f2a9c1e" || !slices.Contains(DevicesOfGroup(g), "device-3f2a9c1e") {
+		t.Errorf("DeviceGroup(device-3f2a9c1e) = %q", g)
+	}
+}
+
+// A device ID can be 40 long, so its group's tag can pass MaxLen, and who still searches by it
+// (Sol's review of #628).
+func TestALongDevicesGroupIsSearchable(t *testing.T) {
+	long := DeviceGroup("abcdefghijklmnopqrstuvwx-1234")
+	if len(long) <= MaxLen {
+		t.Fatalf("%s is no longer than %d", long, MaxLen)
+	}
+	ts := WithDevice([]Tag{{Name: "reviewing"}}, "abcdefghijklmnopqrstuvwx-1234")
+	for _, terms := range [][]string{{long}, {long[:len(long)-2] + "*"}, {"group:device-*"}} {
+		f, err := ParseFilter(terms)
+		if err != nil {
+			t.Fatalf("%q: %v", terms, err)
+		}
+		if !f.Match(ts) {
+			t.Errorf("%q doesn't match %v", terms, Names(ts))
+		}
+	}
+	f, err := ParseFilter([]string{"-" + long})
+	if err != nil || f.Match(ts) {
+		t.Errorf("-%s: %v, matches %v", long, err, f.Match(ts))
+	}
+}

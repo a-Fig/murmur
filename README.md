@@ -80,7 +80,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `lookup` | One session in depth: the branches it has committed to, whether a message would reach it, and its recent messages. |
 | `status` | Sets the line others see next to your name. |
 | `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. A `group:` tag puts a session in a group chat. |
-| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device, or everyone. |
+| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device (`group:device-<ID>`), or everyone. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
@@ -104,7 +104,7 @@ your COO. Their source is in [`internal/skills`](internal/skills).
 | OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
-idle less than its wake setting allows (3 minutes by default). A **notice** is one line with the
+idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
 sender and subject, added after the agent's next tool call; the agent reads the message with
 `inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has

@@ -776,7 +776,30 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 // person's, which the browser uploaded.
 func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, uploads []sendFile) proto.Response {
 	to := strings.TrimSpace(req.To)
-	if g := tags.Normalize(to); bus.IsGroup(g) {
+	// A device's group is the device (#463): the message goes on the bus to the device, as one sent
+	// to its ID does, so every daemon delivers it, older ones too, and only to that device's
+	// sessions. It isn't read as a name after, as a device ID can be shaped like one.
+	toDevice := false
+	if devs := tags.DevicesOfGroup(to); devs != nil {
+		// Two devices can share a group's tag, device-x and x; the message is then sent to neither,
+		// rather than to whichever comes first, and the sender is told to use the device's ID.
+		var found []string
+		d.mu.Lock()
+		for _, dev := range devs {
+			if _, known := d.peers[dev]; known || dev == d.device {
+				found = append(found, dev)
+			}
+		}
+		d.mu.Unlock()
+		switch len(found) {
+		case 0:
+			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group", tags.Normalize(to)))
+		case 1:
+			to, toDevice = found[0], true
+		default:
+			return fail(fmt.Sprintf("not sent: devices %s and %s both have the group %s. Send to the one you mean by its ID", found[0], found[1], tags.Normalize(to)))
+		}
+	} else if g := tags.Normalize(to); bus.IsGroup(g) {
 		to = g
 	}
 	subject := bus.OneLine(req.Subject, 120)
@@ -833,7 +856,9 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	// A name is an address: it is turned into the session's device/session here, and that is what
 	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
 	var toName, renamed string
-	if names.Valid(to) {
+	if toDevice {
+		// Sent to the device, as above.
+	} else if names.Valid(to) {
 		d.mu.Lock()
 		addr, ok := d.resolveNameLocked(to)
 		_, isDevice := d.peers[to]
@@ -877,7 +902,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 			if len(called) == 1 {
 				dev = called[0]
 			}
-			return fail(fmt.Sprintf("not sent: %s Send to a session's name from who, or to %s for every session on the device.", nickNoAddress(to, called), dev))
+			return refuse(proto.RefusedRecipient, fmt.Sprintf("not sent: %s Send to a session's name from who, or to %s for every session on the device.", nickNoAddress(to, called), dev))
 		}
 	}
 	var note string
@@ -896,6 +921,12 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		dnd := d.peerDNDLocked(dev, sess)
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
 		noWake := d.peerNoWakeLocked(dev, sess, wake)
+		// A T3 thread T3 stopped while it was idle has no session, but its route is kept and a message
+		// wakes it as one does an idle session, if the wake setting lets it (#669).
+		sleeping := false
+		if r, ok := d.st.T3Routes[sess]; ok && r.Thread != "" && dev == d.device && stopped {
+			sleeping, noWake = true, d.noWakeLocked(sess, wake)
+		}
 		if noWake == bus.NoWakeIdle && bus.IsPerson(from) {
 			noWake = "" // a person's message wakes a session however long it has been idle (#242)
 		}
@@ -913,7 +944,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 			return refuse(proto.RefusedRecipient, fmt.Sprintf("your message to %[1]s was not delivered. %[1]s has muted you. Nothing you send can reach them until they unmute you.", nameOr(toName, at)))
 		case offline:
 			return refuse(proto.RefusedRecipient, "not sent: "+why)
-		case known && dnd:
+		case (known || sleeping) && dnd:
 			note = nameOr(toName, at) + " is on do not disturb: the message is queued in its inbox until it reads its inbox or turns do not disturb off, with no notice or turn."
 		case known && noWake != "":
 			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
@@ -926,6 +957,10 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 				note = nameOr(toName, at) + "'s hook isn't running, so it sees this when it next reads its inbox."
 			}
 		case known:
+		case sleeping && noWake != "":
+			note = noWakeNote(nameOr(toName, at), noWake, false)
+		case sleeping:
+			note = nameOr(toName, at) + " is idle in T3, which stopped its process: the message wakes it."
 		case dev == d.device && stopped:
 			note = at + " has stopped. The message waits for it, in case it comes back."
 		case bus.IsPerson(at):
@@ -1131,7 +1166,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
 		}
-		ts := d.tagsOfLocked(s)
+		ts := tags.WithDevice(d.tagsOfLocked(s), d.device)
 		if !filter.Match(ts) {
 			continue
 		}
@@ -1155,7 +1190,11 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
 			}
-			if !filter.Match(s.Tags) {
+			ts := s.Tags
+			if s.ID != bus.PersonSession {
+				ts = tags.WithDevice(ts, id) // a person isn't in their device's group, as they get none of its messages
+			}
+			if !filter.Match(ts) {
 				continue
 			}
 			name := s.Name
@@ -1164,7 +1203,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
-				Tags: s.Tags, HookOff: s.HookOff})
+				Tags: ts, HookOff: s.HookOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
 			continue // nothing on it matches

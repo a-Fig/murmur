@@ -65,6 +65,18 @@ names routes by it all the same.
   of its last holder (below), then in other devices' presence, then in the registry, so a message to
   a session that has stopped is kept for it like any other. A device ID shaped like a name is read
   as a device if no session has that name.
+  - *When a presence shows a name that isn't its device's* (#604, 2026-11-15). A presence is
+    whatever its device wrote. While the device the registry has the name on is up, only its
+    presence counts, and if no session there shows the name the message goes to the registry's
+    address, where it is kept. It was the first presence by device ID, so a device that listed
+    someone's name was sent their messages when its ID sorted first, or when their session had
+    stopped. With the registry's device gone or stale, a presence still being written goes before
+    a stale one: a clone that loses its keys file comes back under a new device ID with its names
+    ([encryption](encryption.md), #617), and the registry still has them on the old one. Until the
+    old one goes stale, a send to such a name still goes to it.
+    `who`, `lookup` and the page still show the name on each device that claims it, and a message
+    from such a session shows the name as its sender: taking the name off a presence the registry
+    disagrees with would hide that clone's names for good.
 - **A name a session has left.** A session that followed Claude Code to another conversation (#9)
   isn't called its old name any more, but the registry still has that name down for its Murmur ID. A
   send to the old name reaches the session, and says it is called something else now. An error

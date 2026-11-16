@@ -131,7 +131,7 @@ func TestSendSaysWakingIsOffForTheRecipient(t *testing.T) {
 	}
 }
 
-// Under the default, within 3 minutes, a thread idle for longer isn't woken by an agent's message,
+// Under the default, within 5 minutes, a thread idle for longer isn't woken by an agent's message,
 // and the sender is told. A person's message to it alone wakes it however long it has been idle, so
 // a person sending to it isn't told, and once it has, presence says it may be woken again; one to
 // its device doesn't, so a person sending there is.

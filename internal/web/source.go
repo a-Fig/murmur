@@ -254,7 +254,7 @@ type Settings struct {
 	Busy string `json:"busy"`
 	// SessionBusy overrides Busy for single sessions on this device, by name.
 	SessionBusy map[string]string `json:"sessionBusy,omitempty"`
-	// DefaultMinutes is what Wake.Minutes 0 stands for: 3, or the prompt-cache length if known.
+	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
 }

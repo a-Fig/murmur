@@ -63,7 +63,7 @@ func newT3Device(t *testing.T, remote string, threads *fakeThreads) *device {
 	return d
 }
 
-// Under the default, within 3 minutes, a thread idle longer is not woken: the message waits as a
+// Under the default, within 5 minutes, a thread idle longer is not woken: the message waits as a
 // notice. Once the thread is at work again, it goes in as the next turn.
 func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 	t.Parallel()

@@ -180,6 +180,8 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	if len(held) > 0 {
 		note = "tags set, but a human's choice on the page stands over yours for " + strings.Join(held, ", ")
 	}
+	// The reply lists the tags the session can change, so not its device's group (#463), which who and
+	// lookup show.
 	return proto.Response{OK: true, Self: from, Note: note, Tags: d.tagsOfLocked(s)}
 }
 

@@ -589,7 +589,7 @@ func TestPageSettingsPersist(t *testing.T) {
 	t.Parallel()
 	d := newDevice(t, newRemote(t))
 	pg := d.page()
-	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 3}
+	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 5}
 	if got := pg.settings(); !reflect.DeepEqual(got, def) {
 		t.Fatalf("defaults: %+v, want %+v", got, def)
 	}
@@ -599,7 +599,7 @@ func TestPageSettingsPersist(t *testing.T) {
 		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
 		Busy:           web.BusyWhole,
 		SessionBusy:    map[string]string{"quiet-otter": web.BusySubject},
-		DefaultMinutes: 3,
+		DefaultMinutes: 5,
 	}
 	body, _ := json.Marshal(want)
 	if code, out := pg.call("PUT", "/api/settings", pg.token, string(body)); code != http.StatusOK {
@@ -677,7 +677,7 @@ func TestPageSettingsPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.start()
-	old := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject, DefaultMinutes: 3}
+	old := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject, DefaultMinutes: 5}
 	if got := d.page().settings(); !reflect.DeepEqual(got, old) {
 		t.Fatalf("with a file from before the busy setting: %+v, want %+v", got, old)
 	}

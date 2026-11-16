@@ -100,7 +100,10 @@ and the daemon doesn't exit while the window is open, minimized or not. That is 
 minimized app's calls are still marked hidden, as a background tab's are, so the person isn't shown
 as active, a daemon still restarts onto an update, and it polls the remote at the quiet rate, as it
 would for a hidden tab. A notification then takes up to about 45 seconds: the daemon's 30-second
-quiet poll, then the hidden page's 15-second one. A first version left the hidden mark off instead, which did all three (Opus
+quiet poll, then the hidden page's 15-second one. A window under another window counts as hidden too (#638): its page's
+document stays visible there, so the window checks each second whether it is in front, as it does for
+notifications, and tells the page when that changes; back in front, the page polls at once. Linux has
+no such check, so there an app under another window still counts as looked at. A first version left the hidden mark off instead, which did all three (Opus
 review, 2026-11-15).
 
 A daemon can still go: a crash, `mur stop`. Every 10 seconds the window asks for its clone's page,

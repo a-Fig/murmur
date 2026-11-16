@@ -50,7 +50,8 @@ over.
   counts only if the wake setting would let a message through. With no session live and no page open
   the daemon polls every 30 s, about 2,900 `ls-remote` calls in a day of waiting, so a sleeping
   thread wakes up to 30 s later than a working one would; it still pushes presence every 2 minutes,
-  about 720 pushes a day. `mur join --leave` and `mur stop` end it at once.
+  about 720 pushes a day. `mur join --leave` and `mur stop` end it at once. A sender is told such a thread is idle and the message wakes it, or that
+  the wake setting won't let it (#669); it used to be told the session had stopped, which read as gone.
 
 ## Claude Code outside T3: the messaging socket
 

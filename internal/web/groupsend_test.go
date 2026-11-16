@@ -169,7 +169,7 @@ func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(src, pageFunctions(t, "AuthError", "api", "inApp", "HIDDEN", "OWN_MEANING", "sortsBy", "tagWanted", "TAG_WAIT_MS", "tagsOf",
+	write(src, pageFunctions(t, "AuthError", "api", "pageHidden", "inApp", "HIDDEN", "OWN_MEANING", "sortsBy", "tagWanted", "TAG_WAIT_MS", "tagsOf",
 		"hasTag", "inGroup", "isGroupTag", "sessionByAddr", "tagQueues", "groupJoins", "groupMisses", "queueTagChange", "tagSessions", "forgetJoins",
 		"deliver", "namesOf"))
 	harness := filepath.Join(dir, "harness.js")

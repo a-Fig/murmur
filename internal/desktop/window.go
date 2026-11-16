@@ -5,6 +5,7 @@ package desktop
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log"
 	"net/url"
 	"sync"
@@ -26,6 +27,9 @@ var (
 
 // followEvery is how often the window checks that its daemon is still where the page is.
 const followEvery = 10 * time.Second
+
+// frontEvery is how often the window checks whether it is in front, to tell the page (#638).
+const frontEvery = time.Second
 
 // Supported says whether this build has the window.
 const Supported = true
@@ -89,6 +93,9 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Follow != nil {
 		go a.follow(ctx, opts.Follow)
 	}
+	if systemTellsFront {
+		go a.watchFront(ctx)
+	}
 	w.Run()
 	return nil
 }
@@ -102,6 +109,7 @@ type app struct {
 	host   string // where the page last said it was, or where it was sent
 	unread int
 	dark   *bool // the frame's theme, once the page has said
+	front  *bool // what the page was last told of whether the window is in front; nil, not yet
 }
 
 // pageNote is what the page tells the window each time its title or unread count changes, and
@@ -170,7 +178,38 @@ func (a *app) fromPage(n pageNote) {
 func (a *app) here(host string) {
 	a.mu.Lock()
 	a.host = host
+	a.front = nil // a new document, which hasn't been told
 	a.mu.Unlock()
+}
+
+// watchFront tells the page whether the window is in front, each time that changes. The page can't
+// tell: under another window its document stays visible, and a web view's focus isn't to be trusted
+// (docs/design/desktop.md). While the window is behind, the page marks its calls hidden, so an app
+// left open under the editor doesn't keep the person active or hold off an update's restart (#638).
+func (a *app) watchFront(ctx context.Context) {
+	t := time.NewTicker(frontEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		a.w.Dispatch(a.tellFront)
+	}
+}
+
+// tellFront tells the page whether the window is in front, if that isn't what it was last told.
+// On the UI thread.
+func (a *app) tellFront() {
+	front := a.native.inFront(true)
+	a.mu.Lock()
+	same := a.front != nil && *a.front == front
+	a.front = &front
+	a.mu.Unlock()
+	if !same {
+		a.w.Eval(fmt.Sprintf("window.murmurFront && window.murmurFront(%t)", front))
+	}
 }
 
 // openOutside opens a link the page would have opened in a new tab, in the person's browser.
@@ -185,9 +224,10 @@ func (a *app) openOutside(link string) {
 }
 
 // follow keeps the window on a live page. The app is a person waiting for messages, so its page
-// keeps its daemon up (app.js leaves its calls unmarked when hidden), but a daemon can still go:
-// a crash, `mur stop`, a reboot of what it ran on. Its next start is on a new port with a new
-// token, which the old page can't reach, so follow starts it again and sends the window there.
+// marks every call as the app's (X-Page-App), and the daemon stays up while the window is open,
+// minimized or not. But a daemon can still go: a crash, `mur stop`, a reboot of what it ran on.
+// Its next start is on a new port with a new token, which the old page can't reach, so follow
+// starts it again and sends the window there.
 func (a *app) follow(ctx context.Context, follow func(context.Context, string) string) {
 	t := time.NewTicker(followEvery)
 	defer t.Stop()

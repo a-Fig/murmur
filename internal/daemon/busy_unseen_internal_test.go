@@ -240,3 +240,41 @@ func TestAReadAfterAHandoffWakesThePushLoop(t *testing.T) {
 		t.Error("a second read, with no handoff since, woke the push loop")
 	}
 }
+
+// A run T3 left queued behind later ones isn't a turn anywhere T3's database is asked whether a
+// session is at work (#655): not for a session that reconnected after a restart, nor for a turn the
+// hook saw start and no Stop end, nor for how long a session has been idle.
+func TestARunLeftBehindIsNoTurn(t *testing.T) {
+	t.Parallel()
+	busy, left := t3db.State{Busy: true}, t3db.State{Busy: true, Left: true, LastRun: time.Now().Add(-10 * time.Minute)}
+	for _, tc := range []struct {
+		name  string
+		state t3db.State
+		want  bool
+	}{{"a run going", busy, true}, {"only runs left behind", left, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			now := time.Now()
+			k := threadKey{"", "thread-aaaaaa"}
+			check := func(what string, set func(*session)) {
+				t.Helper()
+				d := threadsDaemon(t)
+				inT3(d, "aaaaaa", time.Hour)
+				set(d.sessions["aaaaaa"])
+				d.threads[k], d.threadRead[k] = tc.state, now.Add(-2*time.Second)
+				d.mu.Lock()
+				defer d.mu.Unlock()
+				if got := d.hookBusyLocked("aaaaaa"); got != tc.want {
+					t.Errorf("%s: hookBusyLocked = %v, want %v", what, got, tc.want)
+				}
+				if _, got := d.idleSinceLocked("aaaaaa"); got != tc.want {
+					t.Errorf("%s: idleSinceLocked says busy %v, want %v", what, got, tc.want)
+				}
+			}
+			check("reconnected after a restart", func(s *session) { s.reconnect = true })
+			check("a turn the hook saw start", func(s *session) {
+				s.hooked, s.stopSeen, s.busyAt = true, true, now.Add(-30*time.Second)
+			})
+		})
+	}
+}

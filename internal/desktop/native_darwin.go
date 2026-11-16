@@ -28,6 +28,9 @@ type macNative struct{}
 
 func beforeWindow() (after func()) { return func() {} }
 
+// systemTellsFront: macOS says whether Murmur is the active app, so the page is told (#638).
+const systemTellsFront = true
+
 func newNative(glaze.WebView) native {
 	if err := glaze.SetAppIcon(dockPNG); err != nil {
 		log.Printf("Dock icon: %v", err)

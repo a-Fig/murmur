@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/join/jointest"
 	"github.com/a-Fig/murmur/internal/testgit"
@@ -109,14 +110,15 @@ func cloneOf(t *testing.T, root string) (remote, clone string) {
 	return remote, clone
 }
 
-// stopDaemon stops the clone's daemon and waits until it has let go of the clone's files.
+// stopDaemon stops the clone's daemon and waits until nothing holds the clone's lock, which the
+// daemon lets go of as it exits, not until daemon.json has gone. A daemon removes daemon.json as it begins
+// to stop and keeps the lock while it drains and says goodbye. One that began to stop by itself, as
+// a clone's does once its user has left, isn't found by `mur stop`, which then doesn't wait; on a
+// slow Windows runner it outlasted the TempDir cleanup's retries (#663).
 func stopDaemon(clone string) {
-	runStop(context.Background(), []string{"-C", clone}, &bytes.Buffer{})
-	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		if _, err := os.Stat(filepath.Join(clone, ".git", "murmur", "daemon.json")); err != nil {
-			return
-		}
-	}
+	ctx := context.Background()
+	runStop(ctx, []string{"-C", clone}, &bytes.Buffer{})
+	client.WaitGone(ctx, filepath.Join(clone, ".git"), client.StopWait)
 }
 
 // box is a user's machine: its own home, Claude Code and Codex directories, a stand-in claude on

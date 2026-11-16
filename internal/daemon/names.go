@@ -400,15 +400,53 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	if h := d.st.NameHolders[name]; h != "" && d.st.SessionNames[h] == name && d.receivesLocked(h) {
 		return bus.Addr(d.device, h), true
 	}
+	// A presence is whatever its device wrote, so a device can show a name that isn't its own
+	// (#604). While the device the registry has the name on is up, only its presence counts: if no
+	// session there shows the name, the session has stopped, and the registry's address keeps the
+	// message for it. Otherwise, of the presences that show the name, one still being written goes
+	// before a stale one, and the first by device ID stands, as it always did. That is for a clone
+	// that lost its keys (#617): it is back under a new device ID with its names, and the registry
+	// still has them on the old one, which is gone or going stale.
+	holder, best := d.nameDeviceLocked(name), 0
+	hp := d.peers[holder]
+	holderUp := holder != "" && (holder == d.device || hp != nil && !d.staleLocked(hp))
 	for _, dev := range sortedKeys(d.peers) {
-		for _, s := range d.peers[dev].pres.Sessions {
+		if holderUp && dev != holder {
+			continue
+		}
+		p := d.peers[dev]
+		rank := 1
+		if !d.staleLocked(p) {
+			rank += 2
+		}
+		if dev == holder {
+			rank++
+		}
+		if rank <= best {
+			continue
+		}
+		for _, s := range p.pres.Sessions {
 			if s.Name == name {
-				return bus.Addr(dev, s.ID), true
+				addr, best = bus.Addr(dev, s.ID), rank
+				break
 			}
 		}
 	}
+	if best > 0 {
+		return addr, true
+	}
 	addr = d.st.Used[name]
 	return addr, addr != ""
+}
+
+// nameDeviceLocked is the device the registry, or an earlier sighting, has a session name on, or
+// that has set it aside; "" if nobody is known to hold it. Caller holds mu.
+func (d *Daemon) nameDeviceLocked(name string) string {
+	if addr := d.st.Used[name]; addr != "" {
+		dev, _ := bus.SplitAddr(addr)
+		return dev
+	}
+	return d.st.Reserved[name]
 }
 
 // noSuchNameLocked is what to tell someone who asked for a name that resolveNameLocked finds no

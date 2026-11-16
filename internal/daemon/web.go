@@ -30,7 +30,7 @@ import (
 // call and no network, and no lock is held while one is made.
 
 // defaultWakeMinutes is what a wake setting of 0 minutes stands for.
-const defaultWakeMinutes = 3
+const defaultWakeMinutes = 5
 
 // listenPage opens the page's port. It is never the sessions' port: those carry the daemon's
 // protocol, and the page speaks HTTP to a browser. Only 127.0.0.1 will do, not just any loopback

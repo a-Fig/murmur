@@ -286,7 +286,7 @@ func newFixtures(now time.Time) *fixtures {
 			SessionWake:    map[string]web.Wake{"brave-heron": {When: web.WakeNever}},
 			Busy:           web.BusySubject,
 			SessionBusy:    map[string]string{"quiet-otter": web.BusyWhole},
-			DefaultMinutes: 3,
+			DefaultMinutes: 5,
 		},
 	}
 	f.activity = fixtureActivity(now)

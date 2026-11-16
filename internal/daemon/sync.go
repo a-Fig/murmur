@@ -99,6 +99,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			// A lock left by a killed git fails every fetch of its ref, and git doesn't always
 			// say so in words ("reference already exists"); clearing stale ones is cheap.
 			clearStaleLocks(d.opt.GitDir, d.log)
+			d.repairRefs() // and a ref a crash left unreadable fails every fetch in the clone (#644)
 		}
 		switch {
 		case err != nil && ctx.Err() == nil && !failing:
@@ -451,11 +452,16 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 	}
 	cut := ctx.Err() != nil // a failure the end of the sync caused says nothing about the ref
 	retry := time.Now()
-	removed := !cut && len(failed) > 0 && clearStaleLocks(d.opt.GitDir, d.log)
+	removed := false
+	if !cut && len(failed) > 0 {
+		// Both are tried: each failure fails every fetch until it is gone.
+		locks, broken := clearStaleLocks(d.opt.GitDir, d.log), d.repairRefs()
+		removed = locks || broken
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if removed {
-		// A lock left by a killed git fails its ref's fetch until removed; with one gone, try
+		// A lock or a broken ref left by a killed git fails fetches until removed; with one gone, try
 		// every ref that failed again at the next poll rather than in a minute. The lock is
 		// usually found stale a poll or more after the fetch it failed.
 		retry = time.Time{}
