@@ -3,6 +3,7 @@ package daemon
 import (
 	"io"
 	"log"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -193,8 +194,29 @@ func TestAHooksWhoIsAnsweredForItsSession(t *testing.T) {
 	if !s.busyAt.IsZero() || s.hooked {
 		t.Error("asking who marked the session at work")
 	}
-	// A hook that speaks for no session here is answered as the CLI is.
+	// After a /clear the hook names another transcript: the title the session showed was the old
+	// conversation's, and isn't what it is doing now.
+	s.doing, s.title, s.transcript = "", "the old conversation", filepath.Join(t.TempDir(), "old.jsonl")
 	d.mu.Unlock()
+	resp = d.handle(t.Context(), proto.Request{Op: proto.OpWho, ClaudeSession: "claude-x", ClientPID: 700,
+		Transcript: filepath.Join(t.TempDir(), "new.jsonl")})
+	for _, dev := range resp.Devices {
+		for _, v := range dev.Sessions {
+			if v.You && v.Doing != "" {
+				t.Errorf("after a new conversation began, you are doing %q", v.Doing)
+			}
+		}
+	}
+	// Two sessions of one process: the hook can't say which the person means, so neither is named.
+	d.mu.Lock()
+	twin := d.newSessionLocked(&proto.Hello{ID: "cccccc", ClientPID: 700}, "claude-code", "", "cccccc")
+	twin.clientPID = 700
+	d.mu.Unlock()
+	resp = d.handle(t.Context(), proto.Request{Op: proto.OpWho, ClaudeSession: "claude-x", ClientPID: 700})
+	if _, sess := bus.SplitAddr(resp.Self); sess != proto.CLISession {
+		t.Errorf("a hook of two sessions was answered as %q", resp.Self)
+	}
+	// A hook that speaks for no session here is answered as the CLI is.
 	resp = d.handle(t.Context(), proto.Request{Op: proto.OpWho, ClaudeSession: "claude-y", ClientPID: 999})
 	d.mu.Lock()
 	if _, sess := bus.SplitAddr(resp.Self); sess != proto.CLISession || resp.Name != "" {

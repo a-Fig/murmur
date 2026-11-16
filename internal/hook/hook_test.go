@@ -725,7 +725,7 @@ func TestTheNameCommandIsAnsweredWithoutATurn(t *testing.T) {
 	repo := newRepo(t)
 	who := `{"ok":true,"self":"fake-0001/aaaaaa","name":"brisk-finch","devices":[{"id":"fake-0001","sessions":[` +
 		`{"addr":"fake-0001/bbbbbb","name":"quiet-otter","doing":"someone else"},` +
-		`{"addr":"fake-0001/aaaaaa","name":"brisk-finch","you":true,"doing":"moving auth","tags":[{"name":"backend"},{"name":"model:opus-5.5"}]}]}]}`
+		`{"addr":"fake-0001/aaaaaa","name":"brisk-finch","you":true,"doing":"moving auth","tags":[{"name":"backend"},{"name":"group:device-fake-0001","src":"derived"},{"name":"model:opus-5.5"}]}]}]}`
 	answer := who
 	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
 		if r.Op == proto.OpWho {
@@ -779,6 +779,11 @@ func TestTheNameCommandIsAnsweredWithoutATurn(t *testing.T) {
 	answer = `{"ok":true,"self":"fake-0001/cli","namePending":true,"devices":[{"id":"fake-0001","sessions":[{"addr":"fake-0001/cli","you":true}]}]}`
 	if out := prompt("", "/murmur-name"); strings.Contains(out, "block") {
 		t.Errorf("answered as the CLI, the prompt was stopped: %s", out)
+	}
+	// A daemon that refuses says nothing the hook can show.
+	answer = `{"ok":false,"error":"no","self":"fake-0001/aaaaaa","name":"brisk-finch","devices":[{"id":"fake-0001","sessions":[{"addr":"fake-0001/aaaaaa","you":true}]}]}`
+	if out := prompt("", "/murmur-name"); strings.Contains(out, "block") {
+		t.Errorf("refused by the daemon, the prompt was stopped: %s", out)
 	}
 	// The CLI, or a session the daemon doesn't know: nothing says who "you" is.
 	answer = `{"ok":true,"self":"fake-0001","devices":[{"id":"fake-0001","sessions":[{"addr":"fake-0001/bbbbbb","name":"quiet-otter"}]}]}`

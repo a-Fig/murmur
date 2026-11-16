@@ -126,9 +126,9 @@ func nameCommand(agent string, in input, who proto.Request, stdout io.Writer) bo
 	if err != nil {
 		return false
 	}
-	who.Op = proto.OpWho
+	who.Op, who.Transcript = proto.OpWho, in.TranscriptPath
 	resp, err := c.Do(ctx, who)
-	if err != nil {
+	if err != nil || !resp.OK {
 		return false
 	}
 	// A daemon from before this answers a hook as it answers the CLI, which is no session.

@@ -428,8 +428,12 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		defer d.mu.Unlock()
 		if hookReq(req) {
 			// The hook asks as the CLI does, for the session it speaks for: the answer to
-			// /murmur-name (#421). It isn't the session at work, so nothing is touched.
-			if ss := d.hookSessionsLocked(req); len(ss) > 0 {
+			// /murmur-name (#421). Finding it follows the conversation, as any hook's request
+			// does (a /clear gives the session a new one), but it isn't the session at work, and
+			// isn't marked so. A hook that speaks for two sessions, as with two of Murmur's servers
+			// in one process, can't say which the person means, and is answered as the CLI.
+			if ss := d.hookSessionsLocked(req); len(ss) == 1 && !req.Subagent {
+				d.newConversationLocked(ss[0], req)
 				sess = ss[0].id
 				from = bus.Addr(d.device, sess)
 			}
@@ -592,14 +596,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 	if hookReq(req) {
 		for _, s := range d.touchHookLocked(req) {
 			ids = append(ids, s.id)
-			if validTranscript(req.Transcript) && !req.Subagent && s.transcript != req.Transcript {
-				// A /clear or a /resume is a new conversation, with a title of its own.
-				s.transcript = req.Transcript
-				if s.title != "" {
-					s.title = ""
-					d.kickPresence()
-				}
-			}
+			d.newConversationLocked(s, req)
 		}
 	} else {
 		ids = []string{req.Session}
@@ -717,6 +714,20 @@ func subjectOnly(m *inMsg) bool {
 // hookReq says req is from the hook, which names its session by its client's ID for it: Claude
 // Code's, or another agent's own (Native, Pi's from Murmur's extension). A request with neither
 // names the session it is from (Session), as the MCP server's do.
+// newConversationLocked notes the transcript a hook's request names, if it isn't the one the
+// session had: a /clear or a /resume is a new conversation, with a title of its own, and the old
+// one's is no longer what the session is doing. Caller holds mu.
+func (d *Daemon) newConversationLocked(s *session, req proto.Request) {
+	if !validTranscript(req.Transcript) || req.Subagent || s.transcript == req.Transcript {
+		return
+	}
+	s.transcript = req.Transcript
+	if s.title != "" {
+		s.title = ""
+		d.kickPresence()
+	}
+}
+
 func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Native != "" }
 
 // turnEnd is the hook at the end of a turn (Claude Code's Stop). The messages the sessions it

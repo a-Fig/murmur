@@ -580,11 +580,14 @@ func Self(r proto.Response) string {
 	if me.Doing != "" {
 		parts = append(parts, me.Doing)
 	}
-	if len(me.Tags) > 0 {
-		names := make([]string, len(me.Tags))
-		for i, t := range me.Tags {
-			names[i] = t.Name
+	// Not the tags the daemon works out, such as the device's group, which every session has.
+	var names []string
+	for _, t := range me.Tags {
+		if t.Src != tags.SrcDerived {
+			names = append(names, t.Name)
 		}
+	}
+	if len(names) > 0 {
 		parts = append(parts, "tags: "+strings.Join(names, ", "))
 	}
 	return strings.Join(parts, " · ")
