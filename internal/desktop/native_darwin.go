@@ -24,18 +24,20 @@ func init() {
 	}
 }
 
-type macNative struct{}
+type macNative struct {
+	win objc.ID // the app's window, an NSWindow
+}
 
 func beforeWindow() (after func()) { return func() {} }
 
 // systemTellsFront: macOS says whether Murmur is the active app, so the page is told (#638).
 const systemTellsFront = true
 
-func newNative(glaze.WebView) native {
+func newNative(w glaze.WebView) native {
 	if err := glaze.SetAppIcon(dockPNG); err != nil {
 		log.Printf("Dock icon: %v", err)
 	}
-	return macNative{}
+	return macNative{win: objc.ID(uintptr(w.Window()))}
 }
 
 // badge is on the UI thread, which is the main thread AppKit wants.
@@ -62,10 +64,18 @@ func (macNative) frame(dark bool) {
 	app.Send(objc.RegisterName("setAppearance:"), look)
 }
 
-// inFront is whether Murmur is the active app, as when its window was clicked last.
-func (macNative) inFront(bool) bool {
+// inFront is whether Murmur is the active app, as when its window was clicked last, with its
+// window on the screen. Being active isn't enough: after Cmd-M an app often stays active with its
+// window in the Dock (#711), and after a swipe to another Space with its window there. The
+// window's occlusion state would say both at once, but over ssh it never changed, so it is taken
+// on trust nowhere (2026-11-16). On the UI thread.
+func (n macNative) inFront(bool) bool {
 	app := objc.ID(objc.GetClass("NSApplication")).Send(objc.RegisterName("sharedApplication"))
-	return objc.Send[bool](app, objc.RegisterName("isActive"))
+	if !objc.Send[bool](app, objc.RegisterName("isActive")) || n.win == 0 {
+		return false
+	}
+	is := func(sel string) bool { return objc.Send[bool](n.win, objc.RegisterName(sel)) }
+	return is("isVisible") && !is("isMiniaturized") && is("isOnActiveSpace")
 }
 
 // notify passes the title and body as arguments, so nothing in them is read as AppleScript.

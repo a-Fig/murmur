@@ -34,7 +34,8 @@ record a host, which can take the window only to a joined clone's page.
 
 The page decides what is news, as it does for its screen reader announcements. The window decides
 whether the person is looking, from the system: whether it is the window in front on Windows, the
-active app on macOS. The page's own guess (`document.hasFocus()`) is taken only on Linux. One run on
+active app on macOS with its window on the screen (after Cmd-M, or a swipe to another Space, an
+app often stays active with its window out of sight, #711). The page's own guess (`document.hasFocus()`) is taken only on Linux. One run on
 2026-11-15 saw it stay true in a minimized WebView2 and another saw it go false, so it isn't relied
 on where the system can say.
 
