@@ -78,11 +78,14 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   too. A week covers a message read after a weekend; the message itself stays in history with its
   file names, and a turn made from it later says the files aren't there.
 - **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
-  2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, and deletes
-  one 14 days after it first read of it, if its device's presence is stale or gone by then. Its own
-  daemon, if it still runs, deleted it 7 days before: the event is written after the push, so this
-  holds whatever the clocks say, and for an event a teammate wrote to name another's ref. A ref no
-  readable event names, as one whose message failed after its push, still stays.
+  2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
+  included, and deletes one once it is 14 days both since it first read of it, by its own clock,
+  and since its message was sent, by the sender's, if its device's presence is stale or gone by
+  then. Its own daemon, if it still runs, deleted it 7 days before, since the event is written
+  after the push. Each date alone can be wrong: a clock set forward by weeks, or a teammate's event
+  naming another's ref with an old date. Both must be for a ref to go early. A ref no event this
+  device read names still stays: one whose message failed after its push, one in a log it can't
+  open, or one sent before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once for each**, since each gets a message of
   its own (#520).
 - **A send with files has 90 seconds**, like any request, and its push holds the device's one

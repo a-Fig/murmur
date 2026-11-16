@@ -504,25 +504,45 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	d.pruneOthersFiles(ctx)
 }
 
-// othersFile is a files ref another device pushed, as read of in its log: whose, and when this
-// daemon first read of it, by its own clock.
+// othersFile is a files ref another device pushed, as read of in its log: whose, when this daemon
+// first read of it, by its own clock, and when its message was sent, by the sender's.
 type othersFile struct {
 	Device string    `json:"device"`
 	Seen   time.Time `json:"seen"`
+	Sent   time.Time `json:"sent"`
+}
+
+// due says the ref is past keep both since it was first read of and since it was sent.
+func (f othersFile) due(keep time.Duration) bool {
+	return time.Since(f.Seen) > keep && !f.Sent.IsZero() && time.Since(f.Sent) > keep
+}
+
+// noteOthersFilesLocked notes the files ref message e names, read in dev's log, if dev is another
+// device. It is saved with the log's cursor. Caller holds mu.
+func (d *Daemon) noteOthersFilesLocked(e bus.Event, dev string) {
+	if e.Type != bus.Message || e.FilesAt == "" || dev == d.device {
+		return
+	}
+	if _, ok := d.st.OthersFiles[e.FilesAt]; !ok {
+		d.st.OthersFiles[e.FilesAt] = othersFile{Device: dev, Seen: time.Now().Round(0), Sent: e.At}
+	}
 }
 
 // pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
 // own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes twice
-// FileKeep after this daemon first read of it. Its event was written after it was pushed, so its
-// own daemon, by then, would have deleted it a FileKeep before, and no receiver can still need it;
-// that holds whatever the clocks say, and for an event a teammate wrote to name another's ref. The
-// device being gone, its presence stale or off the remote, only spares a live one's own prune the
-// race. Every daemon here may delete the same ref: deleting one already gone succeeds.
+// FileKeep after this daemon first read of it, and after its message was sent. Its event was
+// written after it was pushed, so its own daemon, by then, would have deleted it a FileKeep before,
+// and no receiver can still need it. Each time alone fails in one way: what was first read is
+// dated by this clock, which may since have been set forward by weeks, and when it was sent by the
+// sender's, which may be wrong, or written by a teammate to name another's ref. Both must fail for
+// a ref to go early. The device being gone, its presence stale or off the remote, only spares a
+// live one's own prune the race. Every daemon here may delete the same ref: deleting one already
+// gone succeeds.
 func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 	d.mu.Lock()
 	var due []string
 	for at, f := range d.st.OthersFiles {
-		if time.Since(f.Seen) > 2*d.opt.FileKeep {
+		if f.due(2 * d.opt.FileKeep) {
 			due = append(due, at)
 		}
 	}
