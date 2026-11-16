@@ -119,7 +119,7 @@ the turn took, so nothing waits for good.
   is at work when a read of T3's database that began after its turn ended finds a run going, and,
   until a read that began after it, when the daemon has just handed a message to its thread (at
   most a minute, so a read that keeps failing doesn't hold its messages for good). A turn the hook
-  saw start or end while the send was still running is that handoff's own, and holds nothing
+  saw begin while the send was still running is that handoff's own, and holds nothing
   after (#677, 2026-11-16): a T3 slow to answer let the turn end first, and the next message
   waited out the minute for a turn already over. The daemon reads
   the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took

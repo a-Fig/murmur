@@ -1015,11 +1015,17 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), m.Event.To)
 	}
 	// A turn the hook hasn't seen start (runUnseen, hooklessBusy), unless it has: the session was
-	// idle when the send began, so a turn the hook saw start or end since is the one it handed over.
-	// T3 can take a while to answer, and its turn can begin, and even end, before the send returns
-	// (#677). Holding the session after that held its next message for handedHold, a turn it had
-	// already had, wherever T3's database couldn't be read.
-	if s := d.sessions[j.id]; s != nil && j.via == viaT3 && !s.busyAt.After(j.sentAt) && !s.endedAt.After(j.sentAt) {
+	// idle when the send began, so a turn its hook saw begin since is the one it handed over. T3 can
+	// take a while to answer, and its turn can begin, and even end, before the send returns (#677).
+	// Holding the session after that held its next message for handedHold, a turn it had already
+	// had, wherever T3's database couldn't be read. Only a hook says so: a read of T3's database that
+	// ends a turn (endedAt) may have seen an older run go, before T3 queued this one.
+	//
+	// What this leaves: a person who types into the thread while the send runs starts a turn of
+	// their own, which the hook sees, and T3 queues this message behind it. The read of the thread
+	// before the next handoff (t3RunGoing) then finds that queued run, unless T3's database can't be
+	// read or the handoff comes within closeGrace of their turn's end.
+	if s := d.sessions[j.id]; s != nil && j.via == viaT3 && !s.hookTurnAt.After(j.sentAt) {
 		s.handedAt = time.Now()
 	}
 	d.saveLocked()
