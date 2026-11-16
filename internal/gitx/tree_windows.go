@@ -1,8 +1,10 @@
 package gitx
 
 import (
+	"log"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -19,6 +21,9 @@ type tree struct {
 
 // useJob is false in a test of what RunTree does where no job can be made.
 var useJob = true
+
+// noJob logs, once, that no job could be made, which leaves a stopped fetch's children running.
+var noJob sync.Once
 
 // basicAccounting is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, which x/sys doesn't have.
 type basicAccounting struct {
@@ -58,15 +63,22 @@ func startTree(cmd *exec.Cmd) (*tree, error) {
 	t := &tree{git: cmd.Process}
 	pid := uint32(cmd.Process.Pid)
 	if job != 0 {
-		if p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, pid); err == nil {
-			if windows.AssignProcessToJobObject(job, p) == nil {
+		p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, pid)
+		if err == nil {
+			if err = windows.AssignProcessToJobObject(job, p); err == nil {
 				t.job = job
 			}
 			windows.CloseHandle(p)
 		}
 		if t.job == 0 {
 			windows.CloseHandle(job)
+			jerr = err
 		}
+	}
+	if t.job == 0 && useJob {
+		noJob.Do(func() {
+			log.Printf("git's processes can't be put in a job (%v): a stopped files fetch ends git alone, and what it started runs on", jerr)
+		})
 	}
 	if err := resume(pid); err != nil {
 		cmd.Process.Kill()
