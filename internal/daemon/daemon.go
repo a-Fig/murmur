@@ -307,8 +307,8 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if d.hidden.Load() {
 		return ErrInvisible
 	}
-	if strings.HasPrefix(ref, brand.FilesPrefix) && !d.sendFiles.Load() {
-		return errSendOff // turned off while this send waited its turn (#765)
+	if sha != "" && strings.HasPrefix(ref, brand.FilesPrefix) && !d.sendFiles.Load() {
+		return errSendOff // turned off while this send waited its turn (#765); deleting old ones goes on
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()

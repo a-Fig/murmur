@@ -3604,6 +3604,7 @@ function fetchFile(id, i, name, again) {
   fetched.set(key, f);
   f.done = inFetchSlot(async () => (await api("/api/file?id=" + encodeURIComponent(id) + "&i=" + i, { raw: true })).blob())
     .then((blob) => {
+      if (f.dropped) return; // Receive files went off while it came
       // The daemon sends every file as bytes to save; a picture is shown as the kind its name says.
       const type = pictureType(name);
       f.url = URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
@@ -3663,13 +3664,38 @@ function followFileSwitches(state) {
     return;
   }
   for (const k of ["sendFiles", "receiveFiles"]) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
-  if (state.receiveFiles) return;
+  const was = receiving;
+  receiving = !!state.receiveFiles;
+  // Messages the page has came without their files while it was off: ask again for theirs.
+  if (receiving && was === false) refetchFiles(tokenEra);
+  if (receiving) return;
   for (const [key, f] of fetched) {
     if (!f.remote) continue;
     fetched.delete(key);
+    f.dropped = true; // one still on its way is let go of when it comes
     if (f.url) URL.revokeObjectURL(f.url);
     if (ui.viewer?.file === f) ui.viewer = null;
   }
+}
+
+let receiving = null; // Receive files, as the page last followed it
+
+// refetchFiles gives the messages the page has the files the daemon now shows for them.
+async function refetchFiles(era) {
+  const byId = new Map(ui.messages.map((m) => [m.id, m]));
+  let cursor = "";
+  try {
+    for (let pages = 0; pages < 20; pages++) {
+      const r = await api("/api/messages?cursor=" + encodeURIComponent(cursor));
+      if (era !== tokenEra) return;
+      for (const m of r.messages || []) if (m.files?.length && byId.has(m.id)) byId.get(m.id).files = m.files;
+      if (!r.messages?.length || !r.cursor || r.cursor === cursor) break;
+      cursor = r.cursor;
+    }
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+  }
+  render();
 }
 
 // fromElsewhere says message m came from another device, whose files Receive files governs.
@@ -3709,7 +3735,7 @@ function fileList(id, files, fileAt) {
         if (fileAt(i)?.state === "loading") return;
         const file = fileAt(i, true, true);
         render();
-        file.done.then(() => file.state === "here" && !picture && saveFile(f.name, file.url));
+        file.done.then(() => file.state === "here" && !file.dropped && !picture && saveFile(f.name, file.url));
       };
       return h(
         "button",
