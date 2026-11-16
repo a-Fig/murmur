@@ -130,9 +130,10 @@ func TestCleanFiles(t *testing.T) {
 	}
 }
 
-// Names a disk may take for one file, as macOS does those that differ only in Unicode normalization,
-// are made distinct like names that differ only in case (#712). A combining accent is already cut
-// to '_' by FileName, so these are canonical twins made only of letters.
+// Names macOS takes for one file are made distinct (#712): those that differ only in Unicode
+// normalization, and in case as APFS folds it, beyond what ToLower does. A combining accent is
+// already cut to '_' by FileName, so these are twins made only of letters, none of which ToLower
+// alone makes distinct.
 func TestCleanFilesNormalization(t *testing.T) {
 	_, good, err := bus.SealFile([]byte("x"), "0123456789abcdef", 0)
 	if err != nil {
@@ -140,9 +141,12 @@ func TestCleanFilesNormalization(t *testing.T) {
 	}
 	for _, twins := range [][2]string{
 		{"\uD55C.txt", "\u1112\u1161\u11AB.txt"}, // a Hangul syllable, and its jamo
-		{"\u00C5.txt", "\u212B.txt"},             // A with ring, and ANGSTROM SIGN
 		{"\u03AC.txt", "\u1F71.txt"},             // alpha with tonos, and with oxia
-		{"\u00E5.txt", "\u212B.txt"},             // and the case of one, the normalization of the other
+		{"\uF900.txt", "\u8C48.txt"},             // a CJK compatibility ideograph, and its unified form
+		{"\u03C3.txt", "\u03C2.txt"},             // sigma, and final sigma
+		{"\u00B5m.txt", "\u03BCm.txt"},           // MICRO SIGN, and mu
+		{"\u00DF.txt", "ss.txt"},                 // sharp s, and ss
+		{"\u1F71.txt", "\u0386.txt"},             // and the normalization of one, the case of the other
 	} {
 		a, b := good, good
 		a.Name, b.Name = twins[0], twins[1]
