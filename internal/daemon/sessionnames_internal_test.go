@@ -47,6 +47,15 @@ func TestTheNameOfALongGoneSessionIsForgotten(t *testing.T) {
 	if d.pruneSessionNamesLocked(now) {
 		t.Error("a second look changed something")
 	}
+	// The 30 days run from when a session stopped being kept, not from when it took its name: the
+	// holder's time, weeks old, was renewed while it held the name.
+	if at := d.st.NamesSeen["holder"]; now.Sub(at) > time.Hour {
+		t.Errorf("the holder's time wasn't renewed: %v", at)
+	}
+	d.st.NameHolders["quiet-otter"] = "recent"
+	if d.pruneSessionNamesLocked(now.Add(48 * time.Hour)); d.st.SessionNames["holder"] == "" {
+		t.Error("a session that held its name until a day ago was forgotten at once")
+	}
 	if !d.pruneSessionNamesLocked(now.Add(sessionNameKeep+2*time.Hour)) || d.st.SessionNames["undated"] != "" {
 		t.Error("the undated session's name outlived its keep")
 	}

@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -568,14 +569,20 @@ func TestANoteOfAFilesRefGoesWithTheRef(t *testing.T) {
 		t.Fatalf("send: %s", r.Error)
 	}
 	inboxMessage(t, b, "bbbbbb")
-	noted := func() bool {
+	// ok is false while the file is being replaced, which says nothing either way.
+	noted := func() (is, ok bool) {
 		st, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
-		return err == nil && strings.Contains(string(st), `"othersFiles"`)
+		var js map[string]json.RawMessage
+		if err != nil || json.Unmarshal(st, &js) != nil {
+			return false, false
+		}
+		_, is = js["othersFiles"]
+		return is, true
 	}
-	eventually(t, "b to note the files ref of a", noted)
-	holds(t, "the note, while the ref is on the remote", time.Second, noted)
+	eventually(t, "b to note the files ref of a", func() bool { is, ok := noted(); return ok && is })
+	holds(t, "the note, while the ref is on the remote", time.Second, func() bool { is, ok := noted(); return !ok || is })
 
 	ref := strings.TrimSpace(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files"))
 	git(t, remote, "update-ref", "-d", ref) // as its own daemon does when its time is up
-	eventually(t, "the note to go with the ref", func() bool { return !noted() })
+	eventually(t, "the note to go with the ref", func() bool { is, ok := noted(); return ok && !is })
 }

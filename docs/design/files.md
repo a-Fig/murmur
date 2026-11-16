@@ -89,8 +89,7 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   a team whose daemons run only while someone works. The note of a ref that is off the remote
   already goes at the next prune, whatever its age (#747): the prune lists the remote, and a ref is
   pushed before the event that names it, so one not listed was deleted. A ref no event this device
-  read names
-  still stays: one whose message failed after its push, one in a log it can't open, or one sent
+  read names still stays: one whose message failed after its push, one in a log it can't open, or one sent
   before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once** (#739, 2026-11-16). Each gets a message of
   its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,

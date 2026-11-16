@@ -99,8 +99,10 @@ const sessionNameKeep = 30 * 24 * time.Hour
 // which forwardLocked starts from. Past that, the name only labels the session's old messages on
 // the page and in lookup, and forwards a message sent to its old address: after sessionNameKeep
 // those show the address, and such a message is dropped as one to any session that is gone. A
-// session with no time noted, from a state.json older than NamesSeen, counts from now. Caller holds
-// mu.
+// session with no time noted, from a state.json older than NamesSeen, counts from now. So does one
+// kept for any of those reasons, whose time is renewed about once a day while it is: the 30 days
+// run from when the last of them ended, not from when a session that then ran for weeks took its
+// name. Caller holds mu.
 func (d *Daemon) pruneSessionNamesLocked(now time.Time) bool {
 	changed := false
 	for id := range d.st.NamesSeen {
@@ -109,19 +111,17 @@ func (d *Daemon) pruneSessionNamesLocked(now time.Time) bool {
 			changed = true
 		}
 	}
+	if d.st.NamesSeen == nil {
+		d.st.NamesSeen = map[string]time.Time{}
+	}
 	for id, name := range d.st.SessionNames {
 		_, stopped := d.st.Stopped[id]
-		if d.sessions[id] != nil || stopped || d.st.NameHolders[name] == id || d.st.Used[name] == bus.Addr(d.device, id) {
-			continue
-		}
+		kept := d.sessions[id] != nil || stopped || d.st.NameHolders[name] == id || d.st.Used[name] == bus.Addr(d.device, id)
 		seen, ok := d.st.NamesSeen[id]
 		switch {
-		case !ok:
-			if d.st.NamesSeen == nil {
-				d.st.NamesSeen = map[string]time.Time{}
-			}
+		case !ok, kept && now.Sub(seen) > 24*time.Hour:
 			d.st.NamesSeen[id] = now.UTC().Truncate(time.Hour)
-		case now.Sub(seen) > sessionNameKeep:
+		case !kept && now.Sub(seen) > sessionNameKeep:
 			delete(d.st.SessionNames, id)
 			delete(d.st.NamesSeen, id)
 		default:

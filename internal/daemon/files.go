@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -931,7 +932,7 @@ func (d *Daemon) ageOthersFilesLocked(now time.Time) {
 // own daemon would otherwise delete: a deleted clone's would stay for good (#708). A note whose ref
 // is off the remote already goes at once, whatever its age: a ref is pushed before the event that
 // names it, so one not listed has been deleted, and the note had nothing left to do but wait out
-// twice FileKeep of this daemon's running, most of a year for one that runs an hour a day (#747). A ref goes once
+// twice FileKeep of this daemon's running: most of a year for one that runs an hour a day (#747). A ref goes once
 // this daemon has run for twice FileKeep since it first read of it. Its event was written after it
 // was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
 // can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
@@ -947,23 +948,29 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			due = append(due, at)
 		}
 	}
-	notes := len(d.st.OthersFiles)
-	if notes > 0 {
+	// The notes there are before the listing: one a sync makes while the listing runs can name
+	// a ref pushed after it, which the listing lacks though the ref is there.
+	notes := slices.Collect(maps.Keys(d.st.OthersFiles))
+	if len(notes) > 0 {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if notes == 0 {
+	if len(notes) == 0 {
 		return
 	}
-	listed, err := d.repo.ListRemote(ctx)
+	// Within a time of its own, as a sync's listing is: this one runs at every prune now, and one
+	// left waiting on a dead connection would hold up every message that carries files.
+	lctx, cancel := context.WithTimeout(ctx, time.Minute)
+	listed, err := d.repo.ListRemote(lctx)
+	cancel()
 	if err != nil {
 		d.log.Printf("listing the remote's files refs: %v", err)
 		return
 	}
 	d.mu.Lock()
 	gone := false
-	for at := range d.st.OthersFiles {
-		if listed[bus.FilesRef(at)] == "" {
+	for _, at := range notes {
+		if _, ok := d.st.OthersFiles[at]; ok && listed[bus.FilesRef(at)] == "" {
 			delete(d.st.OthersFiles, at) // its own daemon, or another here, deleted it
 			gone = true
 		}
@@ -981,8 +988,7 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 	slices.Sort(due)
 	for _, at := range due {
 		if listed[bus.FilesRef(at)] == "" {
-			forget(at) // its own daemon, or another here, deleted it
-			continue
+			continue // its note went above
 		}
 		d.mu.Lock()
 		p := d.peers[d.st.OthersFiles[at].Device]
