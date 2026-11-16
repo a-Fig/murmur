@@ -74,7 +74,11 @@ func (d *Daemon) scratch() (*bus.Repo, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return d.repo.Scratch(dir), func() { os.RemoveAll(dir) }, nil
+	return d.repo.Scratch(dir), func() {
+		if err := os.RemoveAll(dir); err != nil {
+			d.log.Printf("a files scratch directory is left, for pruning to remove: %v", err)
+		}
+	}, nil
 }
 
 // textOf is a file's bytes as text, if it is text the secret check can read: UTF-16 with its mark,

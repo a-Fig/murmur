@@ -404,17 +404,29 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, e
 		}
 		return done, names
 	}
-	removeFetched := func(names []string) {
+	// removeFetched removes what the fetch wrote, once every process of it has gone (RunTree), so
+	// nothing is still writing, and says what it couldn't remove.
+	removeFetched := func(names []string) error {
+		var errs []error
 		for _, name := range names {
 			p := filepath.Join(packs, name)
-			// On Windows a file git is still closing can't be removed for a moment.
+			var err error
+			// On Windows a file can't be removed for a moment after the process that had it open ends.
 			for try := 0; try < 10; try++ {
-				if err := os.Remove(p); err == nil || errors.Is(err, os.ErrNotExist) {
+				if err = os.Remove(p); err == nil || errors.Is(err, os.ErrNotExist) {
+					err = nil
 					break
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
+			if err != nil {
+				errs = append(errs, err)
+			}
 		}
+		if len(errs) > 0 {
+			return fmt.Errorf("what the fetch wrote is left: %w", errors.Join(errs...))
+		}
+		return nil
 	}
 	// Encrypted files don't compress, so a pack of max bytes takes about max on the wire: zlib's
 	// framing, the commit, the tree and the pack's index take far less than this allows over it.
@@ -439,9 +451,10 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, e
 			}
 		}
 	}()
-	// Protocol 2, as a fetch stopped over protocol 0 or 1 by HTTPS goes on: git-remote-https feeds
-	// a fetch-pack of its own, which doesn't notice the fetch it was for has gone.
-	_, err = r.Git.Run(fctx, "", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "protocol.version=2",
+	// RunTree, as stopping git alone leaves its children: index-pack writing the pack, and over
+	// protocol 0 or 1 by HTTPS a fetch-pack of git-remote-https's own, downloading (#726). Protocol
+	// 2 is asked for too, which leaves less to stop.
+	_, err = r.Git.RunTree(fctx, "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "protocol.version=2",
 		"-c", "fetch.unpackLimit=1", "-c", "core.bigFileThreshold=1m", "fetch", "--quiet",
 		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip="+brand.RefRoot+"*", r.Remote, ref)
@@ -451,12 +464,10 @@ func (r *Repo) FetchFiles(ctx context.Context, ref string, max int64) (string, e
 	// Too large whether it was stopped for it, done before it could be, or ended otherwise (a
 	// timeout) past the limit; and nothing of a fetch that failed is kept.
 	if errors.Is(context.Cause(fctx), ErrTooLarge) || n > limit {
-		removeFetched(names)
-		return "", fmt.Errorf("%w: the files ref holds over %d bytes", ErrTooLarge, limit)
+		return "", errors.Join(fmt.Errorf("%w: the files ref holds over %d bytes", ErrTooLarge, limit), removeFetched(names))
 	}
 	if err != nil {
-		removeFetched(names)
-		return "", err
+		return "", errors.Join(err, removeFetched(names))
 	}
 	return sha, nil
 }
