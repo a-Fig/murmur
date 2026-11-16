@@ -44,7 +44,10 @@ func Run(ctx context.Context, opts Options) error {
 		HideUntilLoaded:   true,
 		FrameAutosaveName: brand.Product,
 		AcceptsFirstMouse: true,
-		OnClose:           func() { a.w.Terminate() },
+		OnClose: func() {
+			opts.Instance.closingDown() // before it has gone, so no click is answered by it
+			a.w.Terminate()
+		},
 	})
 	after()
 	if err != nil {
@@ -75,6 +78,7 @@ func Run(ctx context.Context, opts Options) error {
 	go func() {
 		select {
 		case <-ctx.Done():
+			opts.Instance.closingDown()
 			w.Terminate()
 		case <-done:
 		}

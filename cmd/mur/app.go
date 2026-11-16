@@ -87,6 +87,9 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		if *devtools {
 			args = append(args, "--devtools")
 		}
+		if *fromLauncher {
+			args = append(args, "--from-launcher") // so the window isn't asked to show a repo
+		}
 		exited, err := desktop.Detach(exe, args, logf)
 		if err != nil {
 			return err

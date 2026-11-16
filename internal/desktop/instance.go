@@ -36,6 +36,11 @@ type request struct {
 // maxRequest is as much of a request as is read: a key and a repo's path.
 const maxRequest = 8 << 10
 
+// waitForWindow is how long a request that comes while the window is being made waits for it:
+// starting a daemon can take seconds. It is answered "ok" only once the window has come forward,
+// so a window that fails while being made sends the asker on to open its own.
+const waitForWindow = 30 * time.Second
+
 // Instance is the window's claim to be the one window. Until the window is made, what is asked of
 // it waits for it.
 type Instance struct {
@@ -44,15 +49,19 @@ type Instance struct {
 	ln   net.Listener
 
 	mu      sync.Mutex
-	show    func(gitDir string) // set once the window can come forward
+	show    func(gitDir string) // set once the window can come forward; called holding mu
 	asked   bool                // asked to before it could
-	pending string              // the repo last asked for then, or ""
+	pending string              // the repo asked for then, or ""
+	shown   bool                // the window was made, and came forward for what was asked
 	closing bool                // the window has gone, or is going
+	ready   chan struct{}       // closed once the window is made, or isn't to be
+	once    sync.Once
 }
 
 // Claim opens the window's port and records it at path, unless a window is open already: then
-// that one comes forward, showing the repo at gitDir unless that is "", and Claim returns nil. Two launches at once each find no window before
-// either has claimed, so the finding and the claiming happen under a lock file beside the record.
+// that one comes forward, showing the repo at gitDir unless that is "", and Claim returns nil.
+// Two launches at once each find no window before either has claimed, so the finding and the
+// claiming happen under a lock file beside the record.
 func Claim(path, gitDir string) (*Instance, error) {
 	unlock := lockFile(path + ".lock")
 	defer unlock()
@@ -65,7 +74,7 @@ func Claim(path, gitDir string) (*Instance, error) {
 	}
 	k := make([]byte, 16)
 	rand.Read(k)
-	in := &Instance{path: path, ln: ln, rec: instance{PID: os.Getpid(), Addr: ln.Addr().String(), Key: hex.EncodeToString(k)}}
+	in := &Instance{path: path, ln: ln, ready: make(chan struct{}), rec: instance{PID: os.Getpid(), Addr: ln.Addr().String(), Key: hex.EncodeToString(k)}}
 	b, _ := json.Marshal(in.rec)
 	// A file of its own, renamed into place, so two windows starting together don't share one.
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
@@ -90,17 +99,27 @@ func Claim(path, gitDir string) (*Instance, error) {
 }
 
 // lockFile takes the lock at path, waiting up to five seconds for whoever holds it, and returns
-// what lets it go. A lock older than ten seconds was left by a process that died holding it; one
-// that can't be taken at all is gone without, as a second window is better than none.
+// what lets it go. A holder keeps it while a window it found is being made, up to waitForWindow,
+// so a lock is taken for one left by a process that died holding it only after twice that. The
+// lock holds a token of its own, so a holder that outlived that doesn't let go of the next one's.
+// One that can't be taken at all is gone without, as a second window is better than none.
 func lockFile(path string) func() {
+	t := make([]byte, 8)
+	rand.Read(t)
+	token := hex.EncodeToString(t)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
+			f.WriteString(token)
 			f.Close()
-			return func() { os.Remove(path) }
+			return func() {
+				if b, err := os.ReadFile(path); err == nil && string(b) == token {
+					os.Remove(path)
+				}
+			}
 		}
-		if fi, serr := os.Stat(path); serr == nil && time.Since(fi.ModTime()) > 10*time.Second {
+		if fi, serr := os.Stat(path); serr == nil && time.Since(fi.ModTime()) > 2*waitForWindow {
 			os.Remove(path)
 			continue
 		}
@@ -133,19 +152,31 @@ func (in *Instance) answer(c net.Conn) {
 		return
 	}
 	in.mu.Lock()
-	show, closing := in.show, in.closing
-	if show == nil && !closing {
+	switch {
+	case in.closing:
+		in.mu.Unlock()
+		return // no "ok", so the one asking opens a window of its own
+	case in.show != nil:
+		in.show(req.GitDir) // holding mu, so closingDown can't come between
+		in.mu.Unlock()
+	default:
 		in.asked = true
 		if req.GitDir != "" {
 			in.pending = req.GitDir // a later click on the launcher doesn't undo it
 		}
-	}
-	in.mu.Unlock()
-	if closing {
-		return // no "ok", so the one asking opens a window of its own
-	}
-	if show != nil {
-		show(req.GitDir)
+		in.mu.Unlock()
+		c.SetDeadline(time.Now().Add(waitForWindow + 2*time.Second))
+		select {
+		case <-in.ready:
+		case <-time.After(waitForWindow):
+			return
+		}
+		in.mu.Lock()
+		shown := in.shown
+		in.mu.Unlock()
+		if !shown {
+			return
+		}
 	}
 	c.Write([]byte("ok\n"))
 }
@@ -154,16 +185,19 @@ func (in *Instance) answer(c net.Conn) {
 // asked for already.
 func (in *Instance) onShow(show func(gitDir string)) {
 	in.mu.Lock()
-	in.show = show
-	asked, pending := in.asked, in.pending
-	in.asked, in.pending = false, ""
-	in.mu.Unlock()
-	if asked {
-		show(pending)
+	if !in.closing {
+		in.show, in.shown = show, true
+		if in.asked {
+			show(in.pending)
+		}
+		in.asked, in.pending = false, ""
 	}
+	in.mu.Unlock()
+	in.once.Do(func() { close(in.ready) })
 }
 
-// closingDown says the window is going: what is asked of it from now on isn't answered.
+// closingDown says the window is going: what is asked of it from now on isn't answered, and what
+// was waiting for it to be made is told it won't be.
 func (in *Instance) closingDown() {
 	if in == nil {
 		return
@@ -171,6 +205,7 @@ func (in *Instance) closingDown() {
 	in.mu.Lock()
 	in.show, in.closing = nil, true
 	in.mu.Unlock()
+	in.once.Do(func() { close(in.ready) })
 }
 
 // Close closes the port and takes the record out, if it is still this window's: a second window
@@ -208,7 +243,7 @@ func BringForward(path, gitDir string) bool {
 	}
 	defer c.Close()
 	allowForeground(rec.PID)
-	c.SetDeadline(time.Now().Add(3 * time.Second))
+	c.SetDeadline(time.Now().Add(waitForWindow + 3*time.Second))
 	req, _ := json.Marshal(request{Key: rec.Key, GitDir: gitDir})
 	if _, err := c.Write(append(req, '\n')); err != nil {
 		return false

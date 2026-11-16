@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // A second `mur app` finds the open window's record, and the window comes forward, with the repo
@@ -22,15 +23,18 @@ func TestBringForward(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var shown []string
-	// Asked while the window is still being made: answered at once, done when it can be.
-	if !BringForward(path, "/repos/early") {
-		t.Fatal("a claimed window that isn't made yet didn't answer")
-	}
+	// Asked while the window is still being made: answered once it is.
+	early := make(chan bool)
+	go func() { early <- BringForward(path, "/repos/early") }()
+	waitAsked(t, in)
 	in.onShow(func(gitDir string) {
 		mu.Lock()
 		shown = append(shown, gitDir)
 		mu.Unlock()
 	})
+	if !<-early {
+		t.Fatal("a window asked for while it was being made didn't answer")
+	}
 	if !BringForward(path, "/repos/b") || !BringForward(path, "") {
 		t.Fatal("not brought forward")
 	}
@@ -89,6 +93,9 @@ func TestClaimOnce(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
+			if in != nil {
+				in.onShow(func(string) {}) // the window is made, as a real one soon is
+			}
 			got <- in
 		}()
 	}
@@ -106,6 +113,21 @@ func TestClaimOnce(t *testing.T) {
 	}
 }
 
+// waitAsked waits for a request to reach a window that isn't made yet.
+func waitAsked(t *testing.T, in *Instance) {
+	t.Helper()
+	for range 200 {
+		in.mu.Lock()
+		asked := in.asked
+		in.mu.Unlock()
+		if asked {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the request never came")
+}
+
 // A repo asked for before the window is made isn't undone by a later click that asks for none,
 // and a window on its way out doesn't answer, so the one asking opens its own.
 func TestPendingAndClosing(t *testing.T) {
@@ -115,15 +137,38 @@ func TestPendingAndClosing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer in.Close()
-	BringForward(path, "/repos/b")
-	BringForward(path, "")
+	first, second := make(chan bool), make(chan bool)
+	go func() { first <- BringForward(path, "/repos/b") }()
+	waitAsked(t, in)
+	go func() { second <- BringForward(path, "") }()
+	time.Sleep(100 * time.Millisecond)
 	var got []string
 	in.onShow(func(gitDir string) { got = append(got, gitDir) })
+	if !<-first || !<-second {
+		t.Fatal("not answered once the window was made")
+	}
 	if len(got) != 1 || got[0] != "/repos/b" {
 		t.Fatalf("shown %q", got)
 	}
 	in.closingDown()
 	if BringForward(path, "") {
 		t.Fatal("a closing window answered")
+	}
+}
+
+// A window that fails while it is being made tells whoever was waiting for it that it didn't
+// come forward, so they open their own.
+func TestWindowThatFailsAnswersNo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "window.json")
+	in, err := Claim(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked := make(chan bool)
+	go func() { asked <- BringForward(path, "") }()
+	waitAsked(t, in)
+	in.Close()
+	if <-asked {
+		t.Fatal("a window that never came was said to have come forward")
 	}
 }

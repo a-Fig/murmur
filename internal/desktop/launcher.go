@@ -71,6 +71,10 @@ func RemoveLauncher(dir string) (string, error) {
 	// The record goes only once the launcher has, or a launcher that wouldn't go would be
 	// taken for someone else's from then on.
 	if err := os.RemoveAll(where); err != nil {
+		// Still Murmur's, but no longer as made: the next install makes it again.
+		had.Version = 0
+		b, _ := json.Marshal(had)
+		os.WriteFile(filepath.Join(dir, stampFile), b, 0o600)
 		return where, err
 	}
 	removeLauncherFiles(dir)

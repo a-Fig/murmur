@@ -158,7 +158,9 @@ asks it to come forward and stops. A `mur app` typed in a joined repo, or given 
 moves the window to that repo, as it would have opened there. The process claims the port as it
 starts, before the seconds a daemon can take to start, so a second click in that time finds it;
 two clicks at once look for a window and claim under a lock file (`window.json.lock`), so the
-second finds the first. On
+second finds the first. A click while the window is being made waits for it, up to 30 s, and
+is told it came forward only once it has, so a window that fails while starting leaves the next
+click to open one. On
 Windows the later `mur app` first lets the window's process take the foreground, which Windows
 otherwise gives only to the process the person just started. A window that ends without closing (a
 crash) leaves its record, which the next launch can't reach, and it opens a new window.
