@@ -118,7 +118,7 @@ used one of Murmur's tools.
 | Command                | What it does |
 | ---------------------- | ------------ |
 | `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
-| `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. On Linux, only in a build made with `-tags desktop`. |
+| `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |

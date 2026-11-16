@@ -30,6 +30,7 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	wait := fs.Bool("wait", false, "stay until the window closes")
 	devtools := fs.Bool("devtools", false, "let the window open the web view's developer tools")
 	page := fs.String("page", "", "show this address and no clone's: the devserver's (internal/web/devserver), for work on the app")
+	fromLauncher := fs.Bool("from-launcher", false, "started from the app's launcher, which needs no putting in place and has no terminal to tell")
 	fs.Parse(args)
 	if !desktop.Supported {
 		return desktop.Run(ctx, desktop.Options{})
@@ -42,9 +43,30 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A window is open already: it comes forward, and no second one opens (#616). Macs start an
+	// app's bundle once, but a `mur app` typed in a terminal is another process. One typed in a
+	// joined repo, or given one with -C, moves the window to that repo, as it would open there.
+	window := filepath.Join(cfg, "window.json")
+	asked := ""
+	if gitDir, err := client.FindGitDir(ctx, *dir); err == nil && join.Joined(gitDir) && !*fromLauncher {
+		asked = gitDir
+	}
+	if (!*wait || *fromLauncher) && desktop.BringForward(window, asked) {
+		if !*fromLauncher {
+			fmt.Fprintln(out, "Brought the open window forward.")
+		}
+		return nil
+	}
+	// Started from Murmur.app, this process is the window, so the Dock's icon is the bundle's.
+	if desktop.FromBundle() {
+		*wait = true
+	}
 	gitDir, err := appClone(ctx, *dir, cfg)
 	if err != nil {
 		return err
+	}
+	if !*wait && !*fromLauncher {
+		putLauncher(cfg, out) // once there is a repo for the app to show
 	}
 	if !*wait {
 		exe, err := os.Executable()
@@ -65,14 +87,24 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		if *devtools {
 			args = append(args, "--devtools")
 		}
+		if *fromLauncher {
+			args = append(args, "--from-launcher") // so the window isn't asked to show a repo
+		}
 		exited, err := desktop.Detach(exe, args, logf)
 		if err != nil {
 			return err
 		}
+		if *fromLauncher {
+			return nil // nobody is at a terminal to be told it opened
+		}
 		// A window that can't be made (no web view, no screen) fails within a second or two, and
 		// says why in the log: that is worth saying here, where someone is looking.
 		select {
-		case <-exited:
+		case err := <-exited:
+			if err == nil { // another window claimed first, and came forward
+				fmt.Fprintln(out, "Brought the open window forward.")
+				return nil
+			}
 			return fmt.Errorf("the window closed as it opened: %s", lastLine(logPath, start))
 		case <-time.After(appStartWait):
 		}
@@ -80,6 +112,19 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	}
 
+	// This process is the window: it says so before starting a daemon, which can take seconds,
+	// so a second click meanwhile finds it rather than opening another (Opus review). Two clicks
+	// at once both get this far; the second finds the first's claim here, and stops.
+	inst, err := desktop.Claim(window, asked)
+	if err != nil {
+		log.Printf("a second mur app will open a second window: %v", err)
+	} else if inst == nil {
+		if !*fromLauncher {
+			fmt.Fprintln(out, "Brought the open window forward.")
+		}
+		return nil
+	}
+	defer inst.Close()
 	addr, err := pageOf(ctx, gitDir)
 	if err != nil {
 		return err
@@ -87,11 +132,29 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	f := &follower{cfg: cfg, gitDir: gitDir, page: pageOf}
 	f.remember()
 	return desktop.Run(ctx, desktop.Options{
-		Page:   addr,
-		Follow: f.follow,
-		Open:   browse,
-		Debug:  *devtools,
+		Page:     addr,
+		Follow:   f.follow,
+		Open:     browse,
+		Debug:    *devtools,
+		Instance: inst,
+		Switch:   f.switchTo,
 	})
+}
+
+// putLauncher puts the app's launcher in place for this mur (#616), or moves it here if mur has
+// moved, and says so when it did. Failing to is no reason not to open the window.
+func putLauncher(cfg string, out io.Writer) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	where, changed, err := desktop.InstallLauncher(exe, cfg)
+	switch {
+	case err != nil:
+		fmt.Fprintf(out, "Couldn't add the app's launcher: %v\n", err)
+	case changed:
+		fmt.Fprintf(out, "Added %s's launcher, to start it as any other app: %s\n", brand.Product, where)
+	}
 }
 
 // appStartWait is how long `mur app` watches the window's process before saying it opened.
@@ -219,6 +282,25 @@ func (f *follower) follow(ctx context.Context, host string) string {
 	}
 	f.failed = ""
 	if u, err := url.Parse(page); err != nil || u.Host == host {
+		return ""
+	}
+	return page
+}
+
+// switchTo is desktop.Options.Switch: it moves the window to the clone at gitDir, which a later
+// `mur app` asked for, and returns its page, or "" when the window shows that clone already.
+func (f *follower) switchTo(ctx context.Context, gitDir string) string {
+	f.mu.Lock()
+	same := gitDir == f.gitDir
+	f.gitDir = gitDir
+	f.mu.Unlock()
+	if same {
+		return ""
+	}
+	f.remember()
+	page, err := f.page(ctx, gitDir)
+	if err != nil {
+		log.Printf("the page of %s: %v", gitDir, err)
 		return ""
 	}
 	return page
