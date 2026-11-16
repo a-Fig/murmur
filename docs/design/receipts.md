@@ -25,7 +25,7 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   `UserPromptSubmit` sends a prompt that is that turn (#611, below); clients whose hook sends no
   prompt (Pi, OpenCode) leave it handed over.
 - **A turn's prompt marks it read** (#611, 2026-11-15). The hook sends the first 4 KB of each
-  prompt with `UserPromptSubmit` to its own daemon, which keeps none of it. The daemon remembers each
+  prompt with `UserPromptSubmit` to its own daemon, which writes none of it to disk. The daemon remembers each
   message that asked for receipts as its handoff begins (the turn can start before the client's
   command returns), with the first 4 KB of the turn's text, and marks read the oldest whose turn the
   prompt is: from Murmur's header line on, the prompt and that text agree. Matching the turn, not
@@ -35,7 +35,9 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   day. What a session waits on moves with its inbox to the session that replaces it, a T3
   thread's new server or the next holder of its name, as the turn can start under that one (#744,
   2026-11-16). The mark is still made as the first session's, the one the sender has the message
-  down for.
+  down for. A Codex server in T3 learns its thread only at its first tool call, after the turn's
+  prompt, so a session's last prompt that matched nothing is kept in memory for a minute and tried
+  again when the session takes another's over.
 - **Marks are batched.** They wait 3 s (`ReceiptGather`) and go out as one `receipt` event on the
   recipient's own log, at most one per device every 15 s (`ReceiptGap`), keeping only each message's
   furthest state. Without the gap, a message to ten sessions on five devices could cost twenty

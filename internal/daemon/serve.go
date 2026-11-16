@@ -632,6 +632,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 		if d.readOnPromptLocked(id, req.Prompt) {
 			d.saveLocked() // a turn handed over has started (#611)
+		} else {
+			d.missedPromptLocked(id, req.Prompt)
 		}
 		if s := d.sessions[id]; s != nil && s.sending != "" && req.Prompt != "" &&
 			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
