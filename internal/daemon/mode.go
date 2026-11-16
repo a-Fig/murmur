@@ -89,9 +89,10 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 }
 
 // releaseSinceLocked lets go what arrived in any inbox since away, as releaseLocked does for one
-// session's: each counts as arriving now. What arrived before the device left online keeps the
-// fate it had, and a session still on do not disturb by its own tag keeps holding its own. Caller
-// holds mu.
+// session's: each counts as arriving now. So does what a session's own do not disturb held, if
+// that came off since away (ownDNDLocked). Anything else from before the device left online keeps
+// the fate it had, and a session still on do not disturb by its own tag keeps holding its own.
+// Caller holds mu.
 func (d *Daemon) releaseSinceLocked(away time.Time) {
 	now := time.Now()
 	for id, box := range d.st.Inbox {
@@ -99,7 +100,7 @@ func (d *Daemon) releaseSinceLocked(away time.Time) {
 			continue
 		}
 		for _, m := range box {
-			if !m.Noticed && !m.Pushing && !m.Attempted && !m.Arrived.Before(away) {
+			if !m.Noticed && !m.Pushing && !m.Attempted && !waitedSince(m).Before(away) {
 				m.Released, m.PushFailed = now, false
 			}
 		}
