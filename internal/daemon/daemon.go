@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -329,6 +330,11 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
 	d.health.pushed(ctx, ref, err)
+	if cut := ctx.Err(); err != nil && cut != nil && !errors.Is(err, cut) {
+		// Git, killed at the push's time, says only that it was killed. A caller can tell from
+		// this that the push was cut off, and so may land yet (uploadLost).
+		err = fmt.Errorf("%w: %w", cut, err)
+	}
 	return err
 }
 

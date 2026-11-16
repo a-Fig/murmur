@@ -268,10 +268,12 @@ func checkSendFiles(files []sendFile) error {
 	return nil
 }
 
-// fileUpload is a push of files this device made: when, and how many bytes went (#739).
+// fileUpload is a push of files this device made: when, how many bytes went (#739), and to which
+// files ref, by which a push that left nothing on the remote is taken off the count (#788).
 type fileUpload struct {
 	At    time.Time `json:"at"`
 	Bytes int64     `json:"bytes"`
+	Ref   string    `json:"ref,omitempty"`
 }
 
 // recentUpload is files this device pushed: the ref, what the event said of them, when, and
@@ -346,8 +348,8 @@ func (d *Daemon) filesUnsent(at string) {
 // uploadRoomLocked says whether this device may push size more bytes of files, by FilesPerDay over
 // the last 24 hours, and if it may, counts them as pushed; if not, it says why, with when it may.
 // The look and the count are one step, so two sends at once can't both take the last of the room.
-// Caller holds mu.
-func (d *Daemon) uploadRoomLocked(size int64) error {
+// ref is the files ref they go to. Caller holds mu.
+func (d *Daemon) uploadRoomLocked(size int64, ref string) error {
 	now := time.Now()
 	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return now.Sub(u.At) >= 24*time.Hour })
 	var used int64
@@ -356,8 +358,9 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 	}
 	over := used + size - d.opt.FilesPerDay
 	if over <= 0 {
-		// Counted before the push, which may land though it is said to fail.
-		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size})
+		// Counted before the push, which may land though it is said to fail. One known not to
+		// have is taken off again (refundUploadLocked).
+		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size, Ref: ref})
 		return nil
 	}
 	when := now
@@ -380,6 +383,40 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 	}
 	return fmt.Errorf("this device has sent %s of files in the last day, and sends at most %s a day; it can send these after %s",
 		proto.Size(used), proto.Size(d.opt.FilesPerDay), at)
+}
+
+// refundUploadLocked takes what was pushed to files ref at off the day's count, as the remote is
+// known not to have it, and says whether it was counted. Without it an agent that tried a 15 MB
+// recording a dozen times over a bad connection had uploaded nothing and could send no files for
+// a day (#788). Caller holds mu.
+func (d *Daemon) refundUploadLocked(at string) bool {
+	n := len(d.st.Uploads)
+	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+	return len(d.st.Uploads) < n
+}
+
+// uploadLost says whether the push of files ref at, which ended with err, is known to have left
+// nothing on the remote. One the remote refused, or that was never sent, did. One cut off at its
+// time, or by the daemon stopping, may land yet, as its git can outlive it: the prune looks before
+// it deletes the ref (pruneFiles). For any other, as a connection that dropped, the remote is
+// asked.
+func (d *Daemon) uploadLost(ctx context.Context, at string, err error) bool {
+	switch {
+	case errors.Is(err, bus.ErrRejected), errors.Is(err, bus.ErrRefused), errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible):
+		return true
+	case ctx.Err() != nil, errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return false
+	}
+	return d.filesRefGone(ctx, at)
+}
+
+// filesRefGone says whether the remote, asked now, has no files ref at. A remote that can't be
+// asked says nothing.
+func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	tip, err := d.repo.RemoteRef(ctx, bus.FilesRef(at))
+	return err == nil && tip == ""
 }
 
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
@@ -425,7 +462,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		return nil, "", false, err
 	}
 	d.mu.Lock()
-	if err := d.uploadRoomLocked(int64(len(pack))); err != nil {
+	if err := d.uploadRoomLocked(int64(len(pack)), at); err != nil {
 		d.mu.Unlock()
 		return nil, "", false, err
 	}
@@ -433,8 +470,14 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	d.saveLocked()
 	d.mu.Unlock()
 	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
-		// Left to the next prune to delete: a push can land and still be told it failed.
-		d.dropFileRef(at, true)
+		// Left to the next prune to delete: a push can land and still be told it failed. It
+		// stays counted too, unless it is known not to have landed.
+		if d.uploadLost(ctx, at, err) {
+			d.mu.Lock()
+			d.refundUploadLocked(at)
+			d.mu.Unlock()
+		}
+		d.dropFileRef(at, true) // which saves
 		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
 	}
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
@@ -780,6 +823,19 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	d.mu.Unlock()
 	slices.Sort(due)
 	for _, at := range due {
+		// A push that was cut off, and so stayed counted in the day's uploads, is taken off the
+		// count if it never landed (#788). Looked at before the delete, which leaves no ref
+		// either way.
+		d.mu.Lock()
+		counted := slices.ContainsFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+		d.mu.Unlock()
+		if counted && d.filesRefGone(ctx, at) {
+			d.mu.Lock()
+			if d.refundUploadLocked(at) {
+				d.saveLocked()
+			}
+			d.mu.Unlock()
+		}
 		// Deleting a ref that is already gone succeeds: the look after a refused push finds it at
 		// "", which is what was asked for.
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {

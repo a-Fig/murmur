@@ -524,6 +524,36 @@ func TestFilesPastADaysUploadsAreRefused(t *testing.T) {
 	}
 }
 
+// An upload the remote refused isn't counted in the day's uploads (#788): every try says the
+// files didn't go out, none that the device has sent its day's worth, and the files go once the
+// remote takes them.
+func TestARefusedUploadIsNotCounted(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	a.session("aaaaaa", "")
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	refuse := "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/murmur/files/*) echo no files today >&2; exit 1;; esac; done\n"
+	if err := os.WriteFile(hook, []byte(refuse), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	send := func() proto.Response {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: []string{path}})
+	}
+	for try := 1; try <= 3; try++ {
+		if r := send(); !strings.Contains(r.Error, "its files didn't go out") || strings.Contains(r.Error, "in the last day") {
+			t.Fatalf("try %d, refused by the remote: %q", try, r.Error)
+		}
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if r := send(); r.Error != "" {
+		t.Errorf("once the remote takes files: %s", r.Error)
+	}
+}
+
 // A device keeps at most FilesHeld of files, the oldest message's going first (#739).
 func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 	t.Parallel()
