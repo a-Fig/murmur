@@ -136,6 +136,12 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
     runs on, as it shows the session. It is never kept, and never carried in presence: a presence
     that claims one has it dropped on reading, so no device can put its sessions in another's group.
     It isn't counted toward a session's 12, and can be longer than 40 (a device ID can be 40).
+  - *A group a team made under the prefix before is gone* (#705, 2026-11-16). A `group:device-lab`
+    loses its members as their devices update, as the prefix is the devices'. Letting such a group
+    on would let a session put itself in another device's group, so it is refused, and both the
+    refusal of the tag and of a send to it say what to use if it was a team's group (`group:lab`):
+    only "if", as the name may be a device's ID, mistyped or of a device that has gone. One a session
+    or a person had set is dropped from what is kept, as an old `human` is, so it takes no place.
   - *On the bus it is still the device.* A message to the group is written to the device's ID, so
     every daemon delivers it as before, older ones too, and only to that device's sessions. The tag
     is how a device is named, not a new way of addressing it.
