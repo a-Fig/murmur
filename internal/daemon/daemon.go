@@ -74,6 +74,11 @@ type Options struct {
 	// there. FilePrune is how often the daemon looks for files past it: an hour.
 	FileKeep  time.Duration
 	FilePrune time.Duration
+	// FilesPerDay is how many bytes of files this device uploads in 24 hours at most, and FilesHeld
+	// how many it keeps of the files it sent and fetched, the oldest going first past it (#739):
+	// 200 MB and 1 GB.
+	FilesPerDay int64
+	FilesHeld   int64
 	// MuteGrace is how long after a session mutes another it still gets that session's direct
 	// messages (see mutedHereLocked): 30 s. Negative: none.
 	MuteGrace time.Duration
@@ -213,6 +218,12 @@ func (o *Options) defaults() {
 	}
 	if o.FilePrune == 0 {
 		o.FilePrune = time.Hour
+	}
+	if o.FilesPerDay == 0 {
+		o.FilesPerDay = 200 << 20
+	}
+	if o.FilesHeld == 0 {
+		o.FilesHeld = 1 << 30
 	}
 	if o.MuteGrace == 0 {
 		o.MuteGrace = 30 * time.Second
@@ -392,6 +403,15 @@ type Daemon struct {
 	junkTried  map[string]time.Time // blocking refs clearOwnJunk last tried to delete, and when
 	lastPollOK time.Time            // when the last successful sync listed the remote (monotonic)
 	othersAged time.Time            // when the notes of others' files refs were last aged (monotonic)
+	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
+	// of the same ones to take the same ref (reuseFilesLocked, #739).
+	uploads map[[32]byte]*recentUpload
+	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
+	// leaves alone (pinFilesDir).
+	filesBusy map[string]int
+	// filesEvicting is the directories holdFilesHeld is deleting, each closed when the delete is
+	// over, which pinFilesDir waits for.
+	filesEvicting map[string]chan struct{}
 	// convAt is when a conversation last moved, for how fast to poll (see pollEvery); zero if none
 	// has since the daemon started.
 	convAt time.Time
@@ -878,6 +898,8 @@ type state struct {
 	// OthersFiles is the files refs other devices pushed, by name, as read of in their logs: deleted
 	// from the remote once their device is gone and they are well past FileKeep (#708).
 	OthersFiles map[string]othersFile `json:"othersFiles,omitempty"`
+	// Uploads is what this device pushed to files refs in the last day, for FilesPerDay (#739).
+	Uploads []fileUpload `json:"uploads,omitempty"`
 	// AwaitingRead is, by session ID, the messages handed to it as a turn that asked for receipts,
 	// until a prompt shows the turn started (#611, turnread.go).
 	AwaitingRead map[string][]awaitingRead `json:"awaitingRead,omitempty"`
