@@ -2,6 +2,8 @@ package daemon_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,16 @@ func (d *device) hookNotices(claude string) proto.Response {
 func (d *device) finishedATurn(claude string) {
 	d.t.Helper()
 	d.hookNotices(claude)
+	d.turnEnd(claude)
+}
+
+// handedTurn is the hook through the turn a message handed to T3 started, call: its prompt, as
+// Claude Code's UserPromptSubmit sends it, is what T3 was given, then its end.
+func (d *device) handedTurn(claude string, call t3Call) {
+	d.t.Helper()
+	if r := d.do(proto.Request{Op: proto.OpNotices, ClaudeSession: claude, Whole: true, Prompt: call.Stdin}); r.Error != "" {
+		d.t.Fatalf("notices: %s", r.Error)
+	}
 	d.turnEnd(claude)
 }
 
@@ -89,7 +101,7 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 	b.turnEnd("claude-bob")
 	eventually(t, "the first as a turn", func() bool { return len(calls()) == 1 })
 	holds(t, "the second not queued behind it", time.Second, func() bool { return len(calls()) == 1 })
-	b.finishedATurn("claude-bob") // the turn the first started
+	b.handedTurn("claude-bob", calls()[0]) // the turn the first started
 	eventually(t, "the second as a turn", func() bool { return len(calls()) == 2 })
 	if !strings.Contains(calls()[0].Stdin, "first") || !strings.Contains(calls()[1].Stdin, "second") {
 		t.Errorf("the turns: %q, %q", calls()[0].Stdin, calls()[1].Stdin)
@@ -99,6 +111,61 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 		return len(inbox) == 0 && len(notices) == 0
 	})
 	holds(t, "no more turns", time.Second, func() bool { return len(calls()) == 2 })
+}
+
+// A turn the hook sees start and end while `t3 thread send` is still handing it over is the one the
+// send started: the next message goes when it ends, not after the minute a handoff holds the
+// session for a turn the hook hasn't seen (#677). A T3 slow to answer, as on a loaded machine, left
+// the send returning after the turn's end, and the hold then covered a turn already over.
+func TestATurnSeenBeforeItsHandoffReturnsHoldsNothing(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(exe), fakeT3Sleep), []byte("3s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.finishedATurn("claude-bob")
+	a.send("aaaaaa", bob, "first", "its body")
+	eventually(t, "the first handed to T3", func() bool { return len(calls()) == 1 })
+	b.handedTurn("claude-bob", calls()[0]) // the turn the first started, over before the send returns
+	a.send("aaaaaa", bob, "second", "its body")
+	// Well within the minute of the hold, which the second waited out before.
+	for end := time.Now().Add(30 * time.Second); len(calls()) < 2; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the second wasn't handed over within 30 s of the turn's end")
+		}
+	}
+	if !strings.Contains(calls()[1].Stdin, "second") {
+		t.Errorf("the second turn: %q", calls()[1].Stdin)
+	}
+}
+
+// Hooks that aren't the handed turn's prompt, come while the send runs, keep the hold (#677): a
+// tool call and a Stop may be of an earlier turn that T3's database had ended, and say nothing of
+// the turn the send makes, which T3 may have queued behind them. The next message waits.
+func TestHooksThatArentTheHandedTurnKeepTheHold(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(exe), fakeT3Sleep), []byte("3s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
+
+	b.finishedATurn("claude-bob")
+	a.send("aaaaaa", bob, "first", "its body")
+	eventually(t, "the first handed to T3", func() bool { return len(calls()) == 1 })
+	b.finishedATurn("claude-bob") // a tool call and a Stop, of no turn the send made
+	a.send("aaaaaa", bob, "second", "its body")
+	holds(t, "the second held behind the first's turn", 6*time.Second, func() bool { return len(calls()) == 1 })
 }
 
 // A message the agent read with inbox during its turn is not given to it again when the turn ends.

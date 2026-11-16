@@ -1109,7 +1109,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
 		"not told who else got it, and the result says what became of each. files sends files along, which the recipient gets as paths on its own machine: " +
-		"a text file is checked for secrets as the body is, and an image or other binary can't be. Message to coordinate, not to chat.",
+		"each file's text is checked for secrets as the body is, but nothing compressed, as an image or a zip, is unpacked to check. Message to coordinate, not to chat.",
 		InputSchema: objectSchema(map[string]*jsonschema.Schema{
 			"to":      {Type: "string", Description: "a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's group (group:device-…, from who) for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"},
 			"subject": {Type: "string", Description: "one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},

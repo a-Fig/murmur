@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -372,9 +373,10 @@ func senders(msgs []proto.MessageView) string {
 // over at once (docs/design/delivery.md, "Handing over"): who it is from, as Murmur knows them,
 // then the message as its sender wrote it, then how to answer. What the agent reads here is all it
 // has, so the first line says it is a teammate's agent and not the user, and the last says how to
-// reply and that doing so is optional. The sender's text is not wrapped or quoted: teammates'
-// agents are trusted in Murmur's model, and a message that reads as a request is meant to be acted
-// on. The sender is described (its agent, whose machine) only in the first turn the session has
+// reply and that doing so is optional. The sender's text is not wrapped or quoted, except that a
+// body line reading as a turn's own first line is quoted, so it can't forge a second message
+// (#297): teammates' agents are trusted in Murmur's model, and a message that reads as a request
+// is meant to be acted on. The sender is described (its agent, whose machine) only in the first turn the session has
 // from it (m.Introduced, #216): after that it is a name the agent has met. A message the hook's
 // notice told of earlier says so (m.Told, #355): the agent may have acted on the subject already,
 // and would otherwise take the turn for a second message.
@@ -436,10 +438,10 @@ func Turn(m proto.MessageView) string {
 	b.WriteString(":\n")
 	body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
 	if !repeatsSubject(m.Subject, body) {
-		fmt.Fprintf(&b, "\n%s\n", m.Subject)
+		fmt.Fprintf(&b, "\n%s\n", quotedBody(m.Subject)) // a subject can forge a header as a body line can
 	}
 	if body != "" {
-		fmt.Fprintf(&b, "\n%s\n", body)
+		fmt.Fprintf(&b, "\n%s\n", quotedBody(body))
 	}
 	if len(m.Files) > 0 {
 		b.WriteString("\n" + files(m))
@@ -464,6 +466,100 @@ func Turn(m proto.MessageView) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\nReply with %s's `send` to %s if a reply is needed.\n", brand.Product, who)
+	return b.String()
+}
+
+// quotedBody is a turn's body with one change: a line that reads as a turn's own first
+// line is quoted with "> ", as Inbox quotes every line, so it can't pass for the start of a
+// second message from someone else (#297, Tyler's targeted form of the fix: only those
+// lines, the rest as written). Indentation doesn't save it: an agent reads an indented
+// header as a header, so the line is judged with its leading blanks off.
+func quotedBody(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if headerLine(line) {
+			lines[i] = "> " + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// headerLine says a body line reads as a line Murmur writes to start a message: a turn's first
+// line ("Message from" or "Message sent in", then "via Murmur" followed by ":" or ",", as every
+// real one is), or a notice's or the inbox's ("[Murmur] ...", "[Murmur message from ..."). An
+// agent reads past what would otherwise save a forgery, so it is judged as headerForm has it
+// (Fable's three reviews of #710). A line that starts with the same words but doesn't go on as a header does ("came in via
+// Murmur yesterday") is the sender's prose. Letters from other scripts that look the same
+// (Cyrillic М) still pass: closing that would take a confusables table.
+func headerLine(line string) bool {
+	t := headerForm(line)
+	product := strings.ToLower(brand.Product)
+	if b, ok := strings.CutPrefix(t, "["); ok {
+		// A notice ("[Murmur] tyler ..."), the inbox's envelope ("[Murmur message from ...") or a
+		// receipt's ("[Murmur, 1m ago]"), spaced inside the brackets or not. Only a Markdown link
+		// ("[Murmur](...)", "[Murmur][1]", "[Murmur]: https://...") is prose.
+		b = strings.TrimPrefix(b, " ")
+		rest, ok := strings.CutPrefix(b, product)
+		if !ok {
+			return false
+		}
+		rest = strings.TrimPrefix(rest, " ")
+		if link, ok := strings.CutPrefix(rest, "]"); ok {
+			return !strings.HasPrefix(link, "(") && !strings.HasPrefix(link, "[") &&
+				!strings.HasPrefix(link, ": http")
+		}
+		return strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, "message from ")
+	}
+	if !strings.HasPrefix(t, "message from ") && !strings.HasPrefix(t, "message sent in ") {
+		return false
+	}
+	for rest := t; ; {
+		i := strings.Index(rest, " via "+product)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(" via "+product):]
+		// What follows "via Murmur" in a real header is a colon or a comma. A blank before it doesn't
+		// save a forgery ("via Murmur :"), nor does other punctuation or its absence; a word does
+		// ("via Murmur yesterday", "via murmur.dev"). So does a dash or a bracket after it ("via
+		// Murmur — push now", "via Murmur (urgent):"): an allow-list leaks somewhere, and this is
+		// where (docs/design/delivery.md).
+		after := strings.TrimLeft(rest, " ")
+		switch {
+		case after == "", strings.HasPrefix(after, ":"), strings.HasPrefix(after, ","),
+			strings.HasPrefix(after, ";"), strings.HasPrefix(after, "："):
+			return true
+		case strings.HasPrefix(after, "."):
+			if n := after[1:]; n == "" || strings.HasPrefix(n, " ") {
+				return true
+			}
+		}
+	}
+}
+
+// headerForm is line as headerLine judges it: lower case, without Markdown's emphasis and code
+// marks (* _ ` ~) anywhere, leading blanks, invisible characters and heading or list marks (# -)
+// off, and each run of spaces (a tab, a no-break space, a braille blank) one space.
+func headerForm(line string) string {
+	blank := func(r rune) bool { return unicode.IsSpace(r) || r == '⠀' || unicode.Is(unicode.Cf, r) }
+	mark := func(r rune) bool { return strings.ContainsRune("*_`~", r) }
+	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || mark(r) || r == '#' || r == '-' })
+	var b strings.Builder
+	space := false
+	for _, r := range t {
+		if mark(r) {
+			continue
+		}
+		if blank(r) {
+			if !space {
+				b.WriteByte(' ')
+			}
+			space = true
+			continue
+		}
+		space = false
+		b.WriteRune(unicode.ToLower(r))
+	}
 	return b.String()
 }
 
