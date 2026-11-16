@@ -298,13 +298,22 @@ const threadEnv = "T3CODE_THREAD_ID"
 // stops at isn't seen; on one daemon the thread's address being in use catches it.
 var agentAbove = func() bool {
 	pids := proc.Ancestors(os.Getppid(), 10)
-	for _, pid := range pids[min(1, len(pids)):] {
-		exe, err := proc.Exe(pid)
-		if err != nil {
+	return agentInChain(len(pids), func(i int) (exe, comm string, ok bool) {
+		exe, err := proc.Exe(pids[i])
+		return exe, commOf(pids[i]), err == nil
+	})
+}
+
+// agentInChain is agentAbove's walk over n processes, the client first, each read by at: its
+// program's path, its comm (or ""), and whether it could be read. The client itself is skipped.
+func agentInChain(n int, at func(i int) (exe, comm string, ok bool)) bool {
+	for i := min(1, n); i < n; i++ {
+		exe, comm, ok := at(i)
+		if !ok {
 			return false
 		}
 		name := programName(exe)
-		if agentPrograms[name] || agentPrograms[commOf(pid)] {
+		if agentPrograms[name] || agentPrograms[comm] {
 			return true
 		}
 		if !passThrough[name] {
@@ -314,12 +323,14 @@ var agentAbove = func() bool {
 	return false
 }
 
-// agentPrograms are the agents' programs agentAbove looks for, by name. Antigravity, as T3 runs it,
-// is agy_acp_server, which runs localharness_external, which runs the agent's shell commands (the
-// release T3 downloads, 1.4.5: .exe on Windows, agy_acp_server.par elsewhere; 2026-11-16, #709).
+// agentPrograms are the agents' programs agentAbove looks for, by name. Antigravity, as T3 runs it
+// (release 1.4.5), is agy_acp_server, whose localharness_external runs the agent's shell commands:
+// seen on Windows, 2026-11-16 (#709), as powershell under localharness_external.exe under
+// agy_acp_server.exe. Elsewhere T3's agy_acp_server is agy_acp_server.par, not listed: what runs it,
+// and so the name the walk would read, hasn't been seen; localharness_external, a native program
+// there too, is reached first.
 var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
-	"opencode": true, "pi": true, "gemini": true,
-	"agy_acp_server": true, "agy_acp_server.par": true, "localharness_external": true}
+	"opencode": true, "pi": true, "gemini": true, "agy_acp_server": true, "localharness_external": true}
 
 // passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
 // shells, and what runs a command for one.
