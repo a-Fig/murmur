@@ -52,7 +52,9 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   `delivered`; it is off unless asked, per message, and refused for a message to everyone, which
   would draw a mark from every session on the mesh. The message asks for receipts, and the sender's
   daemon keeps it in `Sent` like a person's, with the state asked about and who asked, until the
-  sender has been told; meanwhile it counts toward the cap of 200. The page shows no ticks for it.
+  sender has been told; meanwhile it is counted apart from the person's 200 (#748, 2026-11-16):
+  sharing them, a busy half hour pushed out a record still waited on, and its sender never heard.
+  The page shows no ticks for it.
   The sender is told once: when every recipient whose
   device writes marks has got that far, or after `TellWait` (30 minutes) with where it is with each.
   A message handed over as a turn counts as delivered: the client holds the turn whole, and it is

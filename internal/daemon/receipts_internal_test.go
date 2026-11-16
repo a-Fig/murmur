@@ -126,3 +126,46 @@ func TestOnlyTheNewestSentMessagesKeepReceipts(t *testing.T) {
 		t.Errorf("kept %d, the oldest among them: %v", len(d.st.Sent), d.st.Sent[first] != nil)
 	}
 }
+
+// A message an agent still waits to be told of isn't pushed out by the person's 200 (#748): it
+// goes when its sender is told. One whose sender has been told counts with the rest.
+func TestAMessageWaitedOnOutlastsTheNewestSent(t *testing.T) {
+	d := receiptDaemon(t)
+	start := time.Now()
+	sent := func(i int) string {
+		e := bus.Event{ID: bus.NewID(), Type: bus.Message, From: "here-0001/aaaaaa", To: "here-0001/bbbbbb", At: start.Add(time.Duration(i) * time.Second)}
+		d.recordSentLocked(e)
+		return e.ID
+	}
+	waited := sent(0)
+	d.st.Sent[waited].Tell, d.st.Sent[waited].Asker = bus.MarkRead, "here-0001/aaaaaa"
+	told := sent(1)
+	d.st.Sent[told].Tell, d.st.Sent[told].Told = bus.MarkRead, true
+	for i := range maxSent + 5 {
+		sent(i + 2)
+	}
+	if d.st.Sent[waited] == nil {
+		t.Error("the message its sender waits to be told of was pushed out")
+	}
+	if d.st.Sent[told] != nil {
+		t.Error("a message whose sender was told outlasted newer ones")
+	}
+	if len(d.st.Sent) != maxSent+1 {
+		t.Errorf("kept %d, want the newest %d and the one waited on", len(d.st.Sent), maxSent)
+	}
+
+	// Past maxTells of them, the oldest waited on goes: a backstop, as each goes at TellWait anyway.
+	for i := range maxTells + 3 {
+		id := sent(1000 + i)
+		d.st.Sent[id].Tell = bus.MarkRead
+	}
+	n := 0
+	for _, rec := range d.st.Sent {
+		if rec.Tell != "" && !rec.Told {
+			n++
+		}
+	}
+	if n > maxTells+1 || d.st.Sent[waited] != nil {
+		t.Errorf("%d waited on are kept, the oldest among them: %v", n, d.st.Sent[waited] != nil)
+	}
+}

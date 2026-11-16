@@ -26,7 +26,11 @@ import (
 // recipient has got that far, or when TellWait has passed and some haven't.
 
 // maxSent is how many of the person's messages keep their recipients and marks (Sent), the newest.
-const maxSent = 200
+// maxTells is how many messages agents wait to be told of are kept beside them (trimSentLocked).
+const (
+	maxSent  = 200
+	maxTells = 2000
+)
 
 // maxMarksHeld caps the marks waiting to go on the bus; past it the oldest are dropped. A device
 // that can't push for a long while would otherwise keep every mark it ever made.
@@ -248,17 +252,39 @@ func (d *Daemon) recordSentLocked(e bus.Event) {
 		d.st.Sent = map[string]*sentRecord{}
 	}
 	d.st.Sent[e.ID] = rec
-	if over := len(d.st.Sent) - maxSent; over > 0 {
-		ids := make([]string, 0, len(d.st.Sent))
-		for id := range d.st.Sent {
-			ids = append(ids, id)
+	d.trimSentLocked(e.ID)
+	d.saveLocked()
+}
+
+// trimSentLocked lets go of the oldest sent records past maxSent, and of those an agent still
+// waits to be told of past maxTells. The two are counted apart (#748): sharing the 200, a busy
+// half hour of the person's messages and other agents' pushed out a record whose sender was still
+// waiting, and it never heard, not even at the timeout. One that is waited on goes when its sender
+// is told, TellWait after it was sent at the latest (tellLoop), so maxTells is only a backstop.
+// just is the record being added, which the caller may yet mark as waited on: it is kept. Caller
+// holds mu.
+func (d *Daemon) trimSentLocked(just string) {
+	var kept, waiting []string
+	for id, rec := range d.st.Sent {
+		switch {
+		case id == just:
+		case rec.Tell != "" && !rec.Told:
+			waiting = append(waiting, id)
+		default:
+			kept = append(kept, id)
+		}
+	}
+	for list, room := range map[*[]string]int{&kept: maxSent - 1, &waiting: maxTells} {
+		ids := *list
+		over := len(ids) - room
+		if over <= 0 {
+			continue
 		}
 		sort.Slice(ids, func(i, j int) bool { return d.st.Sent[ids[i]].At.Before(d.st.Sent[ids[j]].At) })
 		for _, id := range ids[:over] {
 			delete(d.st.Sent, id)
 		}
 	}
-	d.saveLocked()
 }
 
 // recipientsOfLocked is whom message e is for, as this device knows the mesh now, by address, and
