@@ -8,6 +8,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/crgimenes/glaze v0.0.83
 	github.com/ebitengine/purego v0.11.3
+	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.0
@@ -15,7 +16,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect

@@ -136,7 +136,9 @@ the turn took, so nothing waits for good.
   - A run counts only while the thread's newest run is queued or running. One T3 left queued
     behind later runs would otherwise start the 15 minutes again at every turn's end. The same
     holds wherever T3's database says a session is at work: a session that reconnected after a
-    restart, a turn the hook saw start, and how long a session has been idle (#655).
+    restart, a turn the hook saw start, and how long a session has been idle (#655). A cancelled
+    run isn't the newest: it is a follow-up the user took out of T3's queue, mostly while the run
+    before it was still going, and that run is still a turn (#672).
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
