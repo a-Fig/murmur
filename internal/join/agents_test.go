@@ -318,6 +318,32 @@ func TestGeminiCLIsHomeIsNoAntigravity(t *testing.T) {
 	}
 }
 
+// Nor do the skills go there, though the folder is (#741): only once Antigravity's own folder says
+// it is installed.
+func TestGeminiCLIsHomeGetsNoSkills(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	write(t, filepath.Join(sb.GeminiHome, "settings.json"), "{}")
+	a := agents[agentIndex("antigravity")]
+	h := sb.defaultHome(a)
+	alone := []agentHome{h}
+	if dir := sb.joinSkillsDir(a, h, alone); dir != "" {
+		t.Errorf("skills for Gemini CLI's home, at %s", dir)
+	}
+	// Antigravity run only by T3, whose instances read ~/.gemini's skills through T3's link.
+	t3 := agentHome{Dir: t.TempDir(), T3Own: true}
+	want := filepath.Join(sb.GeminiHome, "config", "skills")
+	if dir := sb.joinSkillsDir(a, h, []agentHome{h, t3}); dir != want {
+		t.Errorf("with T3's Antigravity: %q, want %q", dir, want)
+	}
+	if err := os.MkdirAll(filepath.Join(sb.GeminiHome, "antigravity"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if dir := sb.joinSkillsDir(a, h, alone); dir != want {
+		t.Errorf("Antigravity's skills: %q, want %q", dir, want)
+	}
+}
+
 // The hook's command line runs under cmd /c on Windows, which takes no PowerShell quoting.
 func TestAntigravityHookCommand(t *testing.T) {
 	if got := antigravityHookCommand("mur", "Stop"); got != "mur hook --event Stop antigravity" && got != "'mur' hook --event Stop antigravity" {

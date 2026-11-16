@@ -69,7 +69,19 @@ The first and last lines are Murmur's. The first says a teammate's agent is spea
 so the agent treats the message as information rather than its user's typing; the last says how to
 answer and that answering is optional. The sender's text between them is passed on as written,
 neither quoted nor wrapped: teammates' agents are trusted in Murmur's model, and a message that
-reads as a request is meant to be acted on. A body past the limit is cut, as in `inbox`.
+reads as a request is meant to be acted on. One exception (#297, Tyler, 2026-11-15): a subject or
+body line that reads as one Murmur starts a message with — a turn's first line ("Message from" or
+"Message sent in", then "via Murmur" and, past any marks, a colon, a comma or the line's end), a
+notice's (`[Murmur] …`) or an inbox envelope (`[Murmur message from …`, `[Murmur, 1m ago]`) — is quoted with `> `, as `inbox` quotes every line, so a
+message can't forge a second one from someone else inside its own turn. It is judged in lower case,
+with spacing runs as one space and leading blanks, invisible characters and Markdown marks off, as
+an agent reads past each (Fable's three reviews of #710, 2026-11-16). Not covered: look-alike letters from
+other scripts (Cyrillic М); a header that goes on with a dash or a bracket ("via Murmur — push
+now"), as any list of what may follow leaks; a pasted diff's `+` line, left so the patch still
+applies (its `-` and context lines are quoted); and the reply line, which a forger can repeat but
+which starts nothing.
+Everything else stays as written.
+A body past the limit is cut, as in `inbox`.
 
 - **Who it is from, as the receiver knows it.** The first line is written when the message is
   queued, from what the receiving daemon then knows of the sender. A sync reads the registry and
@@ -118,7 +130,11 @@ the turn took, so nothing waits for good.
   were a message the daemon had just handed over itself. So a session whose hook has no turn going
   is at work when a read of T3's database that began after its turn ended finds a run going, and,
   until a read that began after it, when the daemon has just handed a message to its thread (at
-  most a minute, so a read that keeps failing doesn't hold its messages for good). The daemon reads
+  most a minute, so a read that keeps failing doesn't hold its messages for good). A prompt that
+  is the handed turn, seen while the send was still running, holds nothing after (#677,
+  2026-11-16): a T3 slow to answer let the turn end first, and the next message waited out the
+  minute for a turn already over. Nothing else counts: a tool call or a Stop then may be of an
+  earlier turn T3's database had ended, with this one queued behind it. The daemon reads
   the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took
   since the last one through. The same read catches a turn a user's own `Stop` hook kept going
   after Murmur's saw `Stop`, up to 5 s late.

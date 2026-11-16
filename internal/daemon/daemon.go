@@ -640,6 +640,11 @@ type session struct {
 	endedAt, handedAt, unseenAt     time.Time
 	runSeenAt                       time.Time
 	toldUnread, continuations       int
+	// sending is the start of the turn a `t3 thread send` is handing the session, as a prompt shows
+	// it (turnStart), while the send runs, and sendingSeen says a prompt that is that turn came
+	// meanwhile: finishPush then sets no handedAt (#677).
+	sending     string
+	sendingSeen bool
 	// hookSeen says a hook of the session has reported, a subagent's included; toolCalled is when
 	// the session first called one of Murmur's tools (see hookOffLocked, #225). hookNative is the
 	// conversation's own ID as a hook of an agent other than Claude Code reported it, for a session
