@@ -716,3 +716,73 @@ func TestGroksStopAtTheSessionsClose(t *testing.T) {
 		t.Errorf("turn ends: %+v", ends)
 	}
 }
+
+// `/murmur-name` typed in Claude Code is answered by the hook (#421): it stops the prompt, so no
+// turn starts, and the reason the person is shown is the session's name, status and tags. Nothing
+// else is stopped, and where the hook can't say who the session is, the prompt goes on to the
+// skill of the same name.
+func TestTheNameCommandIsAnsweredWithoutATurn(t *testing.T) {
+	repo := newRepo(t)
+	who := `{"ok":true,"self":"fake-0001/aaaaaa","name":"brisk-finch","devices":[{"id":"fake-0001","sessions":[` +
+		`{"addr":"fake-0001/bbbbbb","name":"quiet-otter","doing":"someone else"},` +
+		`{"addr":"fake-0001/aaaaaa","name":"brisk-finch","you":true,"doing":"moving auth","tags":[{"name":"backend"},{"name":"model:opus-5.5"}]}]}]}`
+	answer := who
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		if r.Op == proto.OpWho {
+			return answer
+		}
+		return `{"ok":true}`
+	})
+	prompt := func(agent, text string) string {
+		payload, _ := json.Marshal(map[string]string{"session_id": "claude-x", "hook_event_name": "UserPromptSubmit", "cwd": repo, "prompt": text})
+		var out bytes.Buffer
+		hook.RunFor(agent, bytes.NewReader(payload), &out)
+		return out.String()
+	}
+
+	var got struct {
+		Decision, Reason   string
+		HookSpecificOutput struct {
+			HookEventName          string
+			SuppressOriginalPrompt bool
+		}
+	}
+	out := prompt("", " /murmur-name\n")
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("the hook printed %q: %v", out, err)
+	}
+	if got.Decision != "block" || got.Reason != "brisk-finch · moving auth · tags: backend, model:opus-5.5" ||
+		got.HookSpecificOutput.HookEventName != "UserPromptSubmit" || !got.HookSpecificOutput.SuppressOriginalPrompt {
+		t.Errorf("the hook answered %+v", got)
+	}
+	for _, r := range requests() {
+		if r.Op == proto.OpNotices {
+			t.Error("the hook asked for notices, with no turn to give them to")
+		}
+	}
+
+	for _, text := range []string{"/murmur-name please", "what is /murmur-name", "/murmur", ""} {
+		if out := prompt("", text); strings.Contains(out, "block") {
+			t.Errorf("the prompt %q was stopped: %s", text, out)
+		}
+	}
+	// Codex's hook takes the same payload, but nobody has seen what Codex shows for a stopped prompt.
+	if out := prompt(hook.Codex, "/murmur-name"); strings.Contains(out, "block") {
+		t.Errorf("another agent's prompt was stopped: %s", out)
+	}
+
+	answer = `{"ok":true,"self":"fake-0001/aaaaaa","namePending":true,"devices":[{"id":"fake-0001","sessions":[{"addr":"fake-0001/aaaaaa","you":true}]}]}`
+	if out := prompt("", "/murmur-name"); !strings.Contains(out, "fake-0001/aaaaaa (name pending)") {
+		t.Errorf("with its name pending the hook printed %q", out)
+	}
+	// A daemon from before this answers the hook as it does the CLI, whose "session" is no one's.
+	answer = `{"ok":true,"self":"fake-0001/cli","namePending":true,"devices":[{"id":"fake-0001","sessions":[{"addr":"fake-0001/cli","you":true}]}]}`
+	if out := prompt("", "/murmur-name"); strings.Contains(out, "block") {
+		t.Errorf("answered as the CLI, the prompt was stopped: %s", out)
+	}
+	// The CLI, or a session the daemon doesn't know: nothing says who "you" is.
+	answer = `{"ok":true,"self":"fake-0001","devices":[{"id":"fake-0001","sessions":[{"addr":"fake-0001/bbbbbb","name":"quiet-otter"}]}]}`
+	if out := prompt("", "/murmur-name"); strings.Contains(out, "block") {
+		t.Errorf("with no session to name, the prompt was stopped: %s", out)
+	}
+}

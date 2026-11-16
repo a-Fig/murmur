@@ -558,6 +558,38 @@ func SentEach(rs []SentTo) string {
 	return b.String()
 }
 
+// Self renders, in one line, who the caller is: its name, what it is doing and its tags, as
+// `/murmur-name` shows a person (#421). A session with no name yet is shown by its address, which
+// reaches it until the name lands. "" for a caller that is no session.
+func Self(r proto.Response) string {
+	var me *proto.SessionView
+	for _, d := range r.Devices {
+		for i := range d.Sessions {
+			if d.Sessions[i].You {
+				me = &d.Sessions[i]
+			}
+		}
+	}
+	if me == nil {
+		return ""
+	}
+	parts := []string{r.Name}
+	if r.Name == "" {
+		parts[0] = r.Self + " (name pending)"
+	}
+	if me.Doing != "" {
+		parts = append(parts, me.Doing)
+	}
+	if len(me.Tags) > 0 {
+		names := make([]string, len(me.Tags))
+		for i, t := range me.Tags {
+			names[i] = t.Name
+		}
+		parts = append(parts, "tags: "+strings.Join(names, ", "))
+	}
+	return strings.Join(parts, " · ")
+}
+
 // TagList renders tags with where each came from, where that isn't the session itself.
 func TagList(ts []tags.Tag) string {
 	parts := make([]string, len(ts))

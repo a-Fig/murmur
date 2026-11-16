@@ -157,3 +157,47 @@ func ids(ss []*session) []string {
 	}
 	return out
 }
+
+// A hook's `who` is answered for the session the hook speaks for, which is how `/murmur-name` learns
+// its name (#421): the hook reaches the daemon as the CLI does. It is a question, not work, so the
+// session isn't marked at work by it.
+func TestAHooksWhoIsAnsweredForItsSession(t *testing.T) {
+	d := agentHookDaemon(t)
+	d.mu.Lock()
+	s := d.newSessionLocked(&proto.Hello{ID: "aaaaaa", ClientPID: 700}, "claude-code", "", "aaaaaa")
+	s.clientPID, s.doing = 700, "moving auth"
+	other := d.newSessionLocked(&proto.Hello{ID: "bbbbbb", ClientPID: 701}, "claude-code", "", "bbbbbb")
+	other.clientPID = 701
+	d.mu.Unlock()
+
+	resp := d.handle(t.Context(), proto.Request{Op: proto.OpWho, ClaudeSession: "claude-x", ClientPID: 700})
+	if !resp.OK || resp.Self != "here-0001/aaaaaa" {
+		t.Fatalf("the hook's who: %+v", resp)
+	}
+	you := 0
+	for _, dev := range resp.Devices {
+		for _, v := range dev.Sessions {
+			if v.You {
+				you++
+				if v.Addr != "here-0001/aaaaaa" || v.Doing != "moving auth" {
+					t.Errorf("you are %+v", v)
+				}
+			}
+		}
+	}
+	if you != 1 {
+		t.Errorf("%d sessions marked as you, want 1", you)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !s.busyAt.IsZero() || s.hooked {
+		t.Error("asking who marked the session at work")
+	}
+	// A hook that speaks for no session here is answered as the CLI is.
+	d.mu.Unlock()
+	resp = d.handle(t.Context(), proto.Request{Op: proto.OpWho, ClaudeSession: "claude-y", ClientPID: 999})
+	d.mu.Lock()
+	if _, sess := bus.SplitAddr(resp.Self); sess != proto.CLISession || resp.Name != "" {
+		t.Errorf("a hook of no session: self %q, name %q", resp.Self, resp.Name)
+	}
+}

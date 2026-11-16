@@ -64,6 +64,21 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
   lists it. The cost: asked in their own words, a session answers from `who` without the skill.
   The forms and the field are from each agent's documentation and source (2026-11-15); only
   Claude Code's were tried.
+- **In Claude Code the hook answers `/murmur-name`, with no turn** (Tyler's rule, 2026-11-15: it
+  should act like one of the client's own commands, as `/compact` does). No client lets another
+  program add such a command through a file: a skill or a command file always becomes a prompt
+  to the model. So Murmur's hook on UserPromptSubmit stops the one prompt that is exactly
+  `/murmur-name`, and the reason it gives is the answer, which Claude Code shows the person under
+  its own line, "UserPromptSubmit operation blocked by hook:". The hook asks the daemon `who` for
+  the session it speaks for. The skill stays, for two reasons: Claude Code's terminal refuses a
+  slash command it doesn't know before any hook runs (its documentation, 2026-11-15), so the
+  name has to be one it knows; and wherever the hook doesn't answer, the prompt goes on to the
+  skill and the agent says it, at the cost of a turn. That is: every other agent, a daemon older
+  than this, no daemon, and a session not yet registered. Tried on Claude Code 2.1.325 without
+  its terminal (`claude -p`): no turn, no cost. Not tried: the terminal itself, and whether
+  Codex shows a stopped prompt's reason, which is why its hook lets the prompt through. A mod (a
+  Claude Code plugin with a `command.run` handler) is the client's documented way to a command
+  with no turn; it needs a plugin installed from a marketplace, where the hook is already there.
 - **The skills' folders** are from each agent's documentation, not tried in a
   session (2026-11-08). OpenCode also reads `~/.claude/skills`, so beside Claude Code it sees each
   skill twice.

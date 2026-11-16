@@ -19,7 +19,8 @@
 // with OpenCode's session ID, and says which sessions another session started
 // (internal/join/opencodeplugin.go, #431, #455).
 //
-// It never blocks or fails the agent: any problem, including no daemon running, means it
+// It stops one prompt, the person's `/murmur-name`, which it answers itself (NameCommand, #421).
+// Otherwise it never blocks or fails the agent: any problem, including no daemon running, means it
 // prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
 // can hold the call up is bounded by BracketTimeout.
 package hook
@@ -34,6 +35,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"strings"
+
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/here"
@@ -83,6 +88,61 @@ type output struct {
 		HookEventName     string `json:"hookEventName"`
 		AdditionalContext string `json:"additionalContext"`
 	} `json:"hookSpecificOutput"`
+}
+
+// blockOutput is a UserPromptSubmit hook's answer that stops the prompt: no turn starts, and the
+// person is shown reason. Without suppressOriginalPrompt, Claude Code adds the prompt it stopped.
+type blockOutput struct {
+	Decision           string `json:"decision"`
+	Reason             string `json:"reason"`
+	HookSpecificOutput struct {
+		HookEventName          string `json:"hookEventName"`
+		SuppressOriginalPrompt bool   `json:"suppressOriginalPrompt"`
+	} `json:"hookSpecificOutput"`
+}
+
+// NameCommand is what a person types to be told the session's Murmur name (#421). Tyler's rule
+// (2026-11-15): it answers like one of the client's own commands, at once and with no turn. A
+// client has no way for another program to add such a command, so the hook does it: it stops this
+// one prompt before it reaches the model, and its answer is the reason the client shows. The
+// skill of the same name stays for two reasons. Claude Code's terminal refuses a slash command it
+// doesn't know before any hook runs, so the name has to be one it knows; and where the hook can't
+// answer (no daemon, or a client whose hook can't stop a prompt), the skill has the agent say it.
+const NameCommand = "/" + brand.Name + "-name"
+
+// nameCommand answers NameCommand, and says whether it did. Only for Claude Code, the one client
+// seen to show a stopped prompt's reason and start no turn (2.1.325, 2026-11-15).
+func nameCommand(agent string, in input, who proto.Request, stdout io.Writer) bool {
+	if agent != "" || in.Event != "UserPromptSubmit" || strings.TrimSpace(in.Prompt) != NameCommand {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), NoticeTimeout)
+	defer cancel()
+	gitDir, _ := sessionClone(ctx, agent, in, who)
+	if gitDir == "" {
+		return false
+	}
+	c, err := client.Connect(ctx, gitDir, false)
+	if err != nil {
+		return false
+	}
+	who.Op = proto.OpWho
+	resp, err := c.Do(ctx, who)
+	if err != nil {
+		return false
+	}
+	// A daemon from before this answers a hook as it answers the CLI, which is no session.
+	if _, sess := bus.SplitAddr(resp.Self); sess == "" || sess == proto.CLISession {
+		return false
+	}
+	line := view.Self(resp)
+	if line == "" {
+		return false
+	}
+	out := blockOutput{Decision: "block", Reason: line}
+	out.HookSpecificOutput.HookEventName, out.HookSpecificOutput.SuppressOriginalPrompt = in.Event, true
+	json.NewEncoder(stdout).Encode(out)
+	return true
 }
 
 // stopOutput is a Stop hook's answer that keeps the turn going: Claude Code doesn't stop, and gives
@@ -286,6 +346,9 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) {
 	if in.Event == stop {
 		turnEnd(agent, in, who, stdout)
 		return
+	}
+	if nameCommand(agent, in, who, stdout) {
+		return // no turn starts, so there is nothing to give notices to
 	}
 	op := bracketOp(in)
 	if agent != "" {

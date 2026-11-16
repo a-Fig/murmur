@@ -89,7 +89,7 @@ and Pi): one on when Murmur is worth a turn, one on coordinating over several me
 `murmur-manager`, which a session follows only once you tell it to manage your team of agents as
 your COO, and `murmur-name`, which you call to see which Murmur name a session has:
 `/murmur-name` in Claude Code and T3 Code, `$murmur-name` in Codex, `/skill:murmur-name` in Pi.
-Or ask the session. Their source is in [`internal/skills`](internal/skills).
+In Claude Code the answer comes at once, from Murmur's hook, with no turn. Or ask the session. Their source is in [`internal/skills`](internal/skills).
 
 ## Supported agents
 

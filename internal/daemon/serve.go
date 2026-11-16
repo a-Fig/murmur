@@ -426,6 +426,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if hookReq(req) {
+			// The hook asks as the CLI does, for the session it speaks for: the answer to
+			// /murmur-name (#421). It isn't the session at work, so nothing is touched.
+			if ss := d.hookSessionsLocked(req); len(ss) > 0 {
+				sess = ss[0].id
+				from = bus.Addr(d.device, sess)
+			}
+		}
 		resp := proto.Response{OK: true, Self: from, Devices: d.whoLocked(sess, filter), Filter: filter.String()}
 		if s := d.sessions[sess]; s != nil {
 			resp.Name, resp.NamePending = s.name, s.name == ""

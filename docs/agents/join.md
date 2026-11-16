@@ -38,7 +38,7 @@ joining does:
   short ones on using Murmur well, one for a session its user has made the manager of a team
   of agents, and `murmur-name`, which your user calls to see a session's Murmur name
   (`/murmur-name` in Claude Code and T3 Code, `$murmur-name` in Codex, `/skill:murmur-name` in
-  Pi). In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
+  Pi; in Claude Code Murmur's hook answers it at once, with no turn). In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
   command the agent runs around each tool call and when it finishes, so a busy session is told when
   a message comes. OpenCode 2 gets a plugin file of Murmur's (`plugins/murmur.js` in its config
   folder) that does the same. In Codex, join also marks the hook as approved, so Codex runs it without asking.
