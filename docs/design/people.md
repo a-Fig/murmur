@@ -43,8 +43,11 @@ own session.
   the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit
   in a busy repo. Their inbox also takes what was sent while the daemon was down, since a person's
   daemon exits soon after their page closes and an agent may answer hours later.
-- **On the page**, "Your messages" holds the person's own conversations, each with a composer;
-  others' conversations are read-only. A message shows at once as sending, and one that fails stays
+- **On the page**, the person's own conversations each have a composer; others' conversations
+  are read-only. Conversations lists everyone's, or only theirs with its toggle, and its row in
+  the sidebar carries their unread count. There was a "Your messages" view for theirs until
+  2026-11-15 (#637): the toggle made it a second way to the same list. The sidebar's foot is where
+  a name is chosen, and where one someone else claimed first is replaced. A message shows at once as sending, and one that fails stays
   on screen with its text. Enter sends, except on a phone. The first Enter in the Everyone chat only
   arms it, and says how many sessions it reaches. The line above the composer says working, do not
   disturb, offline or waiting; "working" is a guess from the session's last activity, since nothing

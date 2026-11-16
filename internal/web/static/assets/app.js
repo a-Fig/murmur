@@ -556,7 +556,7 @@ function navRow(key, iconName, label, current, onclick, end) {
 }
 
 // The sidebar is the sessions themselves, under their devices, as T3 Code's are threads under their
-// projects: your messages, every session, every conversation and the newest messages at the top,
+// projects: every session, every conversation and the newest messages at the top, who you are and
 // Settings at the foot. It folds to a strip of faces, and remembers that. On a phone it is a drawer.
 const MINI_KEY = NAME + ":sidebar-mini";
 let mini = false;
@@ -583,6 +583,8 @@ function setOnlyMine(v) {
   try {
     localStorage.setItem(ONLY_MINE_KEY, v ? "1" : "0");
   } catch {}
+  // The one that is open goes with the rest, so the first of yours opens in its place.
+  if (v && ui.conversation && !mineOf(conversations()).some((c) => c.key === ui.conversation)) ui.conversation = null;
   render();
 }
 
@@ -616,9 +618,8 @@ function miniSidebar() {
     h(
       "div",
       { class: "mini-scroll" },
-      miniYou(),
       top("sessions", "users", "Sessions", ui.view === "sessions"),
-      top("messages", "message", "Conversations", ui.view === "messages" && !ui.filter),
+      miniConversations(pick("messages")),
       top("recent", "clock", "Recent", ui.view === "recent"),
       ui.tagFilter &&
         h(
@@ -657,17 +658,19 @@ function miniSidebar() {
         ];
       }),
     ),
+    !me() && ui.state && h("button", { class: "mini-btn", title: "Choose your name", "aria-label": "Choose your name", "data-key": "mini-name", onclick: () => askForName(null) }, icon("user")),
     miniUpdate(),
     h("button", { class: "mini-btn mini-foot" + (ui.view === "settings" ? " current" : ""), title: "Settings", "aria-label": "Settings", "data-key": "mini-settings", onclick: () => go("settings") }, icon("settings")),
   );
 }
 
-function miniYou() {
+// Conversations in the folded sidebar, with a dot while a message to you is unread.
+function miniConversations(onclick) {
   const n = unreadCount();
   return h(
     "button",
-    { class: "mini-btn" + (isMyFilter() ? " current" : ""), title: "Your messages", "aria-label": n ? "Your messages, " + n + " unread" : "Your messages", "data-key": "mini-you", onclick: openYours },
-    icon("user"),
+    { class: "mini-btn" + (ui.view === "messages" && !ui.filter ? " current" : ""), title: "Conversations", "aria-label": n ? "Conversations, " + n + " unread" : "Conversations", "data-key": "mini-messages", onclick },
+    icon("message"),
     n > 0 && h("span", { class: "mini-unread" }),
   );
 }
@@ -685,6 +688,7 @@ function sidebar() {
   if (mini && !NARROW.matches) return miniSidebar();
   const devs = devices();
   const allCount = allConversations().length;
+  const unread = unreadCount();
   const live = devs.reduce((n, d) => n + liveSessions(d).length, 0);
   return h(
     "aside",
@@ -705,9 +709,16 @@ function sidebar() {
       h(
         "nav",
         { class: "sidebar-group g-top", "aria-label": "Views" },
-        yourRow(),
         navRow("top-sessions", "users", "Sessions", ui.view === "sessions", () => ((ui.filter = null), go("sessions")), h("span", { class: "menu-count" }, live)),
-        navRow("all", "message", "Conversations", ui.view === "messages" && !ui.filter, () => ((ui.filter = null), (ui.conversation = null), go("messages")), h("span", { class: "menu-count" }, allCount)),
+        // What is unread, of the messages to you, in place of how many conversations there are.
+        navRow(
+          "all",
+          "message",
+          "Conversations",
+          ui.view === "messages" && !ui.filter,
+          () => ((ui.filter = null), (ui.conversation = null), go("messages")),
+          unread > 0 ? h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread) : h("span", { class: "menu-count" }, allCount),
+        ),
         navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", "data-key": "notice", "data-announce": "", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
@@ -783,7 +794,9 @@ function deviceGroup(d) {
   );
 }
 
-// The foot says who you are here, once you are someone, and carries the update notice.
+// The foot says who you are here, and carries the update notice. With no account yet, it is where
+// you get one; with a name someone else claimed first (#268), it says so, and is where you choose
+// another.
 function sidebarFoot() {
   const a = me();
   const update = updateItem();
@@ -797,30 +810,14 @@ function sidebarFoot() {
           { class: "foot-account" },
           h(
             "button",
-            { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
+            { class: "account-chip", title: a.taken ? "Someone else chose your name first. Choose a new one to send again." : "Your account", "data-key": "account-chip", onclick: () => (a.taken ? askForName(null) : go("settings")) },
             avatar(a.name),
             h("span", { class: "account-name truncate" }, a.name),
+            a.taken && h("span", { class: "name-taken" }, "New name"),
           ),
           h("button", { class: "icon-btn", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
         )
-      : navRow("nav-settings", "settings", "Settings", ui.view === "settings", () => go("settings")),
-  );
-}
-
-// Your messages, at the top of the sidebar, with what is unread. With no account yet, it is where
-// you get one; with a name someone else claimed first (#268), where you choose another.
-function yourRow() {
-  const n = unreadCount();
-  const taken = !!me()?.taken;
-  return navRow(
-    "top-you",
-    "user",
-    "Your messages",
-    isMyFilter(),
-    openYours,
-    taken
-      ? h("span", { class: "name-taken", title: "Someone else chose your name first. Choose a new one to send again." }, "New name")
-      : n > 0 && h("span", { class: "unread-badge", "aria-label": n + " unread" }, n),
+      : [ui.state && navRow("foot-name", "user", "Choose your name", false, () => askForName(null)), navRow("nav-settings", "settings", "Settings", ui.view === "settings", () => go("settings"))],
   );
 }
 
@@ -2007,7 +2004,6 @@ function showTopbar() {
 
 function viewTitle() {
   if (ui.view !== "messages") return TITLES[ui.view];
-  if (isMyFilter()) return "Your messages";
   return ui.filter ? nameOf(ui.filter, ui.filter) : TITLES.messages;
 }
 
@@ -2700,7 +2696,6 @@ function forgetJoins() {
 function visibleMessages() {
   const f = ui.filter;
   if (!f) return ui.messages;
-  if (isMyFilter()) return myMessages();
   const name = nameOf(f, f);
   const slash = f.indexOf("/");
   const found = findSession(name);
@@ -2717,8 +2712,9 @@ function visibleMessages() {
   );
 }
 
-// Your messages: direct ones, and the group chats you have posted in, whole, with the one you just
-// opened, so a group that already has a history shows it before you write in it.
+// The messages of the conversations you are in: direct ones, and the group chats you have posted
+// in, whole, with the one you just opened, so a group that already has a history shows it before
+// you write in it.
 function myMessages() {
   const mine = myName();
   const groups = new Set(ui.draftGroup ? [groupConversation(ui.draftGroup).key] : []);
@@ -2763,10 +2759,10 @@ function conversations() {
   }
   // A conversation just begun has no messages yet, and is at the top while it is open.
   const fresh = draftConversation();
-  if (fresh && (!ui.filter || isMyFilter()) && !byKey.has(fresh.key)) byKey.set(fresh.key, fresh);
+  if (fresh && !ui.filter && !byKey.has(fresh.key)) byKey.set(fresh.key, fresh);
   // So is one whose only message hasn't gone: nothing else lists it, and a message that failed has
   // to stay reachable, with its text and its Try again, after the person looks at something else.
-  if (!ui.filter || isMyFilter()) {
+  if (!ui.filter) {
     for (const item of ui.outbox) if (!byKey.has(item.key)) byKey.set(item.key, { ...item.conversation, messages: [] });
   }
   // A group with members is listed before anyone writes to it, so a person can be the first; it
@@ -2910,23 +2906,35 @@ function conversationsPage() {
     ui.conversation = list.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
     chatMoved = ui.conversation != null;
   }
-  if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
+  // With only yours listed, the first of yours is what opens. One opened from elsewhere (Recent, a
+  // session's row) stays open though the list leaves it out.
+  const shown = me() && onlyMine ? mineOf(list) : list;
+  if (!ui.conversation && shown.length && !NARROW.matches) ui.conversation = shown[0].key;
   const open = list.find((c) => c.key === ui.conversation);
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
   return h(
     "div",
     { class: "page chat-page" },
-    // A picked session keeps its header, and so its tags, before it has any messages.
-    list.length === 0 && !ui.filter
+    // A picked session keeps its header, and so its tags, before it has any messages. Someone with
+    // a name keeps the list, with its way to start a conversation, and is shown who they could
+    // talk to.
+    list.length === 0 && !ui.filter && !me()
       ? emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
           conversationList(list),
-          open ? conversationPane(open) : isMyFilter() && !NARROW.matches && startPane(),
+          open ? conversationPane(open) : !ui.filter && !!me() && !NARROW.matches && startPane(),
         ),
   );
+}
+
+// The conversations you are in, of these: your DMs, the group chats you have written in, and one
+// you have just begun.
+function mineOf(list) {
+  const keys = new Set(myMessages().map((m) => conversationOf(m).key));
+  return list.filter((c) => keys.has(c.key) || (!c.messages.length && !c.quiet));
 }
 
 // With a session picked, a chat with it is called by the other session's name.
@@ -2945,16 +2953,11 @@ function conversationList(list) {
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
   // One list, newest first, so a busy group chat is never below every quiet DM. The switch
   // narrows it to direct messages or group chats.
-  // The toggle under it leaves only the conversations you are in: your DMs, the group chats you
-  // have written in, and one you have just begun. It needs an account, and Your messages is that
-  // list already, so it isn't there.
+  // The toggle under it leaves only the conversations you are in (mineOf). It needs an account.
   const kind = ui.convKind || "all";
   const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
-  const canMine = !!me() && !isMyFilter();
-  if (canMine && onlyMine) {
-    const keys = new Set(myMessages().map((m) => conversationOf(m).key));
-    list = list.filter((c) => keys.has(c.key) || (!c.messages.length && !c.quiet));
-  }
+  const canMine = !!me();
+  if (canMine && onlyMine) list = mineOf(list);
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
   const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
   const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
@@ -2965,14 +2968,7 @@ function conversationList(list) {
     h(
       "div",
       { class: "g-head" },
-      isMyFilter()
-        ? h(
-            "div",
-            { class: "g-head-row" },
-            h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), list.some((c) => c.messages.length) && h("p", { class: "g-head-doing" }, plural(list.filter((c) => c.messages.length).length, "conversation"))),
-            h("div", { class: "g-head-actions" }, newGroupButton(), newMessageButton()),
-          )
-        : name
+      name
         ? [
             h(
               "div",
@@ -2996,7 +2992,7 @@ function conversationList(list) {
         : h(
             "div",
             { class: "g-head-row" },
-            h("div", { class: "g-head-text" }, h("h2", null, "All conversations"), h("p", { class: "g-head-doing" }, plural(list.length, "conversation"))),
+            h("div", { class: "g-head-text" }, h("h2", null, canMine && onlyMine ? "Your conversations" : "All conversations"), h("p", { class: "g-head-doing" }, plural(list.length, "conversation"))),
             h("div", { class: "g-head-actions" }, newGroupButton(), newMessageButton()),
           ),
     ),
@@ -3071,7 +3067,7 @@ function conversationList(list) {
       ),
     ui.showOlder && older.map(conversationRow),
     !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
-    kind === "group" && !q && !(name && !isMyFilter()) && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
+    kind === "group" && !q && !name && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
   );
 }
 
@@ -3520,10 +3516,6 @@ function isPerson(name) {
   return personNames.has(name) || (!!name && name === myName());
 }
 
-function isMyFilter() {
-  return !!ui.filter && !!me() && ui.filter === me().addr && ui.view === "messages";
-}
-
 function people() {
   const out = [];
   for (const d of ui.state?.devices || []) if (d.person) out.push({ ...d.person, device: d });
@@ -3554,10 +3546,6 @@ function unreadCount() {
 function unreadIn(c) {
   const ids = new Set(unreadIds());
   return ids.size ? c.messages.filter((m) => ids.has(m.id)).length : 0;
-}
-
-function yourConversationCount() {
-  return new Set([...myMessages().map((m) => conversationOf(m).key), ...ui.outbox.map((item) => item.key)]).size;
 }
 
 // Opening a conversation marks it read, if someone is looking: a hidden page or a window in the
@@ -3601,13 +3589,14 @@ function markOpenRead() {
   render();
 }
 
-function openYours() {
-  if (!ui.state) return;
-  if (!me()) return askForName(openYours);
-  ui.filter = me().addr;
+// Your own name opens the conversations you are in.
+function showMine() {
+  ui.picker = null;
+  ui.filter = null;
   ui.conversation = null;
   ui.draftTo = null;
   ui.draftGroup = null;
+  setOnlyMine(true);
   go("messages");
   setView("messages");
 }
@@ -3621,7 +3610,7 @@ function startGroup(sessions, tag) {
   if (!me()) return askForName(() => startGroup(sessions, tag));
   tag = tag || groupOf(sessions) || newGroupTag(sessions.map((s) => s.name));
   ui.picker = null;
-  ui.filter = me().addr;
+  ui.filter = null;
   ui.draftTo = null;
   ui.draftGroup = tag;
   ui.conversation = groupConversation(tag).key;
@@ -3657,9 +3646,9 @@ function newGroupTag(names) {
 function startChat(name) {
   if (!ui.state) return;
   if (!me()) return askForName(() => startChat(name));
-  if (name === myName()) return openYours();
+  if (name === myName()) return showMine();
   ui.picker = null;
-  ui.filter = me().addr;
+  ui.filter = null;
   ui.draftTo = name;
   ui.draftGroup = null;
   ui.conversation = dmKey(myName(), name);
@@ -4018,7 +4007,7 @@ function groupFoot(g, back, make) {
   );
 }
 
-// With no conversation open in your messages: who you could talk to.
+// With no conversation to open, for someone with a name: who they could talk to.
 function startPane() {
   const all = reachable();
   const rows = all.slice(0, 8);
