@@ -201,6 +201,11 @@ func TestEditTOMLTables(t *testing.T) {
 		{"crlf", "a = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"mur\"\r\n\r\n[x]\r\n", "a = 1\r\n\r\n[x]\r\n"},
 		{"in a string", "a = \"\"\"\n[mcp_servers.murmur]\n\"\"\"\n", "a = \"\"\"\n[mcp_servers.murmur]\n\"\"\"\n"},
 		{"none", "a = 1\n", "a = 1\n"},
+		// A comment after Murmur's table is the user's, about the next (#740).
+		{"comment after", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n\n# GitHub's, token from GITHUB_PAT\n[mcp_servers.github]\n", "a = 1\n\n# GitHub's, token from GITHUB_PAT\n[mcp_servers.github]\n"},
+		{"comment after, first", "[mcp_servers.murmur]\ncommand = \"mur\"\n\n# GitHub's\n[x]\n", "# GitHub's\n[x]\n"},
+		{"comment after, last", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n# the end\n", "a = 1\n# the end\n"},
+		{"comment inside", "a = 1\n\n[mcp_servers.murmur]\n# ours\ncommand = \"mur\"\n\n[x]\n", "a = 1\n\n[x]\n"},
 	} {
 		got, _, err := editTOMLTables(c.in, "config.toml", [][]string{server}, drop)
 		if err != nil || got != c.want {

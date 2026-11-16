@@ -772,9 +772,10 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 	if len(dropped) == 0 && !renamed {
 		return text, nil, nil
 	}
-	// A dropped table goes from its header to its last line with anything on it, and the blank line
-	// before it goes too, so the tables around it keep one blank line between them. One with nothing
-	// kept before it takes its trailing blank lines instead. The empty string after the last newline
+	// A dropped table goes from its header to its last line with a key or value on it, and the blank
+	// line before it goes too, so the tables around it keep one blank line between them. One with
+	// nothing kept before it takes its trailing blank lines instead. A comment after its last key is
+	// the user's, about what follows, as join writes none: it stays (#740). The empty string after the last newline
 	// is the file's end, not a line, and stays.
 	drop := make([]bool, len(lines))
 	for n, h := range headers {
@@ -787,7 +788,7 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 		}
 		last := h.at
 		for i := h.at; i < next; i++ {
-			if strings.TrimSpace(lines[i]) != "" {
+			if t := strings.TrimSpace(lines[i]); t != "" && !strings.HasPrefix(t, "#") {
 				last = i
 			}
 		}
@@ -803,7 +804,7 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 		}
 		switch {
 		case !keptBefore:
-			for i := last + 1; i < next && i < len(lines)-1; i++ {
+			for i := last + 1; i < next && i < len(lines)-1 && strings.TrimSpace(lines[i]) == ""; i++ {
 				drop[i] = true
 			}
 			for i := 0; i < h.at; i++ {
