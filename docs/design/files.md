@@ -111,11 +111,15 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
 - **Secrets.** Every file goes through the check a body does (`internal/scrub`). UTF-16 with its
-  mark, as Windows PowerShell writes a redirected file, is decoded first. Of a file with zero bytes,
-  its runs of printable ASCII and of UTF-16 with no mark are checked, as `strings` reads a binary,
-  since keys sit in the clear between zero bytes in a `.tar`, a SQLite file or `/proc/self/environ`
-  (#737, from 2026-11-16; before, such a file went unchecked). Only the runs, so 10 MB of random
-  bytes takes 0.1 s, not 13. What is compressed, as an image or a zip, can't be read.
+  mark, as Windows PowerShell writes a redirected file, is decoded, and its bytes are checked too. Of a
+  file with zero bytes, its regions of text are checked, as `strings` reads a binary: UTF-8, and
+  UTF-16 with no mark in either byte order. Keys sit in the clear between zero bytes in a `.tar`, a
+  SQLite file or `/proc/self/environ` (#737, from 2026-11-16; before, such a file went unchecked).
+  A region runs over spaces and line breaks, and only a whole region under 8 characters is skipped,
+  so 10 MB of random bytes takes 0.1 s to check, not 13. Unread: what is compressed, as an image or a
+  zip, which isn't unpacked, and UTF-16 with no mark past U+2000 (CJK, say). `publicKeyToken` with
+  16 hex digits, in every Windows program's manifest, is .NET's public assembly identity, not a
+  secret.
 - **Sizes.** A sender is refused past the limits. A receiver reads a pack's size before the pack
   and doesn't read one over the limit: git stores a blob compressed, so a small fetch can hold a
   large one.

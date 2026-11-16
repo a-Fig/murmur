@@ -29,6 +29,15 @@ func utf16File(text string) []byte {
 	return b
 }
 
+// utf16BE is text as UTF-16, big end first, with no mark.
+func utf16BE(text string) []byte {
+	var b []byte
+	for _, u := range utf16.Encode([]rune(text)) {
+		b = append(b, byte(u>>8), byte(u))
+	}
+	return b
+}
+
 // writeFile writes a file a test sends, in a directory of its own, and returns its full path.
 func writeFile(t *testing.T, name string, data []byte) string {
 	t.Helper()
@@ -318,6 +327,12 @@ func TestFilesASendRefuses(t *testing.T) {
 		"a key in a tar":                       {[]string{writeFile(t, "conf.tar", append(append(make([]byte, 512), "AWS=AKIAIOSFODNN7EXAMPLE\n"...), make([]byte, 512)...))}, "conf.tar"},
 		"a key in UTF-16 with no mark":         {[]string{writeFile(t, "le.txt", utf16File("key AKIAIOSFODNN7EXAMPLE\r\n")[2:])}, "le.txt"},
 		"a key in big-end UTF-16 with no mark": {[]string{writeFile(t, "be.txt", append([]byte{0}, utf16File("key AKIAIOSFODNN7EXAMPLE")[2:]...))}, "be.txt"},
+		// What Sol's review of #753 found getting through the first fix.
+		"a name on the line above its value": {[]string{writeFile(t, "split.bin", []byte("TOKEN=\nabc123abc123\x00"))}, "split.bin"},
+		"a bearer token on the next line":    {[]string{writeFile(t, "bearer.bin", []byte("Bearer\nabc123abc123abc123abc123\x00"))}, "bearer.bin"},
+		"a password with an accent":          {[]string{writeFile(t, "accent.bin", []byte("PASSWORD=abc123édef456\x00"))}, "accent.bin"},
+		"a big-end key before a CJK letter":  {[]string{writeFile(t, "cjk.bin", utf16BE("AKIAIOSFODNN7EXAMPLE中"))}, "cjk.bin"},
+		"a key in the clear after a mark":    {[]string{writeFile(t, "mark.txt", []byte("\xff\xfeAKIAIOSFODNN7EXAMPLE"))}, "mark.txt"},
 	} {
 		if what == "a Git Bash path" && runtime.GOOS != "windows" {
 			continue // a full path everywhere else

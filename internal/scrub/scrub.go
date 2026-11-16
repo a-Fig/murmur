@@ -77,6 +77,15 @@ var patterns = []pattern{
 // (see looksSecret), so that `API_KEY = process.env.API_KEY` in a code discussion passes.
 var assignment = regexp.MustCompile(`(?i)\b[A-Z0-9_]*(SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[A-Z0-9_]*["']?\s*[:=]\s*["']?([^\s"']+)`)
 
+// publicKeyToken is .NET's name for the public identity of a signed assembly
+// (publicKeyToken="6595b64144ccf1df"), in every Windows program's manifest and in .NET config
+// files: public, so not a credential, though its name says token (#737). It is always 16 hex
+// digits (hex16), so any other value under that name is still checked.
+var (
+	publicKeyToken = regexp.MustCompile(`(?i)^publicKeyToken\b`)
+	hex16          = regexp.MustCompile(`^[0-9A-Fa-f]{16}$`)
+)
+
 // Check returns an error naming the kind of secret if any text looks like one.
 func Check(texts ...string) error {
 	for _, t := range texts {
@@ -94,7 +103,7 @@ func Check(texts ...string) error {
 			}
 		}
 		for _, m := range assignment.FindAllStringSubmatch(t, -1) {
-			if looksSecret(m[2]) {
+			if looksSecret(m[2]) && !(publicKeyToken.MatchString(m[0]) && hex16.MatchString(m[2])) {
 				return blocked("a credential assignment")
 			}
 		}
