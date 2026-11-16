@@ -2,6 +2,7 @@ package tags
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -512,5 +513,24 @@ func TestALongDevicesGroupIsSearchable(t *testing.T) {
 	f, err := ParseFilter([]string{"-" + long})
 	if err != nil || f.Match(ts) {
 		t.Errorf("-%s: %v, matches %v", long, err, f.Match(ts))
+	}
+}
+
+// A group a team made under the prefix devices now hold (group:device-lab) is refused with why,
+// and the name to use instead: the same group without device- (#705).
+func TestOwnGroupHint(t *testing.T) {
+	for name, want := range map[string]string{
+		"group:device-lab":        " A group of your own needs a name that doesn't start with group:device-, such as group:lab.",
+		"GROUP:Device-Lab":        " A group of your own needs a name that doesn't start with group:device-, such as group:lab.",
+		"group:device-device-lab": "", // what it would suggest is a device's group too
+		"group:device-":           "",
+		"group:lab":               "",
+	} {
+		if got := OwnGroupHint(name); got != want {
+			t.Errorf("OwnGroupHint(%q) = %q, want %q", name, got, want)
+		}
+	}
+	if _, err := Clean([]string{"group:device-lab"}); err == nil || !strings.Contains(err.Error(), "such as group:lab") {
+		t.Errorf("Clean of a group under the device prefix: %v", err)
 	}
 }

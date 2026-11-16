@@ -104,6 +104,17 @@ func DevicesOfGroup(name string) []string {
 	return []string{"device-" + rest, rest}
 }
 
+// OwnGroupHint is what to say to someone who names a group under DevicePrefix as one of their own:
+// a group a team made before devices had groups (group:device-lab) has no members once its devices
+// update, as the prefix is theirs (#705). It suggests the name without device-, or is "".
+func OwnGroupHint(name string) string {
+	rest, ok := strings.CutPrefix(Normalize(name), DevicePrefix)
+	if !ok || !IsGroup(GroupPrefix+rest) || strings.HasPrefix(GroupPrefix+rest, DevicePrefix) {
+		return ""
+	}
+	return fmt.Sprintf(" A group of your own needs a name that doesn't start with %s, such as %s%s.", DevicePrefix, GroupPrefix, rest)
+}
+
 // WithDevice is ts with the tag of device's group added, as a derived tag: what a reader shows of
 // an agent's session on device.
 func WithDevice(ts []Tag, device string) []Tag {
@@ -316,7 +327,7 @@ func Clean(in []string) (names []string, err error) {
 			continue
 		}
 		if strings.HasPrefix(t, DevicePrefix) {
-			return nil, fmt.Errorf("%s is %s's to give: each session on a device is in that device's group, and nobody sets or removes it", t, brand.Product)
+			return nil, fmt.Errorf("%s is %s's to give: each session on a device is in that device's group, and nobody sets or removes it.%s", t, brand.Product, OwnGroupHint(t))
 		}
 		if !Valid(t) {
 			return nil, fmt.Errorf("%q isn't a tag: a tag is up to %d lowercase letters, digits and . _ : / -, starting with a letter or a digit", raw, MaxLen)

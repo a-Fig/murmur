@@ -801,7 +801,7 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 		d.mu.Unlock()
 		switch len(found) {
 		case 0:
-			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group", tags.Normalize(to)))
+			return fail(fmt.Sprintf("not sent: no device in presence has the group %s. who lists each device's group.%s", tags.Normalize(to), tags.OwnGroupHint(to)))
 		case 1:
 			to, toDevice = found[0], true
 		default:
