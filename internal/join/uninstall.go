@@ -209,7 +209,7 @@ func (e Env) leftovers() []string {
 // has only its daemon stopped. err is for a clone that can't be put back.
 func (e Env) leaveClone(ctx context.Context, r *Report, record string, c clones.Clone) (ok bool, err error) {
 	p, lerr := Locate(ctx, c.Top())
-	if lerr != nil && isDir(c.GitDir) {
+	if lerr != nil && filepath.Base(c.GitDir) != ".git" && isDir(c.GitDir) {
 		p, lerr = Place{GitDir: c.GitDir}, nil
 	}
 	if lerr != nil {

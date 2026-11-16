@@ -292,7 +292,15 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 	p, err := Locate(ctx, dir)
 	if err != nil {
-		return Report{}, err
+		// dir may be the git directory of a clone made with --separate-git-dir, which is where
+		// uninstall's refusal names such a clone (Clone.Top): no working tree is found from it,
+		// but it can be left from there (#749).
+		gitDir, gerr := client.FindGitDir(ctx, dir)
+		abs, aerr := filepath.Abs(dir)
+		if gerr != nil || aerr != nil || !sameEntry(gitDir, abs) {
+			return Report{}, err
+		}
+		p = Place{GitDir: gitDir}
 	}
 	return e.leavePlace(ctx, p)
 }
