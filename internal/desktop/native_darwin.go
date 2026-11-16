@@ -62,10 +62,22 @@ func (macNative) frame(dark bool) {
 	app.Send(objc.RegisterName("setAppearance:"), look)
 }
 
-// inFront is whether Murmur is the active app, as when its window was clicked last.
+// inFront is whether Murmur is the active app, as when its window was clicked last, with a window
+// on the screen: after Cmd-M the app often stays active with its window in the Dock (#711). On the
+// UI thread.
 func (macNative) inFront(bool) bool {
 	app := objc.ID(objc.GetClass("NSApplication")).Send(objc.RegisterName("sharedApplication"))
-	return objc.Send[bool](app, objc.RegisterName("isActive"))
+	if !objc.Send[bool](app, objc.RegisterName("isActive")) {
+		return false
+	}
+	wins := app.Send(objc.RegisterName("windows"))
+	for i := range objc.Send[uint](wins, objc.RegisterName("count")) {
+		w := wins.Send(objc.RegisterName("objectAtIndex:"), i)
+		if objc.Send[bool](w, objc.RegisterName("isVisible")) && !objc.Send[bool](w, objc.RegisterName("isMiniaturized")) {
+			return true
+		}
+	}
+	return false
 }
 
 // notify passes the title and body as arguments, so nothing in them is read as AppleScript.
