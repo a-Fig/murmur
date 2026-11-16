@@ -11,7 +11,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Agent | Where join writes | How a session is told apart | Inside T3 |
 |---|---|---|---|
 | OpenCode | `~/.config/opencode/opencode.jsonc` if there, else `opencode.json`, in the shape the installed version loads: for 2.x, `mcp.servers.murmur` with `"codemode": false` and a `murmur_*` allow rule last in `permissions`; for 1.x, or a version join can't learn, `mcp.murmur` with `"murmur_*": "allow"` last in `permission`, which 2.x loads too. OpenCode 1.x refuses a whole config that has `permissions` (#388), so a rerun moves Murmur's entries to the shape it now writes | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`. OpenCode 1 names none, and its sessions in a directory are one, by an ID Murmur's plugin gives the server | The session ID is T3's native ID for the thread |
-| Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables | One process per session, with `MUSE_SESSION_ID` | The same ID |
+| Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables; the hook under `hooks` there (below) | One process per session, with `MUSE_SESSION_ID` | The same ID |
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 | Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy_acp_server` per thread, with `ANTIGRAVITY_CONVERSATION_ID` in what it runs | The same ID (seen, 2026-11-15) |
@@ -30,7 +30,8 @@ since it wasn't installed). The details, and where each came from, are in the co
 - **Delivery.** Inside T3, `t3 thread send` needed nothing new: an OpenCode and a Muse thread each
   took a message as a turn and answered it with `send`, nobody typing (2026-11-01). Outside T3, Muse
   and Grok have no way in that Murmur uses (Muse's session messaging isn't on Windows, and no way to
-  start a turn in Grok was found), so a message waits in the inbox. Pi has notices and turns since
+  start a turn in Grok was found), so a message to an idle session waits in the inbox; a busy one
+  is told by the hook (Grok's since #225, Muse's since #461). Pi has notices and turns since
   2026-11-09 (#205), OpenCode 2 turns since 2026-11-11 (#135) and notices since 2026-11-12 (#431),
   and OpenCode 1 both since 2026-11-15 (#446): see [handoff](handoff.md) and below.
 - **OpenCode 2's plugin** (2026-11-12, #431, #455). OpenCode 2 has no hooks of Claude Code's kind,
@@ -198,6 +199,41 @@ grok`. Both take Claude Code's payload and answers.
 - **In every repo.** Both hooks are per user. Where Murmur isn't joined the hook finds no daemon and
   prints nothing, which cost 70–100 ms a tool call on the laptop (2026-11-08), plus the shell the
   agent starts it in.
+
+## Muse's hook
+
+Added 2026-11-16 (#461). Muse takes Claude Code's hooks, payload and answers, so `mur hook muse` is
+the Claude Code hook with Muse's identity. Seen on Muse 1.4.14 on Windows, in a scratch config and
+then in a joined sandbox, with `muse exec`: a message sent while the session slept in a shell
+command came as the notice after that call, and at the turn's end `Stop` blocked with the message
+whole and the turn went on. Not tried: a Muse thread in T3 (`muse serve`), or Muse on macOS or Linux.
+
+- **Where.** `hooks` in the same `settings.json` as the server, on `UserPromptSubmit`, `PostToolUse`
+  (matcher `*`) and `Stop`, Claude Code's event names, not the camelCase of Muse's protocol. Each
+  of those answers reaches the model: `additionalContext` on a prompt or after a tool call, and
+  `{"decision": "block", "reason": ...}` at `Stop`, whose next `Stop` comes with
+  `stop_hook_active`. A user's own hooks there stay, and uninstall takes out only the groups that
+  run `mur hook muse`.
+- **The command line.** On Windows Muse runs a hook through cmd, and a token in double quotes broke
+  it, a quoted path and a quoted argument alike. So the path is bare, or its 8.3 short form where it
+  has a space; a path neither works for is a join problem, not a hook that never runs.
+- **Which session.** The payload's `session_id` is the session's `MUSE_SESSION_ID`, which its MCP
+  server registered with, so the daemon finds the session by it, as Grok's. Muse also runs side
+  sessions in a turn (a reminder model calling `submit_reminder_decision`), whose hooks carry their
+  own `session_id` while `MUSE_SESSION_ID` is still the session's; some come after the turn's
+  `Stop`. The hook asks nothing for them, as the notice would land in the side session and a call
+  after `Stop` would mark the session at work again. A subagent shares its parent's
+  `MUSE_SESSION_ID` ([delegates](delegates.md)) and so is skipped the same way, if its hooks carry
+  an ID of its own (not tried).
+- **Its environment.** A hook gets COMSPEC, HOME, PATH, PATHEXT, SYSTEMROOT, TEMP, TMP, WINDIR and
+  Muse's own variables, no APPDATA. The hook looks for its session's record by APPDATA, so on
+  Windows it takes the folders Windows records for any of APPDATA, LOCALAPPDATA and USERPROFILE that
+  are unset. A user who moved APPDATA for Muse's MCP server alone isn't followed, and the hook then
+  goes by its working directory's clone.
+- **In T3.** A Muse thread is held by T3's database alone until its hook first runs (#699); from
+  then on it is a hooked session, as Claude Code's, and what came during the run is held for the
+  turn's end. A Muse session that called Murmur's tools with no hook since is marked "hook not
+  running", which a join fixes.
 
 ## Antigravity
 

@@ -65,6 +65,24 @@ func TestAnAgentHookFindsItsSessionByTheRoutesID(t *testing.T) {
 	}
 }
 
+// Muse's hook (#461) gives the session's MUSE_SESSION_ID, by which its MCP server registered, and
+// finds the session by it. A side session Muse runs in the turn, whose hook comes from the same
+// process with an ID of its own, is not the session's, nor does the session take its ID.
+func TestAMuseHookFindsItsSessionByItsID(t *testing.T) {
+	d := agentHookDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s := d.newSessionLocked(&proto.Hello{ID: "mmmmmm", ClientPID: 700}, "muse in T3", "", "mmmmmm")
+	s.clientPID, s.route.Native = 700, "01a1e597-b944"
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "muse", ClaudeSession: "01a1e597-c358", Ancestors: []int{800, 700}}); len(got) != 0 || s.hookNative != "" || s.hooked {
+		t.Fatalf("a side session's hook took %v, hookNative %q, hooked %v", ids(got), s.hookNative, s.hooked)
+	}
+	got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "muse", ClaudeSession: "01a1e597-b944", Ancestors: []int{800, 700}})
+	if len(got) != 1 || got[0] != s || !s.hooked {
+		t.Fatalf("by its ID: %v, hooked %v", ids(got), s.hooked)
+	}
+}
+
 // Two sessions of one process with no ID yet (T3 runs every Codex thread in one app server):
 // nothing tells them apart, so the hook speaks for neither, but both have a hook that runs.
 func TestAnAgentHookOfSeveralUnknownSessionsTakesNone(t *testing.T) {
@@ -126,6 +144,8 @@ func TestHookOff(t *testing.T) {
 		{"grok", long, false, true},
 		{"pi", long, false, true},
 		{"pi in T3", long, false, true},
+		{"muse", long, false, true},
+		{"muse in T3", long, false, true},
 		{"codex", long, true, false},
 		{"codex", time.Now(), false, false},  // in its grace
 		{"codex", time.Time{}, false, false}, // no tool call: maybe nothing to tell
