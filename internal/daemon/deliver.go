@@ -162,8 +162,6 @@ type pushJob struct {
 	via   string
 	route proto.Route
 	text  string
-	// sentAt is when its last attempt began to hand the turn to T3, for finishPush.
-	sentAt time.Time
 }
 
 // wakeSnapshot copies the page's settings, the wake setting among them. setMu is taken alone,
@@ -867,7 +865,11 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	switch j.via {
 	case viaT3:
 		return d.attempt(j.msgs, func() error {
-			j.sentAt = time.Now()
+			d.mu.Lock()
+			if s := d.sessions[j.id]; s != nil {
+				s.sending, s.sendingSeen = turnStart(j.text), false
+			}
+			d.mu.Unlock()
 			return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
 		})
 	case viaSocket:
@@ -964,6 +966,11 @@ func (d *Daemon) markAttempted(msgs []*inMsg, v bool) error {
 func (d *Daemon) finishPush(j *pushJob, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	seen := false // a prompt that is this turn came while the send ran (sendingSeen)
+	if s := d.sessions[j.id]; s != nil && j.via == viaT3 {
+		seen = s.sendingSeen
+		s.sending, s.sendingSeen = "", false
+	}
 	for _, m := range j.msgs {
 		m.Pushing = false
 		if j.via == viaT3 {
@@ -1014,18 +1021,14 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		}
 		d.noteExplainedAtLocked(d.explainKeyOfPushLocked(j), m.Event.To)
 	}
-	// A turn the hook hasn't seen start (runUnseen, hooklessBusy), unless it has: the session was
-	// idle when the send began, so a turn its hook saw begin since is the one it handed over. T3 can
-	// take a while to answer, and its turn can begin, and even end, before the send returns (#677).
-	// Holding the session after that held its next message for handedHold, a turn it had already
-	// had, wherever T3's database couldn't be read. Only a hook says so: a read of T3's database that
-	// ends a turn (endedAt) may have seen an older run go, before T3 queued this one.
-	//
-	// What this leaves: a person who types into the thread while the send runs starts a turn of
-	// their own, which the hook sees, and T3 queues this message behind it. The read of the thread
-	// before the next handoff (t3RunGoing) then finds that queued run, unless T3's database can't be
-	// read or the handoff comes within closeGrace of their turn's end.
-	if s := d.sessions[j.id]; s != nil && j.via == viaT3 && !s.hookTurnAt.After(j.sentAt) {
+	// A turn the hook hasn't seen start (runUnseen, hooklessBusy), unless it has: T3 can take a while
+	// to answer, and the turn can begin, and even end, before the send returns (#677). Holding the
+	// session after that held its next message for handedHold, a turn it had already had, wherever
+	// T3's database couldn't be read. Only a prompt that is this turn says so (seen): a tool
+	// call or a Stop may be of an earlier turn T3's database had ended, and a read of the database
+	// that ended a turn may have seen an older run go before T3 queued this one. A client whose hook
+	// sends no prompt keeps the hold.
+	if s := d.sessions[j.id]; s != nil && j.via == viaT3 && !seen {
 		s.handedAt = time.Now()
 	}
 	d.saveLocked()

@@ -118,10 +118,11 @@ the turn took, so nothing waits for good.
   were a message the daemon had just handed over itself. So a session whose hook has no turn going
   is at work when a read of T3's database that began after its turn ended finds a run going, and,
   until a read that began after it, when the daemon has just handed a message to its thread (at
-  most a minute, so a read that keeps failing doesn't hold its messages for good). A turn the hook
-  saw begin while the send was still running is that handoff's own, and holds nothing
-  after (#677, 2026-11-16): a T3 slow to answer let the turn end first, and the next message
-  waited out the minute for a turn already over. The daemon reads
+  most a minute, so a read that keeps failing doesn't hold its messages for good). A prompt that
+  is the handed turn, seen while the send was still running, holds nothing after (#677,
+  2026-11-16): a T3 slow to answer let the turn end first, and the next message waited out the
+  minute for a turn already over. Nothing else counts: a tool call or a Stop then may be of an
+  earlier turn T3's database had ended, with this one queued behind it. The daemon reads
   the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took
   since the last one through. The same read catches a turn a user's own `Stop` hook kept going
   after Murmur's saw `Stop`, up to 5 s late.
