@@ -254,7 +254,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if s == nil && !h.Reconnect {
 		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
 	}
-	key := d.uniqueKeyLocked(base, h.ID)
+	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
