@@ -1071,8 +1071,8 @@ func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
 	if id == bus.PersonSession {
 		// A person's daemon goes away when their page closes, and an answer can take hours: what was
 		// sent to them is theirs, however long the daemon was down. What they already have is known
-		// by its ID, so a read of old history adds nothing.
-		return !d.msgIDs[e.ID]
+		// by which message it is (msgKey), so a read of old history adds nothing.
+		return !d.msgKeys[msgKey(e)]
 	}
 	if mode == modeNormal || d.sentSinceLocked(e, id, mode) {
 		return true
