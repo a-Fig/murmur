@@ -105,7 +105,17 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 // names the old one had set aside went to new sessions, while every other device still had them on
 // the old one: a message to one, once its session stopped, went to the old address, where nobody
 // would read it (#617). So the new ID starts with new names, as on any other new device, and the
-// old ones stay taken (Used). Everything else in the file is kept as it was.
+// old ones stay taken (Used).
+//
+// What a session kept by its name is the session's, not the name's: its tags, with the groups it
+// is in and do not disturb, its mutes, and who has been explained to it. So which name each key
+// had goes to namesLeft, for the names that have any of those, are muted by another session
+// here, or have a wake or busy choice of their own on the page (#836), and the name the key gets next takes them (adoptLeftLocked, #827). Without that a session
+// in a group, on do not disturb, came back out of the group and was given turns again.
+//
+// The starts and stops not yet written (unwritten) go too: they are from the old device's
+// addresses, and written to the new device's log every reader would drop them, their sender not
+// being the log's device. Everything else in the file is kept as it was.
 func dropOldNames(path string) error {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -119,10 +129,72 @@ func dropOldNames(path string) error {
 		return nil // loadState says what is wrong with it
 	}
 	n := len(st)
-	for _, k := range []string{"nameKeys", "namePool", "nameBinds", "nameHolders", "sessionNames", "namesSeen"} {
+	kept := map[string]bool{} // the names that have something to hand on
+	for _, k := range []string{"tags", "mutes", "explained"} {
+		var by map[string]json.RawMessage
+		if json.Unmarshal(st[k], &by) == nil {
+			for name := range by {
+				kept[name] = true
+			}
+		}
+	}
+	// And the names muted: a session another one here muted is still muted under its new name.
+	var mutes map[string]map[string]json.RawMessage
+	if json.Unmarshal(st["mutes"], &mutes) == nil {
+		for _, m := range mutes {
+			for name := range m {
+				kept[name] = true
+			}
+		}
+	}
+	// And the names the page has a wake or busy choice for (settings.json, #836).
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(path), "settings.json")); err == nil {
+		var set struct {
+			SessionWake map[string]json.RawMessage `json:"sessionWake"`
+			SessionBusy map[string]json.RawMessage `json:"sessionBusy"`
+		}
+		if json.Unmarshal(b, &set) == nil {
+			for _, by := range []map[string]json.RawMessage{set.SessionWake, set.SessionBusy} {
+				for name := range by {
+					kept[name] = true
+				}
+			}
+		}
+	}
+	// A choice still to be moved to a name (settingsMoves) is that name's.
+	var moves [][2]string
+	if json.Unmarshal(st["settingsMoves"], &moves) == nil {
+		for _, m := range moves {
+			if kept[m[0]] {
+				kept[m[1]] = true
+			}
+		}
+	}
+	// An earlier loss's are kept for the keys that haven't come back since, and for one whose
+	// name since has nothing: its key was given a name with no session there to take them.
+	var earlier, keys map[string]string
+	_ = json.Unmarshal(st["namesLeft"], &earlier)
+	_ = json.Unmarshal(st["nameKeys"], &keys)
+	left := map[string]string{}
+	for _, names := range []map[string]string{earlier, keys} {
+		for key, name := range names {
+			if key != "" && kept[name] {
+				left[key] = name
+			}
+		}
+	}
+	was := string(st["namesLeft"])
+	for _, k := range []string{"nameKeys", "namePool", "nameBinds", "nameHolders", "sessionNames", "namesSeen", "unwritten", "namesLeft"} {
 		delete(st, k)
 	}
-	if len(st) == n {
+	if len(left) > 0 {
+		b, err := json.Marshal(left)
+		if err != nil {
+			return err
+		}
+		st["namesLeft"] = b
+	}
+	if len(st) == n && string(st["namesLeft"]) == was {
 		return nil
 	}
 	// Written as the daemon writes it, and with the time it had: loadState takes that for when the

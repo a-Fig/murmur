@@ -468,7 +468,7 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	env.Version = version
-	env.Progress = os.Stderr // a line while a leave waits for the daemon; stdout is the report
+	env.Progress = os.Stderr // a line while a step is slow, or a leave waits for the daemon; stdout is the report
 	do := join.Join
 	if *leave {
 		do = join.Leave

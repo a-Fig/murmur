@@ -254,7 +254,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if s == nil && !h.Reconnect {
 		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
 	}
-	key := d.uniqueKeyLocked(base, h.ID)
+	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -744,7 +744,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
 		printsWhole := hookReq(req) && req.Whole
-		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		busyWhole := wake.busyChoice(d.settingsNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing || d.heldLocked(id, m) {
 				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
@@ -1055,7 +1055,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
 		// sent, and this is where the sender learns of the mute.
-		muted := d.hasMutedLocked(dev, sess, d.nameOfLocked(from))
+		muted := d.hasMutedLocked(dev, sess, d.muteNameLocked(from, dev))
 		d.mu.Unlock()
 		switch {
 		case muted:
@@ -1227,6 +1227,9 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
 		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		if old := d.leftNameLocked(from); old != "" && (dev == "" || dev == d.device) {
+			muters = d.mutersLocked(old, d.device) // its new name pending: those here that muted its old one
+		}
 		var members []string
 		if group {
 			members, _ = d.groupMembersLocked(to, from)
