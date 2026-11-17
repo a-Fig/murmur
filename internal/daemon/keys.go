@@ -125,11 +125,16 @@ func dropOldNames(path string) error {
 	if len(st) == n {
 		return nil
 	}
-	out, err := json.Marshal(st)
+	// Written as the daemon writes it, and with the time it had: loadState takes that for when the
+	// last daemon last saved, which dates the stops of the sessions a killed one left (Opus's review).
+	fi, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, out)
+	if err := writeJSON(path, st); err != nil {
+		return err
+	}
+	return os.Chtimes(path, fi.ModTime(), fi.ModTime())
 }
 
 func parseKeys(b []byte) (ed25519.PrivateKey, *ecdh.PrivateKey, bool) {

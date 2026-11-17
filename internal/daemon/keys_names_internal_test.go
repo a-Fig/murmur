@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // A clone whose keys are lost has its names taken out of its state file before it takes its new
@@ -24,6 +25,10 @@ func TestLostKeysDropTheNamesBeforeTheNewID(t *testing.T) {
 		`"nameBinds":{"brisk-finch":"bbbbbb"},"nameHolders":{"quiet-otter":"aaaaaa"},"sessionNames":{"aaaaaa":"quiet-otter"},` +
 		`"namesSeen":{"aaaaaa":"2026-11-16T00:00:00Z"}}`
 	if err := os.WriteFile(state, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saved := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(state, saved, saved); err != nil {
 		t.Fatal(err)
 	}
 	device, _, _, err := loadIdentity(dir, nil, nil)
@@ -54,6 +59,12 @@ func TestLostKeysDropTheNamesBeforeTheNewID(t *testing.T) {
 		if _, ok := st[k]; !ok {
 			t.Errorf("%s went from state.json", k)
 		}
+	}
+	// Its time is still when the last daemon saved it, which dates the stops a killed one left.
+	if fi, err := os.Stat(state); err != nil {
+		t.Error(err)
+	} else if !fi.ModTime().Equal(saved) {
+		t.Errorf("state.json's time is %v, want %v", fi.ModTime(), saved)
 	}
 	// The next start, its keys in place, is the same device, and leaves the file alone.
 	after, err := os.ReadFile(state)
