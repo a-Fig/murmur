@@ -244,7 +244,16 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// this time: it is still that thread.
 		route.T3Thread = s.route.T3Thread
 	}
-	key := d.uniqueKeyLocked(nameKey(route.T3Thread, claude, route.Native, h.ID), h.ID)
+	base := nameKey(route.T3Thread, claude, route.Native, h.ID)
+	// A Codex thread that another program had goes on here (#568), if this is a server's first
+	// registration: its tool call has just carried the thread. One back from its grace, or
+	// registering again with a daemon that restarted, says nothing new, and would take the
+	// thread back from a session that got it since.
+	var left []string
+	if s == nil && !h.Reconnect {
+		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
+	}
+	key := d.uniqueKeyLocked(base, h.ID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -276,6 +285,12 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.worktree = worktree
 		s.route = route
 		d.rememberRouteLocked(s)
+	}
+	for _, id := range left {
+		d.takeInboxLocked(s, id) // sent to the conversation, which is here now
+	}
+	if len(left) > 0 {
+		d.saveLocked()
 	}
 	if parent, named := d.kidNative[route.Native]; named && route.Native != "" && claude == "" {
 		// A hook named this session a child before its server registered (an OpenCode child's

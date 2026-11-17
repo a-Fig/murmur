@@ -1274,7 +1274,7 @@ func (d *Daemon) takeInboxLocked(s *session, from string) {
 	} else {
 		d.st.Inbox[s.id] = box
 	}
-	d.log.Printf("session %s, taking over the T3 thread of %s, took what it had unread", bus.Addr(d.device, s.id), bus.Addr(d.device, from))
+	d.log.Printf("session %s, taking over the thread of %s, took what it had unread", bus.Addr(d.device, s.id), bus.Addr(d.device, from))
 	d.kickPush()
 }
 
@@ -1425,8 +1425,16 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 	if d.routeChildLocked(s) {
 		d.kickPresence()
 	}
-	if key := d.uniqueKeyLocked(nameKey(r.T3Thread, s.claudeSession, r.Native, s.id), s.id); key != s.key {
+	base := nameKey(r.T3Thread, s.claudeSession, r.Native, s.id)
+	left := d.yieldThreadLocked(s.id, s.agent, s.clientPID, base)
+	if key := d.uniqueKeyLocked(base, s.id); key != s.key {
 		d.rekeyLocked(s, key)
+	}
+	for _, id := range left {
+		d.takeInboxLocked(s, id) // sent to the conversation, which is here now
+	}
+	if len(left) > 0 {
+		d.saveLocked()
 	}
 	d.kickPush()
 }
