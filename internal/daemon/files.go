@@ -221,15 +221,27 @@ func unixPath(path string) bool {
 //
 // Two rounds of Sol's review of #768 shaped how. Each folder is opened as an os.Root, and every
 // later look and read goes through that handle, so the folder checked is the one read from, though
-// its path be swapped for a link after. A worktree is found from the registrations in the git
-// directory, read as files rather than through `git worktree list`, which looks at each one and
-// would sign in to a share one names; and counts only if its .git, looked at through its handle,
-// leads back to this clone, as an agent can write those registrations. The git directory is known
-// by what it is, not how it is spelled, so neither a case nor an alias gets around it.
+// its path be swapped for a link after. A worktree is found above the file sent, as the nearest
+// folder with a .git that leads back to this clone, looked at through its handle (#772), and that
+// its registration or a session vouches for (ownWorktree). `git worktree list` isn't run: it looks
+// at each one, and would sign in to a share one names. The git directory is known by what it is,
+// not how it is spelled, so neither a case nor an alias gets around it.
 type sendRoots struct {
 	roots []sendRoot
 	git   os.FileInfo // the clone's git directory; nil if it couldn't be looked at
-	vols  map[string]*os.Root
+	// worktrees is the git directory's worktrees folder, which a linked worktree's .git points
+	// into; nil if there is none.
+	worktrees os.FileInfo
+	// notOurs is the folders with a .git that were looked at and aren't this clone's worktrees, so
+	// a send's second file doesn't look again.
+	notOurs []os.FileInfo
+	// gitRoot is the git directory's handle, which a linked worktree's registration is read
+	// through; nil if it couldn't be opened.
+	gitRoot *os.Root
+	// sessions is where this device's sessions are: a main worktree kept apart from its git
+	// directory counts only if one is in it.
+	sessions []string
+	vols     map[string]*os.Root
 }
 
 type sendRoot struct {
@@ -247,12 +259,21 @@ func (d *Daemon) openSendRoots() *sendRoots {
 		git, ok = s.open(gitDir)
 	}
 	if ok {
-		defer git.r.Close()
+		s.gitRoot = git.r
 		s.git = git.id
-		d.addWorktrees(s, git, gitDir)
+		if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
+			s.worktrees = info
+		}
 	} else {
 		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
 	}
+	d.mu.Lock()
+	for _, ss := range d.sessions {
+		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
+			s.sessions = append(s.sessions, filepath.Clean(ss.cwd))
+		}
+	}
+	d.mu.Unlock()
 	temps := []string{d.opt.TempDir}
 	if d.opt.TempDir == "" {
 		temps = []string{os.TempDir()}
@@ -266,61 +287,6 @@ func (d *Daemon) openSendRoots() *sendRoots {
 		}
 	}
 	return s
-}
-
-// addWorktrees adds the clone's worktrees to s's roots.
-func (d *Daemon) addWorktrees(s *sendRoots, git sendRoot, gitDir string) {
-	// The main worktree holds the git directory, unless it was made with --separate-git-dir; each
-	// linked one is named by a registration, read through the git directory's handle, so a link
-	// there to a share is refused rather than followed. A registration's path can be relative to
-	// it (git worktree add --relative-paths).
-	dirs := []string{}
-	if strings.EqualFold(filepath.Base(gitDir), ".git") {
-		dirs = append(dirs, filepath.Dir(gitDir))
-	}
-	var worktrees os.FileInfo
-	if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
-		worktrees = info
-		if f, err := git.r.Open("worktrees"); err == nil {
-			entries, _ := f.ReadDir(-1)
-			f.Close()
-			for _, e := range entries {
-				b, err := git.r.ReadFile(filepath.Join("worktrees", e.Name(), "gitdir"))
-				ptr := strings.TrimSpace(string(b))
-				if err != nil || ptr == "" || netPath(ptr) {
-					continue
-				}
-				if !filepath.IsAbs(ptr) {
-					ptr = filepath.Join(gitDir, "worktrees", e.Name(), ptr)
-				}
-				dirs = append(dirs, filepath.Dir(filepath.Clean(ptr)))
-			}
-		}
-	}
-	// A main worktree kept apart from its git directory is found from where this device's sessions
-	// are: the nearest folder above each with a .git. ownWorktree checks it is this clone's.
-	d.mu.Lock()
-	for _, ss := range d.sessions {
-		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
-			for dir := filepath.Clean(ss.cwd); ; dir = filepath.Dir(dir) {
-				if _, err := s.stat(filepath.Join(dir, ".git")); err == nil {
-					dirs = append(dirs, dir)
-					break
-				}
-				if filepath.Dir(dir) == dir {
-					break
-				}
-			}
-		}
-	}
-	d.mu.Unlock()
-	for _, dir := range dirs {
-		if root, ok := s.open(dir); ok && s.ownWorktree(root, worktrees) && s.add(root) {
-			continue
-		} else if ok {
-			root.r.Close()
-		}
-	}
 }
 
 // add adds root, unless it is one already, or is the git directory or inside it: a registration an
@@ -350,6 +316,9 @@ func (s *sendRoots) Close() {
 	}
 	for _, r := range s.vols {
 		r.Close()
+	}
+	if s.gitRoot != nil {
+		s.gitRoot.Close()
 	}
 }
 
@@ -383,8 +352,33 @@ func (s *sendRoots) open(dir string) (sendRoot, bool) {
 	return sendRoot{path, r, id}, true
 }
 
+// worktreeAt is dir, whose folder is info, as a root, if it has a .git and is one of this clone's
+// worktrees (ownWorktree); it is added to s's roots then.
+func (s *sendRoots) worktreeAt(dir string, info os.FileInfo) (sendRoot, bool) {
+	if s.git == nil || slices.ContainsFunc(s.notOurs, func(n os.FileInfo) bool { return os.SameFile(n, info) }) {
+		return sendRoot{}, false
+	}
+	if _, err := s.stat(filepath.Join(dir, ".git")); err != nil {
+		return sendRoot{}, false
+	}
+	root, ok := s.open(dir)
+	switch {
+	case !ok:
+	case s.ownWorktree(root, s.worktrees) && s.add(root):
+		return root, true
+	default:
+		root.r.Close()
+	}
+	s.notOurs = append(s.notOurs, info)
+	return sendRoot{}, false
+}
+
 // ownWorktree says root's .git, looked at through its handle, is this clone's git directory, or a
 // file that points into its worktrees folder: what git makes for the main worktree and a linked one.
+// A .git file is anyone's to write, so it alone doesn't make a folder a worktree (Sol's review of
+// #805): a linked one's registration in the git directory must name it back, and a main worktree
+// kept apart from its git directory must hold one of this device's sessions. Before #772 the same
+// two were how worktrees were found.
 func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
 	info, err := root.r.Lstat(".git")
 	switch {
@@ -408,10 +402,53 @@ func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
 		return false
 	}
 	if target, err := s.stat(ptr); err == nil && os.SameFile(target, s.git) {
-		return true // a main worktree whose git directory is elsewhere
+		// A main worktree whose git directory is elsewhere.
+		return slices.ContainsFunc(s.sessions, func(cwd string) bool { return s.holds(root, cwd) })
 	}
 	parent, err := s.stat(filepath.Dir(ptr))
-	return err == nil && worktrees != nil && os.SameFile(parent, worktrees)
+	if err != nil || worktrees == nil || !os.SameFile(parent, worktrees) || s.gitRoot == nil {
+		return false
+	}
+	// Its registration, read through the git directory's handle, names this .git back. Its path
+	// can be relative to it (git worktree add --relative-paths).
+	reg := filepath.Join("worktrees", filepath.Base(ptr))
+	b, err = s.gitRoot.ReadFile(filepath.Join(reg, "gitdir"))
+	back := strings.TrimSpace(string(b))
+	if err != nil || back == "" || netPath(back) {
+		return false
+	}
+	if !filepath.IsAbs(back) {
+		back = filepath.Join(ptr, back)
+	}
+	back, err = s.local(back)
+	if err != nil {
+		return false
+	}
+	// Both the file and its folder: a hard link to a worktree's .git, elsewhere, is the same file
+	// (Sol's second review of #805).
+	named, err := s.stat(back)
+	if err != nil || !os.SameFile(named, info) {
+		return false
+	}
+	dir, err := s.stat(filepath.Dir(back))
+	return err == nil && os.SameFile(dir, root.id)
+}
+
+// holds says the folder cwd is root or inside it, by what each folder above it is, so a short
+// name (C:\MYREPO~1) or a link doesn't miss.
+func (s *sendRoots) holds(root sendRoot, cwd string) bool {
+	dir, err := s.local(cwd)
+	if err != nil {
+		return false
+	}
+	for ; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, root.id) {
+			return true
+		}
+		if filepath.Dir(dir) == dir {
+			return false
+		}
+	}
 }
 
 // volume is the root of path's volume, opened once, and path from there.
@@ -530,13 +567,21 @@ func (s *sendRoots) openSend(path string) (*os.File, error) {
 		return nil, err
 	}
 	// The root it is in is found by what each folder above it is, not by how its path is spelled,
-	// which a short Windows name (RUNNER~1) or a case can change.
+	// which a short Windows name (RUNNER~1) or a case can change. A folder above it with a .git is
+	// looked at as it is met, the nearest first, and is a root if it is one of this clone's
+	// worktrees (#772): only the worktree a file is in is opened, not every one the clone has, which
+	// took 1 to 4 s a send on a clone with 220 (Fable's review of #768). One that isn't, as a
+	// nested repo, is passed over, so a file in it is still in the worktree around it.
 	var root sendRoot
 	var rest []string
 	for dir := real; ; dir = filepath.Dir(dir) {
 		if info, err := s.stat(dir); err == nil {
 			if i := slices.IndexFunc(s.roots, func(r sendRoot) bool { return os.SameFile(info, r.id) }); i >= 0 {
 				root = s.roots[i]
+				break
+			}
+			if r, ok := s.worktreeAt(dir, info); ok {
+				root = r
 				break
 			}
 		}
