@@ -123,13 +123,25 @@ func (d *Daemon) heldNamesLocked(addr string) []string {
 // this device reads it, and its sender is told it was muted (#466, docs/design/mutes.md). Caller
 // holds mu.
 func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
-	m := d.st.Mutes[d.tagKeyLocked(id)]
+	return d.mutedAtKeyLocked(d.tagKeyLocked(id), addr)
+}
+
+// mutedAtKeyLocked is mutedAtLocked for the session whose mutes are kept under key (tagKeyOf).
+// Caller holds mu.
+func (d *Daemon) mutedAtKeyLocked(key, addr string) (at time.Time, muted bool) {
+	m := d.st.Mutes[key]
 	if len(m) == 0 || bus.IsPerson(addr) {
 		return at, false
 	}
 	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 		at, muted = m[name]
 		return at, muted
+	}
+	// One here whose new name is pending is still the session muted under its old one (#827).
+	if old := d.leftNameLocked(addr); old != "" {
+		if at, muted = m[old]; muted {
+			return at, true
+		}
 	}
 	for _, name := range d.heldNamesLocked(addr) {
 		// The latest mute of them, so the grace is that one's.
@@ -152,12 +164,41 @@ func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
 // to the device is dropped from the first moment: its sender is never refused, so there is
 // nothing for a grace to keep true. Caller holds mu.
 func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
-	at, muted := d.mutedAtLocked(id, e.From)
+	return d.mutedHereKeyLocked(d.tagKeyLocked(id), e)
+}
+
+// mutedHereKeyLocked is mutedHereLocked for the session whose mutes are kept under key (tagKeyOf).
+// Caller holds mu.
+func (d *Daemon) mutedHereKeyLocked(key string, e bus.Event) bool {
+	at, muted := d.mutedAtKeyLocked(key, e.From)
 	if !muted {
 		return false
 	}
 	direct := strings.Contains(e.To, "/")
 	return !direct || time.Since(at) >= d.opt.MuteGrace
+}
+
+// leftNameLocked is the name the session at addr had before this clone lost its keys, if it is
+// one of this device's whose new name is pending (NamesLeft, #827), and "" otherwise. The
+// sessions here that muted it under that name have still muted it. Caller holds mu.
+func (d *Daemon) leftNameLocked(addr string) string {
+	dev, id := bus.SplitAddr(addr)
+	if s := d.sessions[id]; dev == d.device && s != nil && s.name == "" && s.key != "" {
+		return d.st.NamesLeft[s.key]
+	}
+	return ""
+}
+
+// muteNameLocked is the name a session on device dev would have muted the sender at from by: the
+// one it is shown by (nameOfLocked), or for a session here whose new name is pending, the one
+// sessions here muted it by (leftNameLocked). Where the message is dropped on arrival
+// (mutedAtLocked) is where its sender is refused or told. Only for a muter on this device: no
+// other device's mute of the old name follows the session. Caller holds mu.
+func (d *Daemon) muteNameLocked(from, dev string) string {
+	if name := d.nameOfLocked(from); name != "" || dev != d.device {
+		return name
+	}
+	return d.leftNameLocked(from)
 }
 
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted
@@ -189,7 +230,7 @@ func (d *Daemon) mutersLocked(name, dev string) []string {
 	var out []string
 	if dev == "" || dev == d.device {
 		for _, s := range d.sortedSessionsLocked() {
-			if _, muted := d.st.Mutes[tagKeyOf(s.name, s.id)][name]; muted {
+			if _, muted := d.st.Mutes[d.keptByLocked(s)][name]; muted {
 				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
 			}
 		}
@@ -229,7 +270,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 	if s == nil {
 		return fail("the CLI mutes nobody: a mute is a session's")
 	}
-	key := tagKeyOf(s.name, s.id)
+	key := d.keptByLocked(s)
 	name := req.Name
 	var note string
 	switch {
@@ -243,7 +284,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 		d.dropMuteLocked(key, name)
 		d.log.Printf("session %s unmuted %s", from, name)
 		note = "You have unmuted " + name + ". What it sends from now on will reach you."
-	case name == s.name:
+	case name == s.name || name == key: // key: the name it had before this clone lost its keys
 		return fail("that is your own name")
 	default:
 		if _, ok := d.resolveNameLocked(name); !ok {

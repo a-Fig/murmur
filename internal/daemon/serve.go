@@ -254,7 +254,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if s == nil && !h.Reconnect {
 		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
 	}
-	key := d.uniqueKeyLocked(base, h.ID)
+	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -357,6 +357,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	s.dropped, s.takeover = time.Now(), takeover
 	d.mu.Unlock()
 
+	var over <-chan struct{} // nil, so never, unless a test ends the grace
+	if graceBegins != nil {
+		over = graceBegins(h.ID)
+	}
 	grace := time.NewTimer(d.opt.SessionGrace)
 	defer grace.Stop()
 	select {
@@ -370,6 +374,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.mu.Unlock()
 		return
 	case <-grace.C:
+	case <-over:
 	}
 
 	d.mu.Lock()
@@ -381,16 +386,35 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
+	// A session that took this one's name while it was in its grace, as a conversation resumed at
+	// another ID does (a command-line one after #51 hashed its ID), passed its inbox by: it was
+	// still among the sessions then. It takes it now (Opus's review of #51), and is handed it: its
+	// registration's look for messages to hand over is long done, and nothing after this kicks one.
+	kept := d.keptForLocked(h.ID)
+	adopted := false
+	if holder := d.sessions[d.st.NameHolders[kept]]; kept != "" && holder != nil && holder.id != h.ID &&
+		holder.dropped.IsZero() && holder.name == kept {
+		adopted = d.adoptLocked(holder, kept)
+	}
 	d.saveLocked()
 	unlogged := s.unlogged
 	d.mu.Unlock()
 	d.log.Printf("session %s stopped", addr)
+	if adopted {
+		d.kickPush()
+	}
 	d.kickPresence()
 	if !unlogged {
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
 }
+
+// graceBegins, if a test sets it, is called once a session whose connection dropped is recorded
+// as dropped, as its grace begins, and closing the channel it returns ends that grace as
+// SessionGrace's timer would. Tests take a long grace and end it when they are ready, instead of
+// racing a short one (Sol's review of #51).
+var graceBegins func(id string) <-chan struct{}
 
 // stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
 // then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
@@ -720,7 +744,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
 		printsWhole := hookReq(req) && req.Whole
-		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		busyWhole := wake.busyChoice(d.settingsNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing || d.heldLocked(id, m) {
 				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
@@ -949,7 +973,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
 	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
-	var toName, renamed string
+	var toName, byName, renamed string
 	if toDevice {
 		// Sent to the device, as above.
 	} else if names.Valid(to) {
@@ -959,7 +983,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		isDevice = isDevice || to == d.device // a device may have an ID shaped like a name
 		var now string
 		if ok {
-			now, _, _ = d.sessionInfoLocked(d.queuedAtLocked(addr))
+			now, _, _ = d.sessionInfoLocked(d.queuedAtNamedLocked(addr, to))
 		}
 		d.mu.Unlock()
 		switch {
@@ -970,7 +994,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 			if now != "" && now != to {
 				renamed = fmt.Sprintf("%s was this session's name before it moved to another conversation; it is called %s now. The message was sent to it.", to, now)
 			}
-			to, toName = addr, to
+			to, toName, byName = addr, to, to
 		case !isDevice:
 			d.mu.Lock()
 			why := d.noSuchNameLocked(to)
@@ -1007,7 +1031,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	} else if to != "*" {
 		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
-		at := d.queuedAtLocked(to)
+		at := d.queuedAtNamedLocked(to, byName)
 		dev, sess := bus.SplitAddr(at)
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
@@ -1031,7 +1055,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
 		// sent, and this is where the sender learns of the mute.
-		muted := d.hasMutedLocked(dev, sess, d.nameOfLocked(from))
+		muted := d.hasMutedLocked(dev, sess, d.muteNameLocked(from, dev))
 		d.mu.Unlock()
 		switch {
 		case muted:
@@ -1065,7 +1089,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
-		To: to, Subject: subject, Body: body}
+		To: to, ToName: byName, Subject: subject, Body: body}
 	// Before anything is read (#765, Tyler, 2026-11-16): an agent's files by its device's agents' Send
 	// files, the page's by its person's.
 	sends := func() bool {
@@ -1165,6 +1189,12 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.saveLocked()
 		d.mu.Unlock()
 	}
+	// Not the person's: the page shows a send as sent once it answers, and has nowhere to show a
+	// give-up minutes later, so the person is told at once it wasn't sent and can try again, as before
+	// #781 (Fable's review of rc.2).
+	if bus.IsPerson(from) {
+		settle = nil
+	}
 	err := d.appendEventIf(ctx, e, still, settle)
 	pending := errors.As(err, new(pendingError))
 	if err != nil && !pending {
@@ -1197,6 +1227,9 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
 		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		if old := d.leftNameLocked(from); old != "" && (dev == "" || dev == d.device) {
+			muters = d.mutersLocked(old, d.device) // its new name pending: those here that muted its old one
+		}
 		var members []string
 		if group {
 			members, _ = d.groupMembersLocked(to, from)

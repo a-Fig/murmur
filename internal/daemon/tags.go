@@ -33,9 +33,22 @@ func tagKeyOf(name, id string) string {
 	return "id:" + id
 }
 
+// keptByLocked is what session s's tags and mutes are kept by: its name, or its ID while the
+// name is pending (tagKeyOf). One back on a clone that lost its keys, whose new name is pending,
+// goes by the name its key had on the old device (NamesLeft, #827): it is on do not disturb and
+// in its groups from the start, and what it changes meanwhile is a change to those, which the
+// new name takes when it lands (adoptLeftLocked). By the key, not the ID: a session that moves
+// to another conversation before then leaves them with the one they were for. Caller holds mu.
+func (d *Daemon) keptByLocked(s *session) string {
+	if old := d.st.NamesLeft[s.key]; s.name == "" && s.key != "" && old != "" {
+		return old
+	}
+	return tagKeyOf(s.name, s.id)
+}
+
 // tagStateLocked is what is kept about the tags of session s, nil if nothing. Caller holds mu.
 func (d *Daemon) tagStateLocked(s *session) *tags.State {
-	return d.st.Tags[tagKeyOf(s.name, s.id)]
+	return d.st.Tags[d.keptByLocked(s)]
 }
 
 // adoptTagsLocked moves what a session kept by its ID while its name was pending to the name,
@@ -217,10 +230,10 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 			held = append(held, fmt.Sprintf("%s (a human set it %s)", t, map[bool]string{true: "on", false: "off"}[m.On]))
 		}
 	}
-	d.putTagStateLocked(tagKeyOf(s.name, s.id), &next)
+	d.putTagStateLocked(d.keptByLocked(s), &next)
 	d.kickPresence()
 	if wasDND && !d.ownDNDLocked(id) {
-		d.releaseLocked(tagKeyOf(s.name, s.id))
+		d.releaseLocked(d.keptByLocked(s))
 	}
 	note := "tags set"
 	if len(held) > 0 {
@@ -248,10 +261,15 @@ func (d *Daemon) putTagStateLocked(key string, st *tags.State) {
 // session this device knows nothing of. Caller holds mu.
 func (d *Daemon) tagKeyLocked(id string) string {
 	if s := d.sessions[id]; s != nil {
-		return tagKeyOf(s.name, s.id)
+		return d.keptByLocked(s)
 	}
 	if name := d.st.SessionNames[id]; name != "" {
 		return name
+	}
+	// One that stopped while its new name was pending, on a clone that lost its keys, still goes
+	// by the name its conversation had (keptByLocked), as explainKeyLocked has it.
+	if conv := d.conversationLocked(id); conv != "" && d.st.NamesLeft[conv] != "" {
+		return d.st.NamesLeft[conv]
 	}
 	// One whose name never landed keeps what it has by its ID: one that stopped, whose inbox is
 	// kept in case it comes back, and one that set tags or muted someone before it stopped or the

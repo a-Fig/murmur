@@ -37,9 +37,15 @@ names routes by it all the same.
   restarting, the daemon restarting and a resume, and different keys never share one. The
   key-to-name map stays in the daemon's state file, so the client's ID is never published. A resume
   on another device is a new session there. Two live sessions with one key would share a name, so
-  the later is a session of its own. A key that comes back under another ID while its old session is
-  in its grace takes the name with it, so a message to it isn't left in an inbox about to stop
-  (2026-10-29).
+  the later is a session of its own. Where the two are MCP servers of one client process, it
+  stays one for as long as its inbox is kept (`later` in the state file), so each comes back to
+  its own name whichever reconnects first. Until 2026-11-16 (#38) the first back took the plain
+  key and its sibling's name, and both names changed. A second program on the same conversation
+  isn't held to this: once the first has gone it takes the conversation's name. A client that
+  doesn't say which process it is counts as one process. A server process that is started
+  again has a new ID, and so a new name, as before. A key that comes back under another ID while
+  its old session is in its grace takes the name with it, so a message to it isn't left in an
+  inbox about to stop (2026-10-29).
 - **A Codex session outside T3 follows its thread** (#36, 2026-10-30). Codex's MCP server learns the
   thread ID at its first tool call (`_meta.threadId`), and the key is then `codex:<threadId>`. Codex
   keeps that ID across resume and compaction and gives a new one on `/new`, `/clear` and a fork,
@@ -141,9 +147,15 @@ names routes by it all the same.
   last had, if that one is registered or stopped within `StoppedInbox` and the name is still the
   last it took: one hop. A session that takes a name also takes the kept inboxes of stopped sessions
   whose last name it was. So a conversation comes back as whichever session takes its name next, and
-  a message to the name waits for any of them (2026-10-29). The name sent to isn't on message
-  events, so the receiving daemon can't tell which name was used; putting it there is a bus format
-  change, Tyler's to decide (2026-10-29).
+  a message to the name waits for any of them (2026-10-29). One ID can hold several names over
+  time, after a `/clear`, so a message sent by name also carries the name, as `toName` (#45,
+  2026-11-16). The receiving daemon then forwards it by that name, not by the last name the address
+  had, even while the session at the address runs, and a message that waits in a kept inbox goes
+  to the next session to take the name it carries. A daemon from before that ignores the field and
+  goes by the address, as it did. It stays at the address when no other session has taken the name
+  since. The sending device's mute, offline and do-not-disturb checks still look at the address's
+  session. A session that comes back under its own ID still takes its whole inbox, messages for a
+  name it left among them (#847).
 - **A long-gone session's name is forgotten after 30 days** (#747, 2026-11-16). The daemon keeps the
   name each of its sessions took last, to label a stopped session and to pass a message for an old
   address on to the name's holder. T3 makes a new session for a thread each time its MCP server

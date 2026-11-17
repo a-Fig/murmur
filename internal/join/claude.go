@@ -164,6 +164,9 @@ func (e Env) runClaude(ctx context.Context, h agentHome, claude string, args ...
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, claude, args...)
+	// An npm install's claude.cmd is cmd.exe running node: killing it leaves node holding the output
+	// open, and the join's deadline would wait for node (#829).
+	cmd.WaitDelay = time.Second
 	var env []string
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(kv), "CLAUDE_CONFIG_DIR=") {
