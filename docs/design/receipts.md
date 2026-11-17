@@ -25,14 +25,19 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   `UserPromptSubmit` sends a prompt that is that turn (#611, below); clients whose hook sends no
   prompt (Pi, OpenCode) leave it handed over.
 - **A turn's prompt marks it read** (#611, 2026-11-15). The hook sends the first 4 KB of each
-  prompt with `UserPromptSubmit` to its own daemon, which keeps none of it. The daemon remembers each
+  prompt with `UserPromptSubmit` to its own daemon, which writes none of it to disk. The daemon remembers each
   message that asked for receipts as its handoff begins (the turn can start before the client's
   command returns), with the first 4 KB of the turn's text, and marks read the oldest whose turn the
   prompt is: from Murmur's header line on, the prompt and that text agree. Matching the turn, not
   just taking the next prompt, keeps a prompt the user typed while T3 held Murmur's turn in its queue
   from counting. Matching the whole text, not the subject, keeps a cancelled turn for "Deploy" from
   taking the mark of the turn for "Deploy now" (#651). At most 20 a session are remembered, for a
-  day.
+  day. What a session waits on moves with its inbox to the session that replaces it, a T3
+  thread's new server or the next holder of its name, as the turn can start under that one (#744,
+  2026-11-16). The mark is still made as the first session's, the one the sender has the message
+  down for. A Codex server in T3 learns its thread only at its first tool call, after the turn's
+  prompt, so a session's last prompt that matched nothing is kept in memory for a minute and tried
+  again when the session takes another's over.
 - **Marks are batched.** They wait 3 s (`ReceiptGather`) and go out as one `receipt` event on the
   recipient's own log, at most one per device every 15 s (`ReceiptGap`), keeping only each message's
   furthest state. Without the gap, a message to ten sessions on five devices could cost twenty
@@ -52,7 +57,10 @@ is what the page shows. The states are defined in [delivery](delivery.md).
   `delivered`; it is off unless asked, per message, and refused for a message to everyone, which
   would draw a mark from every session on the mesh. The message asks for receipts, and the sender's
   daemon keeps it in `Sent` like a person's, with the state asked about and who asked, until the
-  sender has been told; meanwhile it counts toward the cap of 200. The page shows no ticks for it.
+  sender has been told; meanwhile it is counted apart from the person's 200 (#748, 2026-11-16):
+  sharing them, a busy half hour pushed out a record still waited on, and its sender never heard.
+  Past 2,000 waited on at once, the oldest's sender is told early where its message is.
+  The page shows no ticks for it.
   The sender is told once: when every recipient whose
   device writes marks has got that far, or after `TellWait` (30 minutes) with where it is with each.
   A message handed over as a turn counts as delivered: the client holds the turn whole, and it is

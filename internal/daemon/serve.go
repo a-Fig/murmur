@@ -333,9 +333,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.mu.Lock()
 	d.lastActive = time.Now()
 	if ctx.Err() != nil {
-		// The daemon is stopping. The session may reconnect to the next one, so its inbox is
-		// kept; the goodbye deletes this device's presence.
-		delete(d.sessions, h.ID)
+		d.stoppedWithDaemonLocked(h.ID)
 		d.mu.Unlock()
 		return
 	}
@@ -351,7 +349,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	case <-ctx.Done():
 		d.mu.Lock()
 		if s.takeover == takeover {
-			delete(d.sessions, h.ID)
+			d.stoppedWithDaemonLocked(h.ID)
 		}
 		d.mu.Unlock()
 		return
@@ -375,6 +373,24 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
+}
+
+// stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
+// then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
+// does any session back from stopped (newSessionLocked). One that doesn't, a thread left open on
+// a laptop shut overnight, is then a stopped session like any other: its inbox, credited commits
+// and T3 route are kept for StoppedInbox, and what is sent meanwhile is queued for it
+// (keptSinceLocked). Unrecorded, the next daemon's pruneInboxes took all of that two minutes
+// after it started. No stop goes on the log: the goodbye deletes this device's presence, and a
+// session that reconnects never stopped as far as anyone else knows. Caller holds mu.
+func (d *Daemon) stoppedWithDaemonLocked(id string) {
+	delete(d.sessions, id)
+	d.st.Stopped[id] = time.Now().Round(0)
+	if d.st.Downed == nil {
+		d.st.Downed = map[string]bool{}
+	}
+	d.st.Downed[id] = true
+	d.saveLocked()
 }
 
 // liveLocked says whether session id is connected: the CLI always is, a session in its grace or
@@ -632,6 +648,8 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 		if d.readOnPromptLocked(id, req.Prompt) {
 			d.saveLocked() // a turn handed over has started (#611)
+		} else {
+			d.missedPromptLocked(id, req.Prompt)
 		}
 		if s := d.sessions[id]; s != nil && s.sending != "" && req.Prompt != "" &&
 			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
@@ -733,7 +751,8 @@ func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Nat
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
 // turn going (req.Continues), they are its reply instead, read, and the turn goes on with them
-// (Tyler, 2026-11-08). A session with none is idle.
+// (Tyler, 2026-11-08). A session with none is idle. While the device is invisible the turn ends
+// all the same, but nothing keeps it going: what waits is handed over once the device is back.
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -757,7 +776,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 			}
 		}
 		d.endTurnLocked(s, wake)
-		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
+		if !req.Continues || d.hidden.Load() || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
 		}
 		for _, m := range d.continueTurnLocked(s, wake, room) {
@@ -993,7 +1012,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		read, err := readSendFiles(req.Files)
+		read, err := d.readSendFiles(ctx, req.Files)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
@@ -1036,10 +1055,17 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.mu.Unlock()
 	}
 	if err := d.appendEvent(ctx, e); err != nil {
-		if len(e.Files) > 0 && !filesReused {
+		// Unless the push may land yet (unsureError): the message would then name files that are
+		// gone, and its receipts would have nothing to be kept in. The files go when their time
+		// is up, as any message's do.
+		unsure := errors.As(err, new(unsureError))
+		if len(e.Files) > 0 && !filesReused && !unsure {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
-		if e.Receipts {
+		// A record kept only to tell an agent how far its message got goes either way: the agent
+		// is told it wasn't sent, and a notice half an hour on that nobody has read it would be
+		// about a message it has likely sent again.
+		if e.Receipts && (!unsure || tellMe != "") {
 			d.mu.Lock()
 			delete(d.st.Sent, e.ID)
 			d.saveLocked()
@@ -1255,6 +1281,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 			d.dropStoppedLocked(h.ID)
 		} else {
 			delete(d.st.Stopped, h.ID)
+			delete(d.st.Downed, h.ID)
 			s.since = at
 		}
 		d.saveLocked()

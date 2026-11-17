@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 	"time"
@@ -35,11 +36,16 @@ const maxAwaiting = 20
 // Batch is the event ID of the first message of a turn that carries several (batchLocked, #699),
 // "" for a turn of one. Its first entry holds the turn's text and the others none, so one prompt
 // matches the turn once, and marks every message of it read.
+//
+// For is the session the message was handed to, where the entry has since moved to the session
+// that replaced it (takeAwaitingLocked), "" where it hasn't: the mark is made as that session's,
+// which is the one the sender has the message down for.
 type awaitingRead struct {
 	ID    string    `json:"id"`
 	From  string    `json:"from"`
 	Turn  string    `json:"turn,omitempty"`
 	Batch string    `json:"batch,omitempty"`
+	For   string    `json:"for,omitempty"`
 	At    time.Time `json:"at"`
 }
 
@@ -64,36 +70,92 @@ func (d *Daemon) awaitReadLocked(id string, e bus.Event, turn, batch string) boo
 			d.st.AwaitingRead[sess] = list
 		}
 	}
-	list := d.st.AwaitingRead[id]
-	if slices.ContainsFunc(list, func(a awaitingRead) bool { return a.ID == e.ID }) {
-		return false
-	}
+	// One kept from an earlier handoff of the message goes: taken over from the session that
+	// tried first (For), its turn's text is that session's, which this session's prompt may not
+	// hold, and its mark would be that session's while this handoff's is this one's.
+	list := slices.DeleteFunc(d.st.AwaitingRead[id], func(a awaitingRead) bool { return a.ID == e.ID })
 	list = append(list, awaitingRead{ID: e.ID, From: e.From, Turn: turn, Batch: batch, At: time.Now()})
-	if over := len(list) - maxAwaiting; over > 0 {
-		// An entry that holds a batch's text gives it to the first of its batch that stays: the rest
-		// would otherwise match no prompt (Sol's review of #701).
-		for _, gone := range list[:over] {
-			if gone.Batch == "" || gone.Turn == "" {
-				continue
-			}
-			if i := slices.IndexFunc(list[over:], func(a awaitingRead) bool { return a.Batch == gone.Batch }); i >= 0 {
-				list[over+i].Turn = gone.Turn
-			}
-		}
-		list = list[over:]
-	}
-	d.st.AwaitingRead[id] = list
+	d.st.AwaitingRead[id] = newestAwaiting(list)
 	return true
 }
 
-// forgetAwaitingLocked drops message msg from what session id waits on, as its handoff failed.
-// Caller holds mu.
+// newestAwaiting is the newest maxAwaiting entries of list, which is in the order they were made.
+func newestAwaiting(list []awaitingRead) []awaitingRead {
+	over := len(list) - maxAwaiting
+	if over <= 0 {
+		return list
+	}
+	// An entry that holds a batch's text gives it to the first of its batch that stays: the rest
+	// would otherwise match no prompt (Sol's review of #701).
+	for _, gone := range list[:over] {
+		if gone.Batch == "" || gone.Turn == "" {
+			continue
+		}
+		if i := slices.IndexFunc(list[over:], func(a awaitingRead) bool { return a.Batch == gone.Batch }); i >= 0 {
+			list[over+i].Turn = gone.Turn
+		}
+	}
+	return list[over:]
+}
+
+// takeAwaitingLocked moves what session from waits on to session to, which replaces it, and says
+// whether there was any (#744). A message handed to a T3 thread through a session in its grace, or
+// a stopped one's route, starts its turn under the thread's new session, whose hook's prompt is
+// looked up under that session's ID: left behind, the entry matched nothing, the message stayed
+// handed over, and a sender that asked to be told when it was read heard only at the timeout. The
+// inbox moves the same way (takeInboxLocked, adoptLocked). The caller saves the state. Caller
+// holds mu.
+func (d *Daemon) takeAwaitingLocked(to, from string) bool {
+	old := d.st.AwaitingRead[from]
+	if len(old) == 0 || to == from {
+		return false
+	}
+	list := d.st.AwaitingRead[to]
+	for _, a := range old {
+		if slices.ContainsFunc(list, func(b awaitingRead) bool { return b.ID == a.ID }) {
+			continue
+		}
+		if a.For == "" {
+			a.For = from
+		}
+		list = append(list, a)
+	}
+	slices.SortStableFunc(list, func(a, b awaitingRead) int { return a.At.Compare(b.At) })
+	delete(d.st.AwaitingRead, from)
+	d.st.AwaitingRead[to] = newestAwaiting(list)
+	// The turn may have started already: a Codex server in T3 learns its thread, and so takes
+	// over, only at its first tool call, which comes after the turn's prompt.
+	if s := d.sessions[to]; s != nil {
+		if s.missedPrompt != "" && time.Since(s.missedAt) <= d.opt.SessionGrace && d.readOnPromptLocked(to, s.missedPrompt) {
+			s.missedPrompt = ""
+		}
+		d.readHeldPromptsLocked(s)
+	}
+	return true
+}
+
+// missedPromptLocked keeps the prompt of session id that was no turn it waits on, in memory and
+// for SessionGrace, as a held prompt is kept (holdPromptLocked): it may be the turn of a message
+// the session is about to take over (takeAwaitingLocked). Caller holds mu.
+func (d *Daemon) missedPromptLocked(id, prompt string) {
+	if s := d.sessions[id]; s != nil && prompt != "" {
+		s.missedPrompt, s.missedAt = prompt, time.Now()
+	}
+}
+
+// forgetAwaitingLocked drops message msg from what session id waits on, as its handoff failed,
+// wherever that has gone: a session that replaced id during the handoff has taken it
+// (takeAwaitingLocked). Caller holds mu.
 func (d *Daemon) forgetAwaitingLocked(id, msg string) {
-	list := slices.DeleteFunc(d.st.AwaitingRead[id], func(a awaitingRead) bool { return a.ID == msg })
-	if len(list) == 0 {
-		delete(d.st.AwaitingRead, id)
-	} else {
-		d.st.AwaitingRead[id] = list
+	for sess, list := range d.st.AwaitingRead {
+		list = slices.DeleteFunc(list, func(a awaitingRead) bool {
+			return a.ID == msg && (sess == id || a.For == id)
+		})
+		if len(list) == 0 {
+			delete(d.st.AwaitingRead, sess)
+		} else {
+			d.st.AwaitingRead[sess] = list
+		}
 	}
 }
 
@@ -112,7 +174,7 @@ func (d *Daemon) readOnPromptLocked(id, prompt string) bool {
 	hit := list[i]
 	for _, a := range slices.Clone(list) { // forgetAwaitingLocked changes list in place
 		if a.ID == hit.ID || hit.Batch != "" && a.Batch == hit.Batch {
-			d.markLocked(id, bus.Event{Type: bus.Message, ID: a.ID, From: a.From, Receipts: true}, bus.MarkRead)
+			d.markLocked(cmp.Or(a.For, id), bus.Event{Type: bus.Message, ID: a.ID, From: a.From, Receipts: true}, bus.MarkRead)
 			d.forgetAwaitingLocked(id, a.ID)
 		}
 	}

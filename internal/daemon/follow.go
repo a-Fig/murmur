@@ -149,7 +149,14 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	var from []string
 	for _, id := range sortedKeys(d.st.Stopped) {
 		if id == s.id || d.sessions[id] != nil || d.st.SessionNames[id] != name ||
-			time.Since(d.st.Stopped[id]) > d.opt.StoppedInbox || len(d.st.Inbox[id]) == 0 {
+			time.Since(d.st.Stopped[id]) > d.opt.StoppedInbox {
+			continue
+		}
+		// A message handed over as a turn has left the inbox, and its turn may start under s.
+		if d.takeAwaitingLocked(s.id, id) {
+			d.saveLocked()
+		}
+		if len(d.st.Inbox[id]) == 0 {
 			continue
 		}
 		for _, m := range d.st.Inbox[id] {

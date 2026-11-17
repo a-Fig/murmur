@@ -188,3 +188,25 @@ func TestClosingOnTheWindowsThread(t *testing.T) {
 		t.Fatal("told it came forward, though the window was closing")
 	}
 }
+
+// An open window is found without being asked anything, and a record of one that has closed
+// isn't taken for one (#746).
+func TestWindowOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "window.json")
+	if WindowOpen(path) {
+		t.Fatal("open with no record")
+	}
+	in, err := Claim(path, "")
+	if err != nil || in == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !WindowOpen(path) {
+		t.Error("the claimed window isn't found")
+	}
+	rec, _ := os.ReadFile(path)
+	in.Close()
+	os.WriteFile(path, rec, 0o600) // as a window that crashed leaves it
+	if WindowOpen(path) {
+		t.Error("a closed window's record taken for an open one")
+	}
+}

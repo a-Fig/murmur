@@ -76,7 +76,10 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
   encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
-  file names, and a turn made from it later says the files aren't there.
+  file names, and a turn made from it later says the files aren't there. An invisible device
+  deletes nothing from the remote, as it writes nothing there (`modes.md`): its refs past their
+  time go when it leaves invisible (#789), or when a teammate's daemon deletes them as a gone
+  device's, below.
 - **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
   2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
   included, and deletes one once it has itself run for 14 days since it first read of it, if the
@@ -95,11 +98,18 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,
   names and contents, within 10 minutes of their push takes that push's ref, once a message naming
   it has gone out. A ref whose message failed is left to the prune and taken by no other send, and
-  a send that took a ref and then failed leaves it be. Until then each message uploaded them again.
+  a send that took a ref and then failed leaves it be. A message whose push ended badly without
+  the remote refusing it may land yet, on Windows even after the push was killed, so its ref is
+  kept its full time (#745). Until then each message uploaded them again.
 - **200 MB of uploads a device a day** (`FilesPerDay`, #739), over the last 24 hours, counted in
   packs pushed, so a send to several counts once. Past it a send with files is refused, saying when
   it can go. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an
-  hour on the remote, which shares the repo's size limits with the team's code.
+  hour on the remote, which shares the repo's size limits with the team's code. A pack is counted
+  before its push, which can land and still report failure, and taken off the count once the
+  remote is known not to have it (#788): at once when the remote, asked after the failed push,
+  lists no such ref; at a prune six minutes or more after the push began, for one cut off at its
+  time limit, since what its git started may still be sending. Before that, a dozen tries at a
+  15 MB recording over a bad connection uploaded nothing and stopped file sends for a day.
 - **1 GB of files kept a device** (`FilesHeld`, #739), those it sent and those it fetched together.
   Past it a message's files go, the oldest first, checked after each send and each fetch, the
   page's included, and at each prune, the files just sent or fetched staying; such a message reads
@@ -121,6 +131,28 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   is known to every teammate: one could push their own blob over it and send a message naming it,
   and a device that read theirs first would show their file under the real message. With the sums
   in the name, a directory holds only files that are what its message says.
+- **Where a send reads from** (#690, 2026-11-16). The daemon reads a file as the user, outside
+  any sandbox the agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise
+  send anything the user can read (`~/.ssh`, cloud credentials, other repos) to the whole team. It
+  reads only from the clone's worktrees and the temp folder (`os.TempDir`, and `/tmp` on macOS and
+  Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
+  Each folder is opened as an `os.Root`, and every later look and the read go through that
+  handle, so the folder checked is the one read from even if its path becomes a link after. The
+  worktrees are found from their registrations in the git directory, read as files through its
+  handle: `git worktree list` looks at each one, which would sign in to a share one names. A main
+  worktree whose git directory is elsewhere (`--separate-git-dir`) is found above a session's
+  folder. As an agent can write registrations, a worktree counts only if its `.git`, looked at
+  through its handle, leads back to this clone, and never if it is the git directory or inside it. A
+  path's links are followed one part at a time, through its volume's handle, which refuses a link
+  to a share instead of following it; the folder it lands in is found, and the git directory
+  refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short
+  Windows name (`RUNNER~1`) or an alias doesn't get around them. A link met in the folder after
+  that can only have been swapped in, and is refused. A network path on Windows (`\\host\share`,
+  `\/host/share`, `\\?\`) is refused before anything, as looking signs in to that host as the
+  user. `~/.claude` stays out though a screenshot pasted into Claude Code may be there: it holds
+  Claude Code's credentials and every conversation. A refusal says to copy the file into the temp
+  folder. The page's uploads aren't paths, and aren't limited. Left: a hard link, which looks like
+  the file it links to.
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
