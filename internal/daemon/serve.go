@@ -1066,6 +1066,18 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: body}
+	// Before anything is read (#765, Tyler, 2026-11-16): an agent's files by its device's agents' Send
+	// files, the page's by its person's.
+	sends := func() bool {
+		return (len(req.Files) == 0 || d.agentSend.Load()) && (len(uploads) == 0 || d.pageSend.Load())
+	}
+	switch {
+	case len(req.Files) > 0 && !d.agentSend.Load():
+		return refuse(proto.RefusedSend, "not sent: sending files is off for agents in this repo. Your user can turn on Send files, with agents too, in "+
+			brand.Product+"'s Settings; or send the text alone.")
+	case len(uploads) > 0 && !d.pageSend.Load():
+		return refuse(proto.RefusedSend, "not sent: sending files is off for you in this repo. Turn on Send files in Settings, or send the text alone.")
+	}
 	filesReused := false // the files took a ref an earlier message went out with (putFiles)
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
@@ -1074,7 +1086,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
-		files, at, reused, err := d.putFiles(ctx, append(read, uploads...))
+		files, at, reused, err := d.putFiles(ctx, append(read, uploads...), sends)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
@@ -1112,7 +1124,11 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.saveLocked()
 		d.mu.Unlock()
 	}
-	if err := d.appendEvent(ctx, e); err != nil {
+	var still func() bool
+	if len(e.Files) > 0 {
+		still = sends
+	}
+	if err := d.appendEventIf(ctx, e, still); err != nil {
 		// Unless the push may land yet (unsureError): the message would then name files that are
 		// gone, and its receipts would have nothing to be kept in. The files go when their time
 		// is up, as any message's do.
@@ -1271,7 +1287,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now(),
-		DND: d.dnd.Load()}
+		DND: d.dnd.Load(), FilesOff: !d.agentRecv.on.Load(), SendFilesOff: !d.agentSend.Load()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -1295,7 +1311,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
-			Stale: d.staleLocked(p), DND: p.pres.DND}
+			Stale: d.staleLocked(p), DND: p.pres.DND, FilesOff: p.pres.Files && p.pres.FilesOff}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
@@ -1313,7 +1329,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
-				Tags: ts, HookOff: s.HookOff})
+				Tags: ts, HookOff: s.HookOff, FilesOff: s.ID == bus.PersonSession && p.pres.Files && p.pres.PersonFilesOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
 			continue // nothing on it matches

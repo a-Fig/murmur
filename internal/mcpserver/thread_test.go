@@ -46,7 +46,8 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 		t.Errorf("under another agent: %+v", h)
 	}
 	agentAbove = func() bool { return false }
-	// Outside T3 (no T3 command line) the variable is someone else's, and the session is as before.
+	// With no T3 command line and not started by a t3 (servingT3, as TestMain sets it), the variable
+	// is only inherited, and the session is as before.
 	t.Setenv("T3CODE_CLI_PATH", "")
 	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != "a4ca6b" {
 		t.Errorf("outside T3: %+v", h)

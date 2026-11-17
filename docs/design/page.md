@@ -76,7 +76,12 @@ from it is in [a person on the page](people.md).
   model and tags, the status and branch, what you have in common (the groups you have posted in that
   it is in, and your device), for a person the sessions they have messaged, and a box that sends a
   direct message from the card. It uses only presence and the messages the page has. A face that is
-  part of another control (the account chip, a group's pile) doesn't open it. Tyler chose the banner
+  part of another control (the account chip, a group's pile) doesn't open it. Since 2026-11-16
+  (#778, Tyler's request) a name opens it wherever the page shows one: the sidebar, Sessions, Recent
+  (activity and messages), a group's members, "Talked with", and a name the page knows written in a
+  message (`quiet-otter`). Names in a picker, in sessions being picked to tag, and in a
+  conversation's row keep that control's action. Read receipts list names in a tooltip, which
+  holds no controls, so they don't open it. Tyler chose the banner
   look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
   which #656 headed with its details, hold little more than the card does.
 - **Themes** (2026-11-09), kept in the browser: Dark (T3 Code's), Dim (the page's greys before it

@@ -8,6 +8,31 @@ couldn't send another a screenshot, a log or a diff.
 which it opens with its own tools; one that reads images sees the image. A person on the page
 attaches, pastes or drops files, and sees the ones a message carries ([below](#on-the-page)).
 
+## Off until turned on
+
+Tyler, 2026-11-16 (#765): files have to be turned on, each way, in Settings, and can then be
+kept from the agents, so a person can send and see files on the page while their agents don't.
+Each device has, for each repo, a main switch each way, **Send files** and **Receive files**
+(`sendFiles`, `receiveFiles`), off until the person turns it on, for anyone who used files on a
+nightly too. Once one is on, a second under it, **Agents too**, says whether it is the agents'
+as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are kept in
+`settings.json` with the page's other settings.
+
+- **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
+  an agent's if sending is off or kept from agents, the page's if it is off, and checked again
+  once the push's turn comes. An agent is told its user can turn it on, and `who` marks the device `AGENTS SEND NO
+  FILES` so it knows before it tries. On the page the paperclip still shows: attaching, dropping
+  or pasting a file asks the person to turn theirs on, and goes on once they do.
+- **Receive files off:** a message from another device arrives as its text, its files neither
+  fetched nor shown. Kept from agents, the page fetches and shows them and the sessions don't get
+  them. A fetch under way ends when its switch goes off, and a
+  message that was waiting for its files goes without them. The device's presence says whether its
+  agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
+  `send` says which recipients get the text alone, and `who` and `lookup` show it before a send.
+  What a session sends another on the same device is there already and fetched from nowhere, so it
+  is shown.
+- **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
+
 ## How a file travels
 
 - **A ref for each message.** The sender's daemon encrypts each file, joins them into one blob (the
@@ -89,8 +114,10 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
   date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
   monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
-  a team whose daemons run only while someone works. A ref no event this device read names
-  still stays: one whose message failed after its push, one in a log it can't open, or one sent
+  a team whose daemons run only while someone works. The note of a ref that is off the remote
+  already goes at the next prune, whatever its age (#747): the prune lists the remote, and a ref is
+  pushed before the event that names it, so one not listed was deleted. A ref no event this device
+  read names still stays: one whose message failed after its push, one in a log it can't open, or one sent
   before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once** (#739, 2026-11-16). Each gets a message of
   its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,
@@ -136,11 +163,14 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
   Each folder is opened as an `os.Root`, and every later look and the read go through that
   handle, so the folder checked is the one read from even if its path becomes a link after. The
-  worktrees are found from their registrations in the git directory, read as files through its
-  handle: `git worktree list` looks at each one, which would sign in to a share one names. A main
-  worktree whose git directory is elsewhere (`--separate-git-dir`) is found above a session's
-  folder. As an agent can write registrations, a worktree counts only if its `.git`, looked at
-  through its handle, leads back to this clone, and never if it is the git directory or inside it. A
+  worktree a file is in is found above it (#772): the nearest folder with a `.git` that, looked at
+  through its handle, leads back to this clone, never the git directory or inside it. A nested repo
+  is passed over. Only that worktree is opened, not every one the clone has, which took 1 to 4 s a
+  send on a clone with 220. A `.git` file is anyone's to write, so a linked worktree also needs its
+  registration in the git directory, read through that directory's handle, to name it back, and a
+  `--separate-git-dir` checkout, whose `.git` points straight at the git directory, needs one of
+  the device's sessions in it (Sol's review of #805). `git worktree list` isn't run: it looks at
+  each worktree, and would sign in to a share one names. A
   path's links are followed one part at a time, through its volume's handle, which refuses a link
   to a share instead of following it; the folder it lands in is found, and the git directory
   refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short

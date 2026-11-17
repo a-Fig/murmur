@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -270,14 +271,16 @@ func helloFor(agent, cwd string) proto.Hello {
 	if isClaude(agent) {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
-	h := proto.Hello{ID: sessionID(claude), Agent: agentName(agent), Cwd: cwd, ClaudeSession: claude,
-		ClientPID: os.Getppid(), Route: routeFromEnv(agent)}
+	t3 := t3Of(agent)
+	h := proto.Hello{ID: sessionID(claude), Agent: agentLabel(agent, t3.cli), Cwd: cwd, ClaudeSession: claude,
+		ClientPID: os.Getppid(), Route: routeWith(agent, t3)}
 	if v := nativeEnv[agent]; v != "" {
 		if native := os.Getenv(v); native != "" {
 			h.ID, h.Native = nativeID(native), native
 		}
 	}
-	if thread := os.Getenv(threadEnv); thread != "" && h.T3CLI != "" && isClaude(agent) && !agentAbove() {
+	if t3.thread && h.T3CLI != "" {
+		thread := os.Getenv(threadEnv)
 		h.ID, h.T3Thread, h.ByThread = threadID(thread), thread, true
 	}
 	return h
@@ -399,10 +402,19 @@ func nativeID(native string) string {
 // line takes a message (#135, package clientcli). T3's thread is in the environment of most agents
 // T3 runs (threadEnv), and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps
 // all of this to itself (see proto.Route).
-func routeFromEnv(agent string) proto.Route {
-	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
+func routeFromEnv(agent string) proto.Route { return routeWith(agent, t3Of(agent)) }
+
+// routeWith is routeFromEnv, with what t3Of found.
+func routeWith(agent string, t3 t3Seen) proto.Route {
+	r := proto.Route{T3CLI: t3.cli, T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
 	case isClaude(agent):
+		// A session T3 runs is reached through T3 only (see the daemon's viaOf): a line written to its
+		// messaging socket starts no turn, and the daemon would take the message as read. One whose
+		// T3 command line can't be found gets no socket, so its messages wait as notices (#780).
+		if r.T3CLI == "" && t3.thread {
+			break
+		}
 		r.MsgSocket, r.MsgToken = os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")
 	case agent == "pi":
 		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
@@ -415,6 +427,67 @@ func routeFromEnv(agent string) proto.Route {
 		}
 	}
 	return r
+}
+
+// t3Seen is what the environment says of T3: its command line, if the session is in T3, and
+// whether T3 runs the client, Claude Code, as a thread (see threadEnv).
+type t3Seen struct {
+	cli    string
+	thread bool
+}
+
+// t3Of looks once at whether agent's session is in T3: the walk up the processes in agentAbove is
+// made once, so the hello's parts can't disagree. T3's app names its command line in
+// T3CODE_CLI_PATH, but its headless server (`t3 serve`, 0.1.9, seen 2026-11-16) doesn't: it gives
+// the Claude Code it runs the thread's ID and T3CODE_HOME. Taken for outside T3 without one, such a
+// session was handed messages through the messaging socket, which starts no turn under T3, and
+// they were lost (#780). Only Claude Code's thread is found this way, as only it is known to have
+// the thread's variable (threadEnv).
+func t3Of(agent string) t3Seen {
+	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
+	seen.thread = isClaude(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
+	if seen.cli == "" && seen.thread {
+		seen.cli, seen.thread = servingT3()
+	}
+	return seen
+}
+
+// servingT3 is the `t3` that runs the client, as t3Of's thread is found, and whether the client
+// is the thread at all. A variable, so that tests needn't have T3.
+var servingT3 = func() (cli string, thread bool) {
+	parent, read := "", false
+	if pids := proc.Ancestors(os.Getppid(), 2); len(pids) == 2 {
+		exe, err := proc.Exe(pids[1])
+		parent, read = exe, err == nil
+	}
+	return t3Serving(parent, read, exec.LookPath)
+}
+
+// t3Serving is servingT3 for the client's parent, if it could be read. `t3 serve` starts Claude
+// Code itself, so a parent that is t3 is the thread's, used while it is still on disk; one that is
+// gone (an update pruned its version) gives way to the t3 on PATH, which follows updates. A parent
+// that is node may be the npm t3, so it too goes to PATH, as does one that can't be read. Any other
+// parent means the client isn't the thread but was started inside it, by tmux or an editor, say,
+// and only inherited its variable: it keeps its own route.
+func t3Serving(parent string, read bool, lookPath func(string) (string, error)) (string, bool) {
+	if read {
+		switch programName(parent) {
+		case "t3":
+			if !strings.HasSuffix(parent, " (deleted)") {
+				if _, err := os.Stat(parent); err == nil {
+					return parent, true
+				}
+			}
+		case "node":
+		default:
+			return "", false
+		}
+	}
+	cli, err := lookPath("t3")
+	if err != nil {
+		return "", true
+	}
+	return cli, true
 }
 
 // parentProgram is the process that started this server and the program it runs. A variable, for
@@ -511,7 +584,10 @@ func sessionID(claude string) string {
 	return bus.RandHex(6)
 }
 
-func agentName(flag string) string {
+func agentName(flag string) string { return agentLabel(flag, t3Of(flag).cli) }
+
+// agentLabel is agentName, with T3's command line as t3Of found it.
+func agentLabel(flag, t3CLI string) string {
 	agent := flag
 	if agent == "" {
 		agent = "agent"
@@ -519,7 +595,7 @@ func agentName(flag string) string {
 			agent = "claude-code"
 		}
 	}
-	if os.Getenv("T3CODE_CLI_PATH") != "" {
+	if t3CLI != "" {
 		agent += " in T3"
 	}
 	return agent

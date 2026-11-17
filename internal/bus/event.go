@@ -434,6 +434,11 @@ type Presence struct {
 	// Files says the device's daemon fetches the files a message carries and gives its sessions
 	// their paths (#570). A sender is told of a recipient whose device doesn't.
 	Files bool `json:"files,omitempty"`
+	// FilesOff says the device's person turned Receive files off for its agents (#765): they take a
+	// message's text and not its files, and a sender is told so. PersonFilesOff says the same of the
+	// person themselves, on the page.
+	FilesOff       bool `json:"filesOff,omitempty"`
+	PersonFilesOff bool `json:"personFilesOff,omitempty"`
 	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
 	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
 	// Both are inside the box, so they are absent from an encrypted presence until it is opened.

@@ -106,7 +106,7 @@ const ui = {
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
-  fileNote: null, // why a file wasn't attached: { key, text }, key the conversation's
+  fileNote: null, // why a file wasn't attached: { key, text, turnOn }, key the conversation's; turnOn, what to do once sending is turned on
   viewer: null, // the picture that is open: { file, name, size, from }, from the key of what opened it
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
   drawer: false, // on a phone, whether the sidebar's drawer is open
@@ -854,7 +854,7 @@ function peopleGroup() {
             h(
               "span",
               { class: "side-session-text" },
-              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, p.name), humanTag()),
+              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": p.name }, p.name), humanTag()),
               h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
             ),
           ),
@@ -1339,7 +1339,7 @@ function sideSessionBody(d, s) {
     h(
       "span",
       { class: "side-session-text" },
-      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 1)),
+      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": s.name }, s.name), tagChips(s, 1)),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
     ),
     pr && prBadge(pr, false),
@@ -1597,7 +1597,7 @@ function sessionCard(d, s) {
         h(
           "span",
           { class: "s-line name-line" },
-          h("span", { class: "s-name truncate" }, s.name),
+          h("span", { class: "s-name truncate", "data-profile": s.name }, s.name),
           tagChips(s, 2),
           // The hook never reported after a tool call, so the session isn't told of messages while it
           // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
@@ -1822,7 +1822,7 @@ function activityLine(iconName, tone, t, key, ...what) {
 }
 
 function actWho(name) {
-  return h("span", { class: "g-act-who" }, name);
+  return name ? nameButton(name, "g-act-who") : h("span", { class: "g-act-who" }, name);
 }
 
 function actBranch(branch) {
@@ -1880,7 +1880,7 @@ function githubItem(e) {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), h("span", { "data-profile": toName(m) }, toName(m))];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1889,7 +1889,7 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" && e.target === e.currentTarget ? open() : null) },
     avatar(from),
     h(
       "div",
@@ -1897,7 +1897,7 @@ function recentItem(m, at) {
       h(
         "div",
         { class: "chat-msg-head" },
-        h("span", { class: "chat-msg-from truncate" }, from),
+        h("span", { class: "chat-msg-from truncate", "data-profile": from }, from),
         m.fromPerson && humanTag(),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
@@ -1909,19 +1909,20 @@ function recentItem(m, at) {
 }
 
 // A Recent item is a button onto its conversation. Its name is what it shows, in the order it shows
-// it (WCAG 2.5.3), Space works as well as Enter, and a link in its text is left to the conversation
-// it opens, since a button can't hold another control.
+// it (WCAG 2.5.3), Space works as well as Enter, and a link or a name in its text is left to the
+// conversation it opens from the keyboard, since a button can't hold another control. A click on a
+// name still opens its card.
 function openable(el, m, at) {
   const to = m.toKind === "all" ? "Everyone" : m.toKind === "group" ? m.to : m.toKind === "device" ? host(m.to) : toName(m);
   el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
   const space = (e) => {
-    if (e.key !== " ") return;
+    if (e.key !== " " || e.target !== e.currentTarget) return;
     e.preventDefault();
     e.currentTarget.click();
   };
   el.addEventListener("keydown", space);
   el.listeners.push(["keydown", space]);
-  for (const a of el.querySelectorAll("a")) a.tabIndex = -1;
+  for (const a of el.querySelectorAll("a, button")) a.tabIndex = -1;
   return el;
 }
 
@@ -2022,7 +2023,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate", "data-profile": r.name }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -2690,7 +2691,7 @@ function profileCard() {
         ),
       ),
     common.length > 0 && section("In common", h("div", { class: "pc-common" }, common)),
-    talked.length > 0 && section("Talked with", h("div", { class: "pc-talked" }, talked.map((n) => h("span", { class: "pc-talked-one", title: n }, avatar(n), h("span", { class: "truncate" }, n))))),
+    talked.length > 0 && section("Talked with", h("div", { class: "pc-talked" }, talked.map((n) => h("button", { type: "button", class: "pc-talked-one", title: n, "data-profile": n, "aria-haspopup": "dialog", "data-key": "pc-talked-" + n }, avatar(n, false), h("span", { class: "truncate" }, n))))),
     !own &&
       h(
         "div",
@@ -3097,6 +3098,34 @@ function avatar(name, card = true) {
   const face = isPerson(name) ? personFace(name, color) : ghostFace(name, color);
   if (card && name) face.dataset.profile = name;
   return face;
+}
+
+// A name the page shows opens the same card as its face (#778, Tyler): where the name stands on its
+// own, as this button; inside a control, as a span with data-profile, which the capture listener
+// above takes ahead of the control. Names in controls that pick (the pickers, sessions being picked
+// to tag) and in a conversation's row keep the control's action.
+function nameButton(name, cls, text = name) {
+  return h("button", { type: "button", class: "name-ref " + cls, "data-profile": name, "aria-haspopup": "dialog" }, text);
+}
+
+// A name the page knows, written in a message, as a session's two words or in backticks.
+function knownName(t) {
+  return !!(findSession(t) || findPerson(t) || t === myName());
+}
+
+// Plain text from a message, with each name the page knows (quiet-otter) made a nameButton.
+function withNames(t, out) {
+  // Not part of a path, an address or a longer word: what comes before is checked by hand, since a
+  // lookbehind is a parse error in Safari before 16.4, and that would stop the whole page.
+  const re = /[a-z0-9]+(?:-[a-z0-9]+)+(?![\w/\\-]|[.:]\w)/g;
+  let last = 0;
+  for (let m; (m = re.exec(t)); ) {
+    if ((m.index > 0 && /[\w./:\\-]/.test(t[m.index - 1])) || !knownName(m[0])) continue;
+    if (m.index > last) out.push(t.slice(last, m.index));
+    out.push(nameButton(m[0], "rich-name"));
+    last = re.lastIndex;
+  }
+  if (last < t.length) out.push(t.slice(last));
 }
 
 function personFace(name, cls) {
@@ -3604,6 +3633,7 @@ function fetchFile(id, i, name, again) {
   fetched.set(key, f);
   f.done = inFetchSlot(async () => (await api("/api/file?id=" + encodeURIComponent(id) + "&i=" + i, { raw: true })).blob())
     .then((blob) => {
+      if (f.dropped) return; // Receive files went off while it came
       // The daemon sends every file as bytes to save; a picture is shown as the kind its name says.
       const type = pictureType(name);
       f.url = URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
@@ -3650,10 +3680,71 @@ function filesOnly(m) {
   return !!m.files?.length && m.fromPerson && personText(m) === m.files.map((f) => f.name).join(", ");
 }
 
+// The file switches as the daemon has them, changed here or on another page. Receive files off
+// drops what this page fetched from other devices, and their files aren't shown (#765).
+function followFileSwitches(state) {
+  const set = ui.settings;
+  if (!set) return;
+  if (settingsSaving || stateAskedAt < settingsAt) {
+    // A save of this page's is on its way, or this state was asked for before one was answered:
+    // the page's are newer.
+    for (const k of FILE_SWITCHES) state[k] = !!set[k];
+    return;
+  }
+  for (const k of FILE_SWITCHES) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
+  const was = receiving;
+  receiving = !!state.receiveFiles;
+  // Messages the page has came without their files while it was off: ask again for theirs.
+  if (receiving && was === false) refetchFiles(tokenEra);
+  if (receiving) return;
+  for (const [key, f] of fetched) {
+    if (!f.remote) continue;
+    fetched.delete(key);
+    f.dropped = true; // one still on its way is let go of when it comes
+    if (f.url) URL.revokeObjectURL(f.url);
+    if (ui.viewer?.file === f) ui.viewer = null;
+  }
+}
+
+let receiving = null; // the person's Receive files, as the page last followed it
+
+// The four file switches (#765): the agents' Send files and Receive files, and the person's own on
+// this page (Tyler, 2026-11-16).
+const FILE_SWITCHES = ["sendFiles", "receiveFiles", "agentsSendOff", "agentsReceiveOff"];
+
+// refetchFiles gives the messages the page has the files the daemon now shows for them.
+async function refetchFiles(era) {
+  const byId = new Map(ui.messages.map((m) => [m.id, m]));
+  let cursor = "";
+  try {
+    for (let pages = 0; pages < 20; pages++) {
+      const r = await api("/api/messages?cursor=" + encodeURIComponent(cursor));
+      if (era !== tokenEra) return;
+      for (const m of r.messages || []) if (m.files?.length && byId.has(m.id)) byId.get(m.id).files = m.files;
+      if (!r.messages?.length || !r.cursor || r.cursor === cursor) break;
+      cursor = r.cursor;
+    }
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+  }
+  render();
+}
+
+// fromElsewhere says message m came from another device, whose files Receive files governs.
+function fromElsewhere(m) {
+  return !!m.fromAddr && !!ui.state?.device && !m.fromAddr.startsWith(ui.state.device + "/");
+}
+
 // Under a message's text: its pictures, shown, and its other files, each a button that saves it.
 function messageFiles(m) {
   if (!m.files?.length) return null;
-  return fileList(m.id, m.files, (i, load, again) => (load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i)));
+  if (fromElsewhere(m) && !ui.settings?.receiveFiles) return null;
+  const remote = fromElsewhere(m);
+  return fileList(m.id, m.files, (i, load, again) => {
+    const f = load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i);
+    if (f) f.remote = remote;
+    return f;
+  });
 }
 
 // fileAt gives the entry of the file in a place: as it is, or, with load, fetched if it wasn't.
@@ -3676,7 +3767,7 @@ function fileList(id, files, fileAt) {
         if (fileAt(i)?.state === "loading") return;
         const file = fileAt(i, true, true);
         render();
-        file.done.then(() => file.state === "here" && !picture && saveFile(f.name, file.url));
+        file.done.then(() => file.state === "here" && !file.dropped && !picture && saveFile(f.name, file.url));
       };
       return h(
         "button",
@@ -3739,7 +3830,30 @@ function viewerDialog() {
 
 // Adds files to a conversation's next message, held to what a message takes: the daemon would
 // refuse the rest only once they had been uploaded.
+// The person's Send files is on, in this repo (#765): off, a file attached, dropped or pasted asks
+// them to turn it on there, and goes on once they do (Tyler, 2026-11-16).
+function sendsFiles() {
+  return !!ui.settings?.sendFiles;
+}
+
+function askToSend(key, files) {
+  ui.fileNote = { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
+  render();
+}
+
+// Turns the person's Send files on, then does what asked for it: opens the picker, in the same
+// click, or attaches what was dropped or pasted.
+function turnOnSending(key) {
+  const then = ui.fileNote?.turnOn;
+  ui.fileNote = null;
+  saveSettings({ ...ui.settings, sendFiles: true }, false, "sendFiles");
+  if (then === "pick") pickFiles(key);
+  else if (then) attach(key, then);
+  else render();
+}
+
 function attach(key, files) {
+  if (!sendsFiles()) return askToSend(key, files);
   const list = attached.get(key) || [];
   let note = "";
   for (const file of files) {
@@ -4011,13 +4125,18 @@ function inline(t) {
   const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https:\/\/[^\s)<>]+[^\s)<>.,;:!?'"])/g;
   let last = 0;
   for (let m; (m = re.exec(t)); ) {
-    if (m.index > last) out.push(t.slice(last, m.index));
-    if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
-    else if (m[2]) out.push(h("strong", null, m[2].slice(2, -2)));
+    if (m.index > last) withNames(t.slice(last, m.index), out);
+    if (m[1] && knownName(m[1].slice(1, -1))) out.push(nameButton(m[1].slice(1, -1), "rich-name", h("code", null, m[1].slice(1, -1))));
+    else if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
+    else if (m[2]) {
+      const bold = [];
+      withNames(m[2].slice(2, -2), bold);
+      out.push(h("strong", null, bold));
+    }
     else out.push(h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
     last = re.lastIndex;
   }
-  if (last < t.length) out.push(t.slice(last));
+  if (last < t.length) withNames(t.slice(last), out);
   return out;
 }
 
@@ -4749,7 +4868,13 @@ function composer(c, target) {
       "div",
       { class: "composer" + (armed ? " composer-armed" : "") },
       armed && h("p", { class: "composer-warn", "data-announce": "" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
-      ui.fileNote?.key === key && h("p", { class: "composer-warn", "data-announce": "" }, ui.fileNote.text),
+      ui.fileNote?.key === key &&
+        h(
+          "p",
+          { class: "composer-warn", "data-announce": "" },
+          ui.fileNote.text,
+          ui.fileNote.turnOn && h("button", { class: "composer-warn-btn", "data-key": "files-on-" + key, onclick: () => turnOnSending(key) }, "Turn on"),
+        ),
       files.length > 0 &&
         h(
           "div",
@@ -4769,7 +4894,7 @@ function composer(c, target) {
       h(
         "div",
         { class: "composer-bar" },
-        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => pickFiles(key) }, icon("paperclip")),
+        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => (sendsFiles() ? pickFiles(key) : askToSend(key)) }, icon("paperclip")),
         h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: () => openPicker() }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
         h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() && !files.length, "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
@@ -5018,6 +5143,8 @@ function busyControl(key, busy, onChange, withDefault) {
 let settingsQueue = Promise.resolve();
 let settingsSeq = 0; // the newest save asked for
 let confirmed = null; // the settings as the daemon last gave them
+let settingsSaving = 0; // saves asked for and not yet answered
+let settingsAt = 0; // when the last one was answered
 
 function queueSettings(job) {
   const token = ui.token;
@@ -5026,13 +5153,19 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next, modeChange = false) {
-  // Each save carries the whole settings: the mode comes from the daemon's state unless this save
-  // changes it, so a page whose settings were loaded before it changed elsewhere can't undo it.
+function saveSettings(next, modeChange = false, filesChange = "") {
+  // Each save carries the whole settings: the mode and the file switches come from the daemon's
+  // state unless this save changes them, so a page whose settings were loaded before they changed
+  // elsewhere can't undo it.
   if (!modeChange && ui.state) next = { ...next, mode: deviceMode() };
+  if (ui.state) for (const k of FILE_SWITCHES) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
+  // The daemon takes only the switch this save changes, and keeps the others as it has them.
+  next = { ...next, filesSet: filesChange ? [filesChange] : [] };
+  if (filesChange && ui.state) ui.state[filesChange] = !!next[filesChange]; // as setMode does
   const seq = ++settingsSeq;
   ui.settings = next;
   render();
+  settingsSaving++;
   queueSettings(async () => {
     try {
       const saved = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
@@ -5050,6 +5183,11 @@ function saveSettings(next, modeChange = false) {
     }
     render();
   });
+  settingsQueue = settingsQueue.finally(() => {
+    settingsSaving--;
+    settingsAt = Date.now();
+  });
+  if (filesChange) queueSettings(async () => poll()); // the poll after the save has the daemon's
 }
 
 function settingsRow(key, title, description, control, extraClass = "") {
@@ -5360,6 +5498,66 @@ function settingsPage() {
                 h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-tip": MODE_HELP[v], "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+    // Files are off both ways until the person turns them on, per repo (#765, Tyler, 2026-11-16).
+    const onOff = (key, on, save) =>
+      h(
+        "div",
+        { class: "segmented", role: "group" },
+        [[false, "Off"], [true, "On"]].map(([v, label]) =>
+          h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + "-" + (v ? "on" : "off"), onclick: () => on !== v && save(v) }, label),
+        ),
+      );
+    // Each way, a main switch for the person and their agents, and once it is on, one that keeps it
+    // from the agents (Tyler, 2026-11-16).
+    const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp) => {
+      const rows = [settingsRow(key, title, on ? onText : offText, onOff(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
+      if (on) {
+        const sub = settingsRow(
+          "agents-" + key,
+          "Agents too",
+          agentsOff ? agentsOffText : agentsOnText,
+          onOff("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
+        );
+        sub.classList.add("row-sub");
+        rows.push(sub);
+      }
+      return rows;
+    };
+    sections.push(
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Files")),
+        h(
+          "div",
+          { class: "group" },
+          fileRows(
+            "send-files",
+            "Send files",
+            !!set.sendFiles,
+            "You can attach files to what you write here: screenshots, logs, diffs.",
+            "No files go out from this device. Attaching one asks you to turn this on.",
+            "sendFiles",
+            !!set.agentsSendOff,
+            "Your agents here can send files too, only from this repo or the temp folder.",
+            "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
+            "agentsSendOff",
+          ),
+          fileRows(
+            "receive-files",
+            "Receive files",
+            !!set.receiveFiles,
+            "Files other devices send are downloaded into this repo's .git folder and shown here.",
+            "Messages arrive without their files, which aren't downloaded. Senders are told.",
+            "receiveFiles",
+            !!set.agentsReceiveOff,
+            "Your agents here get the files sent to them too.",
+            "Only you get files. Your agents get messages without them, and senders are told.",
+            "agentsReceiveOff",
           ),
         ),
       ),
@@ -5705,6 +5903,7 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    followFileSwitches(state);
     forgetJoins();
     // Someone else claimed this name first (#268): ask for another, once per page, unless something
     // is already being asked.
