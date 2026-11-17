@@ -36,8 +36,11 @@ import (
 
 // Options configure a daemon. Zero values take the defaults in docs/design/.
 type Options struct {
-	GitDir string        // the clone's git common dir, absolute
-	Poll   time.Duration // how often to check the remote; 3 s
+	GitDir string // the clone's git common dir, absolute
+	// TempDir is the temp folder a send may read files from, besides the clone's worktrees (#690):
+	// "" is the system's, os.TempDir, and on macOS and Linux /tmp as well.
+	TempDir string
+	Poll    time.Duration // how often to check the remote; 3 s
 	// QuietPoll is how often to check it while no session is live and no page is open: 30 s. A
 	// daemon that is only waiting to wake a T3 thread (see Idle) needn't look as often as one with
 	// an agent working; it is never faster than Poll.

@@ -1012,7 +1012,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		read, err := readSendFiles(req.Files)
+		read, err := d.readSendFiles(ctx, req.Files)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}

@@ -1115,7 +1115,7 @@ func (s *server) tools(srv *mcp.Server) {
 			"subject": {Type: "string", Description: "one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},
 			"body":    {Type: "string", Description: "the rest of the message"},
 			"tell_me": {Type: "string", Description: "read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"},
-			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
+			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log, in this repo or the temp folder: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
 		}, "to", "subject")},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)
