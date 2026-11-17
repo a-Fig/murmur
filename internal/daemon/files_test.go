@@ -683,7 +683,7 @@ func TestSendsOfTheSameFilesAtOnceUploadThemOnce(t *testing.T) {
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
 	b := newDevice(t, remote)
-	senders := []string{"aaaaaa", "dddddd", "eeeeee"}
+	senders := []string{"aaaaaa", "dddddd"} // each waits its turn within the rig's 30 s a request
 	for _, id := range senders {
 		a.session(id, "")
 	}
@@ -729,7 +729,7 @@ func TestASendThatWaitedGoesOnWhenTheFirstFails(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
-	senders := []string{"aaaaaa", "dddddd", "eeeeee"}
+	senders := []string{"aaaaaa", "dddddd"} // each waits its turn within the rig's 30 s a request
 	for _, id := range senders {
 		a.session(id, "")
 	}
