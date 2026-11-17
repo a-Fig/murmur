@@ -30,6 +30,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
@@ -286,10 +287,10 @@ func helloFor(agent, cwd string) proto.Hello {
 	return h
 }
 
-// threadEnv is where T3 puts the thread's ID for the Claude Code process it runs, and so for its MCP
-// servers (read in T3 0.1.x's server, 2026-11-15). Only Claude Code's servers take it: Codex's start
-// with a bare environment, Muse passes on only what join lists, and Pi and Grok weren't tried.
-const threadEnv = "T3CODE_THREAD_ID"
+// threadEnv is t3.ThreadEnv, the thread's ID, which T3 gives the Claude Code process it runs and so
+// its MCP servers. Only Claude Code's servers take it: Codex's start with a bare environment, Muse
+// passes on only what join lists, and Pi and Grok weren't tried.
+const threadEnv = t3.ThreadEnv
 
 // agentAbove says whether an agent's program runs above the client that started this server. Every
 // process under a T3 thread inherits threadEnv, so a claude run from the thread's shell, perhaps in
@@ -460,34 +461,7 @@ var servingT3 = func() (cli string, thread bool) {
 		exe, err := proc.Exe(pids[1])
 		parent, read = exe, err == nil
 	}
-	return t3Serving(parent, read, exec.LookPath)
-}
-
-// t3Serving is servingT3 for the client's parent, if it could be read. `t3 serve` starts Claude
-// Code itself, so a parent that is t3 is the thread's, used while it is still on disk; one that is
-// gone (an update pruned its version) gives way to the t3 on PATH, which follows updates. A parent
-// that is node may be the npm t3, so it too goes to PATH, as does one that can't be read. Any other
-// parent means the client isn't the thread but was started inside it, by tmux or an editor, say,
-// and only inherited its variable: it keeps its own route.
-func t3Serving(parent string, read bool, lookPath func(string) (string, error)) (string, bool) {
-	if read {
-		switch programName(parent) {
-		case "t3":
-			if !strings.HasSuffix(parent, " (deleted)") {
-				if _, err := os.Stat(parent); err == nil {
-					return parent, true
-				}
-			}
-		case "node":
-		default:
-			return "", false
-		}
-	}
-	cli, err := lookPath("t3")
-	if err != nil {
-		return "", true
-	}
-	return cli, true
+	return t3.Serving(parent, read, exec.LookPath)
 }
 
 // parentProgram is the process that started this server and the program it runs. A variable, for
