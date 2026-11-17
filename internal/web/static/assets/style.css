@@ -4627,13 +4627,13 @@ button.chat-msg-from {
 }
 button.chat-msg-from:hover,
 button.name-ref:hover,
-span[data-profile]:hover {
+span[data-profile]:not(.avatar):hover {
   text-decoration: underline;
 }
 button.pc-talked-one:hover {
   text-decoration: none;
 }
-button.pc-talked-one:hover > span {
+button.pc-talked-one:hover > .truncate {
   text-decoration: underline;
 }
 .profile-card {

@@ -1889,7 +1889,7 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" && e.target === e.currentTarget ? open() : null) },
     avatar(from),
     h(
       "div",
@@ -1916,7 +1916,7 @@ function openable(el, m, at) {
   const to = m.toKind === "all" ? "Everyone" : m.toKind === "group" ? m.to : m.toKind === "device" ? host(m.to) : toName(m);
   el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
   const space = (e) => {
-    if (e.key !== " ") return;
+    if (e.key !== " " || e.target !== e.currentTarget) return;
     e.preventDefault();
     e.currentTarget.click();
   };
@@ -3115,10 +3115,12 @@ function knownName(t) {
 
 // Plain text from a message, with each name the page knows (quiet-otter) made a nameButton.
 function withNames(t, out) {
-  const re = /(?<![\w./:-])[a-z0-9]+(?:-[a-z0-9]+)+(?![\w/:-]|\.\w)/g;
+  // Not part of a path, an address or a longer word: what comes before is checked by hand, since a
+  // lookbehind is a parse error in Safari before 16.4, and that would stop the whole page.
+  const re = /[a-z0-9]+(?:-[a-z0-9]+)+(?![\w/\\-]|[.:]\w)/g;
   let last = 0;
   for (let m; (m = re.exec(t)); ) {
-    if (!knownName(m[0])) continue;
+    if ((m.index > 0 && /[\w./:\\-]/.test(t[m.index - 1])) || !knownName(m[0])) continue;
     if (m.index > last) out.push(t.slice(last, m.index));
     out.push(nameButton(m[0], "rich-name"));
     last = re.lastIndex;
@@ -4041,7 +4043,11 @@ function inline(t) {
     if (m.index > last) withNames(t.slice(last, m.index), out);
     if (m[1] && knownName(m[1].slice(1, -1))) out.push(nameButton(m[1].slice(1, -1), "rich-name", h("code", null, m[1].slice(1, -1))));
     else if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
-    else if (m[2]) out.push(h("strong", null, m[2].slice(2, -2)));
+    else if (m[2]) {
+      const bold = [];
+      withNames(m[2].slice(2, -2), bold);
+      out.push(h("strong", null, bold));
+    }
     else out.push(h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
     last = re.lastIndex;
   }
