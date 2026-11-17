@@ -877,8 +877,10 @@ type state struct {
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
 	// NamesLeft is, by session key, the name the key had on the device this clone was before it
-	// lost its keys, where that name has tags, mutes or an explained list kept: the name the key
-	// gets next takes them (adoptLeftLocked, #827). dropOldNames writes it.
+	// lost its keys, where that name has tags, mutes or an explained list kept, or a session here
+	// muted it: the name the key gets next takes them (adoptLeftLocked, #827), and a session
+	// whose new name is pending goes by the old one's meanwhile (keptByLocked). dropOldNames
+	// writes it.
 	NamesLeft map[string]string `json:"namesLeft,omitempty"`
 	// NameHolders is the session on this device that took each name last, and SessionNames the
 	// name each session took last: running or stopped, and never taken back. The registry records

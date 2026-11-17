@@ -42,9 +42,12 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   2026-11-16 (#827) a session that came back had none: one in `group:ui` on do not disturb was out
   of the group and given turns again. Now the state file keeps which name each session key had
   (`namesLeft`), and a session that comes back with that key takes what the old name kept: the
-  tags unless it has some already, the mutes added to its own. It takes them at once, by its ID
-  while its new name is pending, so it is never off do not disturb in between. When the name
-  lands, mutes other sessions on the clone made *of* the old name become mutes of the new one.
+  tags unless it has some already, the mutes added to its own. While its new name is pending it
+  goes by the old name's, so it is never off do not disturb in between, and a session here that
+  muted it still doesn't hear from it. They are found by the session's key, not its ID: one that
+  moves to another conversation before its name lands leaves them with the conversation they
+  were for. When the name lands they move to it, and mutes other sessions on the clone made *of*
+  the old name become mutes of the new one.
   - *What is left.* The page's wake and busy choices for one session are kept by name in
     `settings.json`, and stay with the old name (#836).
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name

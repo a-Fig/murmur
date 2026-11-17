@@ -63,6 +63,9 @@ func (d *Daemon) explainKeyLocked(id string) string {
 	if name := d.st.NameKeys[conv]; conv != "" && name != "" {
 		return name
 	}
+	if old := d.st.NamesLeft[conv]; conv != "" && old != "" {
+		return old // the name it had before this clone lost its keys, until the new one lands (#827)
+	}
 	if d.sessions[id] == nil {
 		if name := d.st.SessionNames[id]; name != "" {
 			return name

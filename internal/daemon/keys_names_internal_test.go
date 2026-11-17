@@ -31,11 +31,11 @@ func TestLostKeysDropTheNamesBeforeTheNewID(t *testing.T) {
 		`"namesSeen":{"aaaaaa":"2026-11-16T00:00:00Z"},` +
 		// What sessions kept by their names (#827): k1's, k2's and k3's names have something, k4's
 		// has nothing. k0 never came back after an earlier loss, and still has tags to take; so does
-		// k4, whose name since has none.
-		`"nameKeys":{"k1":"quiet-otter","k2":"calm-finch","k3":"brave-heron","k4":"plain-wren"},` +
+		// k4, whose name since has none. k5's name has nothing either, but k2's session muted it.
+		`"nameKeys":{"k1":"quiet-otter","k2":"calm-finch","k3":"brave-heron","k4":"dull-wren","k5":"plain-wren"},` +
 		`"namesLeft":{"k0":"old-crane","k1":"older-name","k4":"old-crane"},` +
 		`"tags":{"quiet-otter":{"self":["group:ui"]},"old-crane":{"self":["reviewing"]}},` +
-		`"mutes":{"calm-finch":{"loud-jay":"2026-11-16T00:00:00Z"}},"explained":{"brave-heron":["dev-0001/person"]},` +
+		`"mutes":{"calm-finch":{"loud-jay":"2026-11-16T00:00:00Z","plain-wren":"2026-11-16T00:00:00Z"}},"explained":{"brave-heron":["dev-0001/person"]},` +
 		`"unwritten":[{"v":1,"id":"e1","type":"session.started","from":"` + old + `/aaaaaa"}]}`
 	if err := os.WriteFile(state, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestLostKeysDropTheNamesBeforeTheNewID(t *testing.T) {
 	if err := json.Unmarshal(st["namesLeft"], &left); err != nil {
 		t.Errorf("namesLeft: %v", err)
 	}
-	if want := map[string]string{"k0": "old-crane", "k1": "quiet-otter", "k2": "calm-finch", "k3": "brave-heron", "k4": "old-crane"}; !maps.Equal(left, want) {
+	if want := map[string]string{"k0": "old-crane", "k1": "quiet-otter", "k2": "calm-finch", "k3": "brave-heron", "k4": "old-crane", "k5": "plain-wren"}; !maps.Equal(left, want) {
 		t.Errorf("namesLeft is %v, want %v", left, want)
 	}
 	for _, k := range []string{"pins", "usedNames", "reservedNames", "tags", "mutes", "explained"} {
@@ -145,28 +145,39 @@ func TestANewNameTakesWhatTheOldOneKept(t *testing.T) {
 		t.Errorf("tags after a name with its own took an old one's: %v, left %v", d.st.Tags, d.st.NamesLeft)
 	}
 
-	// One whose new name is pending has them by its ID from the start, so it is on do not disturb
-	// meanwhile, and a tag it adds then is added to them. The name takes the lot when it lands,
-	// and the mute another session here made of the old name is then of the new one.
+	// One whose new name is pending goes by the old name's meanwhile: it is on do not disturb,
+	// a tag it adds is added to them, and the session that muted it still doesn't hear from it.
+	// By its key: moved to another conversation, it has none of them, and back, has them again.
+	// The name takes the lot when it lands, and the mute of the old name is then of the new one.
 	p := &session{id: "cccccc", key: "k3"}
 	d.sessions[p.id] = p
 	d.st.NamesLeft = map[string]string{"k3": "brave-heron"}
 	d.st.Tags["brave-heron"] = &tags.State{Self: []string{tags.DoNotDisturb}}
 	d.st.Mutes["bold-lark"]["brave-heron"] = at
 	d.st.Mutes["brave-heron"] = map[string]time.Time{"loud-jay": at}
+	d.st.Explained["brave-heron"] = []string{ada}
 	d.setNameLocked(p, "")
-	if !d.ownDNDLocked(p.id) || d.st.Tags["brave-heron"] != nil || d.st.NamesLeft["k3"] != "brave-heron" {
-		t.Errorf("with its name pending: tags %v, left %v", d.st.Tags, d.st.NamesLeft)
+	if !d.ownDNDLocked(p.id) || d.tagKeyLocked(p.id) != "brave-heron" || d.st.NamesLeft["k3"] != "brave-heron" || d.explainKeyLocked(p.id) != "brave-heron" {
+		t.Errorf("with its name pending: kept by %q, explained by %q, left %v", d.tagKeyLocked(p.id), d.explainKeyLocked(p.id), d.st.NamesLeft)
 	}
-	if st := d.tagStateLocked(p); st != nil {
-		st.Self = append(st.Self, "reviewing")
+	if _, muted := d.mutedAtLocked(s.id, bus.Addr(d.device, p.id)); !muted {
+		t.Error("with its name pending, the session that muted it hears from it")
 	}
+	p.key = "k9"
+	if d.ownDNDLocked(p.id) || d.tagKeyLocked(p.id) != "id:cccccc" {
+		t.Errorf("in another conversation it is kept by %q", d.tagKeyLocked(p.id))
+	}
+	p.key = "k3"
+	d.tagStateLocked(p).Self = append(d.tagStateLocked(p).Self, "reviewing")
 	d.setNameLocked(p, "keen-swift")
-	if st := d.st.Tags["keen-swift"]; st == nil || !slices.Equal(st.Self, []string{tags.DoNotDisturb, "reviewing"}) || !d.ownDNDLocked(p.id) {
+	if st := d.st.Tags["keen-swift"]; st == nil || !slices.Equal(st.Self, []string{tags.DoNotDisturb, "reviewing"}) || !d.ownDNDLocked(p.id) || d.st.Tags["brave-heron"] != nil {
 		t.Errorf("tags once the name landed: %v", d.st.Tags)
 	}
 	if m := d.st.Mutes["bold-lark"]; !m["keen-swift"].Equal(at) || len(m) != 3 || len(d.st.Mutes["keen-swift"]) != 1 || len(d.st.NamesLeft) != 0 {
 		t.Errorf("mutes once the name landed: %v, left %v", d.st.Mutes, d.st.NamesLeft)
+	}
+	if !slices.Contains(d.st.Explained["keen-swift"], ada) {
+		t.Errorf("explained once the name landed: %v", d.st.Explained)
 	}
 }
 

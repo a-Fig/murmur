@@ -130,6 +130,14 @@ func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
 		at, muted = m[name]
 		return at, muted
 	}
+	if dev, sid := bus.SplitAddr(addr); dev == d.device {
+		// One here whose new name is pending is still the session muted under its old one (#827).
+		if s := d.sessions[sid]; s != nil && s.name == "" && s.key != "" {
+			if at, muted = m[d.st.NamesLeft[s.key]]; muted {
+				return at, true
+			}
+		}
+	}
 	for _, name := range d.heldNamesLocked(addr) {
 		// The latest mute of them, so the grace is that one's.
 		if t, ok := m[name]; ok && (!muted || t.After(at)) {
@@ -188,7 +196,7 @@ func (d *Daemon) mutersLocked(name, dev string) []string {
 	var out []string
 	if dev == "" || dev == d.device {
 		for _, s := range d.sortedSessionsLocked() {
-			if _, muted := d.st.Mutes[tagKeyOf(s.name, s.id)][name]; muted {
+			if _, muted := d.st.Mutes[d.keptByLocked(s)][name]; muted {
 				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
 			}
 		}
@@ -228,7 +236,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 	if s == nil {
 		return fail("the CLI mutes nobody: a mute is a session's")
 	}
-	key := tagKeyOf(s.name, s.id)
+	key := d.keptByLocked(s)
 	name := req.Name
 	var note string
 	switch {
@@ -242,7 +250,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 		d.dropMuteLocked(key, name)
 		d.log.Printf("session %s unmuted %s", from, name)
 		note = "You have unmuted " + name + ". What it sends from now on will reach you."
-	case name == s.name:
+	case name == s.name || name == key: // key: the name it had before this clone lost its keys
 		return fail("that is your own name")
 	default:
 		if _, ok := d.resolveNameLocked(name); !ok {
