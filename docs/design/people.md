@@ -30,9 +30,10 @@ own session.
   re-clones keeps resolving to the old device until they choose the name again. `who` and the page
   list another device's person under their name only if that name reaches them (#350).
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
-  for an answer. It doesn't wake past Never or do not disturb, which a person also chose, and a
-  broadcast from a person wakes nothing extra: one sentence shouldn't wake every idle session on the
-  mesh. The turn says who it is from, that they see only what the agent sends, and how to answer.
+  for an answer. It doesn't wake past Never, which a person also chose, nor past do not disturb,
+  unless the person is the session's own device's, whose messages do not disturb never holds (#777).
+  A broadcast from a person wakes nothing extra: one sentence shouldn't wake every idle session on
+  the mesh. The turn says who it is from, that they see only what the agent sends, and how to answer.
 - **That explanation comes once** (#345, Tyler, 2026-11-09): only the first message a session is
   given whole from a person carries it, by any route. Later ones end with the line an agent's
   message does, since a long line on every message is noise. What each session has been told is kept

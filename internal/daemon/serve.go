@@ -244,7 +244,16 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// this time: it is still that thread.
 		route.T3Thread = s.route.T3Thread
 	}
-	key := d.uniqueKeyLocked(nameKey(route.T3Thread, claude, route.Native, h.ID), h.ID)
+	base := nameKey(route.T3Thread, claude, route.Native, h.ID)
+	// A Codex thread that another program had goes on here (#568), if this is a server's first
+	// registration: its tool call has just carried the thread. One back from its grace, or
+	// registering again with a daemon that restarted, says nothing new, and would take the
+	// thread back from a session that got it since.
+	var left []string
+	if s == nil && !h.Reconnect {
+		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
+	}
+	key := d.uniqueKeyLocked(base, h.ID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -276,6 +285,12 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.worktree = worktree
 		s.route = route
 		d.rememberRouteLocked(s)
+	}
+	for _, id := range left {
+		d.takeInboxLocked(s, id) // sent to the conversation, which is here now
+	}
+	if len(left) > 0 {
+		d.saveLocked()
 	}
 	if parent, named := d.kidNative[route.Native]; named && route.Native != "" && claude == "" {
 		// A hook named this session a child before its server registered (an OpenCode child's
@@ -655,11 +670,6 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
 			s.sendingSeen = true // the turn a send still running hands it has begun (#677)
 		}
-		if d.dndLocked(id) {
-			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
-			// whole message and no hold for the turn's end, and don't count as unread for the hook.
-			continue
-		}
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
 		}
@@ -668,7 +678,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		printsWhole := hookReq(req) && req.Whole
 		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
-			if m.Pushing {
+			if m.Pushing || d.heldLocked(id, m) {
+				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
+				// whole message and no hold for the turn's end, and doesn't count as unread for the
+				// hook. Its own person's messages go through (#777).
 				continue
 			}
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
@@ -955,7 +968,8 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
-		dnd := d.peerDNDLocked(dev, sess)
+		// Do not disturb doesn't hold a message from this device's person to its own sessions (#777).
+		dnd := d.peerDNDLocked(dev, sess) && !(dev == d.device && from == d.personAddr())
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
 		noWake := d.peerNoWakeLocked(dev, sess, wake)
 		// A T3 thread T3 stopped while it was idle has no session, but its route is kept and a message

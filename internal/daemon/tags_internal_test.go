@@ -202,9 +202,9 @@ func TestDoNotDisturbHoldsMessagesUntilTheTagComesOff(t *testing.T) {
 		d.mu.Unlock()
 		t.Fatalf("inbox holds %d, want both messages kept", len(box))
 	}
-	if d.wakesLocked("aaaaaa", always) || !d.wakesLocked("bbbbbb", always) {
+	if !d.heldLocked("aaaaaa", box[0]) || d.heldLocked("bbbbbb", box[0]) || !d.mayWakeLocked("bbbbbb", always) {
 		d.mu.Unlock()
-		t.Fatal("a session on do not disturb may be woken, or one that isn't may not")
+		t.Fatal("a session on do not disturb doesn't hold the message, or one that isn't does, or may not be woken")
 	}
 	// The messages waited longer than a turn's limit.
 	for _, m := range box {
@@ -221,8 +221,8 @@ func TestDoNotDisturbHoldsMessagesUntilTheTagComesOff(t *testing.T) {
 	d.setOwnTags("aaaaaa", proto.Request{Remove: []string{"do-not-disturb"}})
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.wakesLocked("aaaaaa", always) {
-		t.Fatal("still not woken after the tag came off")
+	if d.heldLocked("aaaaaa", d.st.Inbox["aaaaaa"][0]) || !d.mayWakeLocked("aaaaaa", always) {
+		t.Fatal("still held, or not woken, after the tag came off")
 	}
 	for _, m := range d.st.Inbox["aaaaaa"] {
 		if !pushable(m) {
@@ -290,8 +290,8 @@ func TestTheDaemonStaysUpForAThreadOnDoNotDisturb(t *testing.T) {
 	always := pageSettings{Wake: web.Wake{When: web.WakeAlways}}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.wakesLocked("aaaaaa", always) {
-		t.Fatal("a thread on do not disturb may be woken")
+	if !d.dndLocked("aaaaaa") {
+		t.Fatal("the thread isn't on do not disturb")
 	}
 	if !d.holdsRouteLocked(always) {
 		t.Fatal("the daemon would exit, and never read the tag's removal or hand over what waited")

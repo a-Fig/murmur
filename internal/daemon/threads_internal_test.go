@@ -77,8 +77,8 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 			}
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			if got := d.wakesLocked("aaaaaa", tc.wake); got != tc.want {
-				t.Errorf("wakesLocked = %v, want %v", got, tc.want)
+			if got := d.mayWakeLocked("aaaaaa", tc.wake); got != tc.want {
+				t.Errorf("mayWakeLocked = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -94,11 +94,11 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 	wake.SessionWake = map[string]web.Wake{"name-aaaaaa": {When: web.WakeWithin, Minutes: 30}}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.wakesLocked("aaaaaa", wake) {
+	if !d.mayWakeLocked("aaaaaa", wake) {
 		t.Errorf("idle 20 minutes, with its own 30: not woken")
 	}
 	wake.SessionWake = nil
-	if d.wakesLocked("aaaaaa", wake) {
+	if d.mayWakeLocked("aaaaaa", wake) {
 		t.Errorf("idle 20 minutes, with the device's 5: woken")
 	}
 }
@@ -114,7 +114,7 @@ func TestATurnHandedOverCountsAsWork(t *testing.T) {
 	defer d.mu.Unlock()
 	d.pushedAt["aaaaaa"] = time.Now()
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-10 * time.Minute)}
-	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if !d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("just handed a message: not woken")
 	}
 }
@@ -128,10 +128,10 @@ func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
 	d.threadRead = map[threadKey]time.Time{}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if !d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("stopped a minute ago: not woken")
 	}
-	if d.wakesLocked("bbbbbb", wakeWithin(0)) {
+	if d.mayWakeLocked("bbbbbb", wakeWithin(0)) {
 		t.Errorf("stopped 10 minutes ago: woken")
 	}
 	if !d.holdsRouteLocked(wakeWithin(0)) {
@@ -184,7 +184,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 				t.Errorf("%s: who lists the settled session", when)
 			}
 		}
-		if d.wakesLocked("aaaaaa", pageSettings{Wake: web.Wake{When: web.WakeAlways}}) {
+		if d.mayWakeLocked("aaaaaa", pageSettings{Wake: web.Wake{When: web.WakeAlways}}) {
 			t.Errorf("%s: a settled thread may be woken", when)
 		}
 		// A message for everyone reaches the others, not the settled one.
@@ -291,7 +291,7 @@ func TestActivityLetsHeldMessagesGo(t *testing.T) {
 	}
 	d.sessions["aaaaaa"].lastActive = time.Now().Add(-time.Hour)
 	d.st.Inbox["aaaaaa"] = []*inMsg{{Event: bus.Event{ID: "m"}, Arrived: time.Now()}}
-	if d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Fatalf("idle an hour: woken")
 	}
 	d.touchLocked(d.sessions["aaaaaa"], time.Now())
@@ -300,7 +300,7 @@ func TestActivityLetsHeldMessagesGo(t *testing.T) {
 	default:
 		t.Errorf("not kicked")
 	}
-	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if !d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("at work again: not woken")
 	}
 }
