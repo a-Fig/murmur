@@ -31,6 +31,13 @@ from it is in [a person on the page](people.md).
   from presence going stale. Messages are every one this daemon reads, whoever it is for, since
   every record is encrypted for the whole team ([encryption](encryption.md)). The daemon keeps the
   last 500 in memory.
+  - *Which message is which* (#603, 2026-11-16) goes by its ID, its sender and when it was sent.
+    By the ID alone, a device that wrote an ID again hid its own later message from every page,
+    and after a restart could put one of its own in another's place. The page still keeps
+    messages by one ID each, so a second message with an ID the page has is given it with a
+    mark added. Receipts and the unread list go by the ID alone and stay with whichever of the
+    two the daemon kept first, which after a restart is the one with the earlier time: such a
+    message can show another's receipts. Neither is hidden.
 - **Messages from before the daemon started are read back from the bus** (#138, 2026-11-12). The
   daemon exits when idle, so the page opened on conversations with their beginnings gone, and one
   away over 10 minutes left a hole in the middle. They are read back from the logs this clone has

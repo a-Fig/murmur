@@ -463,7 +463,8 @@ type Daemon struct {
 	// started, logged once each (see notePersonLocked).
 	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
-	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
+	// page's messages, oldest first, msgSeq the number of the newest, msgIDs the IDs the page
+	// knows those in msgs by (pageMsg.id) and msgKeys which messages they are (msgKey).
 	lastPage time.Time
 	// lastApp is when the desktop app's page last called, seen or not: it keeps the daemon from
 	// exiting, and does nothing else lastPage does (docs/design/desktop.md).
@@ -471,6 +472,7 @@ type Daemon struct {
 	msgs    []pageMsg
 	msgSeq  uint64
 	msgIDs  map[string]bool
+	msgKeys map[string]bool
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int

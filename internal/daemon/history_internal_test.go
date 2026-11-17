@@ -202,3 +202,57 @@ func TestHistoryMergesActivity(t *testing.T) {
 		t.Errorf("the activity is %q, want the three starts and then the status", kinds)
 	}
 }
+
+// Two messages with one ID are two messages (#603): another device's, a copy of the ID with an
+// earlier time, and the sender's own later one. Each is on the page, under an ID of its own. The
+// same event read again is still kept once, and what the limit drops is forgotten whole.
+func TestAReusedMessageIDHidesNothing(t *testing.T) {
+	d := historyDaemon(10)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	first := sentAt("m1", 5)
+	first.Subject = "the first"
+	forged := sentAt("m1", 1)
+	forged.From, forged.Subject = "other-0003/bbbbbb", "a copy of the ID, dated before"
+	again := sentAt("m1", 9)
+	again.Subject = "the sender's own, later"
+	for _, e := range []bus.Event{first, forged, again, first, forged} {
+		d.recordMessageLocked(e)
+	}
+	ids := map[string]string{}
+	for _, m := range d.msgs {
+		ids[m.id] = m.e.Subject
+	}
+	if len(d.msgs) != 3 || len(ids) != 3 || ids["m1"] != "the first" || len(d.msgIDs) != 3 || len(d.msgKeys) != 3 {
+		t.Fatalf("the page holds %v, want the three messages, each under an ID of its own, the first under m1", ids)
+	}
+
+	// A restart reads them back in the order of the senders' clocks: all three still, and the same
+	// event read twice still once.
+	fresh := historyDaemon(10)
+	fresh.mu.Lock()
+	defer fresh.mu.Unlock()
+	fresh.mergeMessagesLocked([]bus.Event{first, forged, again, again})
+	got, _ := fresh.pageSubjects()
+	if !slices.Equal(got, []string{"a copy of the ID, dated before", "the first", "the sender's own, later"}) {
+		t.Errorf("read back, the page holds %q", got)
+	}
+	if !fresh.msgKeys[msgKey(first)] || len(fresh.msgIDs) != 3 {
+		t.Errorf("read back, the IDs known are %v", fresh.msgIDs)
+	}
+
+	// Past the limit the oldest goes, with its ID and what it was.
+	small := historyDaemon(2)
+	small.mu.Lock()
+	defer small.mu.Unlock()
+	for _, e := range []bus.Event{first, forged, again} {
+		small.recordMessageLocked(e)
+	}
+	if len(small.msgs) != 2 || len(small.msgIDs) != 2 || len(small.msgKeys) != 2 || small.msgKeys[msgKey(first)] {
+		t.Errorf("past the limit: %d messages, IDs %v, %d keys", len(small.msgs), small.msgIDs, len(small.msgKeys))
+	}
+	small.recordMessageLocked(first)
+	if !small.msgKeys[msgKey(first)] || len(small.msgIDs) != 2 {
+		t.Errorf("a message the limit dropped, read again: IDs %v", small.msgIDs)
+	}
+}

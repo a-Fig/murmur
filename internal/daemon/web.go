@@ -3,6 +3,8 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,18 +284,44 @@ func nameOr(name, addr string) string {
 	return addr
 }
 
-// pageMsg is a message the page can show: the event as the bus carried it, and its number. Names
-// are put in when the page asks, so a name that lands later still shows on older messages.
+// pageMsg is a message the page can show: the event as the bus carried it, its number, and the ID
+// the page knows it by. Names are put in when the page asks, so a name that lands later still
+// shows on older messages.
 type pageMsg struct {
 	seq uint64
 	e   bus.Event
+	id  string
+}
+
+// msgKey says which message e is, for the page's list: its ID, who sent it and when. The ID
+// alone used to (#603). An honest ID is 64 random bits and never repeats, but a device can
+// write any ID it likes, and a second message with an ID the list held was dropped without a
+// word: a device could hide its own later message from every page, and after a restart, when
+// the list is read back in the order of the senders' clocks, put a message of its own in the
+// place of someone else's by copying the ID onto one with an earlier time. The same event read
+// twice, live and from history, has the same sender and time, and is still kept once.
+func msgKey(e bus.Event) string {
+	return e.ID + "\x00" + e.From + "\x00" + strconv.FormatInt(e.At.UnixNano(), 36)
+}
+
+// pageIDLocked is the ID the page is to know e by: its own, unless a message the page has is
+// known by that already. Then it is the ID with a mark of which message this is, so the page,
+// which keeps its messages by ID, shows both. Receipts and the unread list go by the ID alone,
+// so they stay with the message that has it plain, which is the first this daemon kept. Caller
+// holds mu.
+func (d *Daemon) pageIDLocked(e bus.Event) string {
+	if !d.msgIDs[e.ID] {
+		return e.ID
+	}
+	sum := sha256.Sum256([]byte(msgKey(e)))
+	return e.ID + "~" + hex.EncodeToString(sum[:4])
 }
 
 // recordMessageLocked keeps a message for the page. Every message this daemon reads goes in,
 // whoever it is for: every record is encrypted for the whole team, which could read them all
 // before encryption too. One to or from this device's person goes on disk too. Caller holds mu.
 func (d *Daemon) recordMessageLocked(e bus.Event) {
-	if d.msgIDs[e.ID] {
+	if d.msgKeys[msgKey(e)] {
 		return
 	}
 	d.keepMessageLocked(e)
@@ -315,7 +343,8 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 		if i < 0 {
 			return
 		}
-		delete(d.msgIDs, d.msgs[i].e.ID)
+		delete(d.msgIDs, d.msgs[i].id)
+		delete(d.msgKeys, msgKey(d.msgs[i].e))
 		d.msgs = slices.Delete(d.msgs, i, i+1)
 		if mine {
 			d.ownMsgs--
@@ -328,8 +357,12 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 		drop(false)
 	}
 	d.msgSeq++
-	d.msgs = append(d.msgs, pageMsg{d.msgSeq, e})
-	d.msgIDs[e.ID] = true
+	id := d.pageIDLocked(e)
+	d.msgs = append(d.msgs, pageMsg{d.msgSeq, e, id})
+	if d.msgKeys == nil {
+		d.msgKeys = map[string]bool{}
+	}
+	d.msgIDs[id], d.msgKeys[msgKey(e)] = true, true
 }
 
 // A cursor is this run of the daemon and the number of the last message returned. Numbers only go
@@ -376,7 +409,7 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	label := d.labelerLocked()
 	out := make([]web.Message, 0, len(d.msgs)-first)
 	for _, m := range d.msgs[first:] {
-		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
+		msg := web.Message{ID: m.id, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
 			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
 		for _, f := range m.e.Files {
 			if d.refuses(&d.pageRecv, m.e) {
