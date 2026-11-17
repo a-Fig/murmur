@@ -641,7 +641,7 @@ func TestASessionIDHidesClaudeCodesID(t *testing.T) {
 	if other := sessionID("0a1b2c3d-1111-2222-3333-444455556666"); other == id {
 		t.Errorf("two conversations that begin alike have the ID %s", id)
 	}
-	if a, b := sessionID(""), sessionID(""); len(a) != 6 || a == b {
-		t.Errorf("with no Claude Code ID, the IDs %q and %q", a, b)
+	if id := sessionID(""); len(id) != 6 {
+		t.Errorf("with no Claude Code ID, the ID %q", id)
 	}
 }

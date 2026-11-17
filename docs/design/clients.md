@@ -27,7 +27,10 @@ since it wasn't installed). The details, and where each came from, are in the co
   and OpenCode's IDs begin with the time and two of them often share six characters. Claude Code's
   is hashed too, since 2026-11-16 (#51): its ID used to be the first six characters of Claude
   Code's, which put 24 bits of that in every address on the bus. A conversation from before then,
-  resumed, comes back at a new address with its name, and the old one forwards to it. A session of
+  resumed, comes back at a new address with its name, and the old one forwards to it. The registry
+  keeps the name at the old address, so once that conversation stops, other devices label its
+  later messages by the new address; T3 threads avoid this by taking the registry's address back
+  (`threadIDLocked`), which here would mean keeping the old ID. A session of
   the shared OpenCode server is registered at its first call and dropped after 30 minutes without
   one.
 - **Delivery.** Inside T3, `t3 thread send` needed nothing new: an OpenCode and a Muse thread each

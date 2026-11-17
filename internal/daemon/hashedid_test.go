@@ -25,7 +25,7 @@ func TestAConversationResumedAtAHashedIDKeepsItsNameAndMessages(t *testing.T) {
 	eventually(t, "the old session to stop", func() bool { return busLines(b, old, "stopped") == 1 })
 
 	// After it: the same conversation, resumed, at its hashed ID.
-	resumed, _, _ := b.sessionPID("9e4f17", "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff", procQ)
+	resumed, _, _ := b.sessionPID("f88c42", "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff", procQ)
 	b.nameIs(resumed, name)
 	eventually(t, "presence", func() bool { return !a.listsSession(old) && a.nameOf(resumed) == name })
 
@@ -37,4 +37,28 @@ func TestAConversationResumedAtAHashedIDKeepsItsNameAndMessages(t *testing.T) {
 		t.Fatalf("send: %+v", r)
 	}
 	b.noticed("0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff", procQ, "from this device")
+}
+
+// #51 with the resume inside the old session's grace, as it may be right after the upgrade (Opus's
+// review): the new session took the name while the old one was still among the sessions, so its
+// unread messages weren't adopted then. They are when its grace runs out.
+func TestAResumeInTheOldSessionsGraceTakesItsInbox(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 2*time.Second, 0)
+	const claude = "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff"
+	old, conn, _ := b.sessionPID("0a1b2c", claude, procP)
+	name := b.named(old)
+	if r := b.do(proto.Request{Op: proto.OpSend, To: old, Subject: "unread"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "unread") })
+	conn.Close()
+
+	resumed, _, _ := b.sessionPID("f88c42", claude, procQ)
+	b.nameIs(resumed, name)
+	if n := busLines(b, old, "stopped"); n != 0 {
+		t.Fatalf("the old session stopped before the resume; the test needs it in its grace")
+	}
+	b.noticed(claude, procQ, "unread")
 }

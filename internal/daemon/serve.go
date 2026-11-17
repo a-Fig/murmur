@@ -381,6 +381,14 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
+	// A session that took this one's name while it was in its grace, as a conversation resumed at
+	// another ID does (a command-line one after #51 hashed its ID), passed its inbox by: it was
+	// still among the sessions then. It takes it now (Opus's review of #51).
+	kept := d.keptForLocked(h.ID)
+	if holder := d.sessions[d.st.NameHolders[kept]]; kept != "" && holder != nil && holder.id != h.ID &&
+		holder.dropped.IsZero() && holder.name == kept {
+		d.adoptLocked(holder, kept)
+	}
 	d.saveLocked()
 	unlogged := s.unlogged
 	d.mu.Unlock()
