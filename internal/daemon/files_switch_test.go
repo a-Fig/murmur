@@ -72,7 +72,9 @@ func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDeviceWith(t, remote, func(d *device) { d.files = `{"pageSendFiles":true,"pageReceiveFiles":true}` })
+	a := newDeviceWith(t, remote, func(d *device) {
+		d.files = `{"sendFiles":true,"receiveFiles":true,"agentsSendOff":true,"agentsReceiveOff":true}`
+	})
 	b := newDevice(t, remote)
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
@@ -117,17 +119,17 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	}
 
 	// A save names the switches it sets; one from a page that hadn't seen them change leaves them.
-	if code, body := pa.call("PUT", "/api/settings", pa.token, `{"wake":{"when":"within"},"pageSendFiles":false,"pageReceiveFiles":false}`); code != 200 {
+	if code, body := pa.call("PUT", "/api/settings", pa.token, `{"wake":{"when":"within"},"sendFiles":false,"receiveFiles":false}`); code != 200 {
 		t.Fatalf("a save naming no switch: %d %s", code, body)
 	}
-	if _, body := pa.call("GET", "/api/settings", pa.token, ""); !strings.Contains(body, `"pageSendFiles":true`) || !strings.Contains(body, `"pageReceiveFiles":true`) {
+	if _, body := pa.call("GET", "/api/settings", pa.token, ""); !strings.Contains(body, `"sendFiles":true`) || !strings.Contains(body, `"receiveFiles":true`) {
 		t.Errorf("a save naming no switch changed them: %s", body)
 	}
-	if code, body := pa.call("PUT", "/api/settings", pa.token, `{"wake":{"when":"within"},"pageReceiveFiles":false,"filesSet":["pageReceiveFiles"]}`); code != 200 {
+	if code, body := pa.call("PUT", "/api/settings", pa.token, `{"wake":{"when":"within"},"receiveFiles":false,"filesSet":["receiveFiles"]}`); code != 200 {
 		t.Fatalf("a save naming one switch: %d %s", code, body)
 	}
-	if _, body := pa.call("GET", "/api/settings", pa.token, ""); !strings.Contains(body, `"pageSendFiles":true`) || !strings.Contains(body, `"pageReceiveFiles":false`) {
-		t.Errorf("a save naming pageReceiveFiles: %s", body)
+	if _, body := pa.call("GET", "/api/settings", pa.token, ""); !strings.Contains(body, `"sendFiles":true`) || !strings.Contains(body, `"receiveFiles":false`) {
+		t.Errorf("a save naming receiveFiles: %s", body)
 	}
 }
 
@@ -135,7 +137,7 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 func TestAPersonWhoTakesNoFilesIsShownSo(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDeviceWith(t, remote, func(d *device) { d.files = `{"sendFiles":true,"receiveFiles":true}` })
+	a := newDeviceWith(t, remote, func(d *device) { d.files = `{"sendFiles":true}` })
 	b := newDevice(t, remote)
 	b.session("bbbbbb", "")
 	pa := a.page()

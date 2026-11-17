@@ -235,8 +235,8 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
 	self.DND = d.dnd.Load()
 	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
-		Mode: d.modeView(), SendFiles: d.agentSend.Load(), ReceiveFiles: d.agentRecv.on.Load(),
-		PageSendFiles: d.pageSend.Load(), PageReceiveFiles: d.pageRecv.on.Load()}
+		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
+		AgentsSendOff: d.pageSend.Load() && !d.agentSend.Load(), AgentsReceiveOff: d.pageRecv.on.Load() && !d.agentRecv.on.Load()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
@@ -411,11 +411,12 @@ type pageSettings struct {
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
 	Mode        string              `json:"mode,omitempty"`
-	// SendFiles, ReceiveFiles and their Page twins are web.Settings's (#765): off unless saved on.
+	// SendFiles, ReceiveFiles and the agents' overrides are web.Settings's (#765): off unless
+	// saved on.
 	SendFiles        bool `json:"sendFiles,omitempty"`
 	ReceiveFiles     bool `json:"receiveFiles,omitempty"`
-	PageSendFiles    bool `json:"pageSendFiles,omitempty"`
-	PageReceiveFiles bool `json:"pageReceiveFiles,omitempty"`
+	AgentsSendOff    bool `json:"agentsSendOff,omitempty"`
+	AgentsReceiveOff bool `json:"agentsReceiveOff,omitempty"`
 	// Away is when the device last left online for another mode, kept so that going back
 	// releases what arrived since (mode.go), across restarts too.
 	Away time.Time `json:"away,omitzero"`
@@ -437,7 +438,7 @@ func (p pageSettings) clone() pageSettings {
 func (p pageSettings) view() web.Settings {
 	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
 		SessionBusy: maps.Clone(p.SessionBusy), Mode: p.Mode, SendFiles: p.SendFiles, ReceiveFiles: p.ReceiveFiles,
-		PageSendFiles: p.PageSendFiles, PageReceiveFiles: p.PageReceiveFiles,
+		AgentsSendOff: p.AgentsSendOff, AgentsReceiveOff: p.AgentsReceiveOff,
 		DefaultMinutes: defaultWakeMinutes}
 }
 
@@ -464,10 +465,16 @@ func (d *Daemon) loadSettings() {
 	d.settings = read
 	d.hidden.Store(read.Mode == web.ModeInvisible)
 	d.dnd.Store(read.Mode == web.ModeDND)
-	d.agentSend.Store(read.SendFiles)
-	d.agentRecv.set(read.ReceiveFiles)
-	d.pageSend.Store(read.PageSendFiles)
-	d.pageRecv.set(read.PageReceiveFiles)
+	d.applyFiles(read)
+}
+
+// applyFiles sets the file switches the daemon reads from p (#765, Tyler, 2026-11-16): sending,
+// and receiving, is the person's when its main switch is on, and their agents' too unless kept
+// from them. It says whether either side's receiving changed.
+func (d *Daemon) applyFiles(p pageSettings) (agents, page bool) {
+	d.pageSend.Store(p.SendFiles)
+	d.agentSend.Store(p.SendFiles && !p.AgentsSendOff)
+	return d.agentRecv.set(p.ReceiveFiles && !p.AgentsReceiveOff), d.pageRecv.set(p.ReceiveFiles)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
@@ -487,7 +494,7 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
 		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode,
-		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles, PageSendFiles: set.PageSendFiles, PageReceiveFiles: set.PageReceiveFiles}
+		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles, AgentsSendOff: set.AgentsSendOff, AgentsReceiveOff: set.AgentsReceiveOff}
 	if next.Mode == web.ModeOnline {
 		next.Mode = ""
 	}
@@ -506,8 +513,8 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}{
 		{"sendFiles", &next.SendFiles, &d.settings.SendFiles},
 		{"receiveFiles", &next.ReceiveFiles, &d.settings.ReceiveFiles},
-		{"pageSendFiles", &next.PageSendFiles, &d.settings.PageSendFiles},
-		{"pageReceiveFiles", &next.PageReceiveFiles, &d.settings.PageReceiveFiles},
+		{"agentsSendOff", &next.AgentsSendOff, &d.settings.AgentsSendOff},
+		{"agentsReceiveOff", &next.AgentsReceiveOff, &d.settings.AgentsReceiveOff},
 	} {
 		if !slices.Contains(set.FilesSet, sw.name) {
 			*sw.next = *sw.cur
@@ -526,10 +533,8 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	away := d.settings.Away
 	d.settings = next
-	d.agentSend.Store(next.SendFiles)
-	d.pageSend.Store(next.PageSendFiles)
-	agents, page := d.agentRecv.set(next.ReceiveFiles), d.pageRecv.set(next.PageReceiveFiles)
-	if page && next.PageReceiveFiles {
+	agents, page := d.applyFiles(next)
+	if page && next.ReceiveFiles {
 		d.mu.Lock()
 		clear(d.fileMiss) // a fetch the switch's going off ended isn't one to wait out
 		d.mu.Unlock()

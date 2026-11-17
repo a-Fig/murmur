@@ -3664,7 +3664,7 @@ function followFileSwitches(state) {
   }
   for (const k of FILE_SWITCHES) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
   const was = receiving;
-  receiving = !!state.pageReceiveFiles;
+  receiving = !!state.receiveFiles;
   // Messages the page has came without their files while it was off: ask again for theirs.
   if (receiving && was === false) refetchFiles(tokenEra);
   if (receiving) return;
@@ -3681,7 +3681,7 @@ let receiving = null; // the person's Receive files, as the page last followed i
 
 // The four file switches (#765): the agents' Send files and Receive files, and the person's own on
 // this page (Tyler, 2026-11-16).
-const FILE_SWITCHES = ["sendFiles", "receiveFiles", "pageSendFiles", "pageReceiveFiles"];
+const FILE_SWITCHES = ["sendFiles", "receiveFiles", "agentsSendOff", "agentsReceiveOff"];
 
 // refetchFiles gives the messages the page has the files the daemon now shows for them.
 async function refetchFiles(era) {
@@ -3709,7 +3709,7 @@ function fromElsewhere(m) {
 // Under a message's text: its pictures, shown, and its other files, each a button that saves it.
 function messageFiles(m) {
   if (!m.files?.length) return null;
-  if (fromElsewhere(m) && !ui.settings?.pageReceiveFiles) return null;
+  if (fromElsewhere(m) && !ui.settings?.receiveFiles) return null;
   const remote = fromElsewhere(m);
   return fileList(m.id, m.files, (i, load, again) => {
     const f = load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i);
@@ -3804,7 +3804,7 @@ function viewerDialog() {
 // The person's Send files is on, in this repo (#765): off, a file attached, dropped or pasted asks
 // them to turn it on there, and goes on once they do (Tyler, 2026-11-16).
 function sendsFiles() {
-  return !!ui.settings?.pageSendFiles;
+  return !!ui.settings?.sendFiles;
 }
 
 function askToSend(key, files) {
@@ -3817,7 +3817,7 @@ function askToSend(key, files) {
 function turnOnSending(key) {
   const then = ui.fileNote?.turnOn;
   ui.fileNote = null;
-  saveSettings({ ...ui.settings, pageSendFiles: true }, false, "pageSendFiles");
+  saveSettings({ ...ui.settings, sendFiles: true }, false, "sendFiles");
   if (then === "pick") pickFiles(key);
   else if (then) attach(key, then);
   else render();
@@ -5476,47 +5476,56 @@ function settingsPage() {
           h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + "-" + (v ? "on" : "off"), onclick: () => on !== v && save(v) }, label),
         ),
       );
-    const fileRow = (key, title, on, onText, offText, prop) =>
-      settingsRow(key, title, on ? onText : offText, onOff(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)));
-    const fileSection = (title, rows) =>
-      h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title)), h("div", { class: "group" }, rows));
+    // Each way, a main switch for the person and their agents, and once it is on, one that keeps it
+    // from the agents (Tyler, 2026-11-16).
+    const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp) => {
+      const rows = [settingsRow(key, title, on ? onText : offText, onOff(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
+      if (on) {
+        const sub = settingsRow(
+          "agents-" + key,
+          "Agents too",
+          agentsOff ? agentsOffText : agentsOnText,
+          onOff("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
+        );
+        sub.classList.add("row-sub");
+        rows.push(sub);
+      }
+      return rows;
+    };
     sections.push(
-      fileSection("Your files", [
-        fileRow(
-          "page-send-files",
-          "Send files",
-          !!set.pageSendFiles,
-          "You can attach files to what you write here: screenshots, logs, diffs.",
-          "Attaching a file asks you to turn this on first.",
-          "pageSendFiles",
+      h(
+        "section",
+        { class: "section" },
+        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Files")),
+        h(
+          "div",
+          { class: "group" },
+          fileRows(
+            "send-files",
+            "Send files",
+            !!set.sendFiles,
+            "You can attach files to what you write here: screenshots, logs, diffs.",
+            "No files go out from this device. Attaching one asks you to turn this on.",
+            "sendFiles",
+            !!set.agentsSendOff,
+            "Your agents here can send files too, only from this repo or the temp folder.",
+            "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
+            "agentsSendOff",
+          ),
+          fileRows(
+            "receive-files",
+            "Receive files",
+            !!set.receiveFiles,
+            "Files other devices send are downloaded into this repo's .git folder and shown here.",
+            "Messages arrive without their files, which aren't downloaded. Senders are told.",
+            "receiveFiles",
+            !!set.agentsReceiveOff,
+            "Your agents here get the files sent to them too.",
+            "Only you get files. Your agents get messages without them, and senders are told.",
+            "agentsReceiveOff",
+          ),
         ),
-        fileRow(
-          "page-receive-files",
-          "Receive files",
-          !!set.pageReceiveFiles,
-          "Files other devices send are downloaded into this repo's .git folder and shown here.",
-          "Messages show here without their files, which aren't downloaded. Anyone writing to you is told.",
-          "pageReceiveFiles",
-        ),
-      ]),
-      fileSection("Your agents' files", [
-        fileRow(
-          "send-files",
-          "Send files",
-          !!set.sendFiles,
-          "Your agents here can send files with a message, only from this repo or the temp folder.",
-          "An agent's message with files isn't sent. It is told you can turn this on.",
-          "sendFiles",
-        ),
-        fileRow(
-          "receive-files",
-          "Receive files",
-          !!set.receiveFiles,
-          "Files sent to your agents here are downloaded into this repo's .git folder for them.",
-          "Your agents get messages without their files, which aren't downloaded. Senders are told.",
-          "receiveFiles",
-        ),
-      ]),
+      ),
     );
     // A session is shown by its address until its name lands, and the daemon keeps these settings
     // by name: one saved under the address would never apply, so the session isn't offered (#43).

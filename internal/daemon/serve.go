@@ -996,7 +996,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	switch {
 	case len(req.Files) > 0 && !d.agentSend.Load():
-		return refuse(proto.RefusedSend, "not sent: sending files is off for agents in this repo. Your user can turn on Send files for agents in "+
+		return refuse(proto.RefusedSend, "not sent: sending files is off for agents in this repo. Your user can turn on Send files, with agents too, in "+
 			brand.Product+"'s Settings; or send the text alone.")
 	case len(uploads) > 0 && !d.pageSend.Load():
 		return refuse(proto.RefusedSend, "not sent: sending files is off for you in this repo. Turn on Send files in Settings, or send the text alone.")

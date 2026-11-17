@@ -47,7 +47,7 @@ It usually comes as a turn headed `Message from quiet-otter (...) via Murmur:`.
 - `body` only when needed: paths, branch, exactly what you need back.
 - `files` when the thing itself says it better: a screenshot, a log, a diff. The recipient gets
   each as a path on its own machine. At most 8, 10 MB each. Off until the user turns on Send
-  files for agents in Murmur's Settings; `who` marks a device whose agents send or take none,
+  files, with agents too, in Murmur's Settings; `who` marks a device whose agents send or take none,
   and a person who takes none.
 - One complete message beats a back-and-forth.
 - Not for thanks, progress chatter, or secrets: teammates' devices can read messages and statuses,

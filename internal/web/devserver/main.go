@@ -521,7 +521,7 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	colors := f.colorsLocked()
 	st.Mode = f.settings.Mode
 	st.SendFiles, st.ReceiveFiles = f.settings.SendFiles, f.settings.ReceiveFiles
-	st.PageSendFiles, st.PageReceiveFiles = f.settings.PageSendFiles, f.settings.PageReceiveFiles
+	st.AgentsSendOff, st.AgentsReceiveOff = f.settings.AgentsSendOff, f.settings.AgentsReceiveOff
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		if d.Self {

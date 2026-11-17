@@ -78,8 +78,8 @@ type State struct {
 	// every open page follows a change made on another, and none saves back what it last saw.
 	SendFiles        bool `json:"sendFiles,omitempty"`
 	ReceiveFiles     bool `json:"receiveFiles,omitempty"`
-	PageSendFiles    bool `json:"pageSendFiles,omitempty"`
-	PageReceiveFiles bool `json:"pageReceiveFiles,omitempty"`
+	AgentsSendOff    bool `json:"agentsSendOff,omitempty"`
+	AgentsReceiveOff bool `json:"agentsReceiveOff,omitempty"`
 }
 
 // Receipt is how far one of the person's messages got with one recipient (#26).
@@ -271,15 +271,13 @@ type Settings struct {
 	// SendFiles and ReceiveFiles say this device sends and takes the files a message carries, in
 	// this repo (#765, Tyler, 2026-11-16): both off until its person turns them on. With sending
 	// off, a send with files is refused; with receiving off, a message from another device arrives
-	// as its text, its files neither fetched nor shown.
-	SendFiles    bool `json:"sendFiles"`
-	ReceiveFiles bool `json:"receiveFiles"`
-	// PageSendFiles and PageReceiveFiles are the same for the person, on this page: what its
-	// composer sends, and whether it fetches and shows the files other devices send (Tyler,
-	// 2026-11-16). SendFiles and ReceiveFiles are the agents'.
-	PageSendFiles    bool `json:"pageSendFiles"`
-	PageReceiveFiles bool `json:"pageReceiveFiles"`
-	// FilesSet names the file switches a save sets (sendFiles, pageReceiveFiles, ...); the daemon
+	// as its text, its files neither fetched nor shown. Each is for the person and their agents
+	// alike, unless AgentsSendOff or AgentsReceiveOff keeps it to the person.
+	SendFiles        bool `json:"sendFiles"`
+	ReceiveFiles     bool `json:"receiveFiles"`
+	AgentsSendOff    bool `json:"agentsSendOff"`
+	AgentsReceiveOff bool `json:"agentsReceiveOff"`
+	// FilesSet names the file switches a save sets (sendFiles, agentsReceiveOff, ...); the daemon
 	// keeps the rest as they are, so a page that hasn't yet seen another's change can't undo it
 	// (Sol's review of #769). Only a save carries it.
 	FilesSet []string `json:"filesSet,omitempty"`

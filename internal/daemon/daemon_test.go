@@ -251,7 +251,7 @@ func (d *device) start() {
 			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 				d.t.Fatal(err)
 			}
-			files := cmp.Or(d.files, `{"sendFiles":true,"receiveFiles":true,"pageSendFiles":true,"pageReceiveFiles":true}`)
+			files := cmp.Or(d.files, `{"sendFiles":true,"receiveFiles":true}`)
 			if err := os.WriteFile(settings, []byte(files), 0o600); err != nil {
 				d.t.Fatal(err)
 			}
