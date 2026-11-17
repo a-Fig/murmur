@@ -195,7 +195,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// agent running join's.
 	byAgent, notes := e.homes()
 	r.Notes = append(r.Notes, notes...)
-	var claudeFresh, codexFresh bool
+	var claudeFresh, codexFresh, piFresh bool
 	var othersFresh []string
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
@@ -225,6 +225,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				claudeFresh = true
 			case j == 0 && a.driver == "codex":
 				codexFresh = true
+			case j == 0 && a.driver == "pi" && e.looksLikePi():
+				// The advice for the Pi running join covers it.
+				piFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -292,7 +295,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return e.cutShort(r, parent, steps.now, consentErr == nil)
 	}
 
-	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
+	r.Tell = e.advice(claudeFresh, codexFresh, piFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
@@ -441,7 +444,7 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
 	r.Tell = []string{
-		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
+		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code and Pi; in Codex the tools stay listed until the session ends, and say they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
@@ -505,6 +508,9 @@ func othersAdvice(labels []string) string {
 		}
 		s += " " + strings.Join(restart, ", ") + verb + " MCP servers only when a session starts: a session already open needs a new one (in T3 Code, a new thread)."
 	}
+	if slices.Contains(labels, "Pi") {
+		s += " In a terminal, /reload in Pi does it too."
+	}
 	return s
 }
 
@@ -529,7 +535,7 @@ func servingT3(getenv func(string) string) string {
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
 // (docs/design/joining.md, "Reloading MCP servers").
-func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
+func (e Env) advice(claudeFresh, codexFresh, piFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
 	}
@@ -544,6 +550,18 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.getenv("CLAUDECODE") == "1":
 		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
+	// Pi loads extensions as a session starts, and again on /reload, a command of its terminal
+	// UI that T3's Pi, in RPC mode, doesn't have; once loaded, the server's tools come and go
+	// with tools/list_changed (Pi 0.99.0, 2026-11-17, #864).
+	case e.looksLikePi() && piFresh && e.inT3():
+		out = append(out, brand.Product+" was just added to Pi, and this thread started before that, so it doesn't have the tools. "+
+			"Pi in T3 Code loads them only in a new thread: open one in this project.")
+	case e.looksLikePi() && piFresh:
+		out = append(out, brand.Product+" was just added to Pi, and this session started before that, so it doesn't have the tools yet. "+
+			"To load them, type /reload in Pi, or start a new session.")
+	case e.looksLikePi():
+		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this session "+
+			"within a few seconds. If they haven't after a minute, start a new session (in T3 Code, a new thread).")
 	case e.looksLikeCodex() && e.inT3():
 		// T3's Codex provider loads the server in a thread created after it was registered, and
 		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
@@ -562,6 +580,13 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 		out = append(out, "Codex sessions already open won't have it; ones started from now on will.")
 	}
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
+}
+
+// looksLikePi reports whether the agent running join is Pi, which sets PI_CODING_AGENT=true for
+// every process it starts (its docs/environment-variables.md, 0.99.0). Claude Code's own variable
+// wins, as a Claude Code that a Pi started inherits both.
+func (e Env) looksLikePi() bool {
+	return e.getenv("PI_CODING_AGENT") == "true" && e.getenv("CLAUDECODE") != "1"
 }
 
 // looksLikeCodex reports whether the agent running join is Codex. The variables are the ones Codex

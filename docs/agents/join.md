@@ -142,7 +142,9 @@ What `mur join` prints says which case this is, and how to get the tools if they
   new thread in this project to talk to other agents through Murmur. This thread won't get them.
 - Codex in a terminal: start a new session.
 - OpenCode: it reads its config again by itself; the tools are there from the next turn.
-- Muse Code, Pi, Grok or Antigravity: start a new session (in T3 Code, a new thread).
+- Pi in a terminal: type `/reload`, or start a new session.
+- Pi in T3 Code: open a new thread.
+- Muse Code, Grok or Antigravity: start a new session (in T3 Code, a new thread).
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to
 use them: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md
