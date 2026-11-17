@@ -931,3 +931,38 @@ func TestARunningSessionGetsNothingForANameAnotherTook(t *testing.T) {
 		t.Fatalf("the next session to take %s was told %v", nameX, told)
 	}
 }
+
+// #45 and mutes (Sol's review): a message for X that waits in the kept inbox of the session that
+// left X was queued under the mutes of the name that session has now. The next session to take X
+// gets it only if X hasn't muted its sender; others' messages for X still reach it.
+func TestAMessageForANameItsAddressLeftKeepsTheNamesMutes(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	senderAddr, _ := a.session("aaaaaa", "claude-sender")
+	sender := a.named(senderAddr)
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	if r := b.mute("cccccc", sender, false); r.Error != "" {
+		t.Fatalf("mute: %+v", r)
+	}
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	b.nameHeld(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) })
+
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from the muted"}); r.Error != "" || r.Messages[0].To != first {
+		t.Fatalf("send: %+v; want it sent to %s", r, first)
+	}
+	if r := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the messages to be queued", func() bool { return logHas(b, "from the muted") && logHas(b, "from this device") })
+
+	if told := b.resumedAs("ffffff", "claude-x", procS); len(told) != 1 || told[0] != "from this device" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}

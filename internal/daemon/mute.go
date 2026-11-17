@@ -123,7 +123,13 @@ func (d *Daemon) heldNamesLocked(addr string) []string {
 // this device reads it, and its sender is told it was muted (#466, docs/design/mutes.md). Caller
 // holds mu.
 func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
-	m := d.st.Mutes[d.tagKeyLocked(id)]
+	return d.mutedAtKeyLocked(d.tagKeyLocked(id), addr)
+}
+
+// mutedAtKeyLocked is mutedAtLocked for the session whose mutes are kept under key (tagKeyOf).
+// Caller holds mu.
+func (d *Daemon) mutedAtKeyLocked(key, addr string) (at time.Time, muted bool) {
+	m := d.st.Mutes[key]
 	if len(m) == 0 || bus.IsPerson(addr) {
 		return at, false
 	}
@@ -152,7 +158,13 @@ func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
 // to the device is dropped from the first moment: its sender is never refused, so there is
 // nothing for a grace to keep true. Caller holds mu.
 func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
-	at, muted := d.mutedAtLocked(id, e.From)
+	return d.mutedHereKeyLocked(d.tagKeyLocked(id), e)
+}
+
+// mutedHereKeyLocked is mutedHereLocked for the session whose mutes are kept under key (tagKeyOf).
+// Caller holds mu.
+func (d *Daemon) mutedHereKeyLocked(key string, e bus.Event) bool {
+	at, muted := d.mutedAtKeyLocked(key, e.From)
 	if !muted {
 		return false
 	}

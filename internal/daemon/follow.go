@@ -230,6 +230,14 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 				continue
 			}
 			took = true
+			// It was queued under the mutes of the name the session had last; one for another name
+			// is the new session's only if that name hasn't muted its sender (Sol's review). s may
+			// not be among the sessions yet, so its mutes are found by the name it takes.
+			if last != name && d.mutedHereKeyLocked(tagKeyOf(name, s.id), m.Event) {
+				d.log.Printf("message %s is from %s, which %s has muted; dropped", m.Event.ID, m.Event.From, name)
+				d.mutedropLocked(s.id, m.Event)
+				continue
+			}
 			if !seen[m.Event.ID] {
 				seen[m.Event.ID] = true
 				box = append(box, m)
