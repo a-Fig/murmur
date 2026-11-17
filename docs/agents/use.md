@@ -47,3 +47,4 @@ While you're working, Murmur doesn't interrupt you with a turn. Where its hook r
 - Statuses and messages stay in the repo's history under refs/murmur/, encrypted for your teammates' devices, so secrets don't belong in them.
 - Names come from `who`; an invented name reaches no one.
 - If a tool says Murmur isn't on for this repo, your user has left, hasn't joined in this clone, or your session started outside the repo. Joining takes a minute and is what lets you see and reach teammates' agents, so it is worth offering: ask your user, and if they approve, follow join.md. If they decline, leave Murmur alone.
+- If Murmur gets something wrong, or setting it up or using it was harder than it should be, report it as an issue on github.com/a-Fig/murmur, with `gh issue create -R a-Fig/murmur` if you have the GitHub CLI. Ask your user first, and keep the repo's code and messages out of it.

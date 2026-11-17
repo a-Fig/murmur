@@ -949,7 +949,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	// A name is an address: it is turned into the session's device/session here, and that is what
 	// goes on the bus, so a daemon that doesn't know names queues the message all the same.
-	var toName, renamed string
+	var toName, byName, renamed string
 	if toDevice {
 		// Sent to the device, as above.
 	} else if names.Valid(to) {
@@ -959,7 +959,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		isDevice = isDevice || to == d.device // a device may have an ID shaped like a name
 		var now string
 		if ok {
-			now, _, _ = d.sessionInfoLocked(d.queuedAtLocked(addr))
+			now, _, _ = d.sessionInfoLocked(d.queuedAtNamedLocked(addr, to))
 		}
 		d.mu.Unlock()
 		switch {
@@ -970,7 +970,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 			if now != "" && now != to {
 				renamed = fmt.Sprintf("%s was this session's name before it moved to another conversation; it is called %s now. The message was sent to it.", to, now)
 			}
-			to, toName = addr, to
+			to, toName, byName = addr, to, to
 		case !isDevice:
 			d.mu.Lock()
 			why := d.noSuchNameLocked(to)
@@ -1007,7 +1007,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	} else if to != "*" {
 		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
-		at := d.queuedAtLocked(to)
+		at := d.queuedAtNamedLocked(to, byName)
 		dev, sess := bus.SplitAddr(at)
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
@@ -1065,7 +1065,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
-		To: to, Subject: subject, Body: body}
+		To: to, ToName: byName, Subject: subject, Body: body}
 	// Before anything is read (#765, Tyler, 2026-11-16): an agent's files by its device's agents' Send
 	// files, the page's by its person's.
 	sends := func() bool {
@@ -1164,6 +1164,12 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.givenUpLocked(from, e.Subject, nameOr(toName, to), err)
 		d.saveLocked()
 		d.mu.Unlock()
+	}
+	// Not the person's: the page shows a send as sent once it answers, and has nowhere to show a
+	// give-up minutes later, so the person is told at once it wasn't sent and can try again, as before
+	// #781 (Fable's review of rc.2).
+	if bus.IsPerson(from) {
+		settle = nil
 	}
 	err := d.appendEventIf(ctx, e, still, settle)
 	pending := errors.As(err, new(pendingError))
