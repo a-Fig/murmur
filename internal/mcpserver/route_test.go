@@ -3,6 +3,9 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +36,50 @@ func TestHelloCarriesTheRouteFromTheEnvironment(t *testing.T) {
 	want := proto.Route{T3CLI: "/home/u/.t3/bin/t3", T3Home: "/home/u/.t3", MsgSocket: "/tmp/claude.sock", MsgToken: "tok-1"}
 	if r := helloFor("claude-code", "/work").Route; r != want {
 		t.Errorf("route %+v, want %+v", r, want)
+	}
+}
+
+// T3's headless server (`t3 serve`) sets no T3CODE_CLI_PATH, only the thread's ID and T3CODE_HOME
+// (#780). Its Claude Code session is still T3's: the route has the `t3` that serves, which the
+// daemon uses ahead of the messaging socket, as it does in T3's app. With no `t3` to be found it
+// gets no socket, which starts no turn there, so its messages wait as notices rather than being
+// taken as read.
+func TestHeadlessT3IsFound(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	t.Setenv(threadEnv, "thread-1")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
+	t.Cleanup(func() { servingT3 = func() (string, bool) { return "", false } })
+	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	h := helloFor("claude-code", "/work")
+	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-1",
+		MsgSocket: "/tmp/claude.sock", MsgToken: "tok-1"}); h.Route != want {
+		t.Errorf("route %+v, want %+v", h.Route, want)
+	}
+	if !h.ByThread || h.Agent != "claude-code in T3" {
+		t.Errorf("hello %+v: want it registered by its thread, as in T3", h)
+	}
+
+	servingT3 = func() (string, bool) { return "", true }
+	h = helloFor("claude-code", "/work")
+	if h.Route.MsgSocket != "" || h.Route.T3CLI != "" || h.ByThread || h.Agent != "claude-code" {
+		t.Errorf("with no t3 to be found: %+v, want no socket, no T3 command line, and not by its thread", h)
+	}
+
+	// Only Claude Code's thread is looked for: another agent with the variable keeps its own route.
+	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	t.Setenv("MURMUR_PI_MESSAGING_SOCKET", "/tmp/pi.sock")
+	t.Setenv("MURMUR_PI_MESSAGING_TOKEN", "tok-2")
+	if h := helloFor("pi", "/work"); h.Route.T3CLI != "" || h.Route.MsgSocket != "/tmp/pi.sock" || h.Agent != "pi" {
+		t.Errorf("pi with the thread's variable: %+v", h)
+	}
+
+	// A claude run from the thread's shell isn't the thread: it keeps its own socket, and isn't T3's.
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	if h := helloFor("claude-code", "/work"); h.Route.MsgSocket != "/tmp/claude.sock" || h.Route.T3CLI != "" || h.ByThread {
+		t.Errorf("under the thread's agent: %+v", h)
 	}
 }
 
@@ -270,5 +317,37 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 	}
 	if got := lastRoute(t, f); got.T3Thread != "thread-1" {
 		t.Errorf("route told: %+v", got)
+	}
+}
+
+// The `t3` a headless thread is reached through comes from Claude Code's parent: the parent itself
+// while it is a t3 on disk, the one on PATH when it is gone or can't be told, and none for a client
+// some other program started, which isn't the thread (#780).
+func TestT3Serving(t *testing.T) {
+	dir := t.TempDir()
+	t3 := filepath.Join(dir, "t3")
+	if err := os.WriteFile(t3, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	onPath := func(string) (string, error) { return "/usr/local/bin/t3", nil }
+	noPath := func(string) (string, error) { return "", exec.ErrNotFound }
+	for _, c := range []struct {
+		name, parent string
+		read         bool
+		look         func(string) (string, error)
+		cli          string
+		thread       bool
+	}{
+		{"its t3", t3, true, onPath, t3, true},
+		{"t3.exe", t3 + ".exe", true, onPath, "/usr/local/bin/t3", true},
+		{"its t3, deleted", t3 + " (deleted)", true, onPath, "/usr/local/bin/t3", true},
+		{"node, the npm t3 perhaps", "/usr/bin/node", true, onPath, "/usr/local/bin/t3", true},
+		{"unreadable", "", false, onPath, "/usr/local/bin/t3", true},
+		{"unreadable, none on PATH", "", false, noPath, "", true},
+		{"tmux", "/usr/bin/tmux", true, onPath, "", false},
+	} {
+		if cli, thread := t3Serving(c.parent, c.read, c.look); cli != c.cli || thread != c.thread {
+			t.Errorf("%s: got %q, %v; want %q, %v", c.name, cli, thread, c.cli, c.thread)
+		}
 	}
 }
