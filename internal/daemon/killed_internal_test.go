@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // A daemon that was killed left its sessions registered in the state file, and the next one
@@ -63,4 +65,67 @@ func TestSessionsOfAKilledDaemonCountAsStopped(t *testing.T) {
 	if _, kept := d.st.Inbox["ghost"]; kept {
 		t.Error("the sweep left the inbox of a session nobody listed")
 	}
+}
+
+// A daemon that last wrote its state more than StoppedInbox ago, and was then killed: a server
+// that reconnects as the next daemon starts keeps its inbox (#762), as it did before a stop was
+// recorded for such a session. One that isn't back two minutes on has run out of time.
+func TestAServerBackAtOnceKeepsItsInboxHoweverOldTheLastWrite(t *testing.T) {
+	t.Parallel()
+	load := func() *Daemon {
+		dir := t.TempDir()
+		st := state{Registered: map[string]bool{"aaaaaa": true, "bbbbbb": true},
+			Inbox: map[string][]*inMsg{"aaaaaa": {{}}, "bbbbbb": {{}}}}
+		b, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "state.json")
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		written := time.Now().Add(-60 * time.Hour)
+		if err := os.Chtimes(path, written, written); err != nil {
+			t.Fatal(err)
+		}
+		d := &Daemon{dir: dir, log: log.New(io.Discard, "", 0), device: "here-0001", sessions: map[string]*session{},
+			opt: Options{StoppedInbox: 24 * time.Hour}, started: time.Now()}
+		if err := d.loadState(); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	d := load()
+	d.pruneInboxes() // as after the first presence push
+	d.mu.Lock()
+	s := d.newSessionLocked(&proto.Hello{ID: "aaaaaa"}, "claude-code", "", "aaaaaa")
+	_, stopped := d.st.Stopped["aaaaaa"]
+	if len(d.st.Inbox["aaaaaa"]) != 1 || stopped || d.st.Downed["aaaaaa"] || s.since.IsZero() {
+		t.Errorf("back at once: inbox %v, still stopped %v, still waited for %v, since %v", d.st.Inbox["aaaaaa"], stopped, d.st.Downed["aaaaaa"], s.since)
+	}
+	if len(d.st.Inbox["bbbbbb"]) != 1 {
+		t.Error("a session not back yet lost its inbox inside the two minutes")
+	}
+	d.started = time.Now().Add(-3 * time.Minute)
+	d.mu.Unlock()
+	d.pruneInboxes()
+	d.mu.Lock()
+	if _, kept := d.st.Inbox["bbbbbb"]; kept {
+		t.Error("a session not back after two minutes, stopped 60 hours, kept its inbox")
+	}
+	if len(d.st.Inbox["aaaaaa"]) != 1 {
+		t.Error("the session that came back lost its inbox to the sweep")
+	}
+	d.mu.Unlock()
+
+	// One that comes back after the two minutes, before any sweep, has run out of time too.
+	d = load()
+	d.started = time.Now().Add(-3 * time.Minute)
+	d.mu.Lock()
+	d.newSessionLocked(&proto.Hello{ID: "aaaaaa"}, "claude-code", "", "aaaaaa")
+	if len(d.st.Inbox["aaaaaa"]) != 0 {
+		t.Error("a session back after the two minutes, stopped 60 hours, kept its inbox")
+	}
+	d.mu.Unlock()
 }

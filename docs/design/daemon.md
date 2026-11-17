@@ -41,11 +41,11 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   crash, a forced shutdown, a dead battery) records nothing, so the state file lists the sessions
   registered with the running daemon, and the next daemon counts any still listed as stopped when
   the last one last wrote that file (#762): at most about a minute before it died if it was
-  reaching the remote, and earlier if it was offline. The 24 hours run from that time, so a
-  session whose daemon last wrote more than a day before has nothing kept, even if its server
-  reconnects as the next daemon starts; until #762 such a session, back within two minutes, kept
-  its inbox. A daemon that stopped that long ago leaves the same. For its first minute the next
-  daemon hands such a session's thread nothing
+  reaching the remote, and earlier if it was offline. The 24 hours run from that time. A session
+  the last daemon went down with, stopped or killed, keeps what it has for the next daemon's first
+  two minutes whatever the stop's age, so a server that reconnects as a laptop is opened after a
+  weekend finds its inbox, as it did before a stop was recorded for it. For its first minute the
+  next daemon hands such a session's thread nothing
   while T3 shows a run of it going or its thread is unread, so its server can reconnect first.
   Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
   stopped sessions. A daemon back after more than 10 minutes skips what it missed, except for

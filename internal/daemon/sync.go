@@ -1890,7 +1890,7 @@ func (d *Daemon) pruneInboxes() {
 		d.dropHeldLocked()
 	}
 	for id, at := range d.st.Stopped {
-		if time.Since(at) > d.opt.StoppedInbox {
+		if d.stopSpentLocked(id, at) {
 			d.dropStoppedLocked(id)
 			d.saveLocked()
 		}
@@ -1900,7 +1900,7 @@ func (d *Daemon) pruneInboxes() {
 			delete(d.pushedAt, id)
 		}
 	}
-	if time.Since(d.started) < 2*time.Minute {
+	if time.Since(d.started) < sweepAfter {
 		return
 	}
 	// Nobody an earlier daemon's stop ended is waited for any longer (awaitedLocked). Only those:
@@ -1954,6 +1954,23 @@ func (d *Daemon) pruneInboxes() {
 	for key := range d.st.Mutes {
 		gone(key)
 	}
+}
+
+// sweepAfter is how long after it starts a daemon leaves what belongs to sessions it knows
+// nothing of, and to those the last daemon went down with: their servers are reconnecting.
+const sweepAfter = 2 * time.Minute
+
+// stopSpentLocked says what is kept for session id, stopped at at, has had its time: StoppedInbox
+// since the stop. Not yet, whatever the stop's age, for a session the last daemon went down
+// with (Downed) while this one is younger than sweepAfter: its server may be reconnecting, and
+// one back in that time kept what it had before a stop was recorded for it (#762). A killed
+// daemon's stop is dated by its last write, which can be days before a laptop is opened again,
+// and a daemon that stopped as a machine shut down for the weekend is as old. Caller holds mu.
+func (d *Daemon) stopSpentLocked(id string, at time.Time) bool {
+	if d.st.Downed[id] && time.Since(d.started) < sweepAfter {
+		return false
+	}
+	return time.Since(at) > d.opt.StoppedInbox
 }
 
 // dropStoppedLocked lets go of what is kept for session id, stopped past StoppedInbox: its inbox,

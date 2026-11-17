@@ -419,9 +419,8 @@ func (d *Daemon) stoppedWithDaemonLocked(id string) {
 // which is the latest it is known to have run. A daemon that reaches the remote writes at least
 // once a minute (LastSync), so that is at most about a minute before it died; one that was
 // offline may have written long before. A time that early has a catch-up read more, and takes
-// that much off StoppedInbox: a session whose daemon last wrote more than StoppedInbox ago has
-// nothing kept, even if its server reconnects at once, as one a daemon's stop ended that long
-// ago has not. A time ahead of the clock, from a clock since put right, counts as now: a stop
+// that much off StoppedInbox, though never all of it for a session whose server is back as this
+// daemon starts (stopSpentLocked). A time ahead of the clock, from a clock since put right, counts as now: a stop
 // in the future never runs out. Nothing is saved here: the state isn't whole yet, and a daemon
 // killed again before its first save finds the same sessions with the same time. It runs as
 // the state is loaded, before any goroutine, so what its name says of mu holds.
@@ -1340,7 +1339,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	}
 	d.st.Registered[h.ID] = true
 	if at, ok := d.st.Stopped[h.ID]; ok {
-		if time.Since(at) > d.opt.StoppedInbox {
+		if d.stopSpentLocked(h.ID, at) {
 			d.dropStoppedLocked(h.ID)
 		} else {
 			delete(d.st.Stopped, h.ID)
