@@ -195,7 +195,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// agent running join's.
 	byAgent, notes := e.homes()
 	r.Notes = append(r.Notes, notes...)
-	var claudeFresh, codexFresh, piFresh bool
+	var claudeFresh, codexFresh bool
 	var othersFresh []string
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
@@ -227,7 +227,6 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				codexFresh = true
 			case j == 0 && a.driver == "pi" && e.looksLikePi():
 				// The advice for the Pi running join covers it.
-				piFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -295,7 +294,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return e.cutShort(r, parent, steps.now, consentErr == nil)
 	}
 
-	r.Tell = e.advice(claudeFresh, codexFresh, piFresh, len(r.Problems) > 0)
+	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
@@ -535,7 +534,7 @@ func servingT3(getenv func(string) string) string {
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
 // (docs/design/joining.md, "Reloading MCP servers").
-func (e Env) advice(claudeFresh, codexFresh, piFresh, problems bool) []string {
+func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
 	}
@@ -552,22 +551,15 @@ func (e Env) advice(claudeFresh, codexFresh, piFresh, problems bool) []string {
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
 	// Pi loads extensions as a session starts, and again on /reload, a command of its terminal
 	// UI that T3's Pi, in RPC mode, doesn't have; once loaded, the server's tools come and go
-	// with tools/list_changed (Pi 0.99.0, 2026-11-17, #864).
-	case e.looksLikePi() && piFresh && e.inT3():
-		out = append(out, brand.Product+" was just added to Pi, and this thread started before that, so it doesn't have the tools. "+
-			"Pi in T3 Code loads them only in a new thread: open one in this project.")
-	case e.looksLikePi() && piFresh:
-		out = append(out, brand.Product+" was just added to Pi, and this session started before that, so it doesn't have the tools yet. "+
-			"To load them, type /reload in Pi, or start a new session.")
+	// with tools/list_changed (Pi 0.99.0, 2026-11-17, #864). Whether this session loaded the
+	// extension can't be told from here: one that started before any join wrote it, even another
+	// session's, needs /reload. So the advice is the same whether or not this join wrote it.
+	case e.looksLikePi() && e.inT3():
+		out = append(out, brand.Product+" is on for this repo. If this thread doesn't have its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox), "+
+			"open a new thread in this project: Pi in T3 Code loads them only as a thread starts.")
 	case e.looksLikePi():
-		// The extension was there already, but maybe not when this session started: another
-		// session's join may have written it since, and this one then needs what a fresh one does.
-		then := "type /reload in Pi."
-		if e.inT3() {
-			then = "open a new thread in this project."
-		}
-		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this session "+
-			"within a few seconds. If they haven't after a minute, "+then)
+		out = append(out, brand.Product+" is on for this repo. If this session doesn't have its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox), "+
+			"type /reload in Pi to load them.")
 	case e.looksLikeCodex() && e.inT3():
 		// T3's Codex provider loads the server in a thread created after it was registered, and
 		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
@@ -592,7 +584,8 @@ func (e Env) advice(claudeFresh, codexFresh, piFresh, problems bool) []string {
 // every process it starts (its docs/environment-variables.md, 0.99.0). A Claude Code or Codex that
 // a Pi started inherits it, so their own variables win (#870's review). The variables can't say
 // which agent started which, so a Pi run from Claude Code's or Codex's shell, the rarer case, gets
-// their advice.
+// their advice. No variable tells a Pi under Codex from a Codex under Pi: Pi also sets AI_AGENT=pi,
+// but Codex (0.169.0) sets none, so both see AI_AGENT=pi, PI_CODING_AGENT and CODEX_THREAD_ID.
 func (e Env) looksLikePi() bool {
 	return e.getenv("PI_CODING_AGENT") == "true" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex()
 }

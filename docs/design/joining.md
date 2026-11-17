@@ -191,9 +191,11 @@ after `mur join`, since the agent that ran it started before the server was regi
 | T3 Code, Pi | Ignored | Honored, by the same Pi | A new thread: Pi's RPC mode, which T3 runs, has no `/reload` |
 
 Join tells a Pi session apart by `PI_CODING_AGENT=true`, which Pi sets for every process it starts.
-A Claude Code or Codex that Pi started inherits it, so their own variables win. Where Pi already had
-the extension, join still says to `/reload` (in T3, a new thread) if the tools don't come: another
-session's join may have written it after this session started.
+A Claude Code or Codex that Pi started inherits it, so their own variables win; a Pi that Codex
+started has the same variables, and gets Codex's advice. Pi's advice is `/reload` (in T3, a new
+thread) whether or not this join wrote the extension: join can't tell whether this session loaded
+it, and one that started before any join wrote it, even another session's, never gets the tools
+without that.
 
 Because `list_changed` is honored where it matters, the server is registered once per user and
 starts in every session as a passive server: after the first join, a Claude Code session in any repo

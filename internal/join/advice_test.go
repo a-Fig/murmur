@@ -16,7 +16,7 @@ func TestAdviceForACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 	const want = "open a new thread in this project to talk to other agents through Murmur"
 	for _, fresh := range []bool{true, false} {
 		e := envWith(map[string]string{"CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"})
-		got := strings.Join(e.advice(false, fresh, false, false), "\n")
+		got := strings.Join(e.advice(false, fresh, false), "\n")
 		if !strings.Contains(got, want) {
 			t.Errorf("codexFresh %v: advice doesn't say %q:\n%s", fresh, want, got)
 		}
@@ -28,7 +28,7 @@ func TestAdviceForACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 
 // Codex outside T3 has sessions, not threads, and the advice for it says so.
 func TestAdviceForCodexOutsideT3SaysToStartANewSession(t *testing.T) {
-	got := strings.Join(envWith(map[string]string{"CODEX_THREAD_ID": "019a"}).advice(false, true, false, false), "\n")
+	got := strings.Join(envWith(map[string]string{"CODEX_THREAD_ID": "019a"}).advice(false, true, false), "\n")
 	if !strings.Contains(got, "start a new session") || strings.Contains(got, "open a new thread") {
 		t.Errorf("advice:\n%s", got)
 	}
@@ -37,7 +37,7 @@ func TestAdviceForCodexOutsideT3SaysToStartANewSession(t *testing.T) {
 // Claude Code in T3 still gets Claude's advice, though T3 is there too.
 func TestAdviceForClaudeInT3IsNotCodexs(t *testing.T) {
 	e := envWith(map[string]string{"CLAUDECODE": "1", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"})
-	got := strings.Join(e.advice(true, false, false, false), "\n")
+	got := strings.Join(e.advice(true, false, false), "\n")
 	if !strings.Contains(got, "press Stop in T3") || strings.Contains(got, "open a new thread in this project to talk") {
 		t.Errorf("advice:\n%s", got)
 	}
@@ -47,37 +47,35 @@ func TestAdviceForClaudeInT3IsNotCodexs(t *testing.T) {
 // told to press Stop in T3, as in T3's app, not to exit and run `claude --continue`.
 func TestAdviceForClaudeInHeadlessT3SaysStopInT3(t *testing.T) {
 	e := envWith(map[string]string{"CLAUDECODE": "1", "T3CODE_THREAD_ID": "thread-1", "T3CODE_HOME": "/home/u/.t3"})
-	got := strings.Join(e.advice(true, false, false, false), "\n")
+	got := strings.Join(e.advice(true, false, false), "\n")
 	if !strings.Contains(got, "press Stop in T3") || strings.Contains(got, "claude --continue") {
 		t.Errorf("advice:\n%s", got)
 	}
 }
 
 // A Pi session that ran join is told about Pi, not Claude Code or Codex (#864): /reload in a
-// terminal when the extension was just written, a new thread in T3, whose Pi has no /reload, and
-// the tools within seconds where the extension was already there (Pi 0.99.0, 2026-11-17). Even
-// then, /reload or a new thread if they don't come: another session may have written the
-// extension after this one started.
+// terminal, and a new thread in T3, whose Pi has no /reload (Pi 0.99.0, 2026-11-17). With no
+// promise that the tools come by themselves: a session that started before any join wrote the
+// extension, even another session's join, never gets them without one (#870's review).
 func TestAdviceForPi(t *testing.T) {
 	cases := []struct {
 		name      string
 		vars      map[string]string
-		fresh     bool
 		want, not string
 	}{
-		{"just added, in a terminal", map[string]string{"PI_CODING_AGENT": "true"}, true, "type /reload in Pi", "new thread"},
-		{"just added, in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, true, "open one in this project", "/reload"},
-		{"already there, in a terminal", map[string]string{"PI_CODING_AGENT": "true"}, false, "within a few seconds. If they haven't after a minute, type /reload in Pi.", "new thread"},
-		{"already there, in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, false, "within a few seconds. If they haven't after a minute, open a new thread in this project.", "/reload"},
+		{"in a terminal", map[string]string{"PI_CODING_AGENT": "true"}, "type /reload in Pi to load them", "new thread"},
+		{"in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project", "/reload"},
 	}
 	for _, c := range cases {
-		got := strings.Join(envWith(c.vars).advice(false, false, c.fresh, false), "\n")
-		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) || strings.Contains(got, "Claude Code") || strings.Contains(got, "Codex") {
+		got := strings.Join(envWith(c.vars).advice(false, false, false), "\n")
+		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) || strings.Contains(got, "Claude Code") || strings.Contains(got, "Codex") ||
+			strings.Contains(got, "seconds") || strings.Contains(got, "minute") {
 			t.Errorf("%s: advice:\n%s", c.name, got)
 		}
 	}
 	// A Claude Code or Codex that a Pi started inherits PI_CODING_AGENT, and is the agent running
-	// join: the innermost agent's advice wins.
+	// join: the innermost agent's advice wins. A Pi that Codex started has the same variables, and
+	// gets Codex's advice too: nothing tells the two apart (looksLikePi).
 	for _, c := range []struct {
 		name string
 		vars map[string]string
@@ -88,7 +86,7 @@ func TestAdviceForPi(t *testing.T) {
 		{"Codex under Pi, in T3", map[string]string{"PI_CODING_AGENT": "true", "CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project to talk"},
 	} {
 		e := envWith(c.vars)
-		got := strings.Join(e.advice(false, false, true, false), "\n")
+		got := strings.Join(e.advice(false, false, false), "\n")
 		if e.looksLikePi() || strings.Contains(got, "Pi") || !strings.Contains(got, c.want) {
 			t.Errorf("%s: advice:\n%s", c.name, got)
 		}
