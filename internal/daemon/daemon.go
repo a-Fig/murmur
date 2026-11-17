@@ -818,6 +818,11 @@ type state struct {
 	// hands their threads anything (awaitedLocked). A session leaves it when it registers or its
 	// stop runs out, and the next daemon takes it out once it has stopped waiting.
 	Downed map[string]bool `json:"downed,omitempty"`
+	// Registered is the sessions registered with the running daemon, those in their grace
+	// included. A session leaves it as its stop is recorded, so a daemon that stops leaves none.
+	// One that is killed (a crash, a forced shutdown, the power) leaves them all, and the next
+	// daemon records their stop from it (stopKilledLocked, #762).
+	Registered map[string]bool `json:"registered,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
 	// Unwritten holds this device's sessions' starts and stops not yet on its log, oldest first
@@ -1557,6 +1562,11 @@ func (d *Daemon) loadState() error {
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
 		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
 		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}, OthersFiles: map[string]othersFile{}}
+	// When the last daemon last wrote its state, read before anything here writes it.
+	var written time.Time
+	if info, err := os.Stat(d.statePath()); err == nil {
+		written = info.ModTime()
+	}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1568,6 +1578,7 @@ func (d *Daemon) loadState() error {
 		d.log.Printf("state.json unreadable, starting fresh: %v", err)
 		d.st = state{}
 	}
+	defer d.stopKilledLocked(written) // once the maps below are there
 	if d.st.Processed == nil {
 		d.st.Processed = map[string]string{}
 	}

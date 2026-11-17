@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -423,4 +425,41 @@ func TestASessionTheDaemonsStopEndedKeepsItsInbox(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("bob got %q", got)
 	}
+}
+
+// The state file lists a session while it is registered, and no longer once its stop is recorded,
+// by its grace running out or by the daemon stopping (#762): what a killed daemon leaves listed
+// is what was registered with it.
+func TestTheStateFileListsRegisteredSessions(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	// ok is false while the file is being replaced, which says nothing either way.
+	listed := func(id string) (registered, stopped, ok bool) {
+		raw, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+		var st struct {
+			Registered map[string]bool      `json:"registered"`
+			Stopped    map[string]time.Time `json:"stopped"`
+		}
+		if err != nil || json.Unmarshal(raw, &st) != nil {
+			return false, false, false
+		}
+		_, stopped = st.Stopped[id]
+		return st.Registered[id], stopped, true
+	}
+	is := func(id string, wantRegistered, wantStopped bool) func() bool {
+		return func() bool {
+			registered, stopped, ok := listed(id)
+			return ok && registered == wantRegistered && stopped == wantStopped
+		}
+	}
+	_, conn := b.session("bbbbbb", "")
+	b.session("cccccc", "")
+	if !is("bbbbbb", true, false)() || !is("cccccc", true, false)() {
+		t.Fatal("a session that has registered isn't listed in the state file")
+	}
+	conn.Close()
+	eventually(t, "the session whose grace ran out to leave the list, stopped", is("bbbbbb", false, true))
+	b.stop()
+	eventually(t, "the session the daemon's stop ended to leave the list, stopped", is("cccccc", false, true))
 }

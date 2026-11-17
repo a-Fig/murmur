@@ -306,6 +306,15 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if d.readHeldPromptsLocked(s) {
 		d.saveLocked() // a turn handed over started while the session was away (#658)
 	}
+	if !d.st.Registered[s.id] {
+		// On disk before the session is told it is registered: a daemon killed from here on
+		// leaves word of it (stopKilledLocked).
+		if d.st.Registered == nil {
+			d.st.Registered = map[string]bool{}
+		}
+		d.st.Registered[s.id] = true
+		d.saveLocked()
+	}
 	_, kid := d.kids[s.id]
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
@@ -377,6 +386,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	delete(d.sessions, h.ID)
+	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
 	d.saveLocked()
@@ -400,12 +410,47 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 // session that reconnects never stopped as far as anyone else knows. Caller holds mu.
 func (d *Daemon) stoppedWithDaemonLocked(id string) {
 	delete(d.sessions, id)
+	delete(d.st.Registered, id)
 	d.st.Stopped[id] = time.Now().Round(0)
 	if d.st.Downed == nil {
 		d.st.Downed = map[string]bool{}
 	}
 	d.st.Downed[id] = true
 	d.saveLocked()
+}
+
+// stopKilledLocked records as stopped the sessions the last daemon left registered: it was
+// killed, with no chance to record them itself (#762). A laptop whose battery died with threads
+// open then starts, the next morning, with those sessions stopped, as a daemon that was shut
+// down leaves them (stoppedWithDaemonLocked): their inboxes, credited commits and T3 routes are
+// kept for StoppedInbox, what was sent meanwhile is queued for them, and their servers are
+// waited for a little (Downed). They stopped at written, when that daemon last wrote its state,
+// which is the latest it is known to have run. A daemon that reaches the remote writes at least
+// once a minute (LastSync), so that is at most about a minute before it died; one that was
+// offline may have written long before. Being early only has a catch-up read more, and brings
+// the end of StoppedInbox that much nearer. Nothing is saved
+// here: the state isn't whole yet, and a daemon killed again before its first save finds the
+// same sessions with the same time. It runs as the state is loaded, before any goroutine, so
+// what its name says of mu holds.
+func (d *Daemon) stopKilledLocked(written time.Time) {
+	if len(d.st.Registered) == 0 {
+		return
+	}
+	if written.IsZero() {
+		written = time.Now()
+	}
+	for id := range d.st.Registered {
+		if _, stopped := d.st.Stopped[id]; !stopped {
+			d.st.Stopped[id] = written.Round(0)
+			if d.st.Downed == nil {
+				d.st.Downed = map[string]bool{}
+			}
+			d.st.Downed[id] = true
+		}
+	}
+	d.log.Printf("the last daemon was killed with %d sessions registered; they count as stopped at %s, when it last wrote its state",
+		len(d.st.Registered), written.Format(time.DateTime))
+	d.st.Registered = nil
 }
 
 // liveLocked says whether session id is connected: the CLI always is, a session in its grace or
