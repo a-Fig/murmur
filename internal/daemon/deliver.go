@@ -1223,6 +1223,7 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 // stays behind (see hadCopyLocked). Caller holds mu.
 func (d *Daemon) takeInboxLocked(s *session, from string) {
 	d.takeFilesWaitLocked(s.id, from)
+	d.takeAwaitingLocked(s.id, from) // what was handed over as a turn, and may start under s
 	old := d.st.Inbox[from]
 	if len(old) == 0 {
 		return

@@ -609,6 +609,10 @@ type Daemon struct {
 }
 
 type session struct {
+	// missedPrompt is the last prompt of the session that was no turn it waits on, and missedAt
+	// when it came (missedPromptLocked).
+	missedPrompt                                 string
+	missedAt                                     time.Time
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
