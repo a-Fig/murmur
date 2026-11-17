@@ -1445,10 +1445,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		if err != nil {
 			return err
 		}
-		if err := d.repo.Fetch(ctx, []string{ref}); err != nil {
-			return err
-		}
-		over, err := d.overOwnLog(ctx, tip)
+		over, err := d.overRemoteTip(ctx, ref, tip)
 		if err != nil {
 			return err
 		}
@@ -1510,6 +1507,50 @@ func pushRefused(err error) bool {
 type unsureError struct{ error }
 
 func (e unsureError) Unwrap() error { return e.error }
+
+// overRemoteTip says whether tip, the remote's tip of this device's log, which refused a write, is
+// something to replace rather than build on (overOwnLog). A tip that is a commit here already is
+// looked at as it is, unfetched: this clone's own from before a restart, or anything an earlier
+// fetch brought. One that isn't here is fetched, for Options.OwnFetchLimit at most, rather than for
+// the send's whole time with every other write behind writeMu (#222).
+//
+// A fetch that runs out of that time fails the write: it says nothing of what the tip is. A slow
+// link times out as a large object does, and the tip may hold this device's own history that this
+// clone lacks, as after a re-clone or a restore that kept the device's identity; replacing it would
+// lose that history (Sol's review of #845). The sends then fail quickly until the sync's background
+// fetch of the log (#15) brings the tip, after which it is looked at as any tip here is. Caller
+// holds writeMu.
+func (d *Daemon) overRemoteTip(ctx context.Context, ref, tip string) (bool, error) {
+	if tip == "" {
+		return false, nil
+	}
+	here, err := d.repo.IsCommit(ctx, tip)
+	if err != nil {
+		return false, err
+	}
+	if !here {
+		fctx, cancel := context.WithTimeout(ctx, d.opt.OwnFetchLimit)
+		err := d.fetchOwn(fctx, ref)
+		late := err != nil && fctx.Err() != nil && ctx.Err() == nil
+		cancel()
+		if late {
+			clearStaleTemp(d.opt.GitDir, d.log) // a git killed at the limit can leave its download behind
+			return false, fmt.Errorf("the tip of this device's log on the remote couldn't be fetched in %v; it is fetched in the background, and sends work again once it is here", d.opt.OwnFetchLimit)
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+	return d.overOwnLog(ctx, tip)
+}
+
+// fetchOwn fetches ref, this device's own log; a test can stand in for it (testFetch).
+func (d *Daemon) fetchOwn(ctx context.Context, ref string) error {
+	if d.testFetch != nil {
+		return d.testFetch(ctx)
+	}
+	return d.repo.Fetch(ctx, []string{ref})
+}
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather
 // than build on: not a commit, or one this daemon's own tip already contains. A failure to tell
