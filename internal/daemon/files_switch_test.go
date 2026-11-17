@@ -174,7 +174,7 @@ func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 	}
 	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "the chart",
 		Files: []string{writeFile(t, "chart.png", []byte("a chart"))}})
-	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace takes no files: they turned Receive files off") {
+	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace takes no files: Receive files is off, so the text alone gets there.") {
 		t.Errorf("to ada: %+v, want a note that she takes no files", r)
 	}
 }

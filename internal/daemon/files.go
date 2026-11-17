@@ -1739,9 +1739,9 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	switch len(people) {
 	case 0:
 	case 1:
-		notes = append(notes, people[0]+" takes no files: they turned Receive files off, so the text alone gets there.")
+		notes = append(notes, people[0]+" takes no files: Receive files is off, so the text alone gets there.")
 	default:
-		notes = append(notes, andList(people)+" take no files: they turned Receive files off, so the text alone gets there.")
+		notes = append(notes, andList(people)+" take no files: Receive files is off, so the text alone gets there.")
 	}
 	return strings.Join(notes, " ")
 }

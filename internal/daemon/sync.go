@@ -1307,7 +1307,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 
 // sawPresence records that a device's presence moved to sha without being read: tried and found
 // unreadable (tried), or not fetched at all. Either way the device is alive. A device never read
-// shows as present, with no sessions, until it is read or goes stale. Caller holds advMu.
+// shows as present, with no sessions, until it is read or goes stale. One read before keeps what it
+// said, but not what it said of files: a device that upgraded past a daemon from before files would
+// otherwise still look like one until its new presence is read (#859). Caller holds advMu.
 func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	if dev == d.device || !bus.ValidDevice(dev) {
 		return
@@ -1316,8 +1318,11 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	defer d.mu.Unlock()
 	p := d.peers[dev]
 	if p == nil {
-		p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}, unread: true}
+		p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}}
 		d.peers[dev] = p
+	}
+	if p.sha != sha {
+		p.unread = true // until a read of a presence replaces p
 	}
 	if tried {
 		p.sha = sha // not worth reading again until it moves
