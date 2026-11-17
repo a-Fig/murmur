@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // A send whose push ended unsure is pushed again until it lands, never on the log twice, and its
@@ -177,5 +178,27 @@ func TestAnUnsureSendAsTheDaemonStopsIsntLeftPending(t *testing.T) {
 	defer d.writeMu.Unlock()
 	if d.ownTip != before || len(d.pendSends) != 0 {
 		t.Errorf("the next write builds on %s with %d pending, want %s with none", d.ownTip, len(d.pendSends), before)
+	}
+}
+
+// The person's send from the page isn't left pending: the page would show it sent, and has nowhere
+// to show its give-up, so a push that ends unsure is refused at once, as before #781 (Fable's
+// review of rc.2).
+func TestThePersonsUnsureSendIsRefusedAtOnce(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: 20 * time.Millisecond, PendingGiveUp: 2 * time.Second}, false)
+	d.sendFirst(t) // a tip to build on
+	d.writeMu.Lock()
+	d.testPush = func(func() error) error { return errors.New("the connection dropped") }
+	d.writeMu.Unlock()
+	r := d.sendWith(context.Background(), d.personAddr(), proto.Request{Op: proto.OpSend, To: "*", Subject: "from the page"}, nil)
+	if !strings.Contains(r.Error, "not sent") {
+		t.Fatalf("the person's send whose push failed answered %+v, want it refused as not sent", r)
+	}
+	d.writeMu.Lock()
+	pending := len(d.pendSends)
+	d.writeMu.Unlock()
+	if pending != 0 {
+		t.Errorf("%d sends left pending, want none", pending)
 	}
 }
