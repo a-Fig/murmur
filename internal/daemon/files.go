@@ -209,13 +209,395 @@ func unixPath(path string) bool {
 	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
 }
 
-// readSendFiles reads the files an agent's send names, each no larger than a file may be.
-func readSendFiles(paths []string) ([]sendFile, error) {
+// sendRoots is the folders a send may read files from (#690): the clone's worktrees, the main one
+// among them, and the temp folder; and the clone's git directory, which none of them may read
+// inside. The daemon reads a file as the user, outside any sandbox the agent runs in, so an agent
+// that was tricked, or a sandboxed one, could otherwise send anything the user can read, ~/.ssh
+// and cloud credentials among it, to the whole team. What an agent makes as it works, screenshots,
+// logs and diffs, is in the clone or in temp, and anything else it can copy there first. The git
+// directory is out: its config can hold a remote's credentials. So is ~/.claude, where a screenshot
+// pasted into Claude Code may be, as it also holds Claude Code's credentials and every
+// conversation.
+//
+// Two rounds of Sol's review of #768 shaped how. Each folder is opened as an os.Root, and every
+// later look and read goes through that handle, so the folder checked is the one read from, though
+// its path be swapped for a link after. A worktree is found from the registrations in the git
+// directory, read as files rather than through `git worktree list`, which looks at each one and
+// would sign in to a share one names; and counts only if its .git, looked at through its handle,
+// leads back to this clone, as an agent can write those registrations. The git directory is known
+// by what it is, not how it is spelled, so neither a case nor an alias gets around it.
+type sendRoots struct {
+	roots []sendRoot
+	git   os.FileInfo // the clone's git directory; nil if it couldn't be looked at
+	vols  map[string]*os.Root
+}
+
+type sendRoot struct {
+	path string // with its links resolved
+	r    *os.Root
+	id   os.FileInfo // what it is, looked at through r
+}
+
+func (d *Daemon) openSendRoots() *sendRoots {
+	s := &sendRoots{vols: map[string]*os.Root{}}
+	gitDir, err := s.local(d.opt.GitDir)
+	var git sendRoot
+	ok := false
+	if err == nil {
+		git, ok = s.open(gitDir)
+	}
+	if ok {
+		defer git.r.Close()
+		s.git = git.id
+		d.addWorktrees(s, git, gitDir)
+	} else {
+		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
+	}
+	temps := []string{d.opt.TempDir}
+	if d.opt.TempDir == "" {
+		temps = []string{os.TempDir()}
+		if runtime.GOOS != "windows" {
+			temps = append(temps, "/tmp")
+		}
+	}
+	for _, dir := range temps {
+		if root, ok := s.open(dir); ok && !s.add(root) {
+			root.r.Close()
+		}
+	}
+	return s
+}
+
+// addWorktrees adds the clone's worktrees to s's roots.
+func (d *Daemon) addWorktrees(s *sendRoots, git sendRoot, gitDir string) {
+	// The main worktree holds the git directory, unless it was made with --separate-git-dir; each
+	// linked one is named by a registration, read through the git directory's handle, so a link
+	// there to a share is refused rather than followed. A registration's path can be relative to
+	// it (git worktree add --relative-paths).
+	dirs := []string{}
+	if strings.EqualFold(filepath.Base(gitDir), ".git") {
+		dirs = append(dirs, filepath.Dir(gitDir))
+	}
+	var worktrees os.FileInfo
+	if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
+		worktrees = info
+		if f, err := git.r.Open("worktrees"); err == nil {
+			entries, _ := f.ReadDir(-1)
+			f.Close()
+			for _, e := range entries {
+				b, err := git.r.ReadFile(filepath.Join("worktrees", e.Name(), "gitdir"))
+				ptr := strings.TrimSpace(string(b))
+				if err != nil || ptr == "" || netPath(ptr) {
+					continue
+				}
+				if !filepath.IsAbs(ptr) {
+					ptr = filepath.Join(gitDir, "worktrees", e.Name(), ptr)
+				}
+				dirs = append(dirs, filepath.Dir(filepath.Clean(ptr)))
+			}
+		}
+	}
+	// A main worktree kept apart from its git directory is found from where this device's sessions
+	// are: the nearest folder above each with a .git. ownWorktree checks it is this clone's.
+	d.mu.Lock()
+	for _, ss := range d.sessions {
+		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
+			for dir := filepath.Clean(ss.cwd); ; dir = filepath.Dir(dir) {
+				if _, err := s.stat(filepath.Join(dir, ".git")); err == nil {
+					dirs = append(dirs, dir)
+					break
+				}
+				if filepath.Dir(dir) == dir {
+					break
+				}
+			}
+		}
+	}
+	d.mu.Unlock()
+	for _, dir := range dirs {
+		if root, ok := s.open(dir); ok && s.ownWorktree(root, worktrees) && s.add(root) {
+			continue
+		} else if ok {
+			root.r.Close()
+		}
+	}
+}
+
+// add adds root, unless it is one already, or is the git directory or inside it: a registration an
+// agent wrote can name the git directory as a worktree.
+func (s *sendRoots) add(root sendRoot) bool {
+	if slices.ContainsFunc(s.roots, func(r sendRoot) bool { return os.SameFile(r.id, root.id) }) {
+		return false
+	}
+	if s.git != nil && os.SameFile(root.id, s.git) {
+		return false // its handle, though its path was swapped since it was looked at
+	}
+	for dir := root.path; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, s.git) {
+			return false
+		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	s.roots = append(s.roots, root)
+	return true
+}
+
+func (s *sendRoots) Close() {
+	for _, r := range s.roots {
+		r.r.Close()
+	}
+	for _, r := range s.vols {
+		r.Close()
+	}
+}
+
+// open opens dir as a root, through its volume's handle, so a part of it swapped for a link to a
+// share is refused rather than followed.
+func (s *sendRoots) open(dir string) (sendRoot, bool) {
+	path, err := s.local(dir)
+	if err != nil {
+		return sendRoot{}, false
+	}
+	var r *os.Root
+	if runtime.GOOS == "windows" {
+		vol, rel, err := s.volume(path)
+		if err != nil {
+			return sendRoot{}, false
+		}
+		r, err = vol.OpenRoot(rel)
+	} else {
+		// No share to sign in to off Windows, and os.Root, from /, would need every folder above
+		// readable, where a lookup needs only search: a /home of mode 711 would refuse every send.
+		r, err = os.OpenRoot(path)
+	}
+	if err != nil {
+		return sendRoot{}, false
+	}
+	id, err := r.Stat(".")
+	if err != nil {
+		r.Close()
+		return sendRoot{}, false
+	}
+	return sendRoot{path, r, id}, true
+}
+
+// ownWorktree says root's .git, looked at through its handle, is this clone's git directory, or a
+// file that points into its worktrees folder: what git makes for the main worktree and a linked one.
+func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
+	info, err := root.r.Lstat(".git")
+	switch {
+	case err != nil || s.git == nil:
+		return false
+	case info.IsDir():
+		return os.SameFile(info, s.git)
+	case !info.Mode().IsRegular():
+		return false
+	}
+	b, err := root.r.ReadFile(".git")
+	ptr, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+	if err != nil || !ok || netPath(ptr) {
+		return false
+	}
+	if !filepath.IsAbs(ptr) {
+		ptr = filepath.Join(root.path, ptr)
+	}
+	ptr, err = s.local(ptr)
+	if err != nil {
+		return false
+	}
+	if target, err := s.stat(ptr); err == nil && os.SameFile(target, s.git) {
+		return true // a main worktree whose git directory is elsewhere
+	}
+	parent, err := s.stat(filepath.Dir(ptr))
+	return err == nil && worktrees != nil && os.SameFile(parent, worktrees)
+}
+
+// volume is the root of path's volume, opened once, and path from there.
+func (s *sendRoots) volume(path string) (*os.Root, string, error) {
+	vol := filepath.VolumeName(path) + string(filepath.Separator)
+	r := s.vols[vol]
+	if r == nil {
+		var err error
+		if r, err = os.OpenRoot(vol); err != nil {
+			return nil, "", err
+		}
+		s.vols[vol] = r
+	}
+	rel := strings.TrimPrefix(path[len(vol)-1:], string(filepath.Separator))
+	return r, cmp.Or(rel, "."), nil
+}
+
+// stat looks at path, which has no links, through its volume's handle.
+func (s *sendRoots) stat(path string) (os.FileInfo, error) {
+	if runtime.GOOS != "windows" {
+		return os.Lstat(path) // see open
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return nil, err
+	}
+	return vol.Lstat(rel)
+}
+
+// readlink is where the link at path leads, read as stat looks.
+func (s *sendRoots) readlink(path string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return os.Readlink(path)
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return "", err
+	}
+	return vol.Readlink(rel)
+}
+
+// local is path with its links resolved, followed one part at a time through its volume's handle:
+// a link to a share, or one swapped in partway, is refused (errOutside) rather than followed, so
+// looking never signs in to a network host.
+func (s *sendRoots) local(path string) (string, error) {
+	path = filepath.Clean(path)
+	if netPath(path) || !filepath.IsAbs(path) {
+		return "", errOutside
+	}
+	vol := filepath.VolumeName(path)
+	done := vol + string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(path[len(vol):], string(filepath.Separator)), string(filepath.Separator))
+	for hops := 0; len(parts) > 0; {
+		part := parts[0]
+		parts = parts[1:]
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(done, part)
+		if part == ".." {
+			done = filepath.Dir(done)
+			continue
+		}
+		info, err := s.stat(next)
+		if err != nil {
+			return "", err
+		}
+		if !isLink(info) {
+			done = next
+			continue
+		}
+		if hops++; hops > 40 {
+			return "", errors.New("too many links")
+		}
+		to, err := s.readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if netPath(to) {
+			return "", errOutside
+		}
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(done, to) // done has no links, so .. in to means its parent
+		}
+		vol = filepath.VolumeName(to)
+		done = vol + string(filepath.Separator)
+		parts = append(strings.Split(strings.TrimPrefix(to[len(vol):], string(filepath.Separator)), string(filepath.Separator)), parts...)
+	}
+	return done, nil
+}
+
+// isLink says info is a link, or a Windows junction, which Go reports as irregular: local follows
+// both itself, a part at a time.
+func isLink(info os.FileInfo) bool {
+	return info.Mode()&os.ModeSymlink != 0 || runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0
+}
+
+// netPath says path, on Windows, names a share or a device rather than a drive: \\host\share,
+// \/host/share, \\?\ and \\.\ among them. Looking at a share signs in to its host as the user.
+func netPath(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	vol := filepath.VolumeName(path)
+	return vol != "" && !(len(vol) == 2 && vol[1] == ':')
+}
+
+var errOutside = errors.New("outside where send reads")
+
+// openSend opens the file path leads to, if it is in a root and not in the git directory. Every
+// look is through the root's handle, and a link met there, which can only be one swapped in since
+// local looked, is refused.
+func (s *sendRoots) openSend(path string) (*os.File, error) {
+	real, err := s.local(path)
+	if err != nil {
+		return nil, err
+	}
+	// The root it is in is found by what each folder above it is, not by how its path is spelled,
+	// which a short Windows name (RUNNER~1) or a case can change.
+	var root sendRoot
+	var rest []string
+	for dir := real; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil {
+			if i := slices.IndexFunc(s.roots, func(r sendRoot) bool { return os.SameFile(info, r.id) }); i >= 0 {
+				root = s.roots[i]
+				break
+			}
+		}
+		if filepath.Dir(dir) == dir {
+			return nil, errOutside
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+	}
+	rel := filepath.Join(append([]string{"."}, rest...)...)
+	done := "."
+	var info os.FileInfo
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		done = filepath.Join(done, part)
+		if info, err = root.r.Lstat(done); err != nil {
+			return nil, err
+		}
+		if isLink(info) {
+			return nil, errOutside
+		}
+		if info.IsDir() && s.git != nil && os.SameFile(info, s.git) {
+			return nil, errOutside
+		}
+	}
+	if info == nil || !info.Mode().IsRegular() {
+		return nil, errNotFile // and opening a pipe would wait for a writer
+	}
+	f, err := root.r.Open(done)
+	if err != nil {
+		return nil, err
+	}
+	if got, err := f.Stat(); err != nil || !os.SameFile(got, info) {
+		f.Close()
+		return nil, cmp.Or(err, errOutside) // swapped since the look
+	}
+	return f, nil
+}
+
+var errNotFile = errors.New("not a file")
+
+// sendTemp is the folder a refusal tells an agent to copy a file into.
+func (d *Daemon) sendTemp() string {
+	return cmp.Or(d.opt.TempDir, os.TempDir())
+}
+
+// readSendFiles reads the files an agent's send names, each no larger than a file may be, and only
+// from where sendRoots allows. A path is followed through its links first, and the file read is
+// the one it leads to, so a link in temp to ~/.ssh is refused (openSend).
+func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
 		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
 	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
+		if netPath(path) {
+			// A share, or a device path: opening it, or looking at it, would sign in to whatever
+			// host it names, as the user. Two slashes are a share's on Windows, never Git Bash's.
+			return nil, fmt.Errorf("%s is a network path, which send doesn't read: copy the file into %s and send it from there", path, d.sendTemp())
+		}
 		if !filepath.IsAbs(path) {
 			if unixPath(path) {
 				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
@@ -224,18 +606,30 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 			}
 			return nil, fmt.Errorf("%s isn't a full path", path)
 		}
-		info, err := os.Stat(path)
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	s := d.openSendRoots()
+	defer s.Close()
+	for _, path := range paths {
+		f, err := s.openSend(path)
+		switch {
+		case errors.Is(err, errOutside):
+			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
+		case errors.Is(err, errNotFile):
+			return nil, fmt.Errorf("%s isn't a file", path)
+		case err != nil:
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
+		}
+		info, err := f.Stat()
 		switch {
 		case err != nil:
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
-		case !info.Mode().IsRegular():
-			return nil, fmt.Errorf("%s isn't a file", path)
+			f.Close()
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
 		case info.Size() > bus.MaxFile:
+			f.Close()
 			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		}
 		b, err := io.ReadAll(io.LimitReader(f, bus.MaxFile+1)) // it may have grown since the look
 		f.Close()

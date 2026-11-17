@@ -121,6 +121,28 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   is known to every teammate: one could push their own blob over it and send a message naming it,
   and a device that read theirs first would show their file under the real message. With the sums
   in the name, a directory holds only files that are what its message says.
+- **Where a send reads from** (#690, 2026-11-16). The daemon reads a file as the user, outside
+  any sandbox the agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise
+  send anything the user can read (`~/.ssh`, cloud credentials, other repos) to the whole team. It
+  reads only from the clone's worktrees and the temp folder (`os.TempDir`, and `/tmp` on macOS and
+  Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
+  Each folder is opened as an `os.Root`, and every later look and the read go through that
+  handle, so the folder checked is the one read from even if its path becomes a link after. The
+  worktrees are found from their registrations in the git directory, read as files through its
+  handle: `git worktree list` looks at each one, which would sign in to a share one names. A main
+  worktree whose git directory is elsewhere (`--separate-git-dir`) is found above a session's
+  folder. As an agent can write registrations, a worktree counts only if its `.git`, looked at
+  through its handle, leads back to this clone, and never if it is the git directory or inside it. A
+  path's links are followed one part at a time, through its volume's handle, which refuses a link
+  to a share instead of following it; the folder it lands in is found, and the git directory
+  refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short
+  Windows name (`RUNNER~1`) or an alias doesn't get around them. A link met in the folder after
+  that can only have been swapped in, and is refused. A network path on Windows (`\\host\share`,
+  `\/host/share`, `\\?\`) is refused before anything, as looking signs in to that host as the
+  user. `~/.claude` stays out though a screenshot pasted into Claude Code may be there: it holds
+  Claude Code's credentials and every conversation. A refusal says to copy the file into the temp
+  folder. The page's uploads aren't paths, and aren't limited. Left: a hard link, which looks like
+  the file it links to.
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.
