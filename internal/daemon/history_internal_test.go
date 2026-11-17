@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -241,18 +242,53 @@ func TestAReusedMessageIDHidesNothing(t *testing.T) {
 		t.Errorf("read back, the IDs known are %v", fresh.msgIDs)
 	}
 
-	// Past the limit the oldest goes, with its ID and what it was.
+	// Past the limit the oldest goes, and its ID stays its own: a page that loaded earlier still
+	// holds it, and would pass over another message given that ID.
 	small := historyDaemon(2)
 	small.mu.Lock()
 	defer small.mu.Unlock()
 	for _, e := range []bus.Event{first, forged, again} {
 		small.recordMessageLocked(e)
 	}
-	if len(small.msgs) != 2 || len(small.msgIDs) != 2 || len(small.msgKeys) != 2 || small.msgKeys[msgKey(first)] {
+	if len(small.msgs) != 2 || len(small.msgIDs) != 2 || len(small.msgKeys) != 2 || small.msgKeys[msgKey(first)] || small.msgIDs["m1"] {
 		t.Errorf("past the limit: %d messages, IDs %v, %d keys", len(small.msgs), small.msgIDs, len(small.msgKeys))
 	}
-	small.recordMessageLocked(first)
-	if !small.msgKeys[msgKey(first)] || len(small.msgIDs) != 2 {
-		t.Errorf("a message the limit dropped, read again: IDs %v", small.msgIDs)
+	// A merge sorts the list again, and each message keeps its ID.
+	was := map[string]string{}
+	for _, m := range small.msgs {
+		was[m.e.Subject] = m.id
+	}
+	late := sentAt("m9", 20)
+	small.mergeMessagesLocked([]bus.Event{late})
+	for _, m := range small.msgs {
+		if id, held := was[m.e.Subject]; held && id != m.id {
+			t.Errorf("%q was %s to the page and is %s after a merge", m.e.Subject, id, m.id)
+		}
+	}
+	// Read again, the first is itself again, under its own ID.
+	big := historyDaemon(10)
+	big.mu.Lock()
+	defer big.mu.Unlock()
+	big.idOwner, big.idGone = small.idOwner, small.idGone
+	big.recordMessageLocked(again)
+	big.recordMessageLocked(first)
+	for _, m := range big.msgs {
+		if (m.id == "m1") != (m.e.Subject == "the first") {
+			t.Errorf("%q is %s to the page", m.e.Subject, m.id)
+		}
+	}
+	// Until enough has been dropped since that no page can still hold it.
+	for i := 0; i <= idKeep; i++ {
+		small.recordMessageLocked(sentAt("x"+strconv.Itoa(i), 30+i))
+	}
+	if _, owned := small.idOwner["m1"]; owned || len(small.idGone) > idKeep || len(small.idOwner) > idKeep+2 {
+		t.Errorf("after %d more messages m1 is still spoken for, or the IDs kept grew: %d gone, %d owned", idKeep, len(small.idGone), len(small.idOwner))
+	}
+
+	// The person's unread goes by the ID the page knows a message by.
+	d.st.Person = "ada-lovelace"
+	d.st.Inbox = map[string][]*inMsg{bus.PersonSession: {{Event: forged}, {Event: first}}}
+	if got := d.accountLocked().Unread; len(got) != 2 || got[0] == got[1] || got[1] != "m1" {
+		t.Errorf("unread, with two messages of one ID: %v", got)
 	}
 }

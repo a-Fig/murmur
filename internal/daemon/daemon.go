@@ -473,6 +473,11 @@ type Daemon struct {
 	msgSeq  uint64
 	msgIDs  map[string]bool
 	msgKeys map[string]bool
+	// idOwner is, by event ID, which message (msgKey) the page knows by that ID plain, for as
+	// long as a page may hold it: while it is in msgs, and until idKeep more have been dropped
+	// since it was. idGone is the IDs whose owner was dropped, oldest first (pageIDLocked).
+	idOwner map[string]string
+	idGone  []string
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
@@ -1276,7 +1281,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
-		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, msgKeys: map[string]bool{}, idOwner: map[string]string{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}

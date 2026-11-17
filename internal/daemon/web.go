@@ -304,17 +304,39 @@ func msgKey(e bus.Event) string {
 	return e.ID + "\x00" + e.From + "\x00" + strconv.FormatInt(e.At.UnixNano(), 36)
 }
 
-// pageIDLocked is the ID the page is to know e by: its own, unless a message the page has is
-// known by that already. Then it is the ID with a mark of which message this is, so the page,
-// which keeps its messages by ID, shows both. Receipts and the unread list go by the ID alone,
-// so they stay with the message that has it plain, which is the first this daemon kept. Caller
-// holds mu.
+// idKeep is how many dropped messages' IDs stay spoken for. The page keeps 2,000 messages of its
+// own, four times what the daemon does, and must not be given another message under an ID it
+// still holds.
+const idKeep = 4000
+
+// pageIDLocked is the ID the page is to know e by, and notes it. The page keeps its messages by
+// ID, and passes over one it has, so an ID means one message for as long as a page may hold it:
+// the first message this daemon kept with an ID owns it plain, through a merge that sorts the
+// list again and for idKeep dropped messages after it has gone from the list itself. Any other
+// message with that ID gets it with a mark of which message it is, the same mark each time, so
+// the page shows both. The mark is 64 bits of a hash of what the sender chose, long enough that
+// none can be made to match another's. A daemon that restarts starts again: its page loads
+// again too, unless an update handed it over. Caller holds mu.
 func (d *Daemon) pageIDLocked(e bus.Event) string {
-	if !d.msgIDs[e.ID] {
+	if d.idOwner == nil {
+		d.idOwner = map[string]string{}
+	}
+	if _, owned := d.idOwner[e.ID]; !owned {
+		d.idOwner[e.ID] = msgKey(e)
+	}
+	return d.pageIDOfLocked(e)
+}
+
+// pageIDOfLocked is the ID the page knows e by, or would: its own if it owns it or nothing
+// does, else the marked one. Receipts go by the event's ID alone, so the page shows them on the
+// message that has it plain. Caller holds mu.
+func (d *Daemon) pageIDOfLocked(e bus.Event) string {
+	key := msgKey(e)
+	if owner, owned := d.idOwner[e.ID]; !owned || owner == key {
 		return e.ID
 	}
-	sum := sha256.Sum256([]byte(msgKey(e)))
-	return e.ID + "~" + hex.EncodeToString(sum[:4])
+	sum := sha256.Sum256([]byte(key))
+	return e.ID + "~" + hex.EncodeToString(sum[:8])
 }
 
 // recordMessageLocked keeps a message for the page. Every message this daemon reads goes in,
@@ -345,6 +367,16 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 		}
 		delete(d.msgIDs, d.msgs[i].id)
 		delete(d.msgKeys, msgKey(d.msgs[i].e))
+		if gone := d.msgs[i]; gone.id == gone.e.ID {
+			// Its ID stays its own for a while yet: a page still has it (pageIDLocked).
+			d.idGone = append(d.idGone, gone.id)
+			for len(d.idGone) > idKeep {
+				if old := d.idGone[0]; !d.msgIDs[old] {
+					delete(d.idOwner, old)
+				}
+				d.idGone = d.idGone[1:]
+			}
+		}
 		d.msgs = slices.Delete(d.msgs, i, i+1)
 		if mine {
 			d.ownMsgs--

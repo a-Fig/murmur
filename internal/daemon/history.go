@@ -231,7 +231,7 @@ func historyEvent(c bus.Commit, dev string, keys bus.Keyring) (bus.Event, bool) 
 // mergeMessagesLocked puts the events the page doesn't have among its messages, all of them in the
 // order they were sent, by their senders' clocks: what is read back has no order of arrival. Every
 // message then gets a new number, so a page that asked before is given them all again, and passes
-// over the ones it has. With nothing new to keep, nothing changes. Caller holds mu.
+// over the ones it has, each of which keeps the ID the page knows it by (pageIDLocked). With nothing new to keep, nothing changes. Caller holds mu.
 func (d *Daemon) mergeMessagesLocked(events []bus.Event) {
 	all := make([]bus.Event, 0, len(d.msgs)+len(events))
 	for _, m := range d.msgs {

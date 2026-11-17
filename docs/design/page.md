@@ -34,10 +34,16 @@ from it is in [a person on the page](people.md).
   - *Which message is which* (#603, 2026-11-16) goes by its ID, its sender and when it was sent.
     By the ID alone, a device that wrote an ID again hid its own later message from every page,
     and after a restart could put one of its own in another's place. The page still keeps
-    messages by one ID each, so a second message with an ID the page has is given it with a
-    mark added. Receipts and the unread list go by the ID alone and stay with whichever of the
-    two the daemon kept first, which after a restart is the one with the earlier time: such a
-    message can show another's receipts. Neither is hidden.
+    messages by one ID each, and passes over an ID it has. So the first message the daemon kept
+    with an ID has it plain, for as long as a page may still hold it: through a re-sort of the
+    list, and for 4,000 dropped messages after the daemon's own 500 have let it go, the page
+    keeping 2,000. Any other message with that ID is given it with a mark added, 64 bits of a
+    hash, the same each time. The unread list follows the marked ID.
+    - *What is left.* Receipts go by the bus's ID alone, so the page shows them on the message
+      that has it plain, whichever of the two they were for. And a daemon that restarts picks
+      owners afresh, by time sent where history is read back: a page handed over by an update,
+      which keeps what it had, can then show one of the two twice and the other not at all until
+      it is loaded again.
 - **Messages from before the daemon started are read back from the bus** (#138, 2026-11-12). The
   daemon exits when idle, so the page opened on conversations with their beginnings gone, and one
   away over 10 minutes left a hole in the middle. They are read back from the logs this clone has
