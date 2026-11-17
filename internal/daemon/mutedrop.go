@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // A message dropped on arrival because its recipient muted its sender is listed, by ID, in the
@@ -32,8 +33,11 @@ type muteDrop struct {
 // device lists it as dropped for a mute. Told is the names of the muters the sender has been told
 // of, or was when it sent.
 type outgoing struct {
-	From    string    `json:"from"`
+	From string `json:"from"`
+	// To is who it was sent to, as its sender named them; Addr, as it was sent: only a device it
+	// could reach is believed when it lists it (Opus's review of #824).
 	To      string    `json:"to"`
+	Addr    string    `json:"addr"`
 	Subject string    `json:"subject"`
 	At      time.Time `json:"at"`
 	Told    []string  `json:"told,omitempty"`
@@ -59,7 +63,8 @@ func (d *Daemon) mutedropLocked(id string, e bus.Event) {
 	d.kickPresence()
 }
 
-// mutedropsLocked is the IDs presence lists as dropped for session id. Caller holds mu.
+// mutedropsLocked is the IDs presence lists as dropped for session id. A list that has run out
+// is let go. Caller holds mu.
 func (d *Daemon) mutedropsLocked(id string) []string {
 	var ids []string
 	for _, m := range d.st.MuteDrops[id] {
@@ -67,13 +72,22 @@ func (d *Daemon) mutedropsLocked(id string) []string {
 			ids = append(ids, m.ID)
 		}
 	}
+	for sess, drops := range d.st.MuteDrops {
+		if len(drops) == 0 || time.Since(drops[len(drops)-1].At) > muteDropKeep {
+			delete(d.st.MuteDrops, sess) // saved with the next change
+		}
+	}
 	return ids
 }
 
 // outgoingLocked keeps e, which session from of this device sent to to (as the sender named it),
 // in case another device lists it as dropped for a mute; named is the muters its sender was told
-// of already. Caller holds mu, and saves the state.
+// of already. One no mute can drop, to a person, or from the CLI, which has no inbox to tell, isn't
+// kept. Caller holds mu, and saves the state.
 func (d *Daemon) outgoingLocked(from, to string, e bus.Event, named []string) {
+	if _, sess := bus.SplitAddr(from); sess == proto.CLISession || bus.IsPerson(e.To) {
+		return
+	}
 	if d.st.Outgoing == nil {
 		d.st.Outgoing = map[string]*outgoing{}
 	}
@@ -95,17 +109,22 @@ func (d *Daemon) outgoingLocked(from, to string, e bus.Event, named []string) {
 	if to == "*" {
 		to = "everyone"
 	}
-	d.st.Outgoing[e.ID] = &outgoing{From: from, To: to, Subject: e.Subject, At: now, Told: slices.Clone(named)}
+	d.st.Outgoing[e.ID] = &outgoing{From: from, To: to, Addr: e.To, Subject: e.Subject, At: now, Told: slices.Clone(named)}
 }
 
-// droppedThereLocked tells this device's senders of the messages another device's sessions, in
+// droppedThereLocked tells this device's senders of the messages device dev's sessions, in
 // sessions, list as dropped for a mute, each once. Caller holds mu.
-func (d *Daemon) droppedThereLocked(sessions []bus.SessionInfo) {
+func (d *Daemon) droppedThereLocked(dev string, sessions []bus.SessionInfo) {
 	told := false
 	for _, s := range sessions {
 		for _, id := range s.Dropped {
 			o := d.st.Outgoing[id]
 			if o == nil || s.Name == "" || slices.Contains(o.Told, s.Name) {
+				continue
+			}
+			// To everyone or a group, any device may have got it; to a device or a session there,
+			// only that one.
+			if to, _ := bus.SplitAddr(o.Addr); o.Addr != "*" && !bus.IsGroup(o.Addr) && to != dev {
 				continue
 			}
 			o.Told = append(o.Told, s.Name)

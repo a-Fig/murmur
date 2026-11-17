@@ -78,13 +78,16 @@ func TestASenderIsToldItsMessageWasDroppedForAMute(t *testing.T) {
 	from := bus.Addr(d.device, "bbbbbb")
 	quiet := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, To: "*", Subject: "the failing page"}
 	named := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, To: "*", Subject: "the log"}
+	elsewhere := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, To: "other-0002/cccccc", Subject: "not theirs"}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.outgoingLocked(from, "*", quiet, nil)
 	d.outgoingLocked(from, "*", named, []string{"quiet-otter"})
-	there := []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Dropped: []string{quiet.ID, named.ID, bus.NewID()}}}
-	d.droppedThereLocked(there)
-	d.droppedThereLocked(there) // a presence read again
+	d.outgoingLocked(from, "brisk-finch", elsewhere, nil)
+	// A device lists what it dropped: one it never got, sent to another device's session, isn't believed.
+	there := []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Dropped: []string{quiet.ID, named.ID, elsewhere.ID, bus.NewID()}}}
+	d.droppedThereLocked("peer-0001", there)
+	d.droppedThereLocked("peer-0001", there) // a presence read again
 	inbox := d.st.Inbox["bbbbbb"]
 	if len(inbox) != 1 {
 		t.Fatalf("the sender's inbox: %+v", inbox)

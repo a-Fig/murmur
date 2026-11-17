@@ -1181,9 +1181,14 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.caughtUp[id] = true
 	d.applyHeldLocked(id) // first: a group's message waiting for it goes by the tags they give it
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
-			d.addInboxLocked(id, e)
+		if !d.addressedLocked(e, id) || d.offMeshLocked(id) {
+			continue
 		}
+		if d.mutedHereLocked(id, e) {
+			d.mutedropLocked(id, e) // what arrived while the daemon was down: its sender is told (#466)
+			continue
+		}
+		d.addInboxLocked(id, e)
 	}
 	d.saveLocked()
 }
@@ -1272,7 +1277,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
-		d.droppedThereLocked(pres.Sessions)
+		d.droppedThereLocked(dev, pres.Sessions)
 	}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
