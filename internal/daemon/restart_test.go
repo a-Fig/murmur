@@ -384,3 +384,43 @@ func TestTagsReadBeforeANamelessSessionReconnectsReachIt(t *testing.T) {
 			got, took, daemon.CatchUpWindow)
 	}
 }
+
+// A session still connected when its daemon stops is a stopped session from then (#736): what is
+// sent while the daemon is down is queued for it, and it gets that back however it returns, as a
+// server that doesn't say it is reconnecting does here. Before, no stop was recorded, so nothing
+// was kept for it, and the next daemon swept its inbox and its T3 route away.
+func TestASessionTheDaemonsStopEndedKeepsItsInbox(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	eventually(t, "b holds the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, b)[ids[0]] != nil
+	})
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "unread before the stop"})
+	eventually(t, "the message to be queued", func() bool {
+		return len(b.do(proto.Request{Op: proto.OpNotices, Session: "bbbbbb"}).Messages) == 1
+	})
+
+	b.stop()
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, while it was down"})
+	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, while it was down"})
+	b.start()
+	// The daemon reads what it missed with bob still away.
+	eventually(t, "b to be back in a's sight", func() bool { return a.seesDevices(2) })
+	b.helloAgain("bbbbbb", false)
+
+	var got []string
+	eventually(t, "bob gets what was kept for it", func() bool {
+		got = got[:0]
+		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
+			got = append(got, m.Subject)
+		}
+		return len(got) >= 3
+	})
+	if len(got) != 3 {
+		t.Fatalf("bob got %q", got)
+	}
+}

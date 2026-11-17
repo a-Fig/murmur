@@ -609,6 +609,10 @@ type Daemon struct {
 }
 
 type session struct {
+	// missedPrompt is the last prompt of the session that was no turn it waits on, and missedAt
+	// when it came (missedPromptLocked).
+	missedPrompt                                 string
+	missedAt                                     time.Time
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
@@ -796,6 +800,11 @@ type state struct {
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
+	// Downed is the stopped sessions that were still connected when the daemon stopped (#736):
+	// their servers may reconnect to the next daemon, which waits a little for them before it
+	// hands their threads anything (awaitedLocked). A session leaves it when it registers or its
+	// stop runs out, and the next daemon takes it out once it has stopped waiting.
+	Downed map[string]bool `json:"downed,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
 	// Unwritten holds this device's sessions' starts and stops not yet on its log, oldest first
