@@ -572,8 +572,8 @@ func (d *Daemon) turnStartLocked(id string) time.Time {
 	return time.Time{}
 }
 
-// awaitedLocked says a session of T3 that isn't registered is one the last daemon's stop ended
-// (st.Downed), whose server may be about to reconnect (#736): for reconnectHold after this daemon
+// awaitedLocked says a session of T3 that isn't registered is one the last daemon's stop, or its
+// being killed, ended (st.Downed), whose server may be about to reconnect (#736, #762): for reconnectHold after this daemon
 // started, while its thread hasn't been read or T3 shows a run of it going. Its kept inbox is left alone
 // then, as a message handed over would be queued behind the run as a turn of its own (#607), or go
 // into a thread not yet known for a delegate's. Once registered it is held as any reconnected

@@ -1043,11 +1043,12 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 }
 
 // recipientsLocked lists the sessions a message can be queued for: those registered, which
-// includes any in their grace, those stopped within StoppedInbox, and the CLI. Caller holds mu.
+// includes any in their grace, those stopped whose inbox is kept (keptLocked), and the CLI.
+// Caller holds mu.
 func (d *Daemon) recipientsLocked() []string {
 	ids := sortedKeys(d.sessions)
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if d.sessions[id] == nil && time.Since(d.st.Stopped[id]) <= d.opt.StoppedInbox {
+		if d.sessions[id] == nil && d.keptLocked(id) {
 			ids = append(ids, id)
 		}
 	}
@@ -1080,11 +1081,11 @@ func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
 	return mode == modeCatchUp && id != proto.CLISession && (s == nil || s.reconnect)
 }
 
-// keptInboxLocked says some stopped session has its inbox kept: it stopped within StoppedInbox
-// and has not registered again. Caller holds mu.
+// keptInboxLocked says some stopped session has its inbox kept (keptLocked) and has not
+// registered again. Caller holds mu.
 func (d *Daemon) keptInboxLocked() bool {
-	for id, at := range d.st.Stopped {
-		if d.sessions[id] == nil && time.Since(at) <= d.opt.StoppedInbox {
+	for id := range d.st.Stopped {
+		if d.sessions[id] == nil && d.keptLocked(id) {
 			return true
 		}
 	}
@@ -1905,8 +1906,9 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 }
 
 // pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
-// for them, and those left by sessions of a daemon that was killed, which records no stop for
-// them (one that stops does, #736), if they didn't come back after the restart.
+// for them, and those of sessions neither registered nor stopped. A daemon that stops records a
+// stop for each of its sessions (#736), and the next daemon does it for one that was killed
+// (#762), so those are what a state file from before either holds.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1915,7 +1917,7 @@ func (d *Daemon) pruneInboxes() {
 		d.dropHeldLocked()
 	}
 	for id, at := range d.st.Stopped {
-		if time.Since(at) > d.opt.StoppedInbox {
+		if d.stopSpentLocked(id, at) {
 			d.dropStoppedLocked(id)
 			d.saveLocked()
 		}
@@ -1925,7 +1927,7 @@ func (d *Daemon) pruneInboxes() {
 			delete(d.pushedAt, id)
 		}
 	}
-	if time.Since(d.started) < 2*time.Minute {
+	if time.Since(d.started) < sweepAfter {
 		return
 	}
 	if d.pruneSessionNamesLocked(time.Now()) {
@@ -1954,7 +1956,7 @@ func (d *Daemon) pruneInboxes() {
 		}
 	}
 	// A thread is kept for a session while it can have messages: it is running or stopped within
-	// StoppedInbox. One that went down with a daemon that was killed, and never came back, has none.
+	// StoppedInbox. One with no stop recorded, from a state file older than #736 and #762, has none.
 	for id := range d.st.T3Routes {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
 			delete(d.st.T3Routes, id)
@@ -1982,6 +1984,33 @@ func (d *Daemon) pruneInboxes() {
 	for key := range d.st.Mutes {
 		gone(key)
 	}
+}
+
+// sweepAfter is how long after it starts a daemon leaves what belongs to sessions it knows
+// nothing of, and to those the last daemon went down with: their servers are reconnecting.
+const sweepAfter = 2 * time.Minute
+
+// stopSpentLocked says what is kept for session id, stopped at at, has had its time: StoppedInbox
+// since the stop. Not yet, whatever the stop's age, for a session the last daemon went down
+// with (Downed) while this one is younger than sweepAfter: its server may be reconnecting, and
+// one back in that time kept what it had before a stop was recorded for it (#762). A killed
+// daemon's stop is dated by its last write, which can be days before a laptop is opened again,
+// and a daemon that stopped as a machine shut down for the weekend is as old. Caller holds mu.
+func (d *Daemon) stopSpentLocked(id string, at time.Time) bool {
+	if d.st.Downed[id] && time.Since(d.started) < sweepAfter {
+		return false
+	}
+	return time.Since(at) > d.opt.StoppedInbox
+}
+
+// keptLocked says session id is stopped and its inbox is kept: its stop hasn't had its time
+// (stopSpentLocked). It is the one test of that, for whether a message is queued for the
+// session, forwarded to it or adopted from it, and whether its thread is read: a session spared
+// by the sweep and counted as gone by the rest would have its inbox kept and nothing put in it.
+// Caller holds mu.
+func (d *Daemon) keptLocked(id string) bool {
+	at, ok := d.st.Stopped[id]
+	return ok && !d.stopSpentLocked(id, at)
 }
 
 // dropStoppedLocked lets go of what is kept for session id, stopped past StoppedInbox: its inbox,

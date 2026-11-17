@@ -3,9 +3,6 @@ package mcpserver
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -320,34 +317,43 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 	}
 }
 
-// The `t3` a headless thread is reached through comes from Claude Code's parent: the parent itself
-// while it is a t3 on disk, the one on PATH when it is gone or can't be told, and none for a client
-// some other program started, which isn't the thread (#780).
-func TestT3Serving(t *testing.T) {
-	dir := t.TempDir()
-	t3 := filepath.Join(dir, "t3")
-	if err := os.WriteFile(t3, nil, 0o755); err != nil {
-		t.Fatal(err)
+// A Codex thread of T3's headless server has none of T3's variables but the T3CODE_HOME join
+// forwards, and the t3 that serves runs Codex. Its route is T3's, and its thread comes from the
+// tool calls' _meta, as in T3's app. A codex t3 doesn't run keeps Codex's own route, as does one
+// with an agent above it (a thread's shell's) or with no T3 home, for which no t3 is looked for
+// (#802).
+func TestHeadlessT3CodexIsFound(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv(threadEnv, "")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	asked := false
+	found := func() string { asked = true; return "/home/u/.local/bin/t3" }
+	t.Cleanup(func() { codexT3 = func() string { return "" } })
+	codexT3 = found
+	h := helloFor("codex", "/work")
+	if r := h.Route; r.T3CLI != "/home/u/.local/bin/t3" || r.T3Home != "/home/u/.t3" || r.CodexCLI != "" {
+		t.Errorf("route %+v, want T3's", h.Route)
 	}
-	onPath := func(string) (string, error) { return "/usr/local/bin/t3", nil }
-	noPath := func(string) (string, error) { return "", exec.ErrNotFound }
-	for _, c := range []struct {
-		name, parent string
-		read         bool
-		look         func(string) (string, error)
-		cli          string
-		thread       bool
-	}{
-		{"its t3", t3, true, onPath, t3, true},
-		{"t3.exe", t3 + ".exe", true, onPath, "/usr/local/bin/t3", true},
-		{"its t3, deleted", t3 + " (deleted)", true, onPath, "/usr/local/bin/t3", true},
-		{"node, the npm t3 perhaps", "/usr/bin/node", true, onPath, "/usr/local/bin/t3", true},
-		{"unreadable", "", false, onPath, "/usr/local/bin/t3", true},
-		{"unreadable, none on PATH", "", false, noPath, "", true},
-		{"tmux", "/usr/bin/tmux", true, onPath, "", false},
-	} {
-		if cli, thread := t3Serving(c.parent, c.read, c.look); cli != c.cli || thread != c.thread {
-			t.Errorf("%s: got %q, %v; want %q, %v", c.name, cli, thread, c.cli, c.thread)
-		}
+	if h.ByThread || h.Agent != "codex in T3" {
+		t.Errorf("hello %+v: want T3's label, and the thread from _meta, not the variable", h)
+	}
+
+	codexT3 = func() string { return "" }
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" {
+		t.Errorf("a codex t3 doesn't run: %+v", h)
+	}
+
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	asked, codexT3 = false, found
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" || asked {
+		t.Errorf("a codex under the thread's codex: %+v, looked for t3: %v", h, asked)
+	}
+	agentAbove = func() bool { return false }
+
+	t.Setenv("T3CODE_HOME", "")
+	asked = false
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || asked {
+		t.Errorf("with no T3 home: %+v, looked for t3: %v", h, asked)
 	}
 }

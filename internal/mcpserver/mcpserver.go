@@ -30,6 +30,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
@@ -286,10 +287,10 @@ func helloFor(agent, cwd string) proto.Hello {
 	return h
 }
 
-// threadEnv is where T3 puts the thread's ID for the Claude Code process it runs, and so for its MCP
-// servers (read in T3 0.1.x's server, 2026-11-15). Only Claude Code's servers take it: Codex's start
-// with a bare environment, Muse passes on only what join lists, and Pi and Grok weren't tried.
-const threadEnv = "T3CODE_THREAD_ID"
+// threadEnv is t3.ThreadEnv, the thread's ID, which T3 gives the Claude Code process it runs and so
+// its MCP servers. Only Claude Code's servers take it: Codex's start with a bare environment, Muse
+// passes on only what join lists, and Pi and Grok weren't tried.
+const threadEnv = t3.ThreadEnv
 
 // agentAbove says whether an agent's program runs above the client that started this server. Every
 // process under a T3 thread inherits threadEnv, so a claude run from the thread's shell, perhaps in
@@ -442,52 +443,52 @@ type t3Seen struct {
 // the Claude Code it runs the thread's ID and T3CODE_HOME. Taken for outside T3 without one, such a
 // session was handed messages through the messaging socket, which starts no turn under T3, and
 // they were lost (#780). Only Claude Code's thread is found this way, as only it is known to have
-// the thread's variable (threadEnv).
+// the thread's variable (threadEnv). Codex's server has neither variable, as Codex starts it with
+// only what join forwards, and the thread's ID reaches only the commands Codex runs: there
+// T3CODE_HOME, which join forwards too, says to look for the t3 above Codex, and the thread comes
+// from the tool calls' _meta as in T3's app (#802). A codex run from a thread's shell inherits
+// T3CODE_HOME: agentAbove finds the thread's own codex above it, and codexT3 takes only a t3 that
+// runs Codex itself, for the walk can stop short of that codex, at a tmux, say.
 func t3Of(agent string) t3Seen {
 	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
 	seen.thread = isClaude(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
-	if seen.cli == "" && seen.thread {
+	switch {
+	case seen.cli != "":
+	case seen.thread:
 		seen.cli, seen.thread = servingT3()
+	case agent == "codex" && os.Getenv("T3CODE_HOME") != "" && !agentAbove():
+		seen.cli = codexT3()
 	}
 	return seen
 }
 
-// servingT3 is the `t3` that runs the client, as t3Of's thread is found, and whether the client
-// is the thread at all. A variable, so that tests needn't have T3.
+// servingT3 is the `t3` that runs the client (Claude Code or Codex, the server's parent), as t3Of
+// finds it, and whether the client is the thread at all. A variable, so that tests needn't have T3.
 var servingT3 = func() (cli string, thread bool) {
 	parent, read := "", false
 	if pids := proc.Ancestors(os.Getppid(), 2); len(pids) == 2 {
 		exe, err := proc.Exe(pids[1])
 		parent, read = exe, err == nil
 	}
-	return t3Serving(parent, read, exec.LookPath)
+	return t3.Serving(parent, read, exec.LookPath)
 }
 
-// t3Serving is servingT3 for the client's parent, if it could be read. `t3 serve` starts Claude
-// Code itself, so a parent that is t3 is the thread's, used while it is still on disk; one that is
-// gone (an update pruned its version) gives way to the t3 on PATH, which follows updates. A parent
-// that is node may be the npm t3, so it too goes to PATH, as does one that can't be read. Any other
-// parent means the client isn't the thread but was started inside it, by tmux or an editor, say,
-// and only inherited its variable: it keeps its own route.
-func t3Serving(parent string, read bool, lookPath func(string) (string, error)) (string, bool) {
-	if read {
-		switch programName(parent) {
-		case "t3":
-			if !strings.HasSuffix(parent, " (deleted)") {
-				if _, err := os.Stat(parent); err == nil {
-					return parent, true
-				}
-			}
-		case "node":
-		default:
-			return "", false
-		}
+// codexT3 is the `t3` that runs Codex, the server's parent: Codex's own parent, only if it is t3,
+// as `t3 serve` runs Codex's native program itself (seen 2026-11-16, #802). Unlike Serving, it
+// takes no node and no t3 from PATH on a guess: npm's codex runs the native one under node, so a
+// codex that tmux started in a thread's shell would be taken for the thread. A t3 an update has
+// deleted gives way to the one on PATH, as in Serving. A variable, so that tests needn't have T3.
+var codexT3 = func() string {
+	pids := proc.Ancestors(os.Getppid(), 2)
+	if len(pids) != 2 {
+		return ""
 	}
-	cli, err := lookPath("t3")
-	if err != nil {
-		return "", true
+	exe, err := proc.Exe(pids[1])
+	if err != nil || programName(exe) != "t3" {
+		return ""
 	}
-	return cli, true
+	cli, _ := t3.Serving(exe, true, exec.LookPath)
+	return cli
 }
 
 // parentProgram is the process that started this server and the program it runs. A variable, for

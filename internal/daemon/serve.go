@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -377,6 +378,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	delete(d.sessions, h.ID)
+	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
 	d.saveLocked()
@@ -400,12 +402,54 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 // session that reconnects never stopped as far as anyone else knows. Caller holds mu.
 func (d *Daemon) stoppedWithDaemonLocked(id string) {
 	delete(d.sessions, id)
+	delete(d.st.Registered, id)
 	d.st.Stopped[id] = time.Now().Round(0)
 	if d.st.Downed == nil {
 		d.st.Downed = map[string]bool{}
 	}
 	d.st.Downed[id] = true
 	d.saveLocked()
+}
+
+// stopKilledLocked records as stopped the sessions the last daemon left registered: it was
+// killed, with no chance to record them itself (#762). A laptop whose battery died with threads
+// open then starts, the next morning, with those sessions stopped, as a daemon that was shut
+// down leaves them (stoppedWithDaemonLocked): their inboxes, credited commits and T3 routes are
+// kept for StoppedInbox, what was sent meanwhile is queued for them, and their servers are
+// waited for a little (Downed). They stopped at written, when that daemon last wrote its state,
+// which is the latest it is known to have run. A daemon that reaches the remote writes at least
+// once a minute (LastSync), so that is at most about a minute before it died; one that was
+// offline may have written long before. A time that early has a catch-up read more, and takes
+// that much off StoppedInbox, though never all of it for a session whose server is back as this
+// daemon starts (stopSpentLocked). A time ahead of the clock, from a clock since put right, counts as now: a stop
+// in the future never runs out. Nothing is saved here: the state isn't whole yet, and a daemon
+// killed again before its first save finds the same sessions with the same time. It runs as
+// the state is loaded, before any goroutine, so what its name says of mu holds.
+func (d *Daemon) stopKilledLocked(written time.Time) {
+	if len(d.st.Registered) == 0 {
+		return
+	}
+	// Not later than this daemon's start either, by which the next one knows the stop for an
+	// earlier daemon's (pruneInboxes).
+	if latest := cmp.Or(d.started, time.Now()); written.IsZero() || written.After(latest) {
+		written = latest
+	}
+	n := 0
+	for id := range d.st.Registered {
+		if _, stopped := d.st.Stopped[id]; !stopped {
+			d.st.Stopped[id] = written.Round(0)
+			if d.st.Downed == nil {
+				d.st.Downed = map[string]bool{}
+			}
+			d.st.Downed[id] = true
+			n++
+		}
+	}
+	if n > 0 {
+		d.log.Printf("the last daemon didn't record the stop of %d sessions registered with it; they count as stopped at %s, when it last wrote its state",
+			n, written.Format(time.DateTime))
+	}
+	d.st.Registered = nil
 }
 
 // liveLocked says whether session id is connected: the CLI always is, a session in its grace or
@@ -1318,8 +1362,8 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	return devices
 }
 
-// newSessionLocked registers a session that isn't registered. One that stopped within
-// StoppedInbox gets its inbox back, with what arrived while it was stopped, and keeps its claim on
+// newSessionLocked registers a session that isn't registered. One whose stop hasn't had its time
+// (stopSpentLocked: within StoppedInbox, or back as a daemon starts) gets its inbox back, with what arrived while it was stopped, and keeps its claim on
 // what was sent since it stopped: a catch-up that reads a backlog ref only after the session has
 // registered again would otherwise take those messages for older than the session and drop them.
 // Past StoppedInbox, pruneInboxes is only late. Caller holds mu.
@@ -1329,16 +1373,23 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	now := time.Now()
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+	// Listed as registered in the same write that takes its stop away, and before the session
+	// is told it is registered: a daemon killed at any moment leaves the session either stopped
+	// or listed (stopKilledLocked), never neither.
+	if d.st.Registered == nil {
+		d.st.Registered = map[string]bool{}
+	}
+	d.st.Registered[h.ID] = true
 	if at, ok := d.st.Stopped[h.ID]; ok {
-		if time.Since(at) > d.opt.StoppedInbox {
+		if d.stopSpentLocked(h.ID, at) {
 			d.dropStoppedLocked(h.ID)
 		} else {
 			delete(d.st.Stopped, h.ID)
 			delete(d.st.Downed, h.ID)
 			s.since = at
 		}
-		d.saveLocked()
 	}
+	d.saveLocked()
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
 	d.setNameLocked(s, d.nameForKeyLocked(key, h.ID))
 	d.sessions[h.ID] = s
