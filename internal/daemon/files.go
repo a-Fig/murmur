@@ -1760,7 +1760,7 @@ func (e noFile) Is(target error) bool { return target == web.ErrNoFile }
 // in it, fetched first if it isn't here.
 func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []byte, error) {
 	d.mu.Lock()
-	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.e.ID == id })
+	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.id == id })
 	var e bus.Event
 	if i >= 0 {
 		e = d.msgs[i].e
