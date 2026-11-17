@@ -23,3 +23,11 @@ const CatchUpWindow = catchUpWindow
 
 // RefFileOK is refFileOK, for a test of what counts as a broken bus ref (#644).
 func RefFileOK(b []byte) bool { return refFileOK(b) }
+
+// SetSendRace sets sendRace, what runs in a send between the look at a part of a path and its
+// opening, and returns what puts it back (#773).
+func SetSendRace(f func(part string)) func() {
+	was := sendRace
+	sendRace = f
+	return func() { sendRace = was }
+}

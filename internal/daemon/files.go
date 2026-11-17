@@ -519,7 +519,7 @@ func (s *sendRoots) local(path string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if !isLink(info) {
+		if !linkIn(info, func() error { _, err := s.readlink(next); return err }) {
 			done = next
 			continue
 		}
@@ -541,12 +541,6 @@ func (s *sendRoots) local(path string) (string, error) {
 		parts = append(strings.Split(strings.TrimPrefix(to[len(vol):], string(filepath.Separator)), string(filepath.Separator)), parts...)
 	}
 	return done, nil
-}
-
-// isLink says info is a link, or a Windows junction, which Go reports as irregular: local follows
-// both itself, a part at a time.
-func isLink(info os.FileInfo) bool {
-	return info.Mode()&os.ModeSymlink != 0 || runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0
 }
 
 // netPath says path, on Windows, names a share or a device rather than a drive: \\host\share,
@@ -577,7 +571,8 @@ func (s *sendRoots) openSend(path string) (*os.File, error) {
 	// nested repo, is passed over, so a file in it is still in the worktree around it.
 	var root sendRoot
 	var rest []string
-	for dir := real; ; dir = filepath.Dir(dir) {
+	dir := real
+	for ; ; dir = filepath.Dir(dir) {
 		if info, err := s.stat(dir); err == nil {
 			if i := slices.IndexFunc(s.roots, func(r sendRoot) bool { return os.SameFile(info, r.id) }); i >= 0 {
 				root = s.roots[i]
@@ -593,36 +588,44 @@ func (s *sendRoots) openSend(path string) (*os.File, error) {
 		}
 		rest = append([]string{filepath.Base(dir)}, rest...)
 	}
-	rel := filepath.Join(append([]string{"."}, rest...)...)
-	done := "."
-	var info os.FileInfo
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == "." {
-			continue
-		}
-		done = filepath.Join(done, part)
-		if info, err = root.r.Lstat(done); err != nil {
-			return nil, err
-		}
-		if isLink(info) {
-			return nil, errOutside
-		}
-		if info.IsDir() && s.git != nil && os.SameFile(info, s.git) {
+	// Nor is a root inside the git directory, however it got there since it was added (#773).
+	for up := dir; filepath.Dir(up) != up; {
+		up = filepath.Dir(up)
+		if info, err := s.stat(up); err == nil && s.git != nil && os.SameFile(info, s.git) {
 			return nil, errOutside
 		}
 	}
-	if info == nil || !info.Mode().IsRegular() {
-		return nil, errNotFile // and opening a pipe would wait for a writer
+	if len(rest) == 0 {
+		return nil, errNotFile
 	}
-	f, err := root.r.Open(done)
-	if err != nil {
-		return nil, err
+	// Down from the root a part at a time, each folder opened as a handle of its own before the next
+	// (#773): a look from the root at a longer path would go through the folders above again, and
+	// os.Root follows a link in them that stays inside the root, as one to the main worktree's .git
+	// does, so a folder swapped for one between two looks would lead there unchecked. How each part
+	// is opened is the system's (descend).
+	return s.descend(root, rest)
+}
+
+// sendRace, if set, runs in descend just before a part is opened: tests swap the part there, as a
+// racing agent would.
+var sendRace func(part string)
+
+// linkIn says info, an entry of a folder, is a link local follows, readlink reading where it
+// leads: a symbolic link, or on Windows a junction. Go reports any other reparse point as irregular
+// too, a OneDrive placeholder, a ProjFS file or an app's execution alias among them, but those have
+// nowhere to lead, so readlink fails on them, and they are the file or folder they stand for (#773).
+func linkIn(info os.FileInfo, readlink func() error) bool {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return true
 	}
-	if got, err := f.Stat(); err != nil || !os.SameFile(got, info) {
-		f.Close()
-		return nil, cmp.Or(err, errOutside) // swapped since the look
-	}
-	return f, nil
+	return runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0 && readlink() == nil
+}
+
+// plainFile says info is a file to read: a regular one, or on Windows one held by a reparse point
+// that leads nowhere (linkIn), as a OneDrive file not yet downloaded is.
+func plainFile(info os.FileInfo) bool {
+	m := info.Mode()
+	return m.IsRegular() || runtime.GOOS == "windows" && m&^os.ModeIrregular&os.ModeType == 0 && !info.IsDir()
 }
 
 var errNotFile = errors.New("not a file")
