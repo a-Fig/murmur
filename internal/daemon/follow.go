@@ -24,10 +24,19 @@ import (
 // live sessions of one client session (two MCP servers in it) would share a name, and a name is an
 // address, so the later one is a session of its own. The name matters as well as the key because a
 // session that finds its T3 thread keeps the name under its old key too (see rekeyLocked), so the
-// client's session ID brings the same name, though the session has another key now. Caller holds mu.
+// client's session ID brings the same name, though the session has another key now.
+//
+// A session that was the later one stays a session of its own, with the key and the name that gave
+// it (#38). Which of the two is the later was decided each time by who was live, so after both
+// had dropped, or the daemon had restarted, the one that came back first took the plain key and
+// its sibling's name, and the sibling, back to find them taken, got a new one: both names
+// changed, and a message to either went to the other or to nobody. Caller holds mu.
 func (d *Daemon) uniqueKeyLocked(key, id string) string {
 	if d.st.ThreadLeft[id] == key {
 		return key + "/" + id // a thread it gave up (yieldThreadLocked)
+	}
+	if d.st.NameKeys[key+"/"+id] != "" {
+		return key + "/" + id // it was the later of two once, and has a name for that
 	}
 	name := d.st.NameKeys[key]
 	for _, o := range d.sessions {

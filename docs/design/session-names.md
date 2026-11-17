@@ -37,7 +37,10 @@ names routes by it all the same.
   restarting, the daemon restarting and a resume, and different keys never share one. The
   key-to-name map stays in the daemon's state file, so the client's ID is never published. A resume
   on another device is a new session there. Two live sessions with one key would share a name, so
-  the later is a session of its own. A key that comes back under another ID while its old session is
+  the later is a session of its own, and stays one: once it has a name as the later, it comes back
+  to that name whichever of the two reconnects first. Until 2026-11-16 (#38) the first back took
+  the plain key and its sibling's name, and both names changed. A later one whose name hadn't
+  landed when both dropped still takes the plain key if it is first back. A key that comes back under another ID while its old session is
   in its grace takes the name with it, so a message to it isn't left in an inbox about to stop
   (2026-10-29).
 - **A Codex session outside T3 follows its thread** (#36, 2026-10-30). Codex's MCP server learns the
