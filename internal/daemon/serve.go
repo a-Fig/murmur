@@ -1086,10 +1086,13 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
-		files, at, reused, err := d.putFiles(ctx, append(read, uploads...), sends)
+		files, at, reused, sent, err := d.putFiles(ctx, append(read, uploads...), sends)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
+		// A send of the same files waits for this one's message to be out, or to have failed
+		// (putFiles): whichever way this returns.
+		defer sent()
 		filesReused = reused
 		e.Files, e.FilesAt = files, at
 		d.mu.Lock()
@@ -1128,11 +1131,10 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	if len(e.Files) > 0 {
 		still = sends
 	}
-	if err := d.appendEventIf(ctx, e, still); err != nil {
-		// Unless the push may land yet (unsureError): the message would then name files that are
-		// gone, and its receipts would have nothing to be kept in. The files go when their time
-		// is up, as any message's do.
-		unsure := errors.As(err, new(unsureError))
+	// unsent lets go of what was made for a message that wasn't sent, unless its push may land yet
+	// (unsure): the message would then name files that are gone, and its receipts would have
+	// nothing to be kept in. The files go when their time is up, as any message's do.
+	unsent := func(unsure bool) {
 		if len(e.Files) > 0 && !filesReused && !unsure {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
@@ -1145,6 +1147,28 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 			d.saveLocked()
 			d.mu.Unlock()
 		}
+	}
+	// A push that ends unsure leaves the message pending, pushed again until it lands, and the
+	// sender is told only if it is given up (pending.go, #781).
+	settle := func(landed, absent bool, err error) {
+		if landed {
+			if len(e.Files) > 0 {
+				d.mu.Lock()
+				d.filesSentLocked(e.FilesAt)
+				d.mu.Unlock()
+			}
+			return
+		}
+		unsent(!absent)
+		d.mu.Lock()
+		d.givenUpLocked(from, e.Subject, nameOr(toName, to), err)
+		d.saveLocked()
+		d.mu.Unlock()
+	}
+	err := d.appendEventIf(ctx, e, still, settle)
+	pending := errors.As(err, new(pendingError))
+	if err != nil && !pending {
+		unsent(errors.As(err, new(unsureError)))
 		// No key for the recipient's device is that recipient's alone. Anything else here, a team
 		// key not yet made or a push that failed, would refuse every recipient the same.
 		about := proto.RefusedSend
@@ -1153,7 +1177,9 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		return refuse(about, "not sent: "+err.Error())
 	}
-	if len(e.Files) > 0 {
+	// A pending send answers as one that landed (Tyler, 2026-11-16): it is pushed until it does, and
+	// its sender is told only if it is given up.
+	if !pending && len(e.Files) > 0 {
 		d.mu.Lock()
 		d.filesSentLocked(e.FilesAt) // a send of the same files may take its ref now
 		d.mu.Unlock()
@@ -1162,6 +1188,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
 	// sessions it was for won't get it, as they have muted it (#27), and which won't be woken by it
 	// (#545).
+	var named []string
 	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
 		group := bus.IsGroup(to)
 		if to == "*" || group {
@@ -1179,6 +1206,14 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(muters, m) })
 		d.mu.Unlock()
 		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
+		named = muters
+	}
+	// Kept a while, so the sender is told if a device it had read no mute of yet drops it (#466).
+	if !bus.IsPerson(from) {
+		d.mu.Lock()
+		d.outgoingLocked(from, nameOr(toName, to), e, named)
+		d.saveLocked()
+		d.mu.Unlock()
 	}
 	if tellMe != "" {
 		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
