@@ -403,10 +403,7 @@ func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
 	}
 	if target, err := s.stat(ptr); err == nil && os.SameFile(target, s.git) {
 		// A main worktree whose git directory is elsewhere.
-		return slices.ContainsFunc(s.sessions, func(cwd string) bool {
-			cwd, err := s.local(cwd)
-			return err == nil && holds(root.path, cwd)
-		})
+		return slices.ContainsFunc(s.sessions, func(cwd string) bool { return s.holds(root, cwd) })
 	}
 	parent, err := s.stat(filepath.Dir(ptr))
 	if err != nil || worktrees == nil || !os.SameFile(parent, worktrees) || s.gitRoot == nil {
@@ -427,14 +424,31 @@ func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
 	if err != nil {
 		return false
 	}
+	// Both the file and its folder: a hard link to a worktree's .git, elsewhere, is the same file
+	// (Sol's second review of #805).
 	named, err := s.stat(back)
-	return err == nil && os.SameFile(named, info)
+	if err != nil || !os.SameFile(named, info) {
+		return false
+	}
+	dir, err := s.stat(filepath.Dir(back))
+	return err == nil && os.SameFile(dir, root.id)
 }
 
-// holds says path is dir or inside it, as written.
-func holds(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+// holds says the folder cwd is root or inside it, by what each folder above it is, so a short
+// name (C:\MYREPO~1) or a link doesn't miss.
+func (s *sendRoots) holds(root sendRoot, cwd string) bool {
+	dir, err := s.local(cwd)
+	if err != nil {
+		return false
+	}
+	for ; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, root.id) {
+			return true
+		}
+		if filepath.Dir(dir) == dir {
+			return false
+		}
+	}
 }
 
 // volume is the root of path's volume, opened once, and path from there.

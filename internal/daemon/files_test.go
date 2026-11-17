@@ -611,6 +611,15 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 		}
 		refused["a file in a folder with a .git planted to point at "+name] = put(dir, "secret.txt")
 	}
+	// Nor does a hard link to a real worktree's .git: the same file, in another folder.
+	wt3, linked := filepath.Join(base, "wt3"), filepath.Join(base, "linked")
+	gitOK(clone, "worktree", "add", "--detach", wt3)
+	if err := os.MkdirAll(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if os.Link(filepath.Join(wt3, ".git"), filepath.Join(linked, ".git")) == nil {
+		refused["a file in a folder with a hard link to a worktree's .git"] = put(linked, "secret.txt")
+	}
 	if upper := filepath.Join(clone, ".GIT", "config"); func() bool { _, err := os.Stat(upper); return err == nil }() {
 		refused["a file in the git directory, spelled in other case"] = upper // Windows', macOS's
 	}
