@@ -181,6 +181,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	if name == "" {
 		return
 	}
+	d.adoptLeftLocked(s) // first: what it kept before stands over what it kept by its ID since
 	d.adoptTagsLocked(s)
 	d.adoptMutesLocked(s)
 	d.adoptExplainedLocked(s)
@@ -200,6 +201,74 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	}
 	d.st.NamesSeen[s.id] = time.Now().UTC().Truncate(time.Hour)
 	d.saveLocked()
+}
+
+// adoptLeftLocked moves to s's name, now that it has landed, what its key kept under the name it
+// had before this clone lost its keys and became a new device (NamesLeft, #827): the tags, unless
+// the new name has some already, the mutes, added to its own up to what a session may have, and
+// who has been explained to it. They are kept by name, and the old name stays on the old device
+// (#617), so without this the session came back with none of them. Until now it went by the old
+// name's (keptByLocked). The mutes other sessions here made of the old name become mutes of the
+// new one: a session muted on this clone stays muted. Caller holds mu.
+func (d *Daemon) adoptLeftLocked(s *session) {
+	old := d.st.NamesLeft[s.key]
+	if s.key == "" || old == "" || s.name == "" {
+		return
+	}
+	delete(d.st.NamesLeft, s.key)
+	defer d.saveLocked()
+	if old == s.name {
+		return
+	}
+	if st := d.st.Tags[old]; st != nil {
+		delete(d.st.Tags, old)
+		if d.st.Tags[s.name] == nil {
+			d.st.Tags[s.name] = st
+		}
+	}
+	if m := d.st.Mutes[old]; m != nil {
+		delete(d.st.Mutes, old)
+		have := d.st.Mutes[s.name]
+		if have == nil {
+			d.st.Mutes[s.name], m = m, nil
+		}
+		for _, name := range sortedKeys(m) {
+			if _, ok := have[name]; ok {
+				continue
+			}
+			if len(have) >= bus.MaxMuted {
+				d.log.Printf("session %s muted %s as %s, on this clone's old device, and has %d mutes already; not kept",
+					bus.Addr(d.device, s.id), name, old, len(have))
+				continue
+			}
+			have[name] = m[name]
+		}
+	}
+	if people, ok := d.st.Explained[old]; ok {
+		delete(d.st.Explained, old)
+		for _, p := range people {
+			d.noteExplainedAtLocked(s.name, p)
+		}
+	}
+	for _, by := range sortedKeys(d.st.Mutes) {
+		m := d.st.Mutes[by]
+		at, muted := m[old]
+		if !muted {
+			continue
+		}
+		delete(m, old)
+		// Not a mute of itself, which it could have made of its old name while this one was pending.
+		if _, ok := m[s.name]; !ok && by != s.name && by != tagKeyOf("", s.id) {
+			m[s.name] = at
+		}
+		if len(m) == 0 {
+			delete(d.st.Mutes, by)
+		}
+	}
+	// The page's own choices for it follow, once nothing holds mu (moveSettings, #836).
+	d.st.SettingsMoves = append(d.st.SettingsMoves, [2]string{old, s.name})
+	d.settingsMove.Store(true)
+	d.log.Printf("session %s, now %s, has what it kept as %s on this clone's old device", bus.Addr(d.device, s.id), s.name, old)
 }
 
 // sessionNameKeep is how long the name of a session that is gone is remembered once nothing else

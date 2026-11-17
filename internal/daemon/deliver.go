@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -173,7 +174,128 @@ type pushJob struct {
 func (d *Daemon) wakeSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	if d.settingsMove.Load() {
+		d.moveSettings()
+	}
 	return d.settings.clone()
+}
+
+// moveSettings moves the page's wake and busy choices for one session from the name it had
+// before this clone lost its keys to the one it has now (st.SettingsMoves, #836). They are kept
+// by name, as its tags are, and the tags follow it (adoptLeftLocked); left behind, a session
+// someone set never to be woken came back under its new name with the device's choice, and was
+// given turns. The name lands under mu, and settings are never taken inside that, so the names
+// wait in the state file for the next reader of the settings, which is here; meanwhile the
+// session is looked up by its old name (settingsNameLocked). A choice the new name already has
+// stands. A save that fails leaves the names waiting. Caller holds setMu, and not mu.
+func (d *Daemon) moveSettings() {
+	d.mu.Lock()
+	moves := slices.Clone(d.st.SettingsMoves)
+	d.mu.Unlock()
+	next := d.settings.clone()
+	renamed := false
+	for _, m := range moves {
+		if renameSettings(&next, m[0], m[1]) {
+			renamed = true
+		}
+	}
+	if renamed {
+		if err := writeJSON(d.settingsPath(), next); err != nil {
+			if !d.settingsMoveFailed { // every read of the settings tries again
+				d.log.Printf("moving %d sessions' settings to their new names: %v; trying again each time the settings are read", len(moves), err)
+			}
+			d.settingsMoveFailed = true
+			return
+		}
+		d.settings = next
+	}
+	d.settingsMoveFailed = false
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.st.SettingsMoved == nil {
+		d.st.SettingsMoved = map[string]string{}
+	}
+	for _, m := range moves {
+		d.st.SettingsMoved[m[0]] = m[1]
+	}
+	// Those moved, and no others: a name may have landed since they were read.
+	d.st.SettingsMoves = slices.Clone(d.st.SettingsMoves[min(len(moves), len(d.st.SettingsMoves)):])
+	if len(d.st.SettingsMoves) == 0 {
+		d.st.SettingsMoves = nil
+		d.settingsMove.Store(false)
+	}
+	d.saveLocked()
+}
+
+// renameSettings moves old's own wake and busy choices in p to name, unless name has its own, and
+// says whether old had any.
+func renameSettings(p *pageSettings, old, name string) (had bool) {
+	if w, ok := p.SessionWake[old]; ok {
+		delete(p.SessionWake, old)
+		if _, has := p.SessionWake[name]; !has {
+			p.SessionWake[name] = w
+		}
+		had = true
+	}
+	if b, ok := p.SessionBusy[old]; ok {
+		delete(p.SessionBusy, old)
+		if _, has := p.SessionBusy[name]; !has {
+			p.SessionBusy[name] = b
+		}
+		had = true
+	}
+	return had
+}
+
+// movedSettings gives the choices in p that a page sent for a name since moved from to the name
+// it was moved to (st.SettingsMoved): the page sends the whole of what it read, and one that read
+// before the move would put the choice back on the old name and take it off the new one, for
+// good. A choice the page sent for the new name stands. Caller holds setMu, and not mu.
+func (d *Daemon) movedSettings(p *pageSettings) {
+	d.mu.Lock()
+	moved := maps.Clone(d.st.SettingsMoved)
+	d.mu.Unlock()
+	for range len(moved) { // a name moved, and moved again after a second loss
+		any := false
+		for _, old := range sortedKeys(moved) {
+			if renameSettings(p, old, moved[old]) {
+				any = true
+			}
+		}
+		if !any {
+			break
+		}
+	}
+}
+
+// settingsNameLocked is the name the page's own choices for session id are kept by
+// (pageSettings.choice): its name, or the one it had before this clone lost its keys, while its
+// new one is pending or the choices haven't been moved to it yet (moveSettings). Caller holds mu.
+func (d *Daemon) settingsNameLocked(id string) string {
+	name := d.sessionNameLocked(id)
+	if name == "" {
+		if conv := d.conversationLocked(id); conv != "" {
+			name = d.st.NamesLeft[conv]
+		}
+		if name == "" {
+			return ""
+		}
+	}
+	// Back along the moves still to be made, to the name that has the choices: lost twice with no
+	// save between (a failed one), they are two names back, and the one between has none.
+	for range len(d.st.SettingsMoves) {
+		prev := ""
+		for _, m := range d.st.SettingsMoves {
+			if m[1] == name {
+				prev = m[0]
+			}
+		}
+		if prev == "" || prev == name {
+			break
+		}
+		name = prev
+	}
+	return name
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it

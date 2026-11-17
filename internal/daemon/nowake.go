@@ -30,7 +30,7 @@ func (d *Daemon) noWakeLocked(id string, wake pageSettings) string {
 	if d.offMeshLocked(id) || d.mayWakeLocked(id, wake) {
 		return ""
 	}
-	if wake.choice(d.sessionNameLocked(id)).When == web.WakeNever {
+	if wake.choice(d.settingsNameLocked(id)).When == web.WakeNever {
 		return bus.NoWakeOff
 	}
 	return bus.NoWakeIdle
