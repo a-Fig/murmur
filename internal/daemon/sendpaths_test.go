@@ -106,25 +106,32 @@ func TestSendReadsAMainWorktreeWithItsGitDirectoryElsewhere(t *testing.T) {
 	if err := sendOne(a, "bbbbbb", file); !strings.Contains(err, refusedSend) {
 		t.Errorf("with no session in the main worktree, which is then found nowhere: %q, want it refused", err)
 	}
-	cwd := filepath.Join(main, "docs")
-	if link := filepath.Join(base, "into-main"); os.Symlink(main, link) == nil {
-		cwd = filepath.Join(link, "docs") // the session's folder, by a link
+	// A worktree inside the main one is one of its own, by its registration: it is sent from while
+	// the main worktree around it, which no session holds yet, isn't one (Sol's review of #807).
+	nested := filepath.Join(main, "nested")
+	git(t, main, "worktree", "add", "-q", "--detach", nested)
+	if err := sendOne(a, "bbbbbb", putFile(t, filepath.Join(nested, "diff.txt"))); err != "" {
+		t.Errorf("a file in a worktree inside the main one: %s", err)
 	}
-	conn, _, err := a.c.Hello(context.Background(), proto.Hello{ID: "aaaaaa", Agent: "test", Cwd: cwd})
+	// The session's folder, reached by a link: a junction on Windows, which needs no privilege.
+	link := filepath.Join(base, "into-main")
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, main).CombinedOutput(); err != nil {
+			t.Fatalf("mklink /J: %v\n%s", err, out)
+		}
+	} else if err := os.Symlink(main, link); err != nil {
+		t.Fatal(err)
+	}
+	conn, _, err := a.c.Hello(context.Background(), proto.Hello{ID: "aaaaaa", Agent: "test", Cwd: filepath.Join(link, "docs")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
 	if err := sendOne(a, "aaaaaa", file); err != "" {
-		t.Errorf("a file in a main worktree whose git directory is elsewhere: %s", err)
+		t.Errorf("a file in a main worktree whose git directory is elsewhere, its session's folder by a link: %s", err)
 	}
 	if err := sendOne(a, "aaaaaa", filepath.Join(sep, "config")); !strings.Contains(err, refusedSend) {
 		t.Errorf("the separate git directory's config: %q, want it refused", err)
-	}
-	nested := filepath.Join(main, "nested")
-	git(t, main, "worktree", "add", "-q", "--detach", nested)
-	if err := sendOne(a, "aaaaaa", putFile(t, filepath.Join(nested, "diff.txt"))); err != "" {
-		t.Errorf("a file in a worktree inside the main one: %s", err)
 	}
 }
 
