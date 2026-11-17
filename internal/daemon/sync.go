@@ -1986,6 +1986,13 @@ func (d *Daemon) pruneInboxes() {
 			d.saveLocked()
 		}
 	}
+	// And the key it was the later of two servers on (uniqueKeyLocked).
+	for id := range d.st.Later {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.Later, id)
+			d.saveLocked()
+		}
+	}
 	// The tags and mutes it kept by its ID, if its name never landed, go with its inbox as well.
 	gone := func(key string) {
 		id, pending := strings.CutPrefix(key, tagKeyOf("", ""))
@@ -2040,6 +2047,7 @@ func (d *Daemon) dropStoppedLocked(id string) {
 	delete(d.st.Commits, id)
 	delete(d.st.T3Routes, id)
 	delete(d.st.ThreadLeft, id)
+	delete(d.st.Later, id)
 	d.dropPendingKeyLocked(id)
 }
 

@@ -1439,7 +1439,7 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 	}
 	base := nameKey(r.T3Thread, s.claudeSession, r.Native, s.id)
 	left := d.yieldThreadLocked(s.id, s.agent, s.clientPID, base)
-	if key := d.uniqueKeyLocked(base, s.id); key != s.key {
+	if key := d.uniqueKeyLocked(base, s.id, s.clientPID); key != s.key {
 		d.rekeyLocked(s, key)
 	}
 	for _, id := range left {

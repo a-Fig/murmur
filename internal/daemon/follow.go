@@ -26,25 +26,39 @@ import (
 // session that finds its T3 thread keeps the name under its old key too (see rekeyLocked), so the
 // client's session ID brings the same name, though the session has another key now.
 //
-// A session that was the later one stays a session of its own, with the key and the name that gave
-// it (#38). Which of the two is the later was decided each time by who was live, so after both
-// had dropped, or the daemon had restarted, the one that came back first took the plain key and
-// its sibling's name, and the sibling, back to find them taken, got a new one: both names
-// changed, and a message to either went to the other or to nobody. Caller holds mu.
-func (d *Daemon) uniqueKeyLocked(key, id string) string {
+// The later of two servers of one client process stays a session of its own for that key (Later,
+// #38). Which of the two is the later was decided each time by who was live, so after both had
+// dropped, or the daemon had restarted, the one that came back first took the plain key and its
+// sibling's name, and the sibling, back to find them taken, got a new one: both names changed,
+// and a message to either went to the other or to nobody. Only siblings, which pid, the client's
+// process, tells from a second program on the same conversation: that one takes the plain key
+// and the conversation's name once the first has gone, as before. Caller holds mu.
+func (d *Daemon) uniqueKeyLocked(key, id string, pid int) string {
 	if d.st.ThreadLeft[id] == key {
 		return key + "/" + id // a thread it gave up (yieldThreadLocked)
 	}
-	if d.st.NameKeys[key+"/"+id] != "" {
-		return key + "/" + id // it was the later of two once, and has a name for that
+	if d.st.Later[id] == key {
+		return key + "/" + id // the later of two servers of its client, once
 	}
 	name := d.st.NameKeys[key]
+	taken, sibling := false, false
 	for _, o := range d.sessions {
 		if o.id != id && o.dropped.IsZero() && (o.key == key || (name != "" && o.name == name)) {
-			return key + "/" + id
+			taken = true
+			sibling = sibling || (o.key == key && o.clientPID == pid)
 		}
 	}
-	return key
+	if !taken {
+		return key
+	}
+	if sibling {
+		if d.st.Later == nil {
+			d.st.Later = map[string]string{}
+		}
+		d.st.Later[id] = key
+		d.saveLocked()
+	}
+	return key + "/" + id
 }
 
 // yieldThreadLocked makes the live Codex sessions of other processes that hold key, a Codex
@@ -77,7 +91,7 @@ func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key string) []stri
 		}
 		d.st.ThreadLeft[o.id] = key
 		from := o.name
-		o.key = d.uniqueKeyLocked(key, o.id)
+		o.key = d.uniqueKeyLocked(key, o.id, o.clientPID)
 		d.setNameLocked(o, d.nameForKeyLocked(o.key, o.id))
 		if o.name == "" {
 			d.kickNames()
@@ -328,7 +342,7 @@ func (d *Daemon) nativeSessionsLocked(native string) []*session {
 func (d *Daemon) followLocked(s *session, claude string) {
 	from := s.name
 	s.claudeSession = claude
-	s.key = d.uniqueKeyLocked(nameKey(s.route.T3Thread, claude, s.route.Native, s.id), s.id)
+	s.key = d.uniqueKeyLocked(nameKey(s.route.T3Thread, claude, s.route.Native, s.id), s.id, s.clientPID)
 	d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id))
 	if s.name == "" {
 		d.kickNames()
