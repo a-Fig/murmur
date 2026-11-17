@@ -357,6 +357,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	s.dropped, s.takeover = time.Now(), takeover
 	d.mu.Unlock()
 
+	var over <-chan struct{} // nil, so never, unless a test ends the grace
+	if graceBegins != nil {
+		over = graceBegins(h.ID)
+	}
 	grace := time.NewTimer(d.opt.SessionGrace)
 	defer grace.Stop()
 	select {
@@ -370,6 +374,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.mu.Unlock()
 		return
 	case <-grace.C:
+	case <-over:
 	}
 
 	d.mu.Lock()
@@ -381,16 +386,35 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
+	// A session that took this one's name while it was in its grace, as a conversation resumed at
+	// another ID does (a command-line one after #51 hashed its ID), passed its inbox by: it was
+	// still among the sessions then. It takes it now (Opus's review of #51), and is handed it: its
+	// registration's look for messages to hand over is long done, and nothing after this kicks one.
+	kept := d.keptForLocked(h.ID)
+	adopted := false
+	if holder := d.sessions[d.st.NameHolders[kept]]; kept != "" && holder != nil && holder.id != h.ID &&
+		holder.dropped.IsZero() && holder.name == kept {
+		adopted = d.adoptLocked(holder, kept)
+	}
 	d.saveLocked()
 	unlogged := s.unlogged
 	d.mu.Unlock()
 	d.log.Printf("session %s stopped", addr)
+	if adopted {
+		d.kickPush()
+	}
 	d.kickPresence()
 	if !unlogged {
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
 }
+
+// graceBegins, if a test sets it, is called once a session whose connection dropped is recorded
+// as dropped, as its grace begins, and closing the channel it returns ends that grace as
+// SessionGrace's timer would. Tests take a long grace and end it when they are ready, instead of
+// racing a short one (Sol's review of #51).
+var graceBegins func(id string) <-chan struct{}
 
 // stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
 // then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
