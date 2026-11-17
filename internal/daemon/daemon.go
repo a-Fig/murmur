@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -36,8 +37,11 @@ import (
 
 // Options configure a daemon. Zero values take the defaults in docs/design/.
 type Options struct {
-	GitDir string        // the clone's git common dir, absolute
-	Poll   time.Duration // how often to check the remote; 3 s
+	GitDir string // the clone's git common dir, absolute
+	// TempDir is the temp folder a send may read files from, besides the clone's worktrees (#690):
+	// "" is the system's, os.TempDir, and on macOS and Linux /tmp as well.
+	TempDir string
+	Poll    time.Duration // how often to check the remote; 3 s
 	// QuietPoll is how often to check it while no session is live and no page is open: 30 s. A
 	// daemon that is only waiting to wake a T3 thread (see Idle) needn't look as often as one with
 	// an agent working; it is never faster than Poll.
@@ -337,6 +341,11 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	defer cancel()
 	err := repo.Push(ctx, sha, ref, mode, expect)
 	d.health.pushed(ctx, ref, err)
+	if cut := ctx.Err(); err != nil && cut != nil && !errors.Is(err, cut) {
+		// Git, stopped at the push's time, says only how it ended. A caller can tell from this
+		// that the push was cut off, and so may land yet (uploadLost).
+		err = fmt.Errorf("%w: %w", cut, err)
+	}
 	return err
 }
 
@@ -593,7 +602,11 @@ type Daemon struct {
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
 	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
-	fileOne  chan struct{} // held for a fetch of a message's files (fetchFiles)
+	// pruneOwed says a prune of the remote's files refs was passed over, or cut short, because
+	// the device was invisible (pruneFiles), and is run once it no longer is. Only fileLoop's
+	// goroutine writes it.
+	pruneOwed atomic.Bool
+	fileOne   chan struct{} // held for a fetch of a message's files (fetchFiles)
 	// fileMiss is the fetches for the page that failed, by files ref: when, and how. Guarded by mu.
 	fileMiss map[string]fileMiss
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
@@ -621,6 +634,10 @@ type Daemon struct {
 }
 
 type session struct {
+	// missedPrompt is the last prompt of the session that was no turn it waits on, and missedAt
+	// when it came (missedPromptLocked).
+	missedPrompt                                 string
+	missedAt                                     time.Time
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
@@ -808,6 +825,11 @@ type state struct {
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
+	// Downed is the stopped sessions that were still connected when the daemon stopped (#736):
+	// their servers may reconnect to the next daemon, which waits a little for them before it
+	// hands their threads anything (awaitedLocked). A session leaves it when it registers or its
+	// stop runs out, and the next daemon takes it out once it has stopped waiting.
+	Downed map[string]bool `json:"downed,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
 	// Unwritten holds this device's sessions' starts and stops not yet on its log, oldest first

@@ -163,10 +163,18 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 			found[key] = true // the user's own setting, kept
 		}
 	}
-	// Keys the table lacks go after its last line that has anything on it.
-	at := len(block)
-	for at > 0 && strings.TrimSpace(block[at-1]) == "" {
-		at--
+	// Keys the table lacks go after its last line with a key or value on it, where uninstall reads the
+	// table as ending. A comment below that line is the user's, about the table that follows: keys added
+	// below it would take it into Murmur's table, and uninstall would drop it with them (#755). A line
+	// of a multi-line string is the value's, whatever it starts with.
+	at, open := 0, ""
+	for i, raw := range block {
+		line := strings.TrimRight(raw, "\r")
+		inString := open != ""
+		open = tomlLineEnd(line, open)
+		if t := strings.TrimSpace(line); t != "" && (inString || !strings.HasPrefix(t, "#")) {
+			at = i + 1
+		}
 	}
 	var add []string
 	for _, key := range keys {
@@ -181,6 +189,19 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 		if nl == "\r\n" {
 			add[i] += "\r"
 		}
+	}
+	// Added after the file's last line, which has no newline, the keys take the CRLF that line lacks,
+	// and the last of them goes without one, as that line did: a \r of their own at the very end
+	// would be a lone CR, which TOML forbids, and Codex would then refuse the file (#783).
+	if nl == "\r\n" && len(add) > 0 && at == len(block) && end == len(lines) {
+		last := &lines[start]
+		if at > 0 {
+			last = &block[at-1]
+		}
+		if !strings.HasSuffix(*last, "\r") {
+			*last += "\r"
+		}
+		add[len(add)-1] = strings.TrimSuffix(add[len(add)-1], "\r")
 	}
 	block = append(block[:at], append(add, block[at:]...)...)
 
