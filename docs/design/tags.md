@@ -39,7 +39,7 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   12, a person's tags are kept first, then the session's, then derived ones.
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
   lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
-  stopped or was killed with it counts as stopped from then (#736, #762), so they are kept as long
+  stopped or was killed with it counts as stopped from about then (#736, #762), so they are kept as long
   too. Until 2026-11-16 they went two minutes after the restart, and a session resumed later than
   that had lost its mutes, so the sessions it muted reached it again. After a restart, a
   person's change to the tags of a session the

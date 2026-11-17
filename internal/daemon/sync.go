@@ -1879,8 +1879,9 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 }
 
 // pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
-// for them, and those left by sessions of a daemon that was killed, which records no stop for
-// them (one that stops does, #736), if they didn't come back after the restart.
+// for them, and those of sessions neither registered nor stopped. A daemon that stops records a
+// stop for each of its sessions (#736), and the next daemon does it for one that was killed
+// (#762), so those are what a state file from before either holds.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1925,7 +1926,7 @@ func (d *Daemon) pruneInboxes() {
 		}
 	}
 	// A thread is kept for a session while it can have messages: it is running or stopped within
-	// StoppedInbox. One that went down with a daemon that was killed, and never came back, has none.
+	// StoppedInbox. One with no stop recorded, from a state file older than #736 and #762, has none.
 	for id := range d.st.T3Routes {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
 			delete(d.st.T3Routes, id)

@@ -455,11 +455,62 @@ func TestTheStateFileListsRegisteredSessions(t *testing.T) {
 	}
 	_, conn := b.session("bbbbbb", "")
 	b.session("cccccc", "")
-	if !is("bbbbbb", true, false)() || !is("cccccc", true, false)() {
-		t.Fatal("a session that has registered isn't listed in the state file")
+	// Listed by the time the session is told it registered: the only wait is for a read that
+	// doesn't fall on the file being replaced.
+	for _, id := range []string{"bbbbbb", "cccccc"} {
+		var registered, ok bool
+		eventually(t, "the state file to be read", func() bool { registered, _, ok = listed(id); return ok })
+		if !registered {
+			t.Fatalf("%s has registered and isn't listed in the state file", id)
+		}
 	}
 	conn.Close()
 	eventually(t, "the session whose grace ran out to leave the list, stopped", is("bbbbbb", false, true))
 	b.stop()
 	eventually(t, "the session the daemon's stop ended to leave the list, stopped", is("cccccc", false, true))
+}
+
+// A daemon that was killed leaves its state file as it last wrote it, with its sessions listed
+// and no stop recorded. The next daemon counts them as stopped (#762): a message sent while no
+// daemon ran is queued for the session before its server is back, as it is after a clean stop.
+// Before, nothing was queued for it, and what it had went two minutes after the start.
+func TestASessionOfAKilledDaemonGetsWhatWasSentMeanwhile(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	path := filepath.Join(b.gitDir, brand.StateDir, "state.json")
+	type kept struct {
+		Registered map[string]bool              `json:"registered"`
+		Stopped    map[string]time.Time         `json:"stopped"`
+		Inbox      map[string][]json.RawMessage `json:"inbox"`
+	}
+	read := func() (raw []byte, st kept, ok bool) {
+		raw, err := os.ReadFile(path)
+		return raw, st, err == nil && json.Unmarshal(raw, &st) == nil
+	}
+	// The file as a daemon killed now would leave it.
+	var asKilled []byte
+	eventually(t, "the state file with bob registered", func() bool {
+		raw, st, ok := read()
+		asKilled = raw
+		return ok && st.Registered["bbbbbb"]
+	})
+	b.stop()
+	if err := os.WriteFile(path, asKilled, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "sent while no daemon ran"})
+	b.start()
+	eventually(t, "the message to be queued for a session not yet back", func() bool {
+		_, st, ok := read()
+		_, stopped := st.Stopped["bbbbbb"]
+		return ok && stopped && len(st.Inbox["bbbbbb"]) == 1
+	})
+	b.helloAgain("bbbbbb", true)
+	got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
+	if len(got) != 1 || got[0].Subject != "sent while no daemon ran" {
+		t.Fatalf("bob's inbox once back: %+v", got)
+	}
 }

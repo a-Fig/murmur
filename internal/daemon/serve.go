@@ -306,15 +306,6 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if d.readHeldPromptsLocked(s) {
 		d.saveLocked() // a turn handed over started while the session was away (#658)
 	}
-	if !d.st.Registered[s.id] {
-		// On disk before the session is told it is registered: a daemon killed from here on
-		// leaves word of it (stopKilledLocked).
-		if d.st.Registered == nil {
-			d.st.Registered = map[string]bool{}
-		}
-		d.st.Registered[s.id] = true
-		d.saveLocked()
-	}
 	_, kid := d.kids[s.id]
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
@@ -427,18 +418,21 @@ func (d *Daemon) stoppedWithDaemonLocked(id string) {
 // waited for a little (Downed). They stopped at written, when that daemon last wrote its state,
 // which is the latest it is known to have run. A daemon that reaches the remote writes at least
 // once a minute (LastSync), so that is at most about a minute before it died; one that was
-// offline may have written long before. Being early only has a catch-up read more, and brings
-// the end of StoppedInbox that much nearer. Nothing is saved
-// here: the state isn't whole yet, and a daemon killed again before its first save finds the
-// same sessions with the same time. It runs as the state is loaded, before any goroutine, so
-// what its name says of mu holds.
+// offline may have written long before. A time that early has a catch-up read more, and takes
+// that much off StoppedInbox: a session whose daemon last wrote more than StoppedInbox ago has
+// nothing kept, even if its server reconnects at once, as one a daemon's stop ended that long
+// ago has not. A time ahead of the clock, from a clock since put right, counts as now: a stop
+// in the future never runs out. Nothing is saved here: the state isn't whole yet, and a daemon
+// killed again before its first save finds the same sessions with the same time. It runs as
+// the state is loaded, before any goroutine, so what its name says of mu holds.
 func (d *Daemon) stopKilledLocked(written time.Time) {
 	if len(d.st.Registered) == 0 {
 		return
 	}
-	if written.IsZero() {
-		written = time.Now()
+	if now := time.Now(); written.IsZero() || written.After(now) {
+		written = now
 	}
+	n := 0
 	for id := range d.st.Registered {
 		if _, stopped := d.st.Stopped[id]; !stopped {
 			d.st.Stopped[id] = written.Round(0)
@@ -446,10 +440,13 @@ func (d *Daemon) stopKilledLocked(written time.Time) {
 				d.st.Downed = map[string]bool{}
 			}
 			d.st.Downed[id] = true
+			n++
 		}
 	}
-	d.log.Printf("the last daemon was killed with %d sessions registered; they count as stopped at %s, when it last wrote its state",
-		len(d.st.Registered), written.Format(time.DateTime))
+	if n > 0 {
+		d.log.Printf("the last daemon didn't record the stop of %d sessions registered with it; they count as stopped at %s, when it last wrote its state",
+			n, written.Format(time.DateTime))
+	}
 	d.st.Registered = nil
 }
 
@@ -1335,6 +1332,13 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	now := time.Now()
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+	// Listed as registered in the same write that takes its stop away, and before the session
+	// is told it is registered: a daemon killed at any moment leaves the session either stopped
+	// or listed (stopKilledLocked), never neither.
+	if d.st.Registered == nil {
+		d.st.Registered = map[string]bool{}
+	}
+	d.st.Registered[h.ID] = true
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		if time.Since(at) > d.opt.StoppedInbox {
 			d.dropStoppedLocked(h.ID)
@@ -1343,8 +1347,8 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 			delete(d.st.Downed, h.ID)
 			s.since = at
 		}
-		d.saveLocked()
 	}
+	d.saveLocked()
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
 	d.setNameLocked(s, d.nameForKeyLocked(key, h.ID))
 	d.sessions[h.ID] = s
