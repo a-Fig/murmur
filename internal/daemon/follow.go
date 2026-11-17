@@ -131,6 +131,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	if name == "" {
 		return
 	}
+	d.adoptLeftLocked(s) // first: what the session kept before goes before what it has kept by its ID since
 	d.adoptTagsLocked(s)
 	d.adoptMutesLocked(s)
 	d.adoptExplainedLocked(s)
@@ -149,6 +150,48 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		d.st.NamesSeen = map[string]time.Time{}
 	}
 	d.st.NamesSeen[s.id] = time.Now().UTC().Truncate(time.Hour)
+	d.saveLocked()
+}
+
+// adoptLeftLocked moves to s's name what its key kept under the name it had before this clone
+// lost its keys and became a new device (NamesLeft, #827): the tags, unless the new name has some
+// already, the mutes, added to the name's own up to what a session may have, and who has been
+// explained to it. They are kept by name, and the old name stays on the old device (#617), so
+// without this the session came back with none of them. The mutes other sessions here made of
+// the old name stay as they are, of a name nobody answers to now. Caller holds mu.
+func (d *Daemon) adoptLeftLocked(s *session) {
+	old := d.st.NamesLeft[s.key]
+	if s.key == "" || old == "" || s.name == "" {
+		return
+	}
+	delete(d.st.NamesLeft, s.key)
+	if old != s.name {
+		if st := d.st.Tags[old]; st != nil {
+			delete(d.st.Tags, old)
+			if d.st.Tags[s.name] == nil {
+				d.st.Tags[s.name] = st
+			}
+		}
+		if m := d.st.Mutes[old]; m != nil {
+			delete(d.st.Mutes, old)
+			have := d.st.Mutes[s.name]
+			if have == nil {
+				d.st.Mutes[s.name] = m
+			}
+			for _, name := range sortedKeys(m) {
+				if _, ok := have[name]; have != nil && !ok && len(have) < bus.MaxMuted {
+					have[name] = m[name]
+				}
+			}
+		}
+		if people, ok := d.st.Explained[old]; ok {
+			delete(d.st.Explained, old)
+			for _, p := range people {
+				d.noteExplainedAtLocked(s.name, p)
+			}
+		}
+		d.log.Printf("session %s, now %s, has the tags and mutes it kept as %s on this clone's old device", bus.Addr(d.device, s.id), s.name, old)
+	}
 	d.saveLocked()
 }
 

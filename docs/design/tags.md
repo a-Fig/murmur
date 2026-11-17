@@ -37,6 +37,13 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   it, and a change more than a minute older does nothing (#251); by the senders' clocks, so a clock
   over a minute behind can lose a change, which beat an old change undoing a new one. At the cap of
   12, a person's tags are kept first, then the session's, then derived ones.
+- **A clone that loses its keys** becomes a new device, and its sessions get new names
+  ([encryption](encryption.md)). Tags, mutes and the explained list are kept by name, so until
+  2026-11-16 (#827) a session that came back had none: one in `group:ui` on do not disturb was out
+  of the group and given turns again. Now the state file keeps which name each session key had
+  (`namesLeft`), and the name the key gets next takes what the old one kept: the tags unless it
+  has some already, the mutes added to its own. Mutes other sessions on the clone made *of* the
+  old name aren't moved to the new one.
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
   lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
   stopped or was killed with it counts as stopped from about then (#736, #762), so they are kept as long

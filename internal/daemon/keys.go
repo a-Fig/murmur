@@ -105,7 +105,17 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 // names the old one had set aside went to new sessions, while every other device still had them on
 // the old one: a message to one, once its session stopped, went to the old address, where nobody
 // would read it (#617). So the new ID starts with new names, as on any other new device, and the
-// old ones stay taken (Used). Everything else in the file is kept as it was.
+// old ones stay taken (Used).
+//
+// What a session kept by its name is the session's, not the name's: its tags, with the groups it
+// is in and do not disturb, its mutes, and who has been explained to it. So which name each key
+// had goes to namesLeft, for the names that have any of those, and the name the key gets next
+// takes them (adoptLeftLocked, #827). Without that a session in a group, on do not disturb, came
+// back out of the group and was given turns again.
+//
+// The starts and stops not yet written (unwritten) go too: they are from the old device's
+// addresses, and written to the new device's log every reader would drop them, their sender not
+// being the log's device. Everything else in the file is kept as it was.
 func dropOldNames(path string) error {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -119,10 +129,39 @@ func dropOldNames(path string) error {
 		return nil // loadState says what is wrong with it
 	}
 	n := len(st)
-	for _, k := range []string{"nameKeys", "namePool", "nameBinds", "nameHolders", "sessionNames", "namesSeen"} {
+	left := map[string]string{} // an earlier loss's, for the keys that haven't come back since
+	_ = json.Unmarshal(st["namesLeft"], &left)
+	var keys map[string]string
+	_ = json.Unmarshal(st["nameKeys"], &keys)
+	for key, name := range keys {
+		left[key] = name
+	}
+	kept := func(name string) bool {
+		for _, k := range []string{"tags", "mutes", "explained"} {
+			var by map[string]json.RawMessage
+			if json.Unmarshal(st[k], &by) == nil && by[name] != nil {
+				return true
+			}
+		}
+		return false
+	}
+	for key, name := range left {
+		if key == "" || name == "" || !kept(name) {
+			delete(left, key)
+		}
+	}
+	was := string(st["namesLeft"])
+	for _, k := range []string{"nameKeys", "namePool", "nameBinds", "nameHolders", "sessionNames", "namesSeen", "unwritten", "namesLeft"} {
 		delete(st, k)
 	}
-	if len(st) == n {
+	if len(left) > 0 {
+		b, err := json.Marshal(left)
+		if err != nil {
+			return err
+		}
+		st["namesLeft"] = b
+	}
+	if len(st) == n && string(st["namesLeft"]) == was {
 		return nil
 	}
 	// Written as the daemon writes it, and with the time it had: loadState takes that for when the
