@@ -463,13 +463,13 @@ var servingT3 = func() (cli string, thread bool) {
 	return t3Serving(parent, read, exec.LookPath)
 }
 
-// t3Serving is servingT3 for the client's parent, if it could be read. `t3 serve` starts Claude Code
-// itself, so a parent that is t3 is the thread's, and is used while it is still on disk; one that is
+// t3Serving is servingT3 for the client's parent, if it could be read. `t3 serve` starts Claude
+// Code itself, so a parent that is t3 is the thread's, used while it is still on disk; one that is
 // gone (an update pruned its version) gives way to the t3 on PATH, which follows updates. A parent
 // that is node may be the npm t3, so it too goes to PATH, as does one that can't be read. Any other
 // parent means the client isn't the thread but was started inside it, by tmux or an editor, say,
 // and only inherited its variable: it keeps its own route.
-func t3Serving(parent string, read bool, lookPath func(string) (string, error)) (cli string, thread bool) {
+func t3Serving(parent string, read bool, lookPath func(string) (string, error)) (string, bool) {
 	if read {
 		switch programName(parent) {
 		case "t3":
