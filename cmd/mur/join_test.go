@@ -301,7 +301,7 @@ func TestJoinLeavesAHookFileTheRepoTracksAlone(t *testing.T) {
 }
 
 // A Codex table an older join wrote forwards T3CODE_CLI_PATH only; joining again adds CODEX_HOME
-// to the list and keeps the user's own names, and --leave leaves the per-user table as it is.
+// and T3CODE_HOME to the list and keeps the user's own names, and --leave leaves the per-user table as it is.
 func TestJoinForwardsCodexHome(t *testing.T) {
 	b := newBox(t)
 	b.mustRun(b.clone, "init")
@@ -314,7 +314,7 @@ func TestJoinForwardsCodexHome(t *testing.T) {
 	// The server's table, then the trust of Murmur's Codex hook, one table for each of its three
 	// hooks (#225).
 	server, trust, _ := strings.Cut(joined, "\n[hooks.state.")
-	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine\n" + tail; server != want || strings.Count(trust, "trusted_hash") != 3 {
+	if want := head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"] # mine\n" + tail; server != want || strings.Count(trust, "trusted_hash") != 3 {
 		t.Errorf("config.toml:\n%s\nwant:\n%s\nand the hook's trust", joined, want)
 	}
 	b.mustRun(b.clone, "join")
