@@ -236,7 +236,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	self.DND = d.dnd.Load()
 	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
 		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
-		AgentsSendOff: d.pageSend.Load() && !d.agentSend.Load(), AgentsReceiveOff: d.pageRecv.on.Load() && !d.agentRecv.on.Load()}
+		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
@@ -472,6 +472,8 @@ func (d *Daemon) loadSettings() {
 // and receiving, is the person's when its main switch is on, and their agents' too unless kept
 // from them. It says whether either side's receiving changed.
 func (d *Daemon) applyFiles(p pageSettings) (agents, page bool) {
+	d.agentsSendOff.Store(p.AgentsSendOff)
+	d.agentsReceiveOff.Store(p.AgentsReceiveOff)
 	d.pageSend.Store(p.SendFiles)
 	d.agentSend.Store(p.SendFiles && !p.AgentsSendOff)
 	return d.agentRecv.set(p.ReceiveFiles && !p.AgentsReceiveOff), d.pageRecv.set(p.ReceiveFiles)

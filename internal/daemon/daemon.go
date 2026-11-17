@@ -583,6 +583,9 @@ type Daemon struct {
 	// agents, and for its person on the page, each its own (Tyler, 2026-11-16).
 	agentSend, pageSend atomic.Bool
 	agentRecv, pageRecv fileSwitch
+	// agentsSendOff and agentsReceiveOff are the settings that keep each from the agents, as saved,
+	// for the page's state: they stand while the main switch is off too (Sol's review of #769).
+	agentsSendOff, agentsReceiveOff atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 
