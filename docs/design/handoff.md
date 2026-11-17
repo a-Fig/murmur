@@ -50,7 +50,9 @@ over.
   `T3CODE_HOME` too. With that set, no command line and no agent above, the server takes Codex's
   parent if it is `t3`, and nothing else: npm's `codex` runs the native one under `node`, so the
   guesses Claude Code's case makes would take a `codex` tmux started in a thread's shell for the
-  thread (#802). A table an older join wrote gets the
+  thread (#802). Not found, so notices only, as before: a `t3` installed from npm, which runs
+  Codex under `node`, and a `t3 serve` that is pid 1 (a container with no init), as `proc.Exe`
+  doesn't read pid 1. A table an older join wrote gets the
   name at the next `mur join`.
 - **A thread that is idle** (#87). T3 stops an idle thread's provider process, and Murmur's MCP
   server with it, after about 30 minutes (seen 2026-10-30), so the session of an idle thread is the
