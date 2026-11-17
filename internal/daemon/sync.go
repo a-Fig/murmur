@@ -1013,8 +1013,8 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 		}
 		if d.offMeshLocked(id) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
-			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
-				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, e.To)
+			if mode == modeNormal && !held && (e.To == bus.Addr(d.device, id) || fwd == bus.Addr(d.device, id)) {
+				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, bus.Addr(d.device, id))
 			}
 			continue
 		}

@@ -212,23 +212,37 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	}
 	var from []string
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if id == s.id || d.sessions[id] != nil || d.keptForLocked(id) != name || !d.keptLocked(id) {
+		if id == s.id || d.sessions[id] != nil || !d.keptLocked(id) {
 			continue
 		}
+		last := d.keptForLocked(id)
 		// A message handed over as a turn has left the inbox, and its turn may start under s.
-		if d.takeAwaitingLocked(s.id, id) {
+		if last == name && d.takeAwaitingLocked(s.id, id) {
 			d.saveLocked()
 		}
-		if len(d.st.Inbox[id]) == 0 {
-			continue
-		}
+		// A message that says which name it was sent to waits for that name, which the session may
+		// have left by a /clear since (#45); one that doesn't, for the name the session had last.
+		var left []*inMsg
+		took := false
 		for _, m := range d.st.Inbox[id] {
+			if nameOr(m.Event.ToName, last) != name {
+				left = append(left, m)
+				continue
+			}
+			took = true
 			if !seen[m.Event.ID] {
 				seen[m.Event.ID] = true
 				box = append(box, m)
 			}
 		}
-		delete(d.st.Inbox, id)
+		if !took {
+			continue
+		}
+		if len(left) == 0 {
+			delete(d.st.Inbox, id)
+		} else {
+			d.st.Inbox[id] = left
+		}
 		from = append(from, bus.Addr(d.device, id))
 	}
 	if len(from) == 0 {
@@ -369,11 +383,16 @@ func (d *Daemon) forwardNamedLocked(to, name string) string {
 	if dev != d.device || id == "" {
 		return ""
 	}
-	if name == "" || name == d.st.SessionNames[id] || name == d.keptForLocked(id) {
+	if id == bus.PersonSession || id == proto.CLISession {
+		name = "" // a person's or the command line's messages are theirs, whatever name they carry
+	}
+	if name == "" {
 		if d.liveLocked(id) {
 			return ""
 		}
 		name = d.keptForLocked(id)
+	} else if s := d.sessions[id]; s != nil && s.dropped.IsZero() && s.name == name {
+		return "" // it holds the name now, though it may not have saved that yet
 	}
 	holder := d.st.NameHolders[name]
 	if holder == "" || holder == id || d.st.SessionNames[holder] != name || !d.receivesLocked(holder) {

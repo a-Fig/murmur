@@ -144,8 +144,10 @@ names routes by it all the same.
   a message to the name waits for any of them (2026-10-29). One ID can hold several names over
   time, after a `/clear`, so a message sent by name also carries the name, as `toName` (#45,
   2026-11-16). The receiving daemon then forwards it by that name, not by the last name the address
-  had, even while the session at the address runs. A daemon from before that ignores the field and
-  goes by the address, as it did.
+  had, even while the session at the address runs, and a message that waits in a kept inbox goes
+  to the next session to take the name it carries. A daemon from before that ignores the field and
+  goes by the address, as it did. The sending device's mute, offline and do-not-disturb checks
+  still look at the address's session.
 - **A long-gone session's name is forgotten after 30 days** (#747, 2026-11-16). The daemon keeps the
   name each of its sessions took last, to label a stopped session and to pass a message for an old
   address on to the name's holder. T3 makes a new session for a thread each time its MCP server
