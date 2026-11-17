@@ -109,8 +109,8 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 //
 // What a session kept by its name is the session's, not the name's: its tags, with the groups it
 // is in and do not disturb, its mutes, and who has been explained to it. So which name each key
-// had goes to namesLeft, for the names that have any of those or are muted by another session
-// here, and the name the key gets next takes them (adoptLeftLocked, #827). Without that a session
+// had goes to namesLeft, for the names that have any of those, are muted by another session
+// here, or have a wake or busy choice of their own on the page (#836), and the name the key gets next takes them (adoptLeftLocked, #827). Without that a session
 // in a group, on do not disturb, came back out of the group and was given turns again.
 //
 // The starts and stops not yet written (unwritten) go too: they are from the old device's
@@ -144,6 +144,29 @@ func dropOldNames(path string) error {
 		for _, m := range mutes {
 			for name := range m {
 				kept[name] = true
+			}
+		}
+	}
+	// And the names the page has a wake or busy choice for (settings.json, #836).
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(path), "settings.json")); err == nil {
+		var set struct {
+			SessionWake map[string]json.RawMessage `json:"sessionWake"`
+			SessionBusy map[string]json.RawMessage `json:"sessionBusy"`
+		}
+		if json.Unmarshal(b, &set) == nil {
+			for _, by := range []map[string]json.RawMessage{set.SessionWake, set.SessionBusy} {
+				for name := range by {
+					kept[name] = true
+				}
+			}
+		}
+	}
+	// A choice still to be moved to a name (settingsMoves) is that name's.
+	var moves [][2]string
+	if json.Unmarshal(st["settingsMoves"], &moves) == nil {
+		for _, m := range moves {
+			if kept[m[0]] {
+				kept[m[1]] = true
 			}
 		}
 	}

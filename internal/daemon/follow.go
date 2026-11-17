@@ -215,6 +215,9 @@ func (d *Daemon) adoptLeftLocked(s *session) {
 			delete(d.st.Mutes, by)
 		}
 	}
+	// The page's own choices for it follow, once nothing holds mu (moveSettings, #836).
+	d.st.SettingsMoves = append(d.st.SettingsMoves, [2]string{old, s.name})
+	d.settingsMove.Store(true)
 	d.log.Printf("session %s, now %s, has what it kept as %s on this clone's old device", bus.Addr(d.device, s.id), s.name, old)
 }
 

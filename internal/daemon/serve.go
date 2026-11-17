@@ -720,7 +720,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
 		printsWhole := hookReq(req) && req.Whole
-		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		busyWhole := wake.busyChoice(d.settingsNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing || d.heldLocked(id, m) {
 				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
