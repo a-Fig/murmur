@@ -550,6 +550,17 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 	if err := send(put(wt, "diff.txt")); err != "" {
 		t.Errorf("a file in a linked worktree: %s", err)
 	}
+	// A repo of its own inside the clone, as a submodule or a vendored one is, is passed over for
+	// the worktree around it (#772).
+	nested := filepath.Join(clone, "vendored")
+	gitOK(clone, "init", "-q", nested)
+	if err := send(put(nested, "lib.txt")); err != "" {
+		t.Errorf("a file in a repo inside the clone: %s", err)
+	}
+	// A repo of its own outside the clone and temp isn't one of its worktrees.
+	elsewhere := filepath.Join(base, "elsewhere")
+	gitOK(base, "init", "-q", elsewhere)
+	refused["a file in another repo"] = put(elsewhere, "secret.txt")
 	// One registered by relative paths, as git worktree add --relative-paths does.
 	wt2 := filepath.Join(base, "wt2")
 	gitOK(clone, "worktree", "add", "--detach", wt2)
