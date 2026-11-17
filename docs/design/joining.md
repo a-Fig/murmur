@@ -181,7 +181,8 @@ Because `list_changed` is honored where it matters, the server is registered onc
 starts in every session as a passive server: after the first join, a Claude Code session in any repo
 gets the tools the moment that repo is joined, with no restart. A session that began before the
 registration needs the restart in the table, and `join` says which for the agent that ran it
-(`CLAUDECODE` and `T3CODE_CLI_PATH` in its environment): in T3, Stop and a message; in a terminal
+(`CLAUDECODE`, and `T3CODE_CLI_PATH` or, from T3's headless server, which sets no
+`T3CODE_CLI_PATH`, `T3CODE_THREAD_ID`, in its environment; #790): in T3, Stop and a message; in a terminal
 Claude Code, exit and `claude --continue`; in Codex, a new thread. Not verified: that `claude
 --continue` loads the server, that Codex honors `default_tools_approval_mode = "approve"` in a live
 thread, and which variables Codex sets for its commands (with none, `join`'s advice covers every
