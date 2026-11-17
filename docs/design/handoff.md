@@ -44,7 +44,12 @@ over.
   (`env_vars`; worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29), which `mur join` writes with
   `CODEX_HOME` (#88). Codex silently leaves out a name its own environment lacks
   (`create_env_for_mcp_server` in `codex-rs/rmcp-client`, read 2026-11-09). Without it the server
-  doesn't know it is in T3, and the session gets notices only.
+  doesn't know it is in T3, and the session gets notices only. T3's headless server (`t3 serve`,
+  0.1.9, with Codex 0.169.0, seen 2026-11-16) sets no `T3CODE_CLI_PATH`, and gives
+  `T3CODE_THREAD_ID` only to the commands Codex runs, not to Codex itself. So join forwards
+  `T3CODE_HOME` too. With that set and no command line, the server takes the `t3` above Codex,
+  checked as Claude Code's is (#802). A table an older join wrote gets the name at the next
+  `mur join`.
 - **A thread that is idle** (#87). T3 stops an idle thread's provider process, and Murmur's MCP
   server with it, after about 30 minutes (seen 2026-10-30), so the session of an idle thread is the
   normal case, and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for

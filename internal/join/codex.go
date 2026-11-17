@@ -26,13 +26,21 @@ type tomlServer struct {
 	approve bool     // default_tools_approval_mode = "approve"
 }
 
-var codexServer = tomlServer{file: "config.toml", args: codexArgs, envVars: []string{t3CLIEnv, codexHomeEnv}, approve: true}
+var codexServer = tomlServer{
+	file: "config.toml", args: codexArgs, envVars: []string{t3CLIEnv, codexHomeEnv, t3HomeEnv}, approve: true,
+}
 
 // t3CLIEnv is the variable that says a session runs inside T3 Code, and where its command line is.
 // Codex starts an MCP server with a bare environment and passes on only the variables the table
 // names in env_vars, so without this one the server can't tell it is in T3 and the daemon has no way
 // to wake the thread with a message (docs/design/handoff.md, "Codex under T3").
 const t3CLIEnv = "T3CODE_CLI_PATH"
+
+// t3HomeEnv is T3's home, the one sign of T3 that T3's headless server (`t3 serve`, 0.1.9) gives
+// Codex: it sets no T3CODE_CLI_PATH, and the thread's ID only in the commands Codex runs (seen
+// 2026-11-16, #802). With it the server finds the t3 above Codex; without it the thread gets
+// notices only.
+const t3HomeEnv = "T3CODE_HOME"
 
 // codexHomeEnv is the Codex home of a session whose home isn't ~/.codex. The server passes it to
 // the daemon, which reads a Codex thread's name from that home outside T3; without it the daemon
