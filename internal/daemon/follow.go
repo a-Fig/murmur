@@ -76,8 +76,8 @@ func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key, claude string
 		// A Claude Code conversation is the same one under either key it can have, its T3 thread's
 		// or its Claude session's, as Claude keeps its session ID where T3 imports a conversation from
 		// the command line or the command line resumes one T3 had (#643).
-		if codex && (o.key != key || o.agent != "codex") || !codex && (o.claudeSession != claude || !isClaudeCode(o.agent)) {
-			continue
+		if codex && (o.key != key || o.agent != "codex") || !codex && (o.claudeSession != claude || !isClaudeCode(o.agent) || d.st.ThreadLeft[o.id] != "") {
+			continue // a Claude session that gave the conversation up once has it no more
 		}
 		if d.st.ThreadLeft == nil {
 			d.st.ThreadLeft = map[string]string{}
@@ -122,12 +122,25 @@ func (d *Daemon) shareNameLocked(key, alias string) {
 	switch {
 	case k == "" && a != "":
 		d.st.NameKeys[key] = a
+		if d.st.NamedFromCLI == nil {
+			d.st.NamedFromCLI = map[string]bool{}
+		}
+		d.st.NamedFromCLI[key] = true
 	case a == "" && k != "":
 		d.st.NameKeys[alias] = k
 	default:
 		return
 	}
 	d.saveLocked()
+}
+
+// shareSessionNameLocked gives s's name to the other key of its conversation, if it is a Claude Code
+// one in a T3 thread: wherever its key is named, in hello, by the pool or the assigner, or by a
+// hook's correction of its Claude session (#643). Caller holds mu.
+func (d *Daemon) shareSessionNameLocked(s *session) {
+	if t3, ok := strings.CutPrefix(s.key, "t3:"); ok && !strings.Contains(t3, "/") {
+		d.shareNameLocked(s.key, claudeAlias(s.agent, t3, s.claudeSession))
+	}
 }
 
 // claudeAlias is the other name key of a conversation whose key is from t3Thread: its Claude
@@ -161,9 +174,10 @@ func (d *Daemon) threadIDLocked(h *proto.Hello) string {
 	if !h.ByThread || h.T3Thread == "" {
 		return h.ID
 	}
-	name := d.st.NameKeys[nameKey(h.T3Thread, "", "", "")]
-	if name == "" {
-		return h.ID
+	key := nameKey(h.T3Thread, "", "", "")
+	name := d.st.NameKeys[key]
+	if name == "" || d.st.NamedFromCLI[key] {
+		return h.ID // a name from the command line is at its session's address, which it goes on using (#643)
 	}
 	dev, id := bus.SplitAddr(d.st.Used[name])
 	if dev != d.device || !validName(id) || id == proto.CLISession || id == bus.PersonSession {
@@ -184,6 +198,7 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	if name == "" {
 		return
 	}
+	d.shareSessionNameLocked(s)
 	d.adoptTagsLocked(s)
 	d.adoptMutesLocked(s)
 	d.adoptExplainedLocked(s)

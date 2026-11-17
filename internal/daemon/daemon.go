@@ -900,6 +900,11 @@ type state struct {
 	// registering again after a daemon restart with the thread it still knows, doesn't take the
 	// thread's name back.
 	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
+	// NamedFromCLI is each T3 thread's name key that took its name from the command line's Claude
+	// session (shareNameLocked, #643). The registry has such a name at the command-line session's
+	// address, which a thread's session doesn't take for its own (threadIDLocked): the command line
+	// goes on using that ID. Kept for good, as NameKeys is.
+	NamedFromCLI map[string]bool `json:"namedFromCLI,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.
