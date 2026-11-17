@@ -451,6 +451,13 @@ type SessionView struct {
 	HookOff bool `json:"hookOff,omitempty"`
 }
 
+// The values of SessionDetail's SendsFiles and TakesFiles.
+const (
+	FilesOn  = "on"
+	FilesOff = "off"
+	FilesOld = "old"
+)
+
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
 // field comes from decides who has it: the bus carries the first group; the second is on the
 // session's own device only, and never leaves it.
@@ -463,6 +470,12 @@ type SessionDetail struct {
 	Nick   string `json:"nick,omitempty"` // what the device is called, as Device.Nick
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
+	// SendsFiles and TakesFiles are what the session's file switches say (#859): FilesOn, FilesOff,
+	// FilesOld (its device runs a daemon from before files, so it takes none), or "" where this
+	// device can't know. A person's are their own switches, an agent's its device's agents'.
+	// Another device's presence says whether it takes files, never whether it sends them.
+	SendsFiles string `json:"sendsFiles,omitempty"`
+	TakesFiles string `json:"takesFiles,omitempty"`
 
 	Branch    string     `json:"branch,omitempty"`
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first

@@ -29,10 +29,15 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
   them. A fetch under way ends when its switch goes off, and a
   message that was waiting for its files goes without them. The device's presence says whether its
   agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
-  `send` says which recipients get the text alone. `who` and `lookup` don't show it, for the same
-  reason as Send files (#859).
+  `send` says which recipients get the text alone. `who` doesn't show it, for the same reason as
+  Send files (#859).
   What a session sends another on the same device is there already and fetched from nowhere, so it
   is shown.
+- **`lookup` shows both, every time:** one `files:` line says whether the session sends files and
+  whether it takes them, so an agent can check its own name or another's before it tries (Tyler,
+  2026-11-17). Here, both come from this device's switches, the person's own for a person. For
+  another device, presence says whether it takes files, never whether it sends them, so that half
+  reads `sends: unknown`.
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
 
 ## How a file travels

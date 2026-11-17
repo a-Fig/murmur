@@ -776,6 +776,7 @@ func Lookup(r proto.Response) string {
 	} else {
 		fmt.Fprintf(&b, "  device %s\n", id)
 	}
+	b.WriteString("  files: " + lookupFiles(d) + "\n")
 
 	if d.Branch != "" {
 		fmt.Fprintf(&b, "  on %s\n", d.Branch)
@@ -897,4 +898,42 @@ func selfHookOff(devices []proto.Device) bool {
 		}
 	}
 	return false
+}
+
+// lookupFiles says whether the session looked up sends and takes files (#859): the one place an
+// agent can check, as who leaves it out.
+func lookupFiles(d *proto.SessionDetail) string {
+	person := d.Agent == bus.AgentPerson
+	whose := "agents here"
+	if !d.Local {
+		whose = "agents on its device"
+	}
+	var sends, takes string
+	switch {
+	case d.SendsFiles == proto.FilesOn:
+		sends = "sends them"
+	case d.SendsFiles == proto.FilesOff && person:
+		sends = "sends none (they turned Send files off)"
+	case d.SendsFiles == proto.FilesOff:
+		sends = "sends none (Send files is off for " + whose + ")"
+	default:
+		sends = "sends: unknown"
+	}
+	switch {
+	case d.TakesFiles == proto.FilesOn:
+		takes = "takes them"
+	case d.TakesFiles == proto.FilesOld:
+		takes = "takes none (its device runs a " + brand.Product + " from before files)"
+	case d.TakesFiles == proto.FilesOff && d.Local && person:
+		takes = "takes none from other devices (they turned Receive files off)"
+	case d.TakesFiles == proto.FilesOff && d.Local:
+		takes = "takes none from other devices (Receive files is off for " + whose + ")"
+	case d.TakesFiles == proto.FilesOff && person:
+		takes = "takes none (they turned Receive files off)"
+	case d.TakesFiles == proto.FilesOff:
+		takes = "takes none (Receive files is off for " + whose + ")"
+	default:
+		takes = "takes: unknown"
+	}
+	return sends + ", " + takes
 }
