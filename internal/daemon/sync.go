@@ -1006,21 +1006,24 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 		d.pending = append(d.pending, e)
 	}
 	dev, sess := bus.SplitAddr(e.To)
-	fwd := d.forwardLocked(e.To)
+	fwd := d.forwardNamedLocked(e.To, e.ToName)
 	for _, id := range d.recipientsLocked() {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
 		if d.offMeshLocked(id) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
-			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
-				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, e.To)
+			if mode == modeNormal && !held && (e.To == bus.Addr(d.device, id) || fwd == bus.Addr(d.device, id)) {
+				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, bus.Addr(d.device, id))
 			}
 			continue
 		}
 		if d.mutedHereLocked(id, e) {
 			if mode == modeNormal && !held {
 				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
+			}
+			if mode == modeNormal {
+				d.mutedropLocked(id, e) // its sender is told (#466)
 			}
 			continue
 		}
@@ -1133,9 +1136,9 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 		return d.hasTagLocked(id, e.To)
 	}
 	if e.To == addr {
-		return d.forwardLocked(e.To) == ""
+		return d.forwardNamedLocked(e.To, e.ToName) == ""
 	}
-	return e.To == "*" || e.To == d.device || d.forwardLocked(e.To) == addr
+	return e.To == "*" || e.To == d.device || d.forwardNamedLocked(e.To, e.ToName) == addr
 }
 
 // addInboxLocked queues message e for session id, once its files, if it carries any, are saved
@@ -1178,9 +1181,14 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.caughtUp[id] = true
 	d.applyHeldLocked(id) // first: a group's message waiting for it goes by the tags they give it
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
-			d.addInboxLocked(id, e)
+		if !d.addressedLocked(e, id) || d.offMeshLocked(id) {
+			continue
 		}
+		if d.mutedHereLocked(id, e) {
+			d.mutedropLocked(id, e) // what arrived while the daemon was down: its sender is told (#466)
+			continue
+		}
+		d.addInboxLocked(id, e)
 	}
 	d.saveLocked()
 }
@@ -1269,6 +1277,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
+		d.droppedThereLocked(dev, pres.Sessions)
 	}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
@@ -1376,12 +1385,14 @@ func (d *Daemon) readOwnLater(ctx context.Context) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
-	return d.appendEventIf(ctx, e, nil)
+	return d.appendEventIf(ctx, e, nil, nil)
 }
 
 // appendEventIf is appendEvent, asking still once each push's turn is had: a message with files
-// isn't sent if Send files went off while it waited (#765).
-func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool) error {
+// isn't sent if Send files went off while it waited (#765). With settle, a push that ends unsure
+// leaves the event pending rather than failed, and appendEventIf returns a pendingError: it is
+// pushed again until it lands or is given up, and settle is told which (pending.go, #781).
+func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool, settle settleFunc) error {
 	if err := d.awaitEpoch(ctx); err != nil {
 		return err
 	}
@@ -1398,43 +1409,38 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	if err != nil {
 		return err
 	}
+	// A push carries the sends pending under it, so it goes out only if they still may: a send
+	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
+	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	for attempt := 0; ; attempt++ {
+		d.dropSwitchedOff(ctx)
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err
 		}
 		if lease == "" {
-			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", stillAll)
 		} else {
-			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, still)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
+		}
+		if errors.Is(err, errSendOff) && (still == nil || still()) {
+			continue // a pending send's switch went off as this waited: build without it
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
+			if settle != nil && d.pendLocked(sha, settle, still, err) {
+				return pendingError{err}
+			}
 		}
 		if err == nil {
-			d.ownTip = sha
-			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
-				d.log.Printf("updating local %s: %v", ref, err)
-			}
-			d.mu.Lock()
-			if e.Type == bus.Message {
-				d.noteConversationLocked() // a message went out; the answer may come soon
-			}
-			d.mu.Unlock()
-			if d.leaveOwnTip(sha) {
-				return nil
-			}
-			d.mu.Lock()
-			d.known[ref] = sha
-			d.mu.Unlock()
-			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
-			d.advMu.Unlock()
+			d.ownLanded(ctx, ref, sha, e.Type == bus.Message)
 			return nil
 		}
 		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
 			return err
 		}
+		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
 			return err
@@ -1453,9 +1459,39 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 			continue
 		}
 		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
-		// first sync, or a copied .git. Build on the remote's tip instead.
+		// first sync, or a copied .git. Build on the remote's tip instead. A send pending on the
+		// tip that was given up for it is settled by whether the remote's has it.
+		d.settlePendingOn(ctx, tip, rejected)
 		d.ownTip = tip
 	}
+}
+
+// ownLanded records sha, the tip of this device's log just pushed, as landed, and with it every
+// send pending under it; message says the write was a message, after which an answer may come
+// soon. Caller holds writeMu.
+func (d *Daemon) ownLanded(ctx context.Context, ref, sha string, message bool) {
+	d.ownTip = sha
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	landed := d.pendSends
+	d.pendSends = nil
+	d.mu.Lock()
+	if message || len(landed) > 0 {
+		d.noteConversationLocked() // a message went out; the answer may come soon
+	}
+	d.mu.Unlock()
+	for _, p := range landed {
+		p.settle(true, false, nil)
+	}
+	if d.leaveOwnTip(sha) {
+		return
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
+	d.advMu.Unlock()
 }
 
 // pushRefused says a push that ended with err is known not to have landed: the remote refused it,
@@ -1786,7 +1822,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
-			Muted: d.mutesOfLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+			Muted: d.mutesOfLocked(s.id), Dropped: d.mutedropsLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
 		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
@@ -1950,6 +1986,13 @@ func (d *Daemon) pruneInboxes() {
 			d.saveLocked()
 		}
 	}
+	// And the key it was the later of two servers on (uniqueKeyLocked).
+	for id := range d.st.Later {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.Later, id)
+			d.saveLocked()
+		}
+	}
 	// The tags and mutes it kept by its ID, if its name never landed, go with its inbox as well.
 	gone := func(key string) {
 		id, pending := strings.CutPrefix(key, tagKeyOf("", ""))
@@ -2004,6 +2047,7 @@ func (d *Daemon) dropStoppedLocked(id string) {
 	delete(d.st.Commits, id)
 	delete(d.st.T3Routes, id)
 	delete(d.st.ThreadLeft, id)
+	delete(d.st.Later, id)
 	d.dropPendingKeyLocked(id)
 }
 

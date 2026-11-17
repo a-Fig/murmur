@@ -978,7 +978,7 @@ function versionSection() {
       ),
     );
   }
-  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Version")), h("div", { class: "group" }, row));
+  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row));
 }
 
 // Four states, as a colored dot on the face:
@@ -5041,7 +5041,7 @@ function waitLine(c) {
 
 const WAKE_CHOICES = [
   ["always", "Always"],
-  ["within", "Within"],
+  ["within", "If idle under"],
   ["never", "Never"],
 ];
 
@@ -5110,7 +5110,7 @@ function wakeControl(key, wake, onChange, withDefault) {
 }
 
 const BUSY_CHOICES = [
-  ["subject", "Subject"],
+  ["subject", "Subject only"],
   ["whole", "Whole message"],
 ];
 
@@ -5211,11 +5211,11 @@ function accountSection() {
   return h(
     "section",
     { class: "section" },
-    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Your account")),
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "You"), h("p", { class: "section-note" }, "How teammates see you and this device.")),
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Agents see it, and send to it.", [
+      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Teammates and their agents see it, and send to it.", [
         h(
           "span",
           { class: "field account-field" },
@@ -5275,8 +5275,8 @@ function colorRow() {
   };
   return settingsRow(
     "color",
-    "Colour",
-    acct?.colorLost && !pick ? acct.colorLost + " has yours now, so you're on Auto." : "Your agents' faces.",
+    "Device colour",
+    acct?.colorLost && !pick ? acct.colorLost + " has yours now, so you're on Auto." : "Fills your sessions' faces on everyone's page.",
     h(
       "div",
       { class: "swatches" },
@@ -5313,7 +5313,7 @@ function nickRow() {
   const id = ui.state?.device || "";
   const value = ui.nickDraft ?? nick;
   const without = acct?.name ? "Without one, they see your name, " + acct.name + "." : "";
-  return settingsRow("nick", "Device nickname", ["What teammates call this device, shown beside its ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without].filter(Boolean).join(" "), [
+  return settingsRow("nick", "Device nickname", ["Shown to teammates beside this device's ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without].filter(Boolean).join(" "), [
     h(
       "span",
       { class: "field account-field" },
@@ -5406,36 +5406,55 @@ async function saveAccount(name) {
   render();
 }
 
-// Each session's own setting, folded under the device default so a device with many sessions
-// doesn't fill the page. The fold says how many sessions there are and how many set their own.
-function perSessionFold(key, rows, set) {
+// Each session's own settings, both of them on one row, folded under the defaults so a device with
+// many sessions doesn't fill the page. It is folded until opened (Tyler, 2026-11-16); the fold
+// says how many sessions there are and how many set their own.
+function perSessionFold(rows, set) {
   ui.settingsOpen = ui.settingsOpen || new Set();
   if (!rows.length) return [];
-  const open = ui.settingsOpen.has(key);
+  const open = ui.settingsOpen.has("sessions");
   const head = h(
     "button",
     {
       class: "row row-fold",
       "aria-expanded": open ? "true" : "false",
-      "data-key": "fold-" + key,
+      "data-key": "fold-sessions",
       onclick: () => {
-        open ? ui.settingsOpen.delete(key) : ui.settingsOpen.add(key);
+        open ? ui.settingsOpen.delete("sessions") : ui.settingsOpen.add("sessions");
         render();
       },
     },
     icon("chevronRight", "row-fold-chev"),
-    h("span", { class: "row-title" }, "Each session"),
+    h("span", { class: "row-title" }, "Per session"),
     h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
   );
   if (open) for (const r of rows) r.classList.add("row-sub");
   return [head, ...(open ? rows : [])];
 }
 
+// One session's row under Per session: its wake-up and what it is shown while working, each
+// Default until it is set.
+function sessionSettingsRow(s, wake, busy, saveWake, saveBusy) {
+  const line = (label, ...control) => h("div", { class: "ps-line" }, h("span", { class: "ps-label" }, label), h("div", { class: "row-control ps-control", role: "group", "aria-label": label + ", " + s.name }, control));
+  return h(
+    "div",
+    { class: "row" },
+    h(
+      "div",
+      { class: "ps-row" },
+      h("div", { class: "row-title ps-name" }, h("span", { class: "truncate", "data-profile": s.name }, s.name), s.agent && h("span", { class: "badge badge-secondary" }, s.agent)),
+      line("Wake", wakeControl("wake-" + s.name, wake, (w) => saveWake(s.name, w), true)),
+      line("While working", busyControl("busy-" + s.name, busy, (b) => saveBusy(s.name, b), true)),
+    ),
+    ui.rowErrors["wake-" + s.name] && h("p", { class: "row-error", "data-announce": "" }, ui.rowErrors["wake-" + s.name]),
+  );
+}
+
 function themeSection() {
   return h(
     "section",
     { class: "section" },
-    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance"), h("p", { class: "section-note" }, "In this browser.")),
     h(
       "div",
       { class: "group" },
@@ -5475,52 +5494,96 @@ function themeSection() {
   );
 }
 
+// Settings (#775, Tyler, 2026-11-16) is one screen for the repo that is open, grouped by what each
+// setting is about: you, messages to your sessions, files, mutes. Every one of those is this
+// repo's, since a device is one clone; the theme and the version are the only ones that aren't, so
+// they come last, under their own heading. A page for every repo at once is #816.
+function settingsSection(key, title, note, ...rows) {
+  return h(
+    "section",
+    { class: "section", "data-key": "set-" + key },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title), note && h("p", { class: "section-note" }, note)),
+    h("div", { class: "group" }, ...rows),
+  );
+}
+
+// Every setting is a segmented control, on/off ones too: one kind of control across Settings
+// (Tyler, 2026-11-17, #862).
+function onOffControl(key, on, save) {
+  return h(
+    "div",
+    { class: "segmented", role: "group" },
+    [[false, "Off"], [true, "On"]].map(([v, label]) =>
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null, themeSection()];
+  const sections = [ui.state ? accountSection() : null];
   if (ui.settings) {
     const set = ui.settings;
+    // A session is shown by its address until its name lands, and the daemon keeps these settings
+    // by name: one saved under the address would never apply, so the session isn't offered (#43).
+    const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/")).sort((a, b) => a.name.localeCompare(b.name));
+    const wakeOver = set.sessionWake || {};
+    const busyOver = set.sessionBusy || {};
+    const saveWake = (name, w) => {
+      // From the settings as they are now: a pause in typing minutes can end after another choice
+      // was made.
+      const next = { ...(ui.settings.sessionWake || {}) };
+      if (w) next[name] = w;
+      else delete next[name];
+      saveSettings({ ...ui.settings, sessionWake: next });
+    };
+    const saveBusy = (name, b) => {
+      const next = { ...(ui.settings.sessionBusy || {}) };
+      if (b) next[name] = b;
+      else delete next[name];
+      saveSettings({ ...ui.settings, sessionBusy: next });
+    };
+    const own = local.filter((s) => wakeOver[s.name] || busyOver[s.name]).length;
     sections.push(
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Mode")),
-        h(
-          "div",
-          { class: "group" },
-          settingsRow(
-            "mode",
-            "This device, in this repo",
-            MODE_HELP[deviceMode()],
-            h(
-              "div",
-              { class: "segmented", role: "group" },
-              [["online", "Online"], ["dnd", "Do not disturb"], ["invisible", "Invisible"]].map(([v, label]) =>
-                h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-tip": MODE_HELP[v], "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
-              ),
+      settingsSection(
+        "messages",
+        "Messages to your sessions",
+        null,
+        settingsRow(
+          "mode",
+          "Availability",
+          MODE_HELP[deviceMode()],
+          h(
+            "div",
+            { class: "segmented", role: "group" },
+            [["online", "Online"], ["dnd", "Do not disturb"], ["invisible", "Invisible"]].map(([v, label]) =>
+              h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-tip": MODE_HELP[v], "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
             ),
           ),
+        ),
+        settingsRow(
+          "wake",
+          "Wake an idle session",
+          "When another session's message may start an idle session's turn. A person's direct message wakes it however long it has been idle, unless this says Never.",
+          wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
+        ),
+        settingsRow("busy", "While a session is working", "What it is shown when a message arrives mid-turn.", busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false)),
+        perSessionFold(
+          local.map((s) => sessionSettingsRow(s, wakeOver[s.name] || null, busyOver[s.name] || null, saveWake, saveBusy)),
+          own,
         ),
       ),
     );
     // Files are off both ways until the person turns them on, per repo (#765, Tyler, 2026-11-16).
-    const onOff = (key, on, save) =>
-      h(
-        "div",
-        { class: "segmented", role: "group" },
-        [[false, "Off"], [true, "On"]].map(([v, label]) =>
-          h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + "-" + (v ? "on" : "off"), onclick: () => on !== v && save(v) }, label),
-        ),
-      );
-    // Each way, a main switch for the person and their agents, and once it is on, one that keeps it
+    // Each way, a main setting for the person and their agents, and once it is on, one that keeps it
     // from the agents (Tyler, 2026-11-16).
     const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp) => {
-      const rows = [settingsRow(key, title, on ? onText : offText, onOff(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
+      const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
       if (on) {
         const sub = settingsRow(
           "agents-" + key,
           "Agents too",
           agentsOff ? agentsOffText : agentsOnText,
-          onOff("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
+          onOffControl("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
         );
         sub.classList.add("row-sub");
         rows.push(sub);
@@ -5528,167 +5591,94 @@ function settingsPage() {
       return rows;
     };
     sections.push(
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Files")),
-        h(
-          "div",
-          { class: "group" },
-          fileRows(
-            "send-files",
-            "Send files",
-            !!set.sendFiles,
-            "You can attach files to what you write here: screenshots, logs, diffs.",
-            "No files go out from this device. Attaching one asks you to turn this on.",
-            "sendFiles",
-            !!set.agentsSendOff,
-            "Your agents here can send files too, only from this repo or the temp folder.",
-            "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
-            "agentsSendOff",
-          ),
-          fileRows(
-            "receive-files",
-            "Receive files",
-            !!set.receiveFiles,
-            "Files other devices send are downloaded into this repo's .git folder and shown here.",
-            "Messages arrive without their files, which aren't downloaded. Senders are told.",
-            "receiveFiles",
-            !!set.agentsReceiveOff,
-            "Your agents here get the files sent to them too.",
-            "Only you get files. Your agents get messages without them, and senders are told.",
-            "agentsReceiveOff",
-          ),
+      settingsSection(
+        "files",
+        "Files",
+        null,
+        fileRows(
+          "send-files",
+          "Send files",
+          !!set.sendFiles,
+          "You can attach files to what you write here: screenshots, logs, diffs.",
+          "No files go out from this device. Attaching one asks you to turn this on.",
+          "sendFiles",
+          !!set.agentsSendOff,
+          "Your agents here can send files too, only from this repo or the temp folder.",
+          "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
+          "agentsSendOff",
+        ),
+        fileRows(
+          "receive-files",
+          "Receive files",
+          !!set.receiveFiles,
+          "Files other devices send are downloaded into this repo's .git folder and shown here.",
+          "Messages arrive without their files, which aren't downloaded. Senders are told.",
+          "receiveFiles",
+          !!set.agentsReceiveOff,
+          "Your agents here get the files sent to them too.",
+          "Only you get files. Your agents get messages without them, and senders are told.",
+          "agentsReceiveOff",
         ),
       ),
     );
-    // A session is shown by its address until its name lands, and the daemon keeps these settings
-    // by name: one saved under the address would never apply, so the session isn't offered (#43).
-    const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/"));
-    const overrides = set.sessionWake || {};
-    const wakeOwn = local.filter((s) => overrides[s.name]).length;
-    const rows = [
-      settingsRow(
-        "wake",
-        "Device default",
-        "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
-        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
-      ),
-      ...perSessionFold("wake", [...local]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((s) =>
-          settingsRow(
-            "wake-" + s.name,
-            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
-            null,
-            wakeControl(
-              "wake-" + s.name,
-              overrides[s.name] || null,
-              (w) => {
-                // From the settings as they are now: a pause in typing minutes can end after
-                // another choice was made.
-                const next = { ...(ui.settings.sessionWake || {}) };
-                if (w) next[s.name] = w;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionWake: next });
-              },
-              true,
-            ),
-          ),
-        ), wakeOwn),
-    ];
-    const busyOverrides = set.sessionBusy || {};
-    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
-    const busyRows = [
-      settingsRow(
-        "busy",
-        "Device default",
-        "What a busy session sees when a message arrives.",
-        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
-      ),
-      ...perSessionFold("busy", [...local]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((s) =>
-          settingsRow(
-            "busy-" + s.name,
-            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
-            null,
-            busyControl(
-              "busy-" + s.name,
-              busyOverrides[s.name] || null,
-              (b) => {
-                const next = { ...(ui.settings.sessionBusy || {}) };
-                if (b) next[s.name] = b;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionBusy: next });
-              },
-              true,
-            ),
-          ),
-        ), busyOwn),
-    ];
-    sections.push(
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Wake-ups")),
-        h("div", { class: "group" }, rows),
-      ),
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
-        h("div", { class: "group" }, busyRows),
-        ui.settingsError && h("p", { class: "row-error section-head", "data-announce": "" }, ui.settingsError),
-      ),
-    );
+    if (ui.settingsError) sections.push(h("p", { class: "row-error section-head", "data-announce": "" }, ui.settingsError));
   }
 
   const mutes = ui.state?.mutes || [];
   sections.push(
-    h(
-      "section",
-      { class: "section" },
-      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Mutes")),
-      h(
-        "div",
-        { class: "group" },
-        mutes.length === 0
-          ? h("div", { class: "row-empty" }, "None")
-          : mutes.map((m) => {
-              const key = "mute-" + m.by + "-" + m.muted;
-              const at = when(m.at);
-              return settingsRow(
-                key,
+    settingsSection(
+      "mutes",
+      "Mutes",
+      "A muted session's messages don't reach the session that muted it.",
+      mutes.length === 0
+        ? h("div", { class: "row-empty" }, "None")
+        : mutes.map((m) => {
+            const key = "mute-" + m.by + "-" + m.muted;
+            const at = when(m.at);
+            return settingsRow(
+              key,
+              h(
+                "span",
+                { class: "mute-line" },
+                icon("bellOff"),
+                h("span", { class: "truncate" }, m.by),
+                h("span", { class: "verb" }, "muted"),
+                h("span", { class: "truncate" }, m.muted),
+              ),
+              at && agoEl("span", "", at),
+              m.canUnmute &&
                 h(
-                  "span",
-                  { class: "mute-line" },
-                  icon("bellOff"),
-                  h("span", { class: "truncate" }, m.by),
-                  h("span", { class: "verb" }, "muted"),
-                  h("span", { class: "truncate" }, m.muted),
+                  "button",
+                  {
+                    class: "btn btn-outline btn-xs",
+                    "data-key": key,
+                    disabled: ui.muting.has(key),
+                    onclick: () => unmute(m, key),
+                  },
+                  "Unmute",
                 ),
-                at && agoEl("span", "", at),
-                m.canUnmute &&
-                  h(
-                    "button",
-                    {
-                      class: "btn btn-outline btn-xs",
-                      "data-key": key,
-                      disabled: ui.muting.has(key),
-                      onclick: () => unmute(m, key),
-                    },
-                    "Unmute",
-                  ),
-                "keep-inline",
-              );
-            }),
-      ),
+              "keep-inline",
+            );
+          }),
     ),
   );
 
-  sections.push(versionSection());
-  return h("div", { class: "page" }, sections);
+  sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
+  return h("div", { class: "page" }, settingsScope(), sections);
+}
+
+// Which repo, and which device, the settings above the line are for: in mur app the repo picker
+// switches between repos, each with settings of its own.
+function settingsScope() {
+  if (!ui.state) return null;
+  const self = (ui.state.devices || []).find((d) => d.self);
+  return h(
+    "p",
+    { class: "settings-scope" },
+    "For ",
+    h("strong", null, ui.state.repo || NAME),
+    self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
+  );
 }
 
 async function unmute(m, key) {

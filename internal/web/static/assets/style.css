@@ -1850,6 +1850,78 @@ a.g-pr:hover {
 .section > .row-error {
   padding: 0 1rem;
 }
+/* Settings (#775): what the settings are for, a note beside a section's title, and the line above
+ * the two sections that aren't per repo. */
+.settings-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0 1rem;
+  margin-bottom: -0.75rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.settings-scope strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.section-head {
+  flex-wrap: wrap;
+  column-gap: 0.625rem;
+  row-gap: 0;
+}
+.section-note {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.settings-everywhere {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px dashed color-mix(in oklab, var(--border) 80%, var(--muted-foreground) 20%);
+}
+.settings-everywhere-label {
+  margin-bottom: -1.25rem;
+  padding: 0 1rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+/* One session's row under Per session: its name, then a line for each of its two settings. */
+.ps-row {
+  display: grid;
+  gap: 0.5rem;
+}
+.ps-name {
+  min-width: 0;
+}
+.ps-line {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+}
+.ps-label {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.ps-control {
+  justify-content: flex-start;
+}
+@media (max-width: 640px) {
+  .ps-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+  .settings-scope,
+  .settings-everywhere-label {
+    padding: 0 0.75rem;
+  }
+}
 .account-field input {
   width: 12rem;
   text-align: left;

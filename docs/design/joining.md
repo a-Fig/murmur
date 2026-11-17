@@ -74,6 +74,17 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 - **What it prints**: what it did, what went wrong, and "Tell your user", chosen from which agent
   ran it (see [reloading MCP servers](#reloading-mcp-servers)), so the agent can say exactly what to
   do next.
+- **It never runs silent past an agent's timeout** (#829, 2026-11-16). An agent runs `mur join`
+  under a timeout of its own, often piped through `tail`, and one that kills it sees nothing: in
+  #813 that looked like a broken install. Its steps each had a bound (a minute for each `claude mcp
+  add`, 15 seconds for the daemon, 30 for the public-repo report), but they add up past 2 minutes
+  with a few Claude Code homes. So the whole join has one deadline, 90 seconds. When it passes, join
+  stops at the next step and reports one problem naming the step it was on; a rerun does only what
+  is missing. The public-repo report is the exception: it is best effort, a daemon retries it, so
+  the deadline cutting it short fails nothing. `claude mcp add` is waited for a second past its
+  kill, since an npm install's `claude.cmd` leaves node holding its output on Windows. A step that
+  runs past 5 seconds says "mur join: still <step>" on standard error. Moving the caller's session
+  in afterwards (up to 10 seconds) is outside the deadline.
 
 ## `mur uninstall`
 

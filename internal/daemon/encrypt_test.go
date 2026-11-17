@@ -16,6 +16,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 // newOwnedDevice is newDevice with git's user.name set in the clone, which presence carries.
@@ -490,6 +491,73 @@ func TestLostKeysTakeANewDevice(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(stateDir, "state.json"))
 	if err != nil || json.Unmarshal(b, &st) != nil || st.Pins[a.self()] == nil {
 		t.Fatalf("no pin for the new device: %s %v", b, err)
+	}
+}
+
+// The new device a clone becomes when its keys are lost starts with new names: the registry has
+// the old ones on the old device, and a session that kept one under the new ID would be sent its
+// messages at the old address once it stopped (#617). Neither a session that comes back with its
+// key nor one new to the clone gets a name the old device held or had set aside.
+func TestLostKeysGiveNewNames(t *testing.T) {
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.pool = 3 })
+	addr, conn := a.session("aaaaaa", "claude-kept")
+	name := a.named(addr)
+	conn.Close()
+	stateDir := filepath.Join(a.gitDir, "murmur")
+	var pool []string
+	eventually(t, "names set aside for a", func() bool { pool = poolOf(t, a); return len(pool) > 0 })
+	a.stop()
+	if err := os.Remove(filepath.Join(stateDir, "keys")); err != nil {
+		t.Fatal(err)
+	}
+	a.start()
+	old := map[string]bool{name: true}
+	for _, n := range pool {
+		old[n] = true
+	}
+	for _, s := range []struct{ id, claude string }{{"aaaaaa", "claude-kept"}, {"bbbbbb", "claude-new"}} {
+		got := a.named(func() string { addr, _ := a.session(s.id, s.claude); return addr }())
+		if old[got] {
+			t.Errorf("%s (%s) is named %s, which the old device held or had set aside", s.id, s.claude, got)
+		}
+	}
+}
+
+// A session that comes back to a clone that lost its keys has a new name, and is still in its
+// groups, still on do not disturb, and still has its mutes (#827): they were kept by the old
+// name, which stayed on the old device.
+func TestLostKeysKeepASessionsTagsAndMutes(t *testing.T) {
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	addr, conn := a.session("aaaaaa", "claude-kept")
+	bob, _ := b.session("bbbbbb", "")
+	name, bobName := a.named(addr), a.named(bob)
+	if r := a.do(proto.Request{Op: proto.OpTags, Session: "aaaaaa", Add: []string{"group:ui", tags.DoNotDisturb}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if r := a.mute("aaaaaa", bobName, false); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	conn.Close()
+	a.stop()
+	if err := os.Remove(filepath.Join(a.gitDir, "murmur", "keys")); err != nil {
+		t.Fatal(err)
+	}
+	a.start()
+	again, _ := a.session("aaaaaa", "claude-kept")
+	if got := a.named(again); got == name {
+		t.Fatalf("the session kept the name %s on the new device", name)
+	}
+	v, ok := a.whoEntry(again)
+	has := func(tag string) bool {
+		return slices.ContainsFunc(v.Tags, func(g tags.Tag) bool { return g.Name == tag })
+	}
+	if !ok || !has("group:ui") || !has(tags.DoNotDisturb) {
+		t.Errorf("the session came back with tags %v", v.Tags)
+	}
+	if r := a.mute("aaaaaa", "", false); r.Error != "" || !slices.Equal(r.Muted, []string{bobName}) {
+		t.Errorf("the session came back with mutes %v (%s)", r.Muted, r.Error)
 	}
 }
 
