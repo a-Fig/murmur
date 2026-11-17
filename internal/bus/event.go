@@ -123,7 +123,12 @@ type Event struct {
 	Agent  string `json:"agent,omitempty"`  // session.started
 	Branch string `json:"branch,omitempty"` // session.started
 
-	To      string `json:"to,omitempty"` // message: device/session, device, "*", or a group's tag
+	To string `json:"to,omitempty"` // message: device/session, device, "*", or a group's tag
+	// ToName is the session name a message was sent to, when it was sent to one (#45). To is the
+	// address the registry has the name at, and a session there may have held other names since, so
+	// the receiving daemon goes by this name where it knows who holds it. A daemon from before it
+	// ignores it and goes by To.
+	ToName  string `json:"toName,omitempty"`
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
 	// Person is a person's name on a message they sent, so that a daemon that never saw their
@@ -230,6 +235,9 @@ func (e *Event) Clean() {
 	}
 	if e.Type != Message {
 		e.Receipts = false
+	}
+	if e.Type != Message || !names.Valid(e.ToName) {
+		e.ToName = ""
 	}
 	e.Marks = cleanMarks(e.Type, e.Marks)
 	e.Files = cleanFiles(e.Type, e.Files)

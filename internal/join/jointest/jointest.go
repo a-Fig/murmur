@@ -10,12 +10,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
 // LogEnv names the file the stand-in appends the arguments of each run to, one line per run.
 const LogEnv = "MURMUR_FAKE_CLAUDE_LOG"
+
+// HangEnv, set to anything, has the stand-in hang until it is killed, as a claude stuck on its
+// first run might.
+const HangEnv = "MURMUR_FAKE_CLAUDE_HANG"
 
 // RunIfFakeClaude does what the claude command does and exits, when this process was started under
 // that name. Tests call it first thing in TestMain.
@@ -33,6 +38,9 @@ func RunIfFakeClaude() {
 			fmt.Fprintln(f, strings.Join(os.Args[1:], " "))
 			f.Close()
 		}
+	}
+	if os.Getenv(HangEnv) != "" {
+		time.Sleep(time.Hour)
 	}
 	if err := fakeClaude(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

@@ -58,6 +58,9 @@ type Options struct {
 	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
 	// each time to a minute; PendingGiveUp how long it is tried before it is given up (pending.go).
 	PendingRetry, PendingGiveUp time.Duration
+	// OwnFetchLimit bounds the fetch of this device's own log's tip when a write to it is refused
+	// (overRemoteTip): a send waits on it, and every other write behind writeMu. 20 s.
+	OwnFetchLimit time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -190,6 +193,9 @@ func (o *Options) defaults() {
 	}
 	if o.PendingRetry == 0 {
 		o.PendingRetry = 5 * time.Second
+	}
+	if o.OwnFetchLimit == 0 {
+		o.OwnFetchLimit = 20 * time.Second
 	}
 	if o.PendingGiveUp == 0 {
 		o.PendingGiveUp = pendingGiveUp
@@ -613,11 +619,17 @@ type Daemon struct {
 	// testPush, set only by tests, stands in for a push of this device's log: it is given the real
 	// one to call, or not.
 	testPush func(push func() error) error
+	// testFetch, set only by tests, stands in for the fetch of this device's own log (fetchOwn).
+	testFetch func(ctx context.Context) error
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
 	setMu    sync.Mutex
 	settings pageSettings
+	// settingsMove says st.SettingsMoves has names to move; wakeSnapshot looks before it copies.
+	// settingsMoveFailed, under setMu, that the last try couldn't save, and the log has said so.
+	settingsMove       atomic.Bool
+	settingsMoveFailed bool
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
 	// read without setMu by everything that writes to the bus or answers an agent.
 	hidden, dnd atomic.Bool
@@ -913,6 +925,20 @@ type state struct {
 	PeerNames map[string]peerName `json:"peerNames,omitempty"`
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
+	// NamesLeft is, by session key, the name the key had on the device this clone was before it
+	// lost its keys, where that name has tags, mutes or an explained list kept, a session here
+	// muted it, or the page has a wake or busy choice for it: the name the key gets next takes
+	// them (adoptLeftLocked, #827), and a session
+	// whose new name is pending goes by the old one's meanwhile (keptByLocked). dropOldNames
+	// writes it.
+	NamesLeft map[string]string `json:"namesLeft,omitempty"`
+	// SettingsMoves is the names, old then new, whose own wake and busy choices on the page are
+	// still to be moved from the first to the second in settings.json (moveSettings, #836).
+	SettingsMoves [][2]string `json:"settingsMoves,omitempty"`
+	// SettingsMoved is the moves made, old name to new. A page that read the settings before a
+	// move sends the old name's choice back with its next save, and no choice for the new one
+	// (SetSettings).
+	SettingsMoved map[string]string `json:"settingsMoved,omitempty"`
 	// NameHolders is the session on this device that took each name last, and SessionNames the
 	// name each session took last: running or stopped, and never taken back. The registry records
 	// the session a name was first given to, which can have a different ID from the one that
@@ -930,6 +956,10 @@ type state struct {
 	// registering again after a daemon restart with the thread it still knows, doesn't take the
 	// thread's name back.
 	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
+	// Later is, by session ID, the name keys the session shares with another MCP server of its
+	// client process that had them first (uniqueKeyLocked, #38). Kept as long as ThreadLeft is,
+	// so that whichever of the two comes back first, each comes back to its own name.
+	Later map[string][]string `json:"later,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.
@@ -1342,6 +1372,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d.pinSelfLocked() // nothing else runs yet
 	d.rereadTeamIfKeysLostLocked()
 	d.loadSettings()
+	d.settingsMove.Store(len(d.st.SettingsMoves) > 0) // a move the last daemon didn't get to
 	d.loadPersonLog()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {

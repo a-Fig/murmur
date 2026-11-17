@@ -460,7 +460,7 @@ func (d *Daemon) mayWakeLocked(id string, wake pageSettings) bool {
 	if d.offMeshLocked(id) {
 		return false
 	}
-	w := wake.choice(d.sessionNameLocked(id))
+	w := wake.choice(d.settingsNameLocked(id))
 	switch w.When {
 	case web.WakeNever:
 		return false

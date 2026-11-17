@@ -37,6 +37,25 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   it, and a change more than a minute older does nothing (#251); by the senders' clocks, so a clock
   over a minute behind can lose a change, which beat an old change undoing a new one. At the cap of
   12, a person's tags are kept first, then the session's, then derived ones.
+- **A clone that loses its keys** becomes a new device, and its sessions get new names
+  ([encryption](encryption.md)). Tags, mutes and the explained list are kept by name, so until
+  2026-11-16 (#827) a session that came back had none: one in `group:ui` on do not disturb was out
+  of the group and given turns again. Now the state file keeps which name each session key had
+  (`namesLeft`), and a session that comes back with that key takes what the old name kept: the
+  tags unless it has some already, the mutes added to its own. While its new name is pending it
+  goes by the old name's, so it is never off do not disturb in between, and a session here that
+  muted it still doesn't hear from it. They are found by the session's key, not its ID: one that
+  moves to another conversation before its name lands leaves them with the conversation they
+  were for. When the name lands they move to it, and mutes other sessions on the clone made *of*
+  the old name become mutes of the new one.
+  - *The page's wake and busy choices for one session* are kept by name too, in
+    `settings.json`, and follow it (#836): until then a session set never to be woken came back
+    with the device's choice. The name lands under the daemon's lock, and the settings' lock
+    is never taken inside that one. So the pair of names waits in the state file
+    (`settingsMoves`) for the next read of the settings, the page's included, and the session is
+    looked up by its old name meanwhile. The page sends back the whole of what it read with
+    every save, so one that read before the move would undo it: the moves made are kept
+    (`settingsMoved`) and a save's old names are read as the new ones.
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
   lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
   stopped or was killed with it counts as stopped from about then (#736, #762), so they are kept as long

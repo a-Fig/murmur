@@ -1244,7 +1244,7 @@ func (d *Daemon) filesFetchedLocked(id string) {
 // isn't dropped because the fetch outlasted the grace (Sol's review). Caller holds mu.
 func (d *Daemon) filesRecipientLocked(id string, e bus.Event) string {
 	to := id
-	if f := d.forwardLocked(bus.Addr(d.device, id)); f != "" {
+	if f := d.forwardNamedLocked(bus.Addr(d.device, id), e.ToName); f != "" {
 		_, to = bus.SplitAddr(f)
 	}
 	if e.From == bus.Addr(d.device, to) || d.offMeshLocked(to) || to != id && d.mutedHereLocked(to, e) {
