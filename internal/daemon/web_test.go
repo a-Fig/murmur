@@ -587,7 +587,7 @@ func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
 // refuses them.
 func TestPageSettingsPersist(t *testing.T) {
 	t.Parallel()
-	d := newDevice(t, newRemote(t))
+	d := newDeviceWith(t, newRemote(t), func(d *device) { d.filesOff = true }) // a new user's defaults
 	pg := d.page()
 	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 5}
 	if got := pg.settings(); !reflect.DeepEqual(got, def) {

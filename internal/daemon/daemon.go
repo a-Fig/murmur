@@ -312,12 +312,14 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
-	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect)
+	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect, nil)
 }
 
 // pushFrom is push from repo, which is d.repo or a copy of it that keeps its objects elsewhere
 // (bus.Repo.Scratch).
-func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string) error {
+//
+// still, if not nil, is asked once the turn is had: false, and nothing is pushed.
+func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string, still func() bool) error {
 	if !d.takePush(ctx) {
 		return notPushedError{ctx.Err()}
 	}
@@ -331,6 +333,9 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	}
 	if err := ctx.Err(); err != nil {
 		return notPushedError{err} // git isn't started for it
+	}
+	if still != nil && !still() {
+		return notPushedError{errSendOff} // turned off while this send waited its turn (#765)
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
@@ -586,6 +591,13 @@ type Daemon struct {
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
 	// read without setMu by everything that writes to the bus or answers an agent.
 	hidden, dnd atomic.Bool
+	// The file switches (#765), read without setMu: Send files and Receive files for this device's
+	// agents, and for its person on the page, each its own (Tyler, 2026-11-16).
+	agentSend, pageSend atomic.Bool
+	agentRecv, pageRecv fileSwitch
+	// agentsSendOff and agentsReceiveOff are the settings that keep each from the agents, as saved,
+	// for the page's state: they stand while the main switch is off too (Sol's review of #769).
+	agentsSendOff, agentsReceiveOff atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 
@@ -866,6 +878,11 @@ type state struct {
 	// (see forwardLocked).
 	NameHolders  map[string]string `json:"nameHolders,omitempty"`
 	SessionNames map[string]string `json:"sessionNames,omitempty"`
+	// NamesSeen is when each session in SessionNames last took its name, to the hour: one long
+	// gone, that nothing else points at, is forgotten sessionNameKeep after it
+	// (pruneSessionNamesLocked). T3 makes a new session for a thread each time its MCP server
+	// restarts, so without that SessionNames only grew (#747).
+	NamesSeen map[string]time.Time `json:"namesSeen,omitempty"`
 	// ThreadLeft is, by session ID, the name key of the Codex thread the session gave up to
 	// another process that went on with it (yieldThreadLocked, #568). Kept so that the session,
 	// registering again after a daemon restart with the thread it still knows, doesn't take the

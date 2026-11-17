@@ -3371,6 +3371,14 @@ a.g-pr:hover {
   font-size: 0.75rem;
   font-weight: 500;
 }
+/* Turns the person's Send files on from the composer, where attaching a file asked for it (#765). */
+.composer-warn-btn {
+  margin-left: 0.375rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: inherit;
+}
 /* The files the next message takes (#570), over what is written. */
 .composer-files {
   display: flex;
@@ -4602,10 +4610,10 @@ a.g-pr:hover {
 /* The profile card (#689): a face or a sender's name opens it, beside what was clicked. It is a
  * popover in the page's own surfaces, with the device's colour (--dev, from its dev-c class) as its
  * only accent, across its top. Placed through the CSSOM. */
-.avatar[data-profile],
-button.chat-msg-from {
+[data-profile] {
   cursor: pointer;
 }
+/* A name on its own is a button (nameButton, #778) that reads as the text around it. */
 button.chat-msg-from {
   padding: 0;
   border: 0;
@@ -4613,7 +4621,27 @@ button.chat-msg-from {
   font-family: inherit;
   text-align: left;
 }
-button.chat-msg-from:hover {
+/* Under :where, so the classes it sits beside (.g-act-who's weight) still win. */
+:where(button.name-ref, button.pc-talked-one) {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+:where(button.name-ref) {
+  display: inline;
+}
+button.chat-msg-from:hover,
+button.name-ref:hover,
+span[data-profile]:not(.avatar):hover {
+  text-decoration: underline;
+}
+button.pc-talked-one:hover {
+  text-decoration: none;
+}
+button.pc-talked-one:hover > .truncate {
   text-decoration: underline;
 }
 .profile-card {

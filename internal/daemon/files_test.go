@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
@@ -550,6 +552,17 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 	if err := send(put(wt, "diff.txt")); err != "" {
 		t.Errorf("a file in a linked worktree: %s", err)
 	}
+	// A repo of its own inside the clone, as a submodule or a vendored one is, is passed over for
+	// the worktree around it (#772).
+	nested := filepath.Join(clone, "vendored")
+	gitOK(clone, "init", "-q", nested)
+	if err := send(put(nested, "lib.txt")); err != "" {
+		t.Errorf("a file in a repo inside the clone: %s", err)
+	}
+	// A repo of its own outside the clone and temp isn't one of its worktrees.
+	elsewhere := filepath.Join(base, "elsewhere")
+	gitOK(base, "init", "-q", elsewhere)
+	refused["a file in another repo"] = put(elsewhere, "secret.txt")
 	// One registered by relative paths, as git worktree add --relative-paths does.
 	wt2 := filepath.Join(base, "wt2")
 	gitOK(clone, "worktree", "add", "--detach", wt2)
@@ -588,6 +601,27 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 	refused["a file in a folder a worktree's registration was pointed at"] = secret
+	// A .git file an agent wrote, in a folder elsewhere, pointing at the git directory or at a
+	// worktree's registration, doesn't make that folder a worktree (Sol's review of #805).
+	for name, ptr := range map[string]string{"planted": a.gitDir, "planted2": reg} {
+		dir := filepath.Join(base, name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+filepath.ToSlash(ptr)+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		refused["a file in a folder with a .git planted to point at "+name] = put(dir, "secret.txt")
+	}
+	// Nor does a hard link to a real worktree's .git: the same file, in another folder.
+	wt3, linked := filepath.Join(base, "wt3"), filepath.Join(base, "linked")
+	gitOK(clone, "worktree", "add", "--detach", wt3)
+	if err := os.MkdirAll(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if os.Link(filepath.Join(wt3, ".git"), filepath.Join(linked, ".git")) == nil {
+		refused["a file in a folder with a hard link to a worktree's .git"] = put(linked, "secret.txt")
+	}
 	if upper := filepath.Join(clone, ".GIT", "config"); func() bool { _, err := os.Stat(upper); return err == nil }() {
 		refused["a file in the git directory, spelled in other case"] = upper // Windows', macOS's
 	}
@@ -811,6 +845,39 @@ func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 	if !fileThere(paths[1]) {
 		t.Errorf("the new copy went too")
 	}
+}
+
+// A note of another device's files ref goes as soon as the ref is off the remote (#747): it used
+// to wait out twice FileKeep of this daemon's running, long after its ref had gone.
+func TestANoteOfAFilesRefGoesWithTheRef(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filePrune = 300 * time.Millisecond })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "noted", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	// ok is false while the file is being replaced, which says nothing either way.
+	noted := func() (is, ok bool) {
+		st, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+		var js map[string]json.RawMessage
+		if err != nil || json.Unmarshal(st, &js) != nil {
+			return false, false
+		}
+		_, is = js["othersFiles"]
+		return is, true
+	}
+	eventually(t, "b to note the files ref of a", func() bool { is, ok := noted(); return ok && is })
+	holds(t, "the note, while the ref is on the remote", time.Second, func() bool { is, ok := noted(); return !ok || is })
+
+	ref := strings.TrimSpace(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files"))
+	git(t, remote, "update-ref", "-d", ref) // as its own daemon does when its time is up
+	eventually(t, "the note to go with the ref", func() bool { is, ok := noted(); return ok && !is })
 }
 
 // A folder above the clone or temp that can be passed through but not listed, as a shared host's

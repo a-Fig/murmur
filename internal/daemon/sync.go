@@ -1235,7 +1235,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
-		pres.Groups, pres.Receipts, pres.Files = false, false, false
+		pres.Groups, pres.Receipts, pres.Files, pres.FilesOff, pres.PersonFilesOff = false, false, false, false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1375,6 +1375,12 @@ func (d *Daemon) readOwnLater(ctx context.Context) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
+	return d.appendEventIf(ctx, e, nil)
+}
+
+// appendEventIf is appendEvent, asking still once each push's turn is had: a message with files
+// isn't sent if Send files went off while it waited (#765).
+func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool) error {
 	if err := d.awaitEpoch(ctx); err != nil {
 		return err
 	}
@@ -1398,9 +1404,9 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			return err
 		}
 		if lease == "" {
-			err = d.push(ctx, sha, ref, bus.FastForward, "")
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
 		} else {
-			err = d.push(ctx, sha, ref, bus.Lease, lease)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, still)
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
@@ -1761,7 +1767,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, DND: d.dnd.Load()}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
@@ -1901,6 +1907,9 @@ func (d *Daemon) pruneInboxes() {
 	}
 	if time.Since(d.started) < 2*time.Minute {
 		return
+	}
+	if d.pruneSessionNamesLocked(time.Now()) {
+		d.saveLocked()
 	}
 	// Nobody an earlier daemon's stop ended is waited for any longer (awaitedLocked). Only those:
 	// this runs after a push that the daemon's own stop cut short too, and the marks that stop is

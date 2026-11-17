@@ -10,12 +10,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -222,15 +224,27 @@ func unixPath(path string) bool {
 //
 // Two rounds of Sol's review of #768 shaped how. Each folder is opened as an os.Root, and every
 // later look and read goes through that handle, so the folder checked is the one read from, though
-// its path be swapped for a link after. A worktree is found from the registrations in the git
-// directory, read as files rather than through `git worktree list`, which looks at each one and
-// would sign in to a share one names; and counts only if its .git, looked at through its handle,
-// leads back to this clone, as an agent can write those registrations. The git directory is known
-// by what it is, not how it is spelled, so neither a case nor an alias gets around it.
+// its path be swapped for a link after. A worktree is found above the file sent, as the nearest
+// folder with a .git that leads back to this clone, looked at through its handle (#772), and that
+// its registration or a session vouches for (ownWorktree). `git worktree list` isn't run: it looks
+// at each one, and would sign in to a share one names. The git directory is known by what it is,
+// not how it is spelled, so neither a case nor an alias gets around it.
 type sendRoots struct {
 	roots []sendRoot
 	git   os.FileInfo // the clone's git directory; nil if it couldn't be looked at
-	vols  map[string]*os.Root
+	// worktrees is the git directory's worktrees folder, which a linked worktree's .git points
+	// into; nil if there is none.
+	worktrees os.FileInfo
+	// notOurs is the folders with a .git that were looked at and aren't this clone's worktrees, so
+	// a send's second file doesn't look again.
+	notOurs []os.FileInfo
+	// gitRoot is the git directory's handle, which a linked worktree's registration is read
+	// through; nil if it couldn't be opened.
+	gitRoot *os.Root
+	// sessions is where this device's sessions are: a main worktree kept apart from its git
+	// directory counts only if one is in it.
+	sessions []string
+	vols     map[string]*os.Root
 }
 
 type sendRoot struct {
@@ -248,12 +262,21 @@ func (d *Daemon) openSendRoots() *sendRoots {
 		git, ok = s.open(gitDir)
 	}
 	if ok {
-		defer git.r.Close()
+		s.gitRoot = git.r
 		s.git = git.id
-		d.addWorktrees(s, git, gitDir)
+		if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
+			s.worktrees = info
+		}
 	} else {
 		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
 	}
+	d.mu.Lock()
+	for _, ss := range d.sessions {
+		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
+			s.sessions = append(s.sessions, filepath.Clean(ss.cwd))
+		}
+	}
+	d.mu.Unlock()
 	temps := []string{d.opt.TempDir}
 	if d.opt.TempDir == "" {
 		temps = []string{os.TempDir()}
@@ -267,61 +290,6 @@ func (d *Daemon) openSendRoots() *sendRoots {
 		}
 	}
 	return s
-}
-
-// addWorktrees adds the clone's worktrees to s's roots.
-func (d *Daemon) addWorktrees(s *sendRoots, git sendRoot, gitDir string) {
-	// The main worktree holds the git directory, unless it was made with --separate-git-dir; each
-	// linked one is named by a registration, read through the git directory's handle, so a link
-	// there to a share is refused rather than followed. A registration's path can be relative to
-	// it (git worktree add --relative-paths).
-	dirs := []string{}
-	if strings.EqualFold(filepath.Base(gitDir), ".git") {
-		dirs = append(dirs, filepath.Dir(gitDir))
-	}
-	var worktrees os.FileInfo
-	if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
-		worktrees = info
-		if f, err := git.r.Open("worktrees"); err == nil {
-			entries, _ := f.ReadDir(-1)
-			f.Close()
-			for _, e := range entries {
-				b, err := git.r.ReadFile(filepath.Join("worktrees", e.Name(), "gitdir"))
-				ptr := strings.TrimSpace(string(b))
-				if err != nil || ptr == "" || netPath(ptr) {
-					continue
-				}
-				if !filepath.IsAbs(ptr) {
-					ptr = filepath.Join(gitDir, "worktrees", e.Name(), ptr)
-				}
-				dirs = append(dirs, filepath.Dir(filepath.Clean(ptr)))
-			}
-		}
-	}
-	// A main worktree kept apart from its git directory is found from where this device's sessions
-	// are: the nearest folder above each with a .git. ownWorktree checks it is this clone's.
-	d.mu.Lock()
-	for _, ss := range d.sessions {
-		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
-			for dir := filepath.Clean(ss.cwd); ; dir = filepath.Dir(dir) {
-				if _, err := s.stat(filepath.Join(dir, ".git")); err == nil {
-					dirs = append(dirs, dir)
-					break
-				}
-				if filepath.Dir(dir) == dir {
-					break
-				}
-			}
-		}
-	}
-	d.mu.Unlock()
-	for _, dir := range dirs {
-		if root, ok := s.open(dir); ok && s.ownWorktree(root, worktrees) && s.add(root) {
-			continue
-		} else if ok {
-			root.r.Close()
-		}
-	}
 }
 
 // add adds root, unless it is one already, or is the git directory or inside it: a registration an
@@ -351,6 +319,9 @@ func (s *sendRoots) Close() {
 	}
 	for _, r := range s.vols {
 		r.Close()
+	}
+	if s.gitRoot != nil {
+		s.gitRoot.Close()
 	}
 }
 
@@ -384,8 +355,33 @@ func (s *sendRoots) open(dir string) (sendRoot, bool) {
 	return sendRoot{path, r, id}, true
 }
 
+// worktreeAt is dir, whose folder is info, as a root, if it has a .git and is one of this clone's
+// worktrees (ownWorktree); it is added to s's roots then.
+func (s *sendRoots) worktreeAt(dir string, info os.FileInfo) (sendRoot, bool) {
+	if s.git == nil || slices.ContainsFunc(s.notOurs, func(n os.FileInfo) bool { return os.SameFile(n, info) }) {
+		return sendRoot{}, false
+	}
+	if _, err := s.stat(filepath.Join(dir, ".git")); err != nil {
+		return sendRoot{}, false
+	}
+	root, ok := s.open(dir)
+	switch {
+	case !ok:
+	case s.ownWorktree(root, s.worktrees) && s.add(root):
+		return root, true
+	default:
+		root.r.Close()
+	}
+	s.notOurs = append(s.notOurs, info)
+	return sendRoot{}, false
+}
+
 // ownWorktree says root's .git, looked at through its handle, is this clone's git directory, or a
 // file that points into its worktrees folder: what git makes for the main worktree and a linked one.
+// A .git file is anyone's to write, so it alone doesn't make a folder a worktree (Sol's review of
+// #805): a linked one's registration in the git directory must name it back, and a main worktree
+// kept apart from its git directory must hold one of this device's sessions. Before #772 the same
+// two were how worktrees were found.
 func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
 	info, err := root.r.Lstat(".git")
 	switch {
@@ -409,10 +405,53 @@ func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
 		return false
 	}
 	if target, err := s.stat(ptr); err == nil && os.SameFile(target, s.git) {
-		return true // a main worktree whose git directory is elsewhere
+		// A main worktree whose git directory is elsewhere.
+		return slices.ContainsFunc(s.sessions, func(cwd string) bool { return s.holds(root, cwd) })
 	}
 	parent, err := s.stat(filepath.Dir(ptr))
-	return err == nil && worktrees != nil && os.SameFile(parent, worktrees)
+	if err != nil || worktrees == nil || !os.SameFile(parent, worktrees) || s.gitRoot == nil {
+		return false
+	}
+	// Its registration, read through the git directory's handle, names this .git back. Its path
+	// can be relative to it (git worktree add --relative-paths).
+	reg := filepath.Join("worktrees", filepath.Base(ptr))
+	b, err = s.gitRoot.ReadFile(filepath.Join(reg, "gitdir"))
+	back := strings.TrimSpace(string(b))
+	if err != nil || back == "" || netPath(back) {
+		return false
+	}
+	if !filepath.IsAbs(back) {
+		back = filepath.Join(ptr, back)
+	}
+	back, err = s.local(back)
+	if err != nil {
+		return false
+	}
+	// Both the file and its folder: a hard link to a worktree's .git, elsewhere, is the same file
+	// (Sol's second review of #805).
+	named, err := s.stat(back)
+	if err != nil || !os.SameFile(named, info) {
+		return false
+	}
+	dir, err := s.stat(filepath.Dir(back))
+	return err == nil && os.SameFile(dir, root.id)
+}
+
+// holds says the folder cwd is root or inside it, by what each folder above it is, so a short
+// name (C:\MYREPO~1) or a link doesn't miss.
+func (s *sendRoots) holds(root sendRoot, cwd string) bool {
+	dir, err := s.local(cwd)
+	if err != nil {
+		return false
+	}
+	for ; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, root.id) {
+			return true
+		}
+		if filepath.Dir(dir) == dir {
+			return false
+		}
+	}
 }
 
 // volume is the root of path's volume, opened once, and path from there.
@@ -531,13 +570,21 @@ func (s *sendRoots) openSend(path string) (*os.File, error) {
 		return nil, err
 	}
 	// The root it is in is found by what each folder above it is, not by how its path is spelled,
-	// which a short Windows name (RUNNER~1) or a case can change.
+	// which a short Windows name (RUNNER~1) or a case can change. A folder above it with a .git is
+	// looked at as it is met, the nearest first, and is a root if it is one of this clone's
+	// worktrees (#772): only the worktree a file is in is opened, not every one the clone has, which
+	// took 1 to 4 s a send on a clone with 220 (Fable's review of #768). One that isn't, as a
+	// nested repo, is passed over, so a file in it is still in the worktree around it.
 	var root sendRoot
 	var rest []string
 	for dir := real; ; dir = filepath.Dir(dir) {
 		if info, err := s.stat(dir); err == nil {
 			if i := slices.IndexFunc(s.roots, func(r sendRoot) bool { return os.SameFile(info, r.id) }); i >= 0 {
 				root = s.roots[i]
+				break
+			}
+			if r, ok := s.worktreeAt(dir, info); ok {
+				root = r
 				break
 			}
 		}
@@ -835,7 +882,9 @@ func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
 // calls it once the message is out or has failed, after filesSentLocked, so that whoever waited
 // finds the ref, or after filesUnsent. It is called here if putFiles doesn't return a ref, a
 // panic included (the page's sends run where one is recovered), and does nothing for a ref reused.
-func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, end func(), err error) {
+//
+// still is asked once the push's turn is had: Send files may have gone off while the send waited.
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool) (files []bus.File, at string, reused bool, end func(), err error) {
 	end = func() {}
 	if err := checkSendFiles(in); err != nil {
 		return nil, "", false, end, err
@@ -847,6 +896,9 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		files, at, ok := d.reuseFilesLocked(sum)
 		if ok {
 			d.mu.Unlock()
+			if still != nil && !still() {
+				return nil, "", false, end, errSendOff
+			}
 			return files, at, true, end, nil
 		}
 		ahead := d.sending[sum]
@@ -910,7 +962,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
-	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
+	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, "", still); err != nil {
 		// Left to the next prune to delete: a push can land and still be told it failed. It
 		// stays counted too, unless it is known not to have landed.
 		if d.uploadLost(ctx, at, err) {
@@ -1000,11 +1052,72 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 	return true
 }
 
+// refuses says sw, a Receive files switch, refuses message e's files: it is from another device,
+// and sw is off (#765, Tyler, 2026-11-16). Its text arrives, and its files are neither fetched nor
+// shown: to this device's sessions if sw is agentRecv, on the page if pageRecv. What a session of
+// this device sends is here already, and no download.
+func (d *Daemon) refuses(sw *fileSwitch, e bus.Event) bool {
+	dev, _ := bus.SplitAddr(e.From)
+	return len(e.Files) > 0 && dev != d.device && !sw.on.Load()
+}
+
+// errReceiveOff is why a message waiting for its files went without them: Receive files was turned
+// off meanwhile.
+var errReceiveOff = errors.New("Receive files is off")
+
+// errSendOff is why a send's files didn't go out: Send files was turned off while it waited.
+var errSendOff = errors.New("sending files is off in this repo")
+
+// fileSwitch is a Receive files switch, whose going off ends the fetches made for it.
+type fileSwitch struct {
+	on atomic.Bool
+	// off is closed when the switch goes off, and made anew when it goes on. mu guards it, and
+	// orders the changes to on.
+	mu  sync.Mutex
+	off chan struct{}
+}
+
+// receiving is ctx, ended as soon as sw goes off, so a fetch under way, or waiting to retry, stops
+// then rather than minutes later (Sol's review of #769).
+func (sw *fileSwitch) receiving(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	sw.mu.Lock()
+	off, on := sw.off, sw.on.Load()
+	sw.mu.Unlock()
+	if !on {
+		cancel()
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-off:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+// set turns sw on or off, and says whether it changed. Off ends every fetch that receiving started.
+func (sw *fileSwitch) set(on bool) bool {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	if sw.on.Swap(on) == on {
+		return false
+	}
+	if on {
+		sw.off = make(chan struct{})
+	} else {
+		close(sw.off)
+	}
+	return true
+}
+
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
 // the fetch is started and the message is queued when it ends, with or without them. Nothing is
 // held for a person: the page asks for a file when it shows it (fileOf). Caller holds mu.
 func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
-	if len(e.Files) == 0 || id == bus.PersonSession || d.filesHere(e) {
+	if len(e.Files) == 0 || id == bus.PersonSession || d.refuses(&d.agentRecv, e) || d.filesHere(e) {
 		return false
 	}
 	w := d.st.FilesWait[e.ID]
@@ -1053,7 +1166,10 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			if !ok {
 				break
 			}
-			err := d.fetchFiles(ctx, e, fileTries)
+			err := errReceiveOff
+			if !d.refuses(&d.agentRecv, e) {
+				err = d.fetchFiles(ctx, e, fileTries, &d.agentRecv)
+			}
 			if ctx.Err() != nil {
 				return // still waiting when the daemon next starts
 			}
@@ -1145,13 +1261,13 @@ func (d *Daemon) takeFilesWaitLocked(to, from string) {
 // is tried again, up to tries times, as the network may be why; a ref that isn't there, or holds
 // something else, is not. What the fetch brings goes to a scratch directory, not the clone's
 // objects.
-func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
+func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
 	release, err := d.holdFiles(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
-	return d.fetchFilesHeld(ctx, e, tries)
+	return d.fetchFilesHeld(ctx, e, tries, sw)
 }
 
 // holdFiles waits for the one turn there is to fetch files, and returns what gives it back. One
@@ -1169,10 +1285,19 @@ func (d *Daemon) holdFiles(ctx context.Context) (release func(), err error) {
 
 // fetchFilesHeld is fetchFiles for a caller that holds the turn (holdFiles). What stops it is
 // errFetchLater unless it would stop every try: the ref isn't there, or what it holds isn't the
-// message's files.
-func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) error {
+// message's files. sw is the Receive files switch it fetches for: the agents' or the page's.
+func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
 	if d.filesHere(e) {
 		return nil
+	}
+	// Checked again here, after the wait for the turn, and the fetch ends if it goes off.
+	if d.refuses(sw, e) {
+		return errReceiveOff
+	}
+	if dev, _ := bus.SplitAddr(e.From); dev != d.device {
+		var stop context.CancelFunc
+		ctx, stop = sw.receiving(ctx)
+		defer stop()
 	}
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
@@ -1197,9 +1322,15 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 		}
 		select {
 		case <-ctx.Done():
+			if d.refuses(sw, e) {
+				return errReceiveOff
+			}
 			return fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
 		case <-time.After(time.Duration(try) * 5 * time.Second):
 		}
+	}
+	if d.refuses(sw, e) {
+		return errReceiveOff
 	}
 	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
@@ -1217,6 +1348,9 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	var failed []string
 	later := false // a file couldn't be saved, which a full disk does: the remote still has it
 	for i, f := range e.Files {
+		if d.refuses(sw, e) {
+			return errReceiveOff
+		}
 		if !f.Readable() {
 			continue
 		}
@@ -1464,7 +1598,10 @@ func (d *Daemon) ageOthersFilesLocked(now time.Time) {
 }
 
 // pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
-// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes once
+// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A note whose ref
+// is off the remote already goes at once, whatever its age: a ref is pushed before the event that
+// names it, so one not listed has been deleted, and the note had nothing left to do but wait out
+// twice FileKeep of this daemon's running: most of a year for one that runs an hour a day (#747). A ref goes once
 // this daemon has run for twice FileKeep since it first read of it. Its event was written after it
 // was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
 // can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
@@ -1480,18 +1617,37 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			due = append(due, at)
 		}
 	}
-	if len(d.st.OthersFiles) > 0 {
+	// The notes there are before the listing: one a sync makes while the listing runs can name
+	// a ref pushed after it, which the listing lacks though the ref is there.
+	notes := slices.Collect(maps.Keys(d.st.OthersFiles))
+	if len(notes) > 0 {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if len(due) == 0 {
+	if len(notes) == 0 {
 		return
 	}
-	listed, err := d.repo.ListRemote(ctx)
+	// Within a time of its own, as a sync's listing is: this one runs at every prune now, and one
+	// left waiting on a dead connection would hold up every message that carries files.
+	lctx, cancel := context.WithTimeout(ctx, time.Minute)
+	listed, err := d.repo.ListRemote(lctx)
+	cancel()
 	if err != nil {
 		d.log.Printf("listing the remote's files refs: %v", err)
 		return
 	}
+	d.mu.Lock()
+	gone := false
+	for _, at := range notes {
+		if _, ok := d.st.OthersFiles[at]; ok && listed[bus.FilesRef(at)] == "" {
+			delete(d.st.OthersFiles, at) // its own daemon, or another here, deleted it
+			gone = true
+		}
+	}
+	if gone {
+		d.saveLocked()
+	}
+	d.mu.Unlock()
 	forget := func(at string) {
 		d.mu.Lock()
 		delete(d.st.OthersFiles, at)
@@ -1501,8 +1657,7 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 	slices.Sort(due)
 	for _, at := range due {
 		if listed[bus.FilesRef(at)] == "" {
-			forget(at) // its own daemon, or another here, deleted it
-			continue
+			continue // its note went above
 		}
 		d.mu.Lock()
 		p := d.peers[d.st.OthersFiles[at].Device]
@@ -1532,25 +1687,57 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 // holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	to, direct := d.recipientsOfLocked(e)
-	var old []string
+	var old, off, people []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
-		if p := d.peers[dev]; dev != d.device && p != nil && !p.locked && !p.pres.Files {
-			name, _, _ := d.sessionInfoLocked(addr)
-			if direct {
-				name = who
-			}
+		p := d.peers[dev]
+		if dev == d.device || p == nil || p.locked {
+			continue
+		}
+		name, _, _ := d.sessionInfoLocked(addr)
+		if direct {
+			name = who
+		}
+		switch {
+		case !p.pres.Files:
 			old = append(old, nameOr(name, addr))
+		case bus.IsPerson(addr) && p.pres.PersonFilesOff:
+			people = append(people, nameOr(name, addr))
+		case !bus.IsPerson(addr) && p.pres.FilesOff: // its person turned their agents' Receive files off (#765)
+			off = append(off, nameOr(name, addr))
 		}
 	}
+	var notes []string
 	switch len(old) {
 	case 0:
-		return ""
 	case 1:
-		return old[0] + " is on a device that runs a " + brand.Product + " from before files, so the text alone gets there."
+		notes = append(notes, old[0]+" is on a device that runs a "+brand.Product+" from before files, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(old)+" are on devices that run a "+brand.Product+" from before files, so the text alone gets there.")
 	}
-	return strings.Join(old[:len(old)-1], ", ") + " and " + old[len(old)-1] + " are on devices that run a " +
-		brand.Product + " from before files, so the text alone gets there."
+	switch len(off) {
+	case 0:
+	case 1:
+		notes = append(notes, off[0]+" takes no files: Receive files is off for the agents on its device, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(off)+" take no files: Receive files is off for the agents on their devices, so the text alone gets there.")
+	}
+	switch len(people) {
+	case 0:
+	case 1:
+		notes = append(notes, people[0]+" takes no files: they turned Receive files off, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(people)+" take no files: they turned Receive files off, so the text alone gets there.")
+	}
+	return strings.Join(notes, " ")
+}
+
+// andList is names joined as a sentence lists them: "a, b and c".
+func andList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // fileMiss is a fetch for the page that failed: when, and how.
@@ -1580,14 +1767,15 @@ func (d *Daemon) pageFetch(ctx context.Context, e bus.Event) error {
 	if missed && time.Since(miss.at) < pageFetchAgain {
 		return miss.err
 	}
-	err = d.fetchFilesHeld(ctx, e, 1)
+	err = d.fetchFilesHeld(ctx, e, 1, &d.pageRecv)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch {
 	case err == nil:
 		delete(d.fileMiss, e.FilesAt)
-	case ctx.Err() != nil:
-		// The page went, or its time ran out: that says nothing of the remote.
+	case ctx.Err() != nil, errors.Is(err, errReceiveOff):
+		// The page went, or its time ran out, or Receive files went off: that says nothing of the
+		// remote.
 	default:
 		d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
 		d.fileMiss[e.FilesAt] = fileMiss{time.Now(), err}
@@ -1616,7 +1804,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 		e = d.msgs[i].e
 	}
 	d.mu.Unlock()
-	if i < 0 || index >= len(e.Files) {
+	if i < 0 || index >= len(e.Files) || d.refuses(&d.pageRecv, e) {
 		return "", nil, noFile("no such file")
 	}
 	f := e.Files[index]
@@ -1634,6 +1822,9 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 	if err != nil {
 		return "", nil, gone
 	}
+	if d.refuses(&d.pageRecv, e) {
+		return "", nil, noFile("no such file") // went off while it was fetched
+	}
 	return f.Name, data, nil
 }
 
@@ -1641,7 +1832,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 // it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld). Caller
 // holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
-	if len(e.Files) == 0 {
+	if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) {
 		return nil
 	}
 	views := make([]proto.FileView, 0, len(e.Files))
