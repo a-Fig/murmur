@@ -905,6 +905,11 @@ type state struct {
 	// address, which a thread's session doesn't take for its own (threadIDLocked): the command line
 	// goes on using that ID. Kept for good, as NameKeys is.
 	NamedFromCLI map[string]bool `json:"namedFromCLI,omitempty"`
+	// CLINames is each name a Claude Code session on the command line has held on this device
+	// (#643). A T3 session that registers before it knows its thread has an ID made from its
+	// Claude session, as the command line's is, so the registry's address for a name can't tell
+	// the two apart: this does (shareNameLocked, Sol's review). It only grows, as Used does.
+	CLINames map[string]bool `json:"cliNames,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.

@@ -123,10 +123,13 @@ func (d *Daemon) shareNameLocked(key, alias, id string) {
 	switch {
 	case k == "" && a != "":
 		d.st.NameKeys[key] = a
-		// From the command line, unless the name is at session id's own address: one in T3 that
-		// registered before it knew its thread, and has just found it, gave the name itself, and
-		// its thread's next session is to take that address (threadIDLocked, Opus's review).
-		if d.st.Used[a] != bus.Addr(d.device, id) {
+		// From the command line, unless the name is at session id's own address and no
+		// command-line session has held it: one in T3 that registered before it knew its thread,
+		// and has just found it, gave the name itself, and its thread's next session is to take
+		// that address (threadIDLocked, Opus's review). Its ID is made from its Claude session, as
+		// the command line's is, so a name the command line gave, which T3 imported, is at that
+		// address too (Sol's review).
+		if d.st.Used[a] != bus.Addr(d.device, id) || d.st.CLINames[a] {
 			if d.st.NamedFromCLI == nil {
 				d.st.NamedFromCLI = map[string]bool{}
 			}
@@ -203,6 +206,13 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	s.name = name
 	if name == "" {
 		return
+	}
+	if s.agent == "claude-code" && !d.st.CLINames[name] {
+		if d.st.CLINames == nil {
+			d.st.CLINames = map[string]bool{}
+		}
+		d.st.CLINames[name] = true
+		d.saveLocked()
 	}
 	d.shareSessionNameLocked(s)
 	d.adoptTagsLocked(s)

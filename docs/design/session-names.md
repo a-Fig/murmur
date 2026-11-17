@@ -84,11 +84,18 @@ names routes by it all the same.
   and the thread can take its name back then. A thread whose name came from the command line
   keeps its own address (`NamedFromCLI`): the registry has that name at the command line's
   session, which goes on using it, so #642's taking of the name's address would have them ask for
-  one ID. Nothing in T3 itself was run: its import and resume were read in its code for #643.
-  - *Cost.* After `/clear` in T3 the new conversation has the thread's name too, so an old one
-    resumed on the command line while the thread runs takes the name, and the thread has another
-    until it stops. A command-line session whose MCP server restarts after its grace, as `/mcp`
-    can make it, takes the name back from a T3 session that is open on the same conversation.
+  one ID. A T3 session that registers before it knows its thread has an ID made from its Claude
+  session, as the command line's is, so the name's address alone can't say which of the two gave
+  it; a name a command-line session has held on the device (`CLINames`) came from the command line
+  (Sol's review). Nothing in T3 itself was run: its import and resume were read in its code for
+  #643.
+  - *Cost.* After `/clear` in T3 the thread's name stays the old conversation's too, but the
+    thread's Claude session is the new one, so the rule above no longer matches the two. Whichever
+    of them registers while the other runs gets a name of its own until the other stops: the old
+    conversation resumed on the command line while the thread runs, or the thread back while the
+    old conversation is open there. A command-line session whose MCP server restarts after its
+    grace, as `/mcp` can make it, takes the name back from a T3 session that is open on the same
+    conversation.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer

@@ -154,3 +154,81 @@ func TestAT3SessionThatFoundItsThreadLateKeepsItsAddress(t *testing.T) {
 	}
 	b.nameIs(next, name)
 }
+
+// A command-line conversation that T3 imports, whose server registers before it knows its thread,
+// registers at the command line's address, which is made from the Claude session as the command
+// line's is. The name is still the command line's: the thread's next session keeps an address of
+// its own, and the command line, resuming the conversation while T3 has it, registers at its own
+// (Sol's review of #643).
+func TestAT3SessionThatFoundItsThreadLateLeavesTheCommandLineItsAddress(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	stopped := func(addr string, n int) {
+		t.Helper()
+		eventually(t, addr+" to stop", func() bool { return busLines(b, addr, "stopped") == n })
+	}
+	cli, conn := b.claudeIn("aaaaaa", 700, "conv-l", "")
+	name := b.named(cli)
+	conn.Close()
+	stopped(cli, 1)
+
+	// T3 imports it; its server registers at the same ID, made from the Claude session, and finds
+	// its thread after.
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "aaaaaa", Agent: "claude-code in T3", ClaudeSession: "conv-l", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	b.nameIs(resp.Self, name)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "aaaaaa", Route: &proto.Route{T3Thread: "thread-l", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	stopped(resp.Self, 2)
+
+	next, _ := b.claudeIn("tttttt", 900, "conv-l", "thread-l")
+	if !strings.HasSuffix(next, "/tttttt") {
+		t.Errorf("the thread's next session registered as %s, at the command line's address", next)
+	}
+	b.nameIs(next, name)
+	again, _ := b.claudeIn("aaaaaa", 1000, "conv-l", "")
+	if !strings.HasSuffix(again, "/aaaaaa") {
+		t.Errorf("the command line's session came back as %s", again)
+	}
+	b.nameIs(again, name)
+}
+
+// After /clear in T3 the thread's name is also the old conversation's, which its Claude session no
+// longer matches: whichever of the thread and the old conversation, resumed on the command line,
+// registers while the other runs has a name of its own (docs/design/session-names.md, Sol's review
+// of #643).
+func TestAfterClearInT3TheThreadAndTheOldConversationShareAName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	t3, conn := b.claudeIn("tttttt", 800, "conv-c1", "thread-c")
+	name := b.named(t3)
+	b.hook("conv-c2", 800) // /clear
+	b.nameIs(t3, name)
+
+	// The thread running, the old conversation resumed on the command line has a name of its own.
+	cli, cconn := b.claudeIn("cccccc", 900, "conv-c1", "")
+	if got := b.named(cli); got == name {
+		t.Errorf("the old conversation took %s from the thread", name)
+	}
+	b.nameIs(t3, name)
+	cconn.Close()
+	eventually(t, cli+" to stop", func() bool { return busLines(b, cli, "stopped") == 1 })
+
+	// The thread stopped, the old conversation has the name, and the thread back meanwhile has
+	// another.
+	conn.Close()
+	eventually(t, t3+" to stop", func() bool { return busLines(b, t3, "stopped") == 1 })
+	cli, _ = b.claudeIn("cccccc", 1000, "conv-c1", "")
+	b.nameIs(cli, name)
+	back, _ := b.claudeIn("uuuuuu", 1100, "conv-c2", "thread-c")
+	if got := b.named(back); got == name {
+		t.Errorf("the thread took %s back from the old conversation", name)
+	}
+}
