@@ -129,3 +129,28 @@ func TestAClaudeSessionGivesItsConversationUpOnce(t *testing.T) {
 	b.named(c)
 	b.nameIs(a, mine)
 }
+
+// A session in T3 that registered before it knew its thread, and found it later, gave the thread
+// its name itself: the thread's next session takes its address, as #642 has it, not one of its own
+// (Opus's review of #643).
+func TestAT3SessionThatFoundItsThreadLateKeepsItsAddress(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "ssssss", Agent: "claude-code in T3", ClaudeSession: "conv-s", ClientPID: 700})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "ssssss", Route: &proto.Route{T3Thread: "thread-s", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+	next, _ := b.claudeIn("tttttt", 800, "conv-s", "thread-s")
+	if !strings.HasSuffix(next, "/ssssss") {
+		t.Errorf("the thread's next session registered as %s, not at the address its name is at", next)
+	}
+	b.nameIs(next, name)
+}

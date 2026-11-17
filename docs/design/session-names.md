@@ -81,8 +81,14 @@ names routes by it all the same.
   open, the rule above applies, with the conversation known by its Claude session ID instead of
   the key: the session that registered last takes the name. A session in T3 keeps its ID across
   its server's restarts (#642), so its `ThreadLeft` record goes at its next first registration,
-  and the thread can take its name back then. Nothing in T3 itself was run: its import and resume
-  were read in its code for #643.
+  and the thread can take its name back then. A thread whose name came from the command line
+  keeps its own address (`NamedFromCLI`): the registry has that name at the command line's
+  session, which goes on using it, so #642's taking of the name's address would have them ask for
+  one ID. Nothing in T3 itself was run: its import and resume were read in its code for #643.
+  - *Cost.* After `/clear` in T3 the new conversation has the thread's name too, so an old one
+    resumed on the command line while the thread runs takes the name, and the thread has another
+    until it stops. A command-line session whose MCP server restarts after its grace, as `/mcp`
+    can make it, takes the name back from a T3 session that is open on the same conversation.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer

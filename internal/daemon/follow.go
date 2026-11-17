@@ -113,8 +113,9 @@ func isClaudeCode(agent string) bool {
 // conversation from the command line and resumes its Claude session; `claude --resume` goes on
 // with one T3 had. Each key had a name of its own, so the conversation was named anew whichever
 // way it moved. Where one key has a name and the other none, the other takes it; where both have
-// one, each keeps its own, as the registry has them. Caller holds mu.
-func (d *Daemon) shareNameLocked(key, alias string) {
+// one, each keeps its own, as the registry has them. id is the session sharing them. Caller holds
+// mu.
+func (d *Daemon) shareNameLocked(key, alias, id string) {
 	if alias == "" || alias == key {
 		return
 	}
@@ -122,10 +123,15 @@ func (d *Daemon) shareNameLocked(key, alias string) {
 	switch {
 	case k == "" && a != "":
 		d.st.NameKeys[key] = a
-		if d.st.NamedFromCLI == nil {
-			d.st.NamedFromCLI = map[string]bool{}
+		// From the command line, unless the name is at session id's own address: one in T3 that
+		// registered before it knew its thread, and has just found it, gave the name itself, and
+		// its thread's next session is to take that address (threadIDLocked, Opus's review).
+		if d.st.Used[a] != bus.Addr(d.device, id) {
+			if d.st.NamedFromCLI == nil {
+				d.st.NamedFromCLI = map[string]bool{}
+			}
+			d.st.NamedFromCLI[key] = true
 		}
-		d.st.NamedFromCLI[key] = true
 	case a == "" && k != "":
 		d.st.NameKeys[alias] = k
 	default:
@@ -139,7 +145,7 @@ func (d *Daemon) shareNameLocked(key, alias string) {
 // hook's correction of its Claude session (#643). Caller holds mu.
 func (d *Daemon) shareSessionNameLocked(s *session) {
 	if t3, ok := strings.CutPrefix(s.key, "t3:"); ok && !strings.Contains(t3, "/") {
-		d.shareNameLocked(s.key, claudeAlias(s.agent, t3, s.claudeSession))
+		d.shareNameLocked(s.key, claudeAlias(s.agent, t3, s.claudeSession), s.id)
 	}
 }
 

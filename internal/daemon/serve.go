@@ -260,7 +260,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base, claude)
 	}
-	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude))
+	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude), h.ID)
 	key := d.uniqueKeyLocked(base, h.ID)
 	taken := false
 	if s != nil {
