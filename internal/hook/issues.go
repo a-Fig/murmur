@@ -14,8 +14,9 @@ import (
 // share their user's. The hook reads them from the call's input and output, which an agent's hook
 // is given after the call: Claude Code's PostToolUse as tool_input and tool_response, Codex's under
 // the same names (codex-rs hooks, rust-v0.169.0), Grok's as toolInput, with tool_response beside its
-// own toolResult (Grok Build's docs/user-guide/10-hooks.md, read 2026-11-15). Pi's extension and
-// OpenCode's plugin pass neither, so an issue their sessions file shows under the login.
+// own toolResult (Grok Build's docs/user-guide/10-hooks.md, read 2026-11-15). Murmur's Pi extension
+// passes them under Claude Code's names for a shell or MCP call, its result as Pi's content blocks
+// (#864). OpenCode's plugin passes neither, so an issue its sessions file shows under the login.
 //
 // Only calls of a known shape are read: a shell command that runs `gh issue create` or `gh issue
 // close`, and an MCP tool of GitHub's server that creates an issue or closes one. Any other call's
@@ -23,8 +24,8 @@ import (
 // was closed, go to the daemon.
 
 // shellTools are the agents' names for the tool that runs a command: Claude Code's and Codex's Bash,
-// and Grok's run_terminal_command.
-var shellTools = map[string]bool{"Bash": true, "run_terminal_command": true}
+// Grok's run_terminal_command, and Pi's bash and powershell (Pi 0.99.0's types).
+var shellTools = map[string]bool{"Bash": true, "run_terminal_command": true, "bash": true, "powershell": true}
 
 // maxIssues bounds what one call can report.
 const maxIssues = 10

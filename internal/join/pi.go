@@ -37,7 +37,9 @@ import (
 //   - before_agent_start, which every prompt and every turn the extension starts goes through, is
 //     UserPromptSubmit: the session is at work, and a notice goes in as the run's message;
 //   - tool_result is PostToolUse: a notice is sent with deliverAs "steer", which Pi puts in after
-//     the tool calls and before the next model request;
+//     the tool calls and before the next model request. A shell or MCP call's input and output go
+//     with it, as Claude Code's hook is given them, so an issue the call filed or closed is the
+//     session's on the page (#510, #864);
 //   - agent_before_settle, the last point at which Pi lets an extension add entries and continue,
 //     is Stop: what the hook gives back keeps the work going, as a custom_message entry and
 //     continue: true. After an error, which ends Pi's run whatever it asks, and after an abort
@@ -190,6 +192,19 @@ export default function (pi: any) {
       }
     });
   const notice = (r: any) => String(r?.hookSpecificOutput?.additionalContext ?? "");
+  // call is what the hook is told of a shell command or an MCP tool's call, under Claude Code's
+  // names: what it was given and gave back, from which the hook learns of an issue it filed or
+  // closed. Nothing for other tools, nor for a call too big to pass: the hook reads at most 1 MiB.
+  const call = (event: any): any => {
+    const name = String(event?.toolName ?? "");
+    if (name !== "bash" && name !== "powershell" && !name.includes("__")) return {};
+    const c = { tool_name: name, tool_input: event?.input ?? {}, tool_response: event?.content ?? [] };
+    try {
+      return Buffer.byteLength(JSON.stringify(c)) < 512 * 1024 ? c : {};
+    } catch {
+      return {};
+    }
+  };
   // interrupted tells the daemon the work ended without a chance to go on (Escape, an error), so the
   // session is idle and a message can go in as a turn.
   const interrupted = async (ctx: any) => {
@@ -290,9 +305,9 @@ export default function (pi: any) {
     const text = notice(await hook("UserPromptSubmit", ctx));
     if (text) return { message: said(text) };
   });
-  pi.on("tool_result", async (_event: any, ctx: any) => {
+  pi.on("tool_result", async (event: any, ctx: any) => {
     await turnOn();
-    const text = notice(await hook("PostToolUse", ctx));
+    const text = notice(await hook("PostToolUse", ctx, call(event)));
     if (text) pi.sendMessage(said(text), { deliverAs: "steer" });
   });
   pi.on("agent_before_settle", async (event: any, ctx: any) => {
