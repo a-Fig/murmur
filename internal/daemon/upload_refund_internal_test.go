@@ -104,5 +104,5 @@ func tryFilesRef(t *testing.T, d *Daemon, pushCtx context.Context) (string, erro
 		t.Fatal(err)
 	}
 	at := bus.NewFilesAt()
-	return at, d.pushFrom(pushCtx, repo, sha, bus.FilesRef(at), bus.FastForward, "")
+	return at, d.pushFrom(pushCtx, repo, sha, bus.FilesRef(at), bus.FastForward, "", nil)
 }

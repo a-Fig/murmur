@@ -8,6 +8,31 @@ couldn't send another a screenshot, a log or a diff.
 which it opens with its own tools; one that reads images sees the image. A person on the page
 attaches, pastes or drops files, and sees the ones a message carries ([below](#on-the-page)).
 
+## Off until turned on
+
+Tyler, 2026-11-16 (#765): files have to be turned on, each way, in Settings, and can then be
+kept from the agents, so a person can send and see files on the page while their agents don't.
+Each device has, for each repo, a main switch each way, **Send files** and **Receive files**
+(`sendFiles`, `receiveFiles`), off until the person turns it on, for anyone who used files on a
+nightly too. Once one is on, a second under it, **Agents too**, says whether it is the agents'
+as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are kept in
+`settings.json` with the page's other settings.
+
+- **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
+  an agent's if sending is off or kept from agents, the page's if it is off, and checked again
+  once the push's turn comes. An agent is told its user can turn it on, and `who` marks the device `AGENTS SEND NO
+  FILES` so it knows before it tries. On the page the paperclip still shows: attaching, dropping
+  or pasting a file asks the person to turn theirs on, and goes on once they do.
+- **Receive files off:** a message from another device arrives as its text, its files neither
+  fetched nor shown. Kept from agents, the page fetches and shows them and the sessions don't get
+  them. A fetch under way ends when its switch goes off, and a
+  message that was waiting for its files goes without them. The device's presence says whether its
+  agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
+  `send` says which recipients get the text alone, and `who` and `lookup` show it before a send.
+  What a session sends another on the same device is there already and fetched from nowhere, so it
+  is shown.
+- **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
+
 ## How a file travels
 
 - **A ref for each message.** The sender's daemon encrypts each file, joins them into one blob (the

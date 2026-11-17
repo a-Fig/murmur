@@ -182,6 +182,12 @@ func Who(r proto.Response) string {
 		if d.DND {
 			b.WriteString("  ON DO NOT DISTURB: its person paused messages to every session on it; they wait in the inbox until it is back online\n")
 		}
+		if d.SendFilesOff {
+			b.WriteString("  AGENTS SEND NO FILES: Send files is off for agents here; your user can turn it on in " + brand.Product + "'s Settings\n")
+		}
+		if d.FilesOff {
+			b.WriteString("  AGENTS TAKE NO FILES: Receive files is off for its agents, so a message's text reaches them and its files don't\n")
+		}
 		if len(d.Sessions) == 0 && r.Filter == "" {
 			b.WriteString("  no sessions\n")
 		}
@@ -202,6 +208,9 @@ func Who(r proto.Response) string {
 			}
 			if s.HookOff {
 				line += ", hook not running"
+			}
+			if s.FilesOff {
+				line += ", takes no files"
 			}
 			if len(s.Tags) > 0 {
 				line += " [" + strings.Join(tags.Names(s.Tags), ", ") + "]"
@@ -775,6 +784,9 @@ func Lookup(r proto.Response) string {
 		fmt.Fprintf(&b, "  device %s (%s)\n", id, who)
 	} else {
 		fmt.Fprintf(&b, "  device %s\n", id)
+	}
+	if d.FilesOff {
+		b.WriteString("  takes no files: Receive files is off for it, so a message's text gets there and its files don't\n")
 	}
 
 	if d.Branch != "" {
