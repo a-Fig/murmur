@@ -266,6 +266,11 @@ func (d *Daemon) tagKeyLocked(id string) string {
 	if name := d.st.SessionNames[id]; name != "" {
 		return name
 	}
+	// One that stopped while its new name was pending, on a clone that lost its keys, still goes
+	// by the name its conversation had (keptByLocked), as explainKeyLocked has it.
+	if conv := d.conversationLocked(id); conv != "" && d.st.NamesLeft[conv] != "" {
+		return d.st.NamesLeft[conv]
+	}
 	// One whose name never landed keeps what it has by its ID: one that stopped, whose inbox is
 	// kept in case it comes back, and one that set tags or muted someone before it stopped or the
 	// daemon restarted. Its mutes count as much as its tags (#503).

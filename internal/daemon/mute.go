@@ -131,12 +131,10 @@ func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
 		at, muted = m[name]
 		return at, muted
 	}
-	if dev, sid := bus.SplitAddr(addr); dev == d.device {
-		// One here whose new name is pending is still the session muted under its old one (#827).
-		if s := d.sessions[sid]; s != nil && s.name == "" && s.key != "" {
-			if at, muted = m[d.st.NamesLeft[s.key]]; muted {
-				return at, true
-			}
+	// One here whose new name is pending is still the session muted under its old one (#827).
+	if old := d.leftNameLocked(addr); old != "" {
+		if at, muted = m[old]; muted {
+			return at, true
 		}
 	}
 	for _, name := range d.heldNamesLocked(addr) {
@@ -166,6 +164,29 @@ func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
 	}
 	direct := strings.Contains(e.To, "/")
 	return !direct || time.Since(at) >= d.opt.MuteGrace
+}
+
+// leftNameLocked is the name the session at addr had before this clone lost its keys, if it is
+// one of this device's whose new name is pending (NamesLeft, #827), and "" otherwise. The
+// sessions here that muted it under that name have still muted it. Caller holds mu.
+func (d *Daemon) leftNameLocked(addr string) string {
+	dev, id := bus.SplitAddr(addr)
+	if s := d.sessions[id]; dev == d.device && s != nil && s.name == "" && s.key != "" {
+		return d.st.NamesLeft[s.key]
+	}
+	return ""
+}
+
+// muteNameLocked is the name a session on device dev would have muted the sender at from by: the
+// one it is shown by (nameOfLocked), or for a session here whose new name is pending, the one
+// sessions here muted it by (leftNameLocked). Where the message is dropped on arrival
+// (mutedAtLocked) is where its sender is refused or told. Only for a muter on this device: no
+// other device's mute of the old name follows the session. Caller holds mu.
+func (d *Daemon) muteNameLocked(from, dev string) string {
+	if name := d.nameOfLocked(from); name != "" || dev != d.device {
+		return name
+	}
+	return d.leftNameLocked(from)
 }
 
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted

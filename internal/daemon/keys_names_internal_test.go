@@ -160,9 +160,27 @@ func TestANewNameTakesWhatTheOldOneKept(t *testing.T) {
 	if !d.ownDNDLocked(p.id) || d.tagKeyLocked(p.id) != "brave-heron" || d.st.NamesLeft["k3"] != "brave-heron" || d.explainKeyLocked(p.id) != "brave-heron" {
 		t.Errorf("with its name pending: kept by %q, explained by %q, left %v", d.tagKeyLocked(p.id), d.explainKeyLocked(p.id), d.st.NamesLeft)
 	}
-	if _, muted := d.mutedAtLocked(s.id, bus.Addr(d.device, p.id)); !muted {
+	from := bus.Addr(d.device, p.id)
+	if _, muted := d.mutedAtLocked(s.id, from); !muted {
 		t.Error("with its name pending, the session that muted it hears from it")
 	}
+	// And it is refused, or told who, when it sends: a message dropped on arrival with its sender
+	// told nothing is what a mute never does. Only for a muter here.
+	if !d.hasMutedLocked(d.device, s.id, d.muteNameLocked(from, d.device)) || d.muteNameLocked(from, "there-0002") != "" ||
+		!slices.Equal(d.mutersLocked(d.leftNameLocked(from), d.device), []string{"bold-lark"}) {
+		t.Errorf("with its name pending, a send finds it muted as %q, by %v", d.muteNameLocked(from, d.device), d.mutersLocked(d.leftNameLocked(from), d.device))
+	}
+	// Stopped before the name lands, it still goes by the old name's: a T3 thread is found by
+	// its route.
+	delete(d.sessions, p.id)
+	d.st.T3Routes[p.id] = t3Route{Thread: "thread-cccccc"}
+	d.st.NamesLeft[nameKey("thread-cccccc", "", "", p.id)] = "brave-heron"
+	if d.tagKeyLocked(p.id) != "brave-heron" || !d.ownDNDLocked(p.id) {
+		t.Errorf("stopped with its name pending, it is kept by %q", d.tagKeyLocked(p.id))
+	}
+	delete(d.st.T3Routes, p.id)
+	delete(d.st.NamesLeft, nameKey("thread-cccccc", "", "", p.id))
+	d.sessions[p.id] = p
 	p.key = "k9"
 	if d.ownDNDLocked(p.id) || d.tagKeyLocked(p.id) != "id:cccccc" {
 		t.Errorf("in another conversation it is kept by %q", d.tagKeyLocked(p.id))
