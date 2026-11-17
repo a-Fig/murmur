@@ -35,7 +35,12 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   keeps one by its ID, and the log notes show the line twice. One written late shows at its own
   time, older than what came meanwhile.
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
-  session returns. Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
+  session returns. A session still connected when the daemon stops counts as stopped from then
+  (#736): until 2026-11-16 no stop was recorded for it, and one that didn't reconnect within two
+  minutes of the next daemon's start lost its inbox and its T3 route. A daemon that is killed
+  still records none. For its first minute the next daemon hands such a session's thread nothing
+  while T3 shows a run of it going or its thread is unread, so its server can reconnect first.
+  Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
   stopped sessions. A daemon back after more than 10 minutes skips what it missed, except for
   sessions stopped within the 24 hours: for those it queues what was sent after they stopped (by the
   sender's clock, with a minute's allowance), messages to the device or to everyone included. One
