@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -31,8 +33,18 @@ func TestASessionsSettingsFollowItToItsNewName(t *testing.T) {
 	if got := d.settingsNameLocked(s.id); got != "quiet-otter" {
 		t.Errorf("with its name pending, its settings are %q's", got)
 	}
+	// Every place that asks goes by that name: the session isn't to be woken, pending or landed.
+	asked := func(when string) {
+		t.Helper()
+		if d.mayWakeLocked(s.id, d.settings) || d.noWakeLocked(s.id, d.settings) != bus.NoWakeOff || d.personWakesLocked(s.id, d.settings) {
+			t.Errorf("%s, a session set never to be woken may be: mayWake %v, noWake %q, personWakes %v", when,
+				d.mayWakeLocked(s.id, d.settings), d.noWakeLocked(s.id, d.settings), d.personWakesLocked(s.id, d.settings))
+		}
+	}
+	asked("with its name pending")
 	d.setNameLocked(s, "bold-lark")
 	d.setNameLocked(o, "brisk-wren") // which has a choice of its own
+	asked("with its name landed and its settings not yet moved")
 	if got := d.settingsNameLocked(s.id); got != "quiet-otter" || len(d.st.SettingsMoves) != 2 {
 		t.Errorf("its name landed and nothing moved yet: its settings are %q's, moves %v", got, d.st.SettingsMoves)
 	}
@@ -55,6 +67,21 @@ func TestASessionsSettingsFollowItToItsNewName(t *testing.T) {
 		t.Errorf("after the move: its settings are %q's, moves %v", got, d.st.SettingsMoves)
 	}
 	d.mu.Unlock()
+	if _, ok := snap.SessionBusy["quiet-otter"]; ok {
+		t.Error("quiet-otter still has a busy choice")
+	}
+	// A page that read the settings before the move saves what it read, with one change: the
+	// old names in it are read as the new ones, and the new name's choice isn't lost.
+	stale := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject,
+		SessionWake: map[string]web.Wake{"quiet-otter": never, "calm-finch": never, "brisk-wren": {When: web.WakeAlways}},
+		SessionBusy: map[string]string{"quiet-otter": web.BusyWhole}}
+	got, err := pageSource{d}.SetSettings(context.Background(), stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionWake["bold-lark"] != never || got.SessionBusy["bold-lark"] != web.BusyWhole || len(got.SessionWake) != 2 || got.SessionWake["brisk-wren"].When != web.WakeAlways {
+		t.Errorf("after a save from a page that read before the move: %+v, busy %v", got.SessionWake, got.SessionBusy)
+	}
 	// And it is on disk, for the next daemon.
 	b, err := os.ReadFile(d.settingsPath())
 	var saved pageSettings
@@ -70,7 +97,9 @@ func TestASessionsSettingsFollowItToItsNewName(t *testing.T) {
 func TestDropOldNamesKeepsANameWithSettings(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(path, []byte(`{"nameKeys":{"k1":"quiet-otter","k2":"calm-finch","k3":"plain-wren"}}`), 0o600); err != nil {
+	// k4's name has a choice still to be moved to it, from a loss before this one.
+	if err := os.WriteFile(path, []byte(`{"nameKeys":{"k1":"quiet-otter","k2":"calm-finch","k3":"plain-wren","k4":"keen-swift"},`+
+		`"settingsMoves":[["quiet-otter","keen-swift"]]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	set := `{"wake":{"when":"always"},"sessionWake":{"quiet-otter":{"when":"never"}},"sessionBusy":{"calm-finch":"whole"}}`
@@ -84,7 +113,36 @@ func TestDropOldNamesKeepsANameWithSettings(t *testing.T) {
 	var st struct {
 		NamesLeft map[string]string `json:"namesLeft"`
 	}
-	if err := json.Unmarshal(b, &st); err != nil || len(st.NamesLeft) != 2 || st.NamesLeft["k1"] != "quiet-otter" || st.NamesLeft["k2"] != "calm-finch" {
+	if err := json.Unmarshal(b, &st); err != nil || len(st.NamesLeft) != 3 || st.NamesLeft["k1"] != "quiet-otter" || st.NamesLeft["k2"] != "calm-finch" || st.NamesLeft["k4"] != "keen-swift" {
 		t.Errorf("state.json after: %s (%v)", b, err)
+	}
+}
+
+// A save that fails leaves the names waiting, and the session looked up by its old name; the
+// next read of the settings moves them. A name that lands meanwhile isn't lost with the first.
+func TestAFailedSettingsMoveIsTriedAgain(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	never := web.Wake{When: web.WakeNever}
+	d.settings = defaultSettings()
+	d.settings.SessionWake = map[string]web.Wake{"quiet-otter": never, "calm-finch": never}
+	d.st.SettingsMoves = [][2]string{{"quiet-otter", "bold-lark"}}
+	d.settingsMove.Store(true)
+	// A folder where the file goes: the save fails.
+	if err := os.Mkdir(d.settingsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if snap := d.wakeSnapshot(); snap.choice("quiet-otter") != never || len(d.st.SettingsMoves) != 1 || !d.settingsMove.Load() {
+		t.Errorf("after a save that failed: %+v, moves %v", snap.SessionWake, d.st.SettingsMoves)
+	}
+	if err := os.Remove(d.settingsPath()); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	d.st.SettingsMoves = append(d.st.SettingsMoves, [2]string{"calm-finch", "keen-swift"})
+	d.mu.Unlock()
+	snap := d.wakeSnapshot()
+	if snap.choice("bold-lark") != never || snap.choice("keen-swift") != never || len(snap.SessionWake) != 2 || len(d.st.SettingsMoves) != 0 || d.settingsMove.Load() {
+		t.Errorf("after the next read: %+v, moves %v", snap.SessionWake, d.st.SettingsMoves)
 	}
 }

@@ -150,13 +150,23 @@ func dropOldNames(path string) error {
 	// And the names the page has a wake or busy choice for (settings.json, #836).
 	if b, err := os.ReadFile(filepath.Join(filepath.Dir(path), "settings.json")); err == nil {
 		var set struct {
-			SessionWake, SessionBusy map[string]json.RawMessage
+			SessionWake map[string]json.RawMessage `json:"sessionWake"`
+			SessionBusy map[string]json.RawMessage `json:"sessionBusy"`
 		}
 		if json.Unmarshal(b, &set) == nil {
 			for _, by := range []map[string]json.RawMessage{set.SessionWake, set.SessionBusy} {
 				for name := range by {
 					kept[name] = true
 				}
+			}
+		}
+	}
+	// A choice still to be moved to a name (settingsMoves) is that name's.
+	var moves [][2]string
+	if json.Unmarshal(st["settingsMoves"], &moves) == nil {
+		for _, m := range moves {
+			if kept[m[0]] {
+				kept[m[1]] = true
 			}
 		}
 	}
