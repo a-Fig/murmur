@@ -1414,7 +1414,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	for attempt := 0; ; attempt++ {
-		d.dropSwitchedOff()
+		d.dropSwitchedOff(ctx)
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err

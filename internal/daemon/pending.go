@@ -108,16 +108,16 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	if d.dropSwitchedOff(); len(d.pendSends) == 0 {
-		return
-	}
 	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go).
 	ctx, cancel := context.WithTimeout(d.bgCtx, pushTimeout)
 	defer cancel()
+	if d.dropSwitchedOff(ctx); len(d.pendSends) == 0 {
+		return
+	}
 	ref, sha := d.meshRef(), d.ownTip
 	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", d.pendingStill)
 	if errors.Is(err, errSendOff) {
-		d.dropSwitchedOff() // Send files went off as the push waited its turn
+		d.dropSwitchedOff(ctx) // Send files went off as the push waited its turn
 		return
 	}
 	if err == nil {
@@ -246,9 +246,36 @@ func (d *Daemon) pendingStill() bool {
 // dropSwitchedOff takes out of this device's log the first pending send whose Send files switch has
 // gone off, and every one after it, which are built on it, and gives them up: nothing pushed after
 // may carry it to the remote, its files' keys with it (Sol's review of rc.2). The log's next write
-// builds on what came before it. Caller holds writeMu.
-func (d *Daemon) dropSwitchedOff() {
-	i := slices.IndexFunc(d.pendSends, func(p pendingSend) bool { return p.still != nil && !p.still() })
+// builds on what came before it. Those the remote has already, as a push that ended unsure may
+// have landed, are settled as landed first, so none is called not sent that went (Sol's re-review).
+// Caller holds writeMu.
+func (d *Daemon) dropSwitchedOff(ctx context.Context) {
+	off := func(p pendingSend) bool { return p.still != nil && !p.still() }
+	if !slices.ContainsFunc(d.pendSends, off) {
+		return
+	}
+	lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	ref := d.meshRef()
+	if tip, err := d.repo.RemoteRef(lctx, ref); err == nil && tip != "" && d.repo.Fetch(lctx, []string{ref}) == nil {
+		landed := -1
+		for k, p := range d.pendSends {
+			if ok, _ := d.repo.IsAncestor(lctx, p.sha, tip); ok {
+				landed = k
+			}
+		}
+		if landed >= 0 {
+			done := d.pendSends[:landed+1]
+			d.pendBase, d.pendSends = d.pendSends[landed].sha, slices.Clone(d.pendSends[landed+1:])
+			if len(d.pendSends) == 0 {
+				d.ownTip = d.pendBase
+			}
+			for _, p := range done {
+				p.settle(true, false, nil)
+			}
+		}
+	}
+	i := slices.IndexFunc(d.pendSends, off)
 	if i < 0 {
 		return
 	}

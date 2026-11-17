@@ -100,3 +100,41 @@ func TestASendOfTheSameFilesTakesAPendingOnesRef(t *testing.T) {
 		t.Errorf("%d uploads counted, want 1: %+v", n, d.st.Uploads)
 	}
 }
+
+// A pending send whose push did land, though it said it didn't, is settled as landed when its Send
+// files switch goes off, not called not sent (Sol's re-review of #842).
+func TestAPendingSendThatLandedIsntGivenUpWhenSendFilesGoesOff(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+	d.pageSend.Store(true)
+	ctx := context.Background()
+	d.sendFirst(t)
+	d.writeMu.Lock()
+	d.testPush = func(real func() error) error {
+		if err := real(); err != nil {
+			return err
+		}
+		return errors.New("the connection dropped")
+	}
+	d.writeMu.Unlock()
+	from := bus.Addr(d.device, "bbbbbb")
+	r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "a file"}, []sendFile{{name: "one.txt", data: []byte("hello")}})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	d.pageSend.Store(false)
+	d.writeMu.Lock()
+	d.testPush = nil
+	d.retryPending()
+	pending := len(d.pendSends)
+	d.writeMu.Unlock()
+	d.mu.Lock()
+	inbox := d.st.Inbox["bbbbbb"]
+	d.mu.Unlock()
+	if pending != 0 || len(inbox) != 0 {
+		t.Errorf("%d still pending; the sender's inbox: %+v", pending, inbox)
+	}
+	if err := d.appendEvent(ctx, message(d, "next")); err != nil {
+		t.Errorf("the next send: %v", err)
+	}
+}
