@@ -115,9 +115,7 @@ user's role, never `sendUserMessage`, which Pi treats as the user's typing.
   the extension, Pi gives its MCP servers T3's `T3CODE_CLI_PATH`, and T3 records the session's file
   as the thread's native ID. Seen with Pi 0.99.0 on Windows against a stand-in for T3: a notice, the
   whole message at the end of the work, and an idle message as one turn through `t3 thread send`.
-  In T3 itself (2026-11-17, #864), an idle Pi thread took a message as a turn. The notice while it
-  works wasn't seen: that thread's model was given no tools at all, from a package of the user's
-  own. T3's Pi adapter has no case for
+  Not seen in T3 itself, where Pi was switched off on the machine. T3's Pi adapter has no case for
   Pi's `custom_message` (T3 0.1.x, read 2026-11-11), so the notice and the end-of-work message
   likely reach the model without showing in the thread.
 - **Not covered:** Pi's commits aren't credited, as no call is bracketed, and a session without a

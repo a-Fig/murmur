@@ -55,7 +55,9 @@ func TestAdviceForClaudeInHeadlessT3SaysStopInT3(t *testing.T) {
 
 // A Pi session that ran join is told about Pi, not Claude Code or Codex (#864): /reload in a
 // terminal when the extension was just written, a new thread in T3, whose Pi has no /reload, and
-// the tools within seconds where the extension was already there (Pi 0.99.0, 2026-11-17).
+// the tools within seconds where the extension was already there (Pi 0.99.0, 2026-11-17). Even
+// then, /reload or a new thread if they don't come: another session may have written the
+// extension after this one started.
 func TestAdviceForPi(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -65,7 +67,8 @@ func TestAdviceForPi(t *testing.T) {
 	}{
 		{"just added, in a terminal", map[string]string{"PI_CODING_AGENT": "true"}, true, "type /reload in Pi", "new thread"},
 		{"just added, in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, true, "open one in this project", "/reload"},
-		{"already there", map[string]string{"PI_CODING_AGENT": "true"}, false, "show up in this session within a few seconds", "/reload"},
+		{"already there, in a terminal", map[string]string{"PI_CODING_AGENT": "true"}, false, "within a few seconds. If they haven't after a minute, type /reload in Pi.", "new thread"},
+		{"already there, in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, false, "within a few seconds. If they haven't after a minute, open a new thread in this project.", "/reload"},
 	}
 	for _, c := range cases {
 		got := strings.Join(envWith(c.vars).advice(false, false, c.fresh, false), "\n")
@@ -73,10 +76,22 @@ func TestAdviceForPi(t *testing.T) {
 			t.Errorf("%s: advice:\n%s", c.name, got)
 		}
 	}
-	// A Claude Code that a Pi started has both variables, and is Claude Code.
-	got := strings.Join(envWith(map[string]string{"PI_CODING_AGENT": "true", "CLAUDECODE": "1"}).advice(false, false, true, false), "\n")
-	if strings.Contains(got, "Pi") {
-		t.Errorf("Claude Code under Pi: advice:\n%s", got)
+	// A Claude Code or Codex that a Pi started inherits PI_CODING_AGENT, and is the agent running
+	// join: the innermost agent's advice wins.
+	for _, c := range []struct {
+		name string
+		vars map[string]string
+		want string
+	}{
+		{"Claude Code under Pi", map[string]string{"PI_CODING_AGENT": "true", "CLAUDECODE": "1"}, "this conversation"},
+		{"Codex under Pi", map[string]string{"PI_CODING_AGENT": "true", "CODEX_THREAD_ID": "019a"}, "Codex loads MCP servers only when a session starts"},
+		{"Codex under Pi, in T3", map[string]string{"PI_CODING_AGENT": "true", "CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project to talk"},
+	} {
+		e := envWith(c.vars)
+		got := strings.Join(e.advice(false, false, true, false), "\n")
+		if e.looksLikePi() || strings.Contains(got, "Pi") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: advice:\n%s", c.name, got)
+		}
 	}
 }
 

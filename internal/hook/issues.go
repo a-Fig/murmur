@@ -15,8 +15,8 @@ import (
 // is given after the call: Claude Code's PostToolUse as tool_input and tool_response, Codex's under
 // the same names (codex-rs hooks, rust-v0.169.0), Grok's as toolInput, with tool_response beside its
 // own toolResult (Grok Build's docs/user-guide/10-hooks.md, read 2026-11-15). Murmur's Pi extension
-// passes them under Claude Code's names for a shell or MCP call, its result as Pi's content blocks
-// (#864). OpenCode's plugin passes neither, so an issue its sessions file shows under the login.
+// passes them under Claude Code's names for a shell or MCP call, its result shaped as an MCP tool's:
+// Pi's content blocks, and isError (#864). OpenCode's plugin passes neither, so an issue its sessions file shows under the login.
 //
 // Only calls of a known shape are read: a shell command that runs `gh issue create` or `gh issue
 // close`, and an MCP tool of GitHub's server that creates an issue or closes one. Any other call's

@@ -191,8 +191,8 @@ grok`. Both take Claude Code's payload and answers.
   2026-11-15). Codex's output is the command's own, and it has none for a call still running when
   it yields. The hook reads them only to find an issue the call filed or closed ([page](page.md)).
   Murmur's Pi extension passes them under Claude Code's names for a `bash`, `powershell` or MCP
-  call, the output as Pi's content blocks, and nothing for a call over 512 KB, as the hook reads at
-  most 1 MiB (#864). OpenCode's plugin passes neither.
+  call, the output shaped as an MCP tool's result (Pi's content blocks and `isError`, so a failed
+  close isn't credited), and nothing for a call over 512 KB, as the hook reads at most 1 MiB (#864). OpenCode's plugin passes neither.
 - **Hook not running.** A session of an agent the hook runs in that called a Murmur tool over a
   minute ago, with no hook of it since the daemon started, is marked in `who`, on the page and in
   `send`'s answer, and asked to have its user run `mur join` again. It is judged from the daemon's

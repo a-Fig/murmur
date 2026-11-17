@@ -194,11 +194,14 @@ export default function (pi: any) {
   const notice = (r: any) => String(r?.hookSpecificOutput?.additionalContext ?? "");
   // call is what the hook is told of a shell command or an MCP tool's call, under Claude Code's
   // names: what it was given and gave back, from which the hook learns of an issue it filed or
-  // closed. Nothing for other tools, nor for a call too big to pass: the hook reads at most 1 MiB.
+  // closed. The result is shaped as an MCP tool's, with Pi's isError beside the content, so an MCP
+  // call that failed, whose error names the issue, isn't taken for one that closed it. Nothing for
+  // other tools, nor for a call too big to pass: the hook reads at most 1 MiB.
   const call = (event: any): any => {
     const name = String(event?.toolName ?? "");
     if (name !== "bash" && name !== "powershell" && !name.includes("__")) return {};
-    const c = { tool_name: name, tool_input: event?.input ?? {}, tool_response: event?.content ?? [] };
+    const response = { content: event?.content ?? [], isError: event?.isError === true };
+    const c = { tool_name: name, tool_input: event?.input ?? {}, tool_response: response };
     try {
       return Buffer.byteLength(JSON.stringify(c)) < 512 * 1024 ? c : {};
     } catch {
