@@ -484,7 +484,8 @@ func TestLookupSaysASessionWontBeWoken(t *testing.T) {
 }
 
 // lookup always says whether the session sends and takes files, the one place an agent can check
-// (#859), and says "unknown" where its device can't know.
+// (#859). Another device's says only whether it takes them, as only this device knows whether one
+// of its own sends them, and "unknown" where its presence couldn't be read.
 func TestLookupSaysWhetherASessionSendsAndTakesFiles(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -497,15 +498,17 @@ func TestLookupSaysWhetherASessionSendsAndTakesFiles(t *testing.T) {
 		{"an agent here, both off", proto.SessionDetail{Local: true, Agent: "Claude Code", SendsFiles: proto.FilesOff, TakesFiles: proto.FilesOff},
 			"files: sends none (Send files is off for agents here), takes none from other devices (Receive files is off for agents here)"},
 		{"the person here, both off", proto.SessionDetail{Local: true, Agent: bus.AgentPerson, SendsFiles: proto.FilesOff, TakesFiles: proto.FilesOff},
-			"files: sends none (they turned Send files off), takes none from other devices (they turned Receive files off)"},
+			"files: sends none (Send files is off), takes none from other devices (Receive files is off)"},
+		{"an agent elsewhere that takes them", proto.SessionDetail{Agent: "Codex", TakesFiles: proto.FilesOn},
+			"files: takes them"},
 		{"an agent elsewhere that takes none", proto.SessionDetail{Agent: "Codex", TakesFiles: proto.FilesOff},
-			"files: sends: unknown, takes none (Receive files is off for agents on its device)"},
-		{"a person elsewhere that takes them", proto.SessionDetail{Agent: bus.AgentPerson, TakesFiles: proto.FilesOn},
-			"files: sends: unknown, takes them"},
+			"files: takes none (Receive files is off for agents on its device)"},
+		{"a person elsewhere that takes none", proto.SessionDetail{Agent: bus.AgentPerson, TakesFiles: proto.FilesOff},
+			"files: takes none (Receive files is off)"},
 		{"a device from before files", proto.SessionDetail{Agent: "Codex", TakesFiles: proto.FilesOld},
-			"files: sends: unknown, takes none (its device runs a " + brand.Product + " from before files)"},
+			"files: takes none (its " + brand.Product + " is older than files)"},
 		{"a device whose presence can't be read", proto.SessionDetail{Agent: "Codex"},
-			"files: sends: unknown, takes: unknown"},
+			"files: takes: unknown"},
 	} {
 		tc.det.Addr, tc.det.Device = "dev-0001/aaaaaa", "dev-0001"
 		if got := Lookup(proto.Response{Lookup: &tc.det}); !strings.Contains(got, "  "+tc.want+"\n") {

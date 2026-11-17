@@ -192,6 +192,30 @@ func TestFilesForASessionOnTheSameDevice(t *testing.T) {
 	}
 }
 
+// With Receive files off, a session still has the files a session on its own device sends: they are
+// there already and fetched from nowhere, which is why lookup says "takes none from other devices".
+func TestFilesFromTheSameDeviceArriveWithReceiveFilesOff(t *testing.T) {
+	t.Parallel()
+	a := newDeviceWith(t, newRemote(t), func(d *device) { d.files = `{"sendFiles":true}` })
+	a.session("aaaaaa", "")
+	bob, _ := a.session("bbbbbb", "")
+	want := "  files: sends them, takes none from other devices (Receive files is off for agents here)\n"
+	if look := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: a.named(bob)})); !strings.Contains(look, want) {
+		t.Errorf("lookup of bob, want %q:\n%s", want, look)
+	}
+	log := []byte("panic: runtime error\n")
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "the log", Files: []string{writeFile(t, "run.log", log)}}); r.Error != "" || r.Note != "" {
+		t.Fatalf("send: %+v, want it sent with no note", r)
+	}
+	m := inboxMessage(t, a, "bbbbbb")
+	if len(m.Files) != 1 {
+		t.Fatalf("files: %+v, want the one sent", m.Files)
+	}
+	if got, err := os.ReadFile(m.Files[0].Path); err != nil || !bytes.Equal(got, log) {
+		t.Errorf("the file: %q, %v", got, err)
+	}
+}
+
 // sendFiles sends as the page's person, with files, as a browser does: a form with a part for
 // each. It returns how the daemon answered.
 func (p *page) sendFiles(to, text string, files ...web.Upload) (int, string) {

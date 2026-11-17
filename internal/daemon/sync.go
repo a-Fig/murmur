@@ -1240,7 +1240,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
-	locked := false
+	locked, unread := false, false
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
@@ -1250,6 +1250,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
 			// before the team key was made. The device is there, with nothing about it readable
 			// here; it is read again once this device holds the key (addTeamKeysLocked).
+			unread = true
 			if errors.Is(err, bus.ErrNotForUs) {
 				locked = true
 			} else {
@@ -1274,7 +1275,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if sealed {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked, unread: unread}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 		d.droppedThereLocked(dev, pres.Sessions)
@@ -1315,7 +1316,7 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	defer d.mu.Unlock()
 	p := d.peers[dev]
 	if p == nil {
-		p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}}
+		p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}, unread: true}
 		d.peers[dev] = p
 	}
 	if tried {

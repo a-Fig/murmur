@@ -60,7 +60,7 @@ func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 		t.Errorf("who mentions files:\n%s", who)
 	}
 	if look, want := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})),
-		"  files: sends: unknown, takes none (Receive files is off for agents on its device)\n"; !strings.Contains(look, want) {
+		"  files: takes none (Receive files is off for agents on its device)\n"; !strings.Contains(look, want) {
 		t.Errorf("lookup of bob, want %q:\n%s", want, look)
 	}
 	if look, want := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: a.named(bus.Addr(a.self(), "aaaaaa"))})),
@@ -169,7 +169,7 @@ func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 		t.Errorf("who mentions files:\n%s", who)
 	}
 	if look, want := view.Lookup(b.do(proto.Request{Op: proto.OpLookup, Session: "bbbbbb", Name: "ada-lovelace"})),
-		"  files: sends: unknown, takes none (they turned Receive files off)\n"; !strings.Contains(look, want) {
+		"  files: takes none (Receive files is off)\n"; !strings.Contains(look, want) {
 		t.Errorf("lookup of ada, want %q:\n%s", want, look)
 	}
 	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "the chart",

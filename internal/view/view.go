@@ -901,39 +901,40 @@ func selfHookOff(devices []proto.Device) bool {
 }
 
 // lookupFiles says whether the session looked up sends and takes files (#859): the one place an
-// agent can check, as who leaves it out.
+// agent can check, as who leaves it out. Only this device knows whether a session sends them, so
+// another device's line says only whether it takes them.
 func lookupFiles(d *proto.SessionDetail) string {
 	person := d.Agent == bus.AgentPerson
-	whose := "agents here"
-	if !d.Local {
-		whose = "agents on its device"
+	off := func(what string) string { // a person's switch is their own, and may never have been touched
+		if person {
+			return what + " is off"
+		}
+		if d.Local {
+			return what + " is off for agents here"
+		}
+		return what + " is off for agents on its device"
 	}
-	var sends, takes string
-	switch {
-	case d.SendsFiles == proto.FilesOn:
-		sends = "sends them"
-	case d.SendsFiles == proto.FilesOff && person:
-		sends = "sends none (they turned Send files off)"
-	case d.SendsFiles == proto.FilesOff:
-		sends = "sends none (Send files is off for " + whose + ")"
-	default:
-		sends = "sends: unknown"
-	}
-	switch {
-	case d.TakesFiles == proto.FilesOn:
+	var takes string
+	switch d.TakesFiles {
+	case proto.FilesOn:
 		takes = "takes them"
-	case d.TakesFiles == proto.FilesOld:
-		takes = "takes none (its device runs a " + brand.Product + " from before files)"
-	case d.TakesFiles == proto.FilesOff && d.Local && person:
-		takes = "takes none from other devices (they turned Receive files off)"
-	case d.TakesFiles == proto.FilesOff && d.Local:
-		takes = "takes none from other devices (Receive files is off for " + whose + ")"
-	case d.TakesFiles == proto.FilesOff && person:
-		takes = "takes none (they turned Receive files off)"
-	case d.TakesFiles == proto.FilesOff:
-		takes = "takes none (Receive files is off for " + whose + ")"
+	case proto.FilesOld:
+		takes = "takes none (its " + brand.Product + " is older than files)"
+	case proto.FilesOff:
+		if d.Local {
+			takes = "takes none from other devices (" + off("Receive files") + ")"
+		} else {
+			takes = "takes none (" + off("Receive files") + ")"
+		}
 	default:
 		takes = "takes: unknown"
+	}
+	if !d.Local {
+		return takes
+	}
+	sends := "sends them"
+	if d.SendsFiles != proto.FilesOn {
+		sends = "sends none (" + off("Send files") + ")"
 	}
 	return sends + ", " + takes
 }

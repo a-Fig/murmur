@@ -33,11 +33,12 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
   Send files (#859).
   What a session sends another on the same device is there already and fetched from nowhere, so it
   is shown.
-- **`lookup` shows both, every time:** one `files:` line says whether the session sends files and
-  whether it takes them, so an agent can check its own name or another's before it tries (Tyler,
-  2026-11-17). Here, both come from this device's switches, the person's own for a person. For
-  another device, presence says whether it takes files, never whether it sends them, so that half
-  reads `sends: unknown`.
+- **`lookup` shows them, every time:** one `files:` line, so an agent can check its own name or
+  another's before it tries (Tyler, 2026-11-17). For a session here it says whether it sends files
+  and whether it takes them from other devices, from this device's switches, the person's own for a
+  person. For another device it says only whether it takes them: presence never says whether a
+  device sends them. A presence whose box wasn't read leaves that unknown (`peer.unread`); only one
+  that was read and has no `files` is from before files.
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
 
 ## How a file travels

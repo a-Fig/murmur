@@ -788,9 +788,11 @@ type peer struct {
 	written time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
-	// read again once it does.
+	// read again once it does. unread says nothing inside its box was read, locked or not, so what it
+	// says of files isn't known: its zero Files is no sign of a daemon from before files.
 	sealed bool
 	locked bool
+	unread bool
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on

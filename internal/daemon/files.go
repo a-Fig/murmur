@@ -1705,7 +1705,7 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
 		p := d.peers[dev]
-		if dev == d.device || p == nil || p.locked {
+		if dev == d.device || p == nil || p.unread {
 			continue
 		}
 		name, _, _ := d.sessionInfoLocked(addr)
