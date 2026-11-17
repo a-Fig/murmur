@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -428,8 +429,10 @@ func (d *Daemon) stopKilledLocked(written time.Time) {
 	if len(d.st.Registered) == 0 {
 		return
 	}
-	if now := time.Now(); written.IsZero() || written.After(now) {
-		written = now
+	// Not later than this daemon's start either, by which the next one knows the stop for an
+	// earlier daemon's (pruneInboxes).
+	if latest := cmp.Or(d.started, time.Now()); written.IsZero() || written.After(latest) {
+		written = latest
 	}
 	n := 0
 	for id := range d.st.Registered {
@@ -1320,8 +1323,8 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	return devices
 }
 
-// newSessionLocked registers a session that isn't registered. One that stopped within
-// StoppedInbox gets its inbox back, with what arrived while it was stopped, and keeps its claim on
+// newSessionLocked registers a session that isn't registered. One whose stop hasn't had its time
+// (stopSpentLocked: within StoppedInbox, or back as a daemon starts) gets its inbox back, with what arrived while it was stopped, and keeps its claim on
 // what was sent since it stopped: a catch-up that reads a backlog ref only after the session has
 // registered again would otherwise take those messages for older than the session and drop them.
 // Past StoppedInbox, pruneInboxes is only late. Caller holds mu.

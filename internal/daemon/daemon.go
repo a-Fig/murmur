@@ -814,7 +814,8 @@ type state struct {
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
 	// Downed is the stopped sessions that were still connected when the daemon stopped (#736),
-	// or was killed (#762):
+	// or was killed (#762). What is kept for them doesn't run out while the next daemon is young
+	// (stopSpentLocked).
 	// their servers may reconnect to the next daemon, which waits a little for them before it
 	// hands their threads anything (awaitedLocked). A session leaves it when it registers or its
 	// stop runs out, and the next daemon takes it out once it has stopped waiting.

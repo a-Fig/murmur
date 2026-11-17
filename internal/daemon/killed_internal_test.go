@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -99,6 +100,18 @@ func TestAServerBackAtOnceKeepsItsInboxHoweverOldTheLastWrite(t *testing.T) {
 	d := load()
 	d.pruneInboxes() // as after the first presence push
 	d.mu.Lock()
+	// Kept is kept for everything that asks: a message is queued for it, and its thread read.
+	if !d.receivesLocked("bbbbbb") || !slices.Contains(d.recipientsLocked(), "bbbbbb") || !d.keptInboxLocked() {
+		t.Error("a session whose inbox is kept as the daemon starts isn't one a message is queued for")
+	}
+	// A stop that old with no daemon having gone down on it has run out, young daemon or not.
+	d.st.Stopped["cccccc"], d.st.Inbox["cccccc"] = time.Now().Add(-60*time.Hour), []*inMsg{{}}
+	d.mu.Unlock()
+	d.pruneInboxes()
+	d.mu.Lock()
+	if _, kept := d.st.Inbox["cccccc"]; kept || d.receivesLocked("cccccc") {
+		t.Error("a session that stopped on its own 60 hours ago kept its inbox")
+	}
 	s := d.newSessionLocked(&proto.Hello{ID: "aaaaaa"}, "claude-code", "", "aaaaaa")
 	_, stopped := d.st.Stopped["aaaaaa"]
 	if len(d.st.Inbox["aaaaaa"]) != 1 || stopped || d.st.Downed["aaaaaa"] || s.since.IsZero() {
@@ -111,7 +124,7 @@ func TestAServerBackAtOnceKeepsItsInboxHoweverOldTheLastWrite(t *testing.T) {
 	d.mu.Unlock()
 	d.pruneInboxes()
 	d.mu.Lock()
-	if _, kept := d.st.Inbox["bbbbbb"]; kept {
+	if _, kept := d.st.Inbox["bbbbbb"]; kept || d.receivesLocked("bbbbbb") || d.st.Downed["bbbbbb"] {
 		t.Error("a session not back after two minutes, stopped 60 hours, kept its inbox")
 	}
 	if len(d.st.Inbox["aaaaaa"]) != 1 {

@@ -1043,11 +1043,12 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 }
 
 // recipientsLocked lists the sessions a message can be queued for: those registered, which
-// includes any in their grace, those stopped within StoppedInbox, and the CLI. Caller holds mu.
+// includes any in their grace, those stopped whose inbox is kept (keptLocked), and the CLI.
+// Caller holds mu.
 func (d *Daemon) recipientsLocked() []string {
 	ids := sortedKeys(d.sessions)
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if d.sessions[id] == nil && time.Since(d.st.Stopped[id]) <= d.opt.StoppedInbox {
+		if d.sessions[id] == nil && d.keptLocked(id) {
 			ids = append(ids, id)
 		}
 	}
@@ -1080,11 +1081,11 @@ func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
 	return mode == modeCatchUp && id != proto.CLISession && (s == nil || s.reconnect)
 }
 
-// keptInboxLocked says some stopped session has its inbox kept: it stopped within StoppedInbox
-// and has not registered again. Caller holds mu.
+// keptInboxLocked says some stopped session has its inbox kept (keptLocked) and has not
+// registered again. Caller holds mu.
 func (d *Daemon) keptInboxLocked() bool {
-	for id, at := range d.st.Stopped {
-		if d.sessions[id] == nil && time.Since(at) <= d.opt.StoppedInbox {
+	for id := range d.st.Stopped {
+		if d.sessions[id] == nil && d.keptLocked(id) {
 			return true
 		}
 	}
@@ -1971,6 +1972,16 @@ func (d *Daemon) stopSpentLocked(id string, at time.Time) bool {
 		return false
 	}
 	return time.Since(at) > d.opt.StoppedInbox
+}
+
+// keptLocked says session id is stopped and its inbox is kept: its stop hasn't had its time
+// (stopSpentLocked). It is the one test of that, for whether a message is queued for the
+// session, forwarded to it or adopted from it, and whether its thread is read: a session spared
+// by the sweep and counted as gone by the rest would have its inbox kept and nothing put in it.
+// Caller holds mu.
+func (d *Daemon) keptLocked(id string) bool {
+	at, ok := d.st.Stopped[id]
+	return ok && !d.stopSpentLocked(id, at)
 }
 
 // dropStoppedLocked lets go of what is kept for session id, stopped past StoppedInbox: its inbox,

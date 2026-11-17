@@ -44,7 +44,8 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   reaching the remote, and earlier if it was offline. The 24 hours run from that time. A session
   the last daemon went down with, stopped or killed, keeps what it has for the next daemon's first
   two minutes whatever the stop's age, so a server that reconnects as a laptop is opened after a
-  weekend finds its inbox, as it did before a stop was recorded for it. For its first minute the
+  weekend finds its inbox, as it did before a stop was recorded for it, with what was sent to
+  it in those minutes. For its first minute the
   next daemon hands such a session's thread nothing
   while T3 shows a run of it going or its thread is unread, so its server can reconnect first.
   Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its

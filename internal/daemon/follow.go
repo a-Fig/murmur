@@ -164,8 +164,7 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	}
 	var from []string
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if id == s.id || d.sessions[id] != nil || d.keptForLocked(id) != name ||
-			time.Since(d.st.Stopped[id]) > d.opt.StoppedInbox {
+		if id == s.id || d.sessions[id] != nil || d.keptForLocked(id) != name || !d.keptLocked(id) {
 			continue
 		}
 		// A message handed over as a turn has left the inbox, and its turn may start under s.
@@ -298,8 +297,7 @@ func (d *Daemon) receivesLocked(id string) bool {
 	if d.sessions[id] != nil {
 		return true
 	}
-	at, ok := d.st.Stopped[id]
-	return ok && time.Since(at) <= d.opt.StoppedInbox
+	return d.keptLocked(id)
 }
 
 // forwardLocked says where a message for the address to goes instead, "" if it stays. The registry
