@@ -175,7 +175,10 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   to a share instead of following it; the folder it lands in is found, and the git directory
   refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short
   Windows name (`RUNNER~1`) or an alias doesn't get around them. A link met in the folder after
-  that can only have been swapped in, and is refused. A network path on Windows (`\\host\share`,
+  that can only have been swapped in, and is refused. From the folder down, each part is looked at
+  in its parent's handle and opened as a handle of its own, which must be the folder looked at, so a
+  folder swapped for a link to `.git` between two looks leads nowhere (#773). A Windows reparse
+  point that leads nowhere, as a OneDrive file not yet downloaded is, is the file it stands for. A network path on Windows (`\\host\share`,
   `\/host/share`, `\\?\`) is refused before anything, as looking signs in to that host as the
   user. `~/.claude` stays out though a screenshot pasted into Claude Code may be there: it holds
   Claude Code's credentials and every conversation. A refusal says to copy the file into the temp
