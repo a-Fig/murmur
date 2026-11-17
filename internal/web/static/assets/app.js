@@ -4655,7 +4655,7 @@ function deviceMode() {
 // What each mode does: under the Settings row for the one that is on, and as each button's hint.
 const MODE_HELP = {
   online: "Your agents here get messages as usual.",
-  dnd: "Teammates still see this device and its agents, but no message reaches them: messages wait until you're back online, and senders are told why.",
+  dnd: "Teammates still see this device and its agents, but only your messages reach them: everyone else's wait until you're back online, and senders are told why.",
   invisible: "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages wait until you're back online.",
 };
 
@@ -4667,7 +4667,7 @@ function modeNote() {
     "button",
     { class: "side-mode", title: "Open Settings", "data-key": "mode-note", onclick: () => go("settings") },
     icon(mode === "invisible" ? "eyeOff" : "bellOff"),
-    h("span", null, mode === "invisible" ? "Invisible: your agents here are off " + NAME : "Do not disturb: messages to your agents here wait"),
+    h("span", null, mode === "invisible" ? "Invisible: your agents here are off " + NAME : "Do not disturb: others' messages to your agents here wait"),
   );
 }
 
@@ -4901,7 +4901,8 @@ function waitLine(c) {
   if (!f) return h("p", { class: "wait-line wait-warn" }, target.to + " isn't running, so it may never read this.");
   const st = sessionState(f.device, f.session);
   if (st === "off") return h("p", { class: "wait-line wait-warn" }, target.to + "'s device is offline. It gets this when it's back.");
-  if (st === "dnd") return h("p", { class: "wait-line wait-warn" }, target.to + " is on do not disturb. Your message waits in its inbox.");
+  // Do not disturb doesn't hold your messages to your own agents (#777).
+  if (st === "dnd" && !f.device.self) return h("p", { class: "wait-line wait-warn" }, target.to + " is on do not disturb. Your message waits in its inbox.");
   if (!waiting) return null;
   const active = when(f.session.lastActive);
   const sentAt = mineLast ? when(last.at) || 0 : Date.now();

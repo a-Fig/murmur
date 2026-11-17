@@ -19,7 +19,8 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
   `send` and `lookup` say when a session won't be woken. Every agent but OpenCode 1 in T3 Code
   shows a one-line notice. `who` marks a session whose hook isn't running: it gets no notice.
 - A session tagged `do-not-disturb` gets no turn and no notice until the tag comes off or it reads
-  its inbox. Use it, and take it off after, for work that mustn't be interrupted.
+  its inbox, except for its own user's messages from that device's page. Use it, and take it off
+  after, for work that mustn't be interrupted.
 
 ## Waiting for a reply
 

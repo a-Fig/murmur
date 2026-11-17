@@ -58,7 +58,7 @@ const (
 )
 
 // errNotNow is what a handoff ends with when, by the time of the handoff, the session may no
-// longer be woken (see wakesLocked).
+// longer be woken (see mayWakeLocked and heldLocked).
 var errNotNow = errors.New("the session may not be woken now")
 
 // How a message goes into a session.
@@ -212,8 +212,9 @@ func viaOf(r proto.Route, live bool) string {
 
 // candidateLocked finds the next message to hand over to session id, with how and where, or nil.
 // A message that is being handed over, that the hook has told the session about, whose handoff
-// failed, or that is too old, is passed over, and so is every message of a session that may not be
-// woken now (see wakesLocked). The session waits while another session's copy of its next message
+// failed, or that is too old, is passed over, and so is every message do not disturb holds
+// (heldLocked), and every other message of a session that may not be woken now (mayWakeLocked)
+// but for a person's question (#242). The session waits while another session's copy of its next message
 // is on its way into the same T3 thread (see handing). A session with a message and no way in is
 // logged, once. Caller holds mu.
 func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, proto.Route) {
@@ -225,17 +226,20 @@ func (d *Daemon) candidateLocked(id string, wake pageSettings) (*inMsg, string, 
 			// takeInboxLocked): its pusher kicks when it is done.
 			return nil, "", proto.Route{}
 		}
-		if next == nil && pushable(m) {
+		if !pushable(m) || d.heldLocked(id, m) {
+			continue
+		}
+		if next == nil {
 			next = m
 		}
-		if person == nil && pushable(m) && personAsks(m) {
+		if person == nil && personAsks(m) {
 			person = m
 		}
 	}
 	if next == nil || d.hookBusyLocked(id) {
 		return nil, "", proto.Route{}
 	}
-	if !d.wakesLocked(id, wake) {
+	if !d.mayWakeLocked(id, wake) {
 		// A person asked this session something, and an answer that waits for its next prompt is no
 		// answer: their message goes in past how long it has been idle, ahead of what from other
 		// agents is left waiting for that (#242).
@@ -292,7 +296,7 @@ func waitedSince(m *inMsg) time.Time {
 // at work now: it is pushable, the page's wake setting lets it through, and there is a way in.
 // Caller holds mu.
 func (d *Daemon) turnableLocked(id string, m *inMsg, wake pageSettings) bool {
-	return pushable(m) && d.wayInLocked(id, wake)
+	return pushable(m) && d.wayInLocked(id, m, wake)
 }
 
 // holdableLocked says message m may be held for the end of session id's turn, which began at
@@ -307,15 +311,21 @@ func (d *Daemon) holdableLocked(id string, m *inMsg, wake pageSettings, turnStar
 	if at := waitedSince(m); (turnStart.IsZero() || at.Before(turnStart)) && time.Since(at) > pushMaxAge {
 		return false
 	}
-	return d.wayInLocked(id, wake)
+	return d.wayInLocked(id, m, wake)
 }
 
-// wayInLocked says a message may go into session id as a turn, as far as the session goes: the
-// page's wake setting lets it through, and there is a way in. The Stop hook is one, for a session
-// whose last Stop could keep its turn going, inside T3 or out: what came during a turn is given at
-// its end, even with no socket. Caller holds mu.
-func (d *Daemon) wayInLocked(id string, wake pageSettings) bool {
-	if !d.wakesLocked(id, wake) {
+// wayInLocked says message m may go into session id as a turn, as far as the session goes: do not
+// disturb doesn't hold it (heldLocked), and sessionWayInLocked. Caller holds mu.
+func (d *Daemon) wayInLocked(id string, m *inMsg, wake pageSettings) bool {
+	return !d.heldLocked(id, m) && d.sessionWayInLocked(id, wake)
+}
+
+// sessionWayInLocked says a message do not disturb doesn't hold may go into session id as a turn:
+// the page's wake setting lets it through, and there is a way in. The Stop hook is one, for a
+// session whose last Stop could keep its turn going, inside T3 or out: what came during a turn is
+// given at its end, even with no socket. Caller holds mu.
+func (d *Daemon) sessionWayInLocked(id string, wake pageSettings) bool {
+	if !d.mayWakeLocked(id, wake) {
 		return false
 	}
 	s := d.sessions[id]
@@ -608,7 +618,8 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 //
 // None are taken once Claude Code would refuse the continuation (stopBlockCap): it would end the
 // turn with them gone. They are then handed over as a turn, as after a turn that ends without Stop.
-// None are taken from a session on do not disturb (#198) either: wayInLocked finds no way in for it.
+// None that do not disturb holds (#198) are taken either (heldLocked): a session on it takes only
+// its own person's (#777).
 //
 // The reply carries them whole, so they are taken, oldest first, only while they fit room (see
 // wholeRoom); the rest stay in the inbox for the turn's next end. After the first that doesn't fit,
@@ -619,13 +630,13 @@ func (d *Daemon) endTurnLocked(s *session, wake pageSettings) {
 // any one message fits an empty room). Otherwise its messages would be handed to T3 while the
 // agent is at work, and its count of continuations would fall behind Claude Code's.
 func (d *Daemon) continueTurnLocked(s *session, wake pageSettings, room *wholeRoom) []*inMsg {
-	if s.continuations >= stopBlockCap || !d.wayInLocked(s.id, wake) {
+	if s.continuations >= stopBlockCap || !d.sessionWayInLocked(s.id, wake) {
 		return nil
 	}
 	var out []*inMsg
 	waiting, full := false, false
 	for _, m := range d.st.Inbox[s.id] {
-		if !pushable(m) {
+		if !pushable(m) || d.heldLocked(s.id, m) {
 			continue
 		}
 		waiting = true
@@ -801,12 +812,12 @@ func (d *Daemon) batchLocked(id string, first *inMsg, via string, wake pageSetti
 		// before #699.
 		return out
 	}
-	personOnly := !d.wakesLocked(id, wake)
+	personOnly := !d.mayWakeLocked(id, wake)
 	r := d.routeOfLocked(id)
 	thread := threadKey{r.T3Home, r.T3Thread} // another session's copy on its way in waits for that (see handing)
 	size := len(first.Event.Subject) + len(first.Event.Body)
 	for _, m := range d.st.Inbox[id] {
-		if m == first || !pushable(m) || personOnly && !personAsks(m) || d.handing[handing{thread, m.Event.ID}] {
+		if m == first || !pushable(m) || d.heldLocked(id, m) || personOnly && !personAsks(m) || d.handing[handing{thread, m.Event.ID}] {
 			continue
 		}
 		if size += len(m.Event.Subject) + len(m.Event.Body); size > maxBatch {
@@ -873,7 +884,8 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	// a turn of several goes only if each of its messages may (batchLocked chose them under the
 	// settings then).
 	allAsk := !slices.ContainsFunc(j.msgs, func(m *inMsg) bool { return !personAsks(m) })
-	ok := (d.wakesLocked(j.id, wake) || allAsk && d.personWakesLocked(j.id, wake)) && !d.hookBusyLocked(j.id)
+	held := slices.ContainsFunc(j.msgs, func(m *inMsg) bool { return d.heldLocked(j.id, m) })
+	ok := !held && (d.mayWakeLocked(j.id, wake) || allAsk && d.personWakesLocked(j.id, wake)) && !d.hookBusyLocked(j.id)
 	d.mu.Unlock()
 	if !ok {
 		return errNotNow
