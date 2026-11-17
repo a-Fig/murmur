@@ -900,7 +900,7 @@ func TestASendToANameItsAddressLeftWaitsForTheName(t *testing.T) {
 
 // #45 with the session at the address running (Opus's review): it is called Y now, and a message to
 // X, which another session took and left, is not its. It waits for the next session to take X.
-func TestARunningSessionGetsNothingForANameItLeft(t *testing.T) {
+func TestARunningSessionGetsNothingForANameAnotherTook(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)

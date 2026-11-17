@@ -377,7 +377,8 @@ func (d *Daemon) forwardLocked(to string) string { return d.forwardNamedLocked(t
 // one or its sender didn't say (#45). The registry has a name at the address of the session that
 // first took it, which may hold another name since, after a /clear: a message sent to a name it has
 // left goes by that name, to the session that holds it, rather than by the name the address has
-// now, even while the session at the address runs. Caller holds mu.
+// now, even while the session at the address runs. If no other session has taken the name since,
+// the message stays at the address. Caller holds mu.
 func (d *Daemon) forwardNamedLocked(to, name string) string {
 	dev, id := bus.SplitAddr(to)
 	if dev != d.device || id == "" {
