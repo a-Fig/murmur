@@ -356,15 +356,25 @@ func (d *Daemon) receivesLocked(id string) bool {
 // is in its grace) goes to the session that holds, or last held, the name that session had last,
 // if that session can receive it and the name is still the last it took. A holder that has moved
 // to another conversation since gets nothing for the name it left (#46): the message stays in the
-// kept inbox, which the next session to take the name takes (see adoptLocked). It goes by the
-// address alone, which is all a message on the bus carries; docs/design/session-names.md ("A name
-// held by another session") says what that misses. Caller holds mu.
-func (d *Daemon) forwardLocked(to string) string {
+// kept inbox, which the next session to take the name takes (see adoptLocked). Caller holds mu.
+func (d *Daemon) forwardLocked(to string) string { return d.forwardNamedLocked(to, "") }
+
+// forwardNamedLocked is forwardLocked for a message sent to the name name, "" if it wasn't sent to
+// one or its sender didn't say (#45). The registry has a name at the address of the session that
+// first took it, which may hold another name since, after a /clear: a message sent to a name it has
+// left goes by that name, to the session that holds it, rather than by the name the address has
+// now, even while the session at the address runs. Caller holds mu.
+func (d *Daemon) forwardNamedLocked(to, name string) string {
 	dev, id := bus.SplitAddr(to)
-	if dev != d.device || id == "" || d.liveLocked(id) {
+	if dev != d.device || id == "" {
 		return ""
 	}
-	name := d.keptForLocked(id)
+	if name == "" || name == d.st.SessionNames[id] || name == d.keptForLocked(id) {
+		if d.liveLocked(id) {
+			return ""
+		}
+		name = d.keptForLocked(id)
+	}
 	holder := d.st.NameHolders[name]
 	if holder == "" || holder == id || d.st.SessionNames[holder] != name || !d.receivesLocked(holder) {
 		return ""
@@ -374,8 +384,12 @@ func (d *Daemon) forwardLocked(to string) string {
 
 // queuedAtLocked is where a message for the address to is queued: to, or the session it is
 // forwarded to. Caller holds mu.
-func (d *Daemon) queuedAtLocked(to string) string {
-	if f := d.forwardLocked(to); f != "" {
+func (d *Daemon) queuedAtLocked(to string) string { return d.queuedAtNamedLocked(to, "") }
+
+// queuedAtNamedLocked is queuedAtLocked for a message sent to the name name (see
+// forwardNamedLocked). Caller holds mu.
+func (d *Daemon) queuedAtNamedLocked(to, name string) string {
+	if f := d.forwardNamedLocked(to, name); f != "" {
 		return f
 	}
 	return to

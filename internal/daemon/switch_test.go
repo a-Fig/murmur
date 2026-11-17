@@ -819,3 +819,47 @@ func TestASubagentsOldClaudeIDMovesNothing(t *testing.T) {
 		t.Errorf("the session followed a subagent's hook back to the conversation it left")
 	}
 }
+
+// #45: one ID can hold several names over time, and the registry has a name at the ID that first
+// took it. Session one took X, followed a /clear to Y and stopped; session two resumed the
+// conversation that was X, took X and stopped. A send to X from another device goes to session one's
+// address, but the message says it was sent to X: it waits for the next session to take X, not for
+// the next to take Y, which is what session one was called last. A send from this device, which
+// knows who holds X, already did.
+func TestSendToANameItsAddressLeftGoesByTheName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	nameY := b.nameHeld(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
+	b.named(second)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) && !a.listsSession(second) })
+
+	there := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from another device"})
+	here := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"})
+	// This device knows who holds X and sends there; the other has only the registry's address.
+	if there.Error != "" || here.Error != "" || there.Messages[0].To != first {
+		t.Fatalf("sent from another device: %+v; from this one: %+v; want the first sent to %s", there, here, first)
+	}
+	eventually(t, "the messages to be queued", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+
+	if told := b.resumedAs("eeeeee", "claude-y", procR); len(told) != 0 {
+		t.Fatalf("the next session to take %s was told %v", nameY, told)
+	}
+	if told := b.resumedAs("ffffff", "claude-x", procS); strings.Join(sorted(told), ",") != "from another device,from this device" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}

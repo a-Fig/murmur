@@ -141,9 +141,11 @@ names routes by it all the same.
   last had, if that one is registered or stopped within `StoppedInbox` and the name is still the
   last it took: one hop. A session that takes a name also takes the kept inboxes of stopped sessions
   whose last name it was. So a conversation comes back as whichever session takes its name next, and
-  a message to the name waits for any of them (2026-10-29). The name sent to isn't on message
-  events, so the receiving daemon can't tell which name was used; putting it there is a bus format
-  change, Tyler's to decide (2026-10-29).
+  a message to the name waits for any of them (2026-10-29). One ID can hold several names over
+  time, after a `/clear`, so a message sent by name also carries the name, as `toName` (#45,
+  2026-11-16). The receiving daemon then forwards it by that name, not by the last name the address
+  had, even while the session at the address runs. A daemon from before that ignores the field and
+  goes by the address, as it did.
 - **A long-gone session's name is forgotten after 30 days** (#747, 2026-11-16). The daemon keeps the
   name each of its sessions took last, to label a stopped session and to pass a message for an old
   address on to the name's holder. T3 makes a new session for a thread each time its MCP server

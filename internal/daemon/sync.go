@@ -1006,7 +1006,7 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 		d.pending = append(d.pending, e)
 	}
 	dev, sess := bus.SplitAddr(e.To)
-	fwd := d.forwardLocked(e.To)
+	fwd := d.forwardNamedLocked(e.To, e.ToName)
 	for _, id := range d.recipientsLocked() {
 		if !d.addressedLocked(e, id) {
 			continue
@@ -1136,9 +1136,9 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 		return d.hasTagLocked(id, e.To)
 	}
 	if e.To == addr {
-		return d.forwardLocked(e.To) == ""
+		return d.forwardNamedLocked(e.To, e.ToName) == ""
 	}
-	return e.To == "*" || e.To == d.device || d.forwardLocked(e.To) == addr
+	return e.To == "*" || e.To == d.device || d.forwardNamedLocked(e.To, e.ToName) == addr
 }
 
 // addInboxLocked queues message e for session id, once its files, if it carries any, are saved
