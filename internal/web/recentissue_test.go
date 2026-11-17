@@ -67,7 +67,7 @@ func TestRecentNamesTheSessionThatFiledAnIssue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(src, pageFunctions(t, "RECENT_RUN", "ISSUE_NEAR", "ghRepo", "sessionOnBranch", "recentEntries", "activityLine", "actWho", "actBranch", "activityItem", "githubItem"))
+	write(src, pageFunctions(t, "RECENT_RUN", "ISSUE_NEAR", "ghRepo", "sessionOnBranch", "recentEntries", "activityLine", "actWho", "nameButton", "actBranch", "activityItem", "githubItem"))
 	harness := filepath.Join(dir, "harness.js")
 	write(harness, recentIssueHarness)
 	b, err := exec.Command(node, harness, src).CombinedOutput()
