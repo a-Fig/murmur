@@ -145,6 +145,16 @@ from it is in [a person on the page](people.md).
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`; [delivery](delivery.md) says what they do. Settings also lists every
   mute ([mutes](mutes.md)), with a button to undo those of this device's sessions.
+- **Settings is one screen per repo, grouped by topic** (2026-11-16, #775, Tyler's choice of a
+  proposal). It grew a section per feature, with rows named by scope ("Device default" twice). A
+  device is one clone, so every setting but two is the open repo's, and the page says which repo
+  and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
+  (availability, waking, what a working session is shown, and each session's own, folded until
+  opened), Files and Mutes. Below a line, "For every repo": the theme, kept in this browser, and
+  About. An on/off setting is a switch and a choice among several a segmented control (Tyler).
+  The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
+  and repo are nearly the same thing here, and people come with a question, not a scope. A page
+  that changes every repo at once is #816.
 - **An open page keeps the daemon up.** The page polls every 3 s, 15 s in a hidden tab. A call with
   the token from a page someone can see counts as an open page for 2 minutes and stops the 10-minute
   idle countdown, so a daemon with nothing else to do exits about 12 minutes after its page is
