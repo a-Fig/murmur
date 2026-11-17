@@ -584,7 +584,11 @@ type Daemon struct {
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
 	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
-	fileOne  chan struct{} // held for a fetch of a message's files (fetchFiles)
+	// pruneOwed says a prune of the remote's files refs was passed over, or cut short, because
+	// the device was invisible (pruneFiles), and is run once it no longer is. Only fileLoop's
+	// goroutine writes it.
+	pruneOwed atomic.Bool
+	fileOne   chan struct{} // held for a fetch of a message's files (fetchFiles)
 	// fileMiss is the fetches for the page that failed, by files ref: when, and how. Guarded by mu.
 	fileMiss map[string]fileMiss
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
