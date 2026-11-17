@@ -613,6 +613,8 @@ type Daemon struct {
 	// testPush, set only by tests, stands in for a push of this device's log: it is given the real
 	// one to call, or not.
 	testPush func(push func() error) error
+	// testFetch, set only by tests, stands in for the fetch of this device's own log (fetchOwn).
+	testFetch func(ctx context.Context) error
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
