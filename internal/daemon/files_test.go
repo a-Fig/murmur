@@ -437,6 +437,32 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 	eventually(t, "the sender's copy to go", func() bool { return len(saved()) == 0 })
 }
 
+// An invisible device writes nothing to the bus, a delete of its files refs included (#789): one
+// past its time stays while the device is invisible, and goes when it is back online, without
+// waiting for the next prune.
+func TestAnInvisibleDeviceDeletesItsFilesRefsOnceBack(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "for a while", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
+	a.page().mode("invisible")
+	eventually(t, "b to drop a", func() bool { return !b.lists(a.self()) })
+	// The same device, still invisible, with a time to keep files that has already passed, and a
+	// prune it would wait an hour for after its first.
+	a.fileKeep, a.filePrune = time.Millisecond, time.Hour
+	a.restart()
+	holds(t, "the files ref, while its device is invisible", 2*time.Second, func() bool { return listed() != "" })
+	a.page().mode("online")
+	eventually(t, "the files ref to leave the remote", func() bool { return listed() == "" })
+}
+
 // A files ref whose device has gone, as a deleted clone's has, is deleted from the remote by a
 // device that read of it (#708), and only once that device is gone: a live one deletes its own.
 func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
