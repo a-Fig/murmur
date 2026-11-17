@@ -827,13 +827,14 @@ func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
 // fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
 // with a ref not reused, unless its push may land yet (unsureError).
 //
-// Only one send of the same files is under way at a time (#763). A ref is taken by another send
+// Only one upload of the same files is under way at a time (#763). A ref is taken by another send
 // once its message is out, so two sessions here that sent the same files at the same moment both
 // found none to take: each uploaded, each was counted in the day's uploads, and the later's
 // note of its ref replaced the earlier's. A second send now waits for the first's message to go
 // out or fail, and then takes its ref or uploads itself. end ends this send's turn: the caller
 // calls it once the message is out or has failed, after filesSentLocked, so that whoever waited
-// finds the ref. It is called here if putFiles fails, and does nothing for a ref reused.
+// finds the ref, or after filesUnsent. It is called here if putFiles doesn't return a ref, a
+// panic included (the page's sends run where one is recovered), and does nothing for a ref reused.
 func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, end func(), err error) {
 	end = func() {}
 	if err := checkSendFiles(in); err != nil {
@@ -861,7 +862,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		select {
 		case <-ahead:
 		case <-ctx.Done():
-			return nil, "", false, end, fmt.Errorf("waiting for another send of the same files: %w", ctx.Err())
+			return nil, "", false, end, fmt.Errorf("another send of the same files was still under way (%w); send it again", ctx.Err())
 		}
 	}
 	end = sync.OnceFunc(func() {
@@ -870,8 +871,9 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		d.mu.Unlock()
 		close(turn)
 	})
+	pushed := false
 	defer func() {
-		if err != nil {
+		if !pushed {
 			end()
 		}
 	}()
@@ -943,6 +945,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	d.uploads[sum] = &recentUpload{at: at, files: slices.Clone(files), when: time.Now()}
 	d.mu.Unlock()
 	d.holdFilesHeld() // its own copies, pinned, stay
+	pushed = true
 	return files, at, false, end, nil
 }
 

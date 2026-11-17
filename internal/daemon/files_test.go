@@ -663,8 +663,13 @@ func TestSendsOfTheSameFilesAtOnceUploadThemOnce(t *testing.T) {
 		}()
 	}
 	for range senders {
-		if e := <-errs; e != "" {
-			t.Errorf("a send of the same files at once: %s", e)
+		select {
+		case e := <-errs:
+			if e != "" {
+				t.Errorf("a send of the same files at once: %s", e)
+			}
+		case <-time.After(2 * time.Minute):
+			t.Fatal("a send of the same files is still waiting")
 		}
 	}
 	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
@@ -682,8 +687,10 @@ func TestSendsOfTheSameFilesAtOnceUploadThemOnce(t *testing.T) {
 	}
 }
 
-// A send that waited for another of the same files goes on when that one fails: it uploads
-// itself, and here fails the same way, since the remote takes no files. None is left waiting.
+// A send whose upload fails ends its turn: one that waited for it goes on, uploads itself, and
+// here fails the same way, since the remote takes no files. None is left waiting, and the same
+// files go once the remote takes them. (It can't show that any waited: without the turn each
+// fails alike.)
 func TestASendThatWaitedGoesOnWhenTheFirstFails(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
