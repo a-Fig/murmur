@@ -751,7 +751,8 @@ func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Nat
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
 // turn going (req.Continues), they are its reply instead, read, and the turn goes on with them
-// (Tyler, 2026-11-08). A session with none is idle.
+// (Tyler, 2026-11-08). A session with none is idle. While the device is invisible the turn ends
+// all the same, but nothing keeps it going: what waits is handed over once the device is back.
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -775,7 +776,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 			}
 		}
 		d.endTurnLocked(s, wake)
-		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
+		if !req.Continues || d.hidden.Load() || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
 		}
 		for _, m := range d.continueTurnLocked(s, wake, room) {
