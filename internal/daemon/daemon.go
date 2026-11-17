@@ -618,6 +618,8 @@ type Daemon struct {
 	// change (setMode) takes mu inside it.
 	setMu    sync.Mutex
 	settings pageSettings
+	// settingsMove says st.SettingsMoves has names to move; wakeSnapshot looks before it copies.
+	settingsMove atomic.Bool
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
 	// read without setMu by everything that writes to the bus or answers an agent.
 	hidden, dnd atomic.Bool
@@ -910,11 +912,14 @@ type state struct {
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
 	// NamesLeft is, by session key, the name the key had on the device this clone was before it
-	// lost its keys, where that name has tags, mutes or an explained list kept, or a session here
-	// muted it: the name the key gets next takes them (adoptLeftLocked, #827), and a session
+	// lost its keys, where that name has tags, mutes or an explained list kept, a session here
+	// muted it, or the page has a wake or busy choice for it: the name the key gets next takes them (adoptLeftLocked, #827), and a session
 	// whose new name is pending goes by the old one's meanwhile (keptByLocked). dropOldNames
 	// writes it.
 	NamesLeft map[string]string `json:"namesLeft,omitempty"`
+	// SettingsMoves is the names, old then new, whose own wake and busy choices on the page are
+	// still to be moved from the first to the second in settings.json (moveSettings, #836).
+	SettingsMoves [][2]string `json:"settingsMoves,omitempty"`
 	// NameHolders is the session on this device that took each name last, and SessionNames the
 	// name each session took last: running or stopped, and never taken back. The registry records
 	// the session a name was first given to, which can have a different ID from the one that
@@ -1344,6 +1349,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d.pinSelfLocked() // nothing else runs yet
 	d.rereadTeamIfKeysLostLocked()
 	d.loadSettings()
+	d.settingsMove.Store(len(d.st.SettingsMoves) > 0) // a move the last daemon didn't get to
 	d.loadPersonLog()
 	wall := now.Round(0)
 	if !d.st.Initialized || wall.Sub(d.st.LastSync) > catchUpLimit {

@@ -48,8 +48,12 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   moves to another conversation before its name lands leaves them with the conversation they
   were for. When the name lands they move to it, and mutes other sessions on the clone made *of*
   the old name become mutes of the new one.
-  - *What is left.* The page's wake and busy choices for one session are kept by name in
-    `settings.json`, and stay with the old name (#836).
+  - *The page's wake and busy choices for one session* are kept by name too, in
+    `settings.json`, and follow it (#836): until then a session set never to be woken came back
+    with the device's choice. Settings have a lock of their own, never taken inside the
+    daemon's, under which the name lands. So the pair of names waits in the state file
+    (`settingsMoves`) for the next read of the settings, and until that the session is looked
+    up by its old name.
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
   lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
   stopped or was killed with it counts as stopped from about then (#736, #762), so they are kept as long

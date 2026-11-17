@@ -173,7 +173,77 @@ type pushJob struct {
 func (d *Daemon) wakeSnapshot() pageSettings {
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	if d.settingsMove.Load() {
+		d.moveSettings()
+	}
 	return d.settings.clone()
+}
+
+// moveSettings moves the page's wake and busy choices for one session from the name it had
+// before this clone lost its keys to the one it has now (st.SettingsMoves, #836). They are kept
+// by name, as its tags are, and the tags follow it (adoptLeftLocked); left behind, a session
+// someone set never to be woken came back under its new name with the device's choice, and was
+// given turns. The name lands under mu, and settings are never taken inside that, so the names
+// wait in the state file for the next reader of the settings, which is here; meanwhile the
+// session is looked up by its old name (settingsNameLocked). A choice the new name already has
+// stands. A save that fails leaves the names waiting. Caller holds setMu, and not mu.
+func (d *Daemon) moveSettings() {
+	d.mu.Lock()
+	moves := slices.Clone(d.st.SettingsMoves)
+	d.mu.Unlock()
+	next, changed := d.settings.clone(), false
+	for _, m := range moves {
+		old, name := m[0], m[1]
+		if w, ok := next.SessionWake[old]; ok {
+			delete(next.SessionWake, old)
+			if _, has := next.SessionWake[name]; !has {
+				next.SessionWake[name] = w
+			}
+			changed = true
+		}
+		if b, ok := next.SessionBusy[old]; ok {
+			delete(next.SessionBusy, old)
+			if _, has := next.SessionBusy[name]; !has {
+				next.SessionBusy[name] = b
+			}
+			changed = true
+		}
+	}
+	if changed {
+		if err := writeJSON(d.settingsPath(), next); err != nil {
+			d.log.Printf("moving %d sessions' settings to their new names: %v; tried again when the settings are next read", len(moves), err)
+			return
+		}
+		d.settings = next
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Those moved, and no others: a name may have landed since they were read.
+	d.st.SettingsMoves = slices.Clone(d.st.SettingsMoves[min(len(moves), len(d.st.SettingsMoves)):])
+	if len(d.st.SettingsMoves) == 0 {
+		d.st.SettingsMoves = nil
+		d.settingsMove.Store(false)
+	}
+	d.saveLocked()
+}
+
+// settingsNameLocked is the name the page's own choices for session id are kept by
+// (pageSettings.choice): its name, or the one it had before this clone lost its keys, while its
+// new one is pending or the choices haven't been moved to it yet (moveSettings). Caller holds mu.
+func (d *Daemon) settingsNameLocked(id string) string {
+	name := d.sessionNameLocked(id)
+	if name == "" {
+		if conv := d.conversationLocked(id); conv != "" {
+			return d.st.NamesLeft[conv]
+		}
+		return ""
+	}
+	for _, m := range d.st.SettingsMoves {
+		if m[1] == name {
+			return m[0]
+		}
+	}
+	return name
 }
 
 // routeOfLocked is how a message gets into session id: what its MCP server told the daemon if it
