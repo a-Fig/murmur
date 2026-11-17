@@ -1508,36 +1508,43 @@ type unsureError struct{ error }
 
 func (e unsureError) Unwrap() error { return e.error }
 
-// ownFetchLimit bounds the fetch of this device's own log's tip when a write to it is rejected
-// (overRemoteTip): a send waits on it, and every other write behind writeMu.
-const ownFetchLimit = 20 * time.Second
-
 // overRemoteTip says whether tip, the remote's tip of this device's log, which refused a write, is
-// something to replace rather than build on (overOwnLog). A tip this clone has already, as after a
-// restart before the first sync, since this clone wrote it, is looked at as it is. One it hasn't is
-// fetched, for ownFetchLimit at most: a large object pushed over the log, which can't arrive in
-// that time, is taken for junk and replaced. Fetching it for the request's whole time failed the
-// send, and every one after it, as git keeps nothing of a fetch that doesn't finish (#222). The
-// cost is a log copied with its .git to another clone and written there, whose tip couldn't be
-// fetched in time: it is replaced, as junk would be. Caller holds writeMu.
+// something to replace rather than build on (overOwnLog). A tip that is a commit here already is
+// looked at as it is, unfetched: this clone's own from before a restart, which is always here, or
+// anything an earlier fetch brought. One that isn't here is fetched, for Options.OwnFetchLimit at
+// most: a large object pushed over the log, which can't arrive in that time, is taken for junk and
+// replaced. Fetching it for the send's whole time failed that send, and every one after it, as git
+// keeps nothing of a fetch that doesn't finish (#222). Only a fetch that ran out of that time says
+// so: one that failed otherwise (a lock, a full disk, the network) is the write's error, as it was
+// (Opus's review of #845). The cost is a log written from a copy of its clone's .git, by another
+// clone, whose tip couldn't be fetched in time: it is replaced as junk would be, and what that
+// clone wrote since this one's tip is lost to the log. Caller holds writeMu.
 func (d *Daemon) overRemoteTip(ctx context.Context, ref, tip string) (bool, error) {
-	if here, err := d.repo.IsCommit(ctx, tip); err != nil || here || tip == "" {
-		if err != nil {
-			return false, err
-		}
+	if tip == "" {
+		return false, nil
+	}
+	here, err := d.repo.IsCommit(ctx, tip)
+	if err != nil {
+		return false, err
+	}
+	if here {
 		return d.overOwnLog(ctx, tip)
 	}
-	fctx, cancel := context.WithTimeout(ctx, ownFetchLimit)
-	err := d.fetchOwn(fctx, ref)
+	fctx, cancel := context.WithTimeout(ctx, d.opt.OwnFetchLimit)
+	err = d.fetchOwn(fctx, ref)
+	late := err != nil && fctx.Err() != nil && ctx.Err() == nil
 	cancel()
-	switch {
-	case err == nil:
-		return d.overOwnLog(ctx, tip)
-	case ctx.Err() != nil:
-		return false, ctx.Err() // the request's time, not the tip's: no verdict on it
+	if late {
+		clearStaleTemp(d.opt.GitDir, d.log) // a git killed at the limit can leave its download behind
+		// A sync may have brought it meanwhile.
+		if here, _ := d.repo.IsCommit(ctx, tip); !here {
+			d.log.Printf("the tip of this device's log on the remote, %s, isn't here and couldn't be fetched in %v; it is replaced", tip, d.opt.OwnFetchLimit)
+			return true, nil
+		}
+	} else if err != nil {
+		return false, err
 	}
-	d.log.Printf("the tip of this device's log on the remote, %s, isn't here and couldn't be fetched (%v); it is replaced", tip, err)
-	return true, nil
+	return d.overOwnLog(ctx, tip)
 }
 
 // fetchOwn fetches ref, this device's own log; a test can stand in for it (testFetch).

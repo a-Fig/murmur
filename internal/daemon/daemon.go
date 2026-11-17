@@ -58,6 +58,9 @@ type Options struct {
 	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
 	// each time to a minute; PendingGiveUp how long it is tried before it is given up (pending.go).
 	PendingRetry, PendingGiveUp time.Duration
+	// OwnFetchLimit bounds the fetch of this device's own log's tip when a write to it is refused
+	// (overRemoteTip): a send waits on it, and every other write behind writeMu. 20 s.
+	OwnFetchLimit time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -190,6 +193,9 @@ func (o *Options) defaults() {
 	}
 	if o.PendingRetry == 0 {
 		o.PendingRetry = 5 * time.Second
+	}
+	if o.OwnFetchLimit == 0 {
+		o.OwnFetchLimit = 20 * time.Second
 	}
 	if o.PendingGiveUp == 0 {
 		o.PendingGiveUp = pendingGiveUp
