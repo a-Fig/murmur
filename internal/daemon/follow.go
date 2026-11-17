@@ -37,7 +37,7 @@ func (d *Daemon) uniqueKeyLocked(key, id string, pid int) string {
 	if d.st.ThreadLeft[id] == key {
 		return key + "/" + id // a thread it gave up (yieldThreadLocked)
 	}
-	if d.st.Later[id] == key {
+	if slices.Contains(d.st.Later[id], key) {
 		return key + "/" + id // the later of two servers of its client, once
 	}
 	name := d.st.NameKeys[key]
@@ -53,13 +53,19 @@ func (d *Daemon) uniqueKeyLocked(key, id string, pid int) string {
 	}
 	if sibling {
 		if d.st.Later == nil {
-			d.st.Later = map[string]string{}
+			d.st.Later = map[string][]string{}
 		}
-		d.st.Later[id] = key
+		// Each conversation it was the later on, not only the last: the two move together on a
+		// /clear and a /resume, and back in one they left, it is still the later there.
+		keys := append(d.st.Later[id], key)
+		d.st.Later[id] = keys[max(0, len(keys)-laterKeys):]
 		d.saveLocked()
 	}
 	return key + "/" + id
 }
+
+// laterKeys is how many conversations a session is remembered as the later of two on.
+const laterKeys = 16
 
 // yieldThreadLocked makes the live Codex sessions of other processes that hold key, a Codex
 // thread's, give it up to session id of process pid, which has just shown the thread is its
@@ -78,7 +84,8 @@ func (d *Daemon) uniqueKeyLocked(key, id string, pid int) string {
 // has a Codex key meanwhile), is left as it was. The caller, once id is the thread's session,
 // gives it what the others had unread (takeInboxLocked). Caller holds mu.
 func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key string) []string {
-	if pid == 0 || !strings.HasPrefix(key, "codex:") || agent != "codex" || d.st.ThreadLeft[id] == key {
+	// One that is the later of two servers on the thread won't take its plain key (uniqueKeyLocked).
+	if pid == 0 || !strings.HasPrefix(key, "codex:") || agent != "codex" || d.st.ThreadLeft[id] == key || slices.Contains(d.st.Later[id], key) {
 		return nil
 	}
 	var left []string

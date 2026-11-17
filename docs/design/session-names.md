@@ -42,9 +42,10 @@ names routes by it all the same.
   its own name whichever reconnects first. Until 2026-11-16 (#38) the first back took the plain
   key and its sibling's name, and both names changed. A second program on the same conversation
   isn't held to this: once the first has gone it takes the conversation's name. A client that
-  doesn't say which process it is counts as one process. A key that comes back under another ID while its old session is
-  in its grace takes the name with it, so a message to it isn't left in an inbox about to stop
-  (2026-10-29).
+  doesn't say which process it is counts as one process. A server process that is started
+  again has a new ID, and so a new name, as before. A key that comes back under another ID while
+  its old session is in its grace takes the name with it, so a message to it isn't left in an
+  inbox about to stop (2026-10-29).
 - **A Codex session outside T3 follows its thread** (#36, 2026-10-30). Codex's MCP server learns the
   thread ID at its first tool call (`_meta.threadId`), and the key is then `codex:<threadId>`. Codex
   keeps that ID across resume and compaction and gives a new one on `/new`, `/clear` and a fork,

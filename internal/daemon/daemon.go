@@ -926,10 +926,10 @@ type state struct {
 	// registering again after a daemon restart with the thread it still knows, doesn't take the
 	// thread's name back.
 	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
-	// Later is, by session ID, the name key the session shares with another MCP server of its
-	// client process that had it first (uniqueKeyLocked, #38). Kept as long as ThreadLeft is, so
-	// that whichever of the two comes back first, each comes back to its own name.
-	Later map[string]string `json:"later,omitempty"`
+	// Later is, by session ID, the name keys the session shares with another MCP server of its
+	// client process that had them first (uniqueKeyLocked, #38). Kept as long as ThreadLeft is,
+	// so that whichever of the two comes back first, each comes back to its own name.
+	Later map[string][]string `json:"later,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.
