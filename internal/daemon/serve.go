@@ -357,6 +357,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	s.dropped, s.takeover = time.Now(), takeover
 	d.mu.Unlock()
 
+	var over <-chan struct{} // nil, so never, unless a test ends the grace
+	if graceBegins != nil {
+		over = graceBegins(h.ID)
+	}
 	grace := time.NewTimer(d.opt.SessionGrace)
 	defer grace.Stop()
 	select {
@@ -370,6 +374,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.mu.Unlock()
 		return
 	case <-grace.C:
+	case <-over:
 	}
 
 	d.mu.Lock()
@@ -404,6 +409,12 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 			At: time.Now().UTC()})
 	}
 }
+
+// graceBegins, if a test sets it, is called once a session whose connection dropped is recorded
+// as dropped, as its grace begins, and closing the channel it returns ends that grace as
+// SessionGrace's timer would. Tests take a long grace and end it when they are ready, instead of
+// racing a short one (Sol's review of #51).
+var graceBegins func(id string) <-chan struct{}
 
 // stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
 // then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
