@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/publicrepo"
+	"github.com/a-Fig/murmur/internal/t3"
 )
 
 // Env is the user's machine as join sees it: where it writes, which of the agent programs are
@@ -67,7 +68,7 @@ func EnvFromProcess() (Env, error) {
 		return Env{}, err
 	}
 	e := Env{Exe: exe, Home: home, Getenv: os.Getenv, LookPath: exec.LookPath, Run: runProgram,
-		T3Settings: t3SettingsPath(os.Getenv("T3CODE_CLI_PATH"), os.Getenv("T3CODE_HOME"))}
+		T3Settings: t3SettingsPath(servingT3(os.Getenv), os.Getenv("T3CODE_HOME"))}
 	// Claude Code puts everything under CLAUDE_CONFIG_DIR when it is set (a second account, a T3
 	// provider with its own home); else its settings are in ~/.claude and its state in ~/.claude.json.
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
@@ -433,6 +434,22 @@ func othersAdvice(labels []string) string {
 	return s
 }
 
+// inT3 says whether join runs in a session T3 runs: T3's app names its command line
+// (T3CODE_CLI_PATH), and its headless server gives the thread's ID alone (t3.ThreadEnv, #790).
+func (e Env) inT3() bool {
+	return e.getenv(t3CLIEnv) != "" || e.getenv(t3.ThreadEnv) != ""
+}
+
+// servingT3 is T3's command line for the session running join: T3CODE_CLI_PATH where T3's app set
+// it; in a thread of its headless server, which names none, the t3 that runs it, a few processes up
+// (join runs in the agent's shell, under the agent T3 started); else "".
+func servingT3(getenv func(string) string) string {
+	if cli := getenv(t3CLIEnv); cli != "" || getenv(t3.ThreadEnv) == "" {
+		return cli
+	}
+	return t3.Above(os.Getpid(), 8, exec.LookPath)
+}
+
 // advice is what to tell the user after a join, by what this machine and this agent need. Which
 // agent is running join decides it: the MCP server is registered once, so a session that started
 // after that already runs it (idle, with no tools, until the join), and one that started before
@@ -444,7 +461,7 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	}
 	var out []string
 	switch {
-	case e.getenv("CLAUDECODE") == "1" && e.getenv("T3CODE_CLI_PATH") != "" && claudeFresh:
+	case e.getenv("CLAUDECODE") == "1" && e.inT3() && claudeFresh:
 		out = append(out, brand.Product+" was just added to Claude Code, and this conversation started before that, so it doesn't have the tools yet. "+
 			"To load them: press Stop in T3, then send any message (T3 restarts Claude with "+brand.Product+" loaded); starting a new thread works too.")
 	case e.getenv("CLAUDECODE") == "1" && claudeFresh:
@@ -453,7 +470,7 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.getenv("CLAUDECODE") == "1":
 		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
-	case e.looksLikeCodex() && e.getenv("T3CODE_CLI_PATH") != "":
+	case e.looksLikeCodex() && e.inT3():
 		// T3's Codex provider loads the server in a thread created after it was registered, and
 		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
 		// servers").
