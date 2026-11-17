@@ -437,6 +437,32 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 	eventually(t, "the sender's copy to go", func() bool { return len(saved()) == 0 })
 }
 
+// An invisible device writes nothing to the bus, a delete of its files refs included (#789): one
+// past its time stays while the device is invisible, and goes when it is back online, without
+// waiting for the next prune.
+func TestAnInvisibleDeviceDeletesItsFilesRefsOnceBack(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "for a while", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
+	a.page().mode("invisible")
+	eventually(t, "b to drop a", func() bool { return !b.lists(a.self()) })
+	// The same device, still invisible, with a time to keep files that has already passed, and a
+	// prune it would wait an hour for after its first.
+	a.fileKeep, a.filePrune = time.Millisecond, time.Hour
+	a.restart()
+	holds(t, "the files ref, while its device is invisible", 2*time.Second, func() bool { return listed() != "" })
+	a.page().mode("online")
+	eventually(t, "the files ref to leave the remote", func() bool { return listed() == "" })
+}
+
 // A files ref whose device has gone, as a deleted clone's has, is deleted from the remote by a
 // device that read of it (#708), and only once that device is gone: a live one deletes its own.
 func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
@@ -464,6 +490,123 @@ func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
 	}
 	a.stop()
 	eventually(t, "the files ref of a, gone, to leave the remote", func() bool { return listed() == "" })
+}
+
+// A send reads files only from the clone's worktrees and the temp folder, never its git directory,
+// and follows a link to where it leads before it looks (#690). A refusal says where to copy the file.
+func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	base := t.TempDir()
+	temp, outside := filepath.Join(base, "temp"), filepath.Join(base, "outside")
+	for _, dir := range []string{temp, outside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := newDeviceWith(t, remote, func(d *device) { d.tempDir = temp })
+	a.session("aaaaaa", "")
+	put := func(dir, name string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("contents of "+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	send := func(path string) string {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a file", Files: []string{path}}).Error
+	}
+	for what, path := range map[string]string{
+		"a file in temp":           put(temp, "shot.png"),
+		"a file in the clone":      put(filepath.Dir(a.gitDir), "notes.txt"),
+		"a file in temp, by a dot": filepath.Join(temp, "..", "temp", "shot.png"),
+	} {
+		if err := send(path); err != "" {
+			t.Errorf("%s: %s", what, err)
+		}
+	}
+	secret := put(outside, "id_ed25519")
+	refused := map[string]string{
+		"a file elsewhere":                secret,
+		"a file in the git directory":     put(a.gitDir, "config-copy"),
+		"a way out of temp by its parent": filepath.Join(temp, "..", "outside", "id_ed25519"),
+	}
+	if link := filepath.Join(temp, "key"); os.Symlink(secret, link) == nil {
+		refused["a link in temp to a file elsewhere"] = link
+		if os.Symlink(filepath.Join("..", "outside"), filepath.Join(temp, "out")) == nil {
+			refused["a relative link in temp to a folder elsewhere"] = filepath.Join(temp, "out", "id_ed25519")
+		}
+		if os.Symlink(filepath.Join(temp, "shot.png"), filepath.Join(temp, "shot-link.png")) == nil {
+			if err := send(filepath.Join(temp, "shot-link.png")); err != "" {
+				t.Errorf("a link in temp to a file in temp: %s", err)
+			}
+		}
+	}
+	// A linked worktree's files are sent. A worktree's registration is in the git directory, which
+	// an agent can write; pointing it at a folder elsewhere doesn't make that folder one.
+	clone := filepath.Dir(a.gitDir)
+	wt := filepath.Join(base, "wt")
+	gitOK(clone, "worktree", "add", "--detach", wt)
+	if err := send(put(wt, "diff.txt")); err != "" {
+		t.Errorf("a file in a linked worktree: %s", err)
+	}
+	// One registered by relative paths, as git worktree add --relative-paths does.
+	wt2 := filepath.Join(base, "wt2")
+	gitOK(clone, "worktree", "add", "--detach", wt2)
+	reg := filepath.Join(a.gitDir, "worktrees", "wt2")
+	relTo := func(from, to string) []byte {
+		rel, err := filepath.Rel(from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []byte(filepath.ToSlash(rel) + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(reg, "gitdir"), relTo(reg, filepath.Join(wt2, ".git")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt2, ".git"), append([]byte("gitdir: "), relTo(wt2, reg)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := send(put(wt2, "rel.txt")); err != "" {
+		t.Errorf("a file in a worktree registered by relative paths: %s", err)
+	}
+	// A registration naming the git directory itself as a worktree, with a .git there to match.
+	if err := os.MkdirAll(filepath.Join(a.gitDir, "worktrees", "evil"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, "worktrees", "evil", "gitdir"), []byte(filepath.ToSlash(filepath.Join(a.gitDir, ".git"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, ".git"), []byte("gitdir: "+filepath.ToSlash(filepath.Join(a.gitDir, "worktrees", "evil"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused["the git directory's config, by a registration naming it as a worktree"] = filepath.Join(a.gitDir, "config")
+	if err := os.MkdirAll(filepath.Join(outside, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, "worktrees", "wt", "gitdir"), []byte(filepath.ToSlash(filepath.Join(outside, ".git"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused["a file in a folder a worktree's registration was pointed at"] = secret
+	if upper := filepath.Join(clone, ".GIT", "config"); func() bool { _, err := os.Stat(upper); return err == nil }() {
+		refused["a file in the git directory, spelled in other case"] = upper // Windows', macOS's
+	}
+	if alias := filepath.Join(temp, "alias"); os.Symlink(clone, alias) == nil {
+		refused["a file in the git directory, by a link to the clone"] = filepath.Join(alias, ".git", "config")
+	}
+	for what, path := range refused {
+		err := send(path)
+		if !strings.Contains(err, "isn't in this repo's clone or the temp folder") || !strings.Contains(err, "copy it into "+temp) {
+			t.Errorf("%s: %q, want it refused, saying to copy it into %s", what, err, temp)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, path := range []string{`\\localhost\c$\Windows\win.ini`, `\/localhost/c$/Windows/win.ini`, `\\?\C:\Windows\win.ini`} {
+			if err := send(path); !strings.Contains(err, "is a network path") {
+				t.Errorf("%s: %q, want it refused as a network path", path, err)
+			}
+		}
+	}
 }
 
 // The same files sent to several names, a message for each, go up once: every message names the
@@ -524,6 +667,36 @@ func TestFilesPastADaysUploadsAreRefused(t *testing.T) {
 	}
 }
 
+// An upload the remote refused isn't counted in the day's uploads (#788): every try says the
+// files didn't go out, none that the device has sent its day's worth, and the files go once the
+// remote takes them.
+func TestARefusedUploadIsNotCounted(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	a.session("aaaaaa", "")
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	refuse := "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/murmur/files/*) echo no files today >&2; exit 1;; esac; done\n"
+	if err := os.WriteFile(hook, []byte(refuse), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	send := func() proto.Response {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: []string{path}})
+	}
+	for try := 1; try <= 3; try++ {
+		if r := send(); !strings.Contains(r.Error, "its files didn't go out") || strings.Contains(r.Error, "in the last day") {
+			t.Fatalf("try %d, refused by the remote: %q", try, r.Error)
+		}
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if r := send(); r.Error != "" {
+		t.Errorf("once the remote takes files: %s", r.Error)
+	}
+}
+
 // A device keeps at most FilesHeld of files, the oldest message's going first (#739).
 func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 	t.Parallel()
@@ -549,5 +722,33 @@ func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 	eventually(t, "the old copy to go", func() bool { return !fileThere(paths[0]) })
 	if !fileThere(paths[1]) {
 		t.Errorf("the new copy went too")
+	}
+}
+
+// A folder above the clone or temp that can be passed through but not listed, as a shared host's
+// /home of mode 711 is, doesn't stop a send (Fable's review of #768).
+func TestSendReadsFilesBelowAFolderThatCantBeListed(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("a folder's search-only mode is Unix's, and root ignores it")
+	}
+	t.Parallel()
+	remote := newRemote(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	temp := filepath.Join(locked, "temp")
+	if err := os.MkdirAll(temp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shot := filepath.Join(temp, "shot.png")
+	if err := os.WriteFile(shot, []byte("a picture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	a := newDeviceWith(t, remote, func(d *device) { d.tempDir = temp })
+	a.session("aaaaaa", "")
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a file", Files: []string{shot}}); r.Error != "" {
+		t.Errorf("a file in temp, below a folder that can't be listed: %s", r.Error)
 	}
 }

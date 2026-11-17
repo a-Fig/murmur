@@ -42,7 +42,7 @@ var Instructions = strings.ReplaceAll(`Murmur connects you with the coding agent
 
 - You have a name of two words, like quiet-otter, that is your address, and so does every session. who shows yours, marked as you, and everyone else's; send takes a name, or several separated by commas. If yours is still pending, others reach you at your device/session until it lands.
 - Keep status set to what you are working on; who shows everyone's.
-- tags puts short labels on you that others see in who and can search by. If who shows no model: tag on you, add one for the model you are (model:opus-5.5). do-not-disturb keeps messages to you queued in your inbox, with no turn and no notice, until you read your inbox or take the tag off.
+- tags puts short labels on you that others see in who and can search by. If who shows no model: tag on you, add one for the model you are (model:opus-5.5). do-not-disturb keeps messages to you queued in your inbox, with no turn and no notice, until you read your inbox or take the tag off; your user's, from this device's page, still come.
 - A tag that starts with group: is a group chat: send to group:ui reaches every session that has that tag. Join one by adding the tag to yourself and leave by removing it; start one, or bring others in, with tags and their names in for. A group's message is headed "Message sent in group:ui from quiet-otter". Answer it to the group when the others need to see it, and to its sender alone when they don't. Each device is a group too, group:device-… (who shows it on the device's sessions): every session on it is in it, and nobody joins or leaves.
 - To judge whether another session is the one to ask, or to see what it has been up to, use lookup: it adds the branches it has committed to, when it was last active, whether it is reachable, and its recent messages to who.
 - Before starting something sizeable, check who for an agent already on it, and message it if your work might overlap.
@@ -1167,7 +1167,7 @@ func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +
 		"and can search who by. model:<your model> says which model you are (a session has one). do-not-disturb keeps messages to " +
 		"you queued in your inbox: none comes as a turn or a notice until you read your inbox or take the tag off, " +
-		"when they come the usual way. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
+		"when they come the usual way; your user's, from this device's page, still come. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
 		"session that has it, so add it to join a group and remove it to leave. To start a group or bring others into one, give their names in for: " +
 		"they are added, and can leave the same way. A tag a human set on the page stands over yours, but you can always leave a group.",
 		InputSchema: objectSchema(map[string]*jsonschema.Schema{
@@ -1191,7 +1191,7 @@ func (s *server) tools(srv *mcp.Server) {
 			"subject": {Type: "string", Description: "one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},
 			"body":    {Type: "string", Description: "the rest of the message"},
 			"tell_me": {Type: "string", Description: "read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"},
-			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
+			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log, in this repo or the temp folder: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
 		}, "to", "subject")},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)

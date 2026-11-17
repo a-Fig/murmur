@@ -209,13 +209,395 @@ func unixPath(path string) bool {
 	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
 }
 
-// readSendFiles reads the files an agent's send names, each no larger than a file may be.
-func readSendFiles(paths []string) ([]sendFile, error) {
+// sendRoots is the folders a send may read files from (#690): the clone's worktrees, the main one
+// among them, and the temp folder; and the clone's git directory, which none of them may read
+// inside. The daemon reads a file as the user, outside any sandbox the agent runs in, so an agent
+// that was tricked, or a sandboxed one, could otherwise send anything the user can read, ~/.ssh
+// and cloud credentials among it, to the whole team. What an agent makes as it works, screenshots,
+// logs and diffs, is in the clone or in temp, and anything else it can copy there first. The git
+// directory is out: its config can hold a remote's credentials. So is ~/.claude, where a screenshot
+// pasted into Claude Code may be, as it also holds Claude Code's credentials and every
+// conversation.
+//
+// Two rounds of Sol's review of #768 shaped how. Each folder is opened as an os.Root, and every
+// later look and read goes through that handle, so the folder checked is the one read from, though
+// its path be swapped for a link after. A worktree is found from the registrations in the git
+// directory, read as files rather than through `git worktree list`, which looks at each one and
+// would sign in to a share one names; and counts only if its .git, looked at through its handle,
+// leads back to this clone, as an agent can write those registrations. The git directory is known
+// by what it is, not how it is spelled, so neither a case nor an alias gets around it.
+type sendRoots struct {
+	roots []sendRoot
+	git   os.FileInfo // the clone's git directory; nil if it couldn't be looked at
+	vols  map[string]*os.Root
+}
+
+type sendRoot struct {
+	path string // with its links resolved
+	r    *os.Root
+	id   os.FileInfo // what it is, looked at through r
+}
+
+func (d *Daemon) openSendRoots() *sendRoots {
+	s := &sendRoots{vols: map[string]*os.Root{}}
+	gitDir, err := s.local(d.opt.GitDir)
+	var git sendRoot
+	ok := false
+	if err == nil {
+		git, ok = s.open(gitDir)
+	}
+	if ok {
+		defer git.r.Close()
+		s.git = git.id
+		d.addWorktrees(s, git, gitDir)
+	} else {
+		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
+	}
+	temps := []string{d.opt.TempDir}
+	if d.opt.TempDir == "" {
+		temps = []string{os.TempDir()}
+		if runtime.GOOS != "windows" {
+			temps = append(temps, "/tmp")
+		}
+	}
+	for _, dir := range temps {
+		if root, ok := s.open(dir); ok && !s.add(root) {
+			root.r.Close()
+		}
+	}
+	return s
+}
+
+// addWorktrees adds the clone's worktrees to s's roots.
+func (d *Daemon) addWorktrees(s *sendRoots, git sendRoot, gitDir string) {
+	// The main worktree holds the git directory, unless it was made with --separate-git-dir; each
+	// linked one is named by a registration, read through the git directory's handle, so a link
+	// there to a share is refused rather than followed. A registration's path can be relative to
+	// it (git worktree add --relative-paths).
+	dirs := []string{}
+	if strings.EqualFold(filepath.Base(gitDir), ".git") {
+		dirs = append(dirs, filepath.Dir(gitDir))
+	}
+	var worktrees os.FileInfo
+	if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
+		worktrees = info
+		if f, err := git.r.Open("worktrees"); err == nil {
+			entries, _ := f.ReadDir(-1)
+			f.Close()
+			for _, e := range entries {
+				b, err := git.r.ReadFile(filepath.Join("worktrees", e.Name(), "gitdir"))
+				ptr := strings.TrimSpace(string(b))
+				if err != nil || ptr == "" || netPath(ptr) {
+					continue
+				}
+				if !filepath.IsAbs(ptr) {
+					ptr = filepath.Join(gitDir, "worktrees", e.Name(), ptr)
+				}
+				dirs = append(dirs, filepath.Dir(filepath.Clean(ptr)))
+			}
+		}
+	}
+	// A main worktree kept apart from its git directory is found from where this device's sessions
+	// are: the nearest folder above each with a .git. ownWorktree checks it is this clone's.
+	d.mu.Lock()
+	for _, ss := range d.sessions {
+		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
+			for dir := filepath.Clean(ss.cwd); ; dir = filepath.Dir(dir) {
+				if _, err := s.stat(filepath.Join(dir, ".git")); err == nil {
+					dirs = append(dirs, dir)
+					break
+				}
+				if filepath.Dir(dir) == dir {
+					break
+				}
+			}
+		}
+	}
+	d.mu.Unlock()
+	for _, dir := range dirs {
+		if root, ok := s.open(dir); ok && s.ownWorktree(root, worktrees) && s.add(root) {
+			continue
+		} else if ok {
+			root.r.Close()
+		}
+	}
+}
+
+// add adds root, unless it is one already, or is the git directory or inside it: a registration an
+// agent wrote can name the git directory as a worktree.
+func (s *sendRoots) add(root sendRoot) bool {
+	if slices.ContainsFunc(s.roots, func(r sendRoot) bool { return os.SameFile(r.id, root.id) }) {
+		return false
+	}
+	if s.git != nil && os.SameFile(root.id, s.git) {
+		return false // its handle, though its path was swapped since it was looked at
+	}
+	for dir := root.path; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, s.git) {
+			return false
+		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	s.roots = append(s.roots, root)
+	return true
+}
+
+func (s *sendRoots) Close() {
+	for _, r := range s.roots {
+		r.r.Close()
+	}
+	for _, r := range s.vols {
+		r.Close()
+	}
+}
+
+// open opens dir as a root, through its volume's handle, so a part of it swapped for a link to a
+// share is refused rather than followed.
+func (s *sendRoots) open(dir string) (sendRoot, bool) {
+	path, err := s.local(dir)
+	if err != nil {
+		return sendRoot{}, false
+	}
+	var r *os.Root
+	if runtime.GOOS == "windows" {
+		vol, rel, err := s.volume(path)
+		if err != nil {
+			return sendRoot{}, false
+		}
+		r, err = vol.OpenRoot(rel)
+	} else {
+		// No share to sign in to off Windows, and os.Root, from /, would need every folder above
+		// readable, where a lookup needs only search: a /home of mode 711 would refuse every send.
+		r, err = os.OpenRoot(path)
+	}
+	if err != nil {
+		return sendRoot{}, false
+	}
+	id, err := r.Stat(".")
+	if err != nil {
+		r.Close()
+		return sendRoot{}, false
+	}
+	return sendRoot{path, r, id}, true
+}
+
+// ownWorktree says root's .git, looked at through its handle, is this clone's git directory, or a
+// file that points into its worktrees folder: what git makes for the main worktree and a linked one.
+func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
+	info, err := root.r.Lstat(".git")
+	switch {
+	case err != nil || s.git == nil:
+		return false
+	case info.IsDir():
+		return os.SameFile(info, s.git)
+	case !info.Mode().IsRegular():
+		return false
+	}
+	b, err := root.r.ReadFile(".git")
+	ptr, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+	if err != nil || !ok || netPath(ptr) {
+		return false
+	}
+	if !filepath.IsAbs(ptr) {
+		ptr = filepath.Join(root.path, ptr)
+	}
+	ptr, err = s.local(ptr)
+	if err != nil {
+		return false
+	}
+	if target, err := s.stat(ptr); err == nil && os.SameFile(target, s.git) {
+		return true // a main worktree whose git directory is elsewhere
+	}
+	parent, err := s.stat(filepath.Dir(ptr))
+	return err == nil && worktrees != nil && os.SameFile(parent, worktrees)
+}
+
+// volume is the root of path's volume, opened once, and path from there.
+func (s *sendRoots) volume(path string) (*os.Root, string, error) {
+	vol := filepath.VolumeName(path) + string(filepath.Separator)
+	r := s.vols[vol]
+	if r == nil {
+		var err error
+		if r, err = os.OpenRoot(vol); err != nil {
+			return nil, "", err
+		}
+		s.vols[vol] = r
+	}
+	rel := strings.TrimPrefix(path[len(vol)-1:], string(filepath.Separator))
+	return r, cmp.Or(rel, "."), nil
+}
+
+// stat looks at path, which has no links, through its volume's handle.
+func (s *sendRoots) stat(path string) (os.FileInfo, error) {
+	if runtime.GOOS != "windows" {
+		return os.Lstat(path) // see open
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return nil, err
+	}
+	return vol.Lstat(rel)
+}
+
+// readlink is where the link at path leads, read as stat looks.
+func (s *sendRoots) readlink(path string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return os.Readlink(path)
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return "", err
+	}
+	return vol.Readlink(rel)
+}
+
+// local is path with its links resolved, followed one part at a time through its volume's handle:
+// a link to a share, or one swapped in partway, is refused (errOutside) rather than followed, so
+// looking never signs in to a network host.
+func (s *sendRoots) local(path string) (string, error) {
+	path = filepath.Clean(path)
+	if netPath(path) || !filepath.IsAbs(path) {
+		return "", errOutside
+	}
+	vol := filepath.VolumeName(path)
+	done := vol + string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(path[len(vol):], string(filepath.Separator)), string(filepath.Separator))
+	for hops := 0; len(parts) > 0; {
+		part := parts[0]
+		parts = parts[1:]
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(done, part)
+		if part == ".." {
+			done = filepath.Dir(done)
+			continue
+		}
+		info, err := s.stat(next)
+		if err != nil {
+			return "", err
+		}
+		if !isLink(info) {
+			done = next
+			continue
+		}
+		if hops++; hops > 40 {
+			return "", errors.New("too many links")
+		}
+		to, err := s.readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if netPath(to) {
+			return "", errOutside
+		}
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(done, to) // done has no links, so .. in to means its parent
+		}
+		vol = filepath.VolumeName(to)
+		done = vol + string(filepath.Separator)
+		parts = append(strings.Split(strings.TrimPrefix(to[len(vol):], string(filepath.Separator)), string(filepath.Separator)), parts...)
+	}
+	return done, nil
+}
+
+// isLink says info is a link, or a Windows junction, which Go reports as irregular: local follows
+// both itself, a part at a time.
+func isLink(info os.FileInfo) bool {
+	return info.Mode()&os.ModeSymlink != 0 || runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0
+}
+
+// netPath says path, on Windows, names a share or a device rather than a drive: \\host\share,
+// \/host/share, \\?\ and \\.\ among them. Looking at a share signs in to its host as the user.
+func netPath(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	vol := filepath.VolumeName(path)
+	return vol != "" && !(len(vol) == 2 && vol[1] == ':')
+}
+
+var errOutside = errors.New("outside where send reads")
+
+// openSend opens the file path leads to, if it is in a root and not in the git directory. Every
+// look is through the root's handle, and a link met there, which can only be one swapped in since
+// local looked, is refused.
+func (s *sendRoots) openSend(path string) (*os.File, error) {
+	real, err := s.local(path)
+	if err != nil {
+		return nil, err
+	}
+	// The root it is in is found by what each folder above it is, not by how its path is spelled,
+	// which a short Windows name (RUNNER~1) or a case can change.
+	var root sendRoot
+	var rest []string
+	for dir := real; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil {
+			if i := slices.IndexFunc(s.roots, func(r sendRoot) bool { return os.SameFile(info, r.id) }); i >= 0 {
+				root = s.roots[i]
+				break
+			}
+		}
+		if filepath.Dir(dir) == dir {
+			return nil, errOutside
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+	}
+	rel := filepath.Join(append([]string{"."}, rest...)...)
+	done := "."
+	var info os.FileInfo
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		done = filepath.Join(done, part)
+		if info, err = root.r.Lstat(done); err != nil {
+			return nil, err
+		}
+		if isLink(info) {
+			return nil, errOutside
+		}
+		if info.IsDir() && s.git != nil && os.SameFile(info, s.git) {
+			return nil, errOutside
+		}
+	}
+	if info == nil || !info.Mode().IsRegular() {
+		return nil, errNotFile // and opening a pipe would wait for a writer
+	}
+	f, err := root.r.Open(done)
+	if err != nil {
+		return nil, err
+	}
+	if got, err := f.Stat(); err != nil || !os.SameFile(got, info) {
+		f.Close()
+		return nil, cmp.Or(err, errOutside) // swapped since the look
+	}
+	return f, nil
+}
+
+var errNotFile = errors.New("not a file")
+
+// sendTemp is the folder a refusal tells an agent to copy a file into.
+func (d *Daemon) sendTemp() string {
+	return cmp.Or(d.opt.TempDir, os.TempDir())
+}
+
+// readSendFiles reads the files an agent's send names, each no larger than a file may be, and only
+// from where sendRoots allows. A path is followed through its links first, and the file read is
+// the one it leads to, so a link in temp to ~/.ssh is refused (openSend).
+func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
 		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
 	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
+		if netPath(path) {
+			// A share, or a device path: opening it, or looking at it, would sign in to whatever
+			// host it names, as the user. Two slashes are a share's on Windows, never Git Bash's.
+			return nil, fmt.Errorf("%s is a network path, which send doesn't read: copy the file into %s and send it from there", path, d.sendTemp())
+		}
 		if !filepath.IsAbs(path) {
 			if unixPath(path) {
 				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
@@ -224,18 +606,30 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 			}
 			return nil, fmt.Errorf("%s isn't a full path", path)
 		}
-		info, err := os.Stat(path)
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	s := d.openSendRoots()
+	defer s.Close()
+	for _, path := range paths {
+		f, err := s.openSend(path)
+		switch {
+		case errors.Is(err, errOutside):
+			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
+		case errors.Is(err, errNotFile):
+			return nil, fmt.Errorf("%s isn't a file", path)
+		case err != nil:
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
+		}
+		info, err := f.Stat()
 		switch {
 		case err != nil:
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
-		case !info.Mode().IsRegular():
-			return nil, fmt.Errorf("%s isn't a file", path)
+			f.Close()
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
 		case info.Size() > bus.MaxFile:
+			f.Close()
 			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		}
 		b, err := io.ReadAll(io.LimitReader(f, bus.MaxFile+1)) // it may have grown since the look
 		f.Close()
@@ -268,10 +662,12 @@ func checkSendFiles(files []sendFile) error {
 	return nil
 }
 
-// fileUpload is a push of files this device made: when, and how many bytes went (#739).
+// fileUpload is a push of files this device made: when, how many bytes went (#739), and to which
+// files ref, by which a push that left nothing on the remote is taken off the count (#788).
 type fileUpload struct {
 	At    time.Time `json:"at"`
 	Bytes int64     `json:"bytes"`
+	Ref   string    `json:"ref,omitempty"`
 }
 
 // recentUpload is files this device pushed: the ref, what the event said of them, when, and
@@ -346,8 +742,8 @@ func (d *Daemon) filesUnsent(at string) {
 // uploadRoomLocked says whether this device may push size more bytes of files, by FilesPerDay over
 // the last 24 hours, and if it may, counts them as pushed; if not, it says why, with when it may.
 // The look and the count are one step, so two sends at once can't both take the last of the room.
-// Caller holds mu.
-func (d *Daemon) uploadRoomLocked(size int64) error {
+// ref is the files ref they go to. Caller holds mu.
+func (d *Daemon) uploadRoomLocked(size int64, ref string) error {
 	now := time.Now()
 	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return now.Sub(u.At) >= 24*time.Hour })
 	var used int64
@@ -356,8 +752,9 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 	}
 	over := used + size - d.opt.FilesPerDay
 	if over <= 0 {
-		// Counted before the push, which may land though it is said to fail.
-		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size})
+		// Counted before the push, which may land though it is said to fail. One known not to
+		// have is taken off again (refundUploadLocked).
+		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size, Ref: ref})
 		return nil
 	}
 	when := now
@@ -382,12 +779,52 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 		proto.Size(used), proto.Size(d.opt.FilesPerDay), at)
 }
 
+// refundUploadLocked takes what was pushed to files ref at off the day's count, as the remote is
+// known not to have it, and says whether it was counted. Without it an agent that tried a 15 MB
+// recording a dozen times over a bad connection had uploaded nothing and could send no files for
+// a day (#788). Caller holds mu.
+func (d *Daemon) refundUploadLocked(at string) bool {
+	n := len(d.st.Uploads)
+	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+	return len(d.st.Uploads) < n
+}
+
+// uploadLost says whether the push of files ref at, which ended with err, is known to have left
+// nothing on the remote. One never sent did: for want of consent, by an invisible device, or
+// because its time ran out before git was started for it (notPushedError). One
+// cut off at its time, or by the daemon stopping, may land yet, as what its git started can outlive
+// it: the prune looks, once that has had its time (pruneFiles). For any other the remote is asked,
+// one it refused included: "remote failed to report status" reads as a refusal, and is what a
+// push that landed says when the connection broke after.
+func (d *Daemon) uploadLost(ctx context.Context, at string, err error) bool {
+	switch {
+	case errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible), errors.As(err, new(notPushedError)):
+		return true
+	case ctx.Err() != nil, errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return false
+	}
+	return d.filesRefGone(ctx, at)
+}
+
+// uploadSettle is how long after an upload began the prune leaves its ref be, if the push failed:
+// the push's own time, and five minutes for what it started to end.
+const uploadSettle = pushTimeout + 5*time.Minute
+
+// filesRefGone says whether the remote, asked now, has no files ref at. A remote that can't be
+// asked says nothing.
+func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	tip, err := d.repo.RemoteRef(ctx, bus.FilesRef(at))
+	return err == nil && tip == ""
+}
+
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
 // event says of them and the ref's name. The same files sent again within uploadReuse, as a send
 // to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
 // where a receiver's would be, so a session on this device, and the page, have them without a
 // fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
-// with a ref not reused.
+// with a ref not reused, unless its push may land yet (unsureError).
 func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, err error) {
 	if err := checkSendFiles(in); err != nil {
 		return nil, "", false, err
@@ -425,7 +862,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 		return nil, "", false, err
 	}
 	d.mu.Lock()
-	if err := d.uploadRoomLocked(int64(len(pack))); err != nil {
+	if err := d.uploadRoomLocked(int64(len(pack)), at); err != nil {
 		d.mu.Unlock()
 		return nil, "", false, err
 	}
@@ -433,10 +870,25 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	d.saveLocked()
 	d.mu.Unlock()
 	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
-		// Left to the next prune to delete: a push can land and still be told it failed.
-		d.dropFileRef(at, true)
+		// Left to the next prune to delete: a push can land and still be told it failed. It
+		// stays counted too, unless it is known not to have landed.
+		if d.uploadLost(ctx, at, err) {
+			d.mu.Lock()
+			d.refundUploadLocked(at)
+			d.mu.Unlock()
+		}
+		d.dropFileRef(at, true) // which saves
 		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
 	}
+	// It went up, and stays counted whatever becomes of the ref: a prune that found it gone, its
+	// message having failed, would take for never landed what an earlier delete took away.
+	d.mu.Lock()
+	for i := range d.st.Uploads {
+		if d.st.Uploads[i].Ref == at {
+			d.st.Uploads[i].Ref = ""
+		}
+	}
+	d.mu.Unlock()
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
 	unpin := d.pinFilesDir(dir)
 	defer unpin()
@@ -570,7 +1022,8 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			d.filesFetchedLocked(e.ID)
 			d.mu.Unlock()
 		}
-		if !pruned {
+		// The first time round, and when the device is out of invisible with a prune owed.
+		if !pruned || d.pruneOwed.Load() && !d.hidden.Load() {
 			pruned = true
 			d.pruneFiles(ctx)
 			continue // a message may have come meanwhile
@@ -770,6 +1223,23 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 		}
 	}
 	d.holdFilesHeld()
+	// An invisible device writes nothing to the bus (mode.go), and deleting a ref is a write: one
+	// that shows, by when it lands, that the device is running. The deletes were refused one by
+	// one, a line in the log for each ref at every prune, and the refs stayed (#789). They are
+	// left for the prune fileLoop runs once the device is out of invisible, which setMode wakes
+	// it for. The copies kept here, above, go on time either way, and the refs of other devices
+	// age on: the daemon runs, which is what their age counts.
+	hidden := d.hidden.Load()
+	d.pruneOwed.Store(hidden)
+	if hidden {
+		d.mu.Lock()
+		d.ageOthersFilesLocked(time.Now())
+		if len(d.st.OthersFiles) > 0 {
+			d.saveLocked()
+		}
+		d.mu.Unlock()
+		return
+	}
 	d.mu.Lock()
 	var due []string
 	for at, sent := range d.st.FileRefs {
@@ -780,9 +1250,33 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	d.mu.Unlock()
 	slices.Sort(due)
 	for _, at := range due {
+		// A push that was cut off, and so stayed counted in the day's uploads, is taken off the
+		// count if it never landed (#788). Looked at before the delete, which leaves no ref
+		// either way, and not until uploadSettle after the push began: what a killed git started
+		// may be sending still, and a ref that landed after the look would be on the remote
+		// uncounted, and after the delete, for good.
+		d.mu.Lock()
+		i := slices.IndexFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+		counted := i >= 0
+		early := counted && time.Since(d.st.Uploads[i].At) < uploadSettle
+		d.mu.Unlock()
+		if early {
+			continue // at the next prune
+		}
+		if counted && d.filesRefGone(ctx, at) {
+			d.mu.Lock()
+			if d.refundUploadLocked(at) {
+				d.saveLocked()
+			}
+			d.mu.Unlock()
+		}
 		// Deleting a ref that is already gone succeeds: the look after a refused push finds it at
 		// "", which is what was asked for.
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			if errors.Is(err, ErrInvisible) {
+				d.pruneOwed.Store(true) // the device went invisible meanwhile
+				return
+			}
 			d.log.Printf("deleting files ref %s from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return
@@ -976,6 +1470,10 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			continue
 		}
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			if errors.Is(err, ErrInvisible) {
+				d.pruneOwed.Store(true) // the device went invisible meanwhile
+				return
+			}
 			d.log.Printf("deleting files ref %s, of a device that is gone, from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return

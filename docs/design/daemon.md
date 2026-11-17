@@ -35,7 +35,12 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   keeps one by its ID, and the log notes show the line twice. One written late shows at its own
   time, older than what came meanwhile.
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
-  session returns. Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
+  session returns. A session still connected when the daemon stops counts as stopped from then
+  (#736): until 2026-11-16 no stop was recorded for it, and one that didn't reconnect within two
+  minutes of the next daemon's start lost its inbox and its T3 route. A daemon that is killed
+  still records none. For its first minute the next daemon hands such a session's thread nothing
+  while T3 shows a run of it going or its thread is unread, so its server can reconnect first.
+  Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
   stopped sessions. A daemon back after more than 10 minutes skips what it missed, except for
   sessions stopped within the 24 hours: for those it queues what was sent after they stopped (by the
   sender's clock, with a minute's allowance), messages to the device or to everyone included. One
@@ -93,6 +98,17 @@ message to T3, so reading the file is running code as the user.
   with Windows' process start a new binary's first start on Tyler's laptop took 21 s, past the 15 s
   a starter waits. A registration, `who`, `send` and `lookup` still wait for the sync, at most 10 s,
   so what they see includes the backlog.
+
+- **A send doesn't wait out a slow sync** (#738, 2026-11-16). After its push lands, a write to this
+  device's log queues its own event for the sessions on this device, which needs the lock a sync
+  holds through its fetches. One slow ref stretched that to most of a minute: a send that had
+  reached the remote answered its agent that much later, sometimes past the client's deadline, so
+  the agent took it for failed, and every other write to the log waited behind it. The write now
+  waits 2 s, longer than a sync takes when nothing is slow, then leaves the queueing to that sync
+  and answers. The cost: during a slow sync, what this device's own writes do here waits for the
+  sync's end. A message to a session on the same device reaches its inbox then, not when the send
+  answers, and a session just added to a group isn't yet counted in the note a send to that group
+  gets.
 
 ## Protocol numbers
 

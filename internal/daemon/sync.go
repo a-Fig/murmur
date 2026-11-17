@@ -161,8 +161,19 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		return err
 	}
 	remote := readable(listed)
+	d.mu.Lock()
+	d.syncing = true // an append may leave its tip to this sync from here on (leaveOwnTip)
+	d.mu.Unlock()
 	d.advMu.Lock()
 	defer d.advMu.Unlock()
+	defer func() {
+		// Not through a panic, which may have left mu locked: the daemon should die of it, not
+		// hang here holding advMu.
+		if p := recover(); p != nil {
+			panic(p)
+		}
+		d.readOwnLater(ctx)
+	}()
 
 	var changed []string
 	d.mu.Lock()
@@ -1305,6 +1316,62 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	}
 }
 
+// leaveOwnTip takes advMu for an append to read sha, the tip of this device's log that it just
+// pushed, and says false; or, if a sync still holds advMu after OwnTipWait, leaves the tip for
+// that sync to read at its end, and says true. The wait is longer than a sync takes when nothing
+// is slow, so a send to a session on this device has nearly always queued its message by the time
+// it answers.
+//
+// A sync holds advMu through its fetches, which a slow ref stretches to most of a minute, and the
+// append holds writeMu: waiting that long kept a send that had already landed from answering its
+// agent, past the client's deadline at worst, with every other write to the log behind it (#738).
+// Reading the tip only queues the event for this device's own sessions, which the sync does as
+// well, later. Another holder of advMu has it briefly, and is waited for.
+func (d *Daemon) leaveOwnTip(sha string) bool {
+	for end := time.Now().Add(d.opt.OwnTipWait); ; time.Sleep(2 * time.Millisecond) {
+		d.mu.Lock()
+		// With mu held, so that a sync can't end between the two looks; TryLock never waits, so
+		// the lock order (advMu, then mu) isn't at stake.
+		if d.advMu.TryLock() {
+			d.mu.Unlock()
+			return false
+		}
+		// A tip already left says this sync is a slow one: the writes behind it don't each wait
+		// their own OwnTipWait to learn that again.
+		if d.syncing && (d.ownLater != "" || time.Now().After(end)) {
+			if d.ownLater == "" {
+				d.log.Printf("the sync is taking long: it reads this device's own writes when it ends")
+			}
+			d.ownLater = sha // read before syncing goes false (readOwnLater)
+			d.mu.Unlock()
+			return true
+		}
+		d.mu.Unlock()
+	}
+}
+
+// readOwnLater reads the tips of this device's log that appends left for this sync, at its end,
+// and lets the next append read its own again. It has a time of its own: the sync's may have run
+// out, and the events are on the remote already. Caller holds advMu.
+func (d *Daemon) readOwnLater(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	ref := d.meshRef()
+	for {
+		d.mu.Lock()
+		sha := d.ownLater
+		d.ownLater = ""
+		if sha == "" {
+			d.syncing = false
+			d.mu.Unlock()
+			return
+		}
+		d.known[ref] = sha
+		d.mu.Unlock()
+		d.advanceMesh(ctx, ref, sha, sha)
+	}
+}
+
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
@@ -1335,17 +1402,24 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		} else {
 			err = d.push(ctx, sha, ref, bus.Lease, lease)
 		}
+		if err != nil && !pushRefused(err) {
+			err = unsureError{err}
+		}
 		if err == nil {
 			d.ownTip = sha
 			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
 				d.log.Printf("updating local %s: %v", ref, err)
 			}
-			d.advMu.Lock()
 			d.mu.Lock()
-			d.known[ref] = sha
 			if e.Type == bus.Message {
 				d.noteConversationLocked() // a message went out; the answer may come soon
 			}
+			d.mu.Unlock()
+			if d.leaveOwnTip(sha) {
+				return nil
+			}
+			d.mu.Lock()
+			d.known[ref] = sha
 			d.mu.Unlock()
 			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
 			d.advMu.Unlock()
@@ -1376,6 +1450,23 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 		d.ownTip = tip
 	}
 }
+
+// pushRefused says a push that ended with err is known not to have landed: the remote refused it,
+// or it was never sent.
+func pushRefused(err error) bool {
+	return errors.Is(err, bus.ErrRejected) || errors.Is(err, bus.ErrRefused) ||
+		errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || errors.As(err, new(notPushedError))
+}
+
+// unsureError is what a write to this device's log ends with when its push ended badly without
+// the remote having refused it: it may land yet. The push looks at the remote before it gives up
+// (bus.Repo.Push), but that look can fail as the push did, and on Windows a push killed at its
+// time limit leaves its children running (internal/gitx/tree_windows.go says so of a fetch), so
+// it can land after the look. What was made for the event, its files and its receipt record, is
+// kept then, as the event may be on the bus (#745).
+type unsureError struct{ error }
+
+func (e unsureError) Unwrap() error { return e.error }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather
 // than build on: not a commit, or one this daemon's own tip already contains. A failure to tell
@@ -1788,7 +1879,8 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 }
 
 // pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
-// for them, and those left by sessions that didn't come back after a restart.
+// for them, and those left by sessions of a daemon that was killed, which records no stop for
+// them (one that stops does, #736), if they didn't come back after the restart.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1810,6 +1902,15 @@ func (d *Daemon) pruneInboxes() {
 	if time.Since(d.started) < 2*time.Minute {
 		return
 	}
+	// Nobody an earlier daemon's stop ended is waited for any longer (awaitedLocked). Only those:
+	// this runs after a push that the daemon's own stop cut short too, and the marks that stop is
+	// writing are for the next daemon.
+	for id := range d.st.Downed {
+		if d.st.Stopped[id].Before(d.started) {
+			delete(d.st.Downed, id)
+			d.saveLocked()
+		}
+	}
 	for id := range d.st.Inbox {
 		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && id != bus.PersonSession && d.sessions[id] == nil && !stopped {
 			delete(d.st.Inbox, id)
@@ -1824,10 +1925,17 @@ func (d *Daemon) pruneInboxes() {
 		}
 	}
 	// A thread is kept for a session while it can have messages: it is running or stopped within
-	// StoppedInbox. One that went down with a daemon and never came back has none.
+	// StoppedInbox. One that went down with a daemon that was killed, and never came back, has none.
 	for id := range d.st.T3Routes {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
 			delete(d.st.T3Routes, id)
+			d.saveLocked()
+		}
+	}
+	// So is the Codex thread it gave up, which says whose its messages are (keptForLocked).
+	for id := range d.st.ThreadLeft {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.ThreadLeft, id)
 			d.saveLocked()
 		}
 	}
@@ -1853,9 +1961,11 @@ func (d *Daemon) pruneInboxes() {
 // first; both come here, so what it gets back doesn't depend on which ran first. Caller holds mu.
 func (d *Daemon) dropStoppedLocked(id string) {
 	delete(d.st.Stopped, id)
+	delete(d.st.Downed, id)
 	delete(d.st.Inbox, id)
 	delete(d.st.Commits, id)
 	delete(d.st.T3Routes, id)
+	delete(d.st.ThreadLeft, id)
 	d.dropPendingKeyLocked(id)
 }
 
