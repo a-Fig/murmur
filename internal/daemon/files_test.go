@@ -599,6 +599,18 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 	refused["a file in a folder a worktree's registration was pointed at"] = secret
+	// A .git file an agent wrote, in a folder elsewhere, pointing at the git directory or at a
+	// worktree's registration, doesn't make that folder a worktree (Sol's review of #805).
+	for name, ptr := range map[string]string{"planted": a.gitDir, "planted2": reg} {
+		dir := filepath.Join(base, name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+filepath.ToSlash(ptr)+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		refused["a file in a folder with a .git planted to point at "+name] = put(dir, "secret.txt")
+	}
 	if upper := filepath.Join(clone, ".GIT", "config"); func() bool { _, err := os.Stat(upper); return err == nil }() {
 		refused["a file in the git directory, spelled in other case"] = upper // Windows', macOS's
 	}

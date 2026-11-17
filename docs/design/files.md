@@ -139,10 +139,11 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   worktree a file is in is found above it (#772): the nearest folder with a `.git` that, looked at
   through its handle, leads back to this clone, never the git directory or inside it. A nested repo
   is passed over. Only that worktree is opened, not every one the clone has, which took 1 to 4 s a
-  send on a clone with 220. Neither the registrations in the git directory, which an agent can
-  write, nor `git worktree list`, which looks at each one and would sign in to a share one names,
-  is read; a `--separate-git-dir` checkout, whose `.git` points straight at the git directory, is
-  found the same way. A
+  send on a clone with 220. A `.git` file is anyone's to write, so a linked worktree also needs its
+  registration in the git directory, read through that directory's handle, to name it back, and a
+  `--separate-git-dir` checkout, whose `.git` points straight at the git directory, needs one of
+  the device's sessions in it (Sol's review of #805). `git worktree list` isn't run: it looks at
+  each worktree, and would sign in to a share one names. A
   path's links are followed one part at a time, through its volume's handle, which refuses a link
   to a share instead of following it; the folder it lands in is found, and the git directory
   refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short
