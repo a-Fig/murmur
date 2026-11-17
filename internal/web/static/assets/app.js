@@ -5507,13 +5507,15 @@ function settingsSection(key, title, note, ...rows) {
   );
 }
 
-// An on/off setting is a switch; a choice among several is a segmented control (Tyler, 2026-11-16).
-// key is its row's, whose title names the switch: a group's label doesn't name what is in it.
-function switchControl(key, on, save) {
+// Every setting is a segmented control, on/off ones too: one kind of control across Settings
+// (Tyler, 2026-11-17, #862).
+function onOffControl(key, on, save) {
   return h(
-    "button",
-    { class: "switch", role: "switch", "aria-checked": on ? "true" : "false", "aria-labelledby": "row-" + key, "data-key": key, onclick: () => save(!on) },
-    h("span", { class: "switch-thumb", "aria-hidden": "true" }),
+    "div",
+    { class: "segmented", role: "group" },
+    [[false, "Off"], [true, "On"]].map(([v, label]) =>
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
+    ),
   );
 }
 
@@ -5572,16 +5574,16 @@ function settingsPage() {
       ),
     );
     // Files are off both ways until the person turns them on, per repo (#765, Tyler, 2026-11-16).
-    // Each way, a main switch for the person and their agents, and once it is on, one that keeps it
+    // Each way, a main setting for the person and their agents, and once it is on, one that keeps it
     // from the agents (Tyler, 2026-11-16).
     const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp) => {
-      const rows = [settingsRow(key, title, on ? onText : offText, switchControl(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
+      const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
       if (on) {
         const sub = settingsRow(
           "agents-" + key,
           "Agents too",
           agentsOff ? agentsOffText : agentsOnText,
-          switchControl("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
+          onOffControl("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
         );
         sub.classList.add("row-sub");
         rows.push(sub);

@@ -819,3 +819,150 @@ func TestASubagentsOldClaudeIDMovesNothing(t *testing.T) {
 		t.Errorf("the session followed a subagent's hook back to the conversation it left")
 	}
 }
+
+// #45: one ID can hold several names over time, and the registry has a name at the ID that first
+// took it. Session one took X, followed a /clear to Y and stopped; session two resumed the
+// conversation that was X, took X and stopped. A send to X from another device goes to session one's
+// address, but the message says it was sent to X: it waits for the next session to take X, not for
+// the next to take Y, which is what session one was called last. A send from this device, which
+// knows who holds X, already did.
+func TestSendToANameItsAddressLeftGoesByTheName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	nameY := b.nameHeld(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
+	b.named(second)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) && !a.listsSession(second) })
+
+	there := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from another device"})
+	here := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"})
+	// This device knows who holds X and sends there; the other has only the registry's address.
+	if there.Error != "" || here.Error != "" || there.Messages[0].To != first {
+		t.Fatalf("sent from another device: %+v; from this one: %+v; want the first sent to %s", there, here, first)
+	}
+	eventually(t, "the messages to be queued", func() bool { return logHas(b, "from another device") && logHas(b, "from this device") })
+
+	if told := b.resumedAs("eeeeee", "claude-y", procR); len(told) != 0 {
+		t.Fatalf("the next session to take %s was told %v", nameY, told)
+	}
+	if told := b.resumedAs("ffffff", "claude-x", procS); strings.Join(sorted(told), ",") != "from another device,from this device" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}
+
+// #45 the other way round (Opus's review): the message to X comes while nobody holds X, and waits in
+// the kept inbox of the session that left it. The next session to take X takes it from there, not
+// the next to take Y.
+func TestASendToANameItsAddressLeftWaitsForTheName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	nameY := b.nameHeld(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) })
+
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "for X"}); r.Error != "" || r.Messages[0].To != first {
+		t.Fatalf("send: %+v; want it sent to %s", r, first)
+	}
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameY, Subject: "for Y"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the messages to be queued", func() bool { return logHas(b, "for X") && logHas(b, "for Y") })
+
+	if told := b.resumedAs("eeeeee", "claude-y", procR); len(told) != 1 || told[0] != "for Y" {
+		t.Fatalf("the next session to take %s was told %v", nameY, told)
+	}
+	if told := b.resumedAs("ffffff", "claude-x", procS); len(told) != 1 || told[0] != "for X" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}
+
+// #45 with the session at the address running (Opus's review): it is called Y now, and a message to
+// X, which another session took and left, is not its. It waits for the next session to take X.
+func TestARunningSessionGetsNothingForANameAnotherTook(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	a.session("aaaaaa", "claude-sender")
+
+	first, _, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	nameY := b.nameHeld(first, nameX)
+
+	second, conn2, _ := b.sessionPID("dddddd", "claude-throwaway", procQ)
+	b.named(second)
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-x", ClientPID: procQ})
+	b.nameIs(second, nameX)
+	conn2.Close()
+	eventually(t, "the second to stop", func() bool { return busLines(b, second, "stopped") == 1 })
+	eventually(t, "presence", func() bool { return !a.listsSession(second) && a.nameOf(first) == nameY })
+
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "for X"}); r.Error != "" || r.Messages[0].To != first {
+		t.Fatalf("send: %+v; want it sent to %s", r, first)
+	}
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for X") })
+	if told := b.hook("claude-y", procP); len(told) != 0 {
+		t.Fatalf("the session called %s was told %v", nameY, told)
+	}
+	if told := b.resumedAs("ffffff", "claude-x", procS); len(told) != 1 || told[0] != "for X" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}
+
+// #45 and mutes (Sol's review): a message for X that waits in the kept inbox of the session that
+// left X was queued under the mutes of the name that session has now. The next session to take X
+// gets it only if X hasn't muted its sender; others' messages for X still reach it.
+func TestAMessageForANameItsAddressLeftKeepsTheNamesMutes(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, 0)
+	senderAddr, _ := a.session("aaaaaa", "claude-sender")
+	sender := a.named(senderAddr)
+
+	first, conn1, _ := b.sessionPID("cccccc", "claude-x", procP)
+	nameX := b.named(first)
+	if r := b.mute("cccccc", sender, false); r.Error != "" {
+		t.Fatalf("mute: %+v", r)
+	}
+	b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-y", ClientPID: procP})
+	b.nameHeld(first, nameX)
+	conn1.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+	eventually(t, "presence to empty", func() bool { return !a.listsSession(first) })
+
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameX, Subject: "from the muted"}); r.Error != "" || r.Messages[0].To != first {
+		t.Fatalf("send: %+v; want it sent to %s", r, first)
+	}
+	if r := b.do(proto.Request{Op: proto.OpSend, To: nameX, Subject: "from this device"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the messages to be queued", func() bool { return logHas(b, "from the muted") && logHas(b, "from this device") })
+
+	if told := b.resumedAs("ffffff", "claude-x", procS); len(told) != 1 || told[0] != "from this device" {
+		t.Fatalf("the next session to take %s was told %v", nameX, told)
+	}
+}

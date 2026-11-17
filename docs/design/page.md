@@ -151,7 +151,7 @@ from it is in [a person on the page](people.md).
   and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
   (availability, waking, what a working session is shown, and each session's own, folded until
   opened), Files and Mutes. Below a line, "For every repo": the theme, kept in this browser, and
-  About. An on/off setting is a switch and a choice among several a segmented control (Tyler).
+  About. Every setting is a segmented control, on/off ones included (Tyler, 2026-11-17, #862).
   The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
   and repo are nearly the same thing here, and people come with a question, not a scope. A page
   that changes every repo at once is #816.
