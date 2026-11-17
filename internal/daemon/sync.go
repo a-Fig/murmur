@@ -1922,6 +1922,13 @@ func (d *Daemon) pruneInboxes() {
 			d.saveLocked()
 		}
 	}
+	// So is the Codex thread it gave up, which says whose its messages are (keptForLocked).
+	for id := range d.st.ThreadLeft {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.ThreadLeft, id)
+			d.saveLocked()
+		}
+	}
 	// The tags and mutes it kept by its ID, if its name never landed, go with its inbox as well.
 	gone := func(key string) {
 		id, pending := strings.CutPrefix(key, tagKeyOf("", ""))

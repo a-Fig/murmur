@@ -74,7 +74,7 @@ func TestCodexThreadsHaveTheirOwnNames(t *testing.T) {
 func TestACodexThreadKeepsItsNameInAnotherProgram(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
+	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	a.session("aaaaaa", "")
 	cli, _ := b.agentSession("bbbbbb", "codex", 700, proto.Route{})
 	b.native("bbbbbb", "thread-1")
@@ -116,15 +116,58 @@ func TestACodexThreadKeepsItsNameInAnotherProgram(t *testing.T) {
 	}
 	b.nameIs(app, name)
 
+	// Nor does another agent's session whose own ID happens to be the thread's take it.
+	pi, _ := b.agentSession("ffffff", "pi", 950, proto.Route{Native: "thread-1"})
+	if got := b.named(pi); got == name {
+		t.Errorf("a Pi session took %s from a Codex thread", name)
+	}
+	b.nameIs(app, name)
+
 	// After a restart of the daemon the first program's server, which still knows the thread,
 	// registers first, and doesn't take the name back.
 	b.restart()
-	cli, _ = b.agentSession("bbbbbb", "codex", 700, codexIn("thread-1"))
+	cli, cliConn := b.agentSession("bbbbbb", "codex", 700, codexIn("thread-1"))
 	if got := b.named(cli); got != other {
 		t.Errorf("after a restart the command line's session is %s, not %s", got, other)
 	}
-	app, _ = b.agentSession("cccccc", "codex", 800, codexIn("thread-1"))
+	app, appConn := b.agentSession("cccccc", "codex", 800, codexIn("thread-1"))
 	b.nameIs(app, name)
+
+	// With both stopped, a message for the address the registry has the name at, the first
+	// session's, is the thread's: the next program to go on with the thread gets it. That one
+	// knows its thread as it registers, and takes the name from no one.
+	cliConn.Close()
+	appConn.Close()
+	eventually(t, "both to stop", func() bool { return busLines(b, cli, "stopped") == 1 && busLines(b, app, "stopped") == 1 })
+	a.send("aaaaaa", cli, "while nobody had the thread", "")
+	eventually(t, "the message to be kept", func() bool { return b.queuedFor(cli, "while nobody had the thread") })
+	next, _ := b.agentSession("eeeeee", "codex", 900, codexIn("thread-1"))
+	b.nameIs(next, name)
+	if m := inboxMessage(t, b, "eeeeee"); m.Subject != "while nobody had the thread" {
+		t.Errorf("the thread's next session got %q", m.Subject)
+	}
+}
+
+// A Codex server that knows its thread as it registers takes the name from another program's
+// live session too (#568), and one that comes back from its grace doesn't take it back.
+func TestACodexThreadMovesAtRegistrationAndStaysMoved(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 5*time.Second, time.Hour)
+	cli, _ := b.agentSession("bbbbbb", "codex", 700, codexIn("thread-1"))
+	name := b.named(cli)
+	app, appConn := b.agentSession("cccccc", "codex", 800, codexIn("thread-1"))
+	b.nameIs(app, name)
+
+	// The app's server drops, and in its grace a third program goes on with the thread.
+	appConn.Close()
+	third, _ := b.agentSession("dddddd", "codex", 900, codexIn("thread-1"))
+	b.nameIs(third, name)
+	back, _ := b.agentSession("cccccc", "codex", 800, codexIn("thread-1"))
+	if got := b.named(back); got == name {
+		t.Errorf("a session back from its grace took %s back", name)
+	}
+	b.nameIs(third, name)
 }
 
 // Inside T3 the T3 thread wins: two sessions of one thread share a name even when Codex gave them

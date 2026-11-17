@@ -48,20 +48,30 @@ names routes by it all the same.
 - **A Codex thread that moves between programs keeps its name** (#568, 2026-11-16). Codex keeps the
   thread ID when another program resumes a thread, as the app does one begun in the command line
   (read in openai/codex at 5cb38e7; the app is closed source and wasn't run), and each program
-  starts an MCP server of its own for it. With the first program closed, the thread's key is free
-  and the name comes back at the first tool call, as above. With it still open there were two live
-  sessions of one key, and the later kept the name it registered with, so the conversation showed
-  a new name for having moved. Now the session whose tool call showed the thread last takes the
-  key and the name, with what the other had unread, and the other gets a new name and keeps it
-  (`ThreadLeft` in the state file, so a daemon restart doesn't hand the name back to whichever
-  registers second). Only between client processes: two MCP servers of one Codex process on one
-  thread are still two sessions, the later with a name of its own.
+  starts an MCP server of its own for it. Once the first program's server has stopped, the thread's
+  key is free and the name comes back at the first tool call, as above. While it runs, which can be
+  after its terminal closed ([handoff](handoff.md)), there were two live sessions of one key, and
+  the later kept the name it registered with, so the conversation showed a new name for having
+  moved. Now the session whose tool call showed the thread last takes the key and the name, with
+  what the other had unread, and the other gets a new name and keeps it (`ThreadLeft` in the state
+  file, so a daemon restart doesn't hand the name back to whichever registers second). Only a
+  server's first registration or its first word of the thread does this, not one coming back from
+  its grace. Only between client processes: two MCP servers of one Codex process on one thread are
+  still two sessions, the later with a name of its own. And only outside T3.
+  - *The registry still has the name at the first session's address*, where another device sends
+    once no presence shows the name. So what arrives for that session after it has stopped counts
+    as the thread's: it is forwarded to the name's holder, or kept for the next session that takes
+    the name.
   - *Cost.* A person who goes back to the first program and carries on there talks to a session
-    with the new name: its server said the thread once and says nothing more, so the daemon can't
-    see the conversation return. If the app forks a thread instead of resuming it, the thread ID
-    is new, and so is the name, as for any fork.
+    with the new name. Its server said the thread once and says nothing more; a Codex hook does
+    report the thread with its process, and nothing acts on that yet. The first session's status
+    stays with it, so `who` shows none under the thread's name until the agent sets one. If the
+    app forks a thread instead of resuming it, the thread ID is new, and so is the name, as for
+    any fork.
   - *Not covered.* Until its first Murmur tool call the second program's session shows the name it
-    registered with, as a restarted server's does.
+    registered with, as a restarted server's does. Whether a turn can be started in the app's
+    session wasn't tried: the command-line route is taken only by a server whose parent program is
+    named `codex`.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer

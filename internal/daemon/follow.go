@@ -51,15 +51,16 @@ func (d *Daemon) uniqueKeyLocked(key, id string) string {
 //
 // Only between processes: two servers of one Codex process on one thread are two MCP servers
 // in one client session, and the later is the session of its own, as before. A session with no
-// PID, or of an agent other than Codex outside T3, is left as it was. The caller, once id is
-// the thread's session, gives it what the others had unread (takeInboxLocked). Caller holds mu.
+// PID, or of an agent other than Codex outside T3 (one in T3 that hasn't found its T3 thread
+// has a Codex key meanwhile), is left as it was. The caller, once id is the thread's session,
+// gives it what the others had unread (takeInboxLocked). Caller holds mu.
 func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key string) []string {
-	if pid == 0 || !strings.HasPrefix(key, "codex:") || !isAgent(agent, "codex") || d.st.ThreadLeft[id] == key {
+	if pid == 0 || !strings.HasPrefix(key, "codex:") || agent != "codex" || d.st.ThreadLeft[id] == key {
 		return nil
 	}
 	var left []string
 	for _, o := range d.sortedSessionsLocked() {
-		if o.id == id || !o.dropped.IsZero() || o.key != key || o.clientPID == 0 || o.clientPID == pid || !isAgent(o.agent, "codex") {
+		if o.id == id || !o.dropped.IsZero() || o.key != key || o.clientPID == 0 || o.clientPID == pid || o.agent != "codex" {
 			continue
 		}
 		if d.st.ThreadLeft == nil {
@@ -83,6 +84,18 @@ func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key string) []stri
 		d.kickPresence()
 	}
 	return left
+}
+
+// keptForLocked is the name that what is sent to session id, which isn't running, is for: the
+// last it took, unless it gave its Codex thread up to another program (yieldThreadLocked). The
+// name it was given then was for a session that ends with its server, while the registry still
+// has the thread's name at its address, which is where another device sends a message for the
+// thread once no presence shows the name. Such a message is the thread's (#568). Caller holds mu.
+func (d *Daemon) keptForLocked(id string) string {
+	if name := d.st.NameKeys[d.st.ThreadLeft[id]]; name != "" {
+		return name
+	}
+	return d.st.SessionNames[id]
 }
 
 // threadIDLocked is the session ID for a hello: h.ID, unless the server made it from its T3 thread
@@ -151,7 +164,7 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	}
 	var from []string
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if id == s.id || d.sessions[id] != nil || d.st.SessionNames[id] != name ||
+		if id == s.id || d.sessions[id] != nil || d.keptForLocked(id) != name ||
 			time.Since(d.st.Stopped[id]) > d.opt.StoppedInbox || len(d.st.Inbox[id]) == 0 {
 			continue
 		}
@@ -298,7 +311,7 @@ func (d *Daemon) forwardLocked(to string) string {
 	if dev != d.device || id == "" || d.liveLocked(id) {
 		return ""
 	}
-	name := d.st.SessionNames[id]
+	name := d.keptForLocked(id)
 	holder := d.st.NameHolders[name]
 	if holder == "" || holder == id || d.st.SessionNames[holder] != name || !d.receivesLocked(holder) {
 		return ""
