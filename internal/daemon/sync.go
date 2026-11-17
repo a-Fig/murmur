@@ -1908,6 +1908,9 @@ func (d *Daemon) pruneInboxes() {
 	if time.Since(d.started) < 2*time.Minute {
 		return
 	}
+	if d.pruneSessionNamesLocked(time.Now()) {
+		d.saveLocked()
+	}
 	// Nobody an earlier daemon's stop ended is waited for any longer (awaitedLocked). Only those:
 	// this runs after a push that the daemon's own stop cut short too, and the marks that stop is
 	// writing are for the next daemon.

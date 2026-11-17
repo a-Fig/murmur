@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
@@ -755,6 +757,39 @@ func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 	if !fileThere(paths[1]) {
 		t.Errorf("the new copy went too")
 	}
+}
+
+// A note of another device's files ref goes as soon as the ref is off the remote (#747): it used
+// to wait out twice FileKeep of this daemon's running, long after its ref had gone.
+func TestANoteOfAFilesRefGoesWithTheRef(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filePrune = 300 * time.Millisecond })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "noted", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	// ok is false while the file is being replaced, which says nothing either way.
+	noted := func() (is, ok bool) {
+		st, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+		var js map[string]json.RawMessage
+		if err != nil || json.Unmarshal(st, &js) != nil {
+			return false, false
+		}
+		_, is = js["othersFiles"]
+		return is, true
+	}
+	eventually(t, "b to note the files ref of a", func() bool { is, ok := noted(); return ok && is })
+	holds(t, "the note, while the ref is on the remote", time.Second, func() bool { is, ok := noted(); return !ok || is })
+
+	ref := strings.TrimSpace(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files"))
+	git(t, remote, "update-ref", "-d", ref) // as its own daemon does when its time is up
+	eventually(t, "the note to go with the ref", func() bool { is, ok := noted(); return ok && !is })
 }
 
 // A folder above the clone or temp that can be passed through but not listed, as a shared host's

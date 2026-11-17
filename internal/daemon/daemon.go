@@ -875,6 +875,11 @@ type state struct {
 	// (see forwardLocked).
 	NameHolders  map[string]string `json:"nameHolders,omitempty"`
 	SessionNames map[string]string `json:"sessionNames,omitempty"`
+	// NamesSeen is when each session in SessionNames last took its name, to the hour: one long
+	// gone, that nothing else points at, is forgotten sessionNameKeep after it
+	// (pruneSessionNamesLocked). T3 makes a new session for a thread each time its MCP server
+	// restarts, so without that SessionNames only grew (#747).
+	NamesSeen map[string]time.Time `json:"namesSeen,omitempty"`
 	// ThreadLeft is, by session ID, the name key of the Codex thread the session gave up to
 	// another process that went on with it (yieldThreadLocked, #568). Kept so that the session,
 	// registering again after a daemon restart with the thread it still knows, doesn't take the
