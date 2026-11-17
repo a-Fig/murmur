@@ -178,7 +178,12 @@ func (d *Daemon) muteNamesLocked(addr string) []string {
 	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 		return []string{name}
 	}
-	return d.heldNamesLocked(addr)
+	// Not a name the registry has given another address since, as a resume does: the receiving
+	// device doesn't hold that one against this address, and a refusal by it would be wrong.
+	return slices.DeleteFunc(d.heldNamesLocked(addr), func(n string) bool {
+		a := d.st.Used[n]
+		return a != "" && a != addr
+	})
 }
 
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted

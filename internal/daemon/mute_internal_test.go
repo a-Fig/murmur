@@ -183,6 +183,15 @@ func TestASendersMuteCheckUsesTheNamesTheReceiverDoes(t *testing.T) {
 	if got := d.mutersLocked(d.muteNamesLocked(from), ""); len(got) != 1 || got[0] != "quiet-otter" {
 		t.Errorf("the muters of a sender with no name yet: %v", got)
 	}
+	// A name its device took last that the registry has given another session since, as a resume
+	// does: the receiving device doesn't hold that one against this sender, so neither does it.
+	d.st.SessionNames["bbbbbb"] = "brave-heron"
+	d.st.Used["brave-heron"] = bus.Addr(me, "yyyyyy")
+	d.peers[there].pres.Sessions[0].Muted = []string{"brave-heron"}
+	if d.hasMutedLocked(there, "rrrrrr", d.muteNamesLocked(from)) {
+		t.Error("a sender was refused for a mute of a name the registry gave another session")
+	}
+	d.st.Used["brave-heron"] = from
 	d.sessions["bbbbbb"].name = "calm-zebra" // it landed
 	if d.hasMutedLocked(there, "rrrrrr", d.muteNamesLocked(from)) {
 		t.Error("a sender with a name of its own was refused for a mute of its address's old one")
@@ -190,27 +199,39 @@ func TestASendersMuteCheckUsesTheNamesTheReceiverDoes(t *testing.T) {
 }
 
 // Every device shows another's session that has left presence, or waits on a new name, by the name
-// its own device does, the one its presence showed last, not the first of its names by spelling
-// (#602).
+// its own device does, the one its presence showed last, not the first of its names by spelling,
+// and in every place it is shown (#602).
 func TestAnotherDevicesSessionIsShownByItsLatestName(t *testing.T) {
-	const me, there = "here-0001", "there-0002"
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{}, false)
+	const there = "there-0002"
 	addr := bus.Addr(there, "aaaaaa")
-	d := &Daemon{device: me, peers: map[string]*peer{},
-		st: state{Used: map[string]string{"brave-heron": addr, "calm-zebra": addr}}}
-	if got := d.nameOfLocked(addr); got != "brave-heron" {
-		t.Fatalf("with nothing seen in presence, shown as %q, want the first by spelling", got)
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: addr, To: "*", Subject: "hello", At: time.Now().UTC()}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.st.Used["brave-heron"], d.st.Used["calm-zebra"] = addr, addr
+	all := func(want string) {
+		t.Helper()
+		for _, s := range shownNames(d, e) {
+			if s.name != want {
+				t.Errorf("%s shows %q, want %q", s.where, s.name, want)
+			}
+		}
 	}
+	all("brave-heron") // nothing seen in presence: the first by spelling
 	// Its presence showed it waiting on a new name, by the one it went by last.
 	pres := bus.Presence{V: bus.Version, Device: there, Sessions: []bus.SessionInfo{{ID: "aaaaaa", Was: "calm-zebra"}}}
 	pres.Clean()
 	d.peers[there] = &peer{pres: pres}
 	d.notePeerNameLocked(addr, cmp.Or(pres.Sessions[0].Name, pres.Sessions[0].Was))
-	if got := d.nameOfLocked(addr); got != "calm-zebra" {
-		t.Errorf("waiting on a new name, shown as %q, want calm-zebra", got)
-	}
+	all("calm-zebra")
 	// It left presence: still calm-zebra.
 	d.peers[there] = &peer{pres: bus.Presence{V: bus.Version, Device: there}}
-	if got := d.nameOfLocked(addr); got != "calm-zebra" {
-		t.Errorf("gone from presence, shown as %q, want calm-zebra", got)
+	all("calm-zebra")
+	// A presence names Was only while the session has no name.
+	named := bus.Presence{V: bus.Version, Device: there, Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "brave-heron", Was: "calm-zebra"}}}
+	named.Clean()
+	if was := named.Sessions[0].Was; was != "" {
+		t.Errorf("a named session's presence kept Was %q", was)
 	}
 }

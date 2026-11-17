@@ -43,7 +43,8 @@ on: not a message to it, to its device, to a group it is in, or to everyone.
   one its address has held while it has none (#602), so a sender waiting on a new name isn't sent
   past a mute of its old one. The cost: a later conversation
   nobody muted, at that address, has what it sends dropped once it has left presence, and is told
-  it was muted (#466). Remembering the last name each address showed would narrow that; it isn't built.
+  it was muted (#466). The name each address last showed in presence (`peerNames`, #602) would
+  narrow that; the receiving check doesn't use it yet.
 - **A muted session can't add the session that muted it to a group** (#483), since each add used one
   of the muting session's 12 tags.
 - **A person can undo one, on the page of the muting session's device**, so an agent can't silence a

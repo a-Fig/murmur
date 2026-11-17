@@ -497,6 +497,11 @@ func (d *Daemon) namesByAddrLocked() map[string]string {
 			byAddr[addr] = name
 		}
 	}
+	for addr, pn := range d.st.PeerNames { // another device's, by its presence's latest (#602)
+		if dev, _ := bus.SplitAddr(addr); dev != d.device && pn.Name != "" {
+			byAddr[addr] = pn.Name
+		}
+	}
 	for id, name := range d.st.SessionNames {
 		if name != "" {
 			byAddr[bus.Addr(d.device, id)] = name
