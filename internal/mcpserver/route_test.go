@@ -316,3 +316,44 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 		t.Errorf("route told: %+v", got)
 	}
 }
+
+// A Codex thread of T3's headless server has none of T3's variables but the T3CODE_HOME join
+// forwards, and the t3 that serves runs Codex. Its route is T3's, and its thread comes from the
+// tool calls' _meta, as in T3's app. A codex t3 doesn't run keeps Codex's own route, as does one
+// with an agent above it (a thread's shell's) or with no T3 home, for which no t3 is looked for
+// (#802).
+func TestHeadlessT3CodexIsFound(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv(threadEnv, "")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	asked := false
+	found := func() string { asked = true; return "/home/u/.local/bin/t3" }
+	t.Cleanup(func() { codexT3 = func() string { return "" } })
+	codexT3 = found
+	h := helloFor("codex", "/work")
+	if r := h.Route; r.T3CLI != "/home/u/.local/bin/t3" || r.T3Home != "/home/u/.t3" || r.CodexCLI != "" {
+		t.Errorf("route %+v, want T3's", h.Route)
+	}
+	if h.ByThread || h.Agent != "codex in T3" {
+		t.Errorf("hello %+v: want T3's label, and the thread from _meta, not the variable", h)
+	}
+
+	codexT3 = func() string { return "" }
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" {
+		t.Errorf("a codex t3 doesn't run: %+v", h)
+	}
+
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	asked, codexT3 = false, found
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" || asked {
+		t.Errorf("a codex under the thread's codex: %+v, looked for t3: %v", h, asked)
+	}
+	agentAbove = func() bool { return false }
+
+	t.Setenv("T3CODE_HOME", "")
+	asked = false
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || asked {
+		t.Errorf("with no T3 home: %+v, looked for t3: %v", h, asked)
+	}
+}

@@ -50,6 +50,7 @@ func TestMain(m *testing.M) {
 	// Nor started by a t3, which would make a client with T3's thread variable the thread: the tests
 	// of T3's headless server say when one is.
 	servingT3 = func() (string, bool) { return "", false }
+	codexT3 = func() string { return "" }
 	// Servers publish their records here, not in the real user's config directory.
 	dir, err := os.MkdirTemp("", "murmur-sessions-")
 	if err != nil {
