@@ -181,6 +181,42 @@ func appDir() (string, error) {
 	return dir, os.MkdirAll(dir, 0o700)
 }
 
+// uninstallApp takes out the desktop app for `mur uninstall`: the launcher `mur app` put in place
+// (#616), then the app's folder, its log, the clone it last showed, its window's record and the
+// launcher's, so that Murmur's folder in the config directory can go after it (#746). An open window
+// keeps the folder, as it writes its log and record there, and is named for the user to close. So
+// does a launcher that couldn't be taken out, whose record says it is still Murmur's.
+func uninstallApp(r *join.Report) (left []string) {
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(cfg, brand.Name, "app")
+	where, err := desktop.RemoveLauncher(dir)
+	switch {
+	case err != nil:
+		r.Problems = append(r.Problems, "taking out the app's launcher ("+where+"): "+err.Error())
+		return nil
+	case where != "":
+		r.Did = append(r.Did, "Took out the app's launcher ("+where+")")
+	}
+	if _, err := os.Lstat(dir); err != nil {
+		return nil
+	}
+	if desktop.WindowOpen(filepath.Join(dir, "window.json")) {
+		return []string{brand.Product + "'s app, whose window is open, and its files (" + dir + "): close the window, then run uninstall again."}
+	}
+	// A window just starting, between its start and its record, isn't found: on Windows its log,
+	// which it writes to, then keeps the folder, and the report has the error; elsewhere the folder
+	// goes and the window runs with no record. Rare enough to leave (Opus review).
+	if err := os.RemoveAll(dir); err != nil {
+		r.Problems = append(r.Problems, "removing the app's files ("+dir+"): "+err.Error())
+		return nil
+	}
+	r.Did = append(r.Did, "Removed the desktop app's files ("+dir+")")
+	return nil
+}
+
 // appClone is the clone the window opens on. A daemon serves one clone's page, so the app has to
 // pick one, and the page's repo menu moves it to any other:
 //
