@@ -19,9 +19,16 @@ on: not a message to it, to its device, to a group it is in, or to everyone.
 - **A mute takes 30 seconds to hold against direct messages** (Tyler, 2026-11-11). A message sent
   before the sender's daemon has read the mute would be dropped with its sender sure it had arrived,
   so for 30 s, by the muting device's clock, direct messages still get through; that is longer than
-  a presence takes to be pushed and read. The cost is a message or two after muting. Left open
-  (#466): a sender whose daemon stays ignorant longer (an older version, or cut off) is never told.
-  A muted session's message to everyone or to a device goes out, and `send` names who didn't get it.
+  a presence takes to be pushed and read. The cost is a message or two after muting. A muted
+  session's message to everyone or to a device goes out, and `send` names who didn't get it.
+- **A sender is told of a message dropped for a mute that its daemon didn't know of** (#466,
+  2026-11-16): one sent past the grace by a daemon that hadn't read the mute, or to everyone or a
+  device before it had. The receiving device lists the IDs of the last 20 such messages, for a day,
+  in the muting session's presence (`dropped`, inside the box). The sender's daemon keeps its
+  sessions' messages for a day, finds its own among them, and tells the sender once per message and
+  muter, in its inbox and from Murmur, so no turn starts. A sender `send` already named the muter to
+  isn't told again. A daemon from before this doesn't read the list, so its sessions still aren't
+  told.
 - **A mute names a session by its name**, which the registry never gives out twice, so it can't land
   on another session, and it follows the conversation across session IDs until it is undone. A
   person can't be muted, nor a session with no name yet. Mutes a session makes before its own name
