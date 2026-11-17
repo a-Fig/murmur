@@ -250,7 +250,7 @@ func TestHelloNamesTheParentProcess(t *testing.T) {
 	if h.ClientPID != os.Getppid() || h.ClientPID == 0 {
 		t.Fatalf("the hello says the parent is %d, want %d", h.ClientPID, os.Getppid())
 	}
-	if h.ClaudeSession != "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff" || h.ID != "0a1b2c" || h.Cwd != "/work" {
+	if h.ClaudeSession != "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff" || h.ID != sessionID("0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff") || h.Cwd != "/work" {
 		t.Fatalf("hello: %+v", h)
 	}
 }
@@ -299,7 +299,7 @@ func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 	if h.ClaudeSession != "fffffff0-live" {
 		t.Fatalf("the second hello brought back %q, want the live ID", h.ClaudeSession)
 	}
-	if h.ID != "0a1b2c" || !h.Reconnect {
+	if h.ID != sessionID("0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff") || !h.Reconnect {
 		t.Fatalf("the session's own ID must not change: %+v", h)
 	}
 }
@@ -623,5 +623,25 @@ func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
 	}
 	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "who"}); err != nil || !res.IsError || f.requestCount() != before {
 		t.Errorf("a call with the marker gone: %v %+v, %d requests", err, res, f.requestCount()-before)
+	}
+}
+
+// A Claude Code session's ID is a hash of Claude Code's, the same each time, so a server that
+// restarts in the conversation, or a resume of it, takes its address back; and none of Claude
+// Code's ID is in it, which every address on the bus would publish (#51).
+func TestASessionIDHidesClaudeCodesID(t *testing.T) {
+	claude := "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff"
+	id := sessionID(claude)
+	if len(id) != 6 || id != sessionID(claude) {
+		t.Fatalf("sessionID gave %q, then %q", id, sessionID(claude))
+	}
+	if strings.HasPrefix(strings.ReplaceAll(claude, "-", ""), id) {
+		t.Errorf("the ID %s is the start of Claude Code's", id)
+	}
+	if other := sessionID("0a1b2c3d-1111-2222-3333-444455556666"); other == id {
+		t.Errorf("two conversations that begin alike have the ID %s", id)
+	}
+	if a, b := sessionID(""), sessionID(""); len(a) != 6 || a == b {
+		t.Errorf("with no Claude Code ID, the IDs %q and %q", a, b)
 	}
 }

@@ -24,7 +24,10 @@ since it wasn't installed). The details, and where each came from, are in the co
 - **Identity.** Claude Code's variables count only for Claude Code: Pi and OpenCode pass their
   environment on to their servers, so one started from a Claude Code session carries that session's
   `CLAUDE_CODE_SESSION_ID`. An agent's own session ID becomes the Murmur ID by hash, since Muse's
-  and OpenCode's IDs begin with the time and two of them often share six characters. A session of
+  and OpenCode's IDs begin with the time and two of them often share six characters. Claude Code's
+  is hashed too, since 2026-11-16 (#51): its ID used to be the first six characters of Claude
+  Code's, which put 24 bits of that in every address on the bus. A conversation from before then,
+  resumed, comes back at a new address with its name, and the old one forwards to it. A session of
   the shared OpenCode server is registered at its first call and dropped after 30 minutes without
   one.
 - **Delivery.** Inside T3, `t3 thread send` needed nothing new: an OpenCode and a Muse thread each
