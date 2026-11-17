@@ -43,7 +43,7 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   any later write that lands carries the pending one with it. `unwritten`, above, makes a new commit
   on each try, which would put a message that landed late on the log twice. After 30 minutes (the
   same as a `tell_me` wait) it is given up: the sender gets a notice in its inbox saying whether the
-  remote has it. A daemon that stops gives up what is pending, and keeps nothing across a restart
+  remote has it. A daemon that stops gives up what is pending, and keeps nothing across a restart; a send whose push ends unsure as it stops says so, as before
   (`internal/daemon/pending.go`).
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
   session returns. A session still connected when the daemon stops counts as stopped from then

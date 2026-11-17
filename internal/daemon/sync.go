@@ -1412,8 +1412,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
-			if settle != nil {
-				d.pendLocked(sha, settle, err)
+			if settle != nil && d.pendLocked(sha, settle, err) {
 				return pendingError{err}
 			}
 		}
@@ -1424,6 +1423,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
 			return err
 		}
+		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
 			return err
@@ -1444,7 +1444,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
 		// first sync, or a copied .git. Build on the remote's tip instead. A send pending on the
 		// tip that was given up for it is settled by whether the remote's has it.
-		d.settlePendingOn(ctx, tip, err)
+		d.settlePendingOn(ctx, tip, rejected)
 		d.ownTip = tip
 	}
 }

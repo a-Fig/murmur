@@ -151,3 +151,28 @@ func message(d *Daemon, subject string) bus.Event {
 	return bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: d.device + "/bbbbbb",
 		At: time.Now().UTC(), To: "*", Subject: subject}
 }
+
+// A send whose push ends unsure as the daemon stops, with no loop left to push it again or give it
+// up, fails unsure, as before #781, rather than being left pending for nobody (Sol's review of #818).
+func TestAnUnsureSendAsTheDaemonStopsIsntLeftPending(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{}, false)
+	before := d.sendFirst(t)
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	d.writeMu.Lock()
+	d.bgCtx = stopped
+	d.testPush = func(func() error) error { return errors.New("the connection dropped") }
+	d.writeMu.Unlock()
+	err := d.appendEventIf(context.Background(), message(d, "late"), nil, func(bool, bool, error) {
+		t.Error("a send never left pending was settled")
+	})
+	if errors.As(err, new(pendingError)) || !errors.As(err, new(unsureError)) {
+		t.Errorf("the send ended with %v, want it unsure and not pending", err)
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	if d.ownTip != before || len(d.pendSends) != 0 {
+		t.Errorf("the next write builds on %s with %d pending, want %s with none", d.ownTip, len(d.pendSends), before)
+	}
+}

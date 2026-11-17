@@ -44,19 +44,25 @@ type pendingError struct{ error }
 func (e pendingError) Unwrap() error { return e.error }
 
 // pendLocked leaves sha, the commit of a send whose push ended with err, unsure, pending: the
-// writes after it build on it, and pendingLoop pushes it again. Caller holds writeMu.
-func (d *Daemon) pendLocked(sha string, settle settleFunc, err error) {
+// writes after it build on it, and pendingLoop pushes it again. It says false, and leaves nothing
+// pending, if the daemon is stopping and no pendingLoop runs to push it or give it up: the send then
+// fails unsure, as before #781 (Sol's review of #818). Caller holds writeMu.
+func (d *Daemon) pendLocked(sha string, settle settleFunc, err error) bool {
+	if !d.pendRun && (d.bgCtx == nil || d.bgCtx.Err() != nil) {
+		return false
+	}
 	if len(d.pendSends) == 0 {
 		d.pendBase, d.pendFrom = d.ownTip, time.Now()
 	}
 	d.pendSends = append(d.pendSends, pendingSend{sha, settle})
 	d.ownTip = sha
 	d.log.Printf("the push of a message ended unsure (%v); it is pushed again until it lands", err)
-	if !d.pendRun && d.bgCtx != nil && d.bgCtx.Err() == nil {
+	if !d.pendRun {
 		d.pendRun = true
 		d.bg.Add(1)
 		go d.pendingLoop()
 	}
+	return true
 }
 
 // pendingLoop pushes the tip of this device's log again while a send is pending under it, waiting
@@ -94,7 +100,8 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	ctx, cancel := context.WithTimeout(d.bgCtx, 2*pushTimeout)
+	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go).
+	ctx, cancel := context.WithTimeout(d.bgCtx, pushTimeout)
 	defer cancel()
 	ref, sha := d.meshRef(), d.ownTip
 	err := d.push(ctx, sha, ref, bus.FastForward, "")
@@ -154,7 +161,9 @@ func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
 	if look {
 		lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || d.repo.Fetch(lctx, []string{ref}) == nil) {
+		// A tip that isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
+		// of #818): that is as if the remote couldn't be asked.
+		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || d.repo.Fetch(lctx, []string{ref}) == nil && func() bool { ok, _ := d.repo.IsCommit(lctx, tip); return ok }()) {
 			if tip == "" { // no log there at all
 				for _, p := range d.pendSends {
 					p.settle(false, true, err)
