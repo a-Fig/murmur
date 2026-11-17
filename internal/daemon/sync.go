@@ -1409,20 +1409,27 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	if err != nil {
 		return err
 	}
+	// A push carries the sends pending under it, so it goes out only if they still may: a send
+	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
+	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	for attempt := 0; ; attempt++ {
+		d.dropSwitchedOff(ctx)
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err
 		}
 		if lease == "" {
-			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", stillAll)
 		} else {
-			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, still)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
+		}
+		if errors.Is(err, errSendOff) && (still == nil || still()) {
+			continue // a pending send's switch went off as this waited: build without it
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
-			if settle != nil && d.pendLocked(sha, settle, err) {
+			if settle != nil && d.pendLocked(sha, settle, still, err) {
 				return pendingError{err}
 			}
 		}

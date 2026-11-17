@@ -1134,8 +1134,8 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	// unsent lets go of what was made for a message that wasn't sent, unless its push may land yet
 	// (unsure): the message would then name files that are gone, and its receipts would have
 	// nothing to be kept in. The files go when their time is up, as any message's do.
-	unsent := func(unsure bool) {
-		if len(e.Files) > 0 && !filesReused && !unsure {
+	unsent := func(unsure, keepFiles bool) {
+		if len(e.Files) > 0 && !filesReused && !unsure && !keepFiles {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
 		// A record kept only to tell an agent how far its message got goes either way: the agent
@@ -1150,25 +1150,31 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	// A push that ends unsure leaves the message pending, pushed again until it lands, and the
 	// sender is told only if it is given up (pending.go, #781).
+	//
+	// Its files' ref may be taken by a send of the same files at once (filesSentLocked, below), as the
+	// files are on the remote whatever becomes of the message: holding that send back until this one
+	// settles would hold it past its own time (Sol's review of rc.2). So a pending send given up
+	// keeps its ref its full time, as one that may land does, since another message may name it.
 	settle := func(landed, absent bool, err error) {
 		if landed {
-			if len(e.Files) > 0 {
-				d.mu.Lock()
-				d.filesSentLocked(e.FilesAt)
-				d.mu.Unlock()
-			}
 			return
 		}
-		unsent(!absent)
+		unsent(!absent, true)
 		d.mu.Lock()
 		d.givenUpLocked(from, e.Subject, nameOr(toName, to), err)
 		d.saveLocked()
 		d.mu.Unlock()
 	}
+	// Not the person's: the page shows a send as sent once it answers, and has nowhere to show a
+	// give-up minutes later, so the person is told at once it wasn't sent and can try again, as before
+	// #781 (Fable's review of rc.2).
+	if bus.IsPerson(from) {
+		settle = nil
+	}
 	err := d.appendEventIf(ctx, e, still, settle)
 	pending := errors.As(err, new(pendingError))
 	if err != nil && !pending {
-		unsent(errors.As(err, new(unsureError)))
+		unsent(errors.As(err, new(unsureError)), false)
 		// No key for the recipient's device is that recipient's alone. Anything else here, a team
 		// key not yet made or a push that failed, would refuse every recipient the same.
 		about := proto.RefusedSend
@@ -1179,7 +1185,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	// A pending send answers as one that landed (Tyler, 2026-11-16): it is pushed until it does, and
 	// its sender is told only if it is given up.
-	if !pending && len(e.Files) > 0 {
+	if len(e.Files) > 0 {
 		d.mu.Lock()
 		d.filesSentLocked(e.FilesAt) // a send of the same files may take its ref now
 		d.mu.Unlock()
