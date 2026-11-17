@@ -451,6 +451,9 @@ type Daemon struct {
 	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
 	// of the same ones to take the same ref (reuseFilesLocked, #739).
 	uploads map[[32]byte]*recentUpload
+	// sending is, by the files' sum, the send that is uploading those files: closed, and gone,
+	// when its message is out or has failed. A send of the same files waits for it (putFiles, #763).
+	sending map[[32]byte]chan struct{}
 	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
 	// leaves alone (pinFilesDir).
 	filesBusy map[string]int
