@@ -27,7 +27,8 @@ import (
 // as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too,
 // and is then on the remote or not as its last push left it: nothing is kept across a restart.
 
-// pendingGiveUp is how long after its first push a pending send is given up. Tyler set it
+// pendingGiveUp is how long after its first push ended unsure a pending send is given up, at the
+// first retry to end past it. Tyler set it
 // (2026-11-16): 30 minutes was too long for a sender to believe a message went that hadn't. With
 // the backoff that is about six pushes again.
 const pendingGiveUp = 3 * time.Minute
@@ -189,8 +190,8 @@ func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
 var errDaemonStopped = errors.New(brand.Product + " stopped before it landed")
 
 // givenUpLocked tells from, in its inbox, that its message about subject to to was given up after
-// err. It is called not sent, though it may land yet if the remote couldn't be asked: after half an
-// hour of failures that is the useful thing to say (Tyler, 2026-11-16). The notice comes from this
+// err. It is called not sent, though it may land yet if the remote couldn't be asked: after minutes
+// of failures that is the useful thing to say (Tyler, 2026-11-16). The notice comes from this
 // device's receipts address, as a tell_me notice does, and never starts a turn. Caller holds mu and
 // saves the state.
 func (d *Daemon) givenUpLocked(from, subject, to string, err error) {

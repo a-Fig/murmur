@@ -41,8 +41,8 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   that landed, with nothing added. The daemon pushes that tip again, waiting 5 s, then twice as long each time
   up to a minute. Pushing the same commits again is safe whether or not the first push landed, and
   any later write that lands carries the pending one with it. `unwritten`, above, makes a new commit
-  on each try, which would put a message that landed late on the log twice. Three minutes after its
-  first push (Tyler, 2026-11-16; 30 was too long) it is given up and called not sent: the sender
+  on each try, which would put a message that landed late on the log twice. About three minutes after
+  its first push (Tyler, 2026-11-16; 30 was too long) it is given up and called not sent: the sender
   gets a notice in its inbox saying so, and why in a few plain words ("the push kept timing out"),
   not git's. A daemon that stops gives up what is pending, and keeps nothing across a restart; a
   send whose push ends unsure as it stops says so, as before (`internal/daemon/pending.go`).
