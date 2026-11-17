@@ -1188,6 +1188,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
 	// sessions it was for won't get it, as they have muted it (#27), and which won't be woken by it
 	// (#545).
+	var named []string
 	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
 		group := bus.IsGroup(to)
 		if to == "*" || group {
@@ -1205,6 +1206,14 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(muters, m) })
 		d.mu.Unlock()
 		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
+		named = muters
+	}
+	// Kept a while, so the sender is told if a device it had read no mute of yet drops it (#466).
+	if !bus.IsPerson(from) {
+		d.mu.Lock()
+		d.outgoingLocked(from, nameOr(toName, to), e, named)
+		d.saveLocked()
+		d.mu.Unlock()
 	}
 	if tellMe != "" {
 		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
