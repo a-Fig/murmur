@@ -285,6 +285,9 @@ func (p *Presence) Clean() {
 			} else if !names.Valid(s.Name) {
 				s.Name = ""
 			}
+			if s.Name != "" || !names.Valid(s.Was) {
+				s.Was = ""
+			}
 			s.Agent = OneLine(s.Agent, 40)
 			s.Branch = OneLine(s.Branch, 100)
 			s.Doing = OneLine(s.Doing, 120)
@@ -481,6 +484,10 @@ type SessionInfo struct {
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// Was is the name the session went by last, while it has none (Name is empty): a new one is
+	// pending, as after Claude Code's /clear. Every device then shows it by the name its own device
+	// does (#602). A daemon from before it ignores it.
+	Was string `json:"was,omitempty"`
 	// NoWake says a message from another agent wouldn't go into the session as a turn now, by its
 	// device's wake setting (#545): NoWakeOff or NoWakeIdle, "" if it would. The message waits for
 	// the session's next turn or its inbox, and the sender is told. A daemon from before it ignores

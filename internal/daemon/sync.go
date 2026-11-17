@@ -1283,6 +1283,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		if s.Name != "" && d.notePresenceNameLocked(s.Name, bus.Addr(dev, s.ID)) {
 			seen = true
 		}
+		if d.notePeerNameLocked(bus.Addr(dev, s.ID), cmp.Or(s.Name, s.Was)) {
+			seen = true
+		}
 	}
 	for name, id := range pres.Names { // the same, from a presence this device can't open
 		if d.notePresenceNameLocked(name, bus.Addr(dev, id)) {
@@ -1787,6 +1790,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
 			Muted: d.mutesOfLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+		if s.name == "" {
+			info.Was = d.st.SessionNames[s.id] // the name it is shown by here (lastNameLocked)
+		}
 		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()

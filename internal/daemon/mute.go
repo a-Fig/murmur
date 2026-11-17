@@ -85,8 +85,14 @@ func (d *Daemon) nameOfLocked(addr string) string {
 // the latest: neither the registry nor presence keeps an order of them. namesByAddrLocked gives
 // the same for every address at once. "" for an address with none. Caller holds mu.
 func (d *Daemon) lastNameLocked(addr string) string {
-	if dev, id := bus.SplitAddr(addr); dev == d.device && d.st.SessionNames[id] != "" {
+	dev, id := bus.SplitAddr(addr)
+	if dev == d.device && d.st.SessionNames[id] != "" {
 		return d.st.SessionNames[id]
+	}
+	// Another device's, by the name its presence last showed it by: the name its own device shows
+	// it by, so every device agrees (#602).
+	if dev != d.device && d.st.PeerNames[addr].Name != "" {
+		return d.st.PeerNames[addr].Name
 	}
 	if names := d.heldNamesLocked(addr); len(names) > 0 {
 		return names[0]
@@ -159,36 +165,52 @@ func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
 	return !direct || time.Since(at) >= d.opt.MuteGrace
 }
 
+// muteNamesLocked is the names a mute of the session at addr may be under, as a receiving device
+// tells (mutedAtLocked): the name it has in presence, or, with none, as after /clear before its
+// new name lands, every name its address has held. A sender is refused, or told who didn't get its
+// message, by these, so it isn't sent a message the receiver then drops unseen (#602). Caller
+// holds mu.
+func (d *Daemon) muteNamesLocked(addr string) []string {
+	if bus.IsPerson(addr) {
+		return nil
+	}
+	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
+		return []string{name}
+	}
+	return d.heldNamesLocked(addr)
+}
+
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted
-// the session called name. Caller holds mu.
-func (d *Daemon) hasMutedLocked(dev, sess, name string) bool {
-	if name == "" || sess == "" {
+// a session by any of names (muteNamesLocked). Caller holds mu.
+func (d *Daemon) hasMutedLocked(dev, sess string, names []string) bool {
+	if len(names) == 0 || sess == "" {
 		return false
 	}
 	if dev == d.device {
-		_, muted := d.st.Mutes[d.tagKeyLocked(sess)][name]
-		return muted
+		m := d.st.Mutes[d.tagKeyLocked(sess)]
+		return slices.ContainsFunc(names, func(n string) bool { _, ok := m[n]; return ok })
 	}
 	if p := d.peers[dev]; p != nil {
 		for _, s := range p.pres.Sessions {
 			if s.ID == sess {
-				return slices.Contains(s.Muted, name)
+				return slices.ContainsFunc(names, func(n string) bool { return slices.Contains(s.Muted, n) })
 			}
 		}
 	}
 	return false
 }
 
-// mutersLocked lists, by name, the sessions that have muted the session called name: on device
-// dev, or on every device this daemon knows if dev is "". Caller holds mu.
-func (d *Daemon) mutersLocked(name, dev string) []string {
-	if name == "" {
+// mutersLocked lists, by name, the sessions that have muted a session by any of names
+// (muteNamesLocked): on device dev, or on every device this daemon knows if dev is "". Caller holds
+// mu.
+func (d *Daemon) mutersLocked(names []string, dev string) []string {
+	if len(names) == 0 {
 		return nil
 	}
 	var out []string
 	if dev == "" || dev == d.device {
 		for _, s := range d.sortedSessionsLocked() {
-			if _, muted := d.st.Mutes[tagKeyOf(s.name, s.id)][name]; muted {
+			if d.hasMutedLocked(d.device, s.id, names) {
 				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
 			}
 		}
@@ -198,12 +220,40 @@ func (d *Daemon) mutersLocked(name, dev string) []string {
 			continue
 		}
 		for _, s := range d.peers[id].pres.Sessions {
-			if slices.Contains(s.Muted, name) {
+			if slices.ContainsFunc(names, func(n string) bool { return slices.Contains(s.Muted, n) }) {
 				out = append(out, nameOr(s.Name, bus.Addr(id, s.ID)))
 			}
 		}
 	}
 	return out
+}
+
+type peerName struct {
+	Name string    `json:"name"`
+	At   time.Time `json:"at"` // to the hour
+}
+
+// notePeerNameLocked records name as the one another device's session at addr is shown by, and
+// lets go of those not seen for sessionNameKeep. It says whether the state changed. Caller holds
+// mu.
+func (d *Daemon) notePeerNameLocked(addr, name string) bool {
+	if name == "" {
+		return false
+	}
+	now := time.Now().UTC().Truncate(time.Hour)
+	if pn, ok := d.st.PeerNames[addr]; ok && pn.Name == name && pn.At.Equal(now) {
+		return false
+	}
+	if d.st.PeerNames == nil {
+		d.st.PeerNames = map[string]peerName{}
+	}
+	for a, pn := range d.st.PeerNames {
+		if now.Sub(pn.At) > sessionNameKeep {
+			delete(d.st.PeerNames, a)
+		}
+	}
+	d.st.PeerNames[addr] = peerName{name, now}
+	return true
 }
 
 // mutersNote tells the sender of a message to many which of them didn't get it, "" if all did.

@@ -881,6 +881,10 @@ type state struct {
 	// Used is every session name this daemon has ever seen, in the registry's history or in
 	// another device's presence, with the session's address where known. It only grows.
 	Used map[string]string `json:"usedNames,omitempty"`
+	// PeerNames is, by address, the name another device's session was last shown by in that
+	// device's presence, its pending one's Was included, and when it was last seen (#602): neither
+	// the registry nor Used says which of an address's names is the latest. Kept sessionNameKeep.
+	PeerNames map[string]peerName `json:"peerNames,omitempty"`
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
 	// NameHolders is the session on this device that took each name last, and SessionNames the
