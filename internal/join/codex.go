@@ -190,6 +190,19 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 			add[i] += "\r"
 		}
 	}
+	// Added after the file's last line, which has no newline, the keys take the CRLF that line lacks,
+	// and the last of them goes without one, as that line did: a \r of their own at the very end
+	// would be a lone CR, which TOML forbids, and Codex would then refuse the file (#783).
+	if nl == "\r\n" && len(add) > 0 && at == len(block) && end == len(lines) {
+		last := &lines[start]
+		if at > 0 {
+			last = &block[at-1]
+		}
+		if !strings.HasSuffix(*last, "\r") {
+			*last += "\r"
+		}
+		add[len(add)-1] = strings.TrimSuffix(add[len(add)-1], "\r")
+	}
 	block = append(block[:at], append(add, block[at:]...)...)
 
 	rebuilt := append(append(append([]string(nil), lines[:start+1]...), block...), lines[end:]...)

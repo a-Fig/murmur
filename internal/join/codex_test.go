@@ -89,6 +89,29 @@ func TestCodexEditKeepsCRLF(t *testing.T) {
 	if strings.Count(got, "\n") != strings.Count(got, "\r\n") || !strings.Contains(got, "command = \"/opt/mur\"\r\n") {
 		t.Errorf("stale CRLF table: %q", got)
 	}
+
+	// Murmur's table last, with no newline at the file's end: the keys added after its last line give
+	// that line its CRLF, and the file still ends without one, never in a lone CR (#783). The same when
+	// the header is the last line.
+	tail := "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\r\ndefault_tools_approval_mode = \"approve\""
+	for in, want := range map[string]string{
+		"x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]": "x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]\r\n" + tail,
+		"x = 1\r\n\r\n[mcp_servers.murmur]": "x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]\r\n" + tail,
+	} {
+		got, _ := edit(t, in)
+		if got != want {
+			t.Errorf("CRLF, no final newline: %q\nwant %q", got, want)
+		}
+		if again, changed := edit(t, got); changed || again != got {
+			t.Errorf("a second edit changed it: %q", again)
+		}
+		// Uninstall gives the file back without Murmur's table, ending as it did, without a lone CR.
+		server := []string{"mcp_servers", "murmur"}
+		drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
+		if out, _, err := editTOMLTables(got, "config.toml", [][]string{server}, drop); err != nil || out != "x = 1" {
+			t.Errorf("uninstall after it: %q %v", out, err)
+		}
+	}
 }
 
 // A table header inside a multi-line string is text, not a table.
