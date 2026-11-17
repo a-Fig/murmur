@@ -120,7 +120,8 @@ func (d *Daemon) heldNamesLocked(addr string) []string {
 // held: which of them it had when it sent can't be known, and a map's order must not decide
 // (#483), so a mute of any of them holds. The cost is a conversation nobody muted, at an address
 // whose earlier conversation was: what it sends is dropped if it has left presence by the time
-// this device reads it, and its sender isn't told (docs/design/mutes.md). Caller holds mu.
+// this device reads it, and its sender is told it was muted (#466, docs/design/mutes.md). Caller
+// holds mu.
 func (d *Daemon) mutedAtLocked(id, addr string) (at time.Time, muted bool) {
 	m := d.st.Mutes[d.tagKeyLocked(id)]
 	if len(m) == 0 || bus.IsPerson(addr) {

@@ -870,6 +870,17 @@ func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
 	return err == nil && tip == ""
 }
 
+// sameFilesBusy is what a send ends with when its time ran out waiting for another send of the
+// same files (putFiles, #763). It reads as what an agent can act on, and unwraps to the context's
+// error for whoever asks why.
+type sameFilesBusy struct{ err error }
+
+func (e sameFilesBusy) Error() string {
+	return "another send of the same files was still under way; send it again"
+}
+
+func (e sameFilesBusy) Unwrap() error { return e.err }
+
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
 // event says of them and the ref's name. The same files sent again within uploadReuse, as a send
 // to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
@@ -877,28 +888,68 @@ func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
 // fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
 // with a ref not reused, unless its push may land yet (unsureError).
 //
+// Only one upload of the same files is under way at a time (#763). A ref is taken by another send
+// once its message is out, so two sessions here that sent the same files at the same moment both
+// found none to take: each uploaded, each was counted in the day's uploads, and the later's
+// note of its ref replaced the earlier's. A second send now waits for the first's message to go
+// out or fail, and then takes its ref or uploads itself. end ends this send's turn: the caller
+// calls it once the message is out or has failed, after filesSentLocked, so that whoever waited
+// finds the ref, or after filesUnsent. It is called here if putFiles doesn't return a ref, a
+// panic included (the page's sends run where one is recovered), and does nothing for a ref reused.
+//
 // still is asked once the push's turn is had: Send files may have gone off while the send waited.
-func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool) (files []bus.File, at string, reused bool, err error) {
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool) (files []bus.File, at string, reused bool, end func(), err error) {
+	end = func() {}
 	if err := checkSendFiles(in); err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	sum := filesSum(in)
-	d.mu.Lock()
-	files, at, ok := d.reuseFilesLocked(sum)
-	d.mu.Unlock()
-	if ok {
-		if still != nil && !still() {
-			return nil, "", false, errSendOff
+	turn := make(chan struct{})
+	for {
+		d.mu.Lock()
+		files, at, ok := d.reuseFilesLocked(sum)
+		if ok {
+			d.mu.Unlock()
+			if still != nil && !still() {
+				return nil, "", false, end, errSendOff
+			}
+			return files, at, true, end, nil
 		}
-		return files, at, true, nil
+		ahead := d.sending[sum]
+		if ahead == nil {
+			if d.sending == nil {
+				d.sending = map[[sha256.Size]byte]chan struct{}{}
+			}
+			d.sending[sum] = turn
+			d.mu.Unlock()
+			break
+		}
+		d.mu.Unlock()
+		select {
+		case <-ahead:
+		case <-ctx.Done():
+			return nil, "", false, end, sameFilesBusy{ctx.Err()}
+		}
 	}
+	end = sync.OnceFunc(func() {
+		d.mu.Lock()
+		delete(d.sending, sum)
+		d.mu.Unlock()
+		close(turn)
+	})
+	pushed := false
+	defer func() {
+		if !pushed {
+			end()
+		}
+	}()
 	at = bus.NewFilesAt()
 	sealed := make([][]byte, len(in))
 	files = make([]bus.File, len(in))
 	for i, sf := range in {
 		blob, f, err := bus.SealFile(sf.data, at, i)
 		if err != nil {
-			return nil, "", false, err
+			return nil, "", false, end, err
 		}
 		f.Name = sf.name
 		sealed[i], files[i] = blob, f
@@ -906,21 +957,21 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool)
 	files = bus.CleanFiles(files) // the names a receiver will save them under
 	pack, err := bus.PackFiles(sealed)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	repo, done, err := d.scratch()
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	defer done()
 	sha, err := repo.NewFilesCommit(ctx, pack)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	d.mu.Lock()
 	if err := d.uploadRoomLocked(int64(len(pack)), at); err != nil {
 		d.mu.Unlock()
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
@@ -934,7 +985,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool)
 			d.mu.Unlock()
 		}
 		d.dropFileRef(at, true) // which saves
-		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
+		return nil, "", false, end, fmt.Errorf("its files didn't go out: %w", err)
 	}
 	// It went up, and stays counted whatever becomes of the ref: a prune that found it gone, its
 	// message having failed, would take for never landed what an earlier delete took away.
@@ -960,7 +1011,8 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool)
 	d.uploads[sum] = &recentUpload{at: at, files: slices.Clone(files), when: time.Now()}
 	d.mu.Unlock()
 	d.holdFilesHeld() // its own copies, pinned, stay
-	return files, at, false, nil
+	pushed = true
+	return files, at, false, end, nil
 }
 
 // dropFileRef forgets a files ref this device pushed, or with due set leaves it to the next prune
@@ -1760,7 +1812,7 @@ func (e noFile) Is(target error) bool { return target == web.ErrNoFile }
 // in it, fetched first if it isn't here.
 func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []byte, error) {
 	d.mu.Lock()
-	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.e.ID == id })
+	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.id == id })
 	var e bus.Event
 	if i >= 0 {
 		e = d.msgs[i].e

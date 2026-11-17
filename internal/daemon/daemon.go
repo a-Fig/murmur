@@ -55,6 +55,9 @@ type Options struct {
 	// before leaving the sync to queue it for this device's own sessions (leaveOwnTip): 2 s,
 	// longer than a sync takes when nothing is slow.
 	OwnTipWait time.Duration
+	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
+	// each time to a minute; PendingGiveUp how long it is tried before it is given up (pending.go).
+	PendingRetry, PendingGiveUp time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -184,6 +187,12 @@ func (o *Options) defaults() {
 	}
 	if o.OwnTipWait == 0 {
 		o.OwnTipWait = 2 * time.Second
+	}
+	if o.PendingRetry == 0 {
+		o.PendingRetry = 5 * time.Second
+	}
+	if o.PendingGiveUp == 0 {
+		o.PendingGiveUp = pendingGiveUp
 	}
 	if o.FetchLimit == 0 {
 		o.FetchLimit = 15 * time.Second
@@ -339,7 +348,12 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	err := repo.Push(ctx, sha, ref, mode, expect)
+	var err error
+	if push := func() error { return repo.Push(ctx, sha, ref, mode, expect) }; d.testPush != nil && ref == d.meshRef() {
+		err = d.testPush(push) // the caller holds writeMu, which guards it
+	} else {
+		err = push()
+	}
 	d.health.pushed(ctx, ref, err)
 	if cut := ctx.Err(); err != nil && cut != nil && !errors.Is(err, cut) {
 		// Git, stopped at the push's time, says only how it ended. A caller can tell from this
@@ -437,6 +451,9 @@ type Daemon struct {
 	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
 	// of the same ones to take the same ref (reuseFilesLocked, #739).
 	uploads map[[32]byte]*recentUpload
+	// sending is, by the files' sum, the send that is uploading those files: closed, and gone,
+	// when its message is out or has failed. A send of the same files waits for it (putFiles, #763).
+	sending map[[32]byte]chan struct{}
 	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
 	// leaves alone (pinFilesDir).
 	filesBusy map[string]int
@@ -463,7 +480,8 @@ type Daemon struct {
 	// started, logged once each (see notePersonLocked).
 	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
-	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
+	// page's messages, oldest first, msgSeq the number of the newest, msgIDs the IDs the page
+	// knows those in msgs by (pageMsg.id) and msgKeys which messages they are (msgKey).
 	lastPage time.Time
 	// lastApp is when the desktop app's page last called, seen or not: it keeps the daemon from
 	// exiting, and does nothing else lastPage does (docs/design/desktop.md).
@@ -471,6 +489,12 @@ type Daemon struct {
 	msgs    []pageMsg
 	msgSeq  uint64
 	msgIDs  map[string]bool
+	msgKeys map[string]bool
+	// idOwner is, by event ID, which message (msgKey) the page knows by that ID plain, for as
+	// long as a page may hold it: while it is in msgs, and until idKeep more have been dropped
+	// since it was. idGone is the IDs whose owner was dropped, oldest first (pageIDLocked).
+	idOwner map[string]string
+	idGone  []string
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
@@ -579,7 +603,16 @@ type Daemon struct {
 	syncing  bool
 	ownLater string
 	writeMu  sync.Mutex // serializes appends to this device's log
-	ownTip   string     // the remote's tip of this device's log, as last known; under writeMu
+	// ownTip is the tip of this device's log that the next write builds on: the remote's, as last
+	// known, or a send's still pending on top of it (pending.go). Under writeMu, as is the rest.
+	ownTip    string
+	pendSends []pendingSend
+	pendBase  string    // the tip the first pending send was built on, which had landed
+	pendFrom  time.Time // when the first pending send's push ended unsure
+	pendRun   bool      // pendingLoop is running
+	// testPush, set only by tests, stands in for a push of this device's log: it is given the real
+	// one to call, or not.
+	testPush func(push func() error) error
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
@@ -964,6 +997,12 @@ type state struct {
 	// sender asked to be told (#276).
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+	// MuteDrops is, by this device's session ID, the messages from other devices dropped on arrival
+	// as the session had muted their sender, newest last, listed in its presence; Outgoing is this
+	// device's sessions' recent messages, by ID, so a sender is told when another device lists one
+	// of them so (#466, mutedrop.go).
+	MuteDrops map[string][]muteDrop `json:"muteDrops,omitempty"`
+	Outgoing  map[string]*outgoing  `json:"outgoing,omitempty"`
 
 	// FileRefs is the files refs this device pushed, by name (bus.FilesRef), and when (#570,
 	// files.go): each is deleted from the remote FileKeep after. FilesWait is the messages for
@@ -1280,7 +1319,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
-		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, msgKeys: map[string]bool{}, idOwner: map[string]string{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}

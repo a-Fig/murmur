@@ -231,19 +231,19 @@ func historyEvent(c bus.Commit, dev string, keys bus.Keyring) (bus.Event, bool) 
 // mergeMessagesLocked puts the events the page doesn't have among its messages, all of them in the
 // order they were sent, by their senders' clocks: what is read back has no order of arrival. Every
 // message then gets a new number, so a page that asked before is given them all again, and passes
-// over the ones it has. With nothing new to keep, nothing changes. Caller holds mu.
+// over the ones it has, each of which keeps the ID the page knows it by (pageIDLocked). With nothing new to keep, nothing changes. Caller holds mu.
 func (d *Daemon) mergeMessagesLocked(events []bus.Event) {
 	all := make([]bus.Event, 0, len(d.msgs)+len(events))
 	for _, m := range d.msgs {
 		all = append(all, m.e)
 	}
-	seen := maps.Clone(d.msgIDs)
+	seen := maps.Clone(d.msgKeys)
 	if seen == nil {
 		seen = map[string]bool{}
 	}
 	for _, e := range events {
-		if !seen[e.ID] {
-			seen[e.ID] = true
+		if key := msgKey(e); !seen[key] {
+			seen[key] = true
 			all = append(all, e)
 		}
 	}
@@ -251,15 +251,15 @@ func (d *Daemon) mergeMessagesLocked(events []bus.Event) {
 		return
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].At.Before(all[j].At) })
-	was, wasIDs, wasOwn, wasSeq := d.msgs, d.msgIDs, d.ownMsgs, d.msgSeq
-	d.msgs, d.msgIDs, d.ownMsgs = nil, map[string]bool{}, 0
+	was, wasIDs, wasKeys, wasOwn, wasSeq := d.msgs, d.msgIDs, d.msgKeys, d.ownMsgs, d.msgSeq
+	d.msgs, d.msgIDs, d.msgKeys, d.ownMsgs = nil, map[string]bool{}, map[string]bool{}, 0
 	for _, e := range all {
 		d.keepMessageLocked(e)
 	}
 	// Everything read back was older than what the page keeps: as it was, numbers and all, so no
 	// page is given again what it has.
-	if len(d.msgs) == len(was) && !slices.ContainsFunc(d.msgs, func(m pageMsg) bool { return !wasIDs[m.e.ID] }) {
-		d.msgs, d.msgIDs, d.ownMsgs, d.msgSeq = was, wasIDs, wasOwn, wasSeq
+	if len(d.msgs) == len(was) && !slices.ContainsFunc(d.msgs, func(m pageMsg) bool { return !wasKeys[msgKey(m.e)] }) {
+		d.msgs, d.msgIDs, d.msgKeys, d.ownMsgs, d.msgSeq = was, wasIDs, wasKeys, wasOwn, wasSeq
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -200,5 +201,94 @@ func TestHistoryMergesActivity(t *testing.T) {
 	}
 	if !slices.Equal(kinds, []string{web.ActStarted + " 1m0s", web.ActStarted + " 2m0s", web.ActStarted + " 3m0s", web.ActStatus + " 4m0s"}) {
 		t.Errorf("the activity is %q, want the three starts and then the status", kinds)
+	}
+}
+
+// Two messages with one ID are two messages (#603): another device's, a copy of the ID with an
+// earlier time, and the sender's own later one. Each is on the page, under an ID of its own. The
+// same event read again is still kept once, and what the limit drops is forgotten whole.
+func TestAReusedMessageIDHidesNothing(t *testing.T) {
+	d := historyDaemon(10)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	first := sentAt("m1", 5)
+	first.Subject = "the first"
+	forged := sentAt("m1", 1)
+	forged.From, forged.Subject = "other-0003/bbbbbb", "a copy of the ID, dated before"
+	again := sentAt("m1", 9)
+	again.Subject = "the sender's own, later"
+	for _, e := range []bus.Event{first, forged, again, first, forged} {
+		d.recordMessageLocked(e)
+	}
+	ids := map[string]string{}
+	for _, m := range d.msgs {
+		ids[m.id] = m.e.Subject
+	}
+	if len(d.msgs) != 3 || len(ids) != 3 || ids["m1"] != "the first" || len(d.msgIDs) != 3 || len(d.msgKeys) != 3 {
+		t.Fatalf("the page holds %v, want the three messages, each under an ID of its own, the first under m1", ids)
+	}
+
+	// A restart reads them back in the order of the senders' clocks: all three still, and the same
+	// event read twice still once.
+	fresh := historyDaemon(10)
+	fresh.mu.Lock()
+	defer fresh.mu.Unlock()
+	fresh.mergeMessagesLocked([]bus.Event{first, forged, again, again})
+	got, _ := fresh.pageSubjects()
+	if !slices.Equal(got, []string{"a copy of the ID, dated before", "the first", "the sender's own, later"}) {
+		t.Errorf("read back, the page holds %q", got)
+	}
+	if !fresh.msgKeys[msgKey(first)] || len(fresh.msgIDs) != 3 {
+		t.Errorf("read back, the IDs known are %v", fresh.msgIDs)
+	}
+
+	// Past the limit the oldest goes, and its ID stays its own: a page that loaded earlier still
+	// holds it, and would pass over another message given that ID.
+	small := historyDaemon(2)
+	small.mu.Lock()
+	defer small.mu.Unlock()
+	for _, e := range []bus.Event{first, forged, again} {
+		small.recordMessageLocked(e)
+	}
+	if len(small.msgs) != 2 || len(small.msgIDs) != 2 || len(small.msgKeys) != 2 || small.msgKeys[msgKey(first)] || small.msgIDs["m1"] {
+		t.Errorf("past the limit: %d messages, IDs %v, %d keys", len(small.msgs), small.msgIDs, len(small.msgKeys))
+	}
+	// A merge sorts the list again, and each message keeps its ID.
+	was := map[string]string{}
+	for _, m := range small.msgs {
+		was[m.e.Subject] = m.id
+	}
+	late := sentAt("m9", 20)
+	small.mergeMessagesLocked([]bus.Event{late})
+	for _, m := range small.msgs {
+		if id, held := was[m.e.Subject]; held && id != m.id {
+			t.Errorf("%q was %s to the page and is %s after a merge", m.e.Subject, id, m.id)
+		}
+	}
+	// Read again, the first is itself again, under its own ID.
+	big := historyDaemon(10)
+	big.mu.Lock()
+	defer big.mu.Unlock()
+	big.idOwner, big.idGone = small.idOwner, small.idGone
+	big.recordMessageLocked(again)
+	big.recordMessageLocked(first)
+	for _, m := range big.msgs {
+		if (m.id == "m1") != (m.e.Subject == "the first") {
+			t.Errorf("%q is %s to the page", m.e.Subject, m.id)
+		}
+	}
+	// Until enough has been dropped since that no page can still hold it.
+	for i := 0; i <= idKeep; i++ {
+		small.recordMessageLocked(sentAt("x"+strconv.Itoa(i), 30+i))
+	}
+	if _, owned := small.idOwner["m1"]; owned || len(small.idGone) > idKeep || len(small.idOwner) > idKeep+2 {
+		t.Errorf("after %d more messages m1 is still spoken for, or the IDs kept grew: %d gone, %d owned", idKeep, len(small.idGone), len(small.idOwner))
+	}
+
+	// The person's unread goes by the ID the page knows a message by.
+	d.st.Person = "ada-lovelace"
+	d.st.Inbox = map[string][]*inMsg{bus.PersonSession: {{Event: forged}, {Event: first}}}
+	if got := d.accountLocked().Unread; len(got) != 2 || got[0] == got[1] || got[1] != "m1" {
+		t.Errorf("unread, with two messages of one ID: %v", got)
 	}
 }
