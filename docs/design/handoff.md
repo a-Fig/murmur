@@ -157,8 +157,9 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   session whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3. T3's headless
   server (`t3 serve`, 0.1.9) sets no `T3CODE_CLI_PATH` at all: a Claude Code thread there is known
   by `T3CODE_THREAD_ID` and reached through the `t3` that runs it (its parent, else the one on
-  PATH), and with none found it gets no
-  messaging socket, which starts no turn under T3 (#780, 2026-11-16). OpenCode's one MCP
+  PATH). With none found it gets no messaging socket, which starts no turn under T3; a Claude Code
+  whose parent is some other program (tmux, an editor) only inherited the variable and keeps its
+  own route (#780, 2026-11-16). OpenCode's one MCP
   process per directory has the environment of whoever started the shared server, so a T3 thread on
   a server a terminal started reads as outside T3, and the other way round (not tried). Codex's
   desktop app wasn't looked at, and only Windows was tried with the real programs.

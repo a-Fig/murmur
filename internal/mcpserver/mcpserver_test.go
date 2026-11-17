@@ -47,8 +47,9 @@ func TestMain(m *testing.M) {
 	}
 	// And under an agent, perhaps: the tests of T3's thread variable say whether one is above.
 	agentAbove = func() bool { return false }
-	// Nor a T3 on this machine's PATH: the tests of T3's headless server give theirs.
-	servingT3 = func() string { return "" }
+	// Nor started by a t3, which would make a client with T3's thread variable the thread: the tests
+	// of T3's headless server say when one is.
+	servingT3 = func() (string, bool) { return "", false }
 	// Servers publish their records here, not in the real user's config directory.
 	dir, err := os.MkdirTemp("", "murmur-sessions-")
 	if err != nil {

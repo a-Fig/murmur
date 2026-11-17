@@ -447,25 +447,47 @@ func t3Of(agent string) t3Seen {
 	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
 	seen.thread = isClaude(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
 	if seen.cli == "" && seen.thread {
-		seen.cli = servingT3()
+		seen.cli, seen.thread = servingT3()
 	}
 	return seen
 }
 
-// servingT3 is the `t3` that runs the client, the thread's: the client's parent if it is t3, as T3
-// starts Claude Code itself, else the one on PATH, else "". A variable, so that tests needn't have
-// T3.
-var servingT3 = func() string {
+// servingT3 is the `t3` that runs the client, as t3Of's thread is found, and whether the client
+// is the thread at all. A variable, so that tests needn't have T3.
+var servingT3 = func() (cli string, thread bool) {
+	parent, read := "", false
 	if pids := proc.Ancestors(os.Getppid(), 2); len(pids) == 2 {
-		if exe, err := proc.Exe(pids[1]); err == nil && programName(exe) == "t3" {
-			return strings.TrimSuffix(exe, " (deleted)")
+		exe, err := proc.Exe(pids[1])
+		parent, read = exe, err == nil
+	}
+	return t3Serving(parent, read, exec.LookPath)
+}
+
+// t3Serving is servingT3 for the client's parent, if it could be read. `t3 serve` starts Claude Code
+// itself, so a parent that is t3 is the thread's, and is used while it is still on disk; one that is
+// gone (an update pruned its version) gives way to the t3 on PATH, which follows updates. A parent
+// that is node may be the npm t3, so it too goes to PATH, as does one that can't be read. Any other
+// parent means the client isn't the thread but was started inside it, by tmux or an editor, say,
+// and only inherited its variable: it keeps its own route.
+func t3Serving(parent string, read bool, lookPath func(string) (string, error)) (cli string, thread bool) {
+	if read {
+		switch programName(parent) {
+		case "t3":
+			if !strings.HasSuffix(parent, " (deleted)") {
+				if _, err := os.Stat(parent); err == nil {
+					return parent, true
+				}
+			}
+		case "node":
+		default:
+			return "", false
 		}
 	}
-	cli, err := exec.LookPath("t3")
+	cli, err := lookPath("t3")
 	if err != nil {
-		return ""
+		return "", true
 	}
-	return cli
+	return cli, true
 }
 
 // parentProgram is the process that started this server and the program it runs. A variable, for

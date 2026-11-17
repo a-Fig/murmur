@@ -3,6 +3,9 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -47,8 +50,8 @@ func TestHeadlessT3IsFound(t *testing.T) {
 	t.Setenv(threadEnv, "thread-1")
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
 	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
-	t.Cleanup(func() { servingT3 = func() string { return "" } })
-	servingT3 = func() string { return "/home/u/.local/bin/t3" }
+	t.Cleanup(func() { servingT3 = func() (string, bool) { return "", false } })
+	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
 	h := helloFor("claude-code", "/work")
 	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-1",
 		MsgSocket: "/tmp/claude.sock", MsgToken: "tok-1"}); h.Route != want {
@@ -58,14 +61,14 @@ func TestHeadlessT3IsFound(t *testing.T) {
 		t.Errorf("hello %+v: want it registered by its thread, as in T3", h)
 	}
 
-	servingT3 = func() string { return "" }
+	servingT3 = func() (string, bool) { return "", true }
 	h = helloFor("claude-code", "/work")
 	if h.Route.MsgSocket != "" || h.Route.T3CLI != "" || h.ByThread || h.Agent != "claude-code" {
 		t.Errorf("with no t3 to be found: %+v, want no socket, no T3 command line, and not by its thread", h)
 	}
 
 	// Only Claude Code's thread is looked for: another agent with the variable keeps its own route.
-	servingT3 = func() string { return "/home/u/.local/bin/t3" }
+	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
 	t.Setenv("MURMUR_PI_MESSAGING_SOCKET", "/tmp/pi.sock")
 	t.Setenv("MURMUR_PI_MESSAGING_TOKEN", "tok-2")
 	if h := helloFor("pi", "/work"); h.Route.T3CLI != "" || h.Route.MsgSocket != "/tmp/pi.sock" || h.Agent != "pi" {
@@ -314,5 +317,37 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 	}
 	if got := lastRoute(t, f); got.T3Thread != "thread-1" {
 		t.Errorf("route told: %+v", got)
+	}
+}
+
+// The `t3` a headless thread is reached through comes from Claude Code's parent: the parent itself
+// while it is a t3 on disk, the one on PATH when it is gone or can't be told, and none for a client
+// some other program started, which isn't the thread (#780).
+func TestT3Serving(t *testing.T) {
+	dir := t.TempDir()
+	t3 := filepath.Join(dir, "t3")
+	if err := os.WriteFile(t3, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	onPath := func(string) (string, error) { return "/usr/local/bin/t3", nil }
+	noPath := func(string) (string, error) { return "", exec.ErrNotFound }
+	for _, c := range []struct {
+		name, parent string
+		read         bool
+		look         func(string) (string, error)
+		cli          string
+		thread       bool
+	}{
+		{"its t3", t3, true, onPath, t3, true},
+		{"t3.exe", t3 + ".exe", true, onPath, "/usr/local/bin/t3", true},
+		{"its t3, deleted", t3 + " (deleted)", true, onPath, "/usr/local/bin/t3", true},
+		{"node, the npm t3 perhaps", "/usr/bin/node", true, onPath, "/usr/local/bin/t3", true},
+		{"unreadable", "", false, onPath, "/usr/local/bin/t3", true},
+		{"unreadable, none on PATH", "", false, noPath, "", true},
+		{"tmux", "/usr/bin/tmux", true, onPath, "", false},
+	} {
+		if cli, thread := t3Serving(c.parent, c.read, c.look); cli != c.cli || thread != c.thread {
+			t.Errorf("%s: got %q, %v; want %q, %v", c.name, cli, thread, c.cli, c.thread)
+		}
 	}
 }
