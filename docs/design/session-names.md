@@ -72,6 +72,17 @@ names routes by it all the same.
     registered with, as a restarted server's does. Whether a turn can be started in the app's
     session wasn't tried: the command-line route is taken only by a server whose parent program is
     named `codex`.
+- **A Claude Code conversation that moves between the command line and T3 keeps its name** (#643,
+  2026-11-16). T3 imports a command-line conversation and resumes its Claude session, and `claude
+  --resume` goes on with one T3 had, so the Claude session ID stays the same. The name key didn't:
+  it is the T3 thread's in T3 and the Claude session's outside it, and each had a name of its own.
+  Now a Claude Code session in a T3 thread gives its two keys one name: where one has a name and
+  the other none, the other takes it (`shareNameLocked`). With the other program's session still
+  open, the rule above applies, with the conversation known by its Claude session ID instead of
+  the key: the session that registered last takes the name. A session in T3 keeps its ID across
+  its server's restarts (#642), so its `ThreadLeft` record goes at its next first registration,
+  and the thread can take its name back then. Nothing in T3 itself was run: its import and resume
+  were read in its code for #643.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer
@@ -244,4 +255,5 @@ knew the rest.
 - **Not covered.** If T3 started the new instance's process before letting the old one go, the new
   server would give up the thread's address after 7 s, for good, and the thread would split as
   before #642. In the switch seen for #636 the old one had gone about 40 s before. A conversation
-  moved between the Claude Code CLI and T3 still changes its name and address (#643).
+  moved between the Claude Code CLI and T3 keeps its name since #643, but not its address: the
+  thread's is made from the thread, the command line's from the Claude session.

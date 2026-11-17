@@ -252,8 +252,15 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	// thread back from a session that got it since.
 	var left []string
 	if s == nil && !h.Reconnect {
-		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
+		if isClaudeCode(agent) && d.st.ThreadLeft[h.ID] != "" {
+			// A Claude session in T3 keeps its ID across its server's restarts, as the ID is made
+			// from the thread (#642): starting again, it has the conversation again, though it gave
+			// it up to the command line once (#643).
+			delete(d.st.ThreadLeft, h.ID)
+		}
+		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base, claude)
 	}
+	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude))
 	key := d.uniqueKeyLocked(base, h.ID)
 	taken := false
 	if s != nil {
