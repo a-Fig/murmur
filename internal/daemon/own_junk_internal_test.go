@@ -10,27 +10,27 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
-// Something pushed over this device's log that isn't here and can't be fetched in time, as a large
-// object would be, is replaced by the next write, which lands; the sends don't each fail on it
-// (#222). A fetch that fails otherwise, or that the send's own time cut short, says nothing of the
-// tip: the send fails, and the tip stays (Opus's review of #845).
-func TestAnUnfetchableTipOverTheOwnLogIsReplaced(t *testing.T) {
+// A tip over this device's log that isn't here and can't be fetched is never replaced on a guess:
+// a fetch that runs out of OwnFetchLimit, fails otherwise, or is cut short by the send's own time
+// fails the send quickly and leaves the tip, as a slow link times out as a large object does, and
+// the tip may be this device's own history (#222, Sol's review of #845). Once the tip is here, as
+// the sync's background fetch brings it, sends work again.
+func TestAnUnfetchableTipOverTheOwnLogFailsSendsAndIsLeft(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name     string
-		fetch    func(ctx context.Context, stop func()) error
-		replaced bool
+		name  string
+		fetch func(ctx context.Context, stop func()) error
 	}{
-		{"its fetch runs out of time", func(ctx context.Context, _ func()) error { <-ctx.Done(); return ctx.Err() }, true},
-		{"its fetch fails otherwise", func(context.Context, func()) error { return errors.New("cannot lock ref") }, false},
-		{"the send's own time runs out", func(ctx context.Context, stop func()) error { stop(); <-ctx.Done(); return ctx.Err() }, false},
+		{"its fetch runs out of time", func(ctx context.Context, _ func()) error { <-ctx.Done(); return ctx.Err() }},
+		{"its fetch fails otherwise", func(context.Context, func()) error { return errors.New("cannot lock ref") }},
+		{"the send's own time runs out", func(ctx context.Context, stop func()) error { stop(); <-ctx.Done(); return ctx.Err() }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			d, peer, _ := rateRig(t, Options{OwnFetchLimit: 200 * time.Millisecond}, false)
 			ctx, stop := context.WithCancel(context.Background())
 			defer stop()
-			before := d.sendFirst(t)
+			d.sendFirst(t)
 			msg, err := bus.Encode(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "peer-0001/aaaaaa", To: "*", Subject: "junk"}, "junk")
 			if err != nil {
 				t.Fatal(err)
@@ -42,29 +42,27 @@ func TestAnUnfetchableTipOverTheOwnLogIsReplaced(t *testing.T) {
 			if err := peer.Push(ctx, junk, d.meshRef(), bus.Force, ""); err != nil {
 				t.Fatal(err)
 			}
-			fetched := 0
 			d.writeMu.Lock()
-			d.testFetch = func(fctx context.Context) error { fetched++; return c.fetch(fctx, stop) }
+			d.testFetch = func(fctx context.Context) error { return c.fetch(fctx, stop) }
 			d.writeMu.Unlock()
 			err = d.appendEvent(ctx, message(d, "after the junk"))
-			tip, rerr := d.repo.RemoteRef(context.Background(), d.meshRef())
+			bg := context.Background()
+			tip, rerr := d.repo.RemoteRef(bg, d.meshRef())
 			if rerr != nil {
 				t.Fatal(rerr)
 			}
-			if !c.replaced {
-				if err == nil || tip != junk {
-					t.Errorf("the send: %v, the remote's tip %s; want it failed and the tip left", err, tip)
-				}
-				return
+			if err == nil || tip != junk {
+				t.Fatalf("the send: %v, the remote's tip %s; want it failed and the tip left", err, tip)
 			}
-			if err != nil {
-				t.Fatalf("the send over an unfetchable tip: %v", err)
+			// The tip arrives, as the sync's background fetch brings it: sends work again.
+			if err := d.repo.Fetch(bg, []string{d.meshRef()}); err != nil {
+				t.Fatal(err)
 			}
-			if parent := strings.TrimSpace(runGit(t, d.opt.GitDir, "rev-parse", tip+"^")); tip == junk || parent != before {
-				t.Errorf("the remote's tip %s, on %s; want the send, on %s", tip, parent, before)
-			}
-			if fetched != 1 {
-				t.Errorf("the tip was fetched %d times, want once", fetched)
+			d.writeMu.Lock()
+			d.testFetch = func(context.Context) error { t.Error("fetched a tip that is here"); return nil }
+			d.writeMu.Unlock()
+			if err := d.appendEvent(bg, message(d, "once it is here")); err != nil {
+				t.Errorf("a send once the tip is here: %v", err)
 			}
 		})
 	}

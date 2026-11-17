@@ -57,15 +57,15 @@ address once ([counting use](counting.md)).
   and builds over junk rather than on it. The remote refuses a ref whose name clashes with
   another's, so a daemon deletes refs that would block its own, such as `presence/<deviceId>/...`
   (found by the Opus reviews of V1, #8, 2026-10-28).
-- **A tip over a device's own log that can't be fetched is replaced** (#222, 2026-11-16). A
-  write the remote refuses looks at the log's tip to tell junk from a tip of its own to build on. A
-  tip that is a commit here already, as this clone's own from before a restart always is, isn't
-  fetched. One that isn't is fetched for 20 s at most. If that runs out, a large object pushed over
-  the log, the write replaces it; a fetch that fails otherwise fails the write, as before. Fetching
-  for the send's whole 90 s failed that send, and every one after it, as git keeps nothing of a
-  fetch that doesn't finish. The cost: a log written from a copy of its clone's `.git`, by another
-  clone, whose tip can't be fetched in time, is replaced as junk would be, and what that clone wrote
-  since is lost to the log.
+- **A tip over a device's own log that can't be fetched fails a write quickly** (#222,
+  2026-11-16). A write the remote refuses looks at the log's tip to tell junk from a tip of its own
+  to build on. A tip that is a commit here already isn't fetched. One that isn't is fetched for 20 s
+  at most, not the send's whole 90 s, with every other write waiting behind it. If that runs out the
+  write fails; the tip isn't replaced on a timeout, as a slow link times out as a large object does,
+  and the tip may hold the device's own history that this clone lacks (a re-clone or a restore that
+  kept its identity): Sol's review of #845 found replacing it would lose that. Sends work again
+  once the sync's background fetch (#15) has brought the tip. A tip that can never be fetched in
+  time still stops them; telling it apart without its tree is #848.
 - **Sizes are capped** (2026-11-09). Git keeps commits compressed, so a quick fetch can bring a
   message of any size: one of 64 MB packed to 64 KB, and reading it whole took 448 MB. A commit over
   1 MB on a log or a presence, or 32 MB on the names registry, is passed over unread, as junk is. A
