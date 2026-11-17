@@ -854,7 +854,7 @@ function peopleGroup() {
             h(
               "span",
               { class: "side-session-text" },
-              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, p.name), humanTag()),
+              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": p.name }, p.name), humanTag()),
               h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
             ),
           ),
@@ -1339,7 +1339,7 @@ function sideSessionBody(d, s) {
     h(
       "span",
       { class: "side-session-text" },
-      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 1)),
+      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": s.name }, s.name), tagChips(s, 1)),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
     ),
     pr && prBadge(pr, false),
@@ -1597,7 +1597,7 @@ function sessionCard(d, s) {
         h(
           "span",
           { class: "s-line name-line" },
-          h("span", { class: "s-name truncate" }, s.name),
+          h("span", { class: "s-name truncate", "data-profile": s.name }, s.name),
           tagChips(s, 2),
           // The hook never reported after a tool call, so the session isn't told of messages while it
           // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
@@ -1822,7 +1822,7 @@ function activityLine(iconName, tone, t, key, ...what) {
 }
 
 function actWho(name) {
-  return h("span", { class: "g-act-who" }, name);
+  return name ? nameButton(name, "g-act-who") : h("span", { class: "g-act-who" }, name);
 }
 
 function actBranch(branch) {
@@ -1880,7 +1880,7 @@ function githubItem(e) {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), h("span", { "data-profile": toName(m) }, toName(m))];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1889,7 +1889,7 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" && e.target === e.currentTarget ? open() : null) },
     avatar(from),
     h(
       "div",
@@ -1897,7 +1897,7 @@ function recentItem(m, at) {
       h(
         "div",
         { class: "chat-msg-head" },
-        h("span", { class: "chat-msg-from truncate" }, from),
+        h("span", { class: "chat-msg-from truncate", "data-profile": from }, from),
         m.fromPerson && humanTag(),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
@@ -1909,19 +1909,20 @@ function recentItem(m, at) {
 }
 
 // A Recent item is a button onto its conversation. Its name is what it shows, in the order it shows
-// it (WCAG 2.5.3), Space works as well as Enter, and a link in its text is left to the conversation
-// it opens, since a button can't hold another control.
+// it (WCAG 2.5.3), Space works as well as Enter, and a link or a name in its text is left to the
+// conversation it opens from the keyboard, since a button can't hold another control. A click on a
+// name still opens its card.
 function openable(el, m, at) {
   const to = m.toKind === "all" ? "Everyone" : m.toKind === "group" ? m.to : m.toKind === "device" ? host(m.to) : toName(m);
   el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
   const space = (e) => {
-    if (e.key !== " ") return;
+    if (e.key !== " " || e.target !== e.currentTarget) return;
     e.preventDefault();
     e.currentTarget.click();
   };
   el.addEventListener("keydown", space);
   el.listeners.push(["keydown", space]);
-  for (const a of el.querySelectorAll("a")) a.tabIndex = -1;
+  for (const a of el.querySelectorAll("a, button")) a.tabIndex = -1;
   return el;
 }
 
@@ -2022,7 +2023,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate", "data-profile": r.name }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -2690,7 +2691,7 @@ function profileCard() {
         ),
       ),
     common.length > 0 && section("In common", h("div", { class: "pc-common" }, common)),
-    talked.length > 0 && section("Talked with", h("div", { class: "pc-talked" }, talked.map((n) => h("span", { class: "pc-talked-one", title: n }, avatar(n), h("span", { class: "truncate" }, n))))),
+    talked.length > 0 && section("Talked with", h("div", { class: "pc-talked" }, talked.map((n) => h("button", { type: "button", class: "pc-talked-one", title: n, "data-profile": n, "aria-haspopup": "dialog", "data-key": "pc-talked-" + n }, avatar(n, false), h("span", { class: "truncate" }, n))))),
     !own &&
       h(
         "div",
@@ -3097,6 +3098,34 @@ function avatar(name, card = true) {
   const face = isPerson(name) ? personFace(name, color) : ghostFace(name, color);
   if (card && name) face.dataset.profile = name;
   return face;
+}
+
+// A name the page shows opens the same card as its face (#778, Tyler): where the name stands on its
+// own, as this button; inside a control, as a span with data-profile, which the capture listener
+// above takes ahead of the control. Names in controls that pick (the pickers, sessions being picked
+// to tag) and in a conversation's row keep the control's action.
+function nameButton(name, cls, text = name) {
+  return h("button", { type: "button", class: "name-ref " + cls, "data-profile": name, "aria-haspopup": "dialog" }, text);
+}
+
+// A name the page knows, written in a message, as a session's two words or in backticks.
+function knownName(t) {
+  return !!(findSession(t) || findPerson(t) || t === myName());
+}
+
+// Plain text from a message, with each name the page knows (quiet-otter) made a nameButton.
+function withNames(t, out) {
+  // Not part of a path, an address or a longer word: what comes before is checked by hand, since a
+  // lookbehind is a parse error in Safari before 16.4, and that would stop the whole page.
+  const re = /[a-z0-9]+(?:-[a-z0-9]+)+(?![\w/\\-]|[.:]\w)/g;
+  let last = 0;
+  for (let m; (m = re.exec(t)); ) {
+    if ((m.index > 0 && /[\w./:\\-]/.test(t[m.index - 1])) || !knownName(m[0])) continue;
+    if (m.index > last) out.push(t.slice(last, m.index));
+    out.push(nameButton(m[0], "rich-name"));
+    last = re.lastIndex;
+  }
+  if (last < t.length) out.push(t.slice(last));
 }
 
 function personFace(name, cls) {
@@ -4096,13 +4125,18 @@ function inline(t) {
   const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https:\/\/[^\s)<>]+[^\s)<>.,;:!?'"])/g;
   let last = 0;
   for (let m; (m = re.exec(t)); ) {
-    if (m.index > last) out.push(t.slice(last, m.index));
-    if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
-    else if (m[2]) out.push(h("strong", null, m[2].slice(2, -2)));
+    if (m.index > last) withNames(t.slice(last, m.index), out);
+    if (m[1] && knownName(m[1].slice(1, -1))) out.push(nameButton(m[1].slice(1, -1), "rich-name", h("code", null, m[1].slice(1, -1))));
+    else if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
+    else if (m[2]) {
+      const bold = [];
+      withNames(m[2].slice(2, -2), bold);
+      out.push(h("strong", null, bold));
+    }
     else out.push(h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
     last = re.lastIndex;
   }
-  if (last < t.length) out.push(t.slice(last));
+  if (last < t.length) withNames(t.slice(last), out);
   return out;
 }
 
