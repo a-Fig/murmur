@@ -1328,7 +1328,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now(),
-		DND: d.dnd.Load(), FilesOff: !d.agentRecv.on.Load(), SendFilesOff: !d.agentSend.Load()}
+		DND: d.dnd.Load()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -1352,7 +1352,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
-			Stale: d.staleLocked(p), DND: p.pres.DND, FilesOff: p.pres.Files && p.pres.FilesOff}
+			Stale: d.staleLocked(p), DND: p.pres.DND}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
@@ -1370,7 +1370,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
-				Tags: ts, HookOff: s.HookOff, FilesOff: s.ID == bus.PersonSession && p.pres.Files && p.pres.PersonFilesOff})
+				Tags: ts, HookOff: s.HookOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
 			continue // nothing on it matches

@@ -20,15 +20,17 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
 
 - **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
   an agent's if sending is off or kept from agents, the page's if it is off, and checked again
-  once the push's turn comes. An agent is told its user can turn it on, and `who` marks the device `AGENTS SEND NO
-  FILES` so it knows before it tries. On the page the paperclip still shows: attaching, dropping
+  once the push's turn comes. An agent is told its user can turn it on. `who` doesn't say so
+  beforehand: most agents never send files, and two lines under every device were noise they read
+  on each call (#859, Tyler, 2026-11-17). On the page the paperclip still shows: attaching, dropping
   or pasting a file asks the person to turn theirs on, and goes on once they do.
 - **Receive files off:** a message from another device arrives as its text, its files neither
   fetched nor shown. Kept from agents, the page fetches and shows them and the sessions don't get
   them. A fetch under way ends when its switch goes off, and a
   message that was waiting for its files goes without them. The device's presence says whether its
   agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
-  `send` says which recipients get the text alone, and `who` and `lookup` show it before a send.
+  `send` says which recipients get the text alone. `who` and `lookup` don't show it, for the same
+  reason as Send files (#859).
   What a session sends another on the same device is there already and fetched from nowhere, so it
   is shown.
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).

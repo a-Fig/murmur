@@ -14,14 +14,15 @@ import (
 
 // Send files and Receive files are off until a person turns them on (#765, Tyler, 2026-11-16). With
 // sending off, a send with files is refused before anything is read or pushed, saying the user can
-// turn it on, and who says so first.
+// turn it on. who doesn't mention it: most agents never send files, and the refusal says it when it
+// matters (#859, Tyler, 2026-11-17).
 func TestASendWithFilesIsRefusedWhileSendFilesIsOff(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
 	a.session("aaaaaa", "")
-	if who := view.Who(a.do(proto.Request{Op: proto.OpWho, Session: "aaaaaa"})); !strings.Contains(who, "AGENTS SEND NO FILES") {
-		t.Errorf("who doesn't say this device sends no files:\n%s", who)
+	if who := view.Who(a.do(proto.Request{Op: proto.OpWho, Session: "aaaaaa"})); strings.Contains(strings.ToLower(who), "files") {
+		t.Errorf("who mentions files:\n%s", who)
 	}
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a log",
 		Files: []string{writeFile(t, "build.log", []byte("a line\n"))}})
@@ -37,7 +38,8 @@ func TestASendWithFilesIsRefusedWhileSendFilesIsOff(t *testing.T) {
 }
 
 // A device with Receive files off takes a message's text, and neither fetches nor shows its files.
-// Its presence says so, so the sender is told when it sends, and who and lookup show it before.
+// Its presence says so, so the sender is told when it sends files; who and lookup don't mention it
+// (#859).
 func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -45,12 +47,13 @@ func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 	b := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
-	eventually(t, "a to see that bob's device takes no files", func() bool {
-		return strings.Contains(view.Who(a.do(proto.Request{Op: proto.OpWho, Session: "aaaaaa"})), "AGENTS TAKE NO FILES")
-	})
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
 	name := a.named(bob)
-	if look := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})); !strings.Contains(look, "takes no files") {
-		t.Errorf("lookup doesn't say bob takes no files:\n%s", look)
+	if who := view.Who(a.do(proto.Request{Op: proto.OpWho, Session: "aaaaaa"})); strings.Contains(strings.ToLower(who), "files") {
+		t.Errorf("who mentions files:\n%s", who)
+	}
+	if look := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})); strings.Contains(strings.ToLower(look), "files") {
+		t.Errorf("lookup mentions files:\n%s", look)
 	}
 	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "the failing page",
 		Files: []string{writeFile(t, "shot.png", []byte("not really a picture"))}})
@@ -133,8 +136,9 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	}
 }
 
-// A person who turned Receive files off is shown so to a sender, and told of when sent to.
-func TestAPersonWhoTakesNoFilesIsShownSo(t *testing.T) {
+// A sender to a person who turned Receive files off is told so when it sends files, and not before
+// (#859).
+func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.files = `{"sendFiles":true}` })
@@ -142,12 +146,14 @@ func TestAPersonWhoTakesNoFilesIsShownSo(t *testing.T) {
 	b.session("bbbbbb", "")
 	pa := a.page()
 	pa.choose("ada-lovelace")
-	eventually(t, "b to see ada take no files", func() bool {
-		return strings.Contains(view.Who(b.do(proto.Request{Op: proto.OpWho, Session: "bbbbbb"})), "ada-lovelace") &&
-			strings.Contains(view.Who(b.do(proto.Request{Op: proto.OpWho, Session: "bbbbbb"})), ", takes no files")
+	eventually(t, "b to see ada", func() bool {
+		return strings.Contains(view.Who(b.do(proto.Request{Op: proto.OpWho, Session: "bbbbbb"})), "ada-lovelace")
 	})
-	if look := view.Lookup(b.do(proto.Request{Op: proto.OpLookup, Session: "bbbbbb", Name: "ada-lovelace"})); !strings.Contains(look, "takes no files") {
-		t.Errorf("lookup of ada:\n%s", look)
+	if who := view.Who(b.do(proto.Request{Op: proto.OpWho, Session: "bbbbbb"})); strings.Contains(strings.ToLower(who), "files") {
+		t.Errorf("who mentions files:\n%s", who)
+	}
+	if look := view.Lookup(b.do(proto.Request{Op: proto.OpLookup, Session: "bbbbbb", Name: "ada-lovelace"})); strings.Contains(strings.ToLower(look), "files") {
+		t.Errorf("lookup of ada mentions files:\n%s", look)
 	}
 	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "the chart",
 		Files: []string{writeFile(t, "chart.png", []byte("a chart"))}})
