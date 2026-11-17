@@ -119,7 +119,8 @@ kept just for Murmur, to connect agents that work in different repos, also read
 https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/different-repos.md.
 
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
-your user what it says; running `mur join` again retries.
+your user what it says; running `mur join` again retries. If a step gets stuck, it gives up within
+about 100 seconds and says which step, so give the command a timeout of 2 minutes or more.
 
 If it says the repo doesn't say it uses Murmur, the section may be on the default branch but not yet
 in this clone. Fetch from the remote Murmur uses (the one `git config murmur.remote` names, else

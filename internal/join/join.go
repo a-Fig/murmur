@@ -47,7 +47,7 @@ type Env struct {
 	// Version is mur's, for reporting a public repo (internal/publicrepo); "", as tests leave it,
 	// reports nothing.
 	Version string
-	// Progress is where a leave says it is still waiting for the daemon to stop, before the report;
+	// Progress is where a join or a leave says what it is still waiting for, before the report;
 	// nil, as most tests leave it, says nothing.
 	Progress io.Writer
 	// RemoveApp, for uninstall, takes out the desktop app's launcher and its folder in Murmur's
@@ -168,6 +168,9 @@ func (r Report) String() string {
 // again, and a rerun only fills in what is missing.
 func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	var r Report
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, joinWait)
+	defer cancel()
 	p, err := Locate(ctx, dir)
 	if err != nil {
 		return r, err
@@ -177,7 +180,15 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			"here or on the default branch as this clone last fetched it. `%[2]s init` adds it and pushes it to the default branch, "+
 			"after the user agrees (%[3]s)", brand.Product, brand.Command, brand.SetupDoc)
 	}
-	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
+	// A step cut short by the deadline fails with it; the problem added at the end says so once.
+	cut := func() bool { return ctx.Err() != nil }
+	problem := func(what string, err error) {
+		if !cut() {
+			r.Problems = append(r.Problems, what+": "+err.Error())
+		}
+	}
+	steps := stepper{w: e.Progress, now: "reading which agents this machine has"}
+	defer steps.stop()
 
 	// Per user: the MCP server, registered once for every repo this user opens, in every
 	// configuration of each agent. Only the default ones' news shapes the advice: those are the
@@ -189,6 +200,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
+			if cut() {
+				break
+			}
+			steps.start("adding " + brand.Product + " to " + h.Label)
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
 			if err != nil {
@@ -219,7 +234,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// Claude Code's hook is per user now, written above; one an older join put in the clone's
 	// working trees comes out, or Claude Code would run both (#422). Not where a home couldn't be
 	// written: the older hook is then the only one its sessions have, and stays for the next join.
-	if claudeOK {
+	if claudeOK && !cut() {
+		steps.start("looking for hooks an older " + brand.Command + " put in this clone's working trees")
 		trees, hookNotes, err := removeHooks(ctx, p, e.claudeSettings())
 		r.Notes = append(r.Notes, hookNotes...)
 		for _, t := range trees {
@@ -231,6 +247,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
+	steps.stop()
+	if cut() {
+		return e.cutShort(r, parent, steps.now, false)
+	}
 	news, consentErr := p.RecordConsent()
 	if consentErr != nil {
 		problem("recording that you joined", consentErr)
@@ -250,6 +270,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
 	// over as a turn, for one): it is replaced. One from before proof (0.2) can't be asked to stop,
 	// and Replace ends it by its process (#394).
+	steps.start("starting this clone's daemon")
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
 	case errors.Is(err, client.ErrNoDaemon):
@@ -266,17 +287,25 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 
+	steps.stop()
+	if cut() {
+		return e.cutShort(r, parent, steps.now, consentErr == nil)
+	}
+
 	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
 		last := len(r.Tell) - 1
 		r.Tell = append(r.Tell[:last], publicrepo.Statement, r.Tell[last])
+		// Best effort, so the deadline cutting it short fails nothing: a daemon tries again.
+		steps.start("asking GitHub whether this repo is public, to report it if it is")
 		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		if res, _ := publicrepo.Once(rctx, publicrepo.Options{Version: e.Version, GitDir: p.GitDir}); res == publicrepo.Reported {
 			r.Did = append(r.Did, publicrepo.Told)
 		}
 		cancel()
+		steps.stop()
 	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
@@ -290,6 +319,50 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("joined, but not everything worked; see above")
 	}
 	return r, nil
+}
+
+// How long a join may take in all, and how long one step runs before the join says it is still on
+// it. Agents run join under a timeout of their own, and one that kills it sees nothing of what it
+// was doing (#829): join gives up first, in time to say where. Variables, for the tests.
+var (
+	joinWait  = 90 * time.Second
+	joinQuiet = 5 * time.Second
+)
+
+// stepper keeps the step a join is on. One that runs past joinQuiet says so on w.
+type stepper struct {
+	w    io.Writer
+	now  string // the step, as in "still <now>"
+	done func()
+}
+
+func (s *stepper) start(what string) {
+	s.stop()
+	s.now = what
+	s.done = sayIfSlow(s.w, joinQuiet, brand.Command+" join: still "+what+"\n")
+}
+
+func (s *stepper) stop() {
+	if s.done != nil {
+		s.done()
+		s.done = nil
+	}
+}
+
+// cutShort ends a join the deadline, or the caller, stopped while it was on step: with a problem that
+// says where it stopped, and the advice for a join that didn't finish. Once the user has joined, a
+// daemon may report the repo, so the advice says so as a finished join's does.
+func (e Env) cutShort(r Report, parent context.Context, step string, joined bool) (Report, error) {
+	if parent.Err() != nil {
+		r.Problems = append(r.Problems, "stopped while "+step)
+	} else {
+		r.Problems = append(r.Problems, fmt.Sprintf("gave up after %d seconds, while %s", int(joinWait/time.Second), step))
+	}
+	r.Tell = e.advice(false, false, true)
+	if joined {
+		r.Tell = append([]string{publicrepo.Statement}, r.Tell...)
+	}
+	return r, errors.New("joining didn't finish; see above")
 }
 
 // Leave undoes a join for the clone containing dir: the consent, the daemon, and the hook an older
