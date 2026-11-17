@@ -1165,6 +1165,12 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.saveLocked()
 		d.mu.Unlock()
 	}
+	// Not the person's: the page shows a send as sent once it answers, and has nowhere to show a
+	// give-up minutes later, so the person is told at once it wasn't sent and can try again, as before
+	// #781 (Fable's review of rc.2).
+	if bus.IsPerson(from) {
+		settle = nil
+	}
 	err := d.appendEventIf(ctx, e, still, settle)
 	pending := errors.As(err, new(pendingError))
 	if err != nil && !pending {
