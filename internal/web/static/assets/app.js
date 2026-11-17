@@ -5508,10 +5508,11 @@ function settingsSection(key, title, note, ...rows) {
 }
 
 // An on/off setting is a switch; a choice among several is a segmented control (Tyler, 2026-11-16).
+// key is its row's, whose title names the switch: a group's label doesn't name what is in it.
 function switchControl(key, on, save) {
   return h(
     "button",
-    { class: "switch", role: "switch", "aria-checked": on ? "true" : "false", "data-key": key, onclick: () => save(!on) },
+    { class: "switch", role: "switch", "aria-checked": on ? "true" : "false", "aria-labelledby": "row-" + key, "data-key": key, onclick: () => save(!on) },
     h("span", { class: "switch-thumb", "aria-hidden": "true" }),
   );
 }
