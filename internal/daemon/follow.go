@@ -57,15 +57,35 @@ func (d *Daemon) uniqueKeyLocked(key, id string, pid int) string {
 		}
 		// Each conversation it was the later on, not only the last: the two move together on a
 		// /clear and a /resume, and back in one they left, it is still the later there.
-		keys := append(d.st.Later[id], key)
-		d.st.Later[id] = keys[max(0, len(keys)-laterKeys):]
+		d.st.Later[id] = d.trimLaterLocked(id, append(d.st.Later[id], key))
 		d.saveLocked()
 	}
 	return key + "/" + id
 }
 
-// laterKeys is how many conversations a session is remembered as the later of two on.
+// laterKeys is how many conversations a session is remembered as the later of two on whose own
+// key (key/id) has no name yet.
 const laterKeys = 16
+
+// trimLaterLocked is keys, session id's Later, with the oldest past laterKeys dropped, of those
+// whose own key has no name. One that has a name is kept: NameKeys keeps it for good, and without
+// the record the later, back first in that conversation, would take the plain key and its
+// sibling's name. Caller holds mu.
+func (d *Daemon) trimLaterLocked(id string, keys []string) []string {
+	unnamed := 0
+	for _, k := range keys {
+		if d.st.NameKeys[k+"/"+id] == "" {
+			unnamed++
+		}
+	}
+	return slices.DeleteFunc(keys, func(k string) bool {
+		if unnamed <= laterKeys || d.st.NameKeys[k+"/"+id] != "" {
+			return false
+		}
+		unnamed--
+		return true
+	})
+}
 
 // yieldThreadLocked makes the live Codex sessions of other processes that hold key, a Codex
 // thread's, give it up to session id of process pid, which has just shown the thread is its

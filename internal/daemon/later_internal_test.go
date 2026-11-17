@@ -1,6 +1,9 @@
 package daemon
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // The later of two servers is held to its own key only if the two are of one client process
 // (#38): a second program on the same conversation takes the conversation's name once the first
@@ -51,5 +54,41 @@ func TestOnlyASiblingStaysTheLater(t *testing.T) {
 	d.dropStoppedLocked(b.id)
 	if len(d.st.Later) != 0 {
 		t.Errorf("after the session was dropped: %v", d.st.Later)
+	}
+}
+
+// A conversation the later of two was on, with a name for its own key there, is remembered past
+// laterKeys more: back in it first, the later still doesn't take its sibling's name.
+func TestTheLaterKeepsAConversationWithANamePastLaterKeys(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	d.st.NameKeys = map[string]string{}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	a, b := d.sessions["aaaaaa"], d.sessions["bbbbbb"]
+	a.clientPID, b.clientPID = 100, 100
+	conv := func(i int) string { return fmt.Sprintf("claude:conv%d", i) }
+	for i := range laterKeys + 2 {
+		a.key = conv(i)
+		if got := d.uniqueKeyLocked(conv(i), b.id, b.clientPID); got != conv(i)+"/bbbbbb" {
+			t.Fatalf("in conversation %d it has key %q", i, got)
+		}
+		d.st.NameKeys[conv(i)+"/bbbbbb"] = fmt.Sprintf("name-%d", i)
+	}
+	delete(d.sessions, a.id)
+	if got := d.uniqueKeyLocked(conv(0), b.id, b.clientPID); got != conv(0)+"/bbbbbb" {
+		t.Errorf("back first in the first conversation, %d on, it has key %q", laterKeys+2, got)
+	}
+	if len(d.st.Later[b.id]) != laterKeys+2 {
+		t.Errorf("later %v", d.st.Later[b.id])
+	}
+	// Those with no name yet go past laterKeys, oldest first.
+	var keys []string
+	for i := range laterKeys + 2 {
+		keys = append(keys, fmt.Sprintf("claude:new%d", i))
+	}
+	keys = d.trimLaterLocked(b.id, append([]string{conv(0)}, keys...))
+	if len(keys) != laterKeys+1 || keys[0] != conv(0) || keys[1] != "claude:new2" {
+		t.Errorf("trimmed to %v", keys)
 	}
 }
