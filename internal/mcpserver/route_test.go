@@ -341,6 +341,17 @@ func TestHeadlessT3CodexIsFound(t *testing.T) {
 		t.Errorf("a codex t3 didn't start: %+v", h)
 	}
 
+	// A codex run from the thread's shell has an agent above it, the thread's codex, past the node
+	// npm's codex runs it under: no t3 is looked for, even one Serving would find through node.
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	asked = false
+	servingT3 = func() (string, bool) { asked = true; return "/home/u/.local/bin/t3", true }
+	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" || asked {
+		t.Errorf("a codex under the thread's codex: %+v, looked for t3: %v", h, asked)
+	}
+	agentAbove = func() bool { return false }
+
 	t.Setenv("T3CODE_HOME", "")
 	asked = false
 	servingT3 = func() (string, bool) { asked = true; return "/home/u/.local/bin/t3", true }

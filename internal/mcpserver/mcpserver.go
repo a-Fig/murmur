@@ -446,7 +446,9 @@ type t3Seen struct {
 // the thread's variable (threadEnv). Codex's server has neither variable, as Codex starts it with
 // only what join forwards, and the thread's ID reaches only the commands Codex runs: there
 // T3CODE_HOME, which join forwards too, says to look for the t3 above Codex, and the thread comes
-// from the tool calls' _meta as in T3's app (#802).
+// from the tool calls' _meta as in T3's app (#802). A codex run from a thread's shell inherits
+// T3CODE_HOME, and npm's codex runs the real one under node, which Serving takes for the npm t3:
+// agentAbove, which finds the thread's own codex above it, keeps such a session off T3's route.
 func t3Of(agent string) t3Seen {
 	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
 	seen.thread = isClaude(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
@@ -454,7 +456,7 @@ func t3Of(agent string) t3Seen {
 	case seen.cli != "":
 	case seen.thread:
 		seen.cli, seen.thread = servingT3()
-	case agent == "codex" && os.Getenv("T3CODE_HOME") != "":
+	case agent == "codex" && os.Getenv("T3CODE_HOME") != "" && !agentAbove():
 		seen.cli, _ = servingT3()
 	}
 	return seen

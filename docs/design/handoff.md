@@ -48,8 +48,8 @@ over.
   0.1.9, with Codex 0.169.0, seen 2026-11-16) sets no `T3CODE_CLI_PATH`, and gives
   `T3CODE_THREAD_ID` only to the commands Codex runs, not to Codex itself. So join forwards
   `T3CODE_HOME` too. With that set and no command line, the server takes the `t3` above Codex,
-  checked as Claude Code's is (#802). A table an older join wrote gets the name at the next
-  `mur join`.
+  checked as Claude Code's is, with no agent above it (#802). A table an older join wrote gets the
+  name at the next `mur join`.
 - **A thread that is idle** (#87). T3 stops an idle thread's provider process, and Murmur's MCP
   server with it, after about 30 minutes (seen 2026-10-30), so the session of an idle thread is the
   normal case, and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for
