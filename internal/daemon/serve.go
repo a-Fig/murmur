@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -244,7 +245,16 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// this time: it is still that thread.
 		route.T3Thread = s.route.T3Thread
 	}
-	key := d.uniqueKeyLocked(nameKey(route.T3Thread, claude, route.Native, h.ID), h.ID)
+	base := nameKey(route.T3Thread, claude, route.Native, h.ID)
+	// A Codex thread that another program had goes on here (#568), if this is a server's first
+	// registration: its tool call has just carried the thread. One back from its grace, or
+	// registering again with a daemon that restarted, says nothing new, and would take the
+	// thread back from a session that got it since.
+	var left []string
+	if s == nil && !h.Reconnect {
+		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
+	}
+	key := d.uniqueKeyLocked(base, h.ID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -276,6 +286,12 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.worktree = worktree
 		s.route = route
 		d.rememberRouteLocked(s)
+	}
+	for _, id := range left {
+		d.takeInboxLocked(s, id) // sent to the conversation, which is here now
+	}
+	if len(left) > 0 {
+		d.saveLocked()
 	}
 	if parent, named := d.kidNative[route.Native]; named && route.Native != "" && claude == "" {
 		// A hook named this session a child before its server registered (an OpenCode child's
@@ -333,9 +349,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.mu.Lock()
 	d.lastActive = time.Now()
 	if ctx.Err() != nil {
-		// The daemon is stopping. The session may reconnect to the next one, so its inbox is
-		// kept; the goodbye deletes this device's presence.
-		delete(d.sessions, h.ID)
+		d.stoppedWithDaemonLocked(h.ID)
 		d.mu.Unlock()
 		return
 	}
@@ -351,7 +365,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	case <-ctx.Done():
 		d.mu.Lock()
 		if s.takeover == takeover {
-			delete(d.sessions, h.ID)
+			d.stoppedWithDaemonLocked(h.ID)
 		}
 		d.mu.Unlock()
 		return
@@ -364,6 +378,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	delete(d.sessions, h.ID)
+	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
 	d.saveLocked()
@@ -375,6 +390,66 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
+}
+
+// stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
+// then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
+// does any session back from stopped (newSessionLocked). One that doesn't, a thread left open on
+// a laptop shut overnight, is then a stopped session like any other: its inbox, credited commits
+// and T3 route are kept for StoppedInbox, and what is sent meanwhile is queued for it
+// (keptSinceLocked). Unrecorded, the next daemon's pruneInboxes took all of that two minutes
+// after it started. No stop goes on the log: the goodbye deletes this device's presence, and a
+// session that reconnects never stopped as far as anyone else knows. Caller holds mu.
+func (d *Daemon) stoppedWithDaemonLocked(id string) {
+	delete(d.sessions, id)
+	delete(d.st.Registered, id)
+	d.st.Stopped[id] = time.Now().Round(0)
+	if d.st.Downed == nil {
+		d.st.Downed = map[string]bool{}
+	}
+	d.st.Downed[id] = true
+	d.saveLocked()
+}
+
+// stopKilledLocked records as stopped the sessions the last daemon left registered: it was
+// killed, with no chance to record them itself (#762). A laptop whose battery died with threads
+// open then starts, the next morning, with those sessions stopped, as a daemon that was shut
+// down leaves them (stoppedWithDaemonLocked): their inboxes, credited commits and T3 routes are
+// kept for StoppedInbox, what was sent meanwhile is queued for them, and their servers are
+// waited for a little (Downed). They stopped at written, when that daemon last wrote its state,
+// which is the latest it is known to have run. A daemon that reaches the remote writes at least
+// once a minute (LastSync), so that is at most about a minute before it died; one that was
+// offline may have written long before. A time that early has a catch-up read more, and takes
+// that much off StoppedInbox, though never all of it for a session whose server is back as this
+// daemon starts (stopSpentLocked). A time ahead of the clock, from a clock since put right, counts as now: a stop
+// in the future never runs out. Nothing is saved here: the state isn't whole yet, and a daemon
+// killed again before its first save finds the same sessions with the same time. It runs as
+// the state is loaded, before any goroutine, so what its name says of mu holds.
+func (d *Daemon) stopKilledLocked(written time.Time) {
+	if len(d.st.Registered) == 0 {
+		return
+	}
+	// Not later than this daemon's start either, by which the next one knows the stop for an
+	// earlier daemon's (pruneInboxes).
+	if latest := cmp.Or(d.started, time.Now()); written.IsZero() || written.After(latest) {
+		written = latest
+	}
+	n := 0
+	for id := range d.st.Registered {
+		if _, stopped := d.st.Stopped[id]; !stopped {
+			d.st.Stopped[id] = written.Round(0)
+			if d.st.Downed == nil {
+				d.st.Downed = map[string]bool{}
+			}
+			d.st.Downed[id] = true
+			n++
+		}
+	}
+	if n > 0 {
+		d.log.Printf("the last daemon didn't record the stop of %d sessions registered with it; they count as stopped at %s, when it last wrote its state",
+			n, written.Format(time.DateTime))
+	}
+	d.st.Registered = nil
 }
 
 // liveLocked says whether session id is connected: the CLI always is, a session in its grace or
@@ -632,15 +707,12 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		}
 		if d.readOnPromptLocked(id, req.Prompt) {
 			d.saveLocked() // a turn handed over has started (#611)
+		} else {
+			d.missedPromptLocked(id, req.Prompt)
 		}
 		if s := d.sessions[id]; s != nil && s.sending != "" && req.Prompt != "" &&
 			whichTurn(req.Prompt, []awaitingRead{{Turn: s.sending}}) == 0 {
 			s.sendingSeen = true // the turn a send still running hands it has begun (#677)
-		}
-		if d.dndLocked(id) {
-			// Do not disturb (#198): its messages stay queued in its inbox, with no notice, no
-			// whole message and no hold for the turn's end, and don't count as unread for the hook.
-			continue
 		}
 		if s := d.sessions[id]; s != nil {
 			told = append(told, s)
@@ -650,7 +722,10 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		printsWhole := hookReq(req) && req.Whole
 		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
-			if m.Pushing {
+			if m.Pushing || d.heldLocked(id, m) {
+				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
+				// whole message and no hold for the turn's end, and doesn't count as unread for the
+				// hook. Its own person's messages go through (#777).
 				continue
 			}
 			if !m.Noticed && !d.queuedForPushLocked(id, m, wake) {
@@ -733,7 +808,8 @@ func hookReq(req proto.Request) bool { return req.ClaudeSession != "" || req.Nat
 // speaks for were told of while at work and haven't read, and those that came during the turn and
 // weren't told, however long it took, would go in as a turn now (#202). Where the hook can keep the
 // turn going (req.Continues), they are its reply instead, read, and the turn goes on with them
-// (Tyler, 2026-11-08). A session with none is idle.
+// (Tyler, 2026-11-08). A session with none is idle. While the device is invisible the turn ends
+// all the same, but nothing keeps it going: what waits is handed over once the device is back.
 func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
@@ -757,7 +833,7 @@ func (d *Daemon) turnEnd(req proto.Request) proto.Response {
 			}
 		}
 		d.endTurnLocked(s, wake)
-		if !req.Continues || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
+		if !req.Continues || d.hidden.Load() || !d.liveLocked(s.id) || d.clearChildInboxLocked(s.id) {
 			continue
 		}
 		for _, m := range d.continueTurnLocked(s, wake, room) {
@@ -936,7 +1012,8 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		known := d.addressKnownLocked(dev, sess)
 		_, stopped := d.st.Stopped[sess]
 		offline := d.offlineLocked(dev, sess)
-		dnd := d.peerDNDLocked(dev, sess)
+		// Do not disturb doesn't hold a message from this device's person to its own sessions (#777).
+		dnd := d.peerDNDLocked(dev, sess) && !(dev == d.device && from == d.personAddr())
 		hookOff, agent := d.peerHookOffLocked(dev, sess)
 		noWake := d.peerNoWakeLocked(dev, sess, wake)
 		// A T3 thread T3 stopped while it was idle has no session, but its route is kept and a message
@@ -989,18 +1066,33 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: from, At: time.Now().UTC(),
 		To: to, Subject: subject, Body: body}
+	// Before anything is read (#765, Tyler, 2026-11-16): an agent's files by its device's agents' Send
+	// files, the page's by its person's.
+	sends := func() bool {
+		return (len(req.Files) == 0 || d.agentSend.Load()) && (len(uploads) == 0 || d.pageSend.Load())
+	}
+	switch {
+	case len(req.Files) > 0 && !d.agentSend.Load():
+		return refuse(proto.RefusedSend, "not sent: sending files is off for agents in this repo. Your user can turn on Send files, with agents too, in "+
+			brand.Product+"'s Settings; or send the text alone.")
+	case len(uploads) > 0 && !d.pageSend.Load():
+		return refuse(proto.RefusedSend, "not sent: sending files is off for you in this repo. Turn on Send files in Settings, or send the text alone.")
+	}
 	filesReused := false // the files took a ref an earlier message went out with (putFiles)
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		read, err := readSendFiles(req.Files)
+		read, err := d.readSendFiles(ctx, req.Files)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
-		files, at, reused, err := d.putFiles(ctx, append(read, uploads...))
+		files, at, reused, sent, err := d.putFiles(ctx, append(read, uploads...), sends)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
+		// A send of the same files waits for this one's message to be out, or to have failed
+		// (putFiles): whichever way this returns.
+		defer sent()
 		filesReused = reused
 		e.Files, e.FilesAt = files, at
 		d.mu.Lock()
@@ -1035,16 +1127,48 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		d.saveLocked()
 		d.mu.Unlock()
 	}
-	if err := d.appendEvent(ctx, e); err != nil {
-		if len(e.Files) > 0 && !filesReused {
+	var still func() bool
+	if len(e.Files) > 0 {
+		still = sends
+	}
+	// unsent lets go of what was made for a message that wasn't sent, unless its push may land yet
+	// (unsure): the message would then name files that are gone, and its receipts would have
+	// nothing to be kept in. The files go when their time is up, as any message's do.
+	unsent := func(unsure, keepFiles bool) {
+		if len(e.Files) > 0 && !filesReused && !unsure && !keepFiles {
 			d.filesUnsent(e.FilesAt) // nothing names them: off the remote at the next prune
 		}
-		if e.Receipts {
+		// A record kept only to tell an agent how far its message got goes either way: the agent
+		// is told it wasn't sent, and a notice half an hour on that nobody has read it would be
+		// about a message it has likely sent again.
+		if e.Receipts && (!unsure || tellMe != "") {
 			d.mu.Lock()
 			delete(d.st.Sent, e.ID)
 			d.saveLocked()
 			d.mu.Unlock()
 		}
+	}
+	// A push that ends unsure leaves the message pending, pushed again until it lands, and the
+	// sender is told only if it is given up (pending.go, #781).
+	//
+	// Its files' ref may be taken by a send of the same files at once (filesSentLocked, below), as the
+	// files are on the remote whatever becomes of the message: holding that send back until this one
+	// settles would hold it past its own time (Sol's review of rc.2). So a pending send given up
+	// keeps its ref its full time, as one that may land does, since another message may name it.
+	settle := func(landed, absent bool, err error) {
+		if landed {
+			return
+		}
+		unsent(!absent, true)
+		d.mu.Lock()
+		d.givenUpLocked(from, e.Subject, nameOr(toName, to), err)
+		d.saveLocked()
+		d.mu.Unlock()
+	}
+	err := d.appendEventIf(ctx, e, still, settle)
+	pending := errors.As(err, new(pendingError))
+	if err != nil && !pending {
+		unsent(errors.As(err, new(unsureError)), false)
 		// No key for the recipient's device is that recipient's alone. Anything else here, a team
 		// key not yet made or a push that failed, would refuse every recipient the same.
 		about := proto.RefusedSend
@@ -1053,6 +1177,8 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		return refuse(about, "not sent: "+err.Error())
 	}
+	// A pending send answers as one that landed (Tyler, 2026-11-16): it is pushed until it does, and
+	// its sender is told only if it is given up.
 	if len(e.Files) > 0 {
 		d.mu.Lock()
 		d.filesSentLocked(e.FilesAt) // a send of the same files may take its ref now
@@ -1062,6 +1188,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	// To everyone, to a device or to a group: it went out, and the sender is told which of the
 	// sessions it was for won't get it, as they have muted it (#27), and which won't be woken by it
 	// (#545).
+	var named []string
 	if dev, sess := bus.SplitAddr(to); to == "*" || sess == "" {
 		group := bus.IsGroup(to)
 		if to == "*" || group {
@@ -1079,6 +1206,14 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		unwoken = slices.DeleteFunc(unwoken, func(m string) bool { return slices.Contains(muters, m) })
 		d.mu.Unlock()
 		note = sentences(note, mutersNote(muters), unwokenNote(unwoken))
+		named = muters
+	}
+	// Kept a while, so the sender is told if a device it had read no mute of yet drops it (#466).
+	if !bus.IsPerson(from) {
+		d.mu.Lock()
+		d.outgoingLocked(from, nameOr(toName, to), e, named)
+		d.saveLocked()
+		d.mu.Unlock()
 	}
 	if tellMe != "" {
 		tellNote = fmt.Sprintf("You'll be told, in your inbox, once it is %s, or in %s with where it is then.", tellMe, minutes(d.opt.TellWait))
@@ -1187,7 +1322,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 // the devices they are on. The CLI shows only when it is the one asking.
 func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	self := proto.Device{ID: d.device, Host: d.host, Owner: d.owner, Nick: d.nickOfLocked(d.device), Self: true, LastSeen: time.Now(),
-		DND: d.dnd.Load()}
+		DND: d.dnd.Load(), FilesOff: !d.agentRecv.on.Load(), SendFilesOff: !d.agentSend.Load()}
 	for _, s := range d.sortedSessionsLocked() {
 		if d.offMeshLocked(s.id) && s.id != you {
 			continue // offline (#189)
@@ -1211,7 +1346,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := proto.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), LastSeen: p.lastChange,
-			Stale: d.staleLocked(p), DND: p.pres.DND}
+			Stale: d.staleLocked(p), DND: p.pres.DND, FilesOff: p.pres.Files && p.pres.FilesOff}
 		for _, s := range p.pres.Sessions {
 			if s.ID == proto.CLISession {
 				continue // V1 daemons list their CLI, which only claims needed
@@ -1229,7 +1364,7 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 			}
 			dv.Sessions = append(dv.Sessions, proto.SessionView{Addr: bus.Addr(id, s.ID), Name: name,
 				Agent: s.Agent, Branch: s.Branch, Doing: s.Doing, Started: peerStarted(p, s), LastActive: peerActive(p, s),
-				Tags: ts, HookOff: s.HookOff})
+				Tags: ts, HookOff: s.HookOff, FilesOff: s.ID == bus.PersonSession && p.pres.Files && p.pres.PersonFilesOff})
 		}
 		if !filter.Empty() && len(dv.Sessions) == 0 {
 			continue // nothing on it matches
@@ -1239,8 +1374,8 @@ func (d *Daemon) whoLocked(you string, filter tags.Filter) []proto.Device {
 	return devices
 }
 
-// newSessionLocked registers a session that isn't registered. One that stopped within
-// StoppedInbox gets its inbox back, with what arrived while it was stopped, and keeps its claim on
+// newSessionLocked registers a session that isn't registered. One whose stop hasn't had its time
+// (stopSpentLocked: within StoppedInbox, or back as a daemon starts) gets its inbox back, with what arrived while it was stopped, and keeps its claim on
 // what was sent since it stopped: a catch-up that reads a backlog ref only after the session has
 // registered again would otherwise take those messages for older than the session and drop them.
 // Past StoppedInbox, pruneInboxes is only late. Caller holds mu.
@@ -1250,15 +1385,23 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	now := time.Now()
 	s := &session{id: h.ID, agent: agent, cwd: h.Cwd, claudeSession: h.ClaudeSession, branch: branch,
 		started: now, lastActive: now, reconnect: h.Reconnect, key: key, clientPID: h.ClientPID}
+	// Listed as registered in the same write that takes its stop away, and before the session
+	// is told it is registered: a daemon killed at any moment leaves the session either stopped
+	// or listed (stopKilledLocked), never neither.
+	if d.st.Registered == nil {
+		d.st.Registered = map[string]bool{}
+	}
+	d.st.Registered[h.ID] = true
 	if at, ok := d.st.Stopped[h.ID]; ok {
-		if time.Since(at) > d.opt.StoppedInbox {
+		if d.stopSpentLocked(h.ID, at) {
 			d.dropStoppedLocked(h.ID)
 		} else {
 			delete(d.st.Stopped, h.ID)
+			delete(d.st.Downed, h.ID)
 			s.since = at
 		}
-		d.saveLocked()
 	}
+	d.saveLocked()
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
 	d.setNameLocked(s, d.nameForKeyLocked(key, h.ID))
 	d.sessions[h.ID] = s

@@ -290,9 +290,10 @@ type Issue struct {
 // the session's messaging socket, so none of this is logged, shown on the page or put on the bus.
 // Every field is optional.
 type Route struct {
-	// T3CLI is T3CODE_CLI_PATH, set for the agents T3 runs, and T3Home is T3CODE_HOME where the
-	// agent has it. T3Thread is the T3 thread the session is, which is how a message reaches it
-	// through T3 (`t3 thread send`) even while the session's MCP server is away.
+	// T3CLI is T3's command line: T3CODE_CLI_PATH, set for the agents T3's app runs, or for a
+	// thread of its headless server, which sets none, the `t3` that serves (#780). T3Home is
+	// T3CODE_HOME where the agent has it. T3Thread is the T3 thread the session is, which is how a
+	// message reaches it through T3 (`t3 thread send`) even while the session's MCP server is away.
 	T3CLI    string `json:"t3Cli,omitempty"`
 	T3Home   string `json:"t3Home,omitempty"`
 	T3Thread string `json:"t3Thread,omitempty"`
@@ -422,8 +423,12 @@ type Device struct {
 	LastSeen time.Time `json:"lastSeen"` // when this daemon last saw its presence change
 	// DND says the device's person put it on do not disturb (#681): no message reaches its sessions
 	// until it is back online.
-	DND      bool          `json:"dnd,omitempty"`
-	Sessions []SessionView `json:"sessions"`
+	DND bool `json:"dnd,omitempty"`
+	// FilesOff says the device takes no files: its person turned Receive files off (#765). For
+	// this device, SendFilesOff says Send files is off, so a send with files is refused.
+	FilesOff     bool          `json:"filesOff,omitempty"`
+	SendFilesOff bool          `json:"sendFilesOff,omitempty"`
+	Sessions     []SessionView `json:"sessions"`
 }
 
 // SessionView is one session as `who` shows it.
@@ -448,6 +453,9 @@ type SessionView struct {
 	// the hook, which runs after every tool call, never reported (#225). It isn't told of messages
 	// while it works.
 	HookOff bool `json:"hookOff,omitempty"`
+	// FilesOff, on a person, says they turned Receive files off on the page (#765): a message's
+	// text reaches them and its files don't.
+	FilesOff bool `json:"filesOff,omitempty"`
 }
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
@@ -462,6 +470,8 @@ type SessionDetail struct {
 	Nick   string `json:"nick,omitempty"` // what the device is called, as Device.Nick
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
+	// FilesOff says the session's device takes no files: Receive files is off on it (#765).
+	FilesOff bool `json:"filesOff,omitempty"`
 
 	Branch    string     `json:"branch,omitempty"`
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first

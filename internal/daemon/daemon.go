@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -36,8 +37,11 @@ import (
 
 // Options configure a daemon. Zero values take the defaults in docs/design/.
 type Options struct {
-	GitDir string        // the clone's git common dir, absolute
-	Poll   time.Duration // how often to check the remote; 3 s
+	GitDir string // the clone's git common dir, absolute
+	// TempDir is the temp folder a send may read files from, besides the clone's worktrees (#690):
+	// "" is the system's, os.TempDir, and on macOS and Linux /tmp as well.
+	TempDir string
+	Poll    time.Duration // how often to check the remote; 3 s
 	// QuietPoll is how often to check it while no session is live and no page is open: 30 s. A
 	// daemon that is only waiting to wake a T3 thread (see Idle) needn't look as often as one with
 	// an agent working; it is never faster than Poll.
@@ -51,6 +55,9 @@ type Options struct {
 	// before leaving the sync to queue it for this device's own sessions (leaveOwnTip): 2 s,
 	// longer than a sync takes when nothing is slow.
 	OwnTipWait time.Duration
+	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
+	// each time to a minute; PendingGiveUp how long it is tried before it is given up (pending.go).
+	PendingRetry, PendingGiveUp time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -181,6 +188,12 @@ func (o *Options) defaults() {
 	if o.OwnTipWait == 0 {
 		o.OwnTipWait = 2 * time.Second
 	}
+	if o.PendingRetry == 0 {
+		o.PendingRetry = 5 * time.Second
+	}
+	if o.PendingGiveUp == 0 {
+		o.PendingGiveUp = pendingGiveUp
+	}
 	if o.FetchLimit == 0 {
 		o.FetchLimit = 15 * time.Second
 	}
@@ -308,14 +321,16 @@ var ErrNoConsent = errors.New("this clone hasn't joined " + brand.Product)
 // Pushes from other devices still meet this device's on GitHub; bus.Push sends a push refused that
 // way again, within this device's turn.
 func (d *Daemon) push(ctx context.Context, sha, ref string, mode bus.PushMode, expect string) error {
-	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect)
+	return d.pushFrom(ctx, d.repo, sha, ref, mode, expect, nil)
 }
 
 // pushFrom is push from repo, which is d.repo or a copy of it that keeps its objects elsewhere
 // (bus.Repo.Scratch).
-func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string) error {
+//
+// still, if not nil, is asked once the turn is had: false, and nothing is pushed.
+func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, mode bus.PushMode, expect string, still func() bool) error {
 	if !d.takePush(ctx) {
-		return ctx.Err()
+		return notPushedError{ctx.Err()}
 	}
 	defer d.donePush()
 	// After the wait, which can be a push or two long: a leave may have landed meanwhile.
@@ -325,12 +340,35 @@ func (d *Daemon) pushFrom(ctx context.Context, repo *bus.Repo, sha, ref string, 
 	if d.hidden.Load() {
 		return ErrInvisible
 	}
+	if err := ctx.Err(); err != nil {
+		return notPushedError{err} // git isn't started for it
+	}
+	if still != nil && !still() {
+		return notPushedError{errSendOff} // turned off while this send waited its turn (#765)
+	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	err := repo.Push(ctx, sha, ref, mode, expect)
+	var err error
+	if push := func() error { return repo.Push(ctx, sha, ref, mode, expect) }; d.testPush != nil && ref == d.meshRef() {
+		err = d.testPush(push) // the caller holds writeMu, which guards it
+	} else {
+		err = push()
+	}
 	d.health.pushed(ctx, ref, err)
+	if cut := ctx.Err(); err != nil && cut != nil && !errors.Is(err, cut) {
+		// Git, stopped at the push's time, says only how it ended. A caller can tell from this
+		// that the push was cut off, and so may land yet (uploadLost).
+		err = fmt.Errorf("%w: %w", cut, err)
+	}
 	return err
 }
+
+// notPushedError is what a push ends with when its time ran out, or the daemon stopped, before
+// git was started for it: nothing was sent, which the same error from a push under way doesn't
+// say (pushRefused). It reads as what it wraps.
+type notPushedError struct{ error }
+
+func (e notPushedError) Unwrap() error { return e.error }
 
 // pushTimeout bounds one push, so a push that hangs doesn't hold up the device's others for good.
 const pushTimeout = time.Minute
@@ -413,6 +451,9 @@ type Daemon struct {
 	// uploads is the files this device pushed within uploadReuse, by their sum (filesSum), for a send
 	// of the same ones to take the same ref (reuseFilesLocked, #739).
 	uploads map[[32]byte]*recentUpload
+	// sending is, by the files' sum, the send that is uploading those files: closed, and gone,
+	// when its message is out or has failed. A send of the same files waits for it (putFiles, #763).
+	sending map[[32]byte]chan struct{}
 	// filesBusy is the directories of files a send or a fetch is writing, which holdFilesHeld
 	// leaves alone (pinFilesDir).
 	filesBusy map[string]int
@@ -439,7 +480,8 @@ type Daemon struct {
 	// started, logged once each (see notePersonLocked).
 	personClashes map[string]bool
 	// lastPage is when a page someone can see last called its API, zero if none has. msgs is the
-	// page's messages, oldest first, msgSeq the number of the newest and msgIDs the IDs in msgs.
+	// page's messages, oldest first, msgSeq the number of the newest, msgIDs the IDs the page
+	// knows those in msgs by (pageMsg.id) and msgKeys which messages they are (msgKey).
 	lastPage time.Time
 	// lastApp is when the desktop app's page last called, seen or not: it keeps the daemon from
 	// exiting, and does nothing else lastPage does (docs/design/desktop.md).
@@ -447,6 +489,12 @@ type Daemon struct {
 	msgs    []pageMsg
 	msgSeq  uint64
 	msgIDs  map[string]bool
+	msgKeys map[string]bool
+	// idOwner is, by event ID, which message (msgKey) the page knows by that ID plain, for as
+	// long as a page may hold it: while it is in msgs, and until idKeep more have been dropped
+	// since it was. idGone is the IDs whose owner was dropped, oldest first (pageIDLocked).
+	idOwner map[string]string
+	idGone  []string
 	// ownMsgs is how many of msgs are to or from this device's person, which PageMessages doesn't
 	// count (see keepMessageLocked).
 	ownMsgs int
@@ -555,7 +603,16 @@ type Daemon struct {
 	syncing  bool
 	ownLater string
 	writeMu  sync.Mutex // serializes appends to this device's log
-	ownTip   string     // the remote's tip of this device's log, as last known; under writeMu
+	// ownTip is the tip of this device's log that the next write builds on: the remote's, as last
+	// known, or a send's still pending on top of it (pending.go). Under writeMu, as is the rest.
+	ownTip    string
+	pendSends []pendingSend
+	pendBase  string    // the tip the first pending send was built on, which had landed
+	pendFrom  time.Time // when the first pending send's push ended unsure
+	pendRun   bool      // pendingLoop is running
+	// testPush, set only by tests, stands in for a push of this device's log: it is given the real
+	// one to call, or not.
+	testPush func(push func() error) error
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
@@ -564,6 +621,13 @@ type Daemon struct {
 	// hidden and dnd say the device is invisible, or on do not disturb (settings.Mode, mode.go),
 	// read without setMu by everything that writes to the bus or answers an agent.
 	hidden, dnd atomic.Bool
+	// The file switches (#765), read without setMu: Send files and Receive files for this device's
+	// agents, and for its person on the page, each its own (Tyler, 2026-11-16).
+	agentSend, pageSend atomic.Bool
+	agentRecv, pageRecv fileSwitch
+	// agentsSendOff and agentsReceiveOff are the settings that keep each from the agents, as saved,
+	// for the page's state: they stand while the main switch is off too (Sol's review of #769).
+	agentsSendOff, agentsReceiveOff atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 
@@ -571,7 +635,11 @@ type Daemon struct {
 	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
 	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
 	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
-	fileOne  chan struct{} // held for a fetch of a message's files (fetchFiles)
+	// pruneOwed says a prune of the remote's files refs was passed over, or cut short, because
+	// the device was invisible (pruneFiles), and is run once it no longer is. Only fileLoop's
+	// goroutine writes it.
+	pruneOwed atomic.Bool
+	fileOne   chan struct{} // held for a fetch of a message's files (fetchFiles)
 	// fileMiss is the fetches for the page that failed, by files ref: when, and how. Guarded by mu.
 	fileMiss map[string]fileMiss
 	markKick chan struct{} // wakes receiptLoop, which writes this device's marks (receipts.go)
@@ -599,6 +667,10 @@ type Daemon struct {
 }
 
 type session struct {
+	// missedPrompt is the last prompt of the session that was no turn it waits on, and missedAt
+	// when it came (missedPromptLocked).
+	missedPrompt                                 string
+	missedAt                                     time.Time
 	id, agent, cwd, branch, doing, claudeSession string
 	started                                      time.Time
 	reconnect                                    bool // registered before, with a daemon that went away
@@ -786,6 +858,19 @@ type state struct {
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
+	// Downed is the stopped sessions that were still connected when the daemon stopped (#736),
+	// or was killed (#762). What is kept for them doesn't run out while the next daemon is young
+	// (stopSpentLocked).
+	// their servers may reconnect to the next daemon, which waits a little for them before it
+	// hands their threads anything (awaitedLocked). A session leaves it when it registers or its
+	// stop runs out, and the next daemon takes it out once it has stopped waiting.
+	Downed map[string]bool `json:"downed,omitempty"`
+	// Registered is the sessions registered with the running daemon, those in their grace
+	// included. A session leaves it as its stop is recorded, so a daemon that stops has none
+	// left once every session's stop is written. One that is killed (a crash, a forced shutdown,
+	// the power), or whose stop ran out of time, leaves some, and the next daemon records their
+	// stop from it (stopKilledLocked, #762).
+	Registered map[string]bool `json:"registered,omitempty"`
 	// LastSync tells the next daemon how long this one was down.
 	LastSync time.Time `json:"lastSync"`
 	// Unwritten holds this device's sessions' starts and stops not yet on its log, oldest first
@@ -831,6 +916,16 @@ type state struct {
 	// (see forwardLocked).
 	NameHolders  map[string]string `json:"nameHolders,omitempty"`
 	SessionNames map[string]string `json:"sessionNames,omitempty"`
+	// NamesSeen is when each session in SessionNames last took its name, to the hour: one long
+	// gone, that nothing else points at, is forgotten sessionNameKeep after it
+	// (pruneSessionNamesLocked). T3 makes a new session for a thread each time its MCP server
+	// restarts, so without that SessionNames only grew (#747).
+	NamesSeen map[string]time.Time `json:"namesSeen,omitempty"`
+	// ThreadLeft is, by session ID, the name key of the Codex thread the session gave up to
+	// another process that went on with it (yieldThreadLocked, #568). Kept so that the session,
+	// registering again after a daemon restart with the thread it still knows, doesn't take the
+	// thread's name back.
+	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
 	// NamesTip is the registry's tip as last examined, readable or not: the lease for the next
 	// push. NamesGood is the last tip that was a commit and was read in full. NamesRepair says the
 	// registry lost names, and the next commit must be a new root holding every one.
@@ -896,6 +991,12 @@ type state struct {
 	// sender asked to be told (#276).
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+	// MuteDrops is, by this device's session ID, the messages from other devices dropped on arrival
+	// as the session had muted their sender, newest last, listed in its presence; Outgoing is this
+	// device's sessions' recent messages, by ID, so a sender is told when another device lists one
+	// of them so (#466, mutedrop.go).
+	MuteDrops map[string][]muteDrop `json:"muteDrops,omitempty"`
+	Outgoing  map[string]*outgoing  `json:"outgoing,omitempty"`
 
 	// FileRefs is the files refs this device pushed, by name (bus.FilesRef), and when (#570,
 	// files.go): each is deleted from the remote FileKeep after. FilesWait is the messages for
@@ -1212,7 +1313,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
-		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, brackets: map[string]*bracket{},
+		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, msgKeys: map[string]bool{}, idOwner: map[string]string{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
@@ -1520,6 +1621,11 @@ func (d *Daemon) loadState() error {
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
 		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
 		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}, OthersFiles: map[string]othersFile{}}
+	// When the last daemon last wrote its state, read before anything here writes it.
+	var written time.Time
+	if info, err := os.Stat(d.statePath()); err == nil {
+		written = info.ModTime()
+	}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1531,6 +1637,7 @@ func (d *Daemon) loadState() error {
 		d.log.Printf("state.json unreadable, starting fresh: %v", err)
 		d.st = state{}
 	}
+	defer d.stopKilledLocked(written) // once the maps below are there
 	if d.st.Processed == nil {
 		d.st.Processed = map[string]string{}
 	}

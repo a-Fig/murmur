@@ -44,7 +44,16 @@ over.
   (`env_vars`; worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29), which `mur join` writes with
   `CODEX_HOME` (#88). Codex silently leaves out a name its own environment lacks
   (`create_env_for_mcp_server` in `codex-rs/rmcp-client`, read 2026-11-09). Without it the server
-  doesn't know it is in T3, and the session gets notices only.
+  doesn't know it is in T3, and the session gets notices only. T3's headless server (`t3 serve`,
+  0.1.9, with Codex 0.169.0, seen 2026-11-16) sets no `T3CODE_CLI_PATH`, and gives
+  `T3CODE_THREAD_ID` only to the commands Codex runs, not to Codex itself. So join forwards
+  `T3CODE_HOME` too. With that set, no command line and no agent above, the server takes Codex's
+  parent if it is `t3`, and nothing else: npm's `codex` runs the native one under `node`, so the
+  guesses Claude Code's case makes would take a `codex` tmux started in a thread's shell for the
+  thread (#802). Not found, so notices only, as before: a `t3` installed from npm, which runs
+  Codex under `node`, and a `t3 serve` that is pid 1 (a container with no init), as `proc.Exe`
+  doesn't read pid 1. A table an older join wrote gets the
+  name at the next `mur join`.
 - **A thread that is idle** (#87). T3 stops an idle thread's provider process, and Murmur's MCP
   server with it, after about 30 minutes (seen 2026-10-30), so the session of an idle thread is the
   normal case, and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for
@@ -154,7 +163,12 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   tool drives through `codex app-server`. Not tried. Codex's own subagents are taken off the mesh
   ([delegates](delegates.md)).
 - *Not covered* (#446): Muse and Grok outside T3, neither installed where this was built. A T3 Codex
-  session whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3. OpenCode's one MCP
+  session whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3. T3's headless
+  server (`t3 serve`, 0.1.9) sets no `T3CODE_CLI_PATH` at all: a Claude Code thread there is known
+  by `T3CODE_THREAD_ID` and reached through the `t3` that runs it (its parent, else the one on
+  PATH). With none found it gets no messaging socket, which starts no turn under T3; a Claude Code
+  whose parent is some other program (tmux, an editor) only inherited the variable and keeps its
+  own route (#780, 2026-11-16). OpenCode's one MCP
   process per directory has the environment of whoever started the shared server, so a T3 thread on
   a server a terminal started reads as outside T3, and the other way round (not tried). Codex's
   desktop app wasn't looked at, and only Windows was tried with the real programs.

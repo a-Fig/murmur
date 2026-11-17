@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -382,5 +384,133 @@ func TestTagsReadBeforeANamelessSessionReconnectsReachIt(t *testing.T) {
 	if len(got) != 1 || got[0].Subject != "to the group" {
 		t.Errorf("back, bob's inbox: %+v; want the group's message (the first read after the restart, and the hello, took %s; the hold lasts %s)",
 			got, took, daemon.CatchUpWindow)
+	}
+}
+
+// A session still connected when its daemon stops is a stopped session from then (#736): what is
+// sent while the daemon is down is queued for it, and it gets that back however it returns, as a
+// server that doesn't say it is reconnecting does here. Before, no stop was recorded, so nothing
+// was kept for it, and the next daemon swept its inbox and its T3 route away.
+func TestASessionTheDaemonsStopEndedKeepsItsInbox(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	eventually(t, "b holds the team key", func() bool {
+		ids := teamIDs(t, remote)
+		return len(ids) == 1 && ringOf(t, b)[ids[0]] != nil
+	})
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "unread before the stop"})
+	eventually(t, "the message to be queued", func() bool {
+		return len(b.do(proto.Request{Op: proto.OpNotices, Session: "bbbbbb"}).Messages) == 1
+	})
+
+	b.stop()
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "direct, while it was down"})
+	a.do(proto.Request{Op: proto.OpSend, To: "*", Subject: "broadcast, while it was down"})
+	b.start()
+	// The daemon reads what it missed with bob still away.
+	eventually(t, "b to be back in a's sight", func() bool { return a.seesDevices(2) })
+	b.helloAgain("bbbbbb", false)
+
+	var got []string
+	eventually(t, "bob gets what was kept for it", func() bool {
+		got = got[:0]
+		for _, m := range b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages {
+			got = append(got, m.Subject)
+		}
+		return len(got) >= 3
+	})
+	if len(got) != 3 {
+		t.Fatalf("bob got %q", got)
+	}
+}
+
+// The state file lists a session while it is registered, and no longer once its stop is recorded,
+// by its grace running out or by the daemon stopping (#762): what a killed daemon leaves listed
+// is what was registered with it.
+func TestTheStateFileListsRegisteredSessions(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	// ok is false while the file is being replaced, which says nothing either way.
+	listed := func(id string) (registered, stopped, ok bool) {
+		raw, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+		var st struct {
+			Registered map[string]bool      `json:"registered"`
+			Stopped    map[string]time.Time `json:"stopped"`
+		}
+		if err != nil || json.Unmarshal(raw, &st) != nil {
+			return false, false, false
+		}
+		_, stopped = st.Stopped[id]
+		return st.Registered[id], stopped, true
+	}
+	is := func(id string, wantRegistered, wantStopped bool) func() bool {
+		return func() bool {
+			registered, stopped, ok := listed(id)
+			return ok && registered == wantRegistered && stopped == wantStopped
+		}
+	}
+	_, conn := b.session("bbbbbb", "")
+	b.session("cccccc", "")
+	// Listed by the time the session is told it registered: the only wait is for a read that
+	// doesn't fall on the file being replaced.
+	for _, id := range []string{"bbbbbb", "cccccc"} {
+		var registered, ok bool
+		eventually(t, "the state file to be read", func() bool { registered, _, ok = listed(id); return ok })
+		if !registered {
+			t.Fatalf("%s has registered and isn't listed in the state file", id)
+		}
+	}
+	conn.Close()
+	eventually(t, "the session whose grace ran out to leave the list, stopped", is("bbbbbb", false, true))
+	b.stop()
+	eventually(t, "the session the daemon's stop ended to leave the list, stopped", is("cccccc", false, true))
+}
+
+// A daemon that was killed leaves its state file as it last wrote it, with its sessions listed
+// and no stop recorded. The next daemon counts them as stopped (#762): a message sent while no
+// daemon ran is queued for the session before its server is back, as it is after a clean stop.
+// Before, nothing was queued for it, and what it had went two minutes after the start.
+func TestASessionOfAKilledDaemonGetsWhatWasSentMeanwhile(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "presence", func() bool { return a.seesSession(bob) })
+	path := filepath.Join(b.gitDir, brand.StateDir, "state.json")
+	type kept struct {
+		Registered map[string]bool              `json:"registered"`
+		Stopped    map[string]time.Time         `json:"stopped"`
+		Inbox      map[string][]json.RawMessage `json:"inbox"`
+	}
+	read := func() (raw []byte, st kept, ok bool) {
+		raw, err := os.ReadFile(path)
+		return raw, st, err == nil && json.Unmarshal(raw, &st) == nil
+	}
+	// The file as a daemon killed now would leave it.
+	var asKilled []byte
+	eventually(t, "the state file with bob registered", func() bool {
+		raw, st, ok := read()
+		asKilled = raw
+		return ok && st.Registered["bbbbbb"]
+	})
+	b.stop()
+	if err := os.WriteFile(path, asKilled, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.do(proto.Request{Op: proto.OpSend, To: bob, Subject: "sent while no daemon ran"})
+	b.start()
+	eventually(t, "the message to be queued for a session not yet back", func() bool {
+		_, st, ok := read()
+		_, stopped := st.Stopped["bbbbbb"]
+		return ok && stopped && len(st.Inbox["bbbbbb"]) == 1
+	})
+	b.helloAgain("bbbbbb", true)
+	got := b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages
+	if len(got) != 1 || got[0].Subject != "sent while no daemon ran" {
+		t.Fatalf("bob's inbox once back: %+v", got)
 	}
 }

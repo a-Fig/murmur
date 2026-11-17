@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
@@ -437,6 +439,32 @@ func TestFilesLeaveTheRemote(t *testing.T) {
 	eventually(t, "the sender's copy to go", func() bool { return len(saved()) == 0 })
 }
 
+// An invisible device writes nothing to the bus, a delete of its files refs included (#789): one
+// past its time stays while the device is invisible, and goes when it is back online, without
+// waiting for the next prune.
+func TestAnInvisibleDeviceDeletesItsFilesRefsOnceBack(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	a.session("aaaaaa", "")
+	b.session("bbbbbb", "")
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "for a while", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	listed := func() string { return gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files") }
+	a.page().mode("invisible")
+	eventually(t, "b to drop a", func() bool { return !b.lists(a.self()) })
+	// The same device, still invisible, with a time to keep files that has already passed, and a
+	// prune it would wait an hour for after its first.
+	a.fileKeep, a.filePrune = time.Millisecond, time.Hour
+	a.restart()
+	holds(t, "the files ref, while its device is invisible", 2*time.Second, func() bool { return listed() != "" })
+	a.page().mode("online")
+	eventually(t, "the files ref to leave the remote", func() bool { return listed() == "" })
+}
+
 // A files ref whose device has gone, as a deleted clone's has, is deleted from the remote by a
 // device that read of it (#708), and only once that device is gone: a live one deletes its own.
 func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
@@ -464,6 +492,155 @@ func TestFilesOfAGoneDeviceLeaveTheRemote(t *testing.T) {
 	}
 	a.stop()
 	eventually(t, "the files ref of a, gone, to leave the remote", func() bool { return listed() == "" })
+}
+
+// A send reads files only from the clone's worktrees and the temp folder, never its git directory,
+// and follows a link to where it leads before it looks (#690). A refusal says where to copy the file.
+func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	base := t.TempDir()
+	temp, outside := filepath.Join(base, "temp"), filepath.Join(base, "outside")
+	for _, dir := range []string{temp, outside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := newDeviceWith(t, remote, func(d *device) { d.tempDir = temp })
+	a.session("aaaaaa", "")
+	put := func(dir, name string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("contents of "+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	send := func(path string) string {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a file", Files: []string{path}}).Error
+	}
+	for what, path := range map[string]string{
+		"a file in temp":           put(temp, "shot.png"),
+		"a file in the clone":      put(filepath.Dir(a.gitDir), "notes.txt"),
+		"a file in temp, by a dot": filepath.Join(temp, "..", "temp", "shot.png"),
+	} {
+		if err := send(path); err != "" {
+			t.Errorf("%s: %s", what, err)
+		}
+	}
+	secret := put(outside, "id_ed25519")
+	refused := map[string]string{
+		"a file elsewhere":                secret,
+		"a file in the git directory":     put(a.gitDir, "config-copy"),
+		"a way out of temp by its parent": filepath.Join(temp, "..", "outside", "id_ed25519"),
+	}
+	if link := filepath.Join(temp, "key"); os.Symlink(secret, link) == nil {
+		refused["a link in temp to a file elsewhere"] = link
+		if os.Symlink(filepath.Join("..", "outside"), filepath.Join(temp, "out")) == nil {
+			refused["a relative link in temp to a folder elsewhere"] = filepath.Join(temp, "out", "id_ed25519")
+		}
+		if os.Symlink(filepath.Join(temp, "shot.png"), filepath.Join(temp, "shot-link.png")) == nil {
+			if err := send(filepath.Join(temp, "shot-link.png")); err != "" {
+				t.Errorf("a link in temp to a file in temp: %s", err)
+			}
+		}
+	}
+	// A linked worktree's files are sent. A worktree's registration is in the git directory, which
+	// an agent can write; pointing it at a folder elsewhere doesn't make that folder one.
+	clone := filepath.Dir(a.gitDir)
+	wt := filepath.Join(base, "wt")
+	gitOK(clone, "worktree", "add", "--detach", wt)
+	if err := send(put(wt, "diff.txt")); err != "" {
+		t.Errorf("a file in a linked worktree: %s", err)
+	}
+	// A repo of its own inside the clone, as a submodule or a vendored one is, is passed over for
+	// the worktree around it (#772).
+	nested := filepath.Join(clone, "vendored")
+	gitOK(clone, "init", "-q", nested)
+	if err := send(put(nested, "lib.txt")); err != "" {
+		t.Errorf("a file in a repo inside the clone: %s", err)
+	}
+	// A repo of its own outside the clone and temp isn't one of its worktrees.
+	elsewhere := filepath.Join(base, "elsewhere")
+	gitOK(base, "init", "-q", elsewhere)
+	refused["a file in another repo"] = put(elsewhere, "secret.txt")
+	// One registered by relative paths, as git worktree add --relative-paths does.
+	wt2 := filepath.Join(base, "wt2")
+	gitOK(clone, "worktree", "add", "--detach", wt2)
+	reg := filepath.Join(a.gitDir, "worktrees", "wt2")
+	relTo := func(from, to string) []byte {
+		rel, err := filepath.Rel(from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []byte(filepath.ToSlash(rel) + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(reg, "gitdir"), relTo(reg, filepath.Join(wt2, ".git")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt2, ".git"), append([]byte("gitdir: "), relTo(wt2, reg)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := send(put(wt2, "rel.txt")); err != "" {
+		t.Errorf("a file in a worktree registered by relative paths: %s", err)
+	}
+	// A registration naming the git directory itself as a worktree, with a .git there to match.
+	if err := os.MkdirAll(filepath.Join(a.gitDir, "worktrees", "evil"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, "worktrees", "evil", "gitdir"), []byte(filepath.ToSlash(filepath.Join(a.gitDir, ".git"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, ".git"), []byte("gitdir: "+filepath.ToSlash(filepath.Join(a.gitDir, "worktrees", "evil"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused["the git directory's config, by a registration naming it as a worktree"] = filepath.Join(a.gitDir, "config")
+	if err := os.MkdirAll(filepath.Join(outside, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.gitDir, "worktrees", "wt", "gitdir"), []byte(filepath.ToSlash(filepath.Join(outside, ".git"))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused["a file in a folder a worktree's registration was pointed at"] = secret
+	// A .git file an agent wrote, in a folder elsewhere, pointing at the git directory or at a
+	// worktree's registration, doesn't make that folder a worktree (Sol's review of #805).
+	for name, ptr := range map[string]string{"planted": a.gitDir, "planted2": reg} {
+		dir := filepath.Join(base, name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+filepath.ToSlash(ptr)+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		refused["a file in a folder with a .git planted to point at "+name] = put(dir, "secret.txt")
+	}
+	// Nor does a hard link to a real worktree's .git: the same file, in another folder.
+	wt3, linked := filepath.Join(base, "wt3"), filepath.Join(base, "linked")
+	gitOK(clone, "worktree", "add", "--detach", wt3)
+	if err := os.MkdirAll(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if os.Link(filepath.Join(wt3, ".git"), filepath.Join(linked, ".git")) == nil {
+		refused["a file in a folder with a hard link to a worktree's .git"] = put(linked, "secret.txt")
+	}
+	if upper := filepath.Join(clone, ".GIT", "config"); func() bool { _, err := os.Stat(upper); return err == nil }() {
+		refused["a file in the git directory, spelled in other case"] = upper // Windows', macOS's
+	}
+	if alias := filepath.Join(temp, "alias"); os.Symlink(clone, alias) == nil {
+		refused["a file in the git directory, by a link to the clone"] = filepath.Join(alias, ".git", "config")
+	}
+	for what, path := range refused {
+		err := send(path)
+		if !strings.Contains(err, "isn't in this repo's clone or the temp folder") || !strings.Contains(err, "copy it into "+temp) {
+			t.Errorf("%s: %q, want it refused, saying to copy it into %s", what, err, temp)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, path := range []string{`\\localhost\c$\Windows\win.ini`, `\/localhost/c$/Windows/win.ini`, `\\?\C:\Windows\win.ini`} {
+			if err := send(path); !strings.Contains(err, "is a network path") {
+				t.Errorf("%s: %q, want it refused as a network path", path, err)
+			}
+		}
+	}
 }
 
 // The same files sent to several names, a message for each, go up once: every message names the
@@ -498,6 +675,94 @@ func TestASendToSeveralUploadsTheFilesOnce(t *testing.T) {
 	}
 }
 
+// Sends of the same files at one moment, from sessions on one device, upload them once (#763):
+// the later ones wait for the first's message and take its ref. With room in the day's uploads
+// for one pack, each would otherwise have been refused or have uploaded again.
+func TestSendsOfTheSameFilesAtOnceUploadThemOnce(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	b := newDevice(t, remote)
+	senders := []string{"aaaaaa", "dddddd"} // each waits its turn within the rig's 30 s a request
+	for _, id := range senders {
+		a.session(id, "")
+	}
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	errs := make(chan string, len(senders))
+	for _, id := range senders {
+		go func() {
+			errs <- a.do(proto.Request{Op: proto.OpSend, Session: id, To: bob, Subject: "from " + id, Files: []string{path}}).Error
+		}()
+	}
+	for range senders {
+		select {
+		case e := <-errs:
+			if e != "" {
+				t.Errorf("a send of the same files at once: %s", e)
+			}
+		case <-time.After(2 * time.Minute):
+			t.Fatal("a send of the same files is still waiting")
+		}
+	}
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
+		t.Errorf("files refs on the remote: %v, want one", refs)
+	}
+	var got []proto.MessageView
+	eventually(t, "a message from each", func() bool {
+		got = append(got, b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages...)
+		return len(got) == len(senders)
+	})
+	for _, m := range got {
+		if len(m.Files) != 1 || !fileThere(m.Files[0].Path) {
+			t.Errorf("%q came with %+v", m.Subject, m.Files)
+		}
+	}
+}
+
+// A send whose upload fails ends its turn: one that waited for it goes on, uploads itself, and
+// here fails the same way, since the remote takes no files. None is left waiting, and the same
+// files go once the remote takes them. (It can't show that any waited: without the turn each
+// fails alike.)
+func TestASendThatWaitedGoesOnWhenTheFirstFails(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	senders := []string{"aaaaaa", "dddddd"} // each waits its turn within the rig's 30 s a request
+	for _, id := range senders {
+		a.session(id, "")
+	}
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	refuse := "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/murmur/files/*) echo no files today >&2; exit 1;; esac; done\n"
+	if err := os.WriteFile(hook, []byte(refuse), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	errs := make(chan string, len(senders))
+	for _, id := range senders {
+		go func() {
+			errs <- a.do(proto.Request{Op: proto.OpSend, Session: id, To: "*", Subject: "from " + id, Files: []string{path}}).Error
+		}()
+	}
+	for range senders {
+		select {
+		case e := <-errs:
+			if !strings.Contains(e, "its files didn't go out") {
+				t.Errorf("a send the remote refused the files of: %q", e)
+			}
+		case <-time.After(2 * time.Minute):
+			t.Fatal("a send of the same files is still waiting")
+		}
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "again", Files: []string{path}}); r.Error != "" {
+		t.Errorf("once the remote takes files: %s", r.Error)
+	}
+}
+
 // A device uploads at most FilesPerDay of files in a day. Past it a send with new files is refused,
 // saying when it can go; the same files sent again take the ref already up, and cost nothing (#739).
 func TestFilesPastADaysUploadsAreRefused(t *testing.T) {
@@ -521,6 +786,36 @@ func TestFilesPastADaysUploadsAreRefused(t *testing.T) {
 	}
 	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
 		t.Errorf("files refs on the remote: %v, want one", refs)
+	}
+}
+
+// An upload the remote refused isn't counted in the day's uploads (#788): every try says the
+// files didn't go out, none that the device has sent its day's worth, and the files go once the
+// remote takes them.
+func TestARefusedUploadIsNotCounted(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	a.session("aaaaaa", "")
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	refuse := "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/murmur/files/*) echo no files today >&2; exit 1;; esac; done\n"
+	if err := os.WriteFile(hook, []byte(refuse), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	send := func() proto.Response {
+		return a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "files", Files: []string{path}})
+	}
+	for try := 1; try <= 3; try++ {
+		if r := send(); !strings.Contains(r.Error, "its files didn't go out") || strings.Contains(r.Error, "in the last day") {
+			t.Fatalf("try %d, refused by the remote: %q", try, r.Error)
+		}
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if r := send(); r.Error != "" {
+		t.Errorf("once the remote takes files: %s", r.Error)
 	}
 }
 
@@ -549,5 +844,66 @@ func TestFilesPastWhatADeviceHoldsGoOldestFirst(t *testing.T) {
 	eventually(t, "the old copy to go", func() bool { return !fileThere(paths[0]) })
 	if !fileThere(paths[1]) {
 		t.Errorf("the new copy went too")
+	}
+}
+
+// A note of another device's files ref goes as soon as the ref is off the remote (#747): it used
+// to wait out twice FileKeep of this daemon's running, long after its ref had gone.
+func TestANoteOfAFilesRefGoesWithTheRef(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filePrune = 300 * time.Millisecond })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "noted", Files: []string{writeFile(t, "a.txt", []byte("a"))}})
+	if r.Error != "" {
+		t.Fatalf("send: %s", r.Error)
+	}
+	inboxMessage(t, b, "bbbbbb")
+	// ok is false while the file is being replaced, which says nothing either way.
+	noted := func() (is, ok bool) {
+		st, err := os.ReadFile(filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+		var js map[string]json.RawMessage
+		if err != nil || json.Unmarshal(st, &js) != nil {
+			return false, false
+		}
+		_, is = js["othersFiles"]
+		return is, true
+	}
+	eventually(t, "b to note the files ref of a", func() bool { is, ok := noted(); return ok && is })
+	holds(t, "the note, while the ref is on the remote", time.Second, func() bool { is, ok := noted(); return !ok || is })
+
+	ref := strings.TrimSpace(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files"))
+	git(t, remote, "update-ref", "-d", ref) // as its own daemon does when its time is up
+	eventually(t, "the note to go with the ref", func() bool { is, ok := noted(); return ok && !is })
+}
+
+// A folder above the clone or temp that can be passed through but not listed, as a shared host's
+// /home of mode 711 is, doesn't stop a send (Fable's review of #768).
+func TestSendReadsFilesBelowAFolderThatCantBeListed(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("a folder's search-only mode is Unix's, and root ignores it")
+	}
+	t.Parallel()
+	remote := newRemote(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	temp := filepath.Join(locked, "temp")
+	if err := os.MkdirAll(temp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shot := filepath.Join(temp, "shot.png")
+	if err := os.WriteFile(shot, []byte("a picture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	a := newDeviceWith(t, remote, func(d *device) { d.tempDir = temp })
+	a.session("aaaaaa", "")
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "a file", Files: []string{shot}}); r.Error != "" {
+		t.Errorf("a file in temp, below a folder that can't be listed: %s", r.Error)
 	}
 }

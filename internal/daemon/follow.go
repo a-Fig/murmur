@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"sort"
@@ -25,6 +26,9 @@ import (
 // session that finds its T3 thread keeps the name under its old key too (see rekeyLocked), so the
 // client's session ID brings the same name, though the session has another key now. Caller holds mu.
 func (d *Daemon) uniqueKeyLocked(key, id string) string {
+	if d.st.ThreadLeft[id] == key {
+		return key + "/" + id // a thread it gave up (yieldThreadLocked)
+	}
 	name := d.st.NameKeys[key]
 	for _, o := range d.sessions {
 		if o.id != id && o.dropped.IsZero() && (o.key == key || (name != "" && o.name == name)) {
@@ -32,6 +36,66 @@ func (d *Daemon) uniqueKeyLocked(key, id string) string {
 		}
 	}
 	return key
+}
+
+// yieldThreadLocked makes the live Codex sessions of other processes that hold key, a Codex
+// thread's, give it up to session id of process pid, which has just shown the thread is its
+// own, and returns their IDs. Codex keeps a thread's ID when another program resumes it, as the
+// app does a conversation begun in the command line, and each program starts an MCP server of
+// its own for it. With the first still open, the two were two live sessions of one key, and the
+// later one kept the name it had registered with: the conversation had a new name for having
+// moved (#568). The one that showed the thread last is where the conversation is, since a tool
+// call carried the thread there, so it takes the name. The other is a session of its own from
+// then on, with a new name, and stays one (ThreadLeft): it never says it has the thread again,
+// having said so once.
+//
+// Only between processes: two servers of one Codex process on one thread are two MCP servers
+// in one client session, and the later is the session of its own, as before. A session with no
+// PID, or of an agent other than Codex outside T3 (one in T3 that hasn't found its T3 thread
+// has a Codex key meanwhile), is left as it was. The caller, once id is the thread's session,
+// gives it what the others had unread (takeInboxLocked). Caller holds mu.
+func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key string) []string {
+	if pid == 0 || !strings.HasPrefix(key, "codex:") || agent != "codex" || d.st.ThreadLeft[id] == key {
+		return nil
+	}
+	var left []string
+	for _, o := range d.sortedSessionsLocked() {
+		if o.id == id || !o.dropped.IsZero() || o.key != key || o.clientPID == 0 || o.clientPID == pid || o.agent != "codex" {
+			continue
+		}
+		if d.st.ThreadLeft == nil {
+			d.st.ThreadLeft = map[string]string{}
+		}
+		d.st.ThreadLeft[o.id] = key
+		from := o.name
+		o.key = d.uniqueKeyLocked(key, o.id)
+		d.setNameLocked(o, d.nameForKeyLocked(o.key, o.id))
+		if o.name == "" {
+			d.kickNames()
+		}
+		addr := bus.Addr(d.device, o.id)
+		d.noteLocked(time.Now(), fmt.Sprintf("%s's Codex thread went on in another program: %s -> %s", addr, from, cmp.Or(o.name, "(no name yet)")))
+		d.log.Printf("session %s's Codex thread went on in another program, as session %s; it had the name %s, and has %s now",
+			addr, bus.Addr(d.device, id), from, cmp.Or(o.name, "none yet"))
+		left = append(left, o.id)
+	}
+	if len(left) > 0 {
+		d.saveLocked()
+		d.kickPresence()
+	}
+	return left
+}
+
+// keptForLocked is the name that what is sent to session id, which isn't running, is for: the
+// last it took, unless it gave its Codex thread up to another program (yieldThreadLocked). The
+// name it was given then was for a session that ends with its server, while the registry still
+// has the thread's name at its address, which is where another device sends a message for the
+// thread once no presence shows the name. Such a message is the thread's (#568). Caller holds mu.
+func (d *Daemon) keptForLocked(id string) string {
+	if name := d.st.NameKeys[d.st.ThreadLeft[id]]; name != "" {
+		return name
+	}
+	return d.st.SessionNames[id]
 }
 
 // threadIDLocked is the session ID for a hello: h.ID, unless the server made it from its T3 thread
@@ -81,7 +145,55 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		d.st.SessionNames = map[string]string{}
 	}
 	d.st.NameHolders[name], d.st.SessionNames[s.id] = s.id, name
+	if d.st.NamesSeen == nil {
+		d.st.NamesSeen = map[string]time.Time{}
+	}
+	d.st.NamesSeen[s.id] = time.Now().UTC().Truncate(time.Hour)
 	d.saveLocked()
+}
+
+// sessionNameKeep is how long the name of a session that is gone is remembered once nothing else
+// points at it: long enough that the page's history, and a teammate's agent that kept its address,
+// have moved on.
+const sessionNameKeep = 30 * 24 * time.Hour
+
+// pruneSessionNamesLocked forgets the name each long-gone session took last (#747), and says
+// whether it forgot any. One is kept while its session runs or its inbox is kept, while it is the
+// name's holder (NameHolders), and while it is the session the registry has the name down for,
+// which forwardLocked starts from. Past that, the name only labels the session's old messages on
+// the page and in lookup, and forwards a message sent to its old address: after sessionNameKeep
+// those show the address, and such a message is dropped as one to any session that is gone. A
+// session with no time noted, from a state.json older than NamesSeen, counts from now. So does one
+// kept for any of those reasons, whose time is renewed about once a day while it is: the 30 days
+// run from when the last of them ended, not from when a session that then ran for weeks took its
+// name. Caller holds mu.
+func (d *Daemon) pruneSessionNamesLocked(now time.Time) bool {
+	changed := false
+	for id := range d.st.NamesSeen {
+		if _, ok := d.st.SessionNames[id]; !ok {
+			delete(d.st.NamesSeen, id)
+			changed = true
+		}
+	}
+	if d.st.NamesSeen == nil {
+		d.st.NamesSeen = map[string]time.Time{}
+	}
+	for id, name := range d.st.SessionNames {
+		_, stopped := d.st.Stopped[id]
+		kept := d.sessions[id] != nil || stopped || d.st.NameHolders[name] == id || d.st.Used[name] == bus.Addr(d.device, id)
+		seen, ok := d.st.NamesSeen[id]
+		switch {
+		case !ok, kept && now.Sub(seen) > 24*time.Hour:
+			d.st.NamesSeen[id] = now.UTC().Truncate(time.Hour)
+		case !kept && now.Sub(seen) > sessionNameKeep:
+			delete(d.st.SessionNames, id)
+			delete(d.st.NamesSeen, id)
+		default:
+			continue
+		}
+		changed = true
+	}
+	return changed
 }
 
 // adoptLocked moves into s's inbox the inboxes kept for sessions stopped within StoppedInbox whose
@@ -100,8 +212,14 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	}
 	var from []string
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if id == s.id || d.sessions[id] != nil || d.st.SessionNames[id] != name ||
-			time.Since(d.st.Stopped[id]) > d.opt.StoppedInbox || len(d.st.Inbox[id]) == 0 {
+		if id == s.id || d.sessions[id] != nil || d.keptForLocked(id) != name || !d.keptLocked(id) {
+			continue
+		}
+		// A message handed over as a turn has left the inbox, and its turn may start under s.
+		if d.takeAwaitingLocked(s.id, id) {
+			d.saveLocked()
+		}
+		if len(d.st.Inbox[id]) == 0 {
 			continue
 		}
 		for _, m := range d.st.Inbox[id] {
@@ -227,8 +345,7 @@ func (d *Daemon) receivesLocked(id string) bool {
 	if d.sessions[id] != nil {
 		return true
 	}
-	at, ok := d.st.Stopped[id]
-	return ok && time.Since(at) <= d.opt.StoppedInbox
+	return d.keptLocked(id)
 }
 
 // forwardLocked says where a message for the address to goes instead, "" if it stays. The registry
@@ -247,7 +364,7 @@ func (d *Daemon) forwardLocked(to string) string {
 	if dev != d.device || id == "" || d.liveLocked(id) {
 		return ""
 	}
-	name := d.st.SessionNames[id]
+	name := d.keptForLocked(id)
 	holder := d.st.NameHolders[name]
 	if holder == "" || holder == id || d.st.SessionNames[holder] != name || !d.receivesLocked(holder) {
 		return ""

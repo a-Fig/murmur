@@ -8,6 +8,31 @@ couldn't send another a screenshot, a log or a diff.
 which it opens with its own tools; one that reads images sees the image. A person on the page
 attaches, pastes or drops files, and sees the ones a message carries ([below](#on-the-page)).
 
+## Off until turned on
+
+Tyler, 2026-11-16 (#765): files have to be turned on, each way, in Settings, and can then be
+kept from the agents, so a person can send and see files on the page while their agents don't.
+Each device has, for each repo, a main switch each way, **Send files** and **Receive files**
+(`sendFiles`, `receiveFiles`), off until the person turns it on, for anyone who used files on a
+nightly too. Once one is on, a second under it, **Agents too**, says whether it is the agents'
+as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are kept in
+`settings.json` with the page's other settings.
+
+- **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
+  an agent's if sending is off or kept from agents, the page's if it is off, and checked again
+  once the push's turn comes. An agent is told its user can turn it on, and `who` marks the device `AGENTS SEND NO
+  FILES` so it knows before it tries. On the page the paperclip still shows: attaching, dropping
+  or pasting a file asks the person to turn theirs on, and goes on once they do.
+- **Receive files off:** a message from another device arrives as its text, its files neither
+  fetched nor shown. Kept from agents, the page fetches and shows them and the sessions don't get
+  them. A fetch under way ends when its switch goes off, and a
+  message that was waiting for its files goes without them. The device's presence says whether its
+  agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
+  `send` says which recipients get the text alone, and `who` and `lookup` show it before a send.
+  What a session sends another on the same device is there already and fetched from nowhere, so it
+  is shown.
+- **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
+
 ## How a file travels
 
 - **A ref for each message.** The sender's daemon encrypts each file, joins them into one blob (the
@@ -76,7 +101,10 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   the remote may then drop the objects in its own time (GitHub doesn't promise when; they are
   encrypted either way). Receivers delete their copies after 7 days
   too. A week covers a message read after a weekend; the message itself stays in history with its
-  file names, and a turn made from it later says the files aren't there.
+  file names, and a turn made from it later says the files aren't there. An invisible device
+  deletes nothing from the remote, as it writes nothing there (`modes.md`): its refs past their
+  time go when it leaves invisible (#789), or when a teammate's daemon deletes them as a gone
+  device's, below.
 - **A sender that never runs again**, as a deleted clone, would leave its refs for good (#708,
   2026-11-16). So every daemon notes the files refs it reads of in other devices' logs, history
   included, and deletes one once it has itself run for 14 days since it first read of it, if the
@@ -86,18 +114,31 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   weeks, as one is when it is put right, ages nothing, and nor does a teammate's event with an old
   date. Time the daemon is down isn't counted, and a machine asleep counts at most the cap (Windows'
   monotonic clock runs on in sleep; others' stop). That only makes a ref wait longer: weeks more on
-  a team whose daemons run only while someone works. A ref no event this device read names
-  still stays: one whose message failed after its push, one in a log it can't open, or one sent
+  a team whose daemons run only while someone works. The note of a ref that is off the remote
+  already goes at the next prune, whatever its age (#747): the prune lists the remote, and a ref is
+  pushed before the event that names it, so one not listed was deleted. A ref no event this device
+  read names still stays: one whose message failed after its push, one in a log it can't open, or one sent
   before it first ran, as a new clone passes over the logs' history.
 - **A send to several recipients uploads the files once** (#739, 2026-11-16). Each gets a message of
   its own (#520), and a file is sealed to its ref, not its message, so a send of the same files,
   names and contents, within 10 minutes of their push takes that push's ref, once a message naming
   it has gone out. A ref whose message failed is left to the prune and taken by no other send, and
-  a send that took a ref and then failed leaves it be. Until then each message uploaded them again.
+  a send that took a ref and then failed leaves it be. A message whose push ended badly without
+  the remote refusing it may land yet, on Windows even after the push was killed, so its ref is
+  kept its full time (#745). Until then each message uploaded them again.
+  Only one upload of the same files is under way at a time (#763): two sessions on a device that
+  sent the same files at one moment each found no ref to take and each uploaded, so the second
+  now waits for the first's message to be out or to have failed, and then takes its ref or
+  uploads itself. It waits no longer than its own send may take, and is then told to send again.
 - **200 MB of uploads a device a day** (`FilesPerDay`, #739), over the last 24 hours, counted in
   packs pushed, so a send to several counts once. Past it a send with files is refused, saying when
   it can go. A loop sending a 20 MB log to everyone each minute would otherwise put a gigabyte an
-  hour on the remote, which shares the repo's size limits with the team's code.
+  hour on the remote, which shares the repo's size limits with the team's code. A pack is counted
+  before its push, which can land and still report failure, and taken off the count once the
+  remote is known not to have it (#788): at once when the remote, asked after the failed push,
+  lists no such ref; at a prune six minutes or more after the push began, for one cut off at its
+  time limit, since what its git started may still be sending. Before that, a dozen tries at a
+  15 MB recording over a bad connection uploaded nothing and stopped file sends for a day.
 - **1 GB of files kept a device** (`FilesHeld`, #739), those it sent and those it fetched together.
   Past it a message's files go, the oldest first, checked after each send and each fetch, the
   page's included, and at each prune, the files just sent or fetched staying; such a message reads
@@ -119,6 +160,34 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   is known to every teammate: one could push their own blob over it and send a message naming it,
   and a device that read theirs first would show their file under the real message. With the sums
   in the name, a directory holds only files that are what its message says.
+- **Where a send reads from** (#690, 2026-11-16). The daemon reads a file as the user, outside
+  any sandbox the agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise
+  send anything the user can read (`~/.ssh`, cloud credentials, other repos) to the whole team. It
+  reads only from the clone's worktrees and the temp folder (`os.TempDir`, and `/tmp` on macOS and
+  Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
+  Each folder is opened as an `os.Root`, and every later look and the read go through that
+  handle, so the folder checked is the one read from even if its path becomes a link after. The
+  worktree a file is in is found above it (#772): the nearest folder with a `.git` that, looked at
+  through its handle, leads back to this clone, never the git directory or inside it. A nested repo
+  is passed over. Only that worktree is opened, not every one the clone has, which took 1 to 4 s a
+  send on a clone with 220. A `.git` file is anyone's to write, so a linked worktree also needs its
+  registration in the git directory, read through that directory's handle, to name it back, and a
+  `--separate-git-dir` checkout, whose `.git` points straight at the git directory, needs one of
+  the device's sessions in it (Sol's review of #805). `git worktree list` isn't run: it looks at
+  each worktree, and would sign in to a share one names. A
+  path's links are followed one part at a time, through its volume's handle, which refuses a link
+  to a share instead of following it; the folder it lands in is found, and the git directory
+  refused, by what each folder is, not how its path is spelled, so a case (`.GIT`), a short
+  Windows name (`RUNNER~1`) or an alias doesn't get around them. A link met in the folder after
+  that can only have been swapped in, and is refused. From the folder down, each part is looked at
+  in its parent's handle and opened as a handle of its own, which must be the folder looked at, so a
+  folder swapped for a link to `.git` between two looks leads nowhere (#773). A Windows reparse
+  point that leads nowhere, as a OneDrive file not yet downloaded is, is the file it stands for. A network path on Windows (`\\host\share`,
+  `\/host/share`, `\\?\`) is refused before anything, as looking signs in to that host as the
+  user. `~/.claude` stays out though a screenshot pasted into Claude Code may be there: it holds
+  Claude Code's credentials and every conversation. A refusal says to copy the file into the temp
+  folder. The page's uploads aren't paths, and aren't limited. Left: a hard link, which looks like
+  the file it links to.
 - **Paths from Git Bash.** On Windows the MCP server puts `/c/Users/...` back to `C:\Users\...`
   and leaves any other path from a root with no drive (`/tmp/shot.png`) for the daemon to refuse:
   Windows would read it on the current drive, where another file of that name may be.

@@ -15,7 +15,10 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   and doesn't keep the turn going with them (#213). `inbox` gives them as usual. When the tag comes
   off, each goes out once, by whichever route applies then, and counts as arriving at that moment,
   so one older than the 15-minute limit on turns is still handed over as one. `send` isn't refused;
-  the sender is told the message is queued.
+  the sender is told the message is queued. A message from the device's own person, sent from its
+  page, isn't held, whether to one session, a group or everyone (#777, Tyler, 2026-11-16: "I don't see when I would want
+  DND to block my own messages"); nothing ties a person's devices together, so one they send from
+  another device is held as anyone's is.
 - **Where a tag comes from**, highest first: a person on the page, the session itself (the `tags`
   tool), or the daemon, which derives a T3 session's model from the thread's `modelSelection.model`
   in T3's database (`claude-opus-5-5`, shown as `model:opus-5.5`); a session outside T3 sets its
@@ -36,9 +39,10 @@ no tag carries behavior but `do-not-disturb`, which he asked for the same day.
   12, a person's tags are kept first, then the session's, then derived ones.
 - **A session with no name yet** keeps its tags and mutes by its ID. One that stops before its name
   lands still has them while its inbox is kept, and they go with the inbox (#503). One whose daemon
-  stopped with it is never recorded as stopped, so they go as its inbox does, if it isn't back two
-  minutes after the restart. The cost: one resumed later than that has lost its mutes too, so the
-  sessions it muted reach it again. After a restart, a person's change to the tags of a session the
+  stopped or was killed with it counts as stopped from about then (#736, #762), so they are kept as long
+  too. Until 2026-11-16 they went two minutes after the restart, and a session resumed later than
+  that had lost its mutes, so the sessions it muted reached it again. After a restart, a
+  person's change to the tags of a session the
   daemon knows nothing of, or an agent's add of it to a group, read in the first 30 s, waits in
   memory for a session of that ID to reconnect in that time, as a message does (#524): one whose
   name was pending and that kept nothing here would otherwise lose it. It is applied before the

@@ -39,7 +39,7 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 | Consent | `.git/murmur/joined.json` (0600) | clone, so every worktree of it |
 | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp` | user |
 | Permission for its tools | `mcp__murmur` in `permissions.allow` of Claude Code's `settings.json` | user |
-| The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME"]` and `default_tools_approval_mode = "approve"` | user |
+| The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME", "T3CODE_HOME"]` and `default_tools_approval_mode = "approve"` | user |
 | The MCP server, for OpenCode, Muse Code, Pi, Grok and Antigravity | see [other agents](clients.md) | user |
 | The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi, and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
 | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` | `settings.json` in each Claude Code home ([Claude Code's hook is per user](clients.md#claude-codes-hook-is-per-user)) | user |
@@ -181,7 +181,8 @@ Because `list_changed` is honored where it matters, the server is registered onc
 starts in every session as a passive server: after the first join, a Claude Code session in any repo
 gets the tools the moment that repo is joined, with no restart. A session that began before the
 registration needs the restart in the table, and `join` says which for the agent that ran it
-(`CLAUDECODE` and `T3CODE_CLI_PATH` in its environment): in T3, Stop and a message; in a terminal
+(`CLAUDECODE`, and `T3CODE_CLI_PATH` or, from T3's headless server, which sets no
+`T3CODE_CLI_PATH`, `T3CODE_THREAD_ID`, in its environment; #790): in T3, Stop and a message; in a terminal
 Claude Code, exit and `claude --continue`; in Codex, a new thread. Not verified: that `claude
 --continue` loads the server, that Codex honors `default_tools_approval_mode = "approve"` in a live
 thread, and which variables Codex sets for its commands (with none, `join`'s advice covers every

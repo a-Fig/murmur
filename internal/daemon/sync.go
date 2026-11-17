@@ -1022,6 +1022,9 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 			if mode == modeNormal && !held {
 				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
 			}
+			if mode == modeNormal {
+				d.mutedropLocked(id, e) // its sender is told (#466)
+			}
 			continue
 		}
 		if !d.inTimeLocked(e, id, mode) &&
@@ -1043,11 +1046,12 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 }
 
 // recipientsLocked lists the sessions a message can be queued for: those registered, which
-// includes any in their grace, those stopped within StoppedInbox, and the CLI. Caller holds mu.
+// includes any in their grace, those stopped whose inbox is kept (keptLocked), and the CLI.
+// Caller holds mu.
 func (d *Daemon) recipientsLocked() []string {
 	ids := sortedKeys(d.sessions)
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if d.sessions[id] == nil && time.Since(d.st.Stopped[id]) <= d.opt.StoppedInbox {
+		if d.sessions[id] == nil && d.keptLocked(id) {
 			ids = append(ids, id)
 		}
 	}
@@ -1067,8 +1071,8 @@ func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
 	if id == bus.PersonSession {
 		// A person's daemon goes away when their page closes, and an answer can take hours: what was
 		// sent to them is theirs, however long the daemon was down. What they already have is known
-		// by its ID, so a read of old history adds nothing.
-		return !d.msgIDs[e.ID]
+		// by which message it is (msgKey), so a read of old history adds nothing.
+		return !d.msgKeys[msgKey(e)]
 	}
 	if mode == modeNormal || d.sentSinceLocked(e, id, mode) {
 		return true
@@ -1080,11 +1084,11 @@ func (d *Daemon) inTimeLocked(e bus.Event, id string, mode syncMode) bool {
 	return mode == modeCatchUp && id != proto.CLISession && (s == nil || s.reconnect)
 }
 
-// keptInboxLocked says some stopped session has its inbox kept: it stopped within StoppedInbox
-// and has not registered again. Caller holds mu.
+// keptInboxLocked says some stopped session has its inbox kept (keptLocked) and has not
+// registered again. Caller holds mu.
 func (d *Daemon) keptInboxLocked() bool {
-	for id, at := range d.st.Stopped {
-		if d.sessions[id] == nil && time.Since(at) <= d.opt.StoppedInbox {
+	for id := range d.st.Stopped {
+		if d.sessions[id] == nil && d.keptLocked(id) {
 			return true
 		}
 	}
@@ -1177,9 +1181,14 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.caughtUp[id] = true
 	d.applyHeldLocked(id) // first: a group's message waiting for it goes by the tags they give it
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
-			d.addInboxLocked(id, e)
+		if !d.addressedLocked(e, id) || d.offMeshLocked(id) {
+			continue
 		}
+		if d.mutedHereLocked(id, e) {
+			d.mutedropLocked(id, e) // what arrived while the daemon was down: its sender is told (#466)
+			continue
+		}
+		d.addInboxLocked(id, e)
 	}
 	d.saveLocked()
 }
@@ -1235,7 +1244,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
-		pres.Groups, pres.Receipts, pres.Files = false, false, false
+		pres.Groups, pres.Receipts, pres.Files, pres.FilesOff, pres.PersonFilesOff = false, false, false, false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
 		if err != nil {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
@@ -1268,6 +1277,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
+		d.droppedThereLocked(dev, pres.Sessions)
 	}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
@@ -1375,6 +1385,14 @@ func (d *Daemon) readOwnLater(ctx context.Context) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
+	return d.appendEventIf(ctx, e, nil, nil)
+}
+
+// appendEventIf is appendEvent, asking still once each push's turn is had: a message with files
+// isn't sent if Send files went off while it waited (#765). With settle, a push that ends unsure
+// leaves the event pending rather than failed, and appendEventIf returns a pendingError: it is
+// pushed again until it lands or is given up, and settle is told which (pending.go, #781).
+func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool, settle settleFunc) error {
 	if err := d.awaitEpoch(ctx); err != nil {
 		return err
 	}
@@ -1391,40 +1409,38 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 	if err != nil {
 		return err
 	}
+	// A push carries the sends pending under it, so it goes out only if they still may: a send
+	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
+	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	for attempt := 0; ; attempt++ {
+		d.dropSwitchedOff(ctx)
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err
 		}
 		if lease == "" {
-			err = d.push(ctx, sha, ref, bus.FastForward, "")
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", stillAll)
 		} else {
-			err = d.push(ctx, sha, ref, bus.Lease, lease)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
+		}
+		if errors.Is(err, errSendOff) && (still == nil || still()) {
+			continue // a pending send's switch went off as this waited: build without it
+		}
+		if err != nil && !pushRefused(err) {
+			err = unsureError{err}
+			if settle != nil && d.pendLocked(sha, settle, still, err) {
+				return pendingError{err}
+			}
 		}
 		if err == nil {
-			d.ownTip = sha
-			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
-				d.log.Printf("updating local %s: %v", ref, err)
-			}
-			d.mu.Lock()
-			if e.Type == bus.Message {
-				d.noteConversationLocked() // a message went out; the answer may come soon
-			}
-			d.mu.Unlock()
-			if d.leaveOwnTip(sha) {
-				return nil
-			}
-			d.mu.Lock()
-			d.known[ref] = sha
-			d.mu.Unlock()
-			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
-			d.advMu.Unlock()
+			d.ownLanded(ctx, ref, sha, e.Type == bus.Message)
 			return nil
 		}
 		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
 			return err
 		}
+		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
 			return err
@@ -1443,10 +1459,57 @@ func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
 			continue
 		}
 		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
-		// first sync, or a copied .git. Build on the remote's tip instead.
+		// first sync, or a copied .git. Build on the remote's tip instead. A send pending on the
+		// tip that was given up for it is settled by whether the remote's has it.
+		d.settlePendingOn(ctx, tip, rejected)
 		d.ownTip = tip
 	}
 }
+
+// ownLanded records sha, the tip of this device's log just pushed, as landed, and with it every
+// send pending under it; message says the write was a message, after which an answer may come
+// soon. Caller holds writeMu.
+func (d *Daemon) ownLanded(ctx context.Context, ref, sha string, message bool) {
+	d.ownTip = sha
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	landed := d.pendSends
+	d.pendSends = nil
+	d.mu.Lock()
+	if message || len(landed) > 0 {
+		d.noteConversationLocked() // a message went out; the answer may come soon
+	}
+	d.mu.Unlock()
+	for _, p := range landed {
+		p.settle(true, false, nil)
+	}
+	if d.leaveOwnTip(sha) {
+		return
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
+	d.advMu.Unlock()
+}
+
+// pushRefused says a push that ended with err is known not to have landed: the remote refused it,
+// or it was never sent.
+func pushRefused(err error) bool {
+	return errors.Is(err, bus.ErrRejected) || errors.Is(err, bus.ErrRefused) ||
+		errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || errors.As(err, new(notPushedError))
+}
+
+// unsureError is what a write to this device's log ends with when its push ended badly without
+// the remote having refused it: it may land yet. The push looks at the remote before it gives up
+// (bus.Repo.Push), but that look can fail as the push did, and on Windows a push killed at its
+// time limit leaves its children running (internal/gitx/tree_windows.go says so of a fetch), so
+// it can land after the look. What was made for the event, its files and its receipt record, is
+// kept then, as the event may be on the bus (#745).
+type unsureError struct{ error }
+
+func (e unsureError) Unwrap() error { return e.error }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather
 // than build on: not a commit, or one this daemon's own tip already contains. A failure to tell
@@ -1741,7 +1804,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, DND: d.dnd.Load()}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
@@ -1759,7 +1822,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
-			Muted: d.mutesOfLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+			Muted: d.mutesOfLocked(s.id), Dropped: d.mutedropsLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
 		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()
@@ -1859,7 +1922,9 @@ func (d *Daemon) liveNamesLocked() map[string]bool {
 }
 
 // pruneInboxes drops the inboxes of sessions stopped longer than StoppedInbox, with what is kept
-// for them, and those left by sessions that didn't come back after a restart.
+// for them, and those of sessions neither registered nor stopped. A daemon that stops records a
+// stop for each of its sessions (#736), and the next daemon does it for one that was killed
+// (#762), so those are what a state file from before either holds.
 func (d *Daemon) pruneInboxes() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1868,7 +1933,7 @@ func (d *Daemon) pruneInboxes() {
 		d.dropHeldLocked()
 	}
 	for id, at := range d.st.Stopped {
-		if time.Since(at) > d.opt.StoppedInbox {
+		if d.stopSpentLocked(id, at) {
 			d.dropStoppedLocked(id)
 			d.saveLocked()
 		}
@@ -1878,8 +1943,20 @@ func (d *Daemon) pruneInboxes() {
 			delete(d.pushedAt, id)
 		}
 	}
-	if time.Since(d.started) < 2*time.Minute {
+	if time.Since(d.started) < sweepAfter {
 		return
+	}
+	if d.pruneSessionNamesLocked(time.Now()) {
+		d.saveLocked()
+	}
+	// Nobody an earlier daemon's stop ended is waited for any longer (awaitedLocked). Only those:
+	// this runs after a push that the daemon's own stop cut short too, and the marks that stop is
+	// writing are for the next daemon.
+	for id := range d.st.Downed {
+		if d.st.Stopped[id].Before(d.started) {
+			delete(d.st.Downed, id)
+			d.saveLocked()
+		}
 	}
 	for id := range d.st.Inbox {
 		if _, stopped := d.st.Stopped[id]; id != proto.CLISession && id != bus.PersonSession && d.sessions[id] == nil && !stopped {
@@ -1895,10 +1972,17 @@ func (d *Daemon) pruneInboxes() {
 		}
 	}
 	// A thread is kept for a session while it can have messages: it is running or stopped within
-	// StoppedInbox. One that went down with a daemon and never came back has none.
+	// StoppedInbox. One with no stop recorded, from a state file older than #736 and #762, has none.
 	for id := range d.st.T3Routes {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
 			delete(d.st.T3Routes, id)
+			d.saveLocked()
+		}
+	}
+	// So is the Codex thread it gave up, which says whose its messages are (keptForLocked).
+	for id := range d.st.ThreadLeft {
+		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {
+			delete(d.st.ThreadLeft, id)
 			d.saveLocked()
 		}
 	}
@@ -1918,15 +2002,44 @@ func (d *Daemon) pruneInboxes() {
 	}
 }
 
+// sweepAfter is how long after it starts a daemon leaves what belongs to sessions it knows
+// nothing of, and to those the last daemon went down with: their servers are reconnecting.
+const sweepAfter = 2 * time.Minute
+
+// stopSpentLocked says what is kept for session id, stopped at at, has had its time: StoppedInbox
+// since the stop. Not yet, whatever the stop's age, for a session the last daemon went down
+// with (Downed) while this one is younger than sweepAfter: its server may be reconnecting, and
+// one back in that time kept what it had before a stop was recorded for it (#762). A killed
+// daemon's stop is dated by its last write, which can be days before a laptop is opened again,
+// and a daemon that stopped as a machine shut down for the weekend is as old. Caller holds mu.
+func (d *Daemon) stopSpentLocked(id string, at time.Time) bool {
+	if d.st.Downed[id] && time.Since(d.started) < sweepAfter {
+		return false
+	}
+	return time.Since(at) > d.opt.StoppedInbox
+}
+
+// keptLocked says session id is stopped and its inbox is kept: its stop hasn't had its time
+// (stopSpentLocked). It is the one test of that, for whether a message is queued for the
+// session, forwarded to it or adopted from it, and whether its thread is read: a session spared
+// by the sweep and counted as gone by the rest would have its inbox kept and nothing put in it.
+// Caller holds mu.
+func (d *Daemon) keptLocked(id string) bool {
+	at, ok := d.st.Stopped[id]
+	return ok && !d.stopSpentLocked(id, at)
+}
+
 // dropStoppedLocked lets go of what is kept for session id, stopped past StoppedInbox: its inbox,
 // the commits credited to it and its thread, and the tags and mutes it kept by its ID if its name
 // never landed. The stop runs out in pruneInboxes, or in newSessionLocked if the session comes back
 // first; both come here, so what it gets back doesn't depend on which ran first. Caller holds mu.
 func (d *Daemon) dropStoppedLocked(id string) {
 	delete(d.st.Stopped, id)
+	delete(d.st.Downed, id)
 	delete(d.st.Inbox, id)
 	delete(d.st.Commits, id)
 	delete(d.st.T3Routes, id)
+	delete(d.st.ThreadLeft, id)
 	d.dropPendingKeyLocked(id)
 }
 

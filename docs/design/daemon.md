@@ -34,8 +34,33 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   failed may have landed all the same, so a start or stop can be on the log twice: the Recent view
   keeps one by its ID, and the log notes show the line twice. One written late shows at its own
   time, older than what came meanwhile.
+- **A send whose push ends unsure is pushed again, not refused** (#781, 2026-11-16). Tyler: "just
+  keep retrying automatically, and dont hand the message back as unsent until we've tried alot and
+  are giving up." A push that timed out or lost its connection under way may land yet, so its
+  commit stays as the tip that later writes build on, and the sender gets the answer of a send
+  that landed, with nothing added. The daemon pushes that tip again, waiting 5 s, then twice as long each time
+  up to a minute. Pushing the same commits again is safe whether or not the first push landed, and
+  any later write that lands carries the pending one with it. `unwritten`, above, makes a new commit
+  on each try, which would put a message that landed late on the log twice. About three minutes after
+  its first push (Tyler, 2026-11-16; 30 was too long) it is given up and called not sent: the sender
+  gets a notice in its inbox saying so, and why in a few plain words ("the push kept timing out"),
+  not git's. A daemon that stops gives up what is pending, and keeps nothing across a restart; a
+  send whose push ends unsure as it stops says so, as before (`internal/daemon/pending.go`).
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
-  session returns. Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
+  session returns. A session still connected when the daemon stops counts as stopped from then
+  (#736): until 2026-11-16 no stop was recorded for it, and one that didn't reconnect within two
+  minutes of the next daemon's start lost its inbox and its T3 route. A daemon that is killed (a
+  crash, a forced shutdown, a dead battery) records nothing, so the state file lists the sessions
+  registered with the running daemon, and the next daemon counts any still listed as stopped when
+  the last one last wrote that file (#762): at most about a minute before it died if it was
+  reaching the remote, and earlier if it was offline. The 24 hours run from that time. A session
+  the last daemon went down with, stopped or killed, keeps what it has for the next daemon's first
+  two minutes whatever the stop's age, so a server that reconnects as a laptop is opened after a
+  weekend finds its inbox, as it did before a stop was recorded for it, with what was sent to
+  it in those minutes. For its first minute the
+  next daemon hands such a session's thread nothing
+  while T3 shows a run of it going or its thread is unread, so its server can reconnect first.
+  Before 2026-10-30 (#30) a laptop shut overnight lost every message sent to its
   stopped sessions. A daemon back after more than 10 minutes skips what it missed, except for
   sessions stopped within the 24 hours: for those it queues what was sent after they stopped (by the
   sender's clock, with a minute's allowance), messages to the device or to everyone included. One

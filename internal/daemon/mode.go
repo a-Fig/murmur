@@ -38,18 +38,16 @@ var invisibleText = brand.Product + " is off for this repo on this device: its p
 	"Nothing can be seen or sent until they bring it back online, in Settings on `" + brand.Command + " ui`."
 
 // invisibleAnswer is the daemon's answer to an agent's request while the device is invisible, and
-// whether it is one: a tool call is refused, and a turn's end is answered with nothing and changes
-// nothing the daemon keeps. The hook's notices are answered in notices, once the hook is seen to
-// run. A registration, a ping, a stop and the CLI's own requests go on.
+// whether it is one: a tool call is refused. The hook's notices and a turn's end are answered in
+// notices and turnEnd, which see the hook run and the turn end, so the session is idle when the
+// device is back, and give nothing (Sol's review of v0.5.0: a turn's end answered here left the
+// session at work for good). A registration, a ping, a stop and the CLI's own requests go on.
 func (d *Daemon) invisibleAnswer(req proto.Request) (proto.Response, bool) {
 	if !d.hidden.Load() {
 		return proto.Response{}, false
 	}
-	switch {
-	case toolOps[req.Op]:
+	if toolOps[req.Op] {
 		return fail(invisibleText), true
-	case req.Op == proto.OpTurnEnd:
-		return proto.Response{OK: true}, true
 	}
 	return proto.Response{}, false
 }
@@ -78,6 +76,7 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 	if was == web.ModeInvisible {
 		d.kickNames() // what waited, without its own backoff to sit out
 		d.kickMarks()
+		d.kickFiles() // for the prune of files refs that was passed over meanwhile (pruneFiles)
 	}
 	if now == web.ModeOnline {
 		d.mu.Lock()

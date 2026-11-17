@@ -7,10 +7,14 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // The tests of Send run the test binary again as the `t3` command: it records what it was given,
@@ -249,5 +253,34 @@ func TestFirstLine(t *testing.T) {
 		if got := firstLine(in); got != want {
 			t.Errorf("firstLine(%.20q) = %.30q, want %.30q", in, got, want)
 		}
+	}
+}
+
+// Above takes the t3 on PATH where no process above runs t3, and none where there is none on
+// PATH either. A run of the tests under T3's headless server has t3 above it, and is skipped.
+func TestAboveFallsBackToPath(t *testing.T) {
+	for i, p := range proc.Ancestors(os.Getpid(), 9) {
+		if i == 0 {
+			continue
+		}
+		if exe, err := proc.Exe(p); err == nil && strings.TrimSuffix(strings.ToLower(filepath.Base(exe)), ".exe") == "t3" {
+			t.Skip("a t3 runs these tests")
+		}
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	if got := Above(os.Getpid(), 8, exec.LookPath); got != "" {
+		t.Errorf("with no t3: %q", got)
+	}
+	name := "t3"
+	if runtime.GOOS == "windows" {
+		name = "t3.exe"
+	}
+	fake := filepath.Join(dir, name)
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Above(os.Getpid(), 8, exec.LookPath); got != fake {
+		t.Errorf("with t3 on PATH: %q, want %q", got, fake)
 	}
 }

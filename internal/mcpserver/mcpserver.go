@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -29,6 +30,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
@@ -41,7 +43,7 @@ var Instructions = strings.ReplaceAll(`Murmur connects you with the coding agent
 
 - You have a name of two words, like quiet-otter, that is your address, and so does every session. who shows yours, marked as you, and everyone else's; send takes a name, or several separated by commas. If yours is still pending, others reach you at your device/session until it lands.
 - Keep status set to what you are working on; who shows everyone's.
-- tags puts short labels on you that others see in who and can search by. If who shows no model: tag on you, add one for the model you are (model:opus-5.5). do-not-disturb keeps messages to you queued in your inbox, with no turn and no notice, until you read your inbox or take the tag off.
+- tags puts short labels on you that others see in who and can search by. If who shows no model: tag on you, add one for the model you are (model:opus-5.5). do-not-disturb keeps messages to you queued in your inbox, with no turn and no notice, until you read your inbox or take the tag off; your user's, from this device's page, still come.
 - A tag that starts with group: is a group chat: send to group:ui reaches every session that has that tag. Join one by adding the tag to yourself and leave by removing it; start one, or bring others in, with tags and their names in for. A group's message is headed "Message sent in group:ui from quiet-otter". Answer it to the group when the others need to see it, and to its sender alone when they don't. Each device is a group too, group:device-… (who shows it on the device's sessions): every session on it is in it, and nobody joins or leaves.
 - To judge whether another session is the one to ask, or to see what it has been up to, use lookup: it adds the branches it has committed to, when it was last active, whether it is reachable, and its recent messages to who.
 - Before starting something sizeable, check who for an agent already on it, and message it if your work might overlap.
@@ -270,23 +272,25 @@ func helloFor(agent, cwd string) proto.Hello {
 	if isClaude(agent) {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
-	h := proto.Hello{ID: sessionID(claude), Agent: agentName(agent), Cwd: cwd, ClaudeSession: claude,
-		ClientPID: os.Getppid(), Route: routeFromEnv(agent)}
+	t3 := t3Of(agent)
+	h := proto.Hello{ID: sessionID(claude), Agent: agentLabel(agent, t3.cli), Cwd: cwd, ClaudeSession: claude,
+		ClientPID: os.Getppid(), Route: routeWith(agent, t3)}
 	if v := nativeEnv[agent]; v != "" {
 		if native := os.Getenv(v); native != "" {
 			h.ID, h.Native = nativeID(native), native
 		}
 	}
-	if thread := os.Getenv(threadEnv); thread != "" && h.T3CLI != "" && isClaude(agent) && !agentAbove() {
+	if t3.thread && h.T3CLI != "" {
+		thread := os.Getenv(threadEnv)
 		h.ID, h.T3Thread, h.ByThread = threadID(thread), thread, true
 	}
 	return h
 }
 
-// threadEnv is where T3 puts the thread's ID for the Claude Code process it runs, and so for its MCP
-// servers (read in T3 0.1.x's server, 2026-11-15). Only Claude Code's servers take it: Codex's start
-// with a bare environment, Muse passes on only what join lists, and Pi and Grok weren't tried.
-const threadEnv = "T3CODE_THREAD_ID"
+// threadEnv is t3.ThreadEnv, the thread's ID, which T3 gives the Claude Code process it runs and so
+// its MCP servers. Only Claude Code's servers take it: Codex's start with a bare environment, Muse
+// passes on only what join lists, and Pi and Grok weren't tried.
+const threadEnv = t3.ThreadEnv
 
 // agentAbove says whether an agent's program runs above the client that started this server. Every
 // process under a T3 thread inherits threadEnv, so a claude run from the thread's shell, perhaps in
@@ -399,10 +403,19 @@ func nativeID(native string) string {
 // line takes a message (#135, package clientcli). T3's thread is in the environment of most agents
 // T3 runs (threadEnv), and helloFor takes it; where it isn't, link.seek finds it. The daemon keeps
 // all of this to itself (see proto.Route).
-func routeFromEnv(agent string) proto.Route {
-	r := proto.Route{T3CLI: os.Getenv("T3CODE_CLI_PATH"), T3Home: os.Getenv("T3CODE_HOME")}
+func routeFromEnv(agent string) proto.Route { return routeWith(agent, t3Of(agent)) }
+
+// routeWith is routeFromEnv, with what t3Of found.
+func routeWith(agent string, t3 t3Seen) proto.Route {
+	r := proto.Route{T3CLI: t3.cli, T3Home: os.Getenv("T3CODE_HOME")}
 	switch {
 	case isClaude(agent):
+		// A session T3 runs is reached through T3 only (see the daemon's viaOf): a line written to its
+		// messaging socket starts no turn, and the daemon would take the message as read. One whose
+		// T3 command line can't be found gets no socket, so its messages wait as notices (#780).
+		if r.T3CLI == "" && t3.thread {
+			break
+		}
 		r.MsgSocket, r.MsgToken = os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")
 	case agent == "pi":
 		r.MsgSocket, r.MsgToken = os.Getenv("MURMUR_PI_MESSAGING_SOCKET"), os.Getenv("MURMUR_PI_MESSAGING_TOKEN")
@@ -415,6 +428,67 @@ func routeFromEnv(agent string) proto.Route {
 		}
 	}
 	return r
+}
+
+// t3Seen is what the environment says of T3: its command line, if the session is in T3, and
+// whether T3 runs the client, Claude Code, as a thread (see threadEnv).
+type t3Seen struct {
+	cli    string
+	thread bool
+}
+
+// t3Of looks once at whether agent's session is in T3: the walk up the processes in agentAbove is
+// made once, so the hello's parts can't disagree. T3's app names its command line in
+// T3CODE_CLI_PATH, but its headless server (`t3 serve`, 0.1.9, seen 2026-11-16) doesn't: it gives
+// the Claude Code it runs the thread's ID and T3CODE_HOME. Taken for outside T3 without one, such a
+// session was handed messages through the messaging socket, which starts no turn under T3, and
+// they were lost (#780). Only Claude Code's thread is found this way, as only it is known to have
+// the thread's variable (threadEnv). Codex's server has neither variable, as Codex starts it with
+// only what join forwards, and the thread's ID reaches only the commands Codex runs: there
+// T3CODE_HOME, which join forwards too, says to look for the t3 above Codex, and the thread comes
+// from the tool calls' _meta as in T3's app (#802). A codex run from a thread's shell inherits
+// T3CODE_HOME: agentAbove finds the thread's own codex above it, and codexT3 takes only a t3 that
+// runs Codex itself, for the walk can stop short of that codex, at a tmux, say.
+func t3Of(agent string) t3Seen {
+	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
+	seen.thread = isClaude(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
+	switch {
+	case seen.cli != "":
+	case seen.thread:
+		seen.cli, seen.thread = servingT3()
+	case agent == "codex" && os.Getenv("T3CODE_HOME") != "" && !agentAbove():
+		seen.cli = codexT3()
+	}
+	return seen
+}
+
+// servingT3 is the `t3` that runs the client (Claude Code or Codex, the server's parent), as t3Of
+// finds it, and whether the client is the thread at all. A variable, so that tests needn't have T3.
+var servingT3 = func() (cli string, thread bool) {
+	parent, read := "", false
+	if pids := proc.Ancestors(os.Getppid(), 2); len(pids) == 2 {
+		exe, err := proc.Exe(pids[1])
+		parent, read = exe, err == nil
+	}
+	return t3.Serving(parent, read, exec.LookPath)
+}
+
+// codexT3 is the `t3` that runs Codex, the server's parent: Codex's own parent, only if it is t3,
+// as `t3 serve` runs Codex's native program itself (seen 2026-11-16, #802). Unlike Serving, it
+// takes no node and no t3 from PATH on a guess: npm's codex runs the native one under node, so a
+// codex that tmux started in a thread's shell would be taken for the thread. A t3 an update has
+// deleted gives way to the one on PATH, as in Serving. A variable, so that tests needn't have T3.
+var codexT3 = func() string {
+	pids := proc.Ancestors(os.Getppid(), 2)
+	if len(pids) != 2 {
+		return ""
+	}
+	exe, err := proc.Exe(pids[1])
+	if err != nil || programName(exe) != "t3" {
+		return ""
+	}
+	cli, _ := t3.Serving(exe, true, exec.LookPath)
+	return cli
 }
 
 // parentProgram is the process that started this server and the program it runs. A variable, for
@@ -511,7 +585,10 @@ func sessionID(claude string) string {
 	return bus.RandHex(6)
 }
 
-func agentName(flag string) string {
+func agentName(flag string) string { return agentLabel(flag, t3Of(flag).cli) }
+
+// agentLabel is agentName, with T3's command line as t3Of found it.
+func agentLabel(flag, t3CLI string) string {
 	agent := flag
 	if agent == "" {
 		agent = "agent"
@@ -519,7 +596,7 @@ func agentName(flag string) string {
 			agent = "claude-code"
 		}
 	}
-	if os.Getenv("T3CODE_CLI_PATH") != "" {
+	if t3CLI != "" {
 		agent += " in T3"
 	}
 	return agent
@@ -1091,7 +1168,7 @@ func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +
 		"and can search who by. model:<your model> says which model you are (a session has one). do-not-disturb keeps messages to " +
 		"you queued in your inbox: none comes as a turn or a notice until you read your inbox or take the tag off, " +
-		"when they come the usual way. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
+		"when they come the usual way; your user's, from this device's page, still come. A tag that starts with group: puts you in that group: send takes the tag as an address and reaches every " +
 		"session that has it, so add it to join a group and remove it to leave. To start a group or bring others into one, give their names in for: " +
 		"they are added, and can leave the same way. A tag a human set on the page stands over yours, but you can always leave a group.",
 		InputSchema: objectSchema(map[string]*jsonschema.Schema{
@@ -1115,7 +1192,7 @@ func (s *server) tools(srv *mcp.Server) {
 			"subject": {Type: "string", Description: "one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},
 			"body":    {Type: "string", Description: "the rest of the message"},
 			"tell_me": {Type: "string", Description: "read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"},
-			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
+			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log, in this repo or the temp folder: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),
 		}, "to", "subject")},
 		func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
 			to := recipients(in.To)

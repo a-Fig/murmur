@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -209,13 +212,443 @@ func unixPath(path string) bool {
 	return runtime.GOOS == "windows" && strings.HasPrefix(path, "/")
 }
 
-// readSendFiles reads the files an agent's send names, each no larger than a file may be.
-func readSendFiles(paths []string) ([]sendFile, error) {
+// sendRoots is the folders a send may read files from (#690): the clone's worktrees, the main one
+// among them, and the temp folder; and the clone's git directory, which none of them may read
+// inside. The daemon reads a file as the user, outside any sandbox the agent runs in, so an agent
+// that was tricked, or a sandboxed one, could otherwise send anything the user can read, ~/.ssh
+// and cloud credentials among it, to the whole team. What an agent makes as it works, screenshots,
+// logs and diffs, is in the clone or in temp, and anything else it can copy there first. The git
+// directory is out: its config can hold a remote's credentials. So is ~/.claude, where a screenshot
+// pasted into Claude Code may be, as it also holds Claude Code's credentials and every
+// conversation.
+//
+// Two rounds of Sol's review of #768 shaped how. Each folder is opened as an os.Root, and every
+// later look and read goes through that handle, so the folder checked is the one read from, though
+// its path be swapped for a link after. A worktree is found above the file sent, as the nearest
+// folder with a .git that leads back to this clone, looked at through its handle (#772), and that
+// its registration or a session vouches for (ownWorktree). `git worktree list` isn't run: it looks
+// at each one, and would sign in to a share one names. The git directory is known by what it is,
+// not how it is spelled, so neither a case nor an alias gets around it.
+type sendRoots struct {
+	roots []sendRoot
+	git   os.FileInfo // the clone's git directory; nil if it couldn't be looked at
+	// worktrees is the git directory's worktrees folder, which a linked worktree's .git points
+	// into; nil if there is none.
+	worktrees os.FileInfo
+	// notOurs is the folders with a .git that were looked at and aren't this clone's worktrees, so
+	// a send's second file doesn't look again.
+	notOurs []os.FileInfo
+	// gitRoot is the git directory's handle, which a linked worktree's registration is read
+	// through; nil if it couldn't be opened.
+	gitRoot *os.Root
+	// sessions is where this device's sessions are: a main worktree kept apart from its git
+	// directory counts only if one is in it.
+	sessions []string
+	vols     map[string]*os.Root
+}
+
+type sendRoot struct {
+	path string // with its links resolved
+	r    *os.Root
+	id   os.FileInfo // what it is, looked at through r
+}
+
+func (d *Daemon) openSendRoots() *sendRoots {
+	s := &sendRoots{vols: map[string]*os.Root{}}
+	gitDir, err := s.local(d.opt.GitDir)
+	var git sendRoot
+	ok := false
+	if err == nil {
+		git, ok = s.open(gitDir)
+	}
+	if ok {
+		s.gitRoot = git.r
+		s.git = git.id
+		if info, err := git.r.Lstat("worktrees"); err == nil && info.IsDir() {
+			s.worktrees = info
+		}
+	} else {
+		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
+	}
+	d.mu.Lock()
+	for _, ss := range d.sessions {
+		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
+			s.sessions = append(s.sessions, filepath.Clean(ss.cwd))
+		}
+	}
+	d.mu.Unlock()
+	temps := []string{d.opt.TempDir}
+	if d.opt.TempDir == "" {
+		temps = []string{os.TempDir()}
+		if runtime.GOOS != "windows" {
+			temps = append(temps, "/tmp")
+		}
+	}
+	for _, dir := range temps {
+		if root, ok := s.open(dir); ok && !s.add(root) {
+			root.r.Close()
+		}
+	}
+	return s
+}
+
+// add adds root, unless it is one already, or is the git directory or inside it: a registration an
+// agent wrote can name the git directory as a worktree.
+func (s *sendRoots) add(root sendRoot) bool {
+	if slices.ContainsFunc(s.roots, func(r sendRoot) bool { return os.SameFile(r.id, root.id) }) {
+		return false
+	}
+	if s.git != nil && os.SameFile(root.id, s.git) {
+		return false // its handle, though its path was swapped since it was looked at
+	}
+	for dir := root.path; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, s.git) {
+			return false
+		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	s.roots = append(s.roots, root)
+	return true
+}
+
+func (s *sendRoots) Close() {
+	for _, r := range s.roots {
+		r.r.Close()
+	}
+	for _, r := range s.vols {
+		r.Close()
+	}
+	if s.gitRoot != nil {
+		s.gitRoot.Close()
+	}
+}
+
+// open opens dir as a root, through its volume's handle, so a part of it swapped for a link to a
+// share is refused rather than followed.
+func (s *sendRoots) open(dir string) (sendRoot, bool) {
+	path, err := s.local(dir)
+	if err != nil {
+		return sendRoot{}, false
+	}
+	var r *os.Root
+	if runtime.GOOS == "windows" {
+		vol, rel, err := s.volume(path)
+		if err != nil {
+			return sendRoot{}, false
+		}
+		r, err = vol.OpenRoot(rel)
+	} else {
+		// No share to sign in to off Windows, and os.Root, from /, would need every folder above
+		// readable, where a lookup needs only search: a /home of mode 711 would refuse every send.
+		r, err = os.OpenRoot(path)
+	}
+	if err != nil {
+		return sendRoot{}, false
+	}
+	id, err := r.Stat(".")
+	if err != nil {
+		r.Close()
+		return sendRoot{}, false
+	}
+	return sendRoot{path, r, id}, true
+}
+
+// worktreeAt is dir, whose folder is info, as a root, if it has a .git and is one of this clone's
+// worktrees (ownWorktree); it is added to s's roots then.
+func (s *sendRoots) worktreeAt(dir string, info os.FileInfo) (sendRoot, bool) {
+	if s.git == nil || slices.ContainsFunc(s.notOurs, func(n os.FileInfo) bool { return os.SameFile(n, info) }) {
+		return sendRoot{}, false
+	}
+	if _, err := s.stat(filepath.Join(dir, ".git")); err != nil {
+		return sendRoot{}, false
+	}
+	root, ok := s.open(dir)
+	switch {
+	case !ok:
+	case s.ownWorktree(root, s.worktrees) && s.add(root):
+		return root, true
+	default:
+		root.r.Close()
+	}
+	s.notOurs = append(s.notOurs, info)
+	return sendRoot{}, false
+}
+
+// ownWorktree says root's .git, looked at through its handle, is this clone's git directory, or a
+// file that points into its worktrees folder: what git makes for the main worktree and a linked one.
+// A .git file is anyone's to write, so it alone doesn't make a folder a worktree (Sol's review of
+// #805): a linked one's registration in the git directory must name it back, and a main worktree
+// kept apart from its git directory must hold one of this device's sessions. Before #772 the same
+// two were how worktrees were found.
+func (s *sendRoots) ownWorktree(root sendRoot, worktrees os.FileInfo) bool {
+	info, err := root.r.Lstat(".git")
+	switch {
+	case err != nil || s.git == nil:
+		return false
+	case info.IsDir():
+		return os.SameFile(info, s.git)
+	case !info.Mode().IsRegular():
+		return false
+	}
+	b, err := root.r.ReadFile(".git")
+	ptr, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+	if err != nil || !ok || netPath(ptr) {
+		return false
+	}
+	if !filepath.IsAbs(ptr) {
+		ptr = filepath.Join(root.path, ptr)
+	}
+	ptr, err = s.local(ptr)
+	if err != nil {
+		return false
+	}
+	if target, err := s.stat(ptr); err == nil && os.SameFile(target, s.git) {
+		// A main worktree whose git directory is elsewhere.
+		return slices.ContainsFunc(s.sessions, func(cwd string) bool { return s.holds(root, cwd) })
+	}
+	parent, err := s.stat(filepath.Dir(ptr))
+	if err != nil || worktrees == nil || !os.SameFile(parent, worktrees) || s.gitRoot == nil {
+		return false
+	}
+	// Its registration, read through the git directory's handle, names this .git back. Its path
+	// can be relative to it (git worktree add --relative-paths).
+	reg := filepath.Join("worktrees", filepath.Base(ptr))
+	b, err = s.gitRoot.ReadFile(filepath.Join(reg, "gitdir"))
+	back := strings.TrimSpace(string(b))
+	if err != nil || back == "" || netPath(back) {
+		return false
+	}
+	if !filepath.IsAbs(back) {
+		back = filepath.Join(ptr, back)
+	}
+	back, err = s.local(back)
+	if err != nil {
+		return false
+	}
+	// Both the file and its folder: a hard link to a worktree's .git, elsewhere, is the same file
+	// (Sol's second review of #805).
+	named, err := s.stat(back)
+	if err != nil || !os.SameFile(named, info) {
+		return false
+	}
+	dir, err := s.stat(filepath.Dir(back))
+	return err == nil && os.SameFile(dir, root.id)
+}
+
+// holds says the folder cwd is root or inside it, by what each folder above it is, so a short
+// name (C:\MYREPO~1) or a link doesn't miss.
+func (s *sendRoots) holds(root sendRoot, cwd string) bool {
+	dir, err := s.local(cwd)
+	if err != nil {
+		return false
+	}
+	for ; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil && os.SameFile(info, root.id) {
+			return true
+		}
+		if filepath.Dir(dir) == dir {
+			return false
+		}
+	}
+}
+
+// volume is the root of path's volume, opened once, and path from there.
+func (s *sendRoots) volume(path string) (*os.Root, string, error) {
+	vol := filepath.VolumeName(path) + string(filepath.Separator)
+	r := s.vols[vol]
+	if r == nil {
+		var err error
+		if r, err = os.OpenRoot(vol); err != nil {
+			return nil, "", err
+		}
+		s.vols[vol] = r
+	}
+	rel := strings.TrimPrefix(path[len(vol)-1:], string(filepath.Separator))
+	return r, cmp.Or(rel, "."), nil
+}
+
+// stat looks at path, which has no links, through its volume's handle.
+func (s *sendRoots) stat(path string) (os.FileInfo, error) {
+	if runtime.GOOS != "windows" {
+		return os.Lstat(path) // see open
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return nil, err
+	}
+	return vol.Lstat(rel)
+}
+
+// readlink is where the link at path leads, read as stat looks.
+func (s *sendRoots) readlink(path string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return os.Readlink(path)
+	}
+	vol, rel, err := s.volume(path)
+	if err != nil {
+		return "", err
+	}
+	return vol.Readlink(rel)
+}
+
+// local is path with its links resolved, followed one part at a time through its volume's handle:
+// a link to a share, or one swapped in partway, is refused (errOutside) rather than followed, so
+// looking never signs in to a network host.
+func (s *sendRoots) local(path string) (string, error) {
+	path = filepath.Clean(path)
+	if netPath(path) || !filepath.IsAbs(path) {
+		return "", errOutside
+	}
+	vol := filepath.VolumeName(path)
+	done := vol + string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(path[len(vol):], string(filepath.Separator)), string(filepath.Separator))
+	for hops := 0; len(parts) > 0; {
+		part := parts[0]
+		parts = parts[1:]
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(done, part)
+		if part == ".." {
+			done = filepath.Dir(done)
+			continue
+		}
+		info, err := s.stat(next)
+		if err != nil {
+			return "", err
+		}
+		if !linkIn(info, func() error { _, err := s.readlink(next); return err }) {
+			done = next
+			continue
+		}
+		if hops++; hops > 40 {
+			return "", errors.New("too many links")
+		}
+		to, err := s.readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if netPath(to) {
+			return "", errOutside
+		}
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(done, to) // done has no links, so .. in to means its parent
+		}
+		vol = filepath.VolumeName(to)
+		done = vol + string(filepath.Separator)
+		parts = append(strings.Split(strings.TrimPrefix(to[len(vol):], string(filepath.Separator)), string(filepath.Separator)), parts...)
+	}
+	return done, nil
+}
+
+// netPath says path, on Windows, names a share or a device rather than a drive: \\host\share,
+// \/host/share, \\?\ and \\.\ among them. Looking at a share signs in to its host as the user.
+func netPath(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	vol := filepath.VolumeName(path)
+	return vol != "" && !(len(vol) == 2 && vol[1] == ':')
+}
+
+var errOutside = errors.New("outside where send reads")
+
+// openSend opens the file path leads to, if it is in a root and not in the git directory. Every
+// look is through the root's handle, and a link met there, which can only be one swapped in since
+// local looked, is refused.
+func (s *sendRoots) openSend(path string) (*os.File, error) {
+	real, err := s.local(path)
+	if err != nil {
+		return nil, err
+	}
+	// The root it is in is found by what each folder above it is, not by how its path is spelled,
+	// which a short Windows name (RUNNER~1) or a case can change. A folder above it with a .git is
+	// looked at as it is met, the nearest first, and is a root if it is one of this clone's
+	// worktrees (#772): only the worktree a file is in is opened, not every one the clone has, which
+	// took 1 to 4 s a send on a clone with 220 (Fable's review of #768). One that isn't, as a
+	// nested repo, is passed over, so a file in it is still in the worktree around it.
+	var root sendRoot
+	var rest []string
+	dir := real
+	for ; ; dir = filepath.Dir(dir) {
+		if info, err := s.stat(dir); err == nil {
+			if i := slices.IndexFunc(s.roots, func(r sendRoot) bool { return os.SameFile(info, r.id) }); i >= 0 {
+				root = s.roots[i]
+				break
+			}
+			if r, ok := s.worktreeAt(dir, info); ok {
+				root = r
+				break
+			}
+		}
+		if filepath.Dir(dir) == dir {
+			return nil, errOutside
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+	}
+	// Nor is a root inside the git directory, however it got there since it was added (#773).
+	for up := dir; filepath.Dir(up) != up; {
+		up = filepath.Dir(up)
+		if info, err := s.stat(up); err == nil && s.git != nil && os.SameFile(info, s.git) {
+			return nil, errOutside
+		}
+	}
+	if len(rest) == 0 {
+		return nil, errNotFile
+	}
+	// Down from the root a part at a time, each folder opened as a handle of its own before the next
+	// (#773): a look from the root at a longer path would go through the folders above again, and
+	// os.Root follows a link in them that stays inside the root, as one to the main worktree's .git
+	// does, so a folder swapped for one between two looks would lead there unchecked. How each part
+	// is opened is the system's (descend).
+	return s.descend(root, rest)
+}
+
+// sendRace, if set, runs in descend just before a part is opened: tests swap the part there, as a
+// racing agent would.
+var sendRace func(part string)
+
+// linkIn says info, an entry of a folder, is a link local follows, readlink reading where it
+// leads: a symbolic link, or on Windows a junction. Go reports any other reparse point as irregular
+// too, a OneDrive placeholder, a ProjFS file or an app's execution alias among them, but those have
+// nowhere to lead, so readlink fails on them, and they are the file or folder they stand for (#773).
+func linkIn(info os.FileInfo, readlink func() error) bool {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return true
+	}
+	return runtime.GOOS == "windows" && info.Mode()&os.ModeIrregular != 0 && readlink() == nil
+}
+
+// plainFile says info is a file to read: a regular one, or on Windows one held by a reparse point
+// that leads nowhere (linkIn), as a OneDrive file not yet downloaded is.
+func plainFile(info os.FileInfo) bool {
+	m := info.Mode()
+	return m.IsRegular() || runtime.GOOS == "windows" && m&^os.ModeIrregular&os.ModeType == 0 && !info.IsDir()
+}
+
+var errNotFile = errors.New("not a file")
+
+// sendTemp is the folder a refusal tells an agent to copy a file into.
+func (d *Daemon) sendTemp() string {
+	return cmp.Or(d.opt.TempDir, os.TempDir())
+}
+
+// readSendFiles reads the files an agent's send names, each no larger than a file may be, and only
+// from where sendRoots allows. A path is followed through its links first, and the file read is
+// the one it leads to, so a link in temp to ~/.ssh is refused (openSend).
+func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
 		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
 	files := make([]sendFile, 0, len(paths))
 	for _, path := range paths {
+		if netPath(path) {
+			// A share, or a device path: opening it, or looking at it, would sign in to whatever
+			// host it names, as the user. Two slashes are a share's on Windows, never Git Bash's.
+			return nil, fmt.Errorf("%s is a network path, which send doesn't read: copy the file into %s and send it from there", path, d.sendTemp())
+		}
 		if !filepath.IsAbs(path) {
 			if unixPath(path) {
 				// Git Bash's /tmp, say: Windows can't open it, and would read it on the current
@@ -224,18 +657,30 @@ func readSendFiles(paths []string) ([]sendFile, error) {
 			}
 			return nil, fmt.Errorf("%s isn't a full path", path)
 		}
-		info, err := os.Stat(path)
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	s := d.openSendRoots()
+	defer s.Close()
+	for _, path := range paths {
+		f, err := s.openSend(path)
+		switch {
+		case errors.Is(err, errOutside):
+			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
+		case errors.Is(err, errNotFile):
+			return nil, fmt.Errorf("%s isn't a file", path)
+		case err != nil:
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
+		}
+		info, err := f.Stat()
 		switch {
 		case err != nil:
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
-		case !info.Mode().IsRegular():
-			return nil, fmt.Errorf("%s isn't a file", path)
+			f.Close()
+			return nil, fmt.Errorf("can't read %s: %v", path, err)
 		case info.Size() > bus.MaxFile:
+			f.Close()
 			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, fmt.Errorf("can't read %s: %v", path, errors.Unwrap(err))
 		}
 		b, err := io.ReadAll(io.LimitReader(f, bus.MaxFile+1)) // it may have grown since the look
 		f.Close()
@@ -268,10 +713,12 @@ func checkSendFiles(files []sendFile) error {
 	return nil
 }
 
-// fileUpload is a push of files this device made: when, and how many bytes went (#739).
+// fileUpload is a push of files this device made: when, how many bytes went (#739), and to which
+// files ref, by which a push that left nothing on the remote is taken off the count (#788).
 type fileUpload struct {
 	At    time.Time `json:"at"`
 	Bytes int64     `json:"bytes"`
+	Ref   string    `json:"ref,omitempty"`
 }
 
 // recentUpload is files this device pushed: the ref, what the event said of them, when, and
@@ -346,8 +793,8 @@ func (d *Daemon) filesUnsent(at string) {
 // uploadRoomLocked says whether this device may push size more bytes of files, by FilesPerDay over
 // the last 24 hours, and if it may, counts them as pushed; if not, it says why, with when it may.
 // The look and the count are one step, so two sends at once can't both take the last of the room.
-// Caller holds mu.
-func (d *Daemon) uploadRoomLocked(size int64) error {
+// ref is the files ref they go to. Caller holds mu.
+func (d *Daemon) uploadRoomLocked(size int64, ref string) error {
 	now := time.Now()
 	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return now.Sub(u.At) >= 24*time.Hour })
 	var used int64
@@ -356,8 +803,9 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 	}
 	over := used + size - d.opt.FilesPerDay
 	if over <= 0 {
-		// Counted before the push, which may land though it is said to fail.
-		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size})
+		// Counted before the push, which may land though it is said to fail. One known not to
+		// have is taken off again (refundUploadLocked).
+		d.st.Uploads = append(d.st.Uploads, fileUpload{At: now.Round(0), Bytes: size, Ref: ref})
 		return nil
 	}
 	when := now
@@ -382,30 +830,126 @@ func (d *Daemon) uploadRoomLocked(size int64) error {
 		proto.Size(used), proto.Size(d.opt.FilesPerDay), at)
 }
 
+// refundUploadLocked takes what was pushed to files ref at off the day's count, as the remote is
+// known not to have it, and says whether it was counted. Without it an agent that tried a 15 MB
+// recording a dozen times over a bad connection had uploaded nothing and could send no files for
+// a day (#788). Caller holds mu.
+func (d *Daemon) refundUploadLocked(at string) bool {
+	n := len(d.st.Uploads)
+	d.st.Uploads = slices.DeleteFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+	return len(d.st.Uploads) < n
+}
+
+// uploadLost says whether the push of files ref at, which ended with err, is known to have left
+// nothing on the remote. One never sent did: for want of consent, by an invisible device, or
+// because its time ran out before git was started for it (notPushedError). One
+// cut off at its time, or by the daemon stopping, may land yet, as what its git started can outlive
+// it: the prune looks, once that has had its time (pruneFiles). For any other the remote is asked,
+// one it refused included: "remote failed to report status" reads as a refusal, and is what a
+// push that landed says when the connection broke after.
+func (d *Daemon) uploadLost(ctx context.Context, at string, err error) bool {
+	switch {
+	case errors.Is(err, ErrNoConsent), errors.Is(err, ErrInvisible), errors.As(err, new(notPushedError)):
+		return true
+	case ctx.Err() != nil, errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return false
+	}
+	return d.filesRefGone(ctx, at)
+}
+
+// uploadSettle is how long after an upload began the prune leaves its ref be, if the push failed:
+// the push's own time, and five minutes for what it started to end.
+const uploadSettle = pushTimeout + 5*time.Minute
+
+// filesRefGone says whether the remote, asked now, has no files ref at. A remote that can't be
+// asked says nothing.
+func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	tip, err := d.repo.RemoteRef(ctx, bus.FilesRef(at))
+	return err == nil && tip == ""
+}
+
+// sameFilesBusy is what a send ends with when its time ran out waiting for another send of the
+// same files (putFiles, #763). It reads as what an agent can act on, and unwraps to the context's
+// error for whoever asks why.
+type sameFilesBusy struct{ err error }
+
+func (e sameFilesBusy) Error() string {
+	return "another send of the same files was still under way; send it again"
+}
+
+func (e sameFilesBusy) Unwrap() error { return e.err }
+
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
 // event says of them and the ref's name. The same files sent again within uploadReuse, as a send
 // to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
 // where a receiver's would be, so a session on this device, and the page, have them without a
 // fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
-// with a ref not reused.
-func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, err error) {
+// with a ref not reused, unless its push may land yet (unsureError).
+//
+// Only one upload of the same files is under way at a time (#763). A ref is taken by another send
+// once its message is out, so two sessions here that sent the same files at the same moment both
+// found none to take: each uploaded, each was counted in the day's uploads, and the later's
+// note of its ref replaced the earlier's. A second send now waits for the first's message to go
+// out or fail, and then takes its ref or uploads itself. end ends this send's turn: the caller
+// calls it once the message is out or has failed, after filesSentLocked, so that whoever waited
+// finds the ref, or after filesUnsent. It is called here if putFiles doesn't return a ref, a
+// panic included (the page's sends run where one is recovered), and does nothing for a ref reused.
+//
+// still is asked once the push's turn is had: Send files may have gone off while the send waited.
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool) (files []bus.File, at string, reused bool, end func(), err error) {
+	end = func() {}
 	if err := checkSendFiles(in); err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	sum := filesSum(in)
-	d.mu.Lock()
-	files, at, ok := d.reuseFilesLocked(sum)
-	d.mu.Unlock()
-	if ok {
-		return files, at, true, nil
+	turn := make(chan struct{})
+	for {
+		d.mu.Lock()
+		files, at, ok := d.reuseFilesLocked(sum)
+		if ok {
+			d.mu.Unlock()
+			if still != nil && !still() {
+				return nil, "", false, end, errSendOff
+			}
+			return files, at, true, end, nil
+		}
+		ahead := d.sending[sum]
+		if ahead == nil {
+			if d.sending == nil {
+				d.sending = map[[sha256.Size]byte]chan struct{}{}
+			}
+			d.sending[sum] = turn
+			d.mu.Unlock()
+			break
+		}
+		d.mu.Unlock()
+		select {
+		case <-ahead:
+		case <-ctx.Done():
+			return nil, "", false, end, sameFilesBusy{ctx.Err()}
+		}
 	}
+	end = sync.OnceFunc(func() {
+		d.mu.Lock()
+		delete(d.sending, sum)
+		d.mu.Unlock()
+		close(turn)
+	})
+	pushed := false
+	defer func() {
+		if !pushed {
+			end()
+		}
+	}()
 	at = bus.NewFilesAt()
 	sealed := make([][]byte, len(in))
 	files = make([]bus.File, len(in))
 	for i, sf := range in {
 		blob, f, err := bus.SealFile(sf.data, at, i)
 		if err != nil {
-			return nil, "", false, err
+			return nil, "", false, end, err
 		}
 		f.Name = sf.name
 		sealed[i], files[i] = blob, f
@@ -413,30 +957,45 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	files = bus.CleanFiles(files) // the names a receiver will save them under
 	pack, err := bus.PackFiles(sealed)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	repo, done, err := d.scratch()
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	defer done()
 	sha, err := repo.NewFilesCommit(ctx, pack)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	d.mu.Lock()
-	if err := d.uploadRoomLocked(int64(len(pack))); err != nil {
+	if err := d.uploadRoomLocked(int64(len(pack)), at); err != nil {
 		d.mu.Unlock()
-		return nil, "", false, err
+		return nil, "", false, end, err
 	}
 	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
-	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
-		// Left to the next prune to delete: a push can land and still be told it failed.
-		d.dropFileRef(at, true)
-		return nil, "", false, fmt.Errorf("its files didn't go out: %w", err)
+	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, "", still); err != nil {
+		// Left to the next prune to delete: a push can land and still be told it failed. It
+		// stays counted too, unless it is known not to have landed.
+		if d.uploadLost(ctx, at, err) {
+			d.mu.Lock()
+			d.refundUploadLocked(at)
+			d.mu.Unlock()
+		}
+		d.dropFileRef(at, true) // which saves
+		return nil, "", false, end, fmt.Errorf("its files didn't go out: %w", err)
 	}
+	// It went up, and stays counted whatever becomes of the ref: a prune that found it gone, its
+	// message having failed, would take for never landed what an earlier delete took away.
+	d.mu.Lock()
+	for i := range d.st.Uploads {
+		if d.st.Uploads[i].Ref == at {
+			d.st.Uploads[i].Ref = ""
+		}
+	}
+	d.mu.Unlock()
 	dir := d.filesDir(bus.Event{FilesAt: at, Files: files})
 	unpin := d.pinFilesDir(dir)
 	defer unpin()
@@ -452,7 +1011,8 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	d.uploads[sum] = &recentUpload{at: at, files: slices.Clone(files), when: time.Now()}
 	d.mu.Unlock()
 	d.holdFilesHeld() // its own copies, pinned, stay
-	return files, at, false, nil
+	pushed = true
+	return files, at, false, end, nil
 }
 
 // dropFileRef forgets a files ref this device pushed, or with due set leaves it to the next prune
@@ -506,11 +1066,72 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 	return true
 }
 
+// refuses says sw, a Receive files switch, refuses message e's files: it is from another device,
+// and sw is off (#765, Tyler, 2026-11-16). Its text arrives, and its files are neither fetched nor
+// shown: to this device's sessions if sw is agentRecv, on the page if pageRecv. What a session of
+// this device sends is here already, and no download.
+func (d *Daemon) refuses(sw *fileSwitch, e bus.Event) bool {
+	dev, _ := bus.SplitAddr(e.From)
+	return len(e.Files) > 0 && dev != d.device && !sw.on.Load()
+}
+
+// errReceiveOff is why a message waiting for its files went without them: Receive files was turned
+// off meanwhile.
+var errReceiveOff = errors.New("Receive files is off")
+
+// errSendOff is why a send's files didn't go out: Send files was turned off while it waited.
+var errSendOff = errors.New("sending files is off in this repo")
+
+// fileSwitch is a Receive files switch, whose going off ends the fetches made for it.
+type fileSwitch struct {
+	on atomic.Bool
+	// off is closed when the switch goes off, and made anew when it goes on. mu guards it, and
+	// orders the changes to on.
+	mu  sync.Mutex
+	off chan struct{}
+}
+
+// receiving is ctx, ended as soon as sw goes off, so a fetch under way, or waiting to retry, stops
+// then rather than minutes later (Sol's review of #769).
+func (sw *fileSwitch) receiving(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	sw.mu.Lock()
+	off, on := sw.off, sw.on.Load()
+	sw.mu.Unlock()
+	if !on {
+		cancel()
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-off:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+// set turns sw on or off, and says whether it changed. Off ends every fetch that receiving started.
+func (sw *fileSwitch) set(on bool) bool {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	if sw.on.Swap(on) == on {
+		return false
+	}
+	if on {
+		sw.off = make(chan struct{})
+	} else {
+		close(sw.off)
+	}
+	return true
+}
+
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
 // the fetch is started and the message is queued when it ends, with or without them. Nothing is
 // held for a person: the page asks for a file when it shows it (fileOf). Caller holds mu.
 func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
-	if len(e.Files) == 0 || id == bus.PersonSession || d.filesHere(e) {
+	if len(e.Files) == 0 || id == bus.PersonSession || d.refuses(&d.agentRecv, e) || d.filesHere(e) {
 		return false
 	}
 	w := d.st.FilesWait[e.ID]
@@ -559,7 +1180,10 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			if !ok {
 				break
 			}
-			err := d.fetchFiles(ctx, e, fileTries)
+			err := errReceiveOff
+			if !d.refuses(&d.agentRecv, e) {
+				err = d.fetchFiles(ctx, e, fileTries, &d.agentRecv)
+			}
 			if ctx.Err() != nil {
 				return // still waiting when the daemon next starts
 			}
@@ -570,7 +1194,8 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			d.filesFetchedLocked(e.ID)
 			d.mu.Unlock()
 		}
-		if !pruned {
+		// The first time round, and when the device is out of invisible with a prune owed.
+		if !pruned || d.pruneOwed.Load() && !d.hidden.Load() {
 			pruned = true
 			d.pruneFiles(ctx)
 			continue // a message may have come meanwhile
@@ -650,13 +1275,13 @@ func (d *Daemon) takeFilesWaitLocked(to, from string) {
 // is tried again, up to tries times, as the network may be why; a ref that isn't there, or holds
 // something else, is not. What the fetch brings goes to a scratch directory, not the clone's
 // objects.
-func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
+func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
 	release, err := d.holdFiles(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
-	return d.fetchFilesHeld(ctx, e, tries)
+	return d.fetchFilesHeld(ctx, e, tries, sw)
 }
 
 // holdFiles waits for the one turn there is to fetch files, and returns what gives it back. One
@@ -674,10 +1299,19 @@ func (d *Daemon) holdFiles(ctx context.Context) (release func(), err error) {
 
 // fetchFilesHeld is fetchFiles for a caller that holds the turn (holdFiles). What stops it is
 // errFetchLater unless it would stop every try: the ref isn't there, or what it holds isn't the
-// message's files.
-func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) error {
+// message's files. sw is the Receive files switch it fetches for: the agents' or the page's.
+func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
 	if d.filesHere(e) {
 		return nil
+	}
+	// Checked again here, after the wait for the turn, and the fetch ends if it goes off.
+	if d.refuses(sw, e) {
+		return errReceiveOff
+	}
+	if dev, _ := bus.SplitAddr(e.From); dev != d.device {
+		var stop context.CancelFunc
+		ctx, stop = sw.receiving(ctx)
+		defer stop()
 	}
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
@@ -702,9 +1336,15 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 		}
 		select {
 		case <-ctx.Done():
+			if d.refuses(sw, e) {
+				return errReceiveOff
+			}
 			return fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
 		case <-time.After(time.Duration(try) * 5 * time.Second):
 		}
+	}
+	if d.refuses(sw, e) {
+		return errReceiveOff
 	}
 	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
@@ -722,6 +1362,9 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	var failed []string
 	later := false // a file couldn't be saved, which a full disk does: the remote still has it
 	for i, f := range e.Files {
+		if d.refuses(sw, e) {
+			return errReceiveOff
+		}
 		if !f.Readable() {
 			continue
 		}
@@ -770,6 +1413,23 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 		}
 	}
 	d.holdFilesHeld()
+	// An invisible device writes nothing to the bus (mode.go), and deleting a ref is a write: one
+	// that shows, by when it lands, that the device is running. The deletes were refused one by
+	// one, a line in the log for each ref at every prune, and the refs stayed (#789). They are
+	// left for the prune fileLoop runs once the device is out of invisible, which setMode wakes
+	// it for. The copies kept here, above, go on time either way, and the refs of other devices
+	// age on: the daemon runs, which is what their age counts.
+	hidden := d.hidden.Load()
+	d.pruneOwed.Store(hidden)
+	if hidden {
+		d.mu.Lock()
+		d.ageOthersFilesLocked(time.Now())
+		if len(d.st.OthersFiles) > 0 {
+			d.saveLocked()
+		}
+		d.mu.Unlock()
+		return
+	}
 	d.mu.Lock()
 	var due []string
 	for at, sent := range d.st.FileRefs {
@@ -780,9 +1440,33 @@ func (d *Daemon) pruneFiles(ctx context.Context) {
 	d.mu.Unlock()
 	slices.Sort(due)
 	for _, at := range due {
+		// A push that was cut off, and so stayed counted in the day's uploads, is taken off the
+		// count if it never landed (#788). Looked at before the delete, which leaves no ref
+		// either way, and not until uploadSettle after the push began: what a killed git started
+		// may be sending still, and a ref that landed after the look would be on the remote
+		// uncounted, and after the delete, for good.
+		d.mu.Lock()
+		i := slices.IndexFunc(d.st.Uploads, func(u fileUpload) bool { return u.Ref == at })
+		counted := i >= 0
+		early := counted && time.Since(d.st.Uploads[i].At) < uploadSettle
+		d.mu.Unlock()
+		if early {
+			continue // at the next prune
+		}
+		if counted && d.filesRefGone(ctx, at) {
+			d.mu.Lock()
+			if d.refundUploadLocked(at) {
+				d.saveLocked()
+			}
+			d.mu.Unlock()
+		}
 		// Deleting a ref that is already gone succeeds: the look after a refused push finds it at
 		// "", which is what was asked for.
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			if errors.Is(err, ErrInvisible) {
+				d.pruneOwed.Store(true) // the device went invisible meanwhile
+				return
+			}
 			d.log.Printf("deleting files ref %s from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return
@@ -928,7 +1612,10 @@ func (d *Daemon) ageOthersFilesLocked(now time.Time) {
 }
 
 // pruneOthersFiles deletes from the remote the files refs of devices that are gone, which only their
-// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A ref goes once
+// own daemon would otherwise delete: a deleted clone's would stay for good (#708). A note whose ref
+// is off the remote already goes at once, whatever its age: a ref is pushed before the event that
+// names it, so one not listed has been deleted, and the note had nothing left to do but wait out
+// twice FileKeep of this daemon's running: most of a year for one that runs an hour a day (#747). A ref goes once
 // this daemon has run for twice FileKeep since it first read of it. Its event was written after it
 // was pushed, so its own daemon, by then, would have deleted it a FileKeep before, and no receiver
 // can still need it. That counts no wall clock, this one's or the sender's, so it holds when either
@@ -944,18 +1631,37 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			due = append(due, at)
 		}
 	}
-	if len(d.st.OthersFiles) > 0 {
+	// The notes there are before the listing: one a sync makes while the listing runs can name
+	// a ref pushed after it, which the listing lacks though the ref is there.
+	notes := slices.Collect(maps.Keys(d.st.OthersFiles))
+	if len(notes) > 0 {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if len(due) == 0 {
+	if len(notes) == 0 {
 		return
 	}
-	listed, err := d.repo.ListRemote(ctx)
+	// Within a time of its own, as a sync's listing is: this one runs at every prune now, and one
+	// left waiting on a dead connection would hold up every message that carries files.
+	lctx, cancel := context.WithTimeout(ctx, time.Minute)
+	listed, err := d.repo.ListRemote(lctx)
+	cancel()
 	if err != nil {
 		d.log.Printf("listing the remote's files refs: %v", err)
 		return
 	}
+	d.mu.Lock()
+	gone := false
+	for _, at := range notes {
+		if _, ok := d.st.OthersFiles[at]; ok && listed[bus.FilesRef(at)] == "" {
+			delete(d.st.OthersFiles, at) // its own daemon, or another here, deleted it
+			gone = true
+		}
+	}
+	if gone {
+		d.saveLocked()
+	}
+	d.mu.Unlock()
 	forget := func(at string) {
 		d.mu.Lock()
 		delete(d.st.OthersFiles, at)
@@ -965,8 +1671,7 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 	slices.Sort(due)
 	for _, at := range due {
 		if listed[bus.FilesRef(at)] == "" {
-			forget(at) // its own daemon, or another here, deleted it
-			continue
+			continue // its note went above
 		}
 		d.mu.Lock()
 		p := d.peers[d.st.OthersFiles[at].Device]
@@ -976,6 +1681,10 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 			continue
 		}
 		if err := d.push(ctx, "", bus.FilesRef(at), bus.Force, ""); err != nil {
+			if errors.Is(err, ErrInvisible) {
+				d.pruneOwed.Store(true) // the device went invisible meanwhile
+				return
+			}
 			d.log.Printf("deleting files ref %s, of a device that is gone, from the remote: %v", at, err)
 			if ctx.Err() != nil {
 				return
@@ -992,25 +1701,57 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 // holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	to, direct := d.recipientsOfLocked(e)
-	var old []string
+	var old, off, people []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
-		if p := d.peers[dev]; dev != d.device && p != nil && !p.locked && !p.pres.Files {
-			name, _, _ := d.sessionInfoLocked(addr)
-			if direct {
-				name = who
-			}
+		p := d.peers[dev]
+		if dev == d.device || p == nil || p.locked {
+			continue
+		}
+		name, _, _ := d.sessionInfoLocked(addr)
+		if direct {
+			name = who
+		}
+		switch {
+		case !p.pres.Files:
 			old = append(old, nameOr(name, addr))
+		case bus.IsPerson(addr) && p.pres.PersonFilesOff:
+			people = append(people, nameOr(name, addr))
+		case !bus.IsPerson(addr) && p.pres.FilesOff: // its person turned their agents' Receive files off (#765)
+			off = append(off, nameOr(name, addr))
 		}
 	}
+	var notes []string
 	switch len(old) {
 	case 0:
-		return ""
 	case 1:
-		return old[0] + " is on a device that runs a " + brand.Product + " from before files, so the text alone gets there."
+		notes = append(notes, old[0]+" is on a device that runs a "+brand.Product+" from before files, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(old)+" are on devices that run a "+brand.Product+" from before files, so the text alone gets there.")
 	}
-	return strings.Join(old[:len(old)-1], ", ") + " and " + old[len(old)-1] + " are on devices that run a " +
-		brand.Product + " from before files, so the text alone gets there."
+	switch len(off) {
+	case 0:
+	case 1:
+		notes = append(notes, off[0]+" takes no files: Receive files is off for the agents on its device, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(off)+" take no files: Receive files is off for the agents on their devices, so the text alone gets there.")
+	}
+	switch len(people) {
+	case 0:
+	case 1:
+		notes = append(notes, people[0]+" takes no files: they turned Receive files off, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(people)+" take no files: they turned Receive files off, so the text alone gets there.")
+	}
+	return strings.Join(notes, " ")
+}
+
+// andList is names joined as a sentence lists them: "a, b and c".
+func andList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // fileMiss is a fetch for the page that failed: when, and how.
@@ -1040,14 +1781,15 @@ func (d *Daemon) pageFetch(ctx context.Context, e bus.Event) error {
 	if missed && time.Since(miss.at) < pageFetchAgain {
 		return miss.err
 	}
-	err = d.fetchFilesHeld(ctx, e, 1)
+	err = d.fetchFilesHeld(ctx, e, 1, &d.pageRecv)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch {
 	case err == nil:
 		delete(d.fileMiss, e.FilesAt)
-	case ctx.Err() != nil:
-		// The page went, or its time ran out: that says nothing of the remote.
+	case ctx.Err() != nil, errors.Is(err, errReceiveOff):
+		// The page went, or its time ran out, or Receive files went off: that says nothing of the
+		// remote.
 	default:
 		d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
 		d.fileMiss[e.FilesAt] = fileMiss{time.Now(), err}
@@ -1070,13 +1812,13 @@ func (e noFile) Is(target error) bool { return target == web.ErrNoFile }
 // in it, fetched first if it isn't here.
 func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []byte, error) {
 	d.mu.Lock()
-	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.e.ID == id })
+	i := slices.IndexFunc(d.msgs, func(m pageMsg) bool { return m.id == id })
 	var e bus.Event
 	if i >= 0 {
 		e = d.msgs[i].e
 	}
 	d.mu.Unlock()
-	if i < 0 || index >= len(e.Files) {
+	if i < 0 || index >= len(e.Files) || d.refuses(&d.pageRecv, e) {
 		return "", nil, noFile("no such file")
 	}
 	f := e.Files[index]
@@ -1094,6 +1836,9 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 	if err != nil {
 		return "", nil, gone
 	}
+	if d.refuses(&d.pageRecv, e) {
+		return "", nil, noFile("no such file") // went off while it was fetched
+	}
 	return f.Name, data, nil
 }
 
@@ -1101,7 +1846,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 // it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld). Caller
 // holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
-	if len(e.Files) == 0 {
+	if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) {
 		return nil
 	}
 	views := make([]proto.FileView, 0, len(e.Files))

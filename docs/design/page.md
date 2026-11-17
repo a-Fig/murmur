@@ -31,6 +31,19 @@ from it is in [a person on the page](people.md).
   from presence going stale. Messages are every one this daemon reads, whoever it is for, since
   every record is encrypted for the whole team ([encryption](encryption.md)). The daemon keeps the
   last 500 in memory.
+  - *Which message is which* (#603, 2026-11-16) goes by its ID, its sender and when it was sent.
+    By the ID alone, a device that wrote an ID again hid its own later message from every page,
+    and after a restart could put one of its own in another's place. The page still keeps
+    messages by one ID each, and passes over an ID it has. So the first message the daemon kept
+    with an ID has it plain, for as long as a page may still hold it: through a re-sort of the
+    list, and for 4,000 dropped messages after the daemon's own 500 have let it go, the page
+    keeping 2,000. Any other message with that ID is given it with a mark added, 64 bits of a
+    hash, the same each time. The unread list follows the marked ID.
+    - *What is left.* Receipts go by the bus's ID alone, so the page shows them on the message
+      that has it plain, whichever of the two they were for. And a daemon that restarts picks
+      owners afresh, by time sent where history is read back: a page handed over by an update,
+      which keeps what it had, can then show one of the two twice and the other not at all until
+      it is loaded again.
 - **Messages from before the daemon started are read back from the bus** (#138, 2026-11-12). The
   daemon exits when idle, so the page opened on conversations with their beginnings gone, and one
   away over 10 minutes left a hole in the middle. They are read back from the logs this clone has
@@ -76,7 +89,12 @@ from it is in [a person on the page](people.md).
   model and tags, the status and branch, what you have in common (the groups you have posted in that
   it is in, and your device), for a person the sessions they have messaged, and a box that sends a
   direct message from the card. It uses only presence and the messages the page has. A face that is
-  part of another control (the account chip, a group's pile) doesn't open it. Tyler chose the banner
+  part of another control (the account chip, a group's pile) doesn't open it. Since 2026-11-16
+  (#778, Tyler's request) a name opens it wherever the page shows one: the sidebar, Sessions, Recent
+  (activity and messages), a group's members, "Talked with", and a name the page knows written in a
+  message (`quiet-otter`). Names in a picker, in sessions being picked to tag, and in a
+  conversation's row keep that control's action. Read receipts list names in a tooltip, which
+  holds no controls, so they don't open it. Tyler chose the banner
   look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
   which #656 headed with its details, hold little more than the card does.
 - **Themes** (2026-11-09), kept in the browser: Dark (T3 Code's), Dim (the page's greys before it
@@ -127,6 +145,16 @@ from it is in [a person on the page](people.md).
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`; [delivery](delivery.md) says what they do. Settings also lists every
   mute ([mutes](mutes.md)), with a button to undo those of this device's sessions.
+- **Settings is one screen per repo, grouped by topic** (2026-11-16, #775, Tyler's choice of a
+  proposal). It grew a section per feature, with rows named by scope ("Device default" twice). A
+  device is one clone, so every setting but two is the open repo's, and the page says which repo
+  and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
+  (availability, waking, what a working session is shown, and each session's own, folded until
+  opened), Files and Mutes. Below a line, "For every repo": the theme, kept in this browser, and
+  About. An on/off setting is a switch and a choice among several a segmented control (Tyler).
+  The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
+  and repo are nearly the same thing here, and people come with a question, not a scope. A page
+  that changes every repo at once is #816.
 - **An open page keeps the daemon up.** The page polls every 3 s, 15 s in a hidden tab. A call with
   the token from a page someone can see counts as an open page for 2 minutes and stops the 10-minute
   idle countdown, so a daemon with nothing else to do exits about 12 minutes after its page is

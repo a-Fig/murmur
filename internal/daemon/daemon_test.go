@@ -87,6 +87,13 @@ type device struct {
 	keep   time.Duration // StoppedInbox; likewise
 	// fileKeep and filePrune are FileKeep and FilePrune; zero takes the daemon's defaults.
 	fileKeep, filePrune time.Duration
+	// filesOff starts the daemon with Send files and Receive files off, as a new user's is (#765);
+	// otherwise both are on.
+	filesOff bool
+	// files, if set, is the settings.json to start with instead, to set the switches one by one.
+	files string
+	// tempDir is TempDir, the temp folder a send may read files from; "" takes the system's.
+	tempDir string
 	// filesPerDay and filesHeld are FilesPerDay and FilesHeld; zero takes the daemon's defaults.
 	filesPerDay, filesHeld int64
 	// muteGrace is MuteGrace. Zero takes none (-1): a mute holds from the first moment, so a test
@@ -238,12 +245,26 @@ func (d *device) start() {
 	if muteGrace == 0 {
 		muteGrace = -1
 	}
+	if !d.filesOff || d.files != "" {
+		// Send files and Receive files are off until a person turns them on (#765). The tests of
+		// files, and of everything else, run with them on, unless a test says, or set them itself.
+		settings := filepath.Join(d.gitDir, brand.StateDir, "settings.json")
+		if _, err := os.Stat(settings); os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+				d.t.Fatal(err)
+			}
+			files := cmp.Or(d.files, `{"sendFiles":true,"receiveFiles":true}`)
+			if err := os.WriteFile(settings, []byte(files), 0o600); err != nil {
+				d.t.Fatal(err)
+			}
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	d.done = done
 	go func() {
 		defer close(done)
-		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
+		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, TempDir: d.tempDir, Poll: d.poll,
 			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, OwnTipWait: cmp.Or(d.ownTipWait, time.Minute), FirstSyncLimit: d.firstSync,
 			SessionGrace: d.grace, StoppedInbox: d.keep, FileKeep: d.fileKeep, FilePrune: d.filePrune, FilesPerDay: d.filesPerDay, FilesHeld: d.filesHeld, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,

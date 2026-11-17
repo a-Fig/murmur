@@ -15,6 +15,11 @@ session tag's rules apply to each of them:
 - An agent can still read its inbox and use every tool.
 - Senders see the tag.
 
+Its own person's messages are the exception (#777, Tyler, 2026-11-16): one sent from the device's
+page, to one session, a group or everyone, goes as usual, a turn or a notice, through the mode and a session's own
+tag alike, and the page doesn't say it waits. Some people talk to their own agents through Murmur,
+and do not disturb is for everyone else.
+
 The device's presence also says it is on do not disturb, so `who` and the page say why on the
 device's own line, and senders on other devices hold to it even if a session's tags don't show it.
 Neither a person taking the tag off a session nor the limit on a session's tags lifts it: the
@@ -54,7 +59,10 @@ Invisible takes the device off Murmur in the repo, as if it were offline.
 - The device still has a team-key grant, and its key data is on the team ref. They show that the
   device exists, not that it is working now.
 - Commits and branches pushed to the repository itself are outside Murmur, and still show work.
-- Messages already on the bus stay there, with their receipts as far as they got.
+- Messages already on the bus stay there, with their receipts as far as they got. So do the files
+  the device sent, past their 7 days: deleting a files ref is a write, and its timing would show
+  the daemon running. They are deleted when the device leaves invisible (#789), unless a
+  teammate's daemon has by then deleted them as a gone device's (`files.md`).
 - Once the device is back online, some of what happened while it was invisible shows. Receipts for
   messages read meanwhile carry when they were read, and sessions that started meanwhile show when
   they started and were last active, with the commits credited to them.
