@@ -1,6 +1,8 @@
 package daemon_test
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,4 +63,43 @@ func TestAResumeInTheOldSessionsGraceTakesItsInbox(t *testing.T) {
 		t.Fatalf("the old session stopped before the resume; the test needs it in its grace")
 	}
 	b.noticed(claude, procQ, "unread")
+}
+
+// And a resumed session with a way to be handed a message is handed what it took when the old
+// one's grace ran out (Sol's review): nothing else may come to wake delivery then.
+func TestAResumeInTheOldSessionsGraceIsHandedItsInbox(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	b := newTimedDevice(t, remote, 2*time.Second, 0)
+	const claude = "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff"
+	old, conn, _ := b.sessionPID("0a1b2c", claude, procP)
+	name := b.named(old)
+	if r := b.do(proto.Request{Op: proto.OpSend, To: old, Subject: "unread"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "unread") })
+	conn.Close()
+
+	c, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "f88c42", Agent: "test", ClaudeSession: claude,
+		ClientPID: procQ, Route: proto.Route{CodexCLI: exe, Native: "0199aaaa-thread-bob"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	b.nameIs(resp.Self, name)
+	if n := busLines(b, old, "stopped"); n != 0 {
+		t.Fatalf("the old session stopped before the resume; the test needs it in its grace")
+	}
+	eventually(t, "the old session to stop", func() bool { return busLines(b, old, "stopped") == 1 })
+	// Soon after, and not at the daemon's kick a minute after it started, which is what took it
+	// before: the stop wakes nothing else.
+	for end := time.Now().Add(15 * time.Second); len(calls()) == 0; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("what the session took was not handed over")
+		}
+	}
+	if args := calls()[0].Args; len(args) != 4 || !strings.Contains(args[3], "unread") {
+		t.Errorf("codex was run as %q", args)
+	}
 }
