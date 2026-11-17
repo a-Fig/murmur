@@ -17,6 +17,10 @@ Docs and comments inform rather than direct: what is true, why, what it cost. Di
 Tyler's rules, marked as his. Facts that can go stale carry a date. Each fact lives in one place:
 this file loads into every session, so it stays short and points into `docs/` for detail.
 
+Tyler's rule (2026-11-16): prose people read (the site, the README, the `mur ui` page, terminal
+output) is written with the writing-for-humans skill:
+https://github.com/a-Fig/figs-skills/blob/main/writing-for-humans-101/SKILL.md
+
 ## Words that mean two things
 
 - **Murmur, mur, t4.** Murmur is the product and the repo (`a-Fig/murmur`); `mur` is the command
