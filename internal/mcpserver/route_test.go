@@ -318,16 +318,18 @@ func TestThreadFoundWhileRegisteringIsToldAfterwards(t *testing.T) {
 }
 
 // A Codex thread of T3's headless server has none of T3's variables but the T3CODE_HOME join
-// forwards, and the t3 that serves is above Codex. Its route is T3's, and its thread comes from
-// the tool calls' _meta, as in T3's app. A codex some other program started, a thread's shell
-// say, keeps Codex's own route, as does one with no T3 home, for which no t3 is looked for (#802).
+// forwards, and the t3 that serves runs Codex. Its route is T3's, and its thread comes from the
+// tool calls' _meta, as in T3's app. A codex t3 doesn't run keeps Codex's own route, as does one
+// with an agent above it (a thread's shell's) or with no T3 home, for which no t3 is looked for
+// (#802).
 func TestHeadlessT3CodexIsFound(t *testing.T) {
 	t.Setenv("T3CODE_CLI_PATH", "")
 	t.Setenv(threadEnv, "")
 	t.Setenv("T3CODE_HOME", "/home/u/.t3")
 	asked := false
-	t.Cleanup(func() { servingT3 = func() (string, bool) { return "", false } })
-	servingT3 = func() (string, bool) { asked = true; return "/home/u/.local/bin/t3", true }
+	found := func() string { asked = true; return "/home/u/.local/bin/t3" }
+	t.Cleanup(func() { codexT3 = func() string { return "" } })
+	codexT3 = found
 	h := helloFor("codex", "/work")
 	if r := h.Route; r.T3CLI != "/home/u/.local/bin/t3" || r.T3Home != "/home/u/.t3" || r.CodexCLI != "" {
 		t.Errorf("route %+v, want T3's", h.Route)
@@ -336,17 +338,14 @@ func TestHeadlessT3CodexIsFound(t *testing.T) {
 		t.Errorf("hello %+v: want T3's label, and the thread from _meta, not the variable", h)
 	}
 
-	servingT3 = func() (string, bool) { return "", false }
+	codexT3 = func() string { return "" }
 	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" {
-		t.Errorf("a codex t3 didn't start: %+v", h)
+		t.Errorf("a codex t3 doesn't run: %+v", h)
 	}
 
-	// A codex run from the thread's shell has an agent above it, the thread's codex, past the node
-	// npm's codex runs it under: no t3 is looked for, even one Serving would find through node.
 	agentAbove = func() bool { return true }
 	t.Cleanup(func() { agentAbove = func() bool { return false } })
-	asked = false
-	servingT3 = func() (string, bool) { asked = true; return "/home/u/.local/bin/t3", true }
+	asked, codexT3 = false, found
 	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" || asked {
 		t.Errorf("a codex under the thread's codex: %+v, looked for t3: %v", h, asked)
 	}
@@ -354,7 +353,6 @@ func TestHeadlessT3CodexIsFound(t *testing.T) {
 
 	t.Setenv("T3CODE_HOME", "")
 	asked = false
-	servingT3 = func() (string, bool) { asked = true; return "/home/u/.local/bin/t3", true }
 	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || asked {
 		t.Errorf("with no T3 home: %+v, looked for t3: %v", h, asked)
 	}
