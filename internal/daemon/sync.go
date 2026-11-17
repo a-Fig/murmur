@@ -1376,12 +1376,14 @@ func (d *Daemon) readOwnLater(ctx context.Context) {
 // appendEvent adds an event to this device's log on the remote. It returns once the push has
 // landed, so a sender knows whether its message went out.
 func (d *Daemon) appendEvent(ctx context.Context, e bus.Event) error {
-	return d.appendEventIf(ctx, e, nil)
+	return d.appendEventIf(ctx, e, nil, nil)
 }
 
 // appendEventIf is appendEvent, asking still once each push's turn is had: a message with files
-// isn't sent if Send files went off while it waited (#765).
-func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool) error {
+// isn't sent if Send files went off while it waited (#765). With settle, a push that ends unsure
+// leaves the event pending rather than failed, and appendEventIf returns a pendingError: it is
+// pushed again until it lands or is given up, and settle is told which (pending.go, #781).
+func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bool, settle settleFunc) error {
 	if err := d.awaitEpoch(ctx); err != nil {
 		return err
 	}
@@ -1411,30 +1413,18 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
+			if settle != nil && d.pendLocked(sha, settle, err) {
+				return pendingError{err}
+			}
 		}
 		if err == nil {
-			d.ownTip = sha
-			if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
-				d.log.Printf("updating local %s: %v", ref, err)
-			}
-			d.mu.Lock()
-			if e.Type == bus.Message {
-				d.noteConversationLocked() // a message went out; the answer may come soon
-			}
-			d.mu.Unlock()
-			if d.leaveOwnTip(sha) {
-				return nil
-			}
-			d.mu.Lock()
-			d.known[ref] = sha
-			d.mu.Unlock()
-			d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
-			d.advMu.Unlock()
+			d.ownLanded(ctx, ref, sha, e.Type == bus.Message)
 			return nil
 		}
 		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
 			return err
 		}
+		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
 			return err
@@ -1453,9 +1443,39 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 			continue
 		}
 		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
-		// first sync, or a copied .git. Build on the remote's tip instead.
+		// first sync, or a copied .git. Build on the remote's tip instead. A send pending on the
+		// tip that was given up for it is settled by whether the remote's has it.
+		d.settlePendingOn(ctx, tip, rejected)
 		d.ownTip = tip
 	}
+}
+
+// ownLanded records sha, the tip of this device's log just pushed, as landed, and with it every
+// send pending under it; message says the write was a message, after which an answer may come
+// soon. Caller holds writeMu.
+func (d *Daemon) ownLanded(ctx context.Context, ref, sha string, message bool) {
+	d.ownTip = sha
+	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+		d.log.Printf("updating local %s: %v", ref, err)
+	}
+	landed := d.pendSends
+	d.pendSends = nil
+	d.mu.Lock()
+	if message || len(landed) > 0 {
+		d.noteConversationLocked() // a message went out; the answer may come soon
+	}
+	d.mu.Unlock()
+	for _, p := range landed {
+		p.settle(true, false, nil)
+	}
+	if d.leaveOwnTip(sha) {
+		return
+	}
+	d.mu.Lock()
+	d.known[ref] = sha
+	d.mu.Unlock()
+	d.advanceMesh(ctx, ref, sha, sha) // queues for sessions on this device
+	d.advMu.Unlock()
 }
 
 // pushRefused says a push that ended with err is known not to have landed: the remote refused it,
