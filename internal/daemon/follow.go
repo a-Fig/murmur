@@ -128,10 +128,10 @@ func (d *Daemon) threadIDLocked(h *proto.Hello) string {
 // name (see adoptLocked). Caller holds mu.
 func (d *Daemon) setNameLocked(s *session, name string) {
 	s.name = name
+	d.adoptLeftLocked(s) // before the name's own: with no name yet, s keeps them by its ID
 	if name == "" {
 		return
 	}
-	d.adoptLeftLocked(s) // first: what the session kept before goes before what it has kept by its ID since
 	d.adoptTagsLocked(s)
 	d.adoptMutesLocked(s)
 	d.adoptExplainedLocked(s)
@@ -153,46 +153,89 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 	d.saveLocked()
 }
 
-// adoptLeftLocked moves to s's name what its key kept under the name it had before this clone
-// lost its keys and became a new device (NamesLeft, #827): the tags, unless the new name has some
-// already, the mutes, added to the name's own up to what a session may have, and who has been
-// explained to it. They are kept by name, and the old name stays on the old device (#617), so
-// without this the session came back with none of them. The mutes other sessions here made of
-// the old name stay as they are, of a name nobody answers to now. Caller holds mu.
+// adoptLeftLocked gives s what its key kept under the name it had before this clone lost its
+// keys and became a new device (NamesLeft, #827): the tags, unless s has some already, the mutes,
+// added to its own up to what a session may have, and who has been explained to it. They are
+// kept by name, and the old name stays on the old device (#617), so without this the session
+// came back with none of them.
+//
+// It takes them as soon as it is back, by its ID while its new name is pending, so it is on do
+// not disturb and in its groups from the start, and what it changes meanwhile is a change to
+// those; the name takes them from the ID when it lands, as it does any (adoptTagsLocked). Once
+// it has the name, the mutes other sessions here made of the old one are of the new one: a
+// session muted on this clone stays muted. Caller holds mu.
 func (d *Daemon) adoptLeftLocked(s *session) {
 	old := d.st.NamesLeft[s.key]
-	if s.key == "" || old == "" || s.name == "" {
+	if s.key == "" || old == "" {
 		return
 	}
-	delete(d.st.NamesLeft, s.key)
-	if old != s.name {
-		if st := d.st.Tags[old]; st != nil {
-			delete(d.st.Tags, old)
-			if d.st.Tags[s.name] == nil {
-				d.st.Tags[s.name] = st
-			}
-		}
-		if m := d.st.Mutes[old]; m != nil {
-			delete(d.st.Mutes, old)
-			have := d.st.Mutes[s.name]
-			if have == nil {
-				d.st.Mutes[s.name] = m
-			}
-			for _, name := range sortedKeys(m) {
-				if _, ok := have[name]; have != nil && !ok && len(have) < bus.MaxMuted {
-					have[name] = m[name]
-				}
-			}
-		}
-		if people, ok := d.st.Explained[old]; ok {
-			delete(d.st.Explained, old)
-			for _, p := range people {
-				d.noteExplainedAtLocked(s.name, p)
-			}
-		}
-		d.log.Printf("session %s, now %s, has the tags and mutes it kept as %s on this clone's old device", bus.Addr(d.device, s.id), s.name, old)
+	if old == s.name {
+		delete(d.st.NamesLeft, s.key)
+		d.saveLocked()
+		return
 	}
-	d.saveLocked()
+	to, moved := tagKeyOf(s.name, s.id), false
+	if st := d.st.Tags[old]; st != nil {
+		delete(d.st.Tags, old)
+		if d.st.Tags[to] == nil {
+			d.st.Tags[to] = st
+		}
+		moved = true
+	}
+	if m := d.st.Mutes[old]; m != nil {
+		delete(d.st.Mutes, old)
+		have := d.st.Mutes[to]
+		if have == nil {
+			if d.st.Mutes == nil {
+				d.st.Mutes = map[string]map[string]time.Time{}
+			}
+			d.st.Mutes[to], m = m, nil
+		}
+		for _, name := range sortedKeys(m) {
+			if _, ok := have[name]; ok {
+				continue
+			}
+			if len(have) >= bus.MaxMuted {
+				d.log.Printf("session %s muted %s as %s, on this clone's old device, and has %d mutes already; not kept",
+					bus.Addr(d.device, s.id), name, old, len(have))
+				continue
+			}
+			have[name] = m[name]
+		}
+		moved = true
+	}
+	if people, ok := d.st.Explained[old]; ok {
+		delete(d.st.Explained, old)
+		for _, p := range people {
+			d.noteExplainedAtLocked(to, p)
+		}
+		moved = true
+	}
+	if moved {
+		d.log.Printf("session %s has what it kept as %s on this clone's old device", bus.Addr(d.device, s.id), old)
+	}
+	if s.name != "" {
+		for _, by := range sortedKeys(d.st.Mutes) {
+			m := d.st.Mutes[by]
+			at, muted := m[old]
+			if !muted {
+				continue
+			}
+			delete(m, old)
+			if _, ok := m[s.name]; !ok && by != s.name {
+				m[s.name] = at
+			}
+			if len(m) == 0 {
+				delete(d.st.Mutes, by)
+			}
+			moved = true
+		}
+		delete(d.st.NamesLeft, s.key)
+		moved = true
+	}
+	if moved {
+		d.saveLocked()
+	}
 }
 
 // sessionNameKeep is how long the name of a session that is gone is remembered once nothing else

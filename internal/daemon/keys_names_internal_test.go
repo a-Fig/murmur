@@ -30,9 +30,10 @@ func TestLostKeysDropTheNamesBeforeTheNewID(t *testing.T) {
 		`"nameBinds":{"brisk-finch":"bbbbbb"},"nameHolders":{"quiet-otter":"aaaaaa"},"sessionNames":{"aaaaaa":"quiet-otter"},` +
 		`"namesSeen":{"aaaaaa":"2026-11-16T00:00:00Z"},` +
 		// What sessions kept by their names (#827): k1's, k2's and k3's names have something, k4's
-		// has nothing. k0 never came back after an earlier loss, and still has tags to take.
+		// has nothing. k0 never came back after an earlier loss, and still has tags to take; so does
+		// k4, whose name since has none.
 		`"nameKeys":{"k1":"quiet-otter","k2":"calm-finch","k3":"brave-heron","k4":"plain-wren"},` +
-		`"namesLeft":{"k0":"old-crane","k1":"older-name"},` +
+		`"namesLeft":{"k0":"old-crane","k1":"older-name","k4":"old-crane"},` +
 		`"tags":{"quiet-otter":{"self":["group:ui"]},"old-crane":{"self":["reviewing"]}},` +
 		`"mutes":{"calm-finch":{"loud-jay":"2026-11-16T00:00:00Z"}},"explained":{"brave-heron":["dev-0001/person"]},` +
 		`"unwritten":[{"v":1,"id":"e1","type":"session.started","from":"` + old + `/aaaaaa"}]}`
@@ -73,7 +74,7 @@ func TestLostKeysDropTheNamesBeforeTheNewID(t *testing.T) {
 	if err := json.Unmarshal(st["namesLeft"], &left); err != nil {
 		t.Errorf("namesLeft: %v", err)
 	}
-	if want := map[string]string{"k0": "old-crane", "k1": "quiet-otter", "k2": "calm-finch", "k3": "brave-heron"}; !maps.Equal(left, want) {
+	if want := map[string]string{"k0": "old-crane", "k1": "quiet-otter", "k2": "calm-finch", "k3": "brave-heron", "k4": "old-crane"}; !maps.Equal(left, want) {
 		t.Errorf("namesLeft is %v, want %v", left, want)
 	}
 	for _, k := range []string{"pins", "usedNames", "reservedNames", "tags", "mutes", "explained"} {
@@ -142,5 +143,47 @@ func TestANewNameTakesWhatTheOldOneKept(t *testing.T) {
 	d.setNameLocked(o, "brisk-wren")
 	if st := d.st.Tags["brisk-wren"]; st == nil || !slices.Equal(st.Self, []string{"own"}) || d.st.Tags["calm-finch"] != nil || len(d.st.NamesLeft) != 0 {
 		t.Errorf("tags after a name with its own took an old one's: %v, left %v", d.st.Tags, d.st.NamesLeft)
+	}
+
+	// One whose new name is pending has them by its ID from the start, so it is on do not disturb
+	// meanwhile, and a tag it adds then is added to them. The name takes the lot when it lands,
+	// and the mute another session here made of the old name is then of the new one.
+	p := &session{id: "cccccc", key: "k3"}
+	d.sessions[p.id] = p
+	d.st.NamesLeft = map[string]string{"k3": "brave-heron"}
+	d.st.Tags["brave-heron"] = &tags.State{Self: []string{tags.DoNotDisturb}}
+	d.st.Mutes["bold-lark"]["brave-heron"] = at
+	d.st.Mutes["brave-heron"] = map[string]time.Time{"loud-jay": at}
+	d.setNameLocked(p, "")
+	if !d.ownDNDLocked(p.id) || d.st.Tags["brave-heron"] != nil || d.st.NamesLeft["k3"] != "brave-heron" {
+		t.Errorf("with its name pending: tags %v, left %v", d.st.Tags, d.st.NamesLeft)
+	}
+	if st := d.tagStateLocked(p); st != nil {
+		st.Self = append(st.Self, "reviewing")
+	}
+	d.setNameLocked(p, "keen-swift")
+	if st := d.st.Tags["keen-swift"]; st == nil || !slices.Equal(st.Self, []string{tags.DoNotDisturb, "reviewing"}) || !d.ownDNDLocked(p.id) {
+		t.Errorf("tags once the name landed: %v", d.st.Tags)
+	}
+	if m := d.st.Mutes["bold-lark"]; !m["keen-swift"].Equal(at) || len(m) != 3 || len(d.st.Mutes["keen-swift"]) != 1 || len(d.st.NamesLeft) != 0 {
+		t.Errorf("mutes once the name landed: %v, left %v", d.st.Mutes, d.st.NamesLeft)
+	}
+}
+
+// A state file whose namesLeft is null, as a hand might leave it, doesn't stop the daemon.
+func TestDropOldNamesReadsANullNamesLeft(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"namesLeft":null,"nameKeys":{"k1":"quiet-otter"},"tags":{"quiet-otter":{"self":["a"]}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := dropOldNames(path); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	var st struct {
+		NamesLeft map[string]string `json:"namesLeft"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil || st.NamesLeft["k1"] != "quiet-otter" {
+		t.Errorf("state.json after: %s (%v)", b, err)
 	}
 }

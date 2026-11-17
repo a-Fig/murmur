@@ -101,7 +101,7 @@ key replaced it.
   device had keys, the daemon takes a new device ID, because teammates would refuse a new key under
   the old one; the old ID goes stale and its names stay taken, and the new ID's sessions get new
   names: the registry never moves a name between devices (#617). A session that comes back with
-  its key takes its tags, mutes and explained list to its new name ([tags](tags.md), #827). The
+  its session key takes its tags, mutes and explained list to its new name ([tags](tags.md), #827). The
   person's name stays with the old device, and the page asks them for another: nothing shows the
   new device is the same person's (#834).
 - **The name registry stays in the clear, and unsealed.** It holds random names, device IDs and

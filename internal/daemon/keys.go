@@ -129,25 +129,26 @@ func dropOldNames(path string) error {
 		return nil // loadState says what is wrong with it
 	}
 	n := len(st)
-	left := map[string]string{} // an earlier loss's, for the keys that haven't come back since
-	_ = json.Unmarshal(st["namesLeft"], &left)
-	var keys map[string]string
-	_ = json.Unmarshal(st["nameKeys"], &keys)
-	for key, name := range keys {
-		left[key] = name
-	}
-	kept := func(name string) bool {
-		for _, k := range []string{"tags", "mutes", "explained"} {
-			var by map[string]json.RawMessage
-			if json.Unmarshal(st[k], &by) == nil && by[name] != nil {
-				return true
+	kept := map[string]bool{} // the names that have something to hand on
+	for _, k := range []string{"tags", "mutes", "explained"} {
+		var by map[string]json.RawMessage
+		if json.Unmarshal(st[k], &by) == nil {
+			for name := range by {
+				kept[name] = true
 			}
 		}
-		return false
 	}
-	for key, name := range left {
-		if key == "" || name == "" || !kept(name) {
-			delete(left, key)
+	// An earlier loss's are kept for the keys that haven't come back since, and for one whose
+	// name since has nothing: its key was given a name with no session there to take them.
+	var earlier, keys map[string]string
+	_ = json.Unmarshal(st["namesLeft"], &earlier)
+	_ = json.Unmarshal(st["nameKeys"], &keys)
+	left := map[string]string{}
+	for _, names := range []map[string]string{earlier, keys} {
+		for key, name := range names {
+			if key != "" && kept[name] {
+				left[key] = name
+			}
 		}
 	}
 	was := string(st["namesLeft"])
