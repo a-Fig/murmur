@@ -291,6 +291,7 @@ func (p *Presence) Clean() {
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
 			s.Muted = cleanMuted(s.Muted)
+			s.Dropped = cleanDropped(s.Dropped)
 			if s.ID == PersonSession {
 				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
 			}
@@ -307,6 +308,18 @@ func cleanMuted(in []string) []string {
 	for _, n := range in {
 		if names.Valid(n) && !slices.Contains(out, n) && len(out) < MaxMuted {
 			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// cleanDropped holds a session's dropped messages to what Murmur writes: event IDs, none repeated,
+// at most MaxDropped.
+func cleanDropped(in []string) []string {
+	var out []string
+	for _, id := range in {
+		if validID(id) && !slices.Contains(out, id) && len(out) < MaxDropped {
+			out = append(out, id)
 		}
 	}
 	return out
@@ -481,6 +494,11 @@ type SessionInfo struct {
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// Dropped is the IDs of the last messages, at most MaxDropped, that this session's device
+	// dropped on arrival because this session had muted their sender (#466). The sender's daemon
+	// finds its own among them and tells the sender, who would otherwise believe it arrived. A
+	// daemon from before it ignores them.
+	Dropped []string `json:"dropped,omitempty"`
 	// NoWake says a message from another agent wouldn't go into the session as a turn now, by its
 	// device's wake setting (#545): NoWakeOff or NoWakeIdle, "" if it would. The message waits for
 	// the session's next turn or its inbox, and the sender is told. A daemon from before it ignores
@@ -498,6 +516,9 @@ const (
 
 // MaxMuted caps SessionInfo.Muted.
 const MaxMuted = 50
+
+// MaxDropped caps SessionInfo.Dropped.
+const MaxDropped = 20
 
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5

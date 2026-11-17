@@ -1022,6 +1022,9 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 			if mode == modeNormal && !held {
 				d.log.Printf("message %s is from %s, which session %s has muted; dropped", e.ID, e.From, id)
 			}
+			if mode == modeNormal {
+				d.mutedropLocked(id, e) // its sender is told (#466)
+			}
 			continue
 		}
 		if !d.inTimeLocked(e, id, mode) &&
@@ -1178,9 +1181,14 @@ func (d *Daemon) catchUpLocked(id string) {
 	d.caughtUp[id] = true
 	d.applyHeldLocked(id) // first: a group's message waiting for it goes by the tags they give it
 	for _, e := range d.pending {
-		if d.addressedLocked(e, id) && !d.offMeshLocked(id) && !d.mutedHereLocked(id, e) {
-			d.addInboxLocked(id, e)
+		if !d.addressedLocked(e, id) || d.offMeshLocked(id) {
+			continue
 		}
+		if d.mutedHereLocked(id, e) {
+			d.mutedropLocked(id, e) // what arrived while the daemon was down: its sender is told (#466)
+			continue
+		}
+		d.addInboxLocked(id, e)
 	}
 	d.saveLocked()
 }
@@ -1269,6 +1277,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
+		d.droppedThereLocked(dev, pres.Sessions)
 	}
 	// A name in another device's presence is in use, whether or not the registry shows it yet.
 	seen := false
@@ -1806,7 +1815,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
-			Muted: d.mutesOfLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+			Muted: d.mutesOfLocked(s.id), Dropped: d.mutedropsLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
 		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {
 			info.LastActive = s.lastActive.UTC()

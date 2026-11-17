@@ -991,6 +991,12 @@ type state struct {
 	// sender asked to be told (#276).
 	Marks []bus.Mark             `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
+	// MuteDrops is, by this device's session ID, the messages from other devices dropped on arrival
+	// as the session had muted their sender, newest last, listed in its presence; Outgoing is this
+	// device's sessions' recent messages, by ID, so a sender is told when another device lists one
+	// of them so (#466, mutedrop.go).
+	MuteDrops map[string][]muteDrop `json:"muteDrops,omitempty"`
+	Outgoing  map[string]*outgoing  `json:"outgoing,omitempty"`
 
 	// FileRefs is the files refs this device pushed, by name (bus.FilesRef), and when (#570,
 	// files.go): each is deleted from the remote FileKeep after. FilesWait is the messages for
