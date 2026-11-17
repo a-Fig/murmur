@@ -275,14 +275,25 @@ func (d *Daemon) settingsNameLocked(id string) string {
 	name := d.sessionNameLocked(id)
 	if name == "" {
 		if conv := d.conversationLocked(id); conv != "" {
-			return d.st.NamesLeft[conv]
+			name = d.st.NamesLeft[conv]
 		}
-		return ""
+		if name == "" {
+			return ""
+		}
 	}
-	for _, m := range d.st.SettingsMoves {
-		if m[1] == name {
-			return m[0]
+	// Back along the moves still to be made, to the name that has the choices: lost twice with no
+	// save between (a failed one), they are two names back, and the one between has none.
+	for range len(d.st.SettingsMoves) {
+		prev := ""
+		for _, m := range d.st.SettingsMoves {
+			if m[1] == name {
+				prev = m[0]
+			}
 		}
+		if prev == "" || prev == name {
+			break
+		}
+		name = prev
 	}
 	return name
 }

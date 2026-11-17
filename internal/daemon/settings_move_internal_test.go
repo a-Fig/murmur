@@ -146,3 +146,53 @@ func TestAFailedSettingsMoveIsTriedAgain(t *testing.T) {
 		t.Errorf("after the next read: %+v, moves %v", snap.SessionWake, d.st.SettingsMoves)
 	}
 }
+
+// A clone that loses its keys twice, with the save of the first move failing between, has its
+// session's choices two names back: they are looked up there, pending and landed, and both moves
+// are made at the next read.
+func TestTwoLossesWithAFailedSaveBetweenKeepNeverWake(t *testing.T) {
+	t.Parallel()
+	d := tagsDaemon(t)
+	never := web.Wake{When: web.WakeNever}
+	d.settings = defaultSettings()
+	d.settings.SessionWake = map[string]web.Wake{"quiet-otter": never}
+	// A folder where the file goes: the save fails.
+	if err := os.Mkdir(d.settingsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	asked := func(id, when string) {
+		t.Helper()
+		if d.mayWakeLocked(id, d.settings) || d.noWakeLocked(id, d.settings) != bus.NoWakeOff || d.personWakesLocked(id, d.settings) {
+			t.Errorf("%s, a session set never to be woken may be (its settings are %q's)", when, d.settingsNameLocked(id))
+		}
+	}
+	d.mu.Lock()
+	s := d.sessions["aaaaaa"]
+	s.key = "k1"
+	d.st.NamesLeft = map[string]string{"k1": "quiet-otter"}
+	d.setNameLocked(s, "")
+	d.setNameLocked(s, "bold-lark")
+	d.mu.Unlock()
+	d.wakeSnapshot() // fails to save
+	d.mu.Lock()
+	// The second loss: its key's name is the first new one, whose move is still to be made.
+	d.st.NamesLeft = map[string]string{"k1": "bold-lark"}
+	d.setNameLocked(s, "")
+	asked(s.id, "lost twice, with its name pending")
+	d.setNameLocked(s, "keen-swift")
+	asked(s.id, "lost twice, with its name landed")
+	if len(d.st.SettingsMoves) != 2 {
+		t.Errorf("moves %v", d.st.SettingsMoves)
+	}
+	d.mu.Unlock()
+	if err := os.Remove(d.settingsPath()); err != nil {
+		t.Fatal(err)
+	}
+	snap := d.wakeSnapshot()
+	if snap.choice("keen-swift") != never || len(snap.SessionWake) != 1 || len(d.st.SettingsMoves) != 0 {
+		t.Errorf("after the next read: %+v, moves %v", snap.SessionWake, d.st.SettingsMoves)
+	}
+	d.mu.Lock()
+	asked(s.id, "after the move")
+	d.mu.Unlock()
+}
