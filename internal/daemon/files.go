@@ -867,6 +867,17 @@ func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
 	return err == nil && tip == ""
 }
 
+// sameFilesBusy is what a send ends with when its time ran out waiting for another send of the
+// same files (putFiles, #763). It reads as what an agent can act on, and unwraps to the context's
+// error for whoever asks why.
+type sameFilesBusy struct{ err error }
+
+func (e sameFilesBusy) Error() string {
+	return "another send of the same files was still under way; send it again"
+}
+
+func (e sameFilesBusy) Unwrap() error { return e.err }
+
 // putFiles encrypts the files of a send and pushes them to a new files ref, and returns what the
 // event says of them and the ref's name. The same files sent again within uploadReuse, as a send
 // to several names does, take the ref already pushed, and reused says so. It keeps a copy of each
@@ -914,7 +925,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool)
 		select {
 		case <-ahead:
 		case <-ctx.Done():
-			return nil, "", false, end, fmt.Errorf("another send of the same files was still under way (%w); send it again", ctx.Err())
+			return nil, "", false, end, sameFilesBusy{ctx.Err()}
 		}
 	}
 	end = sync.OnceFunc(func() {
