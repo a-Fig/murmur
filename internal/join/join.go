@@ -350,15 +350,16 @@ func (s *stepper) stop() {
 }
 
 // cutShort ends a join the deadline, or the caller, stopped while it was on step: with a problem that
-// says where it stopped, and the advice for a join that didn't finish. Once the user has joined, a
-// daemon may report the repo, so the advice says so as a finished join's does.
+// says where it stopped. Each run gets further, since it only does what is missing, so unlike other
+// problems the advice is to run it again before telling the user (Tyler, on #839). Once the user has
+// joined, a daemon may report the repo, so the advice says so as a finished join's does.
 func (e Env) cutShort(r Report, parent context.Context, step string, joined bool) (Report, error) {
 	if parent.Err() != nil {
 		r.Problems = append(r.Problems, "stopped while "+step)
 	} else {
 		r.Problems = append(r.Problems, fmt.Sprintf("gave up after %d seconds, while %s", int(joinWait/time.Second), step))
 	}
-	r.Tell = e.advice(false, false, true)
+	r.Tell = []string{"Joining stopped partway. Run `" + brand.Command + " join` again: it picks up where it stopped. If it stops again, tell your user what is under Problems."}
 	if joined {
 		r.Tell = append([]string{publicrepo.Statement}, r.Tell...)
 	}

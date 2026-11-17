@@ -40,7 +40,7 @@ func TestJoinGivesUpOnAStuckStepAndSaysWhich(t *testing.T) {
 	if p.Joined() {
 		t.Error("the consent was recorded though the join stopped before it")
 	}
-	if len(r.Tell) != 1 || !strings.HasPrefix(r.Tell[0], "Joining didn't finish") {
+	if len(r.Tell) != 1 || !strings.HasPrefix(r.Tell[0], "Joining stopped partway. Run `"+brand.Command+" join` again") {
 		t.Errorf("tell %q", r.Tell)
 	}
 }
