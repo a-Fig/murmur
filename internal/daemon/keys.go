@@ -52,31 +52,36 @@ type keyFile struct {
 // a new device, rather than one whose presence they refuse. It had keys if its state pinned them,
 // or, should state.json be gone too, if the clone's copy of its own presence is sealed (sealed, as
 // git reads it from that copy). A device that never had keys, a daemon from before encryption,
-// keeps its ID. old is the ID it had, where it took a new one, else "".
-func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (device, old string, sign ed25519.PrivateKey, box *ecdh.PrivateKey, err error) {
+// keeps its ID.
+func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (device string, sign ed25519.PrivateKey, box *ecdh.PrivateKey, err error) {
 	device, err = loadDevice(dir)
 	if err != nil {
-		return "", "", nil, nil, err
+		return "", nil, nil, err
 	}
 	path := filepath.Join(dir, "keys")
 	b, err := os.ReadFile(path)
 	if err == nil {
 		if sign, box, ok := parseKeys(b); ok {
-			return device, "", sign, box, nil
+			return device, sign, box, nil
 		}
 		if lg != nil {
 			lg.Printf("%s is unreadable; making new keys", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", "", nil, nil, err
+		return "", nil, nil, err
 	}
 	if hadKeys(filepath.Join(dir, "state.json"), device) || sealed != nil && sealed(device) {
-		if err := os.Remove(filepath.Join(dir, "device")); err != nil {
-			return "", "", nil, nil, err
+		// The names go before the ID does: a start that fails after the new ID and keys are written
+		// would leave the next one nothing to tell it the ID changed, and it would keep the names.
+		if err := dropOldNames(filepath.Join(dir, "state.json")); err != nil {
+			return "", nil, nil, err
 		}
-		old = device
+		if err := os.Remove(filepath.Join(dir, "device")); err != nil {
+			return "", nil, nil, err
+		}
+		old := device
 		if device, err = loadDevice(dir); err != nil {
-			return "", "", nil, nil, err
+			return "", nil, nil, err
 		}
 		if lg != nil {
 			lg.Printf("the keys of %s are gone; this clone is device %s from now on", old, device)
@@ -85,32 +90,46 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 	sign, box = bus.NewSignKey(), bus.NewBoxKey()
 	out, err := json.Marshal(keyFile{Sign: hex.EncodeToString(sign.Seed()), Box: hex.EncodeToString(box.Bytes())})
 	if err != nil {
-		return "", "", nil, nil, err
+		return "", nil, nil, err
 	}
 	if err := writeFileAtomic(path, append(out, '\n')); err != nil {
-		return "", "", nil, nil, err
+		return "", nil, nil, err
 	}
-	return device, old, sign, box, nil
+	return device, sign, box, nil
 }
 
-// dropOldNamesLocked forgets the session names this clone held as old, the device ID it had before
-// its keys were lost (loadIdentity). The registry has each of them on old, or set aside for it, and
-// a new device can't take them over: a move between devices is something the registry never
-// allows. Kept, they were what a reconnecting session took under the new ID, and names old had set
-// aside went to new sessions, while every other device still had them on old: a message to one,
-// once its session stopped, went to old's address, where nobody would read it (#617). So the new
-// ID starts with new names, as on any other new device, and the old ones stay taken (Used).
-func (d *Daemon) dropOldNamesLocked(old string) {
-	n := len(d.st.NameKeys) + len(d.st.NamePool) + len(d.st.NameBinds)
-	clear(d.st.NameKeys)
-	clear(d.st.NameBinds)
-	clear(d.st.NameHolders)
-	clear(d.st.SessionNames)
-	clear(d.st.NamesSeen)
-	d.st.NamePool = nil
-	if n > 0 && d.log != nil {
-		d.log.Printf("the names this clone held as %s stay that device's; its sessions get new names as %s", old, d.device)
+// dropOldNames takes out of the state file at path the session names this clone holds, before
+// loadIdentity gives it a new device ID. The registry has each of them on the old device, or set
+// aside for it, and a new device can't take them over: a move between devices is something the
+// registry never allows. Kept, they were what a reconnecting session took under the new ID, and
+// names the old one had set aside went to new sessions, while every other device still had them on
+// the old one: a message to one, once its session stopped, went to the old address, where nobody
+// would read it (#617). So the new ID starts with new names, as on any other new device, and the
+// old ones stay taken (Used). Everything else in the file is kept as it was.
+func dropOldNames(path string) error {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	var st map[string]json.RawMessage
+	if json.Unmarshal(b, &st) != nil {
+		return nil // loadState says what is wrong with it
+	}
+	n := len(st)
+	for _, k := range []string{"nameKeys", "namePool", "nameBinds", "nameHolders", "sessionNames", "namesSeen"} {
+		delete(st, k)
+	}
+	if len(st) == n {
+		return nil
+	}
+	out, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, out)
 }
 
 func parseKeys(b []byte) (ed25519.PrivateKey, *ecdh.PrivateKey, bool) {

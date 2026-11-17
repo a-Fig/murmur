@@ -1278,7 +1278,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
-	device, oldDevice, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
+	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {
 		return nil, err
 	}
@@ -1295,9 +1295,6 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
 	if err := d.loadState(); err != nil {
 		return nil, err
-	}
-	if oldDevice != "" {
-		d.dropOldNamesLocked(oldDevice) // nothing else runs yet
 	}
 	d.pinSelfLocked() // nothing else runs yet
 	d.rereadTeamIfKeysLostLocked()
