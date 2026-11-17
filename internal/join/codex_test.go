@@ -63,7 +63,7 @@ func TestCodexEditIsIdempotentAndUpdatesInPlace(t *testing.T) {
 	// The keys go above a comment the user wrote for the next table, which stays with that table, and
 	// uninstall then leaves it (#755). A comment between Murmur's keys stays where it is.
 	commented := "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\"]\n\n# GitHub's\n[mcp_servers.github]\ncommand = \"gh\"\n"
-	want = "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n# GitHub's\n[mcp_servers.github]\ncommand = \"gh\"\n"
+	want = "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n# GitHub's\n[mcp_servers.github]\ncommand = \"gh\"\n"
 	got, _ := edit(t, commented)
 	if got != want {
 		t.Errorf("a comment for the next table:\n%s\nwant:\n%s", got, want)
@@ -93,7 +93,7 @@ func TestCodexEditKeepsCRLF(t *testing.T) {
 	// Murmur's table last, with no newline at the file's end: the keys added after its last line give
 	// that line its CRLF, and the file still ends without one, never in a lone CR (#783). The same when
 	// the header is the last line.
-	tail := "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\r\ndefault_tools_approval_mode = \"approve\""
+	tail := "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\r\ndefault_tools_approval_mode = \"approve\""
 	for in, want := range map[string]string{
 		"x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]": "x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]\r\n" + tail,
 		"x = 1\r\n\r\n[mcp_servers.murmur]": "x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]\r\n" + tail,
