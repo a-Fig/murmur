@@ -641,6 +641,87 @@ func TestASendToSeveralUploadsTheFilesOnce(t *testing.T) {
 	}
 }
 
+// Sends of the same files at one moment, from sessions on one device, upload them once (#763):
+// the later ones wait for the first's message and take its ref. With room in the day's uploads
+// for one pack, each would otherwise have been refused or have uploaded again.
+func TestSendsOfTheSameFilesAtOnceUploadThemOnce(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.filesPerDay = 6000 }) // a pack is 4 KB at least
+	b := newDevice(t, remote)
+	senders := []string{"aaaaaa", "dddddd", "eeeeee"}
+	for _, id := range senders {
+		a.session(id, "")
+	}
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	errs := make(chan string, len(senders))
+	for _, id := range senders {
+		go func() {
+			errs <- a.do(proto.Request{Op: proto.OpSend, Session: id, To: bob, Subject: "from " + id, Files: []string{path}}).Error
+		}()
+	}
+	for range senders {
+		if e := <-errs; e != "" {
+			t.Errorf("a send of the same files at once: %s", e)
+		}
+	}
+	if refs := strings.Fields(gitOK(remote, "for-each-ref", "--format=%(refname)", "refs/murmur/files")); len(refs) != 1 {
+		t.Errorf("files refs on the remote: %v, want one", refs)
+	}
+	var got []proto.MessageView
+	eventually(t, "a message from each", func() bool {
+		got = append(got, b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}).Messages...)
+		return len(got) == len(senders)
+	})
+	for _, m := range got {
+		if len(m.Files) != 1 || !fileThere(m.Files[0].Path) {
+			t.Errorf("%q came with %+v", m.Subject, m.Files)
+		}
+	}
+}
+
+// A send that waited for another of the same files goes on when that one fails: it uploads
+// itself, and here fails the same way, since the remote takes no files. None is left waiting.
+func TestASendThatWaitedGoesOnWhenTheFirstFails(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	senders := []string{"aaaaaa", "dddddd", "eeeeee"}
+	for _, id := range senders {
+		a.session(id, "")
+	}
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	refuse := "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/murmur/files/*) echo no files today >&2; exit 1;; esac; done\n"
+	if err := os.WriteFile(hook, []byte(refuse), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeFile(t, "one.bin", bytes.Repeat([]byte{1}, 2000))
+	errs := make(chan string, len(senders))
+	for _, id := range senders {
+		go func() {
+			errs <- a.do(proto.Request{Op: proto.OpSend, Session: id, To: "*", Subject: "from " + id, Files: []string{path}}).Error
+		}()
+	}
+	for range senders {
+		select {
+		case e := <-errs:
+			if !strings.Contains(e, "its files didn't go out") {
+				t.Errorf("a send the remote refused the files of: %q", e)
+			}
+		case <-time.After(2 * time.Minute):
+			t.Fatal("a send of the same files is still waiting")
+		}
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: "*", Subject: "again", Files: []string{path}}); r.Error != "" {
+		t.Errorf("once the remote takes files: %s", r.Error)
+	}
+}
+
 // A device uploads at most FilesPerDay of files in a day. Past it a send with new files is refused,
 // saying when it can go; the same files sent again take the ref already up, and cost nothing (#739).
 func TestFilesPastADaysUploadsAreRefused(t *testing.T) {

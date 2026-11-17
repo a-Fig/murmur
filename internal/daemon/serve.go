@@ -1030,10 +1030,13 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
-		files, at, reused, err := d.putFiles(ctx, append(read, uploads...))
+		files, at, reused, sent, err := d.putFiles(ctx, append(read, uploads...))
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}
+		// A send of the same files waits for this one's message to be out, or to have failed
+		// (putFiles): whichever way this returns.
+		defer sent()
 		filesReused = reused
 		e.Files, e.FilesAt = files, at
 		d.mu.Lock()
