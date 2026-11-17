@@ -197,8 +197,8 @@ Murmur is built by Tyler ([@a-Fig](https://github.com/a-Fig)).
 Huge thanks to [Karthik Subramanian](https://github.com/KarthikSubramanian07), Murmur's biggest
 contributor.
 
-Thanks to [Stiven](https://github.com/SomeoneElseSt) for the idea for Murmur, at the Cal Hacks
-YC after party.
+Thanks to [Stiven](https://github.com/SomeoneElseSt), who gave me the idea for Murmur at the Cal
+Hacks YC after-party.
 
 Thank you as well to these people for their help and support:
 
