@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -870,7 +872,9 @@ func (d *Daemon) filesRefGone(ctx context.Context, at string) bool {
 // where a receiver's would be, so a session on this device, and the page, have them without a
 // fetch. The caller tells filesSentLocked once the message is out, and filesUnsent if it fails
 // with a ref not reused, unless its push may land yet (unsureError).
-func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File, at string, reused bool, err error) {
+//
+// still is asked once the push's turn is had: Send files may have gone off while the send waited.
+func (d *Daemon) putFiles(ctx context.Context, in []sendFile, still func() bool) (files []bus.File, at string, reused bool, err error) {
 	if err := checkSendFiles(in); err != nil {
 		return nil, "", false, err
 	}
@@ -879,6 +883,9 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	files, at, ok := d.reuseFilesLocked(sum)
 	d.mu.Unlock()
 	if ok {
+		if still != nil && !still() {
+			return nil, "", false, errSendOff
+		}
 		return files, at, true, nil
 	}
 	at = bus.NewFilesAt()
@@ -914,7 +921,7 @@ func (d *Daemon) putFiles(ctx context.Context, in []sendFile) (files []bus.File,
 	d.st.FileRefs[at] = time.Now().Round(0)
 	d.saveLocked()
 	d.mu.Unlock()
-	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, ""); err != nil {
+	if err := d.pushFrom(ctx, repo, sha, bus.FilesRef(at), bus.FastForward, "", still); err != nil {
 		// Left to the next prune to delete: a push can land and still be told it failed. It
 		// stays counted too, unless it is known not to have landed.
 		if d.uploadLost(ctx, at, err) {
@@ -1003,11 +1010,72 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 	return true
 }
 
+// refuses says sw, a Receive files switch, refuses message e's files: it is from another device,
+// and sw is off (#765, Tyler, 2026-11-16). Its text arrives, and its files are neither fetched nor
+// shown: to this device's sessions if sw is agentRecv, on the page if pageRecv. What a session of
+// this device sends is here already, and no download.
+func (d *Daemon) refuses(sw *fileSwitch, e bus.Event) bool {
+	dev, _ := bus.SplitAddr(e.From)
+	return len(e.Files) > 0 && dev != d.device && !sw.on.Load()
+}
+
+// errReceiveOff is why a message waiting for its files went without them: Receive files was turned
+// off meanwhile.
+var errReceiveOff = errors.New("Receive files is off")
+
+// errSendOff is why a send's files didn't go out: Send files was turned off while it waited.
+var errSendOff = errors.New("sending files is off in this repo")
+
+// fileSwitch is a Receive files switch, whose going off ends the fetches made for it.
+type fileSwitch struct {
+	on atomic.Bool
+	// off is closed when the switch goes off, and made anew when it goes on. mu guards it, and
+	// orders the changes to on.
+	mu  sync.Mutex
+	off chan struct{}
+}
+
+// receiving is ctx, ended as soon as sw goes off, so a fetch under way, or waiting to retry, stops
+// then rather than minutes later (Sol's review of #769).
+func (sw *fileSwitch) receiving(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	sw.mu.Lock()
+	off, on := sw.off, sw.on.Load()
+	sw.mu.Unlock()
+	if !on {
+		cancel()
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-off:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+// set turns sw on or off, and says whether it changed. Off ends every fetch that receiving started.
+func (sw *fileSwitch) set(on bool) bool {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	if sw.on.Swap(on) == on {
+		return false
+	}
+	if on {
+		sw.off = make(chan struct{})
+	} else {
+		close(sw.off)
+	}
+	return true
+}
+
 // holdForFilesLocked says message e, for session id, waits for its files: they aren't here yet, so
 // the fetch is started and the message is queued when it ends, with or without them. Nothing is
 // held for a person: the page asks for a file when it shows it (fileOf). Caller holds mu.
 func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
-	if len(e.Files) == 0 || id == bus.PersonSession || d.filesHere(e) {
+	if len(e.Files) == 0 || id == bus.PersonSession || d.refuses(&d.agentRecv, e) || d.filesHere(e) {
 		return false
 	}
 	w := d.st.FilesWait[e.ID]
@@ -1056,7 +1124,10 @@ func (d *Daemon) fileLoop(ctx context.Context) {
 			if !ok {
 				break
 			}
-			err := d.fetchFiles(ctx, e, fileTries)
+			err := errReceiveOff
+			if !d.refuses(&d.agentRecv, e) {
+				err = d.fetchFiles(ctx, e, fileTries, &d.agentRecv)
+			}
 			if ctx.Err() != nil {
 				return // still waiting when the daemon next starts
 			}
@@ -1148,13 +1219,13 @@ func (d *Daemon) takeFilesWaitLocked(to, from string) {
 // is tried again, up to tries times, as the network may be why; a ref that isn't there, or holds
 // something else, is not. What the fetch brings goes to a scratch directory, not the clone's
 // objects.
-func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int) error {
+func (d *Daemon) fetchFiles(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
 	release, err := d.holdFiles(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
-	return d.fetchFilesHeld(ctx, e, tries)
+	return d.fetchFilesHeld(ctx, e, tries, sw)
 }
 
 // holdFiles waits for the one turn there is to fetch files, and returns what gives it back. One
@@ -1172,10 +1243,19 @@ func (d *Daemon) holdFiles(ctx context.Context) (release func(), err error) {
 
 // fetchFilesHeld is fetchFiles for a caller that holds the turn (holdFiles). What stops it is
 // errFetchLater unless it would stop every try: the ref isn't there, or what it holds isn't the
-// message's files.
-func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) error {
+// message's files. sw is the Receive files switch it fetches for: the agents' or the page's.
+func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
 	if d.filesHere(e) {
 		return nil
+	}
+	// Checked again here, after the wait for the turn, and the fetch ends if it goes off.
+	if d.refuses(sw, e) {
+		return errReceiveOff
+	}
+	if dev, _ := bus.SplitAddr(e.From); dev != d.device {
+		var stop context.CancelFunc
+		ctx, stop = sw.receiving(ctx)
+		defer stop()
 	}
 	if e.FilesAt == "" {
 		return bus.ErrNoFile
@@ -1200,9 +1280,15 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 		}
 		select {
 		case <-ctx.Done():
+			if d.refuses(sw, e) {
+				return errReceiveOff
+			}
 			return fmt.Errorf("%w: %w", errFetchLater, ctx.Err())
 		case <-time.After(time.Duration(try) * 5 * time.Second):
 		}
+	}
+	if d.refuses(sw, e) {
+		return errReceiveOff
 	}
 	if errors.Is(err, bus.ErrNoFile) || errors.Is(err, bus.ErrTooLarge) {
 		return err
@@ -1220,6 +1306,9 @@ func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int) err
 	var failed []string
 	later := false // a file couldn't be saved, which a full disk does: the remote still has it
 	for i, f := range e.Files {
+		if d.refuses(sw, e) {
+			return errReceiveOff
+		}
 		if !f.Readable() {
 			continue
 		}
@@ -1535,25 +1624,57 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 // holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	to, direct := d.recipientsOfLocked(e)
-	var old []string
+	var old, off, people []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
-		if p := d.peers[dev]; dev != d.device && p != nil && !p.locked && !p.pres.Files {
-			name, _, _ := d.sessionInfoLocked(addr)
-			if direct {
-				name = who
-			}
+		p := d.peers[dev]
+		if dev == d.device || p == nil || p.locked {
+			continue
+		}
+		name, _, _ := d.sessionInfoLocked(addr)
+		if direct {
+			name = who
+		}
+		switch {
+		case !p.pres.Files:
 			old = append(old, nameOr(name, addr))
+		case bus.IsPerson(addr) && p.pres.PersonFilesOff:
+			people = append(people, nameOr(name, addr))
+		case !bus.IsPerson(addr) && p.pres.FilesOff: // its person turned their agents' Receive files off (#765)
+			off = append(off, nameOr(name, addr))
 		}
 	}
+	var notes []string
 	switch len(old) {
 	case 0:
-		return ""
 	case 1:
-		return old[0] + " is on a device that runs a " + brand.Product + " from before files, so the text alone gets there."
+		notes = append(notes, old[0]+" is on a device that runs a "+brand.Product+" from before files, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(old)+" are on devices that run a "+brand.Product+" from before files, so the text alone gets there.")
 	}
-	return strings.Join(old[:len(old)-1], ", ") + " and " + old[len(old)-1] + " are on devices that run a " +
-		brand.Product + " from before files, so the text alone gets there."
+	switch len(off) {
+	case 0:
+	case 1:
+		notes = append(notes, off[0]+" takes no files: Receive files is off for the agents on its device, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(off)+" take no files: Receive files is off for the agents on their devices, so the text alone gets there.")
+	}
+	switch len(people) {
+	case 0:
+	case 1:
+		notes = append(notes, people[0]+" takes no files: they turned Receive files off, so the text alone gets there.")
+	default:
+		notes = append(notes, andList(people)+" take no files: they turned Receive files off, so the text alone gets there.")
+	}
+	return strings.Join(notes, " ")
+}
+
+// andList is names joined as a sentence lists them: "a, b and c".
+func andList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // fileMiss is a fetch for the page that failed: when, and how.
@@ -1583,14 +1704,15 @@ func (d *Daemon) pageFetch(ctx context.Context, e bus.Event) error {
 	if missed && time.Since(miss.at) < pageFetchAgain {
 		return miss.err
 	}
-	err = d.fetchFilesHeld(ctx, e, 1)
+	err = d.fetchFilesHeld(ctx, e, 1, &d.pageRecv)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch {
 	case err == nil:
 		delete(d.fileMiss, e.FilesAt)
-	case ctx.Err() != nil:
-		// The page went, or its time ran out: that says nothing of the remote.
+	case ctx.Err() != nil, errors.Is(err, errReceiveOff):
+		// The page went, or its time ran out, or Receive files went off: that says nothing of the
+		// remote.
 	default:
 		d.log.Printf("fetching the files of message %s for the page: %v", e.ID, err)
 		d.fileMiss[e.FilesAt] = fileMiss{time.Now(), err}
@@ -1619,7 +1741,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 		e = d.msgs[i].e
 	}
 	d.mu.Unlock()
-	if i < 0 || index >= len(e.Files) {
+	if i < 0 || index >= len(e.Files) || d.refuses(&d.pageRecv, e) {
 		return "", nil, noFile("no such file")
 	}
 	f := e.Files[index]
@@ -1637,6 +1759,9 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 	if err != nil {
 		return "", nil, gone
 	}
+	if d.refuses(&d.pageRecv, e) {
+		return "", nil, noFile("no such file") // went off while it was fetched
+	}
 	return f.Name, data, nil
 }
 
@@ -1644,7 +1769,7 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 // it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld). Caller
 // holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
-	if len(e.Files) == 0 {
+	if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) {
 		return nil
 	}
 	views := make([]proto.FileView, 0, len(e.Files))

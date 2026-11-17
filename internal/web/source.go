@@ -74,6 +74,12 @@ type State struct {
 	// Mode is this device's mode in this repo (Settings.Mode): while it is ModeInvisible the page
 	// shows none of its agents, and sends nothing.
 	Mode string `json:"mode,omitempty"`
+	// SendFiles and ReceiveFiles are this device's file switches (Settings, #765), here as well so
+	// every open page follows a change made on another, and none saves back what it last saw.
+	SendFiles        bool `json:"sendFiles,omitempty"`
+	ReceiveFiles     bool `json:"receiveFiles,omitempty"`
+	AgentsSendOff    bool `json:"agentsSendOff,omitempty"`
+	AgentsReceiveOff bool `json:"agentsReceiveOff,omitempty"`
 }
 
 // Receipt is how far one of the person's messages got with one recipient (#26).
@@ -262,6 +268,19 @@ type Settings struct {
 	// Mode is this device's mode in this repo (#681): ModeOnline ("" too), ModeDND, where the
 	// device and its agents are seen but no message reaches them, or ModeInvisible, as if offline.
 	Mode string `json:"mode,omitempty"`
+	// SendFiles and ReceiveFiles say this device sends and takes the files a message carries, in
+	// this repo (#765, Tyler, 2026-11-16): both off until its person turns them on. With sending
+	// off, a send with files is refused; with receiving off, a message from another device arrives
+	// as its text, its files neither fetched nor shown. Each is for the person and their agents
+	// alike, unless AgentsSendOff or AgentsReceiveOff keeps it to the person.
+	SendFiles        bool `json:"sendFiles"`
+	ReceiveFiles     bool `json:"receiveFiles"`
+	AgentsSendOff    bool `json:"agentsSendOff"`
+	AgentsReceiveOff bool `json:"agentsReceiveOff"`
+	// FilesSet names the file switches a save sets (sendFiles, agentsReceiveOff, ...); the daemon
+	// keeps the rest as they are, so a page that hasn't yet seen another's change can't undo it
+	// (Sol's review of #769). Only a save carries it.
+	FilesSet []string `json:"filesSet,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`
