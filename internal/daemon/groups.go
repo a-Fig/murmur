@@ -140,7 +140,7 @@ func (d *Daemon) addToGroups(ctx context.Context, id string, req proto.Request) 
 			why = who + " isn't in any device's presence right now, so it can't be added. Check `who`."
 		case dev != d.device && !d.peers[dev].pres.Groups:
 			why = fmt.Sprintf("%s is on a device whose %s is from before groups, so it can't be added to one until that device updates", who, brand.Product)
-		case d.hasMutedLocked(dev, sess, d.muteNamesLocked(from)):
+		case d.hasMutedLocked(dev, sess, from):
 			// Its device wouldn't apply the add (applyGroupAddLocked); the adder learns of the mute
 			// here, as a send to it does.
 			why = who + " has muted you, so you can't add it to a group"

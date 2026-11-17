@@ -177,10 +177,10 @@ func TestASendersMuteCheckUsesTheNamesTheReceiverDoes(t *testing.T) {
 		st:       state{Used: map[string]string{"brave-heron": from}, SessionNames: map[string]string{"bbbbbb": "calm-zebra"}},
 		peers: map[string]*peer{there: {pres: bus.Presence{Device: there,
 			Sessions: []bus.SessionInfo{{ID: "rrrrrr", Name: "quiet-otter", Muted: []string{"brave-heron"}}}}}}}
-	if !d.hasMutedLocked(there, "rrrrrr", d.muteNamesLocked(from)) {
+	if !d.hasMutedLocked(there, "rrrrrr", from) {
 		t.Error("a sender with no name yet wasn't refused by a recipient that muted a name it held")
 	}
-	if got := d.mutersLocked(d.muteNamesLocked(from), ""); len(got) != 1 || got[0] != "quiet-otter" {
+	if got := d.mutersLocked(from, ""); len(got) != 1 || got[0] != "quiet-otter" {
 		t.Errorf("the muters of a sender with no name yet: %v", got)
 	}
 	// A name its device took last that the registry has given another session since, as a resume
@@ -188,12 +188,20 @@ func TestASendersMuteCheckUsesTheNamesTheReceiverDoes(t *testing.T) {
 	d.st.SessionNames["bbbbbb"] = "brave-heron"
 	d.st.Used["brave-heron"] = bus.Addr(me, "yyyyyy")
 	d.peers[there].pres.Sessions[0].Muted = []string{"brave-heron"}
-	if d.hasMutedLocked(there, "rrrrrr", d.muteNamesLocked(from)) {
+	if d.hasMutedLocked(there, "rrrrrr", from) {
 		t.Error("a sender was refused for a mute of a name the registry gave another session")
 	}
+	// A session on its own device holds that name against it all the same (mutedAtLocked takes the
+	// name its device took last), so it is refused there, rather than dropped unseen.
+	d.sessions["ssssss"] = &session{id: "ssssss", name: "stern-ibis"}
+	d.st.Mutes = map[string]map[string]time.Time{"stern-ibis": {"brave-heron": time.Now().Add(-time.Hour)}}
+	if !d.mutedHereLocked("ssssss", bus.Event{From: from, To: "*"}) || !d.hasMutedLocked(me, "ssssss", from) {
+		t.Error("a session on the sender's own device that drops its message didn't refuse it")
+	}
+	delete(d.sessions, "ssssss")
 	d.st.Used["brave-heron"] = from
 	d.sessions["bbbbbb"].name = "calm-zebra" // it landed
-	if d.hasMutedLocked(there, "rrrrrr", d.muteNamesLocked(from)) {
+	if d.hasMutedLocked(there, "rrrrrr", from) {
 		t.Error("a sender with a name of its own was refused for a mute of its address's old one")
 	}
 }

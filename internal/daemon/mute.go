@@ -81,8 +81,9 @@ func (d *Daemon) nameOfLocked(addr string) string {
 // activity, lookup and the mute checks (#502), so the name an agent replies to or mutes is the one
 // it was shown. One of this device's goes by the name it took last (SessionNames), which this
 // device knows; for one waiting on a new name, that is its previous one. Another device's goes by
-// the first by spelling of the names the registry gave its address, which says nothing of which is
-// the latest: neither the registry nor presence keeps an order of them. namesByAddrLocked gives
+// the name its presence last showed it by (PeerNames, #602), or, never seen there, the first by
+// spelling of the names the registry gave its address, as the registry keeps no order of them.
+// namesByAddrLocked gives
 // the same for every address at once. "" for an address with none. Caller holds mu.
 func (d *Daemon) lastNameLocked(addr string) string {
 	dev, id := bus.SplitAddr(addr)
@@ -171,24 +172,33 @@ func (d *Daemon) mutedHereLocked(id string, e bus.Event) bool {
 // new name lands, every name its address has held. A sender is refused, or told who didn't get its
 // message, by these, so it isn't sent a message the receiver then drops unseen (#602). Caller
 // holds mu.
-func (d *Daemon) muteNamesLocked(addr string) []string {
+//
+// here says the receiving device is this one, whose mutedAtLocked holds the name its device took
+// last (SessionNames) against the address. Another device holds only the names the registry gave
+// it, so a name the registry has given another address since, as a resume does, is left out for
+// one there: a refusal by it would be wrong (Opus's reviews of #840).
+func (d *Daemon) muteNamesLocked(addr string, here bool) []string {
 	if bus.IsPerson(addr) {
 		return nil
 	}
 	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 		return []string{name}
 	}
-	// Not a name the registry has given another address since, as a resume does: the receiving
-	// device doesn't hold that one against this address, and a refusal by it would be wrong.
-	return slices.DeleteFunc(d.heldNamesLocked(addr), func(n string) bool {
+	names := d.heldNamesLocked(addr)
+	if here {
+		return names
+	}
+	return slices.DeleteFunc(names, func(n string) bool {
 		a := d.st.Used[n]
 		return a != "" && a != addr
 	})
 }
 
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted
-// a session by any of names (muteNamesLocked). Caller holds mu.
-func (d *Daemon) hasMutedLocked(dev, sess string, names []string) bool {
+// the session at from, by the names that device holds against it (muteNamesLocked). Caller holds
+// mu.
+func (d *Daemon) hasMutedLocked(dev, sess, from string) bool {
+	names := d.muteNamesLocked(from, dev == d.device)
 	if len(names) == 0 || sess == "" {
 		return false
 	}
@@ -206,17 +216,13 @@ func (d *Daemon) hasMutedLocked(dev, sess string, names []string) bool {
 	return false
 }
 
-// mutersLocked lists, by name, the sessions that have muted a session by any of names
-// (muteNamesLocked): on device dev, or on every device this daemon knows if dev is "". Caller holds
-// mu.
-func (d *Daemon) mutersLocked(names []string, dev string) []string {
-	if len(names) == 0 {
-		return nil
-	}
+// mutersLocked lists, by name, the sessions that have muted the session at from (hasMutedLocked):
+// on device dev, or on every device this daemon knows if dev is "". Caller holds mu.
+func (d *Daemon) mutersLocked(from, dev string) []string {
 	var out []string
 	if dev == "" || dev == d.device {
 		for _, s := range d.sortedSessionsLocked() {
-			if d.hasMutedLocked(d.device, s.id, names) {
+			if d.hasMutedLocked(d.device, s.id, from) {
 				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
 			}
 		}
@@ -226,7 +232,7 @@ func (d *Daemon) mutersLocked(names []string, dev string) []string {
 			continue
 		}
 		for _, s := range d.peers[id].pres.Sessions {
-			if slices.ContainsFunc(names, func(n string) bool { return slices.Contains(s.Muted, n) }) {
+			if d.hasMutedLocked(id, s.ID, from) {
 				out = append(out, nameOr(s.Name, bus.Addr(id, s.ID)))
 			}
 		}
