@@ -1158,7 +1158,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		unsent(!absent)
 		d.mu.Lock()
-		d.givenUpLocked(from, e.Subject, nameOr(toName, to), absent, err)
+		d.givenUpLocked(from, e.Subject, nameOr(toName, to), err)
 		d.saveLocked()
 		d.mu.Unlock()
 	}
@@ -1174,9 +1174,9 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		return refuse(about, "not sent: "+err.Error())
 	}
-	if pending {
-		note = strings.TrimSpace(note + " " + pendingNote)
-	} else if len(e.Files) > 0 {
+	// A pending send answers as one that landed (Tyler, 2026-11-16): it is pushed until it does, and
+	// its sender is told only if it is given up.
+	if !pending && len(e.Files) > 0 {
 		d.mu.Lock()
 		d.filesSentLocked(e.FilesAt) // a send of the same files may take its ref now
 		d.mu.Unlock()

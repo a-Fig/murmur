@@ -192,7 +192,7 @@ func (o *Options) defaults() {
 		o.PendingRetry = 5 * time.Second
 	}
 	if o.PendingGiveUp == 0 {
-		o.PendingGiveUp = 30 * time.Minute
+		o.PendingGiveUp = pendingGiveUp
 	}
 	if o.FetchLimit == 0 {
 		o.FetchLimit = 15 * time.Second

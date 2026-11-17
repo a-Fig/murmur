@@ -37,14 +37,15 @@ daemon is started through WMI so it outlives that session (2026-10-29).
 - **A send whose push ends unsure is pushed again, not refused** (#781, 2026-11-16). Tyler: "just
   keep retrying automatically, and dont hand the message back as unsent until we've tried alot and
   are giving up." A push that timed out or lost its connection under way may land yet, so its
-  commit stays as the tip that later writes build on, and the sender is told it went, with a note
-  not to send it again. The daemon pushes that tip again, waiting 5 s, then twice as long each time
+  commit stays as the tip that later writes build on, and the sender gets the answer of a send
+  that landed, with nothing added. The daemon pushes that tip again, waiting 5 s, then twice as long each time
   up to a minute. Pushing the same commits again is safe whether or not the first push landed, and
   any later write that lands carries the pending one with it. `unwritten`, above, makes a new commit
-  on each try, which would put a message that landed late on the log twice. After 30 minutes (the
-  same as a `tell_me` wait) it is given up: the sender gets a notice in its inbox saying whether the
-  remote has it. A daemon that stops gives up what is pending, and keeps nothing across a restart; a send whose push ends unsure as it stops says so, as before
-  (`internal/daemon/pending.go`).
+  on each try, which would put a message that landed late on the log twice. Three minutes after its
+  first push (Tyler, 2026-11-16; 30 was too long) it is given up and called not sent: the sender
+  gets a notice in its inbox saying so, and why in a few plain words ("the push kept timing out"),
+  not git's. A daemon that stops gives up what is pending, and keeps nothing across a restart; a
+  send whose push ends unsure as it stops says so, as before (`internal/daemon/pending.go`).
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
   session returns. A session still connected when the daemon stops counts as stopped from then
   (#736): until 2026-11-16 no stop was recorded for it, and one that didn't reconnect within two

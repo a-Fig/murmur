@@ -22,12 +22,15 @@ import (
 // way: each try of it makes a new commit, and a first push that landed late would put the message
 // on the log twice.
 //
-// A pending send is given up after Options.PendingGiveUp, half an hour by default, as long as a
-// sender that asked to be told how far its message got waits (TellWait): long enough for the
-// remote, or the network, to come back from most outages, and short enough that a message given
-// up on is still worth sending again. Its sender is then told in its inbox, which a give-up or a
-// receipt is the only way to learn of. It goes as the daemon stops, too, and is then on the
-// remote or not as its last push left it: nothing is kept across a restart.
+// A pending send is given up after Options.PendingGiveUp, pendingGiveUp by default, and its sender
+// is told in its inbox that it wasn't sent, with why in a few plain words; until then it answered
+// as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too,
+// and is then on the remote or not as its last push left it: nothing is kept across a restart.
+
+// pendingGiveUp is how long after its first push a pending send is given up. Tyler set it
+// (2026-11-16): 30 minutes was too long for a sender to believe a message went that hadn't. With
+// the backoff that is about six pushes again.
+const pendingGiveUp = 3 * time.Minute
 
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It is called with writeMu held, and nothing else.
@@ -76,7 +79,7 @@ func (d *Daemon) pendingLoop() {
 			d.writeMu.Lock()
 			d.pendRun = false
 			if len(d.pendSends) > 0 {
-				d.giveUpPending(context.Background(), errors.New("the daemon stopped"), false)
+				d.giveUpPending(context.Background(), errDaemonStopped, false)
 			}
 			d.writeMu.Unlock()
 			return
@@ -182,24 +185,40 @@ func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
 	d.pendSends, d.ownTip = nil, d.pendBase
 }
 
-// pendingNote tells a sender whose message was left pending that it needn't do anything.
-const pendingNote = "Not confirmed yet: its push was cut off, so " + brand.Product +
-	" is pushing it again, and tells you in your inbox only if it gives up. Don't send it again."
+// errDaemonStopped is what a pending send is given up with as the daemon stops.
+var errDaemonStopped = errors.New(brand.Product + " stopped before it landed")
 
 // givenUpLocked tells from, in its inbox, that its message about subject to to was given up after
-// err; absent says the remote doesn't have it. The notice comes from this device's receipts
-// address, as a tell_me notice does, and never starts a turn. Caller holds mu and saves the state.
-func (d *Daemon) givenUpLocked(from, subject, to string, absent bool, err error) {
+// err. It is called not sent, though it may land yet if the remote couldn't be asked: after half an
+// hour of failures that is the useful thing to say (Tyler, 2026-11-16). The notice comes from this
+// device's receipts address, as a tell_me notice does, and never starts a turn. Caller holds mu and
+// saves the state.
+func (d *Daemon) givenUpLocked(from, subject, to string, err error) {
 	addr := d.queuedAtLocked(from)
 	dev, sess := bus.SplitAddr(addr)
 	if dev != d.device || sess == "" {
 		return
 	}
-	body := fmt.Sprintf("Your message to %s couldn't be pushed, and was given up: %v. Send it again if it still matters.", to, err)
-	if !absent {
-		body = fmt.Sprintf("Your message to %s couldn't be confirmed, and was given up: %v. It may have landed all the same: check lookup %s before sending it again.", to, err, to)
-	}
+	body := fmt.Sprintf("Your message to %s couldn't be pushed, and was given up: %s. Send it again if it still matters.", to, givenUpWhy(err))
 	d.addInboxLocked(sess, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: bus.Addr(d.device, bus.ReceiptFrom), To: addr, At: time.Now().UTC(),
 		Subject: fmt.Sprintf("Not sent: %q", subject), Body: body})
+}
+
+// givenUpWhy says, in a few plain words, why a pending send was given up: git's own words, such as
+// "context deadline exceeded: signal: killed", tell an agent nothing (Tyler, 2026-11-16).
+func givenUpWhy(err error) string {
+	switch {
+	case errors.Is(err, errDaemonStopped):
+		return err.Error()
+	case errors.Is(err, ErrNoConsent):
+		return "this clone left " + brand.Product
+	case errors.Is(err, ErrInvisible):
+		return "this device went invisible"
+	case errors.Is(err, bus.ErrRejected), errors.Is(err, bus.ErrRefused):
+		return "the remote refused it"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "the push kept timing out"
+	}
+	return "the push kept failing"
 }

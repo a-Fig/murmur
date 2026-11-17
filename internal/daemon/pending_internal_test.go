@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -112,24 +113,26 @@ func TestALaterSendCarriesAPendingOne(t *testing.T) {
 	}
 }
 
-// A sender whose message is given up is told in its inbox, from Murmur, whether it may land yet.
+// A sender whose message is given up is told in its inbox, from Murmur, that it wasn't sent, and
+// why in plain words, not git's (Tyler, 2026-11-16).
 func TestASenderIsToldOfAGivenUpSend(t *testing.T) {
 	t.Parallel()
 	d, _, _ := rateRig(t, Options{}, false)
 	from := bus.Addr(d.device, "bbbbbb")
 	d.mu.Lock()
-	d.givenUpLocked(from, "the failing page", "quiet-otter", true, errors.New("the connection dropped"))
-	d.givenUpLocked(from, "the log", "quiet-otter", false, errors.New("the connection dropped"))
+	d.givenUpLocked(from, "the failing page", "quiet-otter", fmt.Errorf("%w: signal: killed", context.DeadlineExceeded))
+	d.givenUpLocked(from, "the log", "quiet-otter", errors.New("the connection dropped"))
 	inbox := d.st.Inbox["bbbbbb"]
 	d.mu.Unlock()
 	if len(inbox) != 2 {
 		t.Fatalf("the sender's inbox: %+v", inbox)
 	}
-	if e := inbox[0].Event; e.Subject != `Not sent: "the failing page"` || !strings.Contains(e.Body, "Send it again") || !d.isTellNotice(e) {
-		t.Errorf("the notice of a send the remote doesn't have: %+v", e)
+	if e := inbox[0].Event; e.Subject != `Not sent: "the failing page"` || !d.isTellNotice(e) ||
+		e.Body != "Your message to quiet-otter couldn't be pushed, and was given up: the push kept timing out. Send it again if it still matters." {
+		t.Errorf("the notice of a send whose pushes timed out: %+v", e)
 	}
-	if e := inbox[1].Event; !strings.Contains(e.Body, "may have landed") || !strings.Contains(e.Body, "lookup quiet-otter") {
-		t.Errorf("the notice of a send that may land yet: %+v", e)
+	if e := inbox[1].Event; !strings.Contains(e.Body, "given up: the push kept failing.") {
+		t.Errorf("the notice of a send whose pushes failed: %+v", e)
 	}
 }
 
