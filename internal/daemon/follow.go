@@ -281,23 +281,45 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	}
 	var from []string
 	for _, id := range sortedKeys(d.st.Stopped) {
-		if id == s.id || d.sessions[id] != nil || d.keptForLocked(id) != name || !d.keptLocked(id) {
+		if id == s.id || d.sessions[id] != nil || !d.keptLocked(id) {
 			continue
 		}
+		last := d.keptForLocked(id)
 		// A message handed over as a turn has left the inbox, and its turn may start under s.
-		if d.takeAwaitingLocked(s.id, id) {
+		if last == name && d.takeAwaitingLocked(s.id, id) {
 			d.saveLocked()
 		}
-		if len(d.st.Inbox[id]) == 0 {
-			continue
-		}
+		// A message that says which name it was sent to waits for that name, which the session may
+		// have left by a /clear since (#45); one that doesn't, for the name the session had last.
+		var left []*inMsg
+		took := false
 		for _, m := range d.st.Inbox[id] {
+			if nameOr(m.Event.ToName, last) != name {
+				left = append(left, m)
+				continue
+			}
+			took = true
+			// It was queued under the mutes of the name the session had last; one for another name
+			// is the new session's only if that name hasn't muted its sender (Sol's review). s may
+			// not be among the sessions yet, so its mutes are found by the name it takes.
+			if last != name && d.mutedHereKeyLocked(tagKeyOf(name, s.id), m.Event) {
+				d.log.Printf("message %s is from %s, which %s has muted; dropped", m.Event.ID, m.Event.From, name)
+				d.mutedropLocked(s.id, m.Event)
+				continue
+			}
 			if !seen[m.Event.ID] {
 				seen[m.Event.ID] = true
 				box = append(box, m)
 			}
 		}
-		delete(d.st.Inbox, id)
+		if !took {
+			continue
+		}
+		if len(left) == 0 {
+			delete(d.st.Inbox, id)
+		} else {
+			d.st.Inbox[id] = left
+		}
 		from = append(from, bus.Addr(d.device, id))
 	}
 	if len(from) == 0 {
@@ -425,15 +447,31 @@ func (d *Daemon) receivesLocked(id string) bool {
 // is in its grace) goes to the session that holds, or last held, the name that session had last,
 // if that session can receive it and the name is still the last it took. A holder that has moved
 // to another conversation since gets nothing for the name it left (#46): the message stays in the
-// kept inbox, which the next session to take the name takes (see adoptLocked). It goes by the
-// address alone, which is all a message on the bus carries; docs/design/session-names.md ("A name
-// held by another session") says what that misses. Caller holds mu.
-func (d *Daemon) forwardLocked(to string) string {
+// kept inbox, which the next session to take the name takes (see adoptLocked). Caller holds mu.
+func (d *Daemon) forwardLocked(to string) string { return d.forwardNamedLocked(to, "") }
+
+// forwardNamedLocked is forwardLocked for a message sent to the name name, "" if it wasn't sent to
+// one or its sender didn't say (#45). The registry has a name at the address of the session that
+// first took it, which may hold another name since, after a /clear: a message sent to a name it has
+// left goes by that name, to the session that holds it, rather than by the name the address has
+// now, even while the session at the address runs. If no other session has taken the name since,
+// the message stays at the address. Caller holds mu.
+func (d *Daemon) forwardNamedLocked(to, name string) string {
 	dev, id := bus.SplitAddr(to)
-	if dev != d.device || id == "" || d.liveLocked(id) {
+	if dev != d.device || id == "" {
 		return ""
 	}
-	name := d.keptForLocked(id)
+	if id == bus.PersonSession || id == proto.CLISession {
+		name = "" // a person's or the command line's messages are theirs, whatever name they carry
+	}
+	if name == "" {
+		if d.liveLocked(id) {
+			return ""
+		}
+		name = d.keptForLocked(id)
+	} else if s := d.sessions[id]; s != nil && s.dropped.IsZero() && s.name == name {
+		return "" // it holds the name now, though it may not have saved that yet
+	}
 	holder := d.st.NameHolders[name]
 	if holder == "" || holder == id || d.st.SessionNames[holder] != name || !d.receivesLocked(holder) {
 		return ""
@@ -443,8 +481,12 @@ func (d *Daemon) forwardLocked(to string) string {
 
 // queuedAtLocked is where a message for the address to is queued: to, or the session it is
 // forwarded to. Caller holds mu.
-func (d *Daemon) queuedAtLocked(to string) string {
-	if f := d.forwardLocked(to); f != "" {
+func (d *Daemon) queuedAtLocked(to string) string { return d.queuedAtNamedLocked(to, "") }
+
+// queuedAtNamedLocked is queuedAtLocked for a message sent to the name name (see
+// forwardNamedLocked). Caller holds mu.
+func (d *Daemon) queuedAtNamedLocked(to, name string) string {
+	if f := d.forwardNamedLocked(to, name); f != "" {
 		return f
 	}
 	return to

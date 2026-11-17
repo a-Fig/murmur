@@ -1006,15 +1006,15 @@ func (d *Daemon) queueLocked(e bus.Event, mode syncMode) (queued bool) {
 		d.pending = append(d.pending, e)
 	}
 	dev, sess := bus.SplitAddr(e.To)
-	fwd := d.forwardLocked(e.To)
+	fwd := d.forwardNamedLocked(e.To, e.ToName)
 	for _, id := range d.recipientsLocked() {
 		if !d.addressedLocked(e, id) {
 			continue
 		}
 		if d.offMeshLocked(id) {
 			// Offline (#189): nothing is kept for it, and it is told nothing.
-			if mode == modeNormal && !held && e.To == bus.Addr(d.device, id) {
-				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, e.To)
+			if mode == modeNormal && !held && (e.To == bus.Addr(d.device, id) || fwd == bus.Addr(d.device, id)) {
+				d.log.Printf("message %s is for %s, whose T3 thread is settled; dropped", e.ID, bus.Addr(d.device, id))
 			}
 			continue
 		}
@@ -1136,9 +1136,9 @@ func (d *Daemon) addressedLocked(e bus.Event, id string) bool {
 		return d.hasTagLocked(id, e.To)
 	}
 	if e.To == addr {
-		return d.forwardLocked(e.To) == ""
+		return d.forwardNamedLocked(e.To, e.ToName) == ""
 	}
-	return e.To == "*" || e.To == d.device || d.forwardLocked(e.To) == addr
+	return e.To == "*" || e.To == d.device || d.forwardNamedLocked(e.To, e.ToName) == addr
 }
 
 // addInboxLocked queues message e for session id, once its files, if it carries any, are saved
@@ -1409,20 +1409,27 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	if err != nil {
 		return err
 	}
+	// A push carries the sends pending under it, so it goes out only if they still may: a send
+	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
+	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	for attempt := 0; ; attempt++ {
+		d.dropSwitchedOff(ctx)
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err
 		}
 		if lease == "" {
-			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", stillAll)
 		} else {
-			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, still)
+			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
+		}
+		if errors.Is(err, errSendOff) && (still == nil || still()) {
+			continue // a pending send's switch went off as this waited: build without it
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
-			if settle != nil && d.pendLocked(sha, settle, err) {
+			if settle != nil && d.pendLocked(sha, settle, still, err) {
 				return pendingError{err}
 			}
 		}
