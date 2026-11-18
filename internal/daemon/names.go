@@ -545,7 +545,7 @@ func (d *Daemon) nameLoop(ctx context.Context) {
 }
 
 // wanted is a session that needs a name, and has no pool to take one from.
-type wanted struct{ id, key string }
+type wanted struct{ id, key, agent string }
 
 // bound is a name a session took from the pool, which the registry doesn't have down for it yet.
 type bound struct{ name, id string }
@@ -601,7 +601,7 @@ func (d *Daemon) nameForKeyLocked(s *session, key string) string {
 	name := d.st.NamePool[0]
 	d.st.NamePool = d.st.NamePool[1:]
 	d.st.NameKeys[key] = name
-	d.noteNamedInT3Locked(s, key, name)
+	d.noteNamedInT3Locked(s.agent, key, name)
 	d.st.NameBinds[name] = id
 	// The session's address for the name from now on, as the registry will say once the binding
 	// lands: a session that moves to another conversation before then is still found by it.
@@ -636,7 +636,7 @@ func (d *Daemon) nextNames() nameWork {
 	for _, s := range d.sortedSessionsLocked() {
 		if s.name == "" && !keys[s.key] {
 			keys[s.key] = true // sessions of one key share its name: one assignment for them all
-			w.wants = append(w.wants, wanted{id: s.id, key: s.key})
+			w.wants = append(w.wants, wanted{id: s.id, key: s.key, agent: s.agent})
 		}
 	}
 	for _, name := range sortedKeys(d.st.NameBinds) {
@@ -856,7 +856,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			continue
 		}
 		d.st.NameKeys[s.key] = name
-		d.noteNamedInT3Locked(d.sessions[s.id], s.key, name)
+		d.noteNamedInT3Locked(s.agent, s.key, name) // its session may have gone since it asked
 		for _, o := range d.sessions {
 			if o.key == s.key && o.name == "" {
 				d.setNameLocked(o, name)

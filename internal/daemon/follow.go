@@ -129,9 +129,12 @@ func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key, claude string
 		if codex && (o.key != key || o.agent != "codex") || !codex && (o.claudeSession != claude || !isClaudeCode(o.agent) || d.st.ThreadLeft[o.id] != "") {
 			continue // a Claude session that gave the conversation up once has it no more
 		}
-		if !codex && strings.HasSuffix(o.key, "/"+o.id) {
-			// A session of its own on the conversation, with its own name: the later of two MCP
-			// servers of one client process (Later) has nothing to give up (Sol's review).
+		if !codex && slices.Contains(d.st.Later[o.id], strings.TrimSuffix(o.key, "/"+o.id)) {
+			// The later of two MCP servers of one client process, a session of its own with its own
+			// name (Later, #38), has nothing to give up (Sol's review of 7e4ead79). Another session
+			// of its own on the conversation, such as one resumed on the command line while T3 had
+			// the name, is the conversation's only holder once T3 has stopped, and gives it up as any
+			// holder does (Sol's review of 8d031b55).
 			continue
 		}
 		if d.st.ThreadLeft == nil {
@@ -217,11 +220,12 @@ func claudeAlias(agent, t3Thread, claude string) string {
 	return "claude:" + claude
 }
 
-// noteNamedInT3Locked records that name was given first to s as the name of key, if s is a Claude
-// Code session in T3 that hasn't found its thread, its key its Claude session's (see NamedInT3).
-// The caller saves. Caller holds mu.
-func (d *Daemon) noteNamedInT3Locked(s *session, key, name string) {
-	if s == nil || s.agent != "claude-code in T3" || !strings.HasPrefix(key, "claude:") {
+// noteNamedInT3Locked records that name was given first as the name of key to a session of agent,
+// if that is a Claude Code session in T3 that hasn't found its thread, its key its Claude
+// session's (see NamedInT3). The agent is the one the session had when it asked for a name: the
+// assigner's name can land after the session has gone. The caller saves. Caller holds mu.
+func (d *Daemon) noteNamedInT3Locked(agent, key, name string) {
+	if agent != "claude-code in T3" || !strings.HasPrefix(key, "claude:") {
 		return
 	}
 	if d.st.NamedInT3 == nil {

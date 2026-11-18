@@ -2,11 +2,13 @@ package daemon_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -329,4 +331,118 @@ func TestTheLaterOfTwoServersKeepsItsOwnWhenT3GoesOn(t *testing.T) {
 	if m := inboxMessage(t, b, "bbbbbb"); m.Subject != "for the later server" {
 		t.Errorf("the later server has %q", m.Subject)
 	}
+}
+
+// A conversation T3 had before /clear, resumed on the command line while the thread still had its
+// name, has a name of its own there. Once the thread has stopped, the command line's session is the
+// conversation's only holder: when T3 imports the conversation again it gives it up, with what it
+// had unread, as any holder does (Sol's review of 8d031b55).
+func TestAConversationResumedWhileT3HadItsNameGoesOnInT3WithItsMessages(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	t3, conn := b.claudeIn("tttttt", 800, "conv-a", "thread-1")
+	name := b.named(t3)
+	b.hook("conv-b", 800) // /clear
+	b.nameIs(t3, name)
+	cli, _ := b.claudeIn("cccccc", 900, "conv-a", "")
+	if mine := b.named(cli); mine == name {
+		t.Fatalf("the command line took %s", name)
+	}
+	other, _ := b.claudeIn("ssssss", 600, "conv-other", "")
+	b.named(other)
+	b.send("ssssss", b.nameOf(cli), "for the command line", "")
+	conn.Close()
+	eventually(t, t3+" to stop", func() bool { return busLines(b, t3, "stopped") == 1 })
+
+	b.claudeIn("uuuuuu", 1000, "conv-a", "thread-2")
+	// T3 hands what it took on to its thread as a turn, so neither inbox has it then.
+	if left := b.do(proto.Request{Op: proto.OpInbox, Session: "cccccc"}).Messages; len(left) != 0 {
+		t.Errorf("the command line kept %d unread after the conversation went on in T3", len(left))
+	}
+}
+
+// nameGate is a NameSource that blocks while it is shut, so that a test can hold the assigner's
+// push in flight: the assigner picks names outside the daemon's lock. held is signalled when a
+// pick waits at the gate.
+type nameGate struct {
+	mu   sync.Mutex
+	cond *sync.Cond
+	open bool
+	held chan struct{}
+}
+
+func newNameGate() *nameGate {
+	g := &nameGate{held: make(chan struct{}, 1)}
+	g.cond = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *nameGate) Read(p []byte) (int, error) {
+	g.mu.Lock()
+	for !g.open {
+		select {
+		case g.held <- struct{}{}:
+		default:
+		}
+		g.cond.Wait()
+	}
+	g.mu.Unlock()
+	return rand.Read(p)
+}
+
+func (g *nameGate) let() {
+	g.mu.Lock()
+	g.open = true
+	g.cond.Broadcast()
+	g.mu.Unlock()
+}
+
+func (g *nameGate) waitHeld(t *testing.T) {
+	t.Helper()
+	select {
+	case <-g.held:
+	case <-time.After(time.Minute):
+		t.Fatal("no names push reached the gate")
+	}
+}
+
+// A T3 session that hasn't found its thread waits on the assigner for its name, and stops before the
+// name lands. The name is still T3's: the next session, which finds the thread, leaves the thread's
+// next session the address the name is at, as #642 has it (Sol's review of 8d031b55).
+func TestANameThatLandsAfterItsT3SessionStoppedIsStillT3s(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	g := newNameGate()
+	b := newDeviceWith(t, remote, func(d *device) {
+		d.grace, d.keep, d.names = 300*time.Millisecond, time.Hour, g
+	})
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-4", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	g.waitHeld(t)
+	conn.Close()
+	eventually(t, resp.Self+" to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+	g.let()
+	eventually(t, "the name to land", func() bool { return logHas(b, " -> "+resp.Self) })
+
+	conn, resp, err = b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-4", ClientPID: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-4", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, resp.Self+" to stop again", func() bool { return busLines(b, resp.Self, "stopped") == 2 })
+
+	next, _ := b.claudeIn("tttttt", 1000, "conv-4", "thread-4")
+	if !strings.HasSuffix(next, "/xxxxxx") {
+		t.Errorf("the thread's next session registered as %s, not at the address %s is at", next, name)
+	}
+	b.nameIs(next, name)
 }
