@@ -78,6 +78,37 @@ names routes by it all the same.
     registered with, as a restarted server's does. Whether a turn can be started in the app's
     session wasn't tried: the command-line route is taken only by a server whose parent program is
     named `codex`.
+- **A Claude Code conversation that moves between the command line and T3 keeps its name** (#643,
+  2026-11-16). T3 imports a command-line conversation and resumes its Claude session, and `claude
+  --resume` goes on with one T3 had, so the Claude session ID stays the same. The name key didn't:
+  it is the T3 thread's in T3 and the Claude session's outside it, and each had a name of its own.
+  Now a Claude Code session in a T3 thread gives its two keys one name: where one has a name and
+  the other none, the other takes it (`shareNameLocked`). With the other program's session still
+  open, the rule above applies, with the conversation known by its Claude session ID instead of
+  the key: the session that registered last takes the name. A session in T3 keeps its ID across
+  its server's restarts (#642), so its `ThreadLeft` record goes at its next first registration,
+  and the thread can take its name back then. The later of two MCP servers of one process, a
+  session of its own with its own name (#38), gives nothing up. A thread whose name came from the
+  command line keeps its own address (`NamedFromCLI`): the registry has that name at the command
+  line's session, which goes on using it, so #642's taking of the name's address would have them
+  ask for one ID. A T3 session that registers before it knows its thread has an ID made from its
+  Claude session, as the command line's is, so the name's address alone can't say which of the two
+  the name was given to. A name given first to such a T3 session is recorded (`NamedInT3`), and
+  only such a name lets the thread take that address; any other counts as the command line's
+  (Sol's reviews). Nothing in T3 itself was run: its import and resume were read in its code for
+  #643.
+  - *Cost.* After `/clear` in T3 the thread's name stays the old conversation's too, but the
+    thread's Claude session is the new one, so the rule above no longer matches the two. Whichever
+    of them registers while the other runs gets a name of its own: the old conversation resumed on
+    the command line while the thread runs, or the thread back while the old conversation is open
+    there. It keeps that name after the other stops, until the daemon works out its key again: its
+    server registers again, a hook moves it to another Claude session, or it finds its thread. A
+    command-line session whose MCP server restarts after its grace, as `/mcp` can make it, takes
+    the name back from a T3 session that is open on the same conversation.
+  - *Cost.* A daemon from before #643 recorded nothing in `NamedInT3`. A T3 session from then that
+    registered before it knew its thread, and finds it only after the upgrade, gets the thread an
+    address of its own, made from the thread, instead of the one its name is at. Its name doesn't
+    change.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer
@@ -258,4 +289,5 @@ knew the rest.
 - **Not covered.** If T3 started the new instance's process before letting the old one go, the new
   server would give up the thread's address after 7 s, for good, and the thread would split as
   before #642. In the switch seen for #636 the old one had gone about 40 s before. A conversation
-  moved between the Claude Code CLI and T3 still changes its name and address (#643).
+  moved between the Claude Code CLI and T3 keeps its name since #643, but not its address: the
+  thread's is made from the thread, the command line's from the Claude session.

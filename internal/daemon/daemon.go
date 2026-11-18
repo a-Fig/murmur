@@ -956,6 +956,18 @@ type state struct {
 	// registering again after a daemon restart with the thread it still knows, doesn't take the
 	// thread's name back.
 	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
+	// NamedFromCLI is each T3 thread's name key that took its name from the command line's Claude
+	// session (shareNameLocked, #643). The registry has such a name at the command-line session's
+	// address, which a thread's session doesn't take for its own (threadIDLocked): the command line
+	// goes on using that ID. Kept for good, as NameKeys is.
+	NamedFromCLI map[string]bool `json:"namedFromCLI,omitempty"`
+	// NamedInT3 is each name given first to a Claude Code session in T3 that didn't know its thread
+	// yet, whose key was its Claude session's (noteNamedInT3Locked, #643). Such a session has an ID
+	// made from its Claude session, as the command line's is, so the registry's address for a name
+	// can't say which of the two the name was given to: this does (shareNameLocked, Sol's reviews).
+	// A daemon from before #643 kept no such record, and none of its names is in it. It only grows,
+	// as Used does.
+	NamedInT3 map[string]bool `json:"namedInT3,omitempty"`
 	// Later is, by session ID, the name keys the session shares with another MCP server of its
 	// client process that had them first (uniqueKeyLocked, #38). Kept as long as ThreadLeft is,
 	// so that whichever of the two comes back first, each comes back to its own name.

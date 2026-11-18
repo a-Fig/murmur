@@ -252,8 +252,15 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	// thread back from a session that got it since.
 	var left []string
 	if s == nil && !h.Reconnect {
-		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
+		if isClaudeCode(agent) && d.st.ThreadLeft[h.ID] != "" {
+			// A Claude session in T3 keeps its ID across its server's restarts, as the ID is made
+			// from the thread (#642): starting again, it has the conversation again, though it gave
+			// it up to the command line once (#643).
+			delete(d.st.ThreadLeft, h.ID)
+		}
+		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base, claude)
 	}
+	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude), h.ID)
 	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
@@ -272,7 +279,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// session may have taken its key and name, and s, back, holds the name now. As any taking
 		// of a name does, that also takes what was kept for the name (see adoptLocked).
 		s.key = key
-		d.setNameLocked(s, d.nameForKeyLocked(key, s.id))
+		d.setNameLocked(s, d.nameForKeyLocked(s, key))
 		s.dropped = time.Time{}
 		close(s.takeover)
 		s.takeover = nil
@@ -1433,7 +1440,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	}
 	d.saveLocked()
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
-	d.setNameLocked(s, d.nameForKeyLocked(key, h.ID))
+	d.setNameLocked(s, d.nameForKeyLocked(s, key))
 	d.sessions[h.ID] = s
 	d.noteConversationLocked() // a session starts: its agent is about to look around, and may send
 	return s
