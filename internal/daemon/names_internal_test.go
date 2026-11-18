@@ -170,7 +170,7 @@ func TestNameFromThePoolIsTheSessionsAddressAtOnce(t *testing.T) {
 	d.st.NamePool = []string{"quiet-otter"}
 	s := &session{id: "bbbbbb", key: "claude:one"}
 	d.sessions[s.id] = s
-	d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id))
+	d.setNameLocked(s, d.nameForKeyLocked(s, s.key))
 	if s.name != "quiet-otter" {
 		t.Fatalf("the session took %q from the pool", s.name)
 	}

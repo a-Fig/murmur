@@ -2,11 +2,15 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -230,5 +234,99 @@ func TestAfterClearInT3TheThreadAndTheOldConversationShareAName(t *testing.T) {
 	back, _ := b.claudeIn("uuuuuu", 1100, "conv-c2", "thread-c")
 	if got := b.named(back); got == name {
 		t.Errorf("the thread took %s back from the old conversation", name)
+	}
+}
+
+// lateT3Import has T3 import conversation claude, whose name is name, into thread: its server, of
+// process pid, registers at id before it knows the thread, as one made from the Claude session
+// is, finds the thread, and stops, its stop the nth the daemon has logged for id.
+func lateT3Import(t *testing.T, b *device, id string, pid int, claude, thread, name string, n int) {
+	t.Helper()
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "claude-code in T3", ClaudeSession: claude, ClientPID: pid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	b.nameIs(resp.Self, name)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: id, Route: &proto.Route{T3Thread: thread, T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, resp.Self+" to stop", func() bool { return busLines(b, resp.Self, "stopped") == n })
+}
+
+// A name the command line was given before #643, which T3 imports into a thread it finds late, is
+// still the command line's: a daemon from before #643 kept no record of which program a name was
+// given in, so the thread keeps an address of its own (Sol's review of 7e4ead79).
+func TestANameFromBeforeTheUpgradeLeavesTheCommandLineItsAddress(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	cli, conn := b.claudeIn("aaaaaa", 700, "conv-u", "")
+	name := b.named(cli)
+	conn.Close()
+	eventually(t, cli+" to stop", func() bool { return busLines(b, cli, "stopped") == 1 })
+
+	// The state a daemon from before #643 would have left.
+	b.stop()
+	path := filepath.Join(b.gitDir, brand.StateDir, "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &st); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"namedInT3", "namedFromCLI", "cliNames"} {
+		delete(st, k)
+	}
+	if raw, err = json.Marshal(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.start()
+
+	lateT3Import(t, b, "aaaaaa", 800, "conv-u", "thread-u", name, 1) // the first on this daemon's log
+	next, _ := b.claudeIn("tttttt", 900, "conv-u", "thread-u")
+	if !strings.HasSuffix(next, "/tttttt") {
+		t.Errorf("the thread's next session registered as %s, at the command line's address", next)
+	}
+	b.nameIs(next, name)
+	again, _ := b.claudeIn("aaaaaa", 1000, "conv-u", "")
+	if !strings.HasSuffix(again, "/aaaaaa") {
+		t.Errorf("the command line's session came back as %s", again)
+	}
+	b.nameIs(again, name)
+}
+
+// Of two MCP servers of one command-line process on a conversation, the later is a session of its
+// own, with its own name (#38). When T3 goes on with the conversation, the first gives it up, and
+// the later keeps its name and what it has unread (Sol's review of 7e4ead79).
+func TestTheLaterOfTwoServersKeepsItsOwnWhenT3GoesOn(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	first, _ := b.claudeIn("aaaaaa", 700, "conv-p", "")
+	name := b.named(first)
+	later, _ := b.claudeIn("bbbbbb", 700, "conv-p", "")
+	mine := b.named(later)
+	if mine == name {
+		t.Fatalf("the later server took %s", name)
+	}
+	b.claudeIn("ssssss", 600, "conv-other", "")
+	b.send("ssssss", mine, "for the later server", "")
+
+	t3, _ := b.claudeIn("tttttt", 800, "conv-p", "thread-p")
+	b.nameIs(t3, name)
+	eventually(t, "the first server's session to have a name of its own", func() bool {
+		other := b.nameOf(first)
+		return other != "" && other != name && other != mine
+	})
+	b.nameIs(later, mine)
+	if m := inboxMessage(t, b, "bbbbbb"); m.Subject != "for the later server" {
+		t.Errorf("the later server has %q", m.Subject)
 	}
 }

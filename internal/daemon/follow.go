@@ -129,6 +129,11 @@ func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key, claude string
 		if codex && (o.key != key || o.agent != "codex") || !codex && (o.claudeSession != claude || !isClaudeCode(o.agent) || d.st.ThreadLeft[o.id] != "") {
 			continue // a Claude session that gave the conversation up once has it no more
 		}
+		if !codex && strings.HasSuffix(o.key, "/"+o.id) {
+			// A session of its own on the conversation, with its own name: the later of two MCP
+			// servers of one client process (Later) has nothing to give up (Sol's review).
+			continue
+		}
 		if d.st.ThreadLeft == nil {
 			d.st.ThreadLeft = map[string]string{}
 		}
@@ -136,7 +141,7 @@ func (d *Daemon) yieldThreadLocked(id, agent string, pid int, key, claude string
 		d.st.ThreadLeft[o.id] = gave
 		from := o.name
 		o.key = d.uniqueKeyLocked(gave, o.id, o.clientPID)
-		d.setNameLocked(o, d.nameForKeyLocked(o.key, o.id))
+		d.setNameLocked(o, d.nameForKeyLocked(o, o.key))
 		if o.name == "" {
 			d.kickNames()
 		}
@@ -173,13 +178,14 @@ func (d *Daemon) shareNameLocked(key, alias, id string) {
 	switch {
 	case k == "" && a != "":
 		d.st.NameKeys[key] = a
-		// From the command line, unless the name is at session id's own address and no
-		// command-line session has held it: one in T3 that registered before it knew its thread,
-		// and has just found it, gave the name itself, and its thread's next session is to take
-		// that address (threadIDLocked, Opus's review). Its ID is made from its Claude session, as
-		// the command line's is, so a name the command line gave, which T3 imported, is at that
-		// address too (Sol's review).
-		if d.st.Used[a] != bus.Addr(d.device, id) || d.st.CLINames[a] {
+		// From the command line, unless the name is at session id's own address and was given to a
+		// session in T3: one that registered before it knew its thread, and has just found it, gave
+		// the name itself, and its thread's next session is to take that address (threadIDLocked,
+		// Opus's review). Its ID is made from its Claude session, as the command line's is, so a
+		// name the command line gave, which T3 imported, is at that address too. Where nothing says
+		// which, as for a name from before #643, the thread keeps an address of its own: taking the
+		// command line's would have the two ask for one ID (Sol's reviews).
+		if d.st.Used[a] != bus.Addr(d.device, id) || !d.st.NamedInT3[a] {
 			if d.st.NamedFromCLI == nil {
 				d.st.NamedFromCLI = map[string]bool{}
 			}
@@ -209,6 +215,19 @@ func claudeAlias(agent, t3Thread, claude string) string {
 		return ""
 	}
 	return "claude:" + claude
+}
+
+// noteNamedInT3Locked records that name was given first to s as the name of key, if s is a Claude
+// Code session in T3 that hasn't found its thread, its key its Claude session's (see NamedInT3).
+// The caller saves. Caller holds mu.
+func (d *Daemon) noteNamedInT3Locked(s *session, key, name string) {
+	if s == nil || s.agent != "claude-code in T3" || !strings.HasPrefix(key, "claude:") {
+		return
+	}
+	if d.st.NamedInT3 == nil {
+		d.st.NamedInT3 = map[string]bool{}
+	}
+	d.st.NamedInT3[name] = true
 }
 
 // keptForLocked is the name that what is sent to session id, which isn't running, is for: the
@@ -258,13 +277,6 @@ func (d *Daemon) setNameLocked(s *session, name string) {
 		return
 	}
 	d.adoptLeftLocked(s) // first: what it kept before stands over what it kept by its ID since
-	if s.agent == "claude-code" && !d.st.CLINames[name] {
-		if d.st.CLINames == nil {
-			d.st.CLINames = map[string]bool{}
-		}
-		d.st.CLINames[name] = true
-		d.saveLocked()
-	}
 	d.shareSessionNameLocked(s)
 	d.adoptTagsLocked(s)
 	d.adoptMutesLocked(s)
@@ -545,7 +557,7 @@ func (d *Daemon) followLocked(s *session, claude string) {
 	from := s.name
 	s.claudeSession = claude
 	s.key = d.uniqueKeyLocked(nameKey(s.route.T3Thread, claude, s.route.Native, s.id), s.id, s.clientPID)
-	d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id))
+	d.setNameLocked(s, d.nameForKeyLocked(s, s.key))
 	if s.name == "" {
 		d.kickNames()
 	}
