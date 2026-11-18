@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -11,6 +12,22 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 	"github.com/a-Fig/murmur/internal/web"
 )
+
+// quiet makes a test device whose presence changes only when something it publishes does, and
+// that takes no other device for stale: lookup and send know another device's files only while
+// the presence read is the newest listed (#859), which a heartbeat every 500 ms, on a loaded
+// machine, keeps from ever holding for long.
+func quiet(d *device) { d.beat, d.stale = time.Hour, time.Hour }
+
+// lookupShows waits for lookup of name, from session on d, to show want.
+func lookupShows(t *testing.T, d *device, session, name, want string) {
+	t.Helper()
+	var look string
+	eventually(t, "lookup of "+name+" to show "+strings.TrimSpace(want), func() bool {
+		look = view.Lookup(d.do(proto.Request{Op: proto.OpLookup, Session: session, Name: name}))
+		return strings.Contains(look, want)
+	})
+}
 
 // Send files and Receive files are off until a person turns them on (#765, Tyler, 2026-11-16). With
 // sending off, a send with files is refused before anything is read or pushed, saying the user can
@@ -50,8 +67,8 @@ func TestASendWithFilesIsRefusedWhileSendFilesIsOff(t *testing.T) {
 func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDevice(t, remote)
-	b := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
+	a := newDeviceWith(t, remote, quiet)
+	b := newDeviceWith(t, remote, func(d *device) { quiet(d); d.filesOff = true })
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
@@ -59,10 +76,7 @@ func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 	if who := view.Who(a.do(proto.Request{Op: proto.OpWho, Session: "aaaaaa"})); strings.Contains(strings.ToLower(who), "files") {
 		t.Errorf("who mentions files:\n%s", who)
 	}
-	if look, want := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})),
-		"  files: takes none (Receive files is off for agents on its device)\n"; !strings.Contains(look, want) {
-		t.Errorf("lookup of bob, want %q:\n%s", want, look)
-	}
+	lookupShows(t, a, "aaaaaa", name, "  files: takes none (Receive files is off for agents on its device)\n")
 	if look, want := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: a.named(bus.Addr(a.self(), "aaaaaa"))})),
 		"  files: sends them, takes them\n"; !strings.Contains(look, want) {
 		t.Errorf("lookup of itself, files on, want %q:\n%s", want, look)
@@ -88,9 +102,10 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) {
+		quiet(d)
 		d.files = `{"sendFiles":true,"receiveFiles":true,"agentsSendOff":true,"agentsReceiveOff":true}`
 	})
-	b := newDevice(t, remote)
+	b := newDeviceWith(t, remote, quiet)
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	bobName := b.named(bob)
@@ -112,6 +127,7 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	}
 
 	// From bob to a's agent and to a's person: the agent gets the text alone, the person the file.
+	lookupShows(t, b, "bbbbbb", bus.Addr(a.self(), "aaaaaa"), "  files: takes none (Receive files is off for agents on its device)\n")
 	r = b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: bus.Addr(a.self(), "aaaaaa"), Subject: "for the agent",
 		Files: []string{writeFile(t, "shot.png", []byte("a picture"))}})
 	if r.Error != "" || !strings.Contains(r.Note, "Receive files is off for the agents") {
@@ -120,6 +136,7 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	if m := inboxMessage(t, a, "aaaaaa"); len(m.Files) != 0 {
 		t.Errorf("a's agent got files %+v; want the text alone", m.Files)
 	}
+	lookupShows(t, b, "bbbbbb", "ada-lovelace", "  files: takes them\n")
 	r = b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "for the person",
 		Files: []string{writeFile(t, "chart.png", []byte("a chart"))}})
 	if r.Error != "" || strings.Contains(r.Note, "text alone") {
@@ -157,8 +174,8 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDeviceWith(t, remote, func(d *device) { d.files = `{"sendFiles":true}` })
-	b := newDevice(t, remote)
+	a := newDeviceWith(t, remote, func(d *device) { quiet(d); d.files = `{"sendFiles":true}` })
+	b := newDeviceWith(t, remote, quiet)
 	b.session("bbbbbb", "")
 	pa := a.page()
 	pa.choose("ada-lovelace")
@@ -168,10 +185,7 @@ func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 	if who := view.Who(b.do(proto.Request{Op: proto.OpWho, Session: "bbbbbb"})); strings.Contains(strings.ToLower(who), "files") {
 		t.Errorf("who mentions files:\n%s", who)
 	}
-	if look, want := view.Lookup(b.do(proto.Request{Op: proto.OpLookup, Session: "bbbbbb", Name: "ada-lovelace"})),
-		"  files: takes none (Receive files is off)\n"; !strings.Contains(look, want) {
-		t.Errorf("lookup of ada, want %q:\n%s", want, look)
-	}
+	lookupShows(t, b, "bbbbbb", "ada-lovelace", "  files: takes none (Receive files is off)\n")
 	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "the chart",
 		Files: []string{writeFile(t, "chart.png", []byte("a chart"))}})
 	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace takes no files: Receive files is off, so the text alone gets there.") {

@@ -217,6 +217,9 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		if d.known[ref] != sha {
 			changed = append(changed, ref)
 		}
+		if dev, ok := strings.CutPrefix(ref, brand.PresencePrefix); ok {
+			d.presenceTip[dev] = sha // before the fetch, so what an older one said is known for no more than it is
+		}
 	}
 	d.mu.Unlock()
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
@@ -247,6 +250,9 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	for _, ref := range changed {
 		if failed[ref] == nil {
 			d.known[ref] = remote[ref]
+			if dev, ok := strings.CutPrefix(ref, brand.PresencePrefix); ok {
+				d.presenceTip[dev] = remote[ref] // what the fetch brought, if the ref moved after the listing
+			}
 		}
 	}
 	d.mu.Unlock()
@@ -1240,7 +1246,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
-	locked, unread := false, false
+	locked, opened := false, true
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
@@ -1250,7 +1256,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
 			// before the team key was made. The device is there, with nothing about it readable
 			// here; it is read again once this device holds the key (addTeamKeysLocked).
-			unread = true
+			opened = false
 			if errors.Is(err, bus.ErrNotForUs) {
 				locked = true
 			} else {
@@ -1275,7 +1281,10 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if sealed {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked, unread: unread}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
+	if opened {
+		d.peers[dev].readSHA = sha
+	}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 		d.droppedThereLocked(dev, pres.Sessions)
@@ -1305,11 +1314,23 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.mu.Unlock()
 }
 
+// filesKnownLocked says whether what p, dev's peer, says of files is current (#859): it was read
+// from a presence whose box opened, and that is the newest one listed. A presence refused as not
+// dev's own doesn't count, so the last good one stands. Without it, a device that upgraded past a
+// daemon from before files would still look like one while its new presence went unread. Caller
+// holds mu.
+func (d *Daemon) filesKnownLocked(dev string, p *peer) bool {
+	if p.readSHA == "" {
+		return false
+	}
+	tip := d.presenceTip[dev]
+	return tip == "" || tip == p.readSHA || tip == d.refusedSHA[dev]
+}
+
 // sawPresence records that a device's presence moved to sha without being read: tried and found
 // unreadable (tried), or not fetched at all. Either way the device is alive. A device never read
 // shows as present, with no sessions, until it is read or goes stale. One read before keeps what it
-// said, but not what it said of files: a device that upgraded past a daemon from before files would
-// otherwise still look like one until its new presence is read (#859). Caller holds advMu.
+// said; filesKnownLocked keeps what it said of files from counting. Caller holds advMu.
 func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	if dev == d.device || !bus.ValidDevice(dev) {
 		return
@@ -1320,9 +1341,6 @@ func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	if p == nil {
 		p = &peer{pres: bus.Presence{V: bus.Version, Device: dev, Host: "presence unreadable"}}
 		d.peers[dev] = p
-	}
-	if p.sha != sha {
-		p.unread = true // until a read of a presence replaces p
 	}
 	if tried {
 		p.sha = sha // not worth reading again until it moves

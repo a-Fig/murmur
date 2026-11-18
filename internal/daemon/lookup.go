@@ -153,7 +153,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		det.Host, det.Owner = p.pres.Host, p.pres.Owner
 		det.DeviceSeen, det.Stale = p.lastChange, d.staleLocked(p)
 		switch {
-		case p.unread: // not known: nothing in its box was read
+		case !d.filesKnownLocked(dev, p):
 		case !p.pres.Files:
 			det.TakesFiles = proto.FilesOld
 		case bus.IsPerson(addr):

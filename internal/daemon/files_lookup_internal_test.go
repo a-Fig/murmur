@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +60,184 @@ func (r *giveUpRig) failPresenceFetches() (recovered func()) {
 		r.d.mu.Lock()
 		delete(r.d.unfetched, ref) // no minute's wait before the next try
 		r.d.mu.Unlock()
+	}
+}
+
+// presenceCommit makes the commit of p, sealed with k if k isn't nil, without putting it on the
+// remote, so the same presence can be put back later.
+func (r *giveUpRig) presenceCommit(p bus.Presence, k ed25519.PrivateKey) string {
+	r.t.Helper()
+	msg, err := bus.Encode(p, "presence")
+	if k != nil {
+		msg, err = bus.EncodeSealed(p, "presence", k, giveUpPeer, brand.PresencePrefix+giveUpPeer)
+	}
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	tree := r.git(r.author, "hash-object", "-t", "tree", "-w", "--stdin")
+	return r.git(r.author, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", tree, "-m", msg)
+}
+
+// pushPresenceSHA puts the presence commit sha on the peer's presence ref.
+func (r *giveUpRig) pushPresenceSHA(sha string) {
+	r.t.Helper()
+	r.git(r.author, "push", "-q", "--force", r.remote, sha+":"+brand.PresencePrefix+giveUpPeer)
+}
+
+// farPresence is the peer's presence with one session, quiet-otter, and its agents' Receive files
+// off or on: a current daemon's.
+func farPresence(receiveOff bool) bus.Presence {
+	return bus.Presence{V: bus.Version, Device: giveUpPeer, Host: "far", At: time.Now().UTC(), Files: true, FilesOff: receiveOff,
+		Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Started: time.Now().UTC()}}}
+}
+
+// fromBeforeFiles is the peer's presence as a daemon from before files writes it.
+func fromBeforeFiles() bus.Presence {
+	p := farPresence(false)
+	p.Files = false
+	return p
+}
+
+const (
+	farTakesNone = "  files: takes none (Receive files is off for agents on its device)"
+	farUnknown   = "  files: takes: unknown"
+)
+
+// wantFiles fails the test unless lookup's files line for quiet-otter on the peer is want.
+func (r *giveUpRig) wantFiles(when, want string) {
+	r.t.Helper()
+	if _, line := r.lookupFilesOf(bus.Addr(giveUpPeer, "aaaaaa")); line != want {
+		r.t.Errorf("%s: lookup says %q, want %q", when, line, want)
+	}
+}
+
+// A sync whose read of an upgraded device's presence runs out of time, after the fetch brought it,
+// leaves its files unknown, not "older than files", until a sync reads it (#859, Sol's review).
+func TestAPresenceFetchedButNotReadInTimeLeavesFilesUnknown(t *testing.T) {
+	r := newGiveUpRig(t)
+	addr := bus.Addr(giveUpPeer, "aaaaaa")
+	r.pushPresenceOf(fromBeforeFiles())
+	r.sync()
+	r.wantFiles("before the upgrade", "  files: takes none (its "+brand.Product+" is older than files)")
+
+	r.pushPresenceOf(farPresence(true))
+	limit := r.d.opt.ReadFirstLimit
+	r.d.opt.ReadFirstLimit = time.Nanosecond // the presence is fetched, and its read cut short
+	r.d.pollOnce(r.ctx)                      // its error is the cut, which is what this is about
+	r.d.opt.ReadFirstLimit = limit
+	r.d.mu.Lock()
+	fetched := r.d.known[brand.PresencePrefix+giveUpPeer] == r.d.presenceTip[giveUpPeer]
+	read := r.d.peers[giveUpPeer].readSHA == r.d.presenceTip[giveUpPeer]
+	r.d.mu.Unlock()
+	if !fetched || read {
+		t.Fatalf("fetched %v and read %v; want it fetched and not read, or this tests nothing", fetched, read)
+	}
+	r.wantFiles("fetched, not read", farUnknown)
+	if note := r.noFilesNote(addr); note != "" {
+		t.Errorf("send's note, fetched and not read: %q, want none", note)
+	}
+
+	r.sync()
+	r.wantFiles("read", farTakesNone)
+}
+
+// While an upgraded device's new presence is being fetched, what its old one said of files isn't
+// given as true (#859, Sol's review). The fetch is held by the remote's upload-pack, the second
+// request of the sync after its listing, until the test lets it go.
+func TestAPresenceBeingFetchedLeavesFilesUnknown(t *testing.T) {
+	r := newGiveUpRig(t)
+	r.pushPresenceOf(fromBeforeFiles())
+	r.sync()
+	r.wantFiles("before the upgrade", "  files: takes none (its "+brand.Product+" is older than files)")
+	r.pushPresenceOf(farPresence(true))
+
+	dir := filepath.ToSlash(t.TempDir())
+	script := dir + "/hold.sh"
+	body := "#!/bin/sh\n" +
+		"echo x >> '" + dir + "/calls'\n" +
+		"if [ \"$(wc -l < '" + dir + "/calls')\" -eq 2 ]; then\n" +
+		"\ttouch '" + dir + "/held'\n" +
+		"\twhile [ ! -f '" + dir + "/release' ]; do sleep 0.1; done\n" +
+		"fi\n" +
+		"exec git upload-pack \"$1\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.git(r.work, "config", "remote.origin.uploadpack", "sh '"+script+"'")
+	release := func() {
+		if _, err := os.Stat(dir + "/release"); err != nil {
+			os.WriteFile(dir+"/release", nil, 0o644)
+		}
+	}
+	t.Cleanup(release)
+
+	done := make(chan error, 1)
+	go func() { done <- r.d.pollOnce(context.Background()) }()
+	held := false
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if _, err := os.Stat(dir + "/held"); err == nil {
+			held = true
+			break
+		}
+	}
+	if !held {
+		release()
+		t.Fatalf("the fetch was never held, so this tested nothing (the sync returned %v)", <-done)
+	}
+	r.wantFiles("being fetched", farUnknown)
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("the sync: %v", err)
+	}
+	r.wantFiles("fetched and read", farTakesNone)
+}
+
+// A presence read, then a newer one that fails to fetch, then the ref back on the one read: what it
+// said of files is known again, though no read clears anything (#859, Sol's review).
+func TestFilesAreKnownAgainWhenThePresenceGoesBackToTheOneRead(t *testing.T) {
+	r := newGiveUpRig(t)
+	a := r.presenceCommit(farPresence(true), nil)
+	r.pushPresenceSHA(a)
+	r.sync()
+	r.wantFiles("A read", farTakesNone)
+
+	recovered := r.failPresenceFetches()
+	defer recovered()
+	r.pushPresenceOf(farPresence(false))
+	r.sync()
+	r.wantFiles("B unfetched", farUnknown)
+
+	r.pushPresenceSHA(a)
+	r.sync()
+	r.wantFiles("back on A", farTakesNone)
+}
+
+// A presence refused as not the device's own, sealed with a key other than the one pinned for it,
+// leaves the last good one standing, files and all (#859, Sol's review).
+func TestARefusedPresenceLeavesWhatTheLastGoodOneSaidOfFiles(t *testing.T) {
+	r := newGiveUpRig(t)
+	addr := bus.Addr(giveUpPeer, "aaaaaa")
+	sealed := func(receiveOff bool) bus.Presence {
+		p := farPresence(receiveOff)
+		p.BoxKey = bus.BoxPublic(bus.NewBoxKey())
+		return p
+	}
+	r.pushPresenceSHA(r.presenceCommit(sealed(true), bus.NewSignKey()))
+	r.sync()
+	r.wantFiles("A read", farTakesNone)
+
+	b := r.presenceCommit(sealed(false), bus.NewSignKey()) // not the key pinned for the device
+	r.pushPresenceSHA(b)
+	r.sync()
+	r.d.mu.Lock()
+	refused := r.d.refusedSHA[giveUpPeer] == b
+	r.d.mu.Unlock()
+	if !refused {
+		t.Fatal("B wasn't refused, so this tested nothing")
+	}
+	r.wantFiles("B refused", farTakesNone)
+	if note := r.noFilesNote(addr); !strings.Contains(note, "Receive files is off for the agents on its device") {
+		t.Errorf("send's note, B refused: %q", note)
 	}
 }
 
@@ -156,7 +336,7 @@ func TestLookupSaysADeviceFromBeforeFilesTakesNone(t *testing.T) {
 }
 
 // A current daemon's presence whose box doesn't open here says nothing of files, not even that it
-// predates them: its Files is unread, not false (#859). Its names are kept, as for one sealed for a
+// predates them: its Files wasn't read, so it isn't false (#859). Its names are kept, as for one sealed for a
 // key this device lacks.
 func TestLookupOfADeviceWhosePresenceDoesntOpenSaysUnknown(t *testing.T) {
 	r := newGiveUpRig(t)
@@ -178,8 +358,8 @@ func TestLookupOfADeviceWhosePresenceDoesntOpenSaysUnknown(t *testing.T) {
 	r.d.mu.Lock()
 	peer := r.d.peers[giveUpPeer]
 	r.d.mu.Unlock()
-	if peer == nil || peer.locked || !peer.unread {
-		t.Fatalf("the peer: %+v, want it known, unread and not locked", peer)
+	if peer == nil || peer.locked || peer.readSHA != "" {
+		t.Fatalf("the peer: %+v, want it known, with nothing read and not locked", peer)
 	}
 	got, line := r.lookupFilesOf(bus.Addr(giveUpPeer, "aaaaaa"))
 	if want := "  files: takes: unknown"; got != "" || line != want {
