@@ -918,8 +918,6 @@ func lookupFiles(d *proto.SessionDetail) string {
 	switch d.TakesFiles {
 	case proto.FilesOn:
 		takes = "takes them"
-	case proto.FilesOld:
-		takes = "takes none (its " + brand.Product + " is older than files)"
 	case proto.FilesOff:
 		if d.Local {
 			takes = "takes none from other devices (" + off("Receive files") + ")"

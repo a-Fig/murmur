@@ -37,15 +37,14 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
   another's before it tries (Tyler, 2026-11-17). For a session here it says whether it sends files
   and whether it takes them from other devices, from this device's switches, the person's own for a
   person. For another device it says only whether it takes them: presence never says whether a
-  device sends them. It goes by the last presence read with its box open (`peerFilesLocked`). One
-  that has `files` stands while a newer one waits to be read, so a device that has files never
-  flickers to unknown as it republishes, and a switch turned shows a fetch late. One without
-  `files` is from before files only while it is the newest presence listed, which a listing records
-  before anything is fetched; otherwise, as when a device has just upgraded and its new presence
-  fails to fetch, is being fetched, or doesn't open, it is unknown. A presence refused as not the
-  device's own doesn't count, so the last good one stands. A flag set on each path that could leave
-  a presence unread missed some of them (Sol's reviews of #865); this is worked out from the two
-  SHAs instead.
+  device sends them. It goes by the last presence read with its box open (`peerFilesLocked`),
+  which stands while a newer one is fetched, waits to be read, doesn't open, or is refused as not
+  the device's own. So a device that has files never flickers to unknown as it republishes, and a
+  switch turned shows a fetch late. A presence without `files` is `takes: unknown`, as is a device
+  with nothing read. Nothing says the device predates files: four reviews (Sol's, of #865) each
+  found a way an upgraded device, its new presence not yet read, would be taken for an old one,
+  and with daemons updating themselves within the hour ([updating](updating.md)) the claim was
+  worth little (Tyler, 2026-11-17).
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
 
 ## How a file travels
@@ -284,12 +283,13 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 
 ## Older daemons
 
-Tyler's decision (2026-11-15): sent with a note, not refused. A daemon from before files ignores
-an event's `files` and gives its sessions the text, with no sign there was more. A device's
-presence says whether its daemon takes files (`files`, beside `groups` and `receipts`), and a
-sender is told which recipients' devices don't. Refusing would hold back the text for a gap the
-updater closes within an hour ([updating](updating.md)). A person whose page is served by such a
-daemon is among them.
+Tyler's decision (2026-11-15): sent, not refused. A daemon from before files ignores an event's
+`files` and gives its sessions the text, with no sign there was more. Refusing would hold back the
+text for a gap the updater closes within an hour ([updating](updating.md)). A device's presence
+says whether its daemon takes files (`files`, beside `groups` and `receipts`). Until 2026-11-17 a
+sender was told which recipients' devices didn't; since #859 such a recipient is unknown, in
+`lookup` and in `send`'s note alike, as a presence without `files` may be an upgraded device's
+that hasn't been read yet (see `lookup` above).
 
 A client from before files talking to a newer daemon sends none. A newer client finds an older
 daemon by its protocol number (23) and replaces it, as for any request an older daemon can't serve.

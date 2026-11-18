@@ -186,9 +186,10 @@ func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 	}
 }
 
-// A device that has files republishes its presence every heartbeat, 500 ms here, and each newer
-// one is listed before it is read. lookup never says its files are unknown meanwhile: the last one
-// read stands (#859).
+// A device that has files republishes its presence every heartbeat, 500 ms here, and the reader
+// fetches and reads each newer one in turn. lookup never says its files are unknown meanwhile: the
+// last one read stands (#859). The presences counted are the ones a fetched, from its own copy of
+// the ref, so each was one a had to read.
 func TestADeviceWithFilesIsNeverUnknownWhileItRepublishes(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -206,9 +207,11 @@ func TestADeviceWithFilesIsNeverUnknownWhileItRepublishes(t *testing.T) {
 		if look := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})); !strings.Contains(look, want) {
 			t.Fatalf("lookup of bob as it republishes:\n%s", look)
 		}
-		shas[gitOK(remote, "rev-parse", ref)] = true
+		if sha := gitOK(a.gitDir, "rev-parse", ref); sha != "" {
+			shas[sha] = true
+		}
 		if len(shas) < 3 && time.Now().After(end.Add(55*time.Second)) {
-			t.Fatalf("bob's presence moved %d times in a minute, so this tested little", len(shas)-1)
+			t.Fatalf("a fetched %d of bob's presences in a minute, so this tested little", len(shas))
 		}
 	}
 }

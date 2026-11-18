@@ -574,10 +574,6 @@ type Daemon struct {
 	// log it once a minute.
 	refused    map[string]time.Time
 	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
-	// presenceTip is, for each device, the newest presence a listing showed, set before it is
-	// fetched or read, so that until it is read what the peer said of files is unknown (#859).
-	// Under mu.
-	presenceTip map[string]string
 
 	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
 	// teamChanged is closed and replaced when an epoch is read. Under mu. teamMu serializes the team
@@ -796,13 +792,12 @@ type peer struct {
 	sealed bool
 	locked bool
 	// read is what the last presence read with its box open said of files, kept through newer ones
-	// not read or not opened; nil before one is (peerFilesLocked).
+	// not read, not opened or refused; nil before one is (peerFilesLocked).
 	read *readFiles
 }
 
-// readFiles is what a device's presence said of files, and which presence that was (#859).
+// readFiles is what a device's presence said of files (#859).
 type readFiles struct {
-	sha                   string
 	files, off, personOff bool // bus.Presence's Files, FilesOff and PersonFilesOff
 }
 
@@ -1327,7 +1322,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, msgKeys: map[string]bool{}, idOwner: map[string]string{}, brackets: map[string]*bracket{},
-		refused: map[string]time.Time{}, refusedSHA: map[string]string{}, presenceTip: map[string]string{},
+		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
 		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
 	}
 	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))

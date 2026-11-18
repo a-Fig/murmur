@@ -22,7 +22,6 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
@@ -1696,12 +1695,12 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 }
 
 // noFilesNoteLocked tells the sender of message e, which carries files, which of its recipients
-// are on a device whose daemon is from before files: they get the text alone, with no sign that
-// there was more. who is what the sender called the one it sent to, if it sent to one. Caller
-// holds mu.
+// are known to take none, as Receive files is off for them: they get the text alone. One whose
+// device doesn't say is left out (peerFilesLocked): nothing is promised either way. who is what
+// the sender called the one it sent to, if it sent to one. Caller holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	to, direct := d.recipientsOfLocked(e)
-	var old, off, people []string
+	var off, people []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
 		p := d.peers[dev]
@@ -1712,25 +1711,16 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 		if direct {
 			name = who
 		}
-		switch d.peerFilesLocked(dev, p, addr) {
-		case proto.FilesOld:
-			old = append(old, nameOr(name, addr))
-		case proto.FilesOff:
-			if bus.IsPerson(addr) {
-				people = append(people, nameOr(name, addr))
-			} else {
-				off = append(off, nameOr(name, addr)) // its person turned their agents' Receive files off (#765)
-			}
+		if d.peerFilesLocked(p, addr) != proto.FilesOff {
+			continue
+		}
+		if bus.IsPerson(addr) {
+			people = append(people, nameOr(name, addr))
+		} else {
+			off = append(off, nameOr(name, addr)) // its person turned their agents' Receive files off (#765)
 		}
 	}
 	var notes []string
-	switch len(old) {
-	case 0:
-	case 1:
-		notes = append(notes, old[0]+" is on a device that runs a "+brand.Product+" from before files, so the text alone gets there.")
-	default:
-		notes = append(notes, andList(old)+" are on devices that run a "+brand.Product+" from before files, so the text alone gets there.")
-	}
 	switch len(off) {
 	case 0:
 	case 1:

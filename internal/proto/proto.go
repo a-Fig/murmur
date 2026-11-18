@@ -455,7 +455,6 @@ type SessionView struct {
 const (
 	FilesOn  = "on"
 	FilesOff = "off"
-	FilesOld = "old"
 )
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
@@ -471,8 +470,7 @@ type SessionDetail struct {
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
 	// SendsFiles and TakesFiles are what the session's file switches say (#859): FilesOn, FilesOff,
-	// FilesOld (its device runs a daemon from before files, so it takes none), or "" where this
-	// device can't know. A person's are their own switches, an agent's its device's agents'.
+	// or "" where this device can't know. A person's are their own switches, an agent's its device's agents'.
 	// Another device's presence says whether it takes files, never whether it sends them, so
 	// SendsFiles is set for a session on this device alone.
 	SendsFiles string `json:"sendsFiles,omitempty"`

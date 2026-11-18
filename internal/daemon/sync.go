@@ -217,9 +217,6 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		if d.known[ref] != sha {
 			changed = append(changed, ref)
 		}
-		if dev, ok := strings.CutPrefix(ref, brand.PresencePrefix); ok {
-			d.presenceTip[dev] = sha // before the fetch, so what an older one said is known for no more than it is
-		}
 	}
 	d.mu.Unlock()
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
@@ -250,9 +247,6 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	for _, ref := range changed {
 		if failed[ref] == nil {
 			d.known[ref] = remote[ref]
-			if dev, ok := strings.CutPrefix(ref, brand.PresencePrefix); ok {
-				d.presenceTip[dev] = remote[ref] // what the fetch brought, if the ref moved after the listing
-			}
 		}
 	}
 	d.mu.Unlock()
@@ -1283,7 +1277,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	var read *readFiles
 	if opened {
-		read = &readFiles{sha: sha, files: pres.Files, off: pres.FilesOff, personOff: pres.PersonFilesOff}
+		read = &readFiles{files: pres.Files, off: pres.FilesOff, personOff: pres.PersonFilesOff}
 	} else if old := d.peers[dev]; old != nil {
 		read = old.read // a box that doesn't open here says nothing new of files
 	}
@@ -1317,27 +1311,22 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.mu.Unlock()
 }
 
-// peerFilesLocked is whether the session at addr on p, dev's peer, takes files, as lookup and
-// send's note give it (#859): proto.FilesOn, FilesOff, FilesOld, or "" for unknown. It goes by the
-// last presence read with its box open. One that has files is believed while a newer one waits to
-// be read: a device that has files never loses them, and a switch turned shows a fetch late. One
-// without is from before files only while it is the newest presence listed, a refused one aside,
-// so a device that has just upgraded isn't taken for an old one while its new presence is unread.
-// Caller holds mu.
-func (d *Daemon) peerFilesLocked(dev string, p *peer, addr string) string {
-	r := p.read
-	switch {
-	case r == nil:
+// peerFilesLocked is whether the session at addr, on the device p is, takes files, as lookup and
+// send's note give it (#859): proto.FilesOn, FilesOff, or "" for unknown. It goes by the last
+// presence read with its box open, which stands while a newer one waits to be read, doesn't open
+// or is refused: a device that has files never flickers to unknown as it republishes, and a switch
+// turned shows a fetch late. A presence without files is unknown, not taken for an old daemon's:
+// each way of telling an old daemon from one just upgraded, its new presence not read yet, had a
+// gap (Sol's reviews of #865), and daemons update themselves within the hour. Caller holds mu.
+func (d *Daemon) peerFilesLocked(p *peer, addr string) string {
+	switch r := p.read; {
+	case r == nil || !r.files:
 		return ""
-	case r.files && bus.IsPerson(addr):
+	case bus.IsPerson(addr):
 		return onOff(!r.personOff) // a person's own switch, not their agents'
-	case r.files:
+	default:
 		return onOff(!r.off)
 	}
-	if tip := d.presenceTip[dev]; tip == "" || tip == r.sha || tip == d.refusedSHA[dev] {
-		return proto.FilesOld
-	}
-	return ""
 }
 
 // sawPresence records that a device's presence moved to sha without being read: tried and found

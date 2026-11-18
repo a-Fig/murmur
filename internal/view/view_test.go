@@ -505,8 +505,6 @@ func TestLookupSaysWhetherASessionSendsAndTakesFiles(t *testing.T) {
 			"files: takes none (Receive files is off for agents on its device)"},
 		{"a person elsewhere that takes none", proto.SessionDetail{Agent: bus.AgentPerson, TakesFiles: proto.FilesOff},
 			"files: takes none (Receive files is off)"},
-		{"a device from before files", proto.SessionDetail{Agent: "Codex", TakesFiles: proto.FilesOld},
-			"files: takes none (its " + brand.Product + " is older than files)"},
 		{"a device whose presence can't be read", proto.SessionDetail{Agent: "Codex"},
 			"files: takes: unknown"},
 	} {
