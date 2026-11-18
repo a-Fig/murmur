@@ -152,15 +152,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 	} else if p := d.peers[dev]; p != nil {
 		det.Host, det.Owner = p.pres.Host, p.pres.Owner
 		det.DeviceSeen, det.Stale = p.lastChange, d.staleLocked(p)
-		switch {
-		case !d.filesKnownLocked(dev, p):
-		case !p.pres.Files:
-			det.TakesFiles = proto.FilesOld
-		case bus.IsPerson(addr):
-			det.TakesFiles = onOff(!p.pres.PersonFilesOff) // a person's own switch, not their agents'
-		default:
-			det.TakesFiles = onOff(!p.pres.FilesOff)
-		}
+		det.TakesFiles = d.peerFilesLocked(dev, p, addr)
 		for _, s := range p.pres.Sessions {
 			if s.ID != sess {
 				continue

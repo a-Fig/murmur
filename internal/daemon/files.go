@@ -1705,20 +1705,22 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
 		p := d.peers[dev]
-		if dev == d.device || p == nil || !d.filesKnownLocked(dev, p) {
+		if dev == d.device || p == nil {
 			continue
 		}
 		name, _, _ := d.sessionInfoLocked(addr)
 		if direct {
 			name = who
 		}
-		switch {
-		case !p.pres.Files:
+		switch d.peerFilesLocked(dev, p, addr) {
+		case proto.FilesOld:
 			old = append(old, nameOr(name, addr))
-		case bus.IsPerson(addr) && p.pres.PersonFilesOff:
-			people = append(people, nameOr(name, addr))
-		case !bus.IsPerson(addr) && p.pres.FilesOff: // its person turned their agents' Receive files off (#765)
-			off = append(off, nameOr(name, addr))
+		case proto.FilesOff:
+			if bus.IsPerson(addr) {
+				people = append(people, nameOr(name, addr))
+			} else {
+				off = append(off, nameOr(name, addr)) // its person turned their agents' Receive files off (#765)
+			}
 		}
 	}
 	var notes []string

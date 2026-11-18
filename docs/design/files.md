@@ -37,13 +37,15 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
   another's before it tries (Tyler, 2026-11-17). For a session here it says whether it sends files
   and whether it takes them from other devices, from this device's switches, the person's own for a
   person. For another device it says only whether it takes them: presence never says whether a
-  device sends them. That is known only while the presence read, box and all, is the newest one
-  listed (`filesKnownLocked`): a listing records its tip before anything is fetched, so a fetch
-  that fails or is under way, a read cut short, or a box that didn't open all leave it unknown. A
-  presence refused as not the device's own doesn't count, so the last good one stands. Only a
-  presence that is known and has no `files` is from before files. A flag set on each path that
-  could leave a presence unread missed some of them (Sol's reviews of #865); this is worked out
-  from the two SHAs instead.
+  device sends them. It goes by the last presence read with its box open (`peerFilesLocked`). One
+  that has `files` stands while a newer one waits to be read, so a device that has files never
+  flickers to unknown as it republishes, and a switch turned shows a fetch late. One without
+  `files` is from before files only while it is the newest presence listed, which a listing records
+  before anything is fetched; otherwise, as when a device has just upgraded and its new presence
+  fails to fetch, is being fetched, or doesn't open, it is unknown. A presence refused as not the
+  device's own doesn't count, so the last good one stands. A flag set on each path that could leave
+  a presence unread missed some of them (Sol's reviews of #865); this is worked out from the two
+  SHAs instead.
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
 
 ## How a file travels

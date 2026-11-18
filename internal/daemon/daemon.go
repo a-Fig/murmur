@@ -795,10 +795,15 @@ type peer struct {
 	// read again once it does.
 	sealed bool
 	locked bool
-	// readSHA is the presence pres was read from, box and all; "" when its box didn't open, or
-	// nothing was read. What pres says of files holds only while readSHA is the newest presence
-	// listed (filesKnownLocked).
-	readSHA string
+	// read is what the last presence read with its box open said of files, kept through newer ones
+	// not read or not opened; nil before one is (peerFilesLocked).
+	read *readFiles
+}
+
+// readFiles is what a device's presence said of files, and which presence that was (#859).
+type readFiles struct {
+	sha                   string
+	files, off, personOff bool // bus.Presence's Files, FilesOff and PersonFilesOff
 }
 
 // fetchFail is a ref whose fetch failed: at which listed SHA, and when. It is fetched again on

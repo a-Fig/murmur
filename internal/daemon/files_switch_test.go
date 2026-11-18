@@ -13,12 +13,6 @@ import (
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// quiet makes a test device whose presence changes only when something it publishes does, and
-// that takes no other device for stale: lookup and send know another device's files only while
-// the presence read is the newest listed (#859), which a heartbeat every 500 ms, on a loaded
-// machine, keeps from ever holding for long.
-func quiet(d *device) { d.beat, d.stale = time.Hour, time.Hour }
-
 // lookupShows waits for lookup of name, from session on d, to show want.
 func lookupShows(t *testing.T, d *device, session, name, want string) {
 	t.Helper()
@@ -67,8 +61,8 @@ func TestASendWithFilesIsRefusedWhileSendFilesIsOff(t *testing.T) {
 func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDeviceWith(t, remote, quiet)
-	b := newDeviceWith(t, remote, func(d *device) { quiet(d); d.filesOff = true })
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
@@ -102,10 +96,9 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) {
-		quiet(d)
 		d.files = `{"sendFiles":true,"receiveFiles":true,"agentsSendOff":true,"agentsReceiveOff":true}`
 	})
-	b := newDeviceWith(t, remote, quiet)
+	b := newDevice(t, remote)
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	bobName := b.named(bob)
@@ -174,8 +167,8 @@ func TestThePersonsFileSwitchesAreApartFromTheAgents(t *testing.T) {
 func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	a := newDeviceWith(t, remote, func(d *device) { quiet(d); d.files = `{"sendFiles":true}` })
-	b := newDeviceWith(t, remote, quiet)
+	a := newDeviceWith(t, remote, func(d *device) { d.files = `{"sendFiles":true}` })
+	b := newDevice(t, remote)
 	b.session("bbbbbb", "")
 	pa := a.page()
 	pa.choose("ada-lovelace")
@@ -190,5 +183,32 @@ func TestASenderIsToldWhenAPersonTakesNoFiles(t *testing.T) {
 		Files: []string{writeFile(t, "chart.png", []byte("a chart"))}})
 	if r.Error != "" || !strings.Contains(r.Note, "ada-lovelace takes no files: Receive files is off, so the text alone gets there.") {
 		t.Errorf("to ada: %+v, want a note that she takes no files", r)
+	}
+}
+
+// A device that has files republishes its presence every heartbeat, 500 ms here, and each newer
+// one is listed before it is read. lookup never says its files are unknown meanwhile: the last one
+// read stands (#859).
+func TestADeviceWithFilesIsNeverUnknownWhileItRepublishes(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	name := a.named(bob)
+	const want = "  files: takes none (Receive files is off for agents on its device)\n"
+	lookupShows(t, a, "aaaaaa", name, want)
+	ref := brand.PresencePrefix + b.self()
+	shas := map[string]bool{}
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end) || len(shas) < 3; time.Sleep(50 * time.Millisecond) {
+		if look := view.Lookup(a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})); !strings.Contains(look, want) {
+			t.Fatalf("lookup of bob as it republishes:\n%s", look)
+		}
+		shas[gitOK(remote, "rev-parse", ref)] = true
+		if len(shas) < 3 && time.Now().After(end.Add(55*time.Second)) {
+			t.Fatalf("bob's presence moved %d times in a minute, so this tested little", len(shas)-1)
+		}
 	}
 }

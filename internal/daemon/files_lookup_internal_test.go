@@ -100,7 +100,9 @@ func fromBeforeFiles() bus.Presence {
 
 const (
 	farTakesNone = "  files: takes none (Receive files is off for agents on its device)"
+	farTakesThem = "  files: takes them"
 	farUnknown   = "  files: takes: unknown"
+	farOld       = "  files: takes none (its " + brand.Product + " is older than files)"
 )
 
 // wantFiles fails the test unless lookup's files line for quiet-otter on the peer is want.
@@ -111,133 +113,180 @@ func (r *giveUpRig) wantFiles(when, want string) {
 	}
 }
 
-// A sync whose read of an upgraded device's presence runs out of time, after the fetch brought it,
-// leaves its files unknown, not "older than files", until a sync reads it (#859, Sol's review).
-func TestAPresenceFetchedButNotReadInTimeLeavesFilesUnknown(t *testing.T) {
-	r := newGiveUpRig(t)
-	addr := bus.Addr(giveUpPeer, "aaaaaa")
-	r.pushPresenceOf(fromBeforeFiles())
-	r.sync()
-	r.wantFiles("before the upgrade", "  files: takes none (its "+brand.Product+" is older than files)")
-
-	r.pushPresenceOf(farPresence(true))
-	limit := r.d.opt.ReadFirstLimit
-	r.d.opt.ReadFirstLimit = time.Nanosecond // the presence is fetched, and its read cut short
-	r.d.pollOnce(r.ctx)                      // its error is the cut, which is what this is about
-	r.d.opt.ReadFirstLimit = limit
-	r.d.mu.Lock()
-	fetched := r.d.known[brand.PresencePrefix+giveUpPeer] == r.d.presenceTip[giveUpPeer]
-	read := r.d.peers[giveUpPeer].readSHA == r.d.presenceTip[giveUpPeer]
-	r.d.mu.Unlock()
-	if !fetched || read {
-		t.Fatalf("fetched %v and read %v; want it fetched and not read, or this tests nothing", fetched, read)
-	}
-	r.wantFiles("fetched, not read", farUnknown)
-	if note := r.noFilesNote(addr); note != "" {
-		t.Errorf("send's note, fetched and not read: %q, want none", note)
-	}
-
-	r.sync()
-	r.wantFiles("read", farTakesNone)
+// before is what the peer's presence said before a newer one came, in Sol's scenarios (#865): a
+// daemon from before files, or a current one with its agents' Receive files off. While the newer
+// one isn't read, a device that has files keeps its setting, and one from before files is unknown,
+// as it may have just upgraded. Once read, the newer one, a current daemon's, says its own.
+var before = []struct {
+	name    string
+	pres    func() bus.Presence
+	newer   bus.Presence
+	shown   string // what lookup says before the newer presence comes, and once it is listed alone
+	waiting string // while the newer presence is listed and not read
+	read    string // once it is
+}{
+	{"from before files", fromBeforeFiles, farPresence(true), farOld, farUnknown, farTakesNone},
+	{"with files", func() bus.Presence { return farPresence(true) }, farPresence(false), farTakesNone, farTakesNone, farTakesThem},
 }
 
-// While an upgraded device's new presence is being fetched, what its old one said of files isn't
-// given as true (#859, Sol's review). The fetch is held by the remote's upload-pack, the second
-// request of the sync after its listing, until the test lets it go.
-func TestAPresenceBeingFetchedLeavesFilesUnknown(t *testing.T) {
-	r := newGiveUpRig(t)
-	r.pushPresenceOf(fromBeforeFiles())
-	r.sync()
-	r.wantFiles("before the upgrade", "  files: takes none (its "+brand.Product+" is older than files)")
-	r.pushPresenceOf(farPresence(true))
+// A sync whose read of the newer presence runs out of time, after the fetch brought it, leaves the
+// device's files where its last read put them, or unknown if that was from before files, until a
+// sync reads it (#859, Sol's review).
+func TestAPresenceFetchedButNotReadInTime(t *testing.T) {
+	for _, b := range before {
+		t.Run(b.name, func(t *testing.T) {
+			r := newGiveUpRig(t)
+			r.pushPresenceOf(b.pres())
+			r.sync()
+			r.wantFiles("before", b.shown)
 
-	dir := filepath.ToSlash(t.TempDir())
-	script := dir + "/hold.sh"
-	body := "#!/bin/sh\n" +
-		"echo x >> '" + dir + "/calls'\n" +
-		"if [ \"$(wc -l < '" + dir + "/calls')\" -eq 2 ]; then\n" +
-		"\ttouch '" + dir + "/held'\n" +
-		"\twhile [ ! -f '" + dir + "/release' ]; do sleep 0.1; done\n" +
-		"fi\n" +
-		"exec git upload-pack \"$1\"\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r.git(r.work, "config", "remote.origin.uploadpack", "sh '"+script+"'")
-	release := func() {
-		if _, err := os.Stat(dir + "/release"); err != nil {
-			os.WriteFile(dir+"/release", nil, 0o644)
-		}
-	}
-	t.Cleanup(release)
+			r.pushPresenceOf(b.newer)
+			limit := r.d.opt.ReadFirstLimit
+			r.d.opt.ReadFirstLimit = time.Nanosecond // the presence is fetched, and its read cut short
+			r.d.pollOnce(r.ctx)                      // its error is the cut, which is what this is about
+			r.d.opt.ReadFirstLimit = limit
+			r.d.mu.Lock()
+			tip := r.d.presenceTip[giveUpPeer]
+			fetched := r.d.known[brand.PresencePrefix+giveUpPeer] == tip
+			read := r.d.peers[giveUpPeer].read.sha == tip
+			r.d.mu.Unlock()
+			if !fetched || read {
+				t.Fatalf("fetched %v and read %v; want it fetched and not read, or this tests nothing", fetched, read)
+			}
+			r.wantFiles("fetched, not read", b.waiting)
+			if note, want := r.noFilesNote(bus.Addr(giveUpPeer, "aaaaaa")), b.waiting == farTakesNone; strings.Contains(note, "Receive files is off") != want || strings.Contains(note, "before files") {
+				t.Errorf("send's note, fetched and not read: %q", note)
+			}
 
-	done := make(chan error, 1)
-	go func() { done <- r.d.pollOnce(context.Background()) }()
-	held := false
-	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if _, err := os.Stat(dir + "/held"); err == nil {
-			held = true
-			break
-		}
+			r.sync()
+			r.wantFiles("read", b.read)
+		})
 	}
-	if !held {
-		release()
-		t.Fatalf("the fetch was never held, so this tested nothing (the sync returned %v)", <-done)
+}
+
+// While the newer presence is being fetched, the device's files are where its last read put them,
+// or unknown if that was from before files (#859, Sol's review). The fetch is held by the remote's
+// upload-pack, the second request of the sync after its listing, until the test lets it go.
+func TestAPresenceBeingFetched(t *testing.T) {
+	for _, b := range before {
+		t.Run(b.name, func(t *testing.T) {
+			r := newGiveUpRig(t)
+			r.pushPresenceOf(b.pres())
+			r.sync()
+			r.wantFiles("before", b.shown)
+			r.pushPresenceOf(b.newer)
+
+			dir := filepath.ToSlash(t.TempDir())
+			script := dir + "/hold.sh"
+			body := "#!/bin/sh\n" +
+				"echo x >> '" + dir + "/calls'\n" +
+				"if [ \"$(wc -l < '" + dir + "/calls')\" -eq 2 ]; then\n" +
+				"\ttouch '" + dir + "/held'\n" +
+				"\twhile [ ! -f '" + dir + "/release' ]; do sleep 0.1; done\n" +
+				"fi\n" +
+				"exec git upload-pack \"$1\"\n"
+			if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			r.git(r.work, "config", "remote.origin.uploadpack", "sh '"+script+"'")
+			release := func() {
+				if _, err := os.Stat(dir + "/release"); err != nil {
+					os.WriteFile(dir+"/release", nil, 0o644)
+				}
+			}
+			t.Cleanup(release)
+
+			done := make(chan error, 1)
+			go func() { done <- r.d.pollOnce(context.Background()) }()
+			held := false
+			for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+				if _, err := os.Stat(dir + "/held"); err == nil {
+					held = true
+					break
+				}
+			}
+			if !held {
+				release()
+				t.Fatalf("the fetch was never held, so this tested nothing (the sync returned %v)", <-done)
+			}
+			r.wantFiles("being fetched", b.waiting)
+			release()
+			if err := <-done; err != nil {
+				t.Fatalf("the sync: %v", err)
+			}
+			r.wantFiles("fetched and read", b.read)
+		})
 	}
-	r.wantFiles("being fetched", farUnknown)
-	release()
-	if err := <-done; err != nil {
-		t.Fatalf("the sync: %v", err)
-	}
-	r.wantFiles("fetched and read", farTakesNone)
 }
 
 // A presence read, then a newer one that fails to fetch, then the ref back on the one read: what it
-// said of files is known again, though no read clears anything (#859, Sol's review).
-func TestFilesAreKnownAgainWhenThePresenceGoesBackToTheOneRead(t *testing.T) {
-	r := newGiveUpRig(t)
-	a := r.presenceCommit(farPresence(true), nil)
-	r.pushPresenceSHA(a)
-	r.sync()
-	r.wantFiles("A read", farTakesNone)
+// said of files shows again, though nothing is read (#859, Sol's review).
+func TestFilesShowAgainWhenThePresenceGoesBackToTheOneRead(t *testing.T) {
+	for _, b := range before {
+		t.Run(b.name, func(t *testing.T) {
+			r := newGiveUpRig(t)
+			a := r.presenceCommit(b.pres(), nil)
+			r.pushPresenceSHA(a)
+			r.sync()
+			r.wantFiles("A read", b.shown)
 
-	recovered := r.failPresenceFetches()
-	defer recovered()
-	r.pushPresenceOf(farPresence(false))
-	r.sync()
-	r.wantFiles("B unfetched", farUnknown)
+			recovered := r.failPresenceFetches()
+			defer recovered()
+			r.pushPresenceOf(b.newer)
+			r.sync()
+			r.wantFiles("B unfetched", b.waiting)
 
-	r.pushPresenceSHA(a)
-	r.sync()
-	r.wantFiles("back on A", farTakesNone)
+			r.pushPresenceSHA(a)
+			r.sync()
+			r.wantFiles("back on A", b.shown)
+		})
+	}
 }
 
 // A presence refused as not the device's own, sealed with a key other than the one pinned for it,
-// leaves the last good one standing, files and all (#859, Sol's review).
+// leaves the last good one standing, files and all, from before files too (#859, Sol's review).
 func TestARefusedPresenceLeavesWhatTheLastGoodOneSaidOfFiles(t *testing.T) {
-	r := newGiveUpRig(t)
-	addr := bus.Addr(giveUpPeer, "aaaaaa")
-	sealed := func(receiveOff bool) bus.Presence {
-		p := farPresence(receiveOff)
-		p.BoxKey = bus.BoxPublic(bus.NewBoxKey())
-		return p
-	}
-	r.pushPresenceSHA(r.presenceCommit(sealed(true), bus.NewSignKey()))
-	r.sync()
-	r.wantFiles("A read", farTakesNone)
+	for _, b := range before {
+		t.Run(b.name, func(t *testing.T) {
+			r := newGiveUpRig(t)
+			sealed := func(p bus.Presence) bus.Presence {
+				p.BoxKey = bus.BoxPublic(bus.NewBoxKey())
+				return p
+			}
+			r.pushPresenceSHA(r.presenceCommit(sealed(b.pres()), bus.NewSignKey()))
+			r.sync()
+			r.wantFiles("A read", b.shown)
 
-	b := r.presenceCommit(sealed(false), bus.NewSignKey()) // not the key pinned for the device
-	r.pushPresenceSHA(b)
-	r.sync()
-	r.d.mu.Lock()
-	refused := r.d.refusedSHA[giveUpPeer] == b
-	r.d.mu.Unlock()
-	if !refused {
-		t.Fatal("B wasn't refused, so this tested nothing")
+			bad := r.presenceCommit(sealed(b.newer), bus.NewSignKey()) // not the key pinned for the device
+			r.pushPresenceSHA(bad)
+			r.sync()
+			r.d.mu.Lock()
+			refused := r.d.refusedSHA[giveUpPeer] == bad
+			r.d.mu.Unlock()
+			if !refused {
+				t.Fatal("B wasn't refused, so this tested nothing")
+			}
+			r.wantFiles("B refused", b.shown)
+		})
 	}
-	r.wantFiles("B refused", farTakesNone)
-	if note := r.noFilesNote(addr); !strings.Contains(note, "Receive files is off for the agents on its device") {
-		t.Errorf("send's note, B refused: %q", note)
+}
+
+// A device that has files, republishing as a heartbeat does, is never unknown in lookup: each
+// newer presence is listed before it is read, and the last one read stands meanwhile (#859).
+func TestADeviceWithFilesIsNeverUnknownAsItRepublishes(t *testing.T) {
+	r := newGiveUpRig(t)
+	r.pushPresenceOf(farPresence(true))
+	r.sync()
+	r.wantFiles("first read", farTakesNone)
+	limit := r.d.opt.ReadFirstLimit
+	for i := range 6 {
+		r.pushPresenceOf(farPresence(true)) // a new At, so a new presence
+		if i%2 == 0 {
+			r.d.opt.ReadFirstLimit = time.Nanosecond // listed and fetched, not read
+		}
+		r.d.pollOnce(r.ctx)
+		r.d.opt.ReadFirstLimit = limit
+		r.wantFiles("republished", farTakesNone)
 	}
 }
 
@@ -358,7 +407,7 @@ func TestLookupOfADeviceWhosePresenceDoesntOpenSaysUnknown(t *testing.T) {
 	r.d.mu.Lock()
 	peer := r.d.peers[giveUpPeer]
 	r.d.mu.Unlock()
-	if peer == nil || peer.locked || peer.readSHA != "" {
+	if peer == nil || peer.locked || peer.read != nil {
 		t.Fatalf("the peer: %+v, want it known, with nothing read and not locked", peer)
 	}
 	got, line := r.lookupFilesOf(bus.Addr(giveUpPeer, "aaaaaa"))
