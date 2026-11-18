@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"log"
@@ -162,5 +163,83 @@ func TestAMuteMadeWhileTheNameWasPendingHoldsAfterTheSessionStops(t *testing.T) 
 	d.queueLocked(bus.Event{V: bus.Version, ID: "m1", Type: bus.Message, From: "dev/bbbbbb", To: "dev/aaaaaa", At: time.Now()}, modeNormal)
 	if box := d.st.Inbox["aaaaaa"]; len(box) != 0 {
 		t.Errorf("the stopped session was given %d message(s) from the session it muted", len(box))
+	}
+}
+
+// A sender waiting on a new name after /clear is refused by a recipient that muted its old one, as
+// the recipient's device would drop the message; one with a name of its own is judged by that name
+// alone, as the recipient's device judges it (#602).
+func TestASendersMuteCheckUsesTheNamesTheReceiverDoes(t *testing.T) {
+	const me, there = "here-0001", "there-0002"
+	from := bus.Addr(me, "bbbbbb")
+	d := &Daemon{device: me,
+		sessions: map[string]*session{"bbbbbb": {id: "bbbbbb"}}, // its new name pending
+		st:       state{Used: map[string]string{"brave-heron": from}, SessionNames: map[string]string{"bbbbbb": "calm-zebra"}},
+		peers: map[string]*peer{there: {pres: bus.Presence{Device: there,
+			Sessions: []bus.SessionInfo{{ID: "rrrrrr", Name: "quiet-otter", Muted: []string{"brave-heron"}}}}}}}
+	if !d.hasMutedLocked(there, "rrrrrr", from) {
+		t.Error("a sender with no name yet wasn't refused by a recipient that muted a name it held")
+	}
+	if got := d.mutersLocked(from, ""); len(got) != 1 || got[0] != "quiet-otter" {
+		t.Errorf("the muters of a sender with no name yet: %v", got)
+	}
+	// A name its device took last that the registry has given another session since, as a resume
+	// does: the receiving device doesn't hold that one against this sender, so neither does it.
+	d.st.SessionNames["bbbbbb"] = "brave-heron"
+	d.st.Used["brave-heron"] = bus.Addr(me, "yyyyyy")
+	d.peers[there].pres.Sessions[0].Muted = []string{"brave-heron"}
+	if d.hasMutedLocked(there, "rrrrrr", from) {
+		t.Error("a sender was refused for a mute of a name the registry gave another session")
+	}
+	// A session on its own device holds that name against it all the same (mutedAtLocked takes the
+	// name its device took last), so it is refused there, rather than dropped unseen.
+	d.sessions["ssssss"] = &session{id: "ssssss", name: "stern-ibis"}
+	d.st.Mutes = map[string]map[string]time.Time{"stern-ibis": {"brave-heron": time.Now().Add(-time.Hour)}}
+	if !d.mutedHereLocked("ssssss", bus.Event{From: from, To: "*"}) || !d.hasMutedLocked(me, "ssssss", from) {
+		t.Error("a session on the sender's own device that drops its message didn't refuse it")
+	}
+	delete(d.sessions, "ssssss")
+	d.st.Used["brave-heron"] = from
+	d.sessions["bbbbbb"].name = "calm-zebra" // it landed
+	if d.hasMutedLocked(there, "rrrrrr", from) {
+		t.Error("a sender with a name of its own was refused for a mute of its address's old one")
+	}
+}
+
+// Every device shows another's session that has left presence, or waits on a new name, by the name
+// its own device does, the one its presence showed last, not the first of its names by spelling,
+// and in every place it is shown (#602).
+func TestAnotherDevicesSessionIsShownByItsLatestName(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{}, false)
+	const there = "there-0002"
+	addr := bus.Addr(there, "aaaaaa")
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: addr, To: "*", Subject: "hello", At: time.Now().UTC()}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.st.Used["brave-heron"], d.st.Used["calm-zebra"] = addr, addr
+	all := func(want string) {
+		t.Helper()
+		for _, s := range shownNames(d, e) {
+			if s.name != want {
+				t.Errorf("%s shows %q, want %q", s.where, s.name, want)
+			}
+		}
+	}
+	all("brave-heron") // nothing seen in presence: the first by spelling
+	// Its presence showed it waiting on a new name, by the one it went by last.
+	pres := bus.Presence{V: bus.Version, Device: there, Sessions: []bus.SessionInfo{{ID: "aaaaaa", Was: "calm-zebra"}}}
+	pres.Clean()
+	d.peers[there] = &peer{pres: pres}
+	d.notePeerNameLocked(addr, cmp.Or(pres.Sessions[0].Name, pres.Sessions[0].Was))
+	all("calm-zebra")
+	// It left presence: still calm-zebra.
+	d.peers[there] = &peer{pres: bus.Presence{V: bus.Version, Device: there}}
+	all("calm-zebra")
+	// A presence names Was only while the session has no name.
+	named := bus.Presence{V: bus.Version, Device: there, Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "brave-heron", Was: "calm-zebra"}}}
+	named.Clean()
+	if was := named.Sessions[0].Was; was != "" {
+		t.Errorf("a named session's presence kept Was %q", was)
 	}
 }

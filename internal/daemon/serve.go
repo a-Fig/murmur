@@ -1062,7 +1062,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
 		// sent, and this is where the sender learns of the mute.
-		muted := d.hasMutedLocked(dev, sess, d.muteNameLocked(from, dev))
+		muted := d.hasMutedLocked(dev, sess, from)
 		d.mu.Unlock()
 		switch {
 		case muted:
@@ -1233,10 +1233,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
-		muters := d.mutersLocked(d.nameOfLocked(from), dev)
-		if old := d.leftNameLocked(from); old != "" && (dev == "" || dev == d.device) {
-			muters = d.mutersLocked(old, d.device) // its new name pending: those here that muted its old one
-		}
+		muters := d.mutersLocked(from, dev)
 		var members []string
 		if group {
 			members, _ = d.groupMembersLocked(to, from)

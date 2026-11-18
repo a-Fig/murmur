@@ -300,7 +300,7 @@ func (d *Daemon) recipientsOfLocked(e bus.Event) (to []string, direct bool) {
 	if strings.Contains(e.To, "/") {
 		return []string{e.To}, true
 	}
-	sender := d.nameOfLocked(e.From)
+	sender := e.From
 	want := func(dev string, s bus.SessionInfo) bool {
 		if s.ID == bus.PersonSession || s.ID == proto.CLISession || bus.Addr(dev, s.ID) == e.From {
 			return false

@@ -166,11 +166,13 @@ names routes by it all the same.
   inbox, activity, `lookup` and the mute checks, so the name an agent replies to or mutes is the one
   it was shown. Before, an address that had held several names was shown by whichever a map gave
   last, which could change from one call to the next. One of this device's goes by the name it took
-  last, which the device records. Another device's goes by the first by spelling of the names the
-  registry gave its address: the registry keeps no order of them, and a record's time is its
-  writer's clock. That can be an older name; a send to it reaches the same session, as above.
-  Remembering the last name each address showed in presence would show the latest; it needs new
-  saved state and isn't built.
+  last, which the device records. Another device's goes by the name its presence last showed it by
+  (#602, 2026-11-16): a session waiting on a new name lists the one it went by last (`was`), so
+  every device shows it by the name its own device does, and the device keeps that name a month
+  after it was last seen (`peerNames`). One never seen in presence goes by the first by spelling
+  of the names the registry gave its address: the registry keeps no order of them, and a record's
+  time is its writer's clock. That can be an older name; a send to it reaches the same session, as
+  above.
 - **A name held by another session** (#37, #46). A `/resume` back to an earlier conversation can put
   its name on a session whose Murmur ID isn't the one the registry has. A daemon records in its
   state file the last session to hold each name and the last name each of its sessions held. A

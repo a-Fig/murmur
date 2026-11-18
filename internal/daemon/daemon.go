@@ -58,6 +58,9 @@ type Options struct {
 	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
 	// each time to a minute; PendingGiveUp how long it is tried before it is given up (pending.go).
 	PendingRetry, PendingGiveUp time.Duration
+	// OwnFetchLimit bounds the fetch of this device's own log's tip when a write to it is refused
+	// (overRemoteTip): a send waits on it, and every other write behind writeMu. 20 s.
+	OwnFetchLimit time.Duration
 	// ReadFirstLimit is how long a sync may take over the names registry and every presence, which
 	// it reads before the logs: 15 s, and never more than half of what is left of the sync.
 	// A registry read that stalls (the check of one missing from the listing asks the remote again)
@@ -190,6 +193,9 @@ func (o *Options) defaults() {
 	}
 	if o.PendingRetry == 0 {
 		o.PendingRetry = 5 * time.Second
+	}
+	if o.OwnFetchLimit == 0 {
+		o.OwnFetchLimit = 20 * time.Second
 	}
 	if o.PendingGiveUp == 0 {
 		o.PendingGiveUp = pendingGiveUp
@@ -613,6 +619,8 @@ type Daemon struct {
 	// testPush, set only by tests, stands in for a push of this device's log: it is given the real
 	// one to call, or not.
 	testPush func(push func() error) error
+	// testFetch, set only by tests, stands in for the fetch of this device's own log (fetchOwn).
+	testFetch func(ctx context.Context) error
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
@@ -911,6 +919,10 @@ type state struct {
 	// Used is every session name this daemon has ever seen, in the registry's history or in
 	// another device's presence, with the session's address where known. It only grows.
 	Used map[string]string `json:"usedNames,omitempty"`
+	// PeerNames is, by address, the name another device's session was last shown by in that
+	// device's presence, its pending one's Was included, and when it was last seen (#602): neither
+	// the registry nor Used says which of an address's names is the latest. Kept sessionNameKeep.
+	PeerNames map[string]peerName `json:"peerNames,omitempty"`
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
 	// NamesLeft is, by session key, the name the key had on the device this clone was before it
