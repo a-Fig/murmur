@@ -1144,9 +1144,9 @@ func (s *server) tools(srv *mcp.Server) {
 			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpWho, Tags: []string(in.Tags)})
 			return result(view.Who, resp, err)
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "lookup", Description: "Look up everything known about one other session, by its name from who " +
+	mcp.AddTool(srv, &mcp.Tool{Name: "lookup", Description: "Look up everything known about a session, including your own, by its name from who " +
 		"(or device/session): what it is doing, its branch and the branches it has committed to, when it " +
-		"started and was last active, whether a message would reach it, and its latest messages to and from " +
+		"started and was last active, whether a message would reach it, its known file settings, and its latest messages to and from " +
 		"others. Use it before messaging a session you don't know, to tell whether it is working on what you need " +
 		"and is still there, or when a session you sent to has gone quiet. For a session on this device it " +
 		"also gives its worktree folder and the commits it made."},

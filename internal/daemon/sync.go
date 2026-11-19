@@ -1240,7 +1240,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
-	locked := false
+	locked, opened := false, true
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
 	if pres.Box != nil {
@@ -1250,6 +1250,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			// Encrypted for a team key this device hasn't been granted yet, or for its writer alone
 			// before the team key was made. The device is there, with nothing about it readable
 			// here; it is read again once this device holds the key (addTeamKeysLocked).
+			opened = false
 			if errors.Is(err, bus.ErrNotForUs) {
 				locked = true
 			} else {
@@ -1274,7 +1275,13 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	if sealed {
 		d.newPresenceLocked(dev, pres.At) // the high-water mark of its presence times
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked}
+	var read *readFiles
+	if opened {
+		read = &readFiles{files: pres.Files, off: pres.FilesOff, personOff: pres.PersonFilesOff}
+	} else if old := d.peers[dev]; old != nil {
+		read = old.read // a box that doesn't open here says nothing new of files
+	}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked, read: read}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 		d.droppedThereLocked(dev, pres.Sessions)
@@ -1307,9 +1314,28 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	d.mu.Unlock()
 }
 
+// peerFilesLocked is whether the session at addr, on the device p is, takes files, as lookup and
+// send's note give it (#859): proto.FilesOn, FilesOff, or "" for unknown. It goes by the last
+// presence read with its box open, which stands while a newer one waits to be read, doesn't open
+// or is refused: a device that has files never flickers to unknown as it republishes, and a switch
+// turned shows a fetch late. A presence without files is unknown, not taken for an old daemon's:
+// each way of telling an old daemon from one just upgraded, its new presence not read yet, had a
+// gap (Sol's reviews of #865), and daemons update themselves within the hour. Caller holds mu.
+func (d *Daemon) peerFilesLocked(p *peer, addr string) string {
+	switch r := p.read; {
+	case r == nil || !r.files:
+		return ""
+	case bus.IsPerson(addr):
+		return onOff(!r.personOff) // a person's own switch, not their agents'
+	default:
+		return onOff(!r.off)
+	}
+}
+
 // sawPresence records that a device's presence moved to sha without being read: tried and found
 // unreadable (tried), or not fetched at all. Either way the device is alive. A device never read
-// shows as present, with no sessions, until it is read or goes stale. Caller holds advMu.
+// shows as present, with no sessions, until it is read or goes stale. One read before keeps what it
+// said; peerFilesLocked judges what it said of files. Caller holds advMu.
 func (d *Daemon) sawPresence(dev, sha string, tried bool) {
 	if dev == d.device || !bus.ValidDevice(dev) {
 		return

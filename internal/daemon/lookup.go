@@ -139,6 +139,11 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 				det.DelegateOf = d.parentNameLocked(parent)
 			}
 		}
+		send, recv := d.agentSend.Load(), d.agentRecv.on.Load()
+		if sess == bus.PersonSession {
+			send, recv = d.pageSend.Load(), d.pageRecv.on.Load()
+		}
+		det.SendsFiles, det.TakesFiles = onOff(send), onOff(recv)
 		recs := d.st.Commits[sess]
 		det.CommitCount = len(recs)
 		for _, r := range recs[max(len(recs)-lookupCommits, 0):] {
@@ -147,10 +152,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 	} else if p := d.peers[dev]; p != nil {
 		det.Host, det.Owner = p.pres.Host, p.pres.Owner
 		det.DeviceSeen, det.Stale = p.lastChange, d.staleLocked(p)
-		det.FilesOff = p.pres.Files && p.pres.FilesOff
-		if bus.IsPerson(addr) {
-			det.FilesOff = p.pres.Files && p.pres.PersonFilesOff // a person's own switch, not their agents'
-		}
+		det.TakesFiles = d.peerFilesLocked(p, addr)
 		for _, s := range p.pres.Sessions {
 			if s.ID != sess {
 				continue
@@ -212,4 +214,12 @@ func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, i
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+// onOff is a file switch as SessionDetail gives it.
+func onOff(on bool) string {
+	if on {
+		return proto.FilesOn
+	}
+	return proto.FilesOff
 }

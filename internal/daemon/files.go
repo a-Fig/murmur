@@ -22,7 +22,6 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
@@ -1696,39 +1695,32 @@ func (d *Daemon) pruneOthersFiles(ctx context.Context) {
 }
 
 // noFilesNoteLocked tells the sender of message e, which carries files, which of its recipients
-// are on a device whose daemon is from before files: they get the text alone, with no sign that
-// there was more. who is what the sender called the one it sent to, if it sent to one. Caller
-// holds mu.
+// are known to take none, as Receive files is off for them: they get the text alone. One whose
+// device doesn't say is left out (peerFilesLocked): nothing is promised either way. who is what
+// the sender called the one it sent to, if it sent to one. Caller holds mu.
 func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	to, direct := d.recipientsOfLocked(e)
-	var old, off, people []string
+	var off, people []string
 	for _, addr := range to {
 		dev, _ := bus.SplitAddr(addr)
 		p := d.peers[dev]
-		if dev == d.device || p == nil || p.locked {
+		if dev == d.device || p == nil {
 			continue
 		}
 		name, _, _ := d.sessionInfoLocked(addr)
 		if direct {
 			name = who
 		}
-		switch {
-		case !p.pres.Files:
-			old = append(old, nameOr(name, addr))
-		case bus.IsPerson(addr) && p.pres.PersonFilesOff:
+		if d.peerFilesLocked(p, addr) != proto.FilesOff {
+			continue
+		}
+		if bus.IsPerson(addr) {
 			people = append(people, nameOr(name, addr))
-		case !bus.IsPerson(addr) && p.pres.FilesOff: // its person turned their agents' Receive files off (#765)
-			off = append(off, nameOr(name, addr))
+		} else {
+			off = append(off, nameOr(name, addr)) // its person turned their agents' Receive files off (#765)
 		}
 	}
 	var notes []string
-	switch len(old) {
-	case 0:
-	case 1:
-		notes = append(notes, old[0]+" is on a device that runs a "+brand.Product+" from before files, so the text alone gets there.")
-	default:
-		notes = append(notes, andList(old)+" are on devices that run a "+brand.Product+" from before files, so the text alone gets there.")
-	}
 	switch len(off) {
 	case 0:
 	case 1:
@@ -1739,9 +1731,9 @@ func (d *Daemon) noFilesNoteLocked(e bus.Event, who string) string {
 	switch len(people) {
 	case 0:
 	case 1:
-		notes = append(notes, people[0]+" takes no files: they turned Receive files off, so the text alone gets there.")
+		notes = append(notes, people[0]+" takes no files: Receive files is off, so the text alone gets there.")
 	default:
-		notes = append(notes, andList(people)+" take no files: they turned Receive files off, so the text alone gets there.")
+		notes = append(notes, andList(people)+" take no files: Receive files is off, so the text alone gets there.")
 	}
 	return strings.Join(notes, " ")
 }

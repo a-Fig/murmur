@@ -423,12 +423,8 @@ type Device struct {
 	LastSeen time.Time `json:"lastSeen"` // when this daemon last saw its presence change
 	// DND says the device's person put it on do not disturb (#681): no message reaches its sessions
 	// until it is back online.
-	DND bool `json:"dnd,omitempty"`
-	// FilesOff says the device takes no files: its person turned Receive files off (#765). For
-	// this device, SendFilesOff says Send files is off, so a send with files is refused.
-	FilesOff     bool          `json:"filesOff,omitempty"`
-	SendFilesOff bool          `json:"sendFilesOff,omitempty"`
-	Sessions     []SessionView `json:"sessions"`
+	DND      bool          `json:"dnd,omitempty"`
+	Sessions []SessionView `json:"sessions"`
 }
 
 // SessionView is one session as `who` shows it.
@@ -453,10 +449,13 @@ type SessionView struct {
 	// the hook, which runs after every tool call, never reported (#225). It isn't told of messages
 	// while it works.
 	HookOff bool `json:"hookOff,omitempty"`
-	// FilesOff, on a person, says they turned Receive files off on the page (#765): a message's
-	// text reaches them and its files don't.
-	FilesOff bool `json:"filesOff,omitempty"`
 }
+
+// The values of SessionDetail's SendsFiles and TakesFiles.
+const (
+	FilesOn  = "on"
+	FilesOff = "off"
+)
 
 // SessionDetail is everything the daemon knows about one session, as `lookup` shows it. Where a
 // field comes from decides who has it: the bus carries the first group; the second is on the
@@ -470,8 +469,12 @@ type SessionDetail struct {
 	Nick   string `json:"nick,omitempty"` // what the device is called, as Device.Nick
 	Agent  string `json:"agent,omitempty"`
 	You    bool   `json:"you,omitempty"`
-	// FilesOff says the session's device takes no files: Receive files is off on it (#765).
-	FilesOff bool `json:"filesOff,omitempty"`
+	// SendsFiles and TakesFiles are what the session's file switches say (#859): FilesOn, FilesOff,
+	// or "" where this device can't know. A person's are their own switches, an agent's its device's agents'.
+	// Another device's presence says whether it takes files, never whether it sends them, so
+	// SendsFiles is set for a session on this device alone.
+	SendsFiles string `json:"sendsFiles,omitempty"`
+	TakesFiles string `json:"takesFiles,omitempty"`
 
 	Branch    string     `json:"branch,omitempty"`
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first

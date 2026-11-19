@@ -482,3 +482,35 @@ func TestLookupSaysASessionWontBeWoken(t *testing.T) {
 		t.Errorf("on do not disturb:\n%s", got)
 	}
 }
+
+// lookup always says whether the session sends and takes files, the one place an agent can check
+// (#859). Another device's says only whether it takes them, as only this device knows whether one
+// of its own sends them, and "unknown" where its presence couldn't be read.
+func TestLookupSaysWhetherASessionSendsAndTakesFiles(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		what string
+		det  proto.SessionDetail
+		want string
+	}{
+		{"an agent here, both on", proto.SessionDetail{Local: true, Agent: "Claude Code", SendsFiles: proto.FilesOn, TakesFiles: proto.FilesOn},
+			"files: sends them, takes them"},
+		{"an agent here, both off", proto.SessionDetail{Local: true, Agent: "Claude Code", SendsFiles: proto.FilesOff, TakesFiles: proto.FilesOff},
+			"files: sends none (Send files is off for agents here), takes none from other devices (Receive files is off for agents here)"},
+		{"the person here, both off", proto.SessionDetail{Local: true, Agent: bus.AgentPerson, SendsFiles: proto.FilesOff, TakesFiles: proto.FilesOff},
+			"files: sends none (Send files is off), takes none from other devices (Receive files is off)"},
+		{"an agent elsewhere that takes them", proto.SessionDetail{Agent: "Codex", TakesFiles: proto.FilesOn},
+			"files: takes them"},
+		{"an agent elsewhere that takes none", proto.SessionDetail{Agent: "Codex", TakesFiles: proto.FilesOff},
+			"files: takes none (Receive files is off for agents on its device)"},
+		{"a person elsewhere that takes none", proto.SessionDetail{Agent: bus.AgentPerson, TakesFiles: proto.FilesOff},
+			"files: takes none (Receive files is off)"},
+		{"a device whose presence can't be read", proto.SessionDetail{Agent: "Codex"},
+			"files: takes: unknown"},
+	} {
+		tc.det.Addr, tc.det.Device = "dev-0001/aaaaaa", "dev-0001"
+		if got := Lookup(proto.Response{Lookup: &tc.det}); !strings.Contains(got, "  "+tc.want+"\n") {
+			t.Errorf("%s: want %q in\n%s", tc.what, tc.want, got)
+		}
+	}
+}

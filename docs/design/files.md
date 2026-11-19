@@ -20,17 +20,31 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
 
 - **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
   an agent's if sending is off or kept from agents, the page's if it is off, and checked again
-  once the push's turn comes. An agent is told its user can turn it on, and `who` marks the device `AGENTS SEND NO
-  FILES` so it knows before it tries. On the page the paperclip still shows: attaching, dropping
+  once the push's turn comes. An agent is told its user can turn it on. `who` doesn't say so
+  beforehand: most agents never send files, and two lines under every device were noise they read
+  on each call (#859, Tyler, 2026-11-17). On the page the paperclip still shows: attaching, dropping
   or pasting a file asks the person to turn theirs on, and goes on once they do.
 - **Receive files off:** a message from another device arrives as its text, its files neither
   fetched nor shown. Kept from agents, the page fetches and shows them and the sessions don't get
   them. A fetch under way ends when its switch goes off, and a
   message that was waiting for its files goes without them. The device's presence says whether its
   agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's
-  `send` says which recipients get the text alone, and `who` and `lookup` show it before a send.
+  `send` says which recipients get the text alone. `who` doesn't show it, for the same reason as
+  Send files (#859).
   What a session sends another on the same device is there already and fetched from nowhere, so it
   is shown.
+- **`lookup` shows them, every time:** one `files:` line, so an agent can check its own name or
+  another's before it tries (Tyler, 2026-11-17). For a session here it says whether it sends files
+  and whether it takes them from other devices, from this device's switches, the person's own for a
+  person. For another device it says only whether it takes them: presence never says whether a
+  device sends them. It goes by the last presence read with its box open (`peerFilesLocked`),
+  which stands while a newer one is fetched, waits to be read, doesn't open, or is refused as not
+  the device's own. So a device that has files never flickers to unknown as it republishes, and a
+  switch turned shows a fetch late. A presence without `files` is `takes: unknown`, as is a device
+  with nothing read. Nothing says the device predates files: four reviews (Sol's, of #865) each
+  found a way an upgraded device, its new presence not yet read, would be taken for an old one,
+  and with daemons updating themselves within the hour ([updating](updating.md)) the claim was
+  worth little (Tyler, 2026-11-17).
 - **The path limit stays** as a second guard when sending is on ([What is checked](#what-is-checked)).
 
 ## How a file travels
@@ -269,12 +283,13 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
 
 ## Older daemons
 
-Tyler's decision (2026-11-15): sent with a note, not refused. A daemon from before files ignores
-an event's `files` and gives its sessions the text, with no sign there was more. A device's
-presence says whether its daemon takes files (`files`, beside `groups` and `receipts`), and a
-sender is told which recipients' devices don't. Refusing would hold back the text for a gap the
-updater closes within an hour ([updating](updating.md)). A person whose page is served by such a
-daemon is among them.
+Tyler's decision (2026-11-15): sent, not refused. A daemon from before files ignores an event's
+`files` and gives its sessions the text, with no sign there was more. Refusing would hold back the
+text for a gap the updater closes within an hour ([updating](updating.md)). A device's presence
+says whether its daemon takes files (`files`, beside `groups` and `receipts`). Until 2026-11-17 a
+sender was told which recipients' devices didn't; since #859 such a recipient is unknown, in
+`lookup` and in `send`'s note alike, as a presence without `files` may be an upgraded device's
+that hasn't been read yet (see `lookup` above).
 
 A client from before files talking to a newer daemon sends none. A newer client finds an older
 daemon by its protocol number (23) and replaces it, as for any request an older daemon can't serve.
