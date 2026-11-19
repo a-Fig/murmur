@@ -5096,7 +5096,7 @@ function wakeControl(key, wake, onChange, withDefault) {
     inputmode: "numeric",
     placeholder: String(def),
     "aria-label": "Minutes idle",
-    title: "Minutes it may be idle and still be woken, from 1 to 1440; blank uses the device default",
+    title: "Minutes it may be idle and still be woken, from 1 to 1440; blank means " + def + " minutes",
     "data-key": key + "-minutes",
     value: wake.minutes ? String(wake.minutes) : null,
     oninput: (e) => {
@@ -5636,7 +5636,7 @@ function settingsPage() {
           "Your agents here can send files too, only from this repo or the temp folder.",
           "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
           "agentsSendOff",
-          ["Send no files from this device; attaching one asks you to turn this on first", "Allow messages written here to carry file attachments from this device"],
+          ["Send no files from this device; attaching one asks you to turn this on first", "Let you, and your agents if Agents too is on, attach files to messages from this device"],
           ["Agents on this device may not send files; a file message from one is not sent and it is told you can turn this on", "Agents on this device may send files, only from this repo or the temp folder"],
         ),
         fileRows(
@@ -6121,7 +6121,7 @@ document.addEventListener("keydown", (e) => {
 // can't be styled. The page's tip is only for what a person can't already read: a button that is
 // only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
 // labelled buttons and badges keep the browser's title, which waits long enough not to get in the
-// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// way. The exception is a choice in a segmented control, whose tip says what it does before it is picked. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
 // show too, and it comes back after, so assistive tech still reads it.
 //
 // The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
