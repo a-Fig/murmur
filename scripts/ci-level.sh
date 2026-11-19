@@ -35,8 +35,11 @@ quiet() {
 base=${CI_LEVEL_BASE:-}
 if [ -n "$base" ] && ! git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1; then base=; fi
 
+# A build constraint, new style or old, indented or not.
+tag='^[[:space:]]*//[[:space:]]*(go:build|\+build)'
+
 # full for Go the daemon's tests run differently per OS: a file named for an OS (with or without an
-# architecture), one with a //go:build line before or after the change (a deleted or renamed file is
+# architecture), one with a build constraint before or after the change (a deleted or renamed file is
 # read as it was), and a change that adds or removes a line naming runtime.GOOS. An edit inside an
 # existing runtime.GOOS branch is `go`: whole files that test runtime.GOOS include the daemon's
 # most-changed ones (sync.go, files.go), and main's run catches the rest (docs/testing.md).
@@ -48,9 +51,9 @@ perOS() {
     *) echo go; return ;;
   esac
   if [ -z "$base" ]; then echo full; return; fi
-  if [ -f "$1" ] && grep -q '^//go:build' "$1"; then echo full; return; fi
-  if git show "$base:$1" 2>/dev/null | grep -q '^//go:build'; then echo full; return; fi
-  if git diff "$base" -- "$1" | grep -qE '^[-+].*(//go:build|runtime\.GOOS)'; then echo full; return; fi
+  if [ -f "$1" ] && grep -qE "$tag" "$1"; then echo full; return; fi
+  if git show "$base:$1" 2>/dev/null | grep -qE "$tag"; then echo full; return; fi
+  if git diff "$base" -- "$1" | grep -qE '^[-+].*(go:build|\+build|runtime\.GOOS)'; then echo full; return; fi
   echo go
 }
 

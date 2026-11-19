@@ -2,31 +2,37 @@
 # Checks scripts/ci-level.sh: each case is the level expected, then the files changed. They run in
 # a scratch repo whose one commit is the base (CI_LEVEL_BASE), with the change in its working tree.
 set -eu
-script="$(cd "$(dirname "$0")" >/dev/null && pwd)/ci-level.sh"
+unset CDPATH
+script="$(cd "$(dirname "$0")" && pwd)/ci-level.sh"
 repo=$(mktemp -d)
 trap 'rm -rf "$repo"' EXIT
 cd "$repo"
 g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g init -q
 g config core.autocrlf false
-mkdir -p internal/a internal/b internal/c internal/d internal/e
+mkdir -p internal/a internal/b internal/c internal/d internal/e internal/f
 printf 'package a\n' >internal/a/plain.go
 printf '//go:build windows\n\npackage b\n' >internal/b/tagged.go
 printf '//go:build windows\n\npackage c\n' >internal/c/untag.go
 printf 'package d\n\nvar x = 1\n' >internal/d/goos.go
 printf 'package e\n\nfunc f() bool { return runtime.GOOS == "windows" }\n' >internal/e/inbranch.go
 printf 'package e\n' >internal/e/stays.go
+printf '// +build windows\n\npackage f\n' >internal/f/legacy.go
+printf '  //go:build windows\n\npackage f\n\nvar a = 1\n' >internal/f/indented.go
 g add -A
 g commit -qm base
 export CI_LEVEL_BASE=HEAD
 # The change: an untagged edit, a deletion of a tagged file, a tag taken out, a runtime.GOOS
-# branch added, an edit beside one that was already there, and a tagged file added.
+# branch added, an edit beside one that was already there, a tagged file added, a file with an
+# old-style constraint deleted, and an edit to one whose constraint is indented.
 printf 'package a\n\nvar y = 2\n' >internal/a/plain.go
 rm internal/b/tagged.go
 printf 'package c\n' >internal/c/untag.go
 printf 'package d\n\nvar x = runtime.GOOS == "windows"\n' >internal/d/goos.go
 printf 'package e\n\nfunc f() bool { return runtime.GOOS == "windows" }\n\nvar z = 3\n' >internal/e/inbranch.go
 printf '//go:build !windows\n\npackage e\n' >internal/e/added.go
+rm internal/f/legacy.go
+printf '  //go:build windows\n\npackage f\n\nvar a = 2\n' >internal/f/indented.go
 
 fails=0
 want() {
@@ -68,6 +74,8 @@ want full internal/c/untag.go
 want full internal/d/goos.go
 want go internal/e/inbranch.go
 want full internal/e/added.go
+want full internal/f/legacy.go
+want full internal/f/indented.go
 # A rename comes as both names: the old one, deleted here, is read as it was.
 want full internal/a/plain.go internal/b/tagged.go
 want full go.sum
