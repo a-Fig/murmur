@@ -293,6 +293,9 @@ func (p *Presence) Clean() {
 			} else if !names.Valid(s.Name) {
 				s.Name = ""
 			}
+			if s.Name != "" || !names.Valid(s.Was) {
+				s.Was = ""
+			}
 			s.Agent = OneLine(s.Agent, 40)
 			s.Branch = OneLine(s.Branch, 100)
 			s.Doing = OneLine(s.Doing, 120)
@@ -502,6 +505,10 @@ type SessionInfo struct {
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// Was is the name the session went by last, while it has none (Name is empty): a new one is
+	// pending, as after Claude Code's /clear. Every device then shows it by the name its own device
+	// does (#602). A daemon from before it ignores it.
+	Was string `json:"was,omitempty"`
 	// Dropped is the IDs of the last messages, at most MaxDropped, that this session's device
 	// dropped on arrival because this session had muted their sender (#466). The sender's daemon
 	// finds its own among them and tells the sender, who would otherwise believe it arrived. A

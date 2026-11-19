@@ -42,14 +42,14 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 	// the thread.
 	agentAbove = func() bool { return true }
 	t.Cleanup(func() { agentAbove = func() bool { return false } })
-	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != "a4ca6b" {
+	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != sessionID("a4ca6bbb-aaaa-bbbb-cccc-ddddeeeeffff") {
 		t.Errorf("under another agent: %+v", h)
 	}
 	agentAbove = func() bool { return false }
 	// With no T3 command line and not started by a t3 (servingT3, as TestMain sets it), the variable
 	// is only inherited, and the session is as before.
 	t.Setenv("T3CODE_CLI_PATH", "")
-	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != "a4ca6b" {
+	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != sessionID("a4ca6bbb-aaaa-bbbb-cccc-ddddeeeeffff") {
 		t.Errorf("outside T3: %+v", h)
 	}
 }
@@ -98,7 +98,7 @@ func TestAServerTakesTheThreadsAddressFromTheDaemon(t *testing.T) {
 	t.Setenv("T3CODE_CLI_PATH", "")
 	g := &fakeDaemon{helloReply: func(proto.Hello) (string, string) { return "", "865a81" }}
 	l = startedLink(t, g, nil, helloFor("claude-code", "/work"))
-	if id, _ := l.wait(context.Background(), time.Second); id != "a4ca6b" {
+	if id, _ := l.wait(context.Background(), time.Second); id != sessionID("a4ca6bbb-aaaa-bbbb-cccc-ddddeeeeffff") {
 		t.Errorf("a server outside T3 took the ID %s", id)
 	}
 }
@@ -119,7 +119,7 @@ func TestAServerWhoseThreadIsLiveIsASessionOfItsOwn(t *testing.T) {
 	}}
 	fd := &finder{}
 	startedLink(t, f, fd, helloFor("claude-code", "/work"))
-	if h := f.lastHello(); h.ID != "0d0d0d" || h.ByThread || h.T3Thread != "" {
+	if h := f.lastHello(); h.ID != sessionID("0d0d0d0d-aaaa-bbbb-cccc-ddddeeeeffff") || h.ByThread || h.T3Thread != "" {
 		t.Fatalf("registered with %+v", h)
 	}
 	waitFor(t, "a look in T3's database", func() bool {

@@ -31,3 +31,11 @@ func SetSendRace(f func(part string)) func() {
 	sendRace = f
 	return func() { sendRace = was }
 }
+
+// SetGraceBegins sets graceBegins, what is called as a dropped session's grace begins and returns
+// what ends it, and returns what puts it back.
+func SetGraceBegins(f func(id string) <-chan struct{}) func() {
+	was := graceBegins
+	graceBegins = f
+	return func() { graceBegins = was }
+}

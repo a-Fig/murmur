@@ -166,9 +166,9 @@ func TestANewNameTakesWhatTheOldOneKept(t *testing.T) {
 	}
 	// And it is refused, or told who, when it sends: a message dropped on arrival with its sender
 	// told nothing is what a mute never does. Only for a muter here.
-	if !d.hasMutedLocked(d.device, s.id, d.muteNameLocked(from, d.device)) || d.muteNameLocked(from, "there-0002") != "" ||
-		!slices.Equal(d.mutersLocked(d.leftNameLocked(from), d.device), []string{"bold-lark"}) {
-		t.Errorf("with its name pending, a send finds it muted as %q, by %v", d.muteNameLocked(from, d.device), d.mutersLocked(d.leftNameLocked(from), d.device))
+	if !d.hasMutedLocked(d.device, s.id, from) || slices.Contains(d.muteNamesLocked(from, false), "brave-heron") ||
+		!slices.Equal(d.mutersLocked(from, ""), []string{"bold-lark"}) {
+		t.Errorf("with its name pending, a send finds it muted as %v (there %v), by %v", d.muteNamesLocked(from, true), d.muteNamesLocked(from, false), d.mutersLocked(from, ""))
 	}
 	// Stopped before the name lands, it still goes by the old name's: a T3 thread is found by
 	// its route.

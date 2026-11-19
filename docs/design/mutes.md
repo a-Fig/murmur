@@ -38,9 +38,13 @@ on: not a message to it, to its device, to a group it is in, or to everyone.
   2026-11-12), as after Claude Code's `/clear`: a message carries no name and the registry keeps no
   order, so a mute of any of them holds. For one of this device's sessions that includes the name it
   took last, which the registry may have down for another session ID after a resume, so the name the
-  inbox shows for it is always one a mute holds against (#502). The cost: a later conversation
+  inbox shows for it is always one a mute holds against (#502). A sender's own device refuses it, or
+  names the muters of a message to many, by the same names: the one it has in presence, or every
+  one its address has held while it has none (#602), so a sender waiting on a new name isn't sent
+  past a mute of its old one. The cost: a later conversation
   nobody muted, at that address, has what it sends dropped once it has left presence, and is told
-  it was muted (#466). Remembering the last name each address showed would narrow that; it isn't built.
+  it was muted (#466). The name each address last showed in presence (`peerNames`, #602) would
+  narrow that; the receiving check doesn't use it yet.
 - **A muted session can't add the session that muted it to a group** (#483), since each add used one
   of the muting session's 12 tags.
 - **A person can undo one, on the page of the muting session's device**, so an agent can't silence a

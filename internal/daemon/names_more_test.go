@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -304,6 +305,53 @@ func TestTwoServersOfOneSessionDoNotShareAName(t *testing.T) {
 	if got := a.nameOf(first); got != n1 {
 		t.Fatalf("the first server reconnected as %q, was %q", got, n1)
 	}
+	noNameTwice(t, readRegistry(t, remote))
+}
+
+// Two MCP servers of one client session keep their own names whichever of them comes back first
+// (#38): after both have dropped, and after the daemon has restarted. The later of the two was
+// whichever found the other live, so the first back took its sibling's name.
+func TestTwoServersOfOneSessionKeepTheirNamesInAnyOrder(t *testing.T) {
+	remote := newRemote(t)
+	a := newDeviceWith(t, remote, func(d *device) { d.grace = 300 * time.Millisecond })
+	const key = "claude-shared-0038"
+	first, c1 := a.session("aaaaaa", key)
+	second, c2 := a.session("bbbbbb", key)
+	n1, n2 := a.named(first), a.named(second)
+	if n1 == n2 {
+		t.Fatalf("both are named %s", n1)
+	}
+	back := func(when string) (io.Closer, io.Closer) {
+		t.Helper()
+		var b1, b2 net.Conn
+		eventually(t, "the second server back, "+when, func() bool {
+			var err error
+			b2, err = a.restartedMCP("bbbbbb", key)
+			return err == nil
+		})
+		eventually(t, "the first server back, "+when, func() bool {
+			var err error
+			b1, err = a.restartedMCP("aaaaaa", key)
+			return err == nil
+		})
+		if got1, got2 := a.nameOf(first), a.nameOf(second); got1 != n1 || got2 != n2 {
+			t.Fatalf("%s they are %q and %q, were %q and %q", when, got1, got2, n1, n2)
+		}
+		return b1, b2
+	}
+	// Both drop, and are gone from presence, before the second comes back.
+	c1.Close()
+	c2.Close()
+	eventually(t, "both sessions stopped", func() bool {
+		return !a.listsSession(first) && !a.listsSession(second)
+	})
+	b1, b2 := back("after both dropped")
+	// And across a restart of the daemon.
+	b1.Close()
+	b2.Close()
+	a.stop()
+	a.start()
+	back("after the daemon restarted")
 	noNameTwice(t, readRegistry(t, remote))
 }
 
