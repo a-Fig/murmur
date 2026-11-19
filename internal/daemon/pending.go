@@ -129,17 +129,15 @@ func (d *Daemon) retryPending() {
 		// The remote's tip isn't under this one: an older copy of the log, or junk, to push over,
 		// as appendEventIf does; or a log that went on without the pending sends.
 		if tip, rerr := d.repo.RemoteRef(ctx, ref); rerr == nil {
-			if ferr := d.repo.Fetch(ctx, []string{ref}); ferr == nil {
-				if over, oerr := d.overOwnLog(ctx, tip); oerr == nil {
-					if !over {
-						d.settlePendingOn(ctx, tip, err)
-						d.ownTip = tip
-						return
-					}
-					if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
-						d.ownLanded(ctx, ref, sha, false)
-						return
-					}
+			if over, oerr := d.overRemoteTip(ctx, ref, tip); oerr == nil {
+				if !over {
+					d.settlePendingOn(ctx, tip, err)
+					d.ownTip = tip
+					return
+				}
+				if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
+					d.ownLanded(ctx, ref, sha, false)
+					return
 				}
 			}
 		}

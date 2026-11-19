@@ -548,6 +548,9 @@ func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
 	s.d.pageCalled(ctx)
 	s.d.setMu.Lock()
 	defer s.d.setMu.Unlock()
+	if s.d.settingsMove.Load() {
+		s.d.moveSettings() // so the page reads each session's choice under the name it has now
+	}
 	return s.d.settings.view(), nil
 }
 
@@ -573,6 +576,10 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	if d.settingsMove.Load() {
+		d.moveSettings()
+	}
+	d.movedSettings(&next) // a page that read before a session's name changed (#836)
 	// The file switches this save doesn't name stay as they are.
 	for _, sw := range []struct {
 		name      string

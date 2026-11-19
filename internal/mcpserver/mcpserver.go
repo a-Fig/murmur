@@ -570,19 +570,15 @@ func openCodeService() (exe, state string) {
 	return exe, state
 }
 
-// sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays
-// the same if the MCP server restarts within the session. Otherwise it is random.
+// sessionID derives the session's ID from Claude Code's, when there is one, so the ID stays the
+// same if the MCP server restarts within the session, or the conversation is resumed. It is hashed,
+// as nativeID is for the other agents: it used to be the first six hex characters of Claude Code's
+// ID, which put 24 bits of it in every address on the bus (#51). Otherwise it is random.
 func sessionID(claude string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(claude) {
-		if r >= '0' && r <= '9' || r >= 'a' && r <= 'f' {
-			b.WriteRune(r)
-		}
+	if claude == "" {
+		return bus.RandHex(6)
 	}
-	if id := b.String(); len(id) >= 6 {
-		return id[:6]
-	}
-	return bus.RandHex(6)
+	return nativeID("claude:" + claude)
 }
 
 func agentName(flag string) string { return agentLabel(flag, t3Of(flag).cli) }

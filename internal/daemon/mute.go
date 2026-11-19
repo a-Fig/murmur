@@ -81,12 +81,19 @@ func (d *Daemon) nameOfLocked(addr string) string {
 // activity, lookup and the mute checks (#502), so the name an agent replies to or mutes is the one
 // it was shown. One of this device's goes by the name it took last (SessionNames), which this
 // device knows; for one waiting on a new name, that is its previous one. Another device's goes by
-// the first by spelling of the names the registry gave its address, which says nothing of which is
-// the latest: neither the registry nor presence keeps an order of them. namesByAddrLocked gives
+// the name its presence last showed it by (PeerNames, #602), or, never seen there, the first by
+// spelling of the names the registry gave its address, as the registry keeps no order of them.
+// namesByAddrLocked gives
 // the same for every address at once. "" for an address with none. Caller holds mu.
 func (d *Daemon) lastNameLocked(addr string) string {
-	if dev, id := bus.SplitAddr(addr); dev == d.device && d.st.SessionNames[id] != "" {
+	dev, id := bus.SplitAddr(addr)
+	if dev == d.device && d.st.SessionNames[id] != "" {
 		return d.st.SessionNames[id]
+	}
+	// Another device's, by the name its presence last showed it by: the name its own device shows
+	// it by, so every device agrees (#602).
+	if dev != d.device && d.st.PeerNames[addr].Name != "" {
+		return d.st.PeerNames[addr].Name
 	}
 	if names := d.heldNamesLocked(addr); len(names) > 0 {
 		return names[0]
@@ -137,6 +144,12 @@ func (d *Daemon) mutedAtKeyLocked(key, addr string) (at time.Time, muted bool) {
 		at, muted = m[name]
 		return at, muted
 	}
+	// One here whose new name is pending is still the session muted under its old one (#827).
+	if old := d.leftNameLocked(addr); old != "" {
+		if at, muted = m[old]; muted {
+			return at, true
+		}
+	}
 	for _, name := range d.heldNamesLocked(addr) {
 		// The latest mute of them, so the grace is that one's.
 		if t, ok := m[name]; ok && (!muted || t.After(at)) {
@@ -172,36 +185,78 @@ func (d *Daemon) mutedHereKeyLocked(key string, e bus.Event) bool {
 	return !direct || time.Since(at) >= d.opt.MuteGrace
 }
 
+// leftNameLocked is the name the session at addr had before this clone lost its keys, if it is
+// one of this device's whose new name is pending (NamesLeft, #827), and "" otherwise. The
+// sessions here that muted it under that name have still muted it. Caller holds mu.
+func (d *Daemon) leftNameLocked(addr string) string {
+	dev, id := bus.SplitAddr(addr)
+	if s := d.sessions[id]; dev == d.device && s != nil && s.name == "" && s.key != "" {
+		return d.st.NamesLeft[s.key]
+	}
+	return ""
+}
+
+// muteNamesLocked is the names a mute of the session at addr may be under, as a receiving device
+// tells (mutedAtLocked): the name it has in presence, or, with none, as after /clear before its
+// new name lands, every name its address has held. A sender is refused, or told who didn't get its
+// message, by these, so it isn't sent a message the receiver then drops unseen (#602). Caller
+// holds mu.
+//
+// here says the receiving device is this one, whose mutedAtLocked holds the name its device took
+// last (SessionNames) against the address, and, for a session here whose new name is pending
+// after its clone lost its keys, the name it had before (leftNameLocked, #827). Another device
+// holds only the names the registry gave it, so a name the registry has given another address
+// since, as a resume does, is left out for one there: a refusal by it would be wrong (Opus's
+// reviews of #840). No other device's mute of the old name follows the session either.
+func (d *Daemon) muteNamesLocked(addr string, here bool) []string {
+	if bus.IsPerson(addr) {
+		return nil
+	}
+	if name, _, _ := d.sessionInfoLocked(addr); name != "" {
+		return []string{name}
+	}
+	names := d.heldNamesLocked(addr)
+	if here {
+		if old := d.leftNameLocked(addr); old != "" && !slices.Contains(names, old) {
+			names = append(names, old)
+		}
+		return names
+	}
+	return slices.DeleteFunc(names, func(n string) bool {
+		a := d.st.Used[n]
+		return a != "" && a != addr
+	})
+}
+
 // hasMutedLocked says the session at dev/sess, here or in another device's presence, has muted
-// the session called name. Caller holds mu.
-func (d *Daemon) hasMutedLocked(dev, sess, name string) bool {
-	if name == "" || sess == "" {
+// the session at from, by the names that device holds against it (muteNamesLocked). Caller holds
+// mu.
+func (d *Daemon) hasMutedLocked(dev, sess, from string) bool {
+	names := d.muteNamesLocked(from, dev == d.device)
+	if len(names) == 0 || sess == "" {
 		return false
 	}
 	if dev == d.device {
-		_, muted := d.st.Mutes[d.tagKeyLocked(sess)][name]
-		return muted
+		m := d.st.Mutes[d.tagKeyLocked(sess)]
+		return slices.ContainsFunc(names, func(n string) bool { _, ok := m[n]; return ok })
 	}
 	if p := d.peers[dev]; p != nil {
 		for _, s := range p.pres.Sessions {
 			if s.ID == sess {
-				return slices.Contains(s.Muted, name)
+				return slices.ContainsFunc(names, func(n string) bool { return slices.Contains(s.Muted, n) })
 			}
 		}
 	}
 	return false
 }
 
-// mutersLocked lists, by name, the sessions that have muted the session called name: on device
-// dev, or on every device this daemon knows if dev is "". Caller holds mu.
-func (d *Daemon) mutersLocked(name, dev string) []string {
-	if name == "" {
-		return nil
-	}
+// mutersLocked lists, by name, the sessions that have muted the session at from (hasMutedLocked):
+// on device dev, or on every device this daemon knows if dev is "". Caller holds mu.
+func (d *Daemon) mutersLocked(from, dev string) []string {
 	var out []string
 	if dev == "" || dev == d.device {
 		for _, s := range d.sortedSessionsLocked() {
-			if _, muted := d.st.Mutes[tagKeyOf(s.name, s.id)][name]; muted {
+			if d.hasMutedLocked(d.device, s.id, from) {
 				out = append(out, nameOr(s.name, bus.Addr(d.device, s.id)))
 			}
 		}
@@ -211,12 +266,40 @@ func (d *Daemon) mutersLocked(name, dev string) []string {
 			continue
 		}
 		for _, s := range d.peers[id].pres.Sessions {
-			if slices.Contains(s.Muted, name) {
+			if d.hasMutedLocked(id, s.ID, from) {
 				out = append(out, nameOr(s.Name, bus.Addr(id, s.ID)))
 			}
 		}
 	}
 	return out
+}
+
+type peerName struct {
+	Name string    `json:"name"`
+	At   time.Time `json:"at"` // to the hour
+}
+
+// notePeerNameLocked records name as the one another device's session at addr is shown by, and
+// lets go of those not seen for sessionNameKeep. It says whether the state changed. Caller holds
+// mu.
+func (d *Daemon) notePeerNameLocked(addr, name string) bool {
+	if name == "" {
+		return false
+	}
+	now := time.Now().UTC().Truncate(time.Hour)
+	if pn, ok := d.st.PeerNames[addr]; ok && pn.Name == name && pn.At.Equal(now) {
+		return false
+	}
+	if d.st.PeerNames == nil {
+		d.st.PeerNames = map[string]peerName{}
+	}
+	for a, pn := range d.st.PeerNames {
+		if now.Sub(pn.At) > sessionNameKeep {
+			delete(d.st.PeerNames, a)
+		}
+	}
+	d.st.PeerNames[addr] = peerName{name, now}
+	return true
 }
 
 // mutersNote tells the sender of a message to many which of them didn't get it, "" if all did.
@@ -241,7 +324,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 	if s == nil {
 		return fail("the CLI mutes nobody: a mute is a session's")
 	}
-	key := tagKeyOf(s.name, s.id)
+	key := d.keptByLocked(s)
 	name := req.Name
 	var note string
 	switch {
@@ -255,7 +338,7 @@ func (d *Daemon) mute(id string, req proto.Request) proto.Response {
 		d.dropMuteLocked(key, name)
 		d.log.Printf("session %s unmuted %s", from, name)
 		note = "You have unmuted " + name + ". What it sends from now on will reach you."
-	case name == s.name:
+	case name == s.name || name == key: // key: the name it had before this clone lost its keys
 		return fail("that is your own name")
 	default:
 		if _, ok := d.resolveNameLocked(name); !ok {

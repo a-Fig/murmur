@@ -252,9 +252,16 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	// thread back from a session that got it since.
 	var left []string
 	if s == nil && !h.Reconnect {
-		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base)
+		if isClaudeCode(agent) && d.st.ThreadLeft[h.ID] != "" {
+			// A Claude session in T3 keeps its ID across its server's restarts, as the ID is made
+			// from the thread (#642): starting again, it has the conversation again, though it gave
+			// it up to the command line once (#643).
+			delete(d.st.ThreadLeft, h.ID)
+		}
+		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base, claude)
 	}
-	key := d.uniqueKeyLocked(base, h.ID)
+	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude), h.ID)
+	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread
@@ -272,7 +279,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// session may have taken its key and name, and s, back, holds the name now. As any taking
 		// of a name does, that also takes what was kept for the name (see adoptLocked).
 		s.key = key
-		d.setNameLocked(s, d.nameForKeyLocked(key, s.id))
+		d.setNameLocked(s, d.nameForKeyLocked(s, key))
 		s.dropped = time.Time{}
 		close(s.takeover)
 		s.takeover = nil
@@ -357,6 +364,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	s.dropped, s.takeover = time.Now(), takeover
 	d.mu.Unlock()
 
+	var over <-chan struct{} // nil, so never, unless a test ends the grace
+	if graceBegins != nil {
+		over = graceBegins(h.ID)
+	}
 	grace := time.NewTimer(d.opt.SessionGrace)
 	defer grace.Stop()
 	select {
@@ -370,6 +381,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.mu.Unlock()
 		return
 	case <-grace.C:
+	case <-over:
 	}
 
 	d.mu.Lock()
@@ -381,16 +393,35 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
+	// A session that took this one's name while it was in its grace, as a conversation resumed at
+	// another ID does (a command-line one after #51 hashed its ID), passed its inbox by: it was
+	// still among the sessions then. It takes it now (Opus's review of #51), and is handed it: its
+	// registration's look for messages to hand over is long done, and nothing after this kicks one.
+	kept := d.keptForLocked(h.ID)
+	adopted := false
+	if holder := d.sessions[d.st.NameHolders[kept]]; kept != "" && holder != nil && holder.id != h.ID &&
+		holder.dropped.IsZero() && holder.name == kept {
+		adopted = d.adoptLocked(holder, kept)
+	}
 	d.saveLocked()
 	unlogged := s.unlogged
 	d.mu.Unlock()
 	d.log.Printf("session %s stopped", addr)
+	if adopted {
+		d.kickPush()
+	}
 	d.kickPresence()
 	if !unlogged {
 		d.appendSoon(bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.SessionStopped, From: addr,
 			At: time.Now().UTC()})
 	}
 }
+
+// graceBegins, if a test sets it, is called once a session whose connection dropped is recorded
+// as dropped, as its grace begins, and closing the channel it returns ends that grace as
+// SessionGrace's timer would. Tests take a long grace and end it when they are ready, instead of
+// racing a short one (Sol's review of #51).
+var graceBegins func(id string) <-chan struct{}
 
 // stoppedWithDaemonLocked takes session id out as the daemon stops, and records it as stopped
 // then (#736). Its server may reconnect to the next daemon, which gives it back its inbox as it
@@ -720,7 +751,7 @@ func (d *Daemon) notices(req proto.Request) proto.Response {
 		// Only the hook shows a message whole: a request that names no client's session isn't one,
 		// and a hook that doesn't say it prints Read (req.Whole) would lose it (#229).
 		printsWhole := hookReq(req) && req.Whole
-		busyWhole := wake.busyChoice(d.sessionNameLocked(id)) == web.BusyWhole
+		busyWhole := wake.busyChoice(d.settingsNameLocked(id)) == web.BusyWhole
 		for _, m := range d.st.Inbox[id] {
 			if m.Pushing || d.heldLocked(id, m) {
 				// Do not disturb (#198): what it holds stays queued in the inbox, with no notice, no
@@ -1031,7 +1062,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		// The recipient has muted the sender (#27): its device would drop the message, so it isn't
 		// sent, and this is where the sender learns of the mute.
-		muted := d.hasMutedLocked(dev, sess, d.nameOfLocked(from))
+		muted := d.hasMutedLocked(dev, sess, from)
 		d.mu.Unlock()
 		switch {
 		case muted:
@@ -1202,7 +1233,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		}
 		wake := d.wakeSnapshot() // setMu is taken alone, before mu
 		d.mu.Lock()
-		muters := d.mutersLocked(d.nameOfLocked(from), dev)
+		muters := d.mutersLocked(from, dev)
 		var members []string
 		if group {
 			members, _ = d.groupMembersLocked(to, from)
@@ -1409,7 +1440,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 	}
 	d.saveLocked()
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
-	d.setNameLocked(s, d.nameForKeyLocked(key, h.ID))
+	d.setNameLocked(s, d.nameForKeyLocked(s, key))
 	d.sessions[h.ID] = s
 	d.noteConversationLocked() // a session starts: its agent is about to look around, and may send
 	return s
