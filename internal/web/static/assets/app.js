@@ -957,7 +957,7 @@ function versionSection() {
     description = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
   } else if (v.ready) {
     description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
-    control = h("button", { class: "btn btn-outline btn-xs", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+    control = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
   } else if (v.latest && v.auto) {
     description = v.latest + " is out, and installing on its own.";
   } else if (v.latest) {
@@ -5045,6 +5045,14 @@ const WAKE_CHOICES = [
   ["never", "Never"],
 ];
 
+// Each wake choice's hover hint, in Settings and under Per session.
+const WAKE_TIPS = {
+  default: "Use the device-wide Wake an idle session choice for this session",
+  always: "Start a new turn for it no matter how long it has been idle",
+  within: "Start a new turn only if it has been idle under the minutes beside it",
+  never: "Never start a turn for it; messages wait in its inbox until it next runs",
+};
+
 // Minutes being typed are saved once the typing pauses. A choice made meanwhile, such as Never,
 // cancels them: they belong to the Within it replaced.
 const minuteEdits = new Map(); // a control's key → its timer
@@ -5066,6 +5074,7 @@ function wakeControl(key, wake, onChange, withDefault) {
         "button",
         {
           "aria-pressed": current === v ? "true" : "false",
+          "data-tip": WAKE_TIPS[v],
           "data-key": key + "-" + v,
           onclick: () => {
             if (v === current) return;
@@ -5087,6 +5096,7 @@ function wakeControl(key, wake, onChange, withDefault) {
     inputmode: "numeric",
     placeholder: String(def),
     "aria-label": "Minutes idle",
+    title: "Minutes it may be idle and still be woken, from 1 to 1440; blank means " + def + " minutes",
     "data-key": key + "-minutes",
     value: wake.minutes ? String(wake.minutes) : null,
     oninput: (e) => {
@@ -5114,6 +5124,13 @@ const BUSY_CHOICES = [
   ["whole", "Whole message"],
 ];
 
+// Each busy choice's hover hint, in Settings and under Per session.
+const BUSY_TIPS = {
+  default: "Use the device-wide While a session is working choice for this session",
+  subject: "While it is mid-turn, show it only the arriving message's subject",
+  whole: "While it is mid-turn, show it the arriving message's whole text",
+};
+
 function busyControl(key, busy, onChange, withDefault) {
   const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
   const current = busy || "default";
@@ -5125,6 +5142,7 @@ function busyControl(key, busy, onChange, withDefault) {
         "button",
         {
           "aria-pressed": current === v ? "true" : "false",
+          "data-tip": BUSY_TIPS[v],
           "data-key": key + "-" + v,
           onclick: () => {
             if (v !== current) onChange(v === "default" ? null : v);
@@ -5226,6 +5244,7 @@ function accountSection() {
             autocomplete: "nickname",
             spellcheck: "false",
             "aria-label": "Your name",
+            title: "The name teammates and their agents see for you and address messages to",
             "aria-invalid": ui.rowErrors.account ? "true" : null,
             "data-key": "account-name",
             oninput: (e) => {
@@ -5239,7 +5258,7 @@ function accountSection() {
             },
           }),
         ),
-        h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
+        h("button", { class: "btn btn-outline btn-xs", title: "Save this name so teammates and their agents can see and address you by it", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
       ]),
       nickRow(),
       colorRow(),
@@ -5280,7 +5299,7 @@ function colorRow() {
     h(
       "div",
       { class: "swatches" },
-      swatch(0, { class: "swatch-auto" }, "Auto"),
+      swatch(0, { class: "swatch-auto", "data-tip": "Let Murmur assign this device a colour no other device has picked" }, "Auto"),
       COLORS.map((name, i) => {
         const who = taken.get(i);
         return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
@@ -5326,6 +5345,7 @@ function nickRow() {
         autocapitalize: "none",
         spellcheck: "false",
         "aria-label": "Device nickname",
+        title: "Optional label teammates see beside this device's ID; nothing is addressed to it",
         "aria-invalid": ui.rowErrors.nick ? "true" : null,
         "data-key": "nick-name",
         oninput: (e) => {
@@ -5339,8 +5359,8 @@ function nickRow() {
         },
       }),
     ),
-    h("button", { class: "btn btn-outline btn-xs", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
-    nick && h("button", { class: "btn btn-ghost btn-xs", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
+    h("button", { class: "btn btn-outline btn-xs", title: "Save this nickname beside this device's ID for teammates", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
+    nick && h("button", { class: "btn btn-ghost btn-xs", title: "Clear the nickname; teammates see your name beside this device instead", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
   ]);
 }
 
@@ -5418,6 +5438,7 @@ function perSessionFold(rows, set) {
     {
       class: "row row-fold",
       "aria-expanded": open ? "true" : "false",
+      title: open ? "Hide the wake and while-working choices set per session" : "Show the wake and while-working choices set per session on this device",
       "data-key": "fold-sessions",
       onclick: () => {
         open ? ui.settingsOpen.delete("sessions") : ui.settingsOpen.add("sessions");
@@ -5450,6 +5471,14 @@ function sessionSettingsRow(s, wake, busy, saveWake, saveBusy) {
   );
 }
 
+// Each theme's hover hint: what it looks like, and that it stays in this browser.
+const THEME_TIPS = {
+  dark: "Black page like T3 Code's dark theme; saved only in this browser",
+  dim: "Soft dark-grey page, lighter than Dark; saved only in this browser",
+  light: "White page with dark text; saved only in this browser",
+  murmur: "Cream page with ink text and blue accents, like the Murmur website; saved only in this browser",
+};
+
 function themeSection() {
   return h(
     "section",
@@ -5473,6 +5502,7 @@ function themeSection() {
                 role: "radio",
                 "aria-checked": theme === id ? "true" : "false",
                 tabindex: theme === id ? 0 : -1,
+                "data-tip": THEME_TIPS[id],
                 "data-key": "theme-" + id,
                 onclick: () => setTheme(id),
                 onkeydown: (e) => {
@@ -5508,13 +5538,13 @@ function settingsSection(key, title, note, ...rows) {
 }
 
 // Every setting is a segmented control, on/off ones too: one kind of control across Settings
-// (Tyler, 2026-11-17, #862).
-function onOffControl(key, on, save) {
+// (Tyler, 2026-11-17, #862). hints says what Off and On each do, on hover.
+function onOffControl(key, on, save, hints) {
   return h(
     "div",
     { class: "segmented", role: "group" },
-    [[false, "Off"], [true, "On"]].map(([v, label]) =>
-      h("button", { "aria-pressed": on === v ? "true" : "false", "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
+    [[false, "Off"], [true, "On"]].map(([v, label], i) =>
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
     ),
   );
 }
@@ -5576,14 +5606,14 @@ function settingsPage() {
     // Files are off both ways until the person turns them on, per repo (#765, Tyler, 2026-11-16).
     // Each way, a main setting for the person and their agents, and once it is on, one that keeps it
     // from the agents (Tyler, 2026-11-16).
-    const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp) => {
-      const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop)))];
+    const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp, hints, agentsHints) => {
+      const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop), hints))];
       if (on) {
         const sub = settingsRow(
           "agents-" + key,
           "Agents too",
           agentsOff ? agentsOffText : agentsOnText,
-          onOffControl("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp)),
+          onOffControl("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp), agentsHints),
         );
         sub.classList.add("row-sub");
         rows.push(sub);
@@ -5606,6 +5636,8 @@ function settingsPage() {
           "Your agents here can send files too, only from this repo or the temp folder.",
           "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
           "agentsSendOff",
+          ["Send no files from this device; attaching one asks you to turn this on first", "Let you, and your agents if Agents too is on, attach files to messages from this device"],
+          ["Agents on this device may not send files; a file message from one is not sent and it is told you can turn this on", "Agents on this device may send files, only from this repo or the temp folder"],
         ),
         fileRows(
           "receive-files",
@@ -5618,6 +5650,8 @@ function settingsPage() {
           "Your agents here get the files sent to them too.",
           "Only you get files. Your agents get messages without them, and senders are told.",
           "agentsReceiveOff",
+          ["Do not download files sent here; messages arrive without them and senders are told", "Download files sent here into this repo's .git folder and show them on this page"],
+          ["Only you receive files here; agents get the message without its files and senders are told", "Agents on this device receive files sent to them as well as their messages"],
         ),
       ),
     );
@@ -5651,6 +5685,7 @@ function settingsPage() {
                   "button",
                   {
                     class: "btn btn-outline btn-xs",
+                    title: "Unmute: " + m.by + " starts receiving " + m.muted + "'s messages again",
                     "data-key": key,
                     disabled: ui.muting.has(key),
                     onclick: () => unmute(m, key),
@@ -6086,7 +6121,7 @@ document.addEventListener("keydown", (e) => {
 // can't be styled. The page's tip is only for what a person can't already read: a button that is
 // only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
 // labelled buttons and badges keep the browser's title, which waits long enough not to get in the
-// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// way. The exception is a choice in a segmented control, whose tip says what it does before it is picked. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
 // show too, and it comes back after, so assistive tech still reads it.
 //
 // The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so
