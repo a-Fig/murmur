@@ -225,6 +225,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				claudeFresh = true
 			case j == 0 && a.driver == "codex":
 				codexFresh = true
+			case j == 0 && a.driver == "pi" && e.looksLikePi():
+				// The advice for the Pi running join covers it.
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -441,7 +443,7 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
 	r.Tell = []string{
-		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
+		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code and Pi; in Codex the tools stay listed until the session ends, and say they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
@@ -484,9 +486,9 @@ func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
-// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse and Pi
-// read their servers when a session starts, and Grok and Antigravity are believed to (their
-// documentation).
+// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse reads
+// its servers when a session starts, Pi then and on /reload in its terminal (2026-11-17, #864), and
+// Grok and Antigravity are believed to read them as Muse does (their documentation).
 func othersAdvice(labels []string) string {
 	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
 	if slices.Contains(labels, "OpenCode") {
@@ -494,7 +496,7 @@ func othersAdvice(labels []string) string {
 	}
 	var restart []string
 	for _, l := range labels {
-		if l != "OpenCode" {
+		if l != "OpenCode" && l != "Pi" {
 			restart = append(restart, l)
 		}
 	}
@@ -504,6 +506,9 @@ func othersAdvice(labels []string) string {
 			verb = " load"
 		}
 		s += " " + strings.Join(restart, ", ") + verb + " MCP servers only when a session starts: a session already open needs a new one (in T3 Code, a new thread)."
+	}
+	if slices.Contains(labels, "Pi") {
+		s += " In a Pi session already open, type /reload to get its tools (in T3 Code, open a new thread)."
 	}
 	return s
 }
@@ -544,6 +549,17 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.getenv("CLAUDECODE") == "1":
 		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
+	// Pi loads extensions as a session starts, and again on /reload, a command of its terminal
+	// UI that T3's Pi, in RPC mode, doesn't have; once loaded, the server's tools come and go
+	// with tools/list_changed (Pi 0.99.0, 2026-11-17, #864). Whether this session loaded the
+	// extension can't be told from here: one that started before any join wrote it, even another
+	// session's, needs /reload. So the advice is the same whether or not this join wrote it.
+	case e.looksLikePi() && e.inT3():
+		out = append(out, brand.Product+" is on for this repo. If this thread doesn't have its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox), "+
+			"open a new thread in this project: Pi in T3 Code loads them only as a thread starts.")
+	case e.looksLikePi():
+		out = append(out, brand.Product+" is on for this repo. If this session doesn't have its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox), "+
+			"type /reload in Pi to load them.")
 	case e.looksLikeCodex() && e.inT3():
 		// T3's Codex provider loads the server in a thread created after it was registered, and
 		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
@@ -562,6 +578,16 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 		out = append(out, "Codex sessions already open won't have it; ones started from now on will.")
 	}
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
+}
+
+// looksLikePi reports whether the agent running join is Pi, which sets PI_CODING_AGENT=true for
+// every process it starts (its docs/environment-variables.md, 0.99.0). A Claude Code or Codex that
+// a Pi started inherits it, so their own variables win (#870's review). The variables can't say
+// which agent started which, so a Pi run from Claude Code's or Codex's shell, the rarer case, gets
+// their advice. No variable tells a Pi under Codex from a Codex under Pi: Pi also sets AI_AGENT=pi,
+// but Codex (0.169.0) sets none, so both see AI_AGENT=pi, PI_CODING_AGENT and CODEX_THREAD_ID.
+func (e Env) looksLikePi() bool {
+	return e.getenv("PI_CODING_AGENT") == "true" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex()
 }
 
 // looksLikeCodex reports whether the agent running join is Codex. The variables are the ones Codex

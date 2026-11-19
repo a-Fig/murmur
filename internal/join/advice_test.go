@@ -53,6 +53,46 @@ func TestAdviceForClaudeInHeadlessT3SaysStopInT3(t *testing.T) {
 	}
 }
 
+// A Pi session that ran join is told about Pi, not Claude Code or Codex (#864): /reload in a
+// terminal, and a new thread in T3, whose Pi has no /reload (Pi 0.99.0, 2026-11-17). With no
+// promise that the tools come by themselves: a session that started before any join wrote the
+// extension, even another session's join, never gets them without one (#870's review).
+func TestAdviceForPi(t *testing.T) {
+	cases := []struct {
+		name      string
+		vars      map[string]string
+		want, not string
+	}{
+		{"in a terminal", map[string]string{"PI_CODING_AGENT": "true"}, "type /reload in Pi to load them", "new thread"},
+		{"in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project", "/reload"},
+	}
+	for _, c := range cases {
+		got := strings.Join(envWith(c.vars).advice(false, false, false), "\n")
+		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) || strings.Contains(got, "Claude Code") || strings.Contains(got, "Codex") ||
+			strings.Contains(got, "seconds") || strings.Contains(got, "minute") {
+			t.Errorf("%s: advice:\n%s", c.name, got)
+		}
+	}
+	// A Claude Code or Codex that a Pi started inherits PI_CODING_AGENT, and is the agent running
+	// join: the innermost agent's advice wins. A Pi that Codex started has the same variables, and
+	// gets Codex's advice too: nothing tells the two apart (looksLikePi).
+	for _, c := range []struct {
+		name string
+		vars map[string]string
+		want string
+	}{
+		{"Claude Code under Pi", map[string]string{"PI_CODING_AGENT": "true", "CLAUDECODE": "1"}, "this conversation"},
+		{"Codex under Pi", map[string]string{"PI_CODING_AGENT": "true", "CODEX_THREAD_ID": "019a"}, "Codex loads MCP servers only when a session starts"},
+		{"Codex under Pi, in T3", map[string]string{"PI_CODING_AGENT": "true", "CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project to talk"},
+	} {
+		e := envWith(c.vars)
+		got := strings.Join(e.advice(false, false, false), "\n")
+		if e.looksLikePi() || strings.Contains(got, "Pi") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: advice:\n%s", c.name, got)
+		}
+	}
+}
+
 // Join's own T3 command line: T3CODE_CLI_PATH where T3's app set it; none outside T3, where no
 // t3 on PATH or above is looked for.
 func TestServingT3(t *testing.T) {

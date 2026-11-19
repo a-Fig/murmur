@@ -378,7 +378,10 @@ func TestAddTOMLListItem(t *testing.T) {
 // What join prints after adding Murmur to the other agents says when their sessions get it.
 func TestOthersAdvice(t *testing.T) {
 	got := othersAdvice([]string{"OpenCode", "Muse Code"})
-	if !strings.Contains(got, "OpenCode sessions get its tools within seconds") || !strings.Contains(got, "Muse Code loads MCP servers only when a session starts") {
+	if !strings.Contains(got, "OpenCode sessions get its tools within seconds") || !strings.Contains(got, "Muse Code loads MCP servers only when a session starts") || strings.Contains(got, "/reload") {
 		t.Errorf("advice: %s", got)
+	}
+	if got := othersAdvice([]string{"Pi", "Muse Code"}); !strings.Contains(got, "In a Pi session already open, type /reload") || strings.Contains(got, "Pi, Muse Code load") {
+		t.Errorf("advice for Pi: %s", got)
 	}
 }
