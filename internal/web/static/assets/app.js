@@ -957,7 +957,7 @@ function versionSection() {
     description = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
   } else if (v.ready) {
     description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
-    control = h("button", { class: "btn btn-outline btn-xs", title: "Restart the daemon onto the installed update", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+    control = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
   } else if (v.latest && v.auto) {
     description = v.latest + " is out, and installing on its own.";
   } else if (v.latest) {
@@ -5047,10 +5047,10 @@ const WAKE_CHOICES = [
 
 // Each wake choice's hover hint, in Settings and under Per session.
 const WAKE_TIPS = {
-  default: "Use this device's default",
-  always: "Wake it however long it has been idle",
-  within: "Wake it only if idle under the minutes set",
-  never: "Never wake it; messages wait in its inbox",
+  default: "Use the device-wide Wake an idle session choice for this session",
+  always: "Start a new turn for it no matter how long it has been idle",
+  within: "Start a new turn only if it has been idle under the minutes beside it",
+  never: "Never start a turn for it; messages wait in its inbox until it next runs",
 };
 
 // Minutes being typed are saved once the typing pauses. A choice made meanwhile, such as Never,
@@ -5096,7 +5096,7 @@ function wakeControl(key, wake, onChange, withDefault) {
     inputmode: "numeric",
     placeholder: String(def),
     "aria-label": "Minutes idle",
-    title: "Idle minutes that still wake it, 1 to 1440",
+    title: "Minutes it may be idle and still be woken, from 1 to 1440; blank uses the device default",
     "data-key": key + "-minutes",
     value: wake.minutes ? String(wake.minutes) : null,
     oninput: (e) => {
@@ -5126,9 +5126,9 @@ const BUSY_CHOICES = [
 
 // Each busy choice's hover hint, in Settings and under Per session.
 const BUSY_TIPS = {
-  default: "Use this device's default",
-  subject: "Show only the subject while it works",
-  whole: "Show the whole message while it works",
+  default: "Use the device-wide While a session is working choice for this session",
+  subject: "While it is mid-turn, show it only the arriving message's subject",
+  whole: "While it is mid-turn, show it the arriving message's whole text",
 };
 
 function busyControl(key, busy, onChange, withDefault) {
@@ -5244,7 +5244,7 @@ function accountSection() {
             autocomplete: "nickname",
             spellcheck: "false",
             "aria-label": "Your name",
-            title: "Name teammates and their agents see and send to",
+            title: "The name teammates and their agents see for you and address messages to",
             "aria-invalid": ui.rowErrors.account ? "true" : null,
             "data-key": "account-name",
             oninput: (e) => {
@@ -5258,7 +5258,7 @@ function accountSection() {
             },
           }),
         ),
-        h("button", { class: "btn btn-outline btn-xs", title: "Save your name", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
+        h("button", { class: "btn btn-outline btn-xs", title: "Save this name so teammates and their agents can see and address you by it", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
       ]),
       nickRow(),
       colorRow(),
@@ -5299,7 +5299,7 @@ function colorRow() {
     h(
       "div",
       { class: "swatches" },
-      swatch(0, { class: "swatch-auto", "data-tip": "Use the colour Murmur picks for this device" }, "Auto"),
+      swatch(0, { class: "swatch-auto", "data-tip": "Let Murmur assign this device a colour no other device has picked" }, "Auto"),
       COLORS.map((name, i) => {
         const who = taken.get(i);
         return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
@@ -5345,7 +5345,7 @@ function nickRow() {
         autocapitalize: "none",
         spellcheck: "false",
         "aria-label": "Device nickname",
-        title: "Label teammates see beside this device's ID",
+        title: "Optional label teammates see beside this device's ID; nothing is addressed to it",
         "aria-invalid": ui.rowErrors.nick ? "true" : null,
         "data-key": "nick-name",
         oninput: (e) => {
@@ -5359,8 +5359,8 @@ function nickRow() {
         },
       }),
     ),
-    h("button", { class: "btn btn-outline btn-xs", title: "Save the nickname", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
-    nick && h("button", { class: "btn btn-ghost btn-xs", title: "Remove the nickname", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
+    h("button", { class: "btn btn-outline btn-xs", title: "Save this nickname beside this device's ID for teammates", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
+    nick && h("button", { class: "btn btn-ghost btn-xs", title: "Clear the nickname; teammates see your name beside this device instead", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
   ]);
 }
 
@@ -5438,7 +5438,7 @@ function perSessionFold(rows, set) {
     {
       class: "row row-fold",
       "aria-expanded": open ? "true" : "false",
-      title: open ? "Hide each session's own settings" : "Show each session's own settings",
+      title: open ? "Hide the wake and while-working choices set per session" : "Show the wake and while-working choices set per session on this device",
       "data-key": "fold-sessions",
       onclick: () => {
         open ? ui.settingsOpen.delete("sessions") : ui.settingsOpen.add("sessions");
@@ -5471,12 +5471,12 @@ function sessionSettingsRow(s, wake, busy, saveWake, saveBusy) {
   );
 }
 
-// Each theme's hover hint: what it looks like, in a few words.
+// Each theme's hover hint: what it looks like, and that it stays in this browser.
 const THEME_TIPS = {
-  dark: "Black, like T3 Code",
-  dim: "Soft dark greys",
-  light: "Pale background, dark text",
-  murmur: "Cream and blue, like the website",
+  dark: "Black page like T3 Code's dark theme; saved only in this browser",
+  dim: "Soft dark-grey page, lighter than Dark; saved only in this browser",
+  light: "White page with dark text; saved only in this browser",
+  murmur: "Cream page with ink text and blue accents, like the Murmur website; saved only in this browser",
 };
 
 function themeSection() {
@@ -5636,8 +5636,8 @@ function settingsPage() {
           "Your agents here can send files too, only from this repo or the temp folder.",
           "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
           "agentsSendOff",
-          ["No files go out from this device", "Files can be attached and sent from here"],
-          ["Only you send files; agents here cannot", "Agents here can send files too"],
+          ["Send no files from this device; attaching one asks you to turn this on first", "Allow messages written here to carry file attachments from this device"],
+          ["Agents on this device may not send files; a file message from one is not sent and it is told you can turn this on", "Agents on this device may send files, only from this repo or the temp folder"],
         ),
         fileRows(
           "receive-files",
@@ -5650,8 +5650,8 @@ function settingsPage() {
           "Your agents here get the files sent to them too.",
           "Only you get files. Your agents get messages without them, and senders are told.",
           "agentsReceiveOff",
-          ["Files sent here are not downloaded", "Files sent here are downloaded and shown"],
-          ["Only you get files; agents here do not", "Agents here get files sent to them too"],
+          ["Do not download files sent here; messages arrive without them and senders are told", "Download files sent here into this repo's .git folder and show them on this page"],
+          ["Only you receive files here; agents get the message without its files and senders are told", "Agents on this device receive files sent to them as well as their messages"],
         ),
       ),
     );
@@ -5685,7 +5685,7 @@ function settingsPage() {
                   "button",
                   {
                     class: "btn btn-outline btn-xs",
-                    title: m.muted + "'s messages reach " + m.by + " again",
+                    title: "Unmute: " + m.by + " starts receiving " + m.muted + "'s messages again",
                     "data-key": key,
                     disabled: ui.muting.has(key),
                     onclick: () => unmute(m, key),
