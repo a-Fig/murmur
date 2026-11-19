@@ -3,8 +3,10 @@
 #
 # The jobs run in parallel on GitHub's own runners, which are free for a public repo and start fresh
 # for every job. `changes` picks which of them a pull request needs from the files it touches
-# (scripts/ci-level.sh); a push to `main` and a run by hand run them all. docs/testing.md has the
-# reasons and the times.
+# (scripts/ci-level.sh); a push to `main` and a run by hand run them all. A pull request runs
+# internal/daemon's tests on Linux alone unless it changes code that differs per OS: on macOS and
+# Windows they are most of CI's time, and main's run still finds what they catch before the nightly
+# takes it (#879). docs/testing.md has the reasons and the times.
 name: test
 
 on:
@@ -59,11 +61,14 @@ jobs:
             fi
           fi
           case "$level" in
-            none | site | page | full) ;;
+            none | site | page | go | full) ;;
             *) echo "::error::scripts/ci-level.sh answered '$level'"; exit 1 ;;
           esac
           echo "level=$level" >> "$GITHUB_OUTPUT"
           echo "Jobs for this run: \`$level\` (scripts/ci-level.sh)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$level" != full ]; then
+            echo "The daemon's tests on macOS and Windows run when this merges. To run them now: \`gh workflow run test.yml --ref <branch>\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "level: $level"
 
   test-linux:
@@ -104,7 +109,7 @@ jobs:
   # it took 1,154 s of this job's 20 minutes on 2026-11-12, and the others together about 4.
   test-macos:
     needs: changes
-    if: needs.changes.outputs.level == 'full'
+    if: needs.changes.outputs.level == 'go' || needs.changes.outputs.level == 'full'
     runs-on: macos-latest
     timeout-minutes: 60
     defaults:
@@ -141,7 +146,7 @@ jobs:
   # packages together took about 8 minutes.
   test-windows:
     needs: changes
-    if: needs.changes.outputs.level == 'full'
+    if: needs.changes.outputs.level == 'go' || needs.changes.outputs.level == 'full'
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -159,7 +164,7 @@ jobs:
 
   # The daemon package's tests, dealt out by position in their sorted list to one runner each: four
   # on Windows, where they are slowest, and two on macOS. A test added later lands in some shard on
-  # its own, so none goes unrun.
+  # its own, so none goes unrun. A pull request runs them only at `full` (#879).
   #
   # A test that hangs should end in Go's -timeout panic, which names it and prints every goroutine,
   # not in the job's cancellation, which keeps no log (#727). A hang is never retried, so what must

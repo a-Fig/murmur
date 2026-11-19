@@ -54,10 +54,27 @@ the names of the files changed to `scripts/ci-level.sh`, which answers with one 
 | `none` | Markdown and images at the top of the repo, in `docs/` and in `.github/`, other than `README.md` and `docs/agents/` | nothing |
 | `site` | `site/`, and the above | `test-linux`, the site's tests alone |
 | `page` | `internal/web/static`, and the above | `test-linux`, whole |
-| `full` | anything else | every job |
+| `go` | `internal/`, `cmd/`, `README.md` and `docs/agents/`, and the above | every job but the daemon shards |
+| `full` | anything else, and Go that is built differently per OS: a file named for one (`_windows.go`, `_unix.go`, `_other.go`, ...) or with a `//go:build` line; `go.mod`, `go.sum`, the workflows and `scripts/` | every job |
 
 The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
-differently per OS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
+differently per OS.
+
+**A pull request runs `internal/daemon` on macOS and Windows only at `full`** (2026-11-19, #879).
+Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
+44223188463), and three of its five macOS jobs. The account gets five macOS jobs at a time, so two
+full runs at once queued, and on 2026-11-17 three runs failed with a macOS job that waited up to
+40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and macOS and
+Windows run every other package, so what a pull request alone misses is a daemon test that fails on
+one OS only. The push to `main` runs every job, and the nightly takes only a commit whose push
+run passed, so such a failure still shows before a release, on main rather than on its pull
+request. To run every job on a branch before merging it: `gh workflow run test.yml --ref <branch>`.
+
+Two other ways to cut the Windows time were measured and dropped on 2026-11-19, in runs
+44470284567 and 44470384061 on a throwaway branch: turning off Defender's real-time scanning (the
+shards start about 27,500 git processes each, and a `git config` takes 140 ms there) and raising
+`-parallel`. Neither showed a gain, since the same job's time varied from 37 to 64 minutes between
+runners. Run whole on one runner, the package took 37 minutes on Windows and 22 on macOS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
 so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `changes` runs it
 before it uses their answer. A push to `main` and a run by hand are always `full`. On a pull
 request that isn't `full`, the daemon shards show as one skipped check with its name unfilled
