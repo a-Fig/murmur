@@ -55,18 +55,22 @@ the names of the files changed to `scripts/ci-level.sh`, which answers with one 
 | `site` | `site/`, and the above | `test-linux`, the site's tests alone |
 | `page` | `internal/web/static`, and the above | `test-linux`, whole |
 | `go` | `internal/`, `cmd/`, `README.md` and `docs/agents/`, and the above | every job but the daemon shards |
-| `full` | anything else, and Go that is built differently per OS: a file named for one (`_windows.go`, `_unix.go`, `_other.go`, ...) or with a `//go:build` line; `go.mod`, `go.sum`, the workflows and `scripts/` | every job |
+| `full` | anything else; Go that differs per OS: a file named for one (`_windows.go`, `_darwin_arm64.go`, `_unix.go`, `_other.go`, ...), one with a `//go:build` line before or after the change, a change that adds or removes a `runtime.GOOS` line; `go.mod`, `go.sum`, the workflows and `scripts/` | every job |
 
 The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
 differently per OS.
 
 **A pull request runs `internal/daemon` on macOS and Windows only at `full`** (2026-11-19, #879).
 Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
-44223188463), and three of its five macOS jobs. The account gets five macOS jobs at a time, so two
+44223188463), and two of its three macOS jobs. The account gets five macOS jobs at a time, so two
 full runs at once queued, and on 2026-11-17 three runs failed with a macOS job that waited up to
 40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and macOS and
 Windows run every other package, so what a pull request alone misses is a daemon test that fails on
-one OS only. The push to `main` runs every job, and the nightly takes only a commit whose push
+one OS only, from code that isn't marked as per-OS: an edit inside a `runtime.GOOS` branch that was
+already there, say. Counting every file that mentions `runtime.GOOS` would have caught that, but
+those include the daemon's most-changed files (`sync.go`, `files.go`, `daemon_test.go`), so most
+pull requests would be `full` again. `changes` reads what a change did against the merge's first
+parent (`CI_LEVEL_BASE`), so a deleted or renamed file is read as it was. The push to `main` runs every job, and the nightly takes only a commit whose push
 run passed, so such a failure still shows before a release, on main rather than on its pull
 request. To run every job on a branch before merging it: `gh workflow run test.yml --ref <branch>`.
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # How much of .github/workflows/test.yml a pull request needs, from the files it touches, one per
-# line on stdin, named from the top of the repo. Prints one word:
+# line on stdin, named from the top of the repo (run it there). Prints one word:
 #
 #   none  docs, templates and images: no check reads them
 #   site  site/ only: the site's own tests, which take seconds
@@ -9,13 +9,16 @@
 #   go    Go and the files its tests read: every package on Linux, and on macOS and Windows every
 #         package but internal/daemon, whose tests there are most of CI's time; a push to main runs
 #         them (#879)
-#   full  anything else, and code that differs per OS (a file named for one, or with a build
-#         constraint), go.mod, the workflows and these scripts: every job
+#   full  anything else, Go that is built or behaves differently per OS (see perOS), go.mod,
+#         go.sum, the workflows and these scripts: every job
+#
+# CI_LEVEL_BASE names the commit the change is made against (the merge commit's first parent, in
+# the workflow). Without it, or when git can't read it, every Go file is `full`, since what it
+# changed can't be read.
 #
 # The widest need of any file wins, a file no rule names is `full`, and so is an empty list, so a
 # mistake here runs too much rather than too little. scripts/ci-level-test.sh checks the rules.
 set -eu
-cd "$(dirname "$0")/.."
 
 rank() {
   case "$1" in none) echo 0 ;; site) echo 1 ;; page) echo 2 ;; go) echo 3 ;; *) echo 4 ;; esac
@@ -29,16 +32,26 @@ quiet() {
   esac
 }
 
-# full for Go that is built differently per OS, which the daemon's tests on that OS exercise: a
-# file named for an OS, or one with a //go:build line (a deleted file has neither to read, and its
-# name is the only clue left).
+base=${CI_LEVEL_BASE:-}
+if [ -n "$base" ] && ! git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1; then base=; fi
+
+# full for Go the daemon's tests run differently per OS: a file named for an OS (with or without an
+# architecture), one with a //go:build line before or after the change (a deleted or renamed file is
+# read as it was), and a change that adds or removes a line naming runtime.GOOS. An edit inside an
+# existing runtime.GOOS branch is `go`: whole files that test runtime.GOOS include the daemon's
+# most-changed ones (sync.go, files.go), and main's run catches the rest (docs/testing.md).
 perOS() {
   case "$1" in
-    *_windows.go | *_windows_test.go | *_darwin.go | *_darwin_test.go | *_linux.go | *_linux_test.go | \
-      *_unix.go | *_unix_test.go | *_other.go | *_other_test.go) echo full ;;
-    *.go) if [ -f "$1" ] && grep -q '^//go:build' "$1"; then echo full; else echo go; fi ;;
-    *) echo go ;;
+    *_windows.go | *_windows_*.go | *_darwin.go | *_darwin_*.go | *_linux.go | *_linux_*.go | \
+      *_unix.go | *_unix_*.go | *_other.go | *_other_*.go) echo full; return ;;
+    *.go) ;;
+    *) echo go; return ;;
   esac
+  if [ -z "$base" ]; then echo full; return; fi
+  if [ -f "$1" ] && grep -q '^//go:build' "$1"; then echo full; return; fi
+  if git show "$base:$1" 2>/dev/null | grep -q '^//go:build'; then echo full; return; fi
+  if git diff "$base" -- "$1" | grep -qE '^[-+].*(//go:build|runtime\.GOOS)'; then echo full; return; fi
+  echo go
 }
 
 level=none
@@ -50,9 +63,9 @@ while IFS= read -r f || [ -n "$f" ]; do
     site/*) l=site ;;
     internal/web/static/*) l=page ;;
     go.mod | go.sum | .github/workflows/* | scripts/*) l=full ;;
-    # Tested Markdown: the skills, the README a setup test reads, and the agent pages that test
-    # reads too (internal/setup/setup_test.go).
     internal/* | cmd/*) l=$(perOS "$f") ;;
+    # Tested Markdown: the README a setup test reads, and the agent pages that test reads too
+    # (internal/setup/setup_test.go). The skills are under internal/.
     README.md | docs/agents/*) l=go ;;
     # Docs and images, at the top of the repo, in docs/ and in .github/. The same kinds of file
     # anywhere else (a test's data under cmd/, say) are not quiet: `*` in a pattern crosses a `/`.

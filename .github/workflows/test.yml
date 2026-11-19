@@ -4,9 +4,10 @@
 # The jobs run in parallel on GitHub's own runners, which are free for a public repo and start fresh
 # for every job. `changes` picks which of them a pull request needs from the files it touches
 # (scripts/ci-level.sh); a push to `main` and a run by hand run them all. A pull request runs
-# internal/daemon's tests on Linux alone unless it changes code that differs per OS: on macOS and
-# Windows they are most of CI's time, and main's run still finds what they catch before the nightly
-# takes it (#879). docs/testing.md has the reasons and the times.
+# internal/daemon's tests on Linux alone unless it is `full` (Go that differs per OS, go.mod and
+# go.sum, the workflows, scripts/): on macOS and Windows they are most of CI's time, and main's run
+# still finds what they catch before the nightly takes it (#879). docs/testing.md has the reasons
+# and the times.
 name: test
 
 on:
@@ -35,11 +36,15 @@ jobs:
     outputs:
       level: ${{ steps.level.outputs.level }}
     steps:
+      # A pull request's checkout is the merge of it into main, so its first parent is main as it
+      # was: scripts/ci-level.sh reads what the change did to Go from that.
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 2
       - id: level
         env:
+          CI_LEVEL_BASE: HEAD^1
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
