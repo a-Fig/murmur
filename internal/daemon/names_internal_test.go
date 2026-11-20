@@ -436,3 +436,29 @@ func TestStoppedT3SessionSharesLandedNameWithClaudeKey(t *testing.T) {
 	}
 }
 
+// When givePoolLocked names a CLI session in its grace before a live T3 session on the same
+// conversation, T3 shares that name rather than taking a second one from the pool (#874).
+func TestGivePoolSharesNameBetweenDroppedCLIAndT3(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.st.NamePool = []string{"bold-lark", "keen-swift"}
+	cli := &session{id: "aaaaaa", agent: "claude-code", claudeSession: "conv-pool-share",
+		key: "claude:conv-pool-share", clientPID: 700, dropped: time.Now()}
+	t3 := &session{id: "tttttt", agent: "claude-code in T3", claudeSession: "conv-pool-share",
+		key: "t3:thread-pool-share", route: proto.Route{T3Thread: "thread-pool-share"}, clientPID: 800}
+	d.sessions[cli.id] = cli
+	d.sessions[t3.id] = t3
+
+	d.givePoolLocked()
+	if cli.name != "bold-lark" || t3.name != "bold-lark" {
+		t.Errorf("cli=%q t3=%q; want both bold-lark", cli.name, t3.name)
+	}
+	if !d.st.NamedFromCLI["t3:thread-pool-share"] {
+		t.Error("name given to CLI session was not marked NamedFromCLI on the T3 thread")
+	}
+	if len(d.st.NamePool) != 1 {
+		t.Errorf("pool has %d names left, want 1", len(d.st.NamePool))
+	}
+}

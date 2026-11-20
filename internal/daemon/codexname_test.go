@@ -228,4 +228,3 @@ func TestACodexThreadFoundWhileItsNameIsPushedGetsOneName(t *testing.T) {
 	b.native("cccccc", "thread-push")
 	b.nameIs(second, name)
 }
-

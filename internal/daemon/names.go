@@ -629,6 +629,9 @@ func (d *Daemon) givePoolLocked() {
 		if s.name != "" {
 			continue
 		}
+		// An earlier session in this loop (for instance a CLI session in its grace) may have just
+		// named the conversation's Claude key; share it before taking a second name from the pool.
+		d.shareSessionNameLocked(s)
 		if s.dropped.IsZero() {
 			// Another live session may already hold the name s.key just received (for instance a
 			// T3 thread that did /clear while its name was pushed and its old Claude session was
@@ -946,12 +949,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	for i, s := range w.wants {
 		name := given[i]
 		if o := d.sessions[s.id]; o != nil && o.name == "" && d.st.NameKeys[o.key] == name {
-			if o.dropped.IsZero() {
-				o.key = d.uniqueKeyLocked(o.key, o.id, o.clientPID)
-			}
-			if d.st.NameKeys[o.key] == name {
-				d.setNameLocked(o, name)
-			}
+			d.setNameLocked(o, name)
 		}
 	}
 	for _, name := range person {

@@ -598,5 +598,3 @@ func TestAThreadClearedWhileItsNameIsPushedDoesNotShareALiveName(t *testing.T) {
 		t.Errorf("two live sessions share the name %s (%s and %s)", t3Name, resp.Self, cli)
 	}
 }
-
-
