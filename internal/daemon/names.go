@@ -544,8 +544,18 @@ func (d *Daemon) nameLoop(ctx context.Context) {
 	}
 }
 
-// wanted is a session that needs a name, and has no pool to take one from.
-type wanted struct{ id, key, agent string }
+// wanted is a session that needs a name, and has no pool to take one from. alias is its
+// conversation's Claude session key when key is a T3 thread's, so the name is shared even if the
+// session stops before the push lands (#874).
+type wanted struct{ id, key, agent, alias string }
+
+// pendingShare is a Claude Code conversation's (t3, claude) key pair seen by shareNameLocked while
+// both keys were unnamed and an assigner push was in flight (#874).
+type pendingShare struct{ key, alias, id string }
+
+// pendingRekey is a session's move from one unnamed key to another in rekeyLocked while an
+// assigner push was in flight (#874).
+type pendingRekey struct{ from, to string }
 
 // bound is a name a session took from the pool, which the registry doesn't have down for it yet.
 type bound struct{ name, id string }
@@ -619,8 +629,44 @@ func (d *Daemon) givePoolLocked() {
 		if s.name != "" {
 			continue
 		}
+		// An earlier session in this loop (for instance a CLI session in its grace) may have just
+		// named the conversation's Claude key; share it before taking a second name from the pool.
+		d.shareSessionNameLocked(s)
+		if s.dropped.IsZero() {
+			// Another live session may already hold the name s.key just received (for instance a
+			// T3 thread that did /clear while its name was pushed and its old Claude session was
+			// resumed on the command line): two live sessions never share a name (#874).
+			s.key = d.uniqueKeyLocked(s.key, s.id, s.clientPID)
+		}
 		if d.setNameLocked(s, d.nameForKeyLocked(s, s.key)); s.name != "" {
 			d.kickPresence()
+		}
+	}
+}
+
+// applyPendingKeysLocked gives a name that just landed to any key linked to it while the
+// assigner's push was in flight: Claude Code conversations' (t3, claude) pairs recorded by
+// shareNameLocked, and keys a session moved to by finding its thread in rekeyLocked (#874).
+// Shares run before rekeys so a name from the command line marks NamedFromCLI on the thread's key.
+// Caller holds mu.
+func (d *Daemon) applyPendingKeysLocked(shares []pendingShare, rekeys []pendingRekey) {
+	for {
+		progressed := false
+		for _, sh := range shares {
+			k, a := d.st.NameKeys[sh.key], d.st.NameKeys[sh.alias]
+			if (k == "") != (a == "") {
+				d.shareNameLocked(sh.key, sh.alias, sh.id)
+				progressed = true
+			}
+		}
+		for _, rk := range rekeys {
+			if name := d.st.NameKeys[rk.from]; name != "" && d.st.NameKeys[rk.to] == "" {
+				d.st.NameKeys[rk.to] = name
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
 		}
 	}
 }
@@ -632,13 +678,30 @@ func (d *Daemon) nextNames() nameWork {
 	defer d.mu.Unlock()
 	d.givePoolLocked()
 	var w nameWork
+	d.pendingShares, d.pendingRekeys = nil, nil
 	keys := map[string]bool{}
 	for _, s := range d.sortedSessionsLocked() {
-		if s.name == "" && !keys[s.key] {
-			keys[s.key] = true // sessions of one key share its name: one assignment for them all
-			w.wants = append(w.wants, wanted{id: s.id, key: s.key, agent: s.agent})
+		if s.name != "" || keys[s.key] {
+			continue
 		}
+		var alias string
+		if t3, ok := strings.CutPrefix(s.key, "t3:"); ok && !strings.Contains(t3, "/") {
+			alias = claudeAlias(s.agent, t3, s.claudeSession)
+		}
+		if alias != "" && keys[alias] {
+			// Another session of the same conversation (e.g. a CLI session in its grace) is
+			// already in this push: share that name instead of pushing a second one (#874).
+			d.pendingShares = append(d.pendingShares, pendingShare{key: s.key, alias: alias, id: s.id})
+			keys[s.key] = true
+			continue
+		}
+		keys[s.key] = true // sessions of one key share its name: one assignment for them all
+		if alias != "" {
+			keys[alias] = true
+		}
+		w.wants = append(w.wants, wanted{id: s.id, key: s.key, agent: s.agent, alias: alias})
 	}
+	d.assigning = len(w.wants) > 0
 	for _, name := range sortedKeys(d.st.NameBinds) {
 		w.binds = append(w.binds, bound{name: name, id: d.st.NameBinds[name]})
 	}
@@ -712,6 +775,16 @@ func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string
 // again, leased on whatever the tip is. It returns
 // bus.ErrRejected if the lease failed.
 func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
+	finished := false
+	if len(w.wants) > 0 {
+		defer func() {
+			if !finished {
+				d.mu.Lock()
+				d.assigning, d.pendingShares, d.pendingRekeys = false, nil, nil
+				d.mu.Unlock()
+			}
+		}()
+	}
 	// The repair flag is read with the tip it goes with: a sync between nextNames and here may have
 	// found the registry rewound, and building on the new tip without the snapshot would lose names.
 	d.mu.Lock()
@@ -823,6 +896,13 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	defer d.advMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	finished = true
+	var pendingShares []pendingShare
+	var pendingRekeys []pendingRekey
+	if len(w.wants) > 0 {
+		pendingShares, pendingRekeys = d.pendingShares, d.pendingRekeys
+		d.assigning, d.pendingShares, d.pendingRekeys = false, nil, nil
+	}
 	d.known[brand.NamesRef] = sha
 	if d.st.NamesTip == tip {
 		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
@@ -857,12 +937,20 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		}
 		d.st.NameKeys[s.key] = name
 		d.noteNamedInT3Locked(s.agent, s.key, name) // its session may have gone since it asked
-		for _, o := range d.sessions {
-			if o.key == s.key && o.name == "" {
-				d.setNameLocked(o, name)
-			}
+		if s.alias != "" {
+			d.shareNameLocked(s.key, s.alias, s.id)
 		}
 		d.log.Printf("session %s is named %s", addr, name)
+	}
+	d.applyPendingKeysLocked(pendingShares, pendingRekeys)
+	// Give each requesting session its landed name before givePoolLocked visits sessions in ID
+	// order, so a session that rekeyed while the push was out keeps the name ahead of another
+	// session that started on its old key meanwhile (for instance after /clear in T3).
+	for i, s := range w.wants {
+		name := given[i]
+		if o := d.sessions[s.id]; o != nil && o.name == "" && d.st.NameKeys[o.key] == name {
+			d.setNameLocked(o, name)
+		}
 	}
 	for _, name := range person {
 		d.notePersonClaimLocked(name, d.personAddr())

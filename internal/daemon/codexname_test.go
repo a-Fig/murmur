@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -190,4 +191,40 @@ func TestT3ThreadWinsOverTheCodexThread(t *testing.T) {
 	if other := b.named(third); other == name {
 		t.Errorf("a Codex thread ID joined two T3 threads under the name %s", name)
 	}
+}
+
+// A Codex session that learns its thread while its first name is being pushed keeps that name for
+// the thread rather than taking a second one (#874).
+func TestACodexThreadFoundWhileItsNameIsPushedGetsOneName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	g := newPushGate(false)
+	t.Cleanup(func() { g.set(true) })
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.names = 300*time.Millisecond, time.Hour, g })
+	first, conn := b.agentSession("bbbbbb", "codex", 700, proto.Route{})
+	select {
+	case <-g.held:
+	case <-time.After(time.Minute):
+		t.Fatal("no names push reached the gate")
+	}
+	b.native("bbbbbb", "thread-push")
+	g.set(true)
+	name := b.named(first)
+
+	// Only one name assignment should have been pushed for the session.
+	assigned := 0
+	for _, ev := range b.do(proto.Request{Op: proto.OpLog, Limit: 500}).Events {
+		if strings.Contains(ev.Line, " -> "+first) {
+			assigned++
+		}
+	}
+	if assigned != 1 {
+		t.Errorf("session %s got %d name assignments, want 1", first, assigned)
+	}
+	conn.Close()
+	eventually(t, "the first to stop", func() bool { return busLines(b, first, "stopped") == 1 })
+
+	second, _ := b.agentSession("cccccc", "codex", 800, proto.Route{})
+	b.native("cccccc", "thread-push")
+	b.nameIs(second, name)
 }

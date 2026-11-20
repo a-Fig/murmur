@@ -196,6 +196,11 @@ func (d *Daemon) shareNameLocked(key, alias, id string) {
 		}
 	case a == "" && k != "":
 		d.st.NameKeys[alias] = k
+	case k == "" && a == "":
+		if d.assigning {
+			d.pendingShares = append(d.pendingShares, pendingShare{key: key, alias: alias, id: id})
+		}
+		return
 	default:
 		return
 	}

@@ -446,3 +446,155 @@ func TestANameThatLandsAfterItsT3SessionStoppedIsStillT3s(t *testing.T) {
 	}
 	b.nameIs(next, name)
 }
+
+// With no name set aside, a T3 session that hasn't found its thread waits on the assigner, and finds
+// the thread while the name is being pushed. The command line, resuming the conversation later,
+// should have the name T3 had (#874).
+func TestAThreadFoundWhileItsNameIsPushedKeepsOneName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	g := newPushGate(false)
+	t.Cleanup(func() { g.set(true) })
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.names = 300*time.Millisecond, time.Hour, g })
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-3", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	select {
+	case <-g.held: // the push for its name is out
+	case <-time.After(time.Minute):
+		t.Fatal("no names push reached the gate")
+	}
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-3", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	g.set(true)
+	name := b.named(resp.Self)
+	conn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+
+	conn, resp, err = b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code", ClaudeSession: "conv-3", ClientPID: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if got := b.named(resp.Self); got != name {
+		t.Errorf("the command line is %s, T3 was %s", got, name)
+	}
+}
+
+// A T3 session that finds its thread while its name is being pushed, and stops before the push
+// lands, still keeps one name and its registered address: the thread's next ByThread session takes
+// that address and name even after a provider switch, and `claude --resume` gets the same name
+// (#874).
+func TestAThreadFoundThenStoppedWhileItsNameIsPushedKeepsNameAndAddress(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	g := newPushGate(false)
+	t.Cleanup(func() { g.set(true) })
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.names = 300*time.Millisecond, time.Hour, g })
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-s1", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	select {
+	case <-g.held:
+	case <-time.After(time.Minute):
+		t.Fatal("no names push reached the gate")
+	}
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-s1", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+	g.set(true)
+	eventually(t, "the name to land", func() bool { return logHas(b, " -> "+resp.Self) })
+
+	next, nconn := b.claudeIn("tttttt", 900, "conv-s2", "thread-s1")
+	if !strings.HasSuffix(next, "/xxxxxx") {
+		t.Errorf("the thread's next session registered as %s, not at %s", next, resp.Self)
+	}
+	name := b.named(next)
+	nconn.Close()
+	eventually(t, "the second T3 session to stop", func() bool { return busLines(b, next, "stopped") == 2 })
+
+	cli, _ := b.claudeIn("xxxxxx", 1000, "conv-s1", "")
+	if got := b.named(cli); got != name {
+		t.Errorf("the command line is %s, T3 was %s", got, name)
+	}
+}
+
+// A command-line conversation that T3 imports while the command line's name is still being pushed
+// keeps that one name, and leaves the command line its address: the thread's next ByThread session
+// keeps an address of its own, because the name was given to the command line (#874).
+func TestACLIImportWhileItsNameIsPushedKeepsOneNameAndCLIAddress(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	g := newPushGate(false)
+	t.Cleanup(func() { g.set(true) })
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.names = 300*time.Millisecond, time.Hour, g })
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "aaaaaa", Agent: "claude-code", ClaudeSession: "conv-i1", ClientPID: 700})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	select {
+	case <-g.held:
+	case <-time.After(time.Minute):
+		t.Fatal("no names push reached the gate")
+	}
+	conn.Close()
+	eventually(t, "the command line to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+
+	t3, tconn := b.claudeIn("tttttt", 800, "conv-i1", "thread-i1")
+	g.set(true)
+	name := b.named(t3)
+	tconn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, t3, "stopped") == 1 })
+
+	next, _ := b.claudeIn("tttttt", 900, "conv-i1", "thread-i1")
+	if !strings.HasSuffix(next, "/tttttt") {
+		t.Errorf("T3's next session registered as %s, at the command line's address", next)
+	}
+	b.nameIs(next, name)
+	cli, _ := b.claudeIn("aaaaaa", 1000, "conv-i1", "")
+	if !strings.HasSuffix(cli, "/aaaaaa") {
+		t.Errorf("the command line came back as %s", cli)
+	}
+	b.nameIs(cli, name)
+}
+
+// If a T3 session finds its thread and /clears while its name is being pushed, and the old
+// conversation is resumed on the command line before the push lands, the two live sessions must
+// not end up sharing a name (#874).
+func TestAThreadClearedWhileItsNameIsPushedDoesNotShareALiveName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	g := newPushGate(false)
+	t.Cleanup(func() { g.set(true) })
+	b := newDeviceWith(t, remote, func(d *device) { d.grace, d.keep, d.names = 300*time.Millisecond, time.Hour, g })
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-c1", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	select {
+	case <-g.held:
+	case <-time.After(time.Minute):
+		t.Fatal("no names push reached the gate")
+	}
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-c1", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	b.hook("conv-c2", 800) // /clear in T3
+	cli, _ := b.claudeIn("cccccc", 900, "conv-c1", "")
+	g.set(true)
+
+	t3Name := b.named(resp.Self)
+	cliName := b.named(cli)
+	if cliName == t3Name {
+		t.Errorf("two live sessions share the name %s (%s and %s)", t3Name, resp.Self, cli)
+	}
+}
