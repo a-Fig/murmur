@@ -1581,11 +1581,13 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 // thread: the name follows the thread across /clear, restarts and account switches. Nothing goes
 // on the bus. Caller holds mu.
 func (d *Daemon) rekeyLocked(s *session, key string) {
-	from := s.name
+	from, oldKey := s.name, s.key
 	s.key = key
 	if d.st.NameKeys[key] == "" && s.name != "" {
 		d.st.NameKeys[key] = s.name
 		d.saveLocked()
+	} else if d.st.NameKeys[key] == "" && s.name == "" && d.assigning {
+		d.pendingRekeys = append(d.pendingRekeys, pendingRekey{from: oldKey, to: key})
 	}
 	d.setNameLocked(s, d.nameForKeyLocked(s, key))
 	if s.name == "" {

@@ -472,6 +472,14 @@ type Daemon struct {
 	// namesChecked says the registry has been looked at since this daemon started, even if its
 	// tip is the one state.json recorded.
 	namesChecked bool
+	// assigning says the assigner has a push of session names (wants) in flight. While it is true,
+	// pendingShares records unnamed (t3, claude) key pairs seen by shareNameLocked and
+	// pendingRekeys records unnamed keys moved by rekeyLocked, so a name landing from that push
+	// reaches the session's new key and its conversation's other key instead of causing a second
+	// name (#874). Under mu.
+	assigning     bool
+	pendingShares []pendingShare
+	pendingRekeys []pendingRekey
 	// presenceCut is how many sessions the last presence left out to keep to bus.MaxSessions (see
 	// capSessions), so that is logged when it changes, not on every heartbeat.
 	presenceCut int

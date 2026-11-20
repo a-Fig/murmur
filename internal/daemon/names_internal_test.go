@@ -11,6 +11,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -365,3 +366,73 @@ func TestAMuteOfADepartedLocalSendersShownNameHolds(t *testing.T) {
 		t.Error("a mute of the name the sender is shown by let its message through")
 	}
 }
+
+// A T3 session that finds its thread while a push that also refills the pool is in flight takes the
+// pushed name on both keys and leaves every reserved pool name untouched (#874).
+func TestRekeyDuringPushRefillingPoolTakesNoSecondName(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	d.opt.NamePool = 3
+	d.mu.Lock()
+	s := &session{id: "xxxxxx", agent: "claude-code in T3", claudeSession: "conv-pool", key: "claude:conv-pool", clientPID: 800}
+	d.sessions[s.id] = s
+	d.mu.Unlock()
+
+	w := d.nextNames()
+	if len(w.wants) != 1 || w.reserve != 3 {
+		t.Fatalf("nextNames: wants=%+v reserve=%d; want 1 want and 3 reserve", w.wants, w.reserve)
+	}
+	d.mu.Lock()
+	d.setRouteLocked(s, proto.Route{T3Thread: "thread-pool", T3CLI: "/opt/t3/bin/t3"})
+	d.mu.Unlock()
+
+	if err := d.pushNames(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s.name == "" {
+		t.Fatal("session has no name after push landed")
+	}
+	if got := d.st.NameKeys["claude:conv-pool"]; got != s.name {
+		t.Errorf("claude key has %q, session has %q", got, s.name)
+	}
+	if got := d.st.NameKeys["t3:thread-pool"]; got != s.name {
+		t.Errorf("t3 key has %q, session has %q", got, s.name)
+	}
+	if d.st.NamedFromCLI["t3:thread-pool"] {
+		t.Error("T3's own name was marked NamedFromCLI")
+	}
+	if len(d.st.NamePool) != 3 {
+		t.Errorf("pool has %d names after landing, want 3 (a second name was taken from the pool)", len(d.st.NamePool))
+	}
+}
+
+// A T3 session that already knew its thread when nextNames picked it, and stops before the push
+// lands, still shares its landed name with its Claude session key (#874).
+func TestStoppedT3SessionSharesLandedNameWithClaudeKey(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	d.mu.Lock()
+	s := &session{id: "tttttt", agent: "claude-code in T3", claudeSession: "conv-gone",
+		key: "t3:thread-gone", route: proto.Route{T3Thread: "thread-gone"}, clientPID: 800}
+	d.sessions[s.id] = s
+	d.mu.Unlock()
+
+	w := d.nextNames()
+	d.mu.Lock()
+	delete(d.sessions, s.id)
+	d.mu.Unlock()
+
+	if err := d.pushNames(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t3Name := d.st.NameKeys["t3:thread-gone"]
+	cliName := d.st.NameKeys["claude:conv-gone"]
+	if t3Name == "" || cliName != t3Name {
+		t.Errorf("t3 key has %q, claude key has %q; want both equal and non-empty", t3Name, cliName)
+	}
+}
+
