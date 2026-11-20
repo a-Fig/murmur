@@ -1268,8 +1268,14 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	pres.Clean()
 	changed := time.Now()
-	if p == nil {
+	switch {
+	case p == nil:
 		changed = firstSight(c.Time) // no change of ours to time it by
+	case p.listed == sha:
+		// The SHA it last had, read again because a key came that opens it (addTeamKeysLocked):
+		// no new heartbeat, so it keeps the time it changed, as sawPresence does. A fresh time made
+		// a stale device look reachable in who and lookup (#871).
+		changed = p.lastChange
 	}
 	d.mu.Lock()
 	if sealed {
