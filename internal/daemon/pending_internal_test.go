@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -135,6 +136,74 @@ func TestASenderIsToldOfAGivenUpSend(t *testing.T) {
 	if e := inbox[1].Event; !strings.Contains(e.Body, "given up: the push kept failing.") {
 		t.Errorf("the notice of a send whose pushes failed: %+v", e)
 	}
+}
+
+// A pending send given up because the remote refused the git credentials tells the sender so, and
+// that the user has to fix their git login rather than telling it to try again (#858).
+func TestAGivenUpSendSaysWhenTheRemoteRefusedCredentials(t *testing.T) {
+	t.Parallel()
+	gitErr := func(stderr string) error {
+		return &gitx.Error{
+			Args:   []string{"push", "origin", "sha:refs/murmur/mesh/dev"},
+			Stderr: stderr,
+			Err:    errors.New("exit status 128"),
+		}
+	}
+	want := "Your message to quiet-otter couldn't be pushed, and was given up: the remote refused git credentials. Ask your user to fix their git login before sending again."
+	for _, c := range []struct {
+		name string
+		err  error
+	}{
+		{"https auth failed", gitErr("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/a/b.git/'\n")},
+		{"ssh permission denied", gitErr("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n")},
+		{"terminal prompts disabled", gitErr("fatal: could not read Username for 'https://github.com': terminal prompts disabled\n")},
+		{"wrapped git error", fmt.Errorf("push failed: %w", gitErr("remote: Permission to a/b.git denied to alice.\nfatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403\n"))},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			d, _, _ := rateRig(t, Options{}, false)
+			from := bus.Addr(d.device, "bbbbbb")
+			d.mu.Lock()
+			d.givenUpLocked(from, "auth check", "quiet-otter", c.err)
+			inbox := d.st.Inbox["bbbbbb"]
+			d.mu.Unlock()
+			if len(inbox) != 1 {
+				t.Fatalf("the sender's inbox: %+v", inbox)
+			}
+			if e := inbox[0].Event; e.Subject != `Not sent: "auth check"` || !d.isTellNotice(e) || e.Body != want {
+				t.Errorf("the give-up notice: %+v, want body %q", e, want)
+			}
+		})
+	}
+
+	t.Run("pending send given up after auth failure", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		ctx := context.Background()
+		d.sendFirst(t)
+		authErr := gitErr("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/a/b.git/'\n")
+		d.writeMu.Lock()
+		d.testPush = func(func() error) error { return authErr }
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "after expiry"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		d.writeMu.Lock()
+		d.pendFrom = time.Now().Add(-time.Hour)
+		d.retryPending()
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		wantAll := "Your message to * couldn't be pushed, and was given up: the remote refused git credentials. Ask your user to fix their git login before sending again."
+		if len(inbox) != 1 {
+			t.Fatalf("the sender's inbox has %d messages, want 1", len(inbox))
+		}
+		if got := inbox[0].Event.Body; got != wantAll {
+			t.Errorf("the give-up notice body:\n got: %q\nwant: %q", got, wantAll)
+		}
+	})
 }
 
 // sendFirst writes a message to d's log and returns the tip of the remote's after it.
