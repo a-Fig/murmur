@@ -9,6 +9,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // A send whose push ended unsure (unsureError: it timed out or lost its connection with the push
@@ -218,8 +219,8 @@ func (d *Daemon) givenUpLocked(from, subject, to string, err error) {
 
 // givenUpWhy says, in a few plain words, why a pending send was given up, and what the sender
 // should do next: git's own words, such as "context deadline exceeded: signal: killed", tell an
-// agent nothing (Tyler, 2026-11-16). When the remote refused git credentials, retrying won't help
-// until the user fixes their login (#858).
+// agent nothing (Tyler, 2026-11-16). When git couldn't log in to the remote or access the
+// repository, retrying won't help until the user fixes it (#858).
 func givenUpWhy(err error) (why, next string) {
 	next = "Send it again if it still matters."
 	switch {
@@ -235,8 +236,8 @@ func givenUpWhy(err error) (why, next string) {
 		return "the remote refused it", next
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return "the push kept timing out", next
-	case isAuthError(err):
-		return "the remote refused git credentials", "Ask your user to fix their git login before sending again."
+	case err != nil && errorClass(err, errorText(err), false) == web.ErrAuth:
+		return "git couldn't log in to the remote or access the repository", "Ask your user to check their git login and access before sending again."
 	}
 	return "the push kept failing", next
 }

@@ -138,8 +138,9 @@ func TestASenderIsToldOfAGivenUpSend(t *testing.T) {
 	}
 }
 
-// A pending send given up because the remote refused the git credentials tells the sender so, and
-// that the user has to fix their git login rather than telling it to try again (#858).
+// A pending send given up because git couldn't log in to the remote or access the repository tells
+// the sender so, and asks the user to check their login and access rather than retrying (#858).
+// Auth phrases that appear only in git's command arguments with empty stderr don't trigger it.
 func TestAGivenUpSendSaysWhenTheRemoteRefusedCredentials(t *testing.T) {
 	t.Parallel()
 	gitErr := func(stderr string) error {
@@ -149,15 +150,24 @@ func TestAGivenUpSendSaysWhenTheRemoteRefusedCredentials(t *testing.T) {
 			Err:    errors.New("exit status 128"),
 		}
 	}
-	want := "Your message to quiet-otter couldn't be pushed, and was given up: the remote refused git credentials. Ask your user to fix their git login before sending again."
+	wantAuth := "Your message to quiet-otter couldn't be pushed, and was given up: git couldn't log in to the remote or access the repository. Ask your user to check their git login and access before sending again."
+	wantPlain := "Your message to quiet-otter couldn't be pushed, and was given up: the push kept failing. Send it again if it still matters."
 	for _, c := range []struct {
 		name string
 		err  error
+		want string
 	}{
-		{"https auth failed", gitErr("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/a/b.git/'\n")},
-		{"ssh permission denied", gitErr("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n")},
-		{"terminal prompts disabled", gitErr("fatal: could not read Username for 'https://github.com': terminal prompts disabled\n")},
-		{"wrapped git error", fmt.Errorf("push failed: %w", gitErr("remote: Permission to a/b.git denied to alice.\nfatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403\n"))},
+		{"https auth failed", gitErr("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/a/b.git/'\n"), wantAuth},
+		{"ssh permission denied", gitErr("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n"), wantAuth},
+		{"terminal prompts disabled", gitErr("fatal: could not read Username for 'https://github.com': terminal prompts disabled\n"), wantAuth},
+		{"wrapped git error", fmt.Errorf("push failed: %w", gitErr("remote: Permission to a/b.git denied to alice.\nfatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403\n")), wantAuth},
+		{"repository not found", gitErr("remote: Repository not found.\nfatal: repository 'https://github.com/a/b.git/' not found\n"), wantAuth},
+		{"host key verification failed", gitErr("Host key verification failed.\nfatal: Could not read from remote repository.\n"), wantAuth},
+		{"auth words only in args with empty stderr", &gitx.Error{
+			Args:   []string{"push", "origin", "sha:refs/murmur/Authentication failed"},
+			Stderr: "  \n",
+			Err:    errors.New("exit status 128"),
+		}, wantPlain},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -170,8 +180,8 @@ func TestAGivenUpSendSaysWhenTheRemoteRefusedCredentials(t *testing.T) {
 			if len(inbox) != 1 {
 				t.Fatalf("the sender's inbox: %+v", inbox)
 			}
-			if e := inbox[0].Event; e.Subject != `Not sent: "auth check"` || !d.isTellNotice(e) || e.Body != want {
-				t.Errorf("the give-up notice: %+v, want body %q", e, want)
+			if e := inbox[0].Event; e.Subject != `Not sent: "auth check"` || !d.isTellNotice(e) || e.Body != c.want {
+				t.Errorf("the give-up notice: %+v, want body %q", e, c.want)
 			}
 		})
 	}
@@ -196,7 +206,7 @@ func TestAGivenUpSendSaysWhenTheRemoteRefusedCredentials(t *testing.T) {
 		d.mu.Lock()
 		inbox := d.st.Inbox["bbbbbb"]
 		d.mu.Unlock()
-		wantAll := "Your message to * couldn't be pushed, and was given up: the remote refused git credentials. Ask your user to fix their git login before sending again."
+		wantAll := "Your message to * couldn't be pushed, and was given up: git couldn't log in to the remote or access the repository. Ask your user to check their git login and access before sending again."
 		if len(inbox) != 1 {
 			t.Fatalf("the sender's inbox has %d messages, want 1", len(inbox))
 		}

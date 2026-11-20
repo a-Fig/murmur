@@ -207,20 +207,23 @@ func healthError(ctx context.Context, err error, at time.Time) *web.HealthError 
 	return &web.HealthError{Class: class, Message: errorLine(text), At: at}
 }
 
-// errorText is what git printed to stderr for err, or err.Error() if err is not a gitx.Error with
-// stderr. Using stderr keeps git's command line out of error matching and display.
+// errorText is what git printed to stderr for err, or its underlying error when stderr is empty,
+// keeping git's command line out of error matching and display.
 func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
 	var g *gitx.Error
-	if errors.As(err, &g) && strings.TrimSpace(g.Stderr) != "" {
-		return g.Stderr // what git said, without the command line
+	if errors.As(err, &g) {
+		if strings.TrimSpace(g.Stderr) != "" {
+			return g.Stderr
+		}
+		if g.Err != nil {
+			return g.Err.Error()
+		}
+		return ""
 	}
 	return err.Error()
-}
-
-// isAuthError says err looks like the remote wanting credentials or refusing the ones given,
-// classified by the same git stderr patterns the health page uses.
-func isAuthError(err error) bool {
-	return err != nil && errorClass(err, errorText(err), false) == web.ErrAuth
 }
 
 // errorClass sorts a failure into one of web's Err* classes, by what git and the remote said. Git's
