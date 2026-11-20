@@ -140,6 +140,19 @@ and eye line, so each accessory fits every ghost; some, like the bubble, reach p
 and the page doesn't clip them. `scripts/ghosts.py` writes them and `docs/ghosts.html`, a sheet of
 every combination; a change to the set means running it again.
 
+### The v3 page
+
+A second page, `/assets/v3/page.html` (`internal/web/static/assets/v3/`), builds the Figma file's
+"mur ui v3" screens as they are drawn, on the same `/api` and the same `#token=`. It is apart
+from the page above, not a theme of it (2026-11-11). It is set in Rubik, takes its colors and
+backdrop from the Figma frames, and has Light and Dark.
+
+Each agent there is a cat from `internal/web/static/assets/cats/`: the 54 looks in the Figma
+file's "Cat Avatar — gallery" as of 2026-11-11. That is six tones (Butter, Cream, Blue, Navy, Sky,
+Ginger; Gold was dropped) and not every face in every tone. A name hashes to one of them, so an
+agent keeps its cat everywhere. A change to the gallery means exporting the cats again and
+updating the list in `v3/app.js`.
+
 ## Renders
 
 `site/how-wide.mp4`, `site/how-tall.mp4` and their posters are rendered from
