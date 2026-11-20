@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -426,18 +428,7 @@ func TestLookupOfAPresenceForALateKeyIsKnownOnceTheKeyComes(t *testing.T) {
 	addr := bus.Addr(giveUpPeer, "aaaaaa")
 	team := bus.NewBoxKey()
 	id := bus.TeamID(bus.BoxPublic(team))
-	enc, err := bus.EncryptPresence(bus.Presence{V: bus.Version, Device: giveUpPeer, Host: "far", At: time.Now().UTC(),
-		BoxKey: bus.BoxPublic(bus.NewBoxKey()), Files: true,
-		Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Started: time.Now().UTC()}}},
-		map[string]string{id: bus.BoxPublic(team)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	msg, err := bus.EncodeSealed(enc, "presence", bus.NewSignKey(), giveUpPeer, brand.PresencePrefix+giveUpPeer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.pushPresence(msg)
+	r.pushPresence(lockedPresence(t, team, bus.NewSignKey(), time.Now()))
 	r.sync()
 	if got, line := r.lookupFilesOf(addr); got != "" || line != farUnknown {
 		t.Errorf("before the key: %q (%q), want takes: unknown", line, got)
@@ -449,6 +440,92 @@ func TestLookupOfAPresenceForALateKeyIsKnownOnceTheKeyComes(t *testing.T) {
 	if got, line := r.lookupFilesOf(addr); got != proto.FilesOn || line != farTakesThem {
 		t.Errorf("with the key: %q (%q), want takes them", line, got)
 	}
+}
+
+// A presence read again because a key came, its SHA the same, is no sign of life: a device that had
+// gone stale stays stale in who and lookup, its lastChange where its last heartbeat put it (#871). A
+// new heartbeat, a new SHA, makes it fresh again.
+func TestALateKeyDoesntMakeAStaleDeviceLookReachable(t *testing.T) {
+	r := newGiveUpRig(t)
+	addr := bus.Addr(giveUpPeer, "aaaaaa")
+	team := bus.NewBoxKey()
+	id := bus.TeamID(bus.BoxPublic(team))
+	sign := bus.NewSignKey()
+	r.pushPresence(lockedPresence(t, team, sign, time.Now()))
+	r.sync()
+	r.d.mu.Lock()
+	p := r.d.peers[giveUpPeer]
+	if p == nil || !p.locked {
+		r.d.mu.Unlock()
+		t.Fatalf("before the key: %+v, want it read and locked", p)
+	}
+	// No heartbeat since, for longer than StaleAfter.
+	quiet := p.lastChange.Add(-2 * r.d.opt.StaleAfter)
+	p.lastChange = quiet
+	sha := p.sha
+	r.d.addTeamKeysLocked(bus.Keyring{id: team})
+	r.d.mu.Unlock()
+	r.sync()
+
+	r.d.mu.Lock()
+	p = r.d.peers[giveUpPeer]
+	if p.locked || p.sha != sha {
+		r.d.mu.Unlock()
+		t.Fatalf("with the key: locked %v at %s, want %s read again and opened", p.locked, short(p.sha), short(sha))
+	}
+	if !p.lastChange.Equal(quiet) || !r.d.staleLocked(p) {
+		t.Errorf("with the key: lastChange %v, stale %v; want %v, stale", p.lastChange, r.d.staleLocked(p), quiet)
+	}
+	dv, det := r.seenOf(addr)
+	r.d.mu.Unlock()
+	if dv == nil || !dv.Stale || !dv.LastSeen.Equal(quiet) || len(dv.Sessions) != 1 {
+		t.Errorf("with the key: who shows %+v, want it stale, last seen %v, with its one session", dv, quiet)
+	}
+	if !det.Running || !det.Stale || det.Reachable || !det.DeviceSeen.Equal(quiet) {
+		t.Errorf("with the key: lookup shows running %v, stale %v, reachable %v, device seen %v; want running, stale, not reachable, seen %v",
+			det.Running, det.Stale, det.Reachable, det.DeviceSeen, quiet)
+	}
+
+	r.pushPresence(lockedPresence(t, team, sign, time.Now().Add(time.Second))) // a new At, so a new SHA
+	r.sync()
+	r.d.mu.Lock()
+	p = r.d.peers[giveUpPeer]
+	moved := p.sha != sha && p.lastChange.After(quiet)
+	dv, det = r.seenOf(addr)
+	r.d.mu.Unlock()
+	if !moved || dv == nil || dv.Stale || det.Stale || !det.Reachable {
+		t.Errorf("after a new heartbeat: moved %v, who %+v, lookup stale %v, reachable %v; want it fresh and reachable", moved, dv, det.Stale, det.Reachable)
+	}
+}
+
+// seenOf is the peer's device as who shows it, nil if it isn't listed, and the session at addr as
+// lookup gives it. Caller holds mu.
+func (r *giveUpRig) seenOf(addr string) (*proto.Device, *proto.SessionDetail) {
+	for _, dv := range r.d.whoLocked("", tags.Filter{}) {
+		if dv.ID == giveUpPeer {
+			return &dv, r.d.detailLocked(addr, proto.CLISession, 0)
+		}
+	}
+	return nil, r.d.detailLocked(addr, proto.CLISession, 0)
+}
+
+// lockedPresence is a presence of giveUpPeer written at at, sealed with sign, with one session that
+// takes files, encrypted for the team key team.
+func lockedPresence(t *testing.T, team *ecdh.PrivateKey, sign ed25519.PrivateKey, at time.Time) string {
+	t.Helper()
+	id := bus.TeamID(bus.BoxPublic(team))
+	enc, err := bus.EncryptPresence(bus.Presence{V: bus.Version, Device: giveUpPeer, Host: "far", At: at.UTC(),
+		BoxKey: bus.BoxPublic(bus.NewBoxKey()), Files: true,
+		Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "claude", Started: at.UTC()}}},
+		map[string]string{id: bus.BoxPublic(team)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := bus.EncodeSealed(enc, "presence", sign, giveUpPeer, brand.PresencePrefix+giveUpPeer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return msg
 }
 
 // A device whose presence was read and has no Files runs a daemon from before files, or is one
