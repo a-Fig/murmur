@@ -247,7 +247,8 @@ whole and the turn went on. Not tried: a Muse thread in T3 (`muse serve`), or Mu
 
 Added 2026-11-15 (#650), at Tyler's request. Tested in T3 Code on Antigravity 1.5.13 on
 2026-11-20. `PreInvocation` delivered notices, `Stop` continued the turn, and an already
-registered MCP server picked up its tools from `notifications/tools/list_changed`.
+registered MCP server picked up its tools from `notifications/tools/list_changed`. Reports from
+1.5.13 also cover hook payloads (#888, #892, #894).
 
 - **Homes.** T3 runs each Antigravity instance with a home of its own,
   `userdata/providers/antigravity/<sha256 of the instance ID>`, as its `GEMINI_HOME`. T3 says this
@@ -260,9 +261,10 @@ registered MCP server picked up its tools from `notifications/tools/list_changed
   sets in its shell commands, as the thread's provider session. Antigravity's MCP server takes its
   thread and identity from `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`,
   as Claude Code does. Antigravity gives `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks,
-  not to MCP servers. Under older T3 without `T3CODE_THREAD_ID`, the daemon pairs the hook's `conversationId` with the
-  server among the hook's ancestors (`hookNative`) and resolves the T3 thread via `t3db.ThreadOf`
-  as a fallback.
+  not to MCP servers. The hook finds a session moved by `mur join -C` by T3's thread ID when
+  available, or by the sole Antigravity server record of its client process (#888). The daemon pairs
+  the hook's `conversationId` with the server among the hook's ancestors (`hookNative`) and, under
+  older T3 without `T3CODE_THREAD_ID`, resolves the T3 thread via `t3db.ThreadOf` as a fallback.
 - **Tool approval.** Join adds `mcp(murmur/*)` to `permissions.allow` in
   `antigravity-acp/settings.json` in a T3 instance's home or `antigravity-cli/settings.json` in a
   standalone CLI's home (Antigravity 1.5.13). A settings file join can't edit leaves a note with the rule and path.
@@ -274,13 +276,14 @@ registered MCP server picked up its tools from `notifications/tools/list_changed
   `agy`, `agy_acp_server`, and `localharness_external` are all in `agentPrograms` for `agentAbove`,
   so an agent run from an Antigravity thread's shell does not steal the enclosing T3 thread's
   `T3CODE_THREAD_ID`.
-- **The hook.** It is a `murmur` entry in `config/hooks.json`. Antigravity's payload doesn't name
-  its event, so the command line does: `mur hook --event Stop antigravity`. It runs on two events:
-  - `PreInvocation`, before each model call, stands for both `UserPromptSubmit` and `PostToolUse`.
-    `PostToolUse`'s answer is ignored. Its notices go back as a system message (`injectSteps`), and
-    its `lastUserInput` is the prompt #611 matches.
-  - `Stop` keeps a turn going with `"decision": "continue"`, only when `terminationReason` is
-    `NO_TOOL_CALL`.
+- **The hook.** The `murmur` entry in `config/hooks.json` names the event on the command line
+  for older versions, as in `mur hook --event Stop antigravity`.
+  - `PreInvocation` returns notices as a system message (`injectSteps`) before each model call.
+    On invocation 0, `lastUserInput` is the prompt #611 matches.
+  - `Stop` can continue a turn after `NO_TOOL_CALL` when background work is done. Older payloads
+    can omit `fullyIdle`.
+  - `PreToolUse` and `PostToolUse` bracket `run_command` calls for commit credit. The snapshots
+    use the command's `Cwd` when supplied.
 
-  Every answer is a JSON object, `{}` when there is nothing to say. Hooks run with `cmd /c` on
-  Windows, so a path with a space is double-quoted.
+  Every answer is a JSON object. Hooks run with `cmd /c` on Windows, so a path with a space is
+  double-quoted.

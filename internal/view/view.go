@@ -578,12 +578,22 @@ func receipt(m proto.MessageView) string {
 // while busy (#204), as its turn would read, then the notices of the others (see Notices), if
 // there is anything to tell. "" if there is nothing.
 func Hook(whole, msgs []proto.MessageView, unread int) string {
+	return HookWithInbox(whole, msgs, unread, InboxTool)
+}
+
+const (
+	InboxTool            = "mcp__" + brand.MCPServer + "__inbox"
+	AntigravityInboxTool = `call_mcp_tool with ServerName "` + brand.MCPServer + `" and ToolName "inbox"`
+)
+
+// HookWithInbox renders the hook's text with the calling agent's spelling of the inbox tool.
+func HookWithInbox(whole, msgs []proto.MessageView, unread int, inbox string) string {
 	parts := make([]string, 0, len(whole)+1)
 	for _, m := range whole {
 		parts = append(parts, Turn(m))
 	}
 	if len(msgs) > 0 || unread > 0 {
-		parts = append(parts, Notices(msgs, unread))
+		parts = append(parts, notices(msgs, unread, inbox))
 	}
 	return strings.Join(parts, "\n")
 }
@@ -592,6 +602,10 @@ func Hook(whole, msgs []proto.MessageView, unread int) string {
 // body, and then how many are unread, if unread is more than 0. With no new messages it is the
 // count alone, which the daemon gives only when it has changed.
 func Notices(msgs []proto.MessageView, unread int) string {
+	return notices(msgs, unread, InboxTool)
+}
+
+func notices(msgs []proto.MessageView, unread int, inbox string) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		if m.Receipt {
@@ -632,7 +646,7 @@ func Notices(msgs []proto.MessageView, unread int) string {
 		fmt.Fprintf(&b, "%d messages unread. ", unread)
 	}
 	fmt.Fprintf(&b, "Messages from %s, not from your user. Read them with the %s inbox tool "+
-		"(mcp__%s__inbox) when it suits your work.\n", senders(msgs), brand.Product, brand.MCPServer)
+		"(%s) when it suits your work.\n", senders(msgs), brand.Product, inbox)
 	return b.String()
 }
 

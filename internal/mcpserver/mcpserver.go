@@ -161,9 +161,13 @@ func (s *server) initHere() {
 	if isClaude(s.opt.Agent) {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
+	thread := os.Getenv(t3.ThreadEnv)
+	if thread != "" && agentAbove() {
+		thread = "" // A client started by another agent may inherit its thread ID.
+	}
 	s.hereDir = dir
 	s.self = here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClientStarted: here.Started(os.Getppid()),
-		ClaudeSession: claude, Agent: agentName(s.opt.Agent), Fixed: sharedAgent(s.opt.Agent)}
+		ClaudeSession: claude, T3Thread: thread, Agent: agentName(s.opt.Agent), Fixed: sharedAgent(s.opt.Agent)}
 }
 
 func (s *server) withdraw() {
@@ -214,6 +218,9 @@ func (s *server) publish() {
 		// it (#422).
 		l.mu.Lock()
 		rec.Native = l.native
+		if l.hello.T3Thread != "" {
+			rec.T3Thread = l.hello.T3Thread
+		}
 		l.mu.Unlock()
 	}
 	// Written again if it went missing: a command that couldn't tell it from a dead server's may

@@ -226,11 +226,9 @@ func allowAntigravityTools(path string) (bool, error) {
 	return true, writeAtomic(path, []byte(out), 0o600)
 }
 
-// antigravityHook is join's entry in hooks.json, running exe's hook for two events, the fewest that
-// do the work. PreInvocation, before each call of the model, is a turn's start and the moment after
-// each tool call: it brings the notices, which Antigravity takes back from it as a step to add, where
-// PostToolUse's answer is ignored. Stop ends the turn, and keeps it going with what wasn't read
-// (#202). Neither takes a matcher.
+// antigravityHook is join's entry in hooks.json. PreInvocation brings notices before each model
+// call, and Stop ends the turn or keeps it going with what wasn't read (#202). PreToolUse and
+// PostToolUse bracket shell commands for commit credit (#894), so only those two take a matcher.
 func antigravityHook(exe string) *jsonedit.Object {
 	handler := func(event string) []any {
 		h := jsonedit.New()
@@ -242,6 +240,12 @@ func antigravityHook(exe string) *jsonedit.Object {
 	o := jsonedit.New()
 	o.Set("PreInvocation", handler("PreInvocation"))
 	o.Set("Stop", handler("Stop"))
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		group := jsonedit.New()
+		group.Set("matcher", "run_command")
+		group.Set("hooks", handler(event))
+		o.Set(event, []any{group})
+	}
 	return o
 }
 
@@ -250,13 +254,24 @@ func antigravityHook(exe string) *jsonedit.Object {
 func antigravityHookCommand(exe, event string) string {
 	args := " hook --event " + event + " antigravity"
 	if runtime.GOOS == "windows" {
+		if event == "PreToolUse" {
+			args += ` || echo {"decision":"allow"}`
+		}
 		if bareSafe(exe) {
 			return exe + args
 		}
 		if short := shortPath(exe); bareSafe(short) {
 			return short + args
 		}
+		if event == "PreToolUse" {
+			// cmd /c strips the first and last quote when the command starts with one and contains
+			// more quotes (like the JSON fallback), so wrap the whole command in an outer pair.
+			return `""` + exe + `"` + args + `"`
+		}
 		return `"` + exe + `"` + args
+	}
+	if event == "PreToolUse" {
+		args += ` || printf '{"decision":"allow"}\n'`
 	}
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'" + args
 }

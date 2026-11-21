@@ -1568,6 +1568,7 @@ func (d *Daemon) setRouteLocked(s *session, r proto.Route) {
 		// Another way in, or a first one: what the log said of the last no longer holds, and a
 		// failure of this one is worth its own line.
 		delete(d.pushWarned, s.id)
+		d.kickPresence()
 	}
 	s.route = r
 	d.rememberRouteLocked(s)

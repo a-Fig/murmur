@@ -46,7 +46,7 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved | `hooks.json` in each Codex home, its trust in `config.toml` there ([Codex's and Grok's hook](clients.md#codexs-and-groks-hook)) | user |
 | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
 | The hook for Muse Code, on `UserPromptSubmit`, `PostToolUse` and `Stop` | `hooks` in each Muse home's `settings.json` ([Muse's hook](clients.md#muses-hook)) | user |
-| The hook for Antigravity, on `PreInvocation` and `Stop` | a `murmur` entry in `config/hooks.json` in each Antigravity home ([other agents](clients.md#antigravity)) | user |
+| The hook for Antigravity, on `PreInvocation`, `Stop`, and before and after `run_command` | a `murmur` entry in `config/hooks.json` in each Antigravity home ([other agents](clients.md#antigravity)) | user |
 | The daemon | started, if none is running | clone |
 
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
