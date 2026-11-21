@@ -343,15 +343,17 @@
   #uses, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
   #uses h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
-  /* The agents Murmur works with, as tiles of one size; T3 Code first, in blue and starred, since
-     every agent in it gets a message as a new turn. */
-  .agents { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-  .agents li { display: flex; align-items: center; gap: 8px; min-height: 60px; padding: 14px 18px; border-radius: var(--r-md); background: var(--cream-2); border: 1px solid #E6E0C2; font-size: 16px; font-weight: 600; line-height: 1.3; color: var(--ink); }
-  .agents .star { background: var(--blue); border-color: var(--blue); color: var(--cream); }
-  .agents .star a { display: flex; align-items: center; gap: 8px; width: 100%; color: inherit; text-decoration: none; }
-  .agents .star a:hover { text-decoration: underline; text-underline-offset: 3px; }
-  .agents .star a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
-  .agents .star svg { width: 16px; height: 16px; flex: none; fill: var(--butter); }
+  /* The agents Murmur works with, as outlined tiles of one size with each one's logo (agents/,
+     from T3 Code; agents/SOURCES.txt). T3 Code comes first, in blue, since every agent in it gets a
+     message as a new turn. */
+  .agents { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .agents li { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 10px 14px; border-radius: var(--r-md); border: 1.5px solid var(--rule); font-size: 15.5px; font-weight: 600; line-height: 1.3; color: var(--ink); }
+  .agents img { width: 22px; height: 22px; object-fit: contain; flex: none; }
+  .agents .t3 { background: var(--blue); border-color: var(--blue); color: var(--cream); }
+  .agents .t3 img { border-radius: 5px; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55); }
+  .agents .t3 a { display: flex; align-items: center; justify-content: center; gap: 10px; color: inherit; text-decoration: none; }
+  .agents .t3 a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .agents .t3 a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
   @media (max-width: 759px) { .agents { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .agents-note { margin-top: 12px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); text-wrap: pretty; }
   .uses-lead { margin-top: 10px; font-size: 17px; line-height: 1.5; max-width: 64ch; color: var(--ink-soft); text-wrap: pretty; }
@@ -894,14 +896,14 @@ void main() {
   <div class="setup-in">
     <h2>Supported</h2>
     <ul class="agents">
-      <li class="star"><a href="https://github.com/pingdotgg/t3code"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.2l2 4.3 4.7.5-3.5 3.2 1 4.6L8 11.5l-4.2 2.3 1-4.6L1.3 6l4.7-.5z"/></svg>T3 Code</a></li>
-      <li>Claude Code</li>
-      <li>Codex</li>
-      <li>OpenCode</li>
-      <li>Pi</li>
-      <li>Muse Code</li>
-      <li>Grok</li>
-      <li>Antigravity</li>
+      <li class="t3"><a href="https://github.com/pingdotgg/t3code"><img src="/agents/t3.svg" alt="" width="22" height="22">T3 Code</a></li>
+      <li><img src="/agents/claude.svg" alt="" width="22" height="22">Claude Code</li>
+      <li><img src="/agents/codex.svg" alt="" width="22" height="22">Codex</li>
+      <li><img src="/agents/opencode.svg" alt="" width="22" height="22">OpenCode</li>
+      <li><img src="/agents/pi.svg" alt="" width="22" height="22">Pi</li>
+      <li><img src="/agents/muse.svg" alt="" width="22" height="22">Muse Code</li>
+      <li><img src="/agents/grok.svg" alt="" width="22" height="22">Grok</li>
+      <li><img src="/agents/antigravity.svg" alt="" width="22" height="22">Antigravity</li>
     </ul>
     <p class="agents-note" data-prose>In T3 Code, every agent here gets a message as a new turn. On their own, Muse Code, Grok and Antigravity keep it in their inbox until they check.</p>
   </div>
