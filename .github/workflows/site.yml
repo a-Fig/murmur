@@ -6,7 +6,9 @@
 # It needs two repo secrets: CLOUDFLARE_API_TOKEN, a token with the "Edit Cloudflare Workers"
 # permissions for the account and the afig.dev zone, and CLOUDFLARE_ACCOUNT_ID. Without them the
 # job warns and deploys nothing. D1 migrations (site/migrations) are still applied by hand, since one
-# changes data that a redeploy can't undo.
+# changes data that a redeploy can't undo: a push that adds one fails here instead of deploying code
+# ahead of its schema. Apply it (`npx wrangler d1 migrations apply murmur-usage --remote`), then run
+# this workflow by hand.
 name: site
 
 on:
@@ -28,16 +30,35 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.repository == 'a-Fig/murmur'
+    # Only main: a run by hand could otherwise publish any branch.
+    if: github.repository == 'a-Fig/murmur' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # wrangler 4 needs node 22 or later.
+      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 22
       # The same tests a pull request runs (test.yml), so a commit pushed to main without one can't
       # publish a broken site.
       - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
+      - name: Stop if the push adds a D1 migration
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER" --jq '.files[].filename')
+          if echo "$files" | grep -q '^site/migrations/'; then
+            echo "::error::This push adds a D1 migration. Apply it, then run this workflow by hand."
+            exit 1
+          fi
       - if: env.HAS_TOKEN != 'true'
         run: echo "::warning::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID isn't set, so the site wasn't deployed."
       - if: env.HAS_TOKEN == 'true'
