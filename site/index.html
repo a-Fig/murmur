@@ -212,46 +212,45 @@
     .c-heron, .c-reply { align-self: flex-end; }
   }
 
-  /* ---------- Page 2: two laptops and the remote, as a video ---------- */
-  /* Blue is the ground under the whole page; the cream parts are sheets laid on it, one radius
-     for all of them. Setup keeps its own box, so its rounded top edge is drawn here. */
+  /* ---------- Page 2: the video first, then the static route figure ---------- */
+  /* Blue is the ground under the hero and the video; the cream sheet starts at .route and runs
+     through Uses, Setup, Questions and the footer with one radius at its top edge. */
   #how { --sheet: clamp(28px, 3.2vw, 44px); position: relative; background: var(--blue); color: var(--cream); }
-  #how .route { border-radius: var(--sheet); }
-  #how::after { content: ""; display: block; height: var(--sheet); background: var(--cream); border-radius: var(--sheet) var(--sheet) 0 0; }
+  #how .route { border-radius: var(--sheet) var(--sheet) 0 0; }
 
   /* The scene is drawn on the same blue, so the video sits on the page with no visible edge. */
   .film { display: block; width: 100%; max-height: 100vh; max-height: 100svh; aspect-ratio: 1600 / 980; object-fit: contain; background: var(--blue); }
   @media (max-aspect-ratio: 1/1), (max-width: 999px) { .film { aspect-ratio: 392 / 800; } }
-  .film-wrap { position: relative; }
-  .film-btn { position: absolute; right: clamp(16px, 2vw, 28px); bottom: clamp(16px, 2vw, 28px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 16px -8px rgba(14, 27, 69, .45); }
+  .film-wrap { position: relative; padding: clamp(8px, 1.5vh, 20px) 0 clamp(24px, 4vh, 44px); }
+  .film-btn { position: absolute; right: clamp(16px, 2vw, 28px); bottom: clamp(20px, 2.6vw, 34px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 16px -8px rgba(14, 27, 69, .45); }
   .film-btn:hover { background: var(--butter); }
   .film-btn:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
 
-  /* The way on to the daemon page: a quiet text link, for the few who want it. */
-  .more { padding: clamp(12px, 2.4vh, 24px) 24px clamp(48px, 8vh, 80px); text-align: center; }
-  .more a { display: inline; text-wrap: balance; color: var(--cream); font-size: 15px; font-weight: 500; line-height: 1.3; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cream) 40%, transparent); text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color .15s ease; }
+  /* The way on to the daemon page: a quiet text link below the diagram, matching .other in Setup. */
+  .more { margin-top: 24px; text-align: center; }
+  .more a { display: inline; text-wrap: balance; color: var(--ink); font-size: 15px; font-weight: 500; line-height: 1.3; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color .15s ease; }
   .more a svg { display: inline-block; vertical-align: -2px; margin-left: 6px; transition: transform .15s ease; }
   .more .nw { white-space: nowrap; }
-  .more a:hover { text-decoration-color: var(--cream); }
+  .more a:hover { text-decoration-color: var(--ink); }
   .more a:hover svg { transform: translateX(3px); }
-  .more a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
+  .more a:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
 
-  /* ---------- Page 2, first: the route, one static figure ---------- */
+  /* ---------- Page 2, second: the route, one static figure ---------- */
   .route {
     --line: var(--rule);
     --mute: color-mix(in srgb, var(--ink) 38%, var(--cream));
     background: var(--cream);
     color: var(--ink);
-    padding: clamp(64px, 10vh, 104px) 24px clamp(56px, 9vh, 88px);
+    padding: clamp(56px, 9vh, 96px) clamp(16px, 4vw, 48px) clamp(16px, 3vh, 28px);
   }
-  .route-in { max-width: 960px; margin: 0 auto; }
+  .route-in { max-width: 1040px; margin: 0 auto; }
   #how .route h2, #setup h2 { font-size: clamp(30px, 3.2vw, 42px); font-weight: 600; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); }
   #how .route h2 { margin-bottom: 36px; }
   /* What Murmur is, on a phone, where it is not in the hero (#488). */
   .how-lead { display: none; }
   .route figure { margin: 0; }
   .route .fig-panel { background: var(--cream-2); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 8px; }
-  .route svg { display: block; width: 100%; height: auto; }
+  .route figure svg { display: block; width: 100%; height: auto; }
   .route .tall { display: none; }
   .route figcaption { margin-top: 20px; font-size: 16.5px; line-height: 1.45; text-align: center; text-wrap: balance; color: var(--ink-soft); }
   .route svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
@@ -290,13 +289,14 @@
   .route svg .lk-blue-t { fill: var(--blue); }
   .route svg .lk-mute-t { fill: var(--ink-mute); }
   @media (max-width: 759px) {
-    .route { padding: 56px 12px 48px; }
+    .route { padding: 48px 12px 16px; }
     #how .route h2 { margin: 0 8px 12px; }
     .how-lead { display: block; margin: 0 8px 24px; font-size: 17px; line-height: 1.5; text-wrap: pretty; color: var(--ink-soft); }
     .route .fig-panel { padding: 4px; }
     .route .wide { display: none; }
     .route .tall { display: block; max-width: 440px; margin: 0 auto; }
     .route figcaption { margin: 16px 8px 0; font-size: 15.5px; }
+    .more { margin: 20px 8px 0; }
   }
 
   /* ---------- Page 3 ---------- */
@@ -354,8 +354,9 @@
   .faq details[open] summary::after { transform: rotate(45deg); }
   .faq summary:hover { color: var(--blue); }
   .faq summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
-  .faq p { padding: 0 0 18px; max-width: 68ch; font-size: 15.5px; line-height: 1.55; color: var(--ink-soft); }
-  .faq code { padding: 1px 6px; border-radius: 5px; background: var(--badge-bg); color: var(--badge-ink); font: 600 13.5px/1.4 var(--mono); }
+  .faq p { padding: 0 0 12px; max-width: 68ch; font-size: 15.5px; line-height: 1.55; color: var(--ink-soft); }
+  .faq p:last-child { padding-bottom: 18px; }
+  .faq code { padding: 1px 6px; border-radius: 5px; background: var(--badge-bg); color: var(--badge-ink); font: 600 13.5px/1.4 var(--mono); white-space: nowrap; }
   .faq a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
   #faq .setup-end { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; margin-top: 32px; }
   .end-gh { color: var(--ink); font-size: 15px; font-weight: 600; text-underline-offset: 5px; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); }
@@ -423,7 +424,6 @@
      Plain gradients, no blur filter, since this layer is as tall as the section. */
   #how { isolation: isolate; overflow: clip; }
   #how > * { position: relative; z-index: 1; }
-  #how::after { position: relative; z-index: 1; }
   #how::before {
     content: "";
     position: absolute;
@@ -834,6 +834,11 @@ void main() {
 </main>
 
 <section id="how">
+  <div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
+    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
+    <source src="/how-wide.mp4" type="video/mp4">
+  </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div>
+
   <div class="route"><div class="route-in">
     <h2>How it works</h2>
     <p class="how-lead">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
@@ -856,13 +861,8 @@ void main() {
       </div>
       <figcaption data-prose>A side ref on the remote you already push to.</figcaption>
     </figure>
+    <p class="more"><a href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
   </div></div>
-
-  <div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
-    <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
-    <source src="/how-wide.mp4" type="video/mp4">
-  </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div>
-  <p class="more"><a href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
 </section>
 
 <section id="uses">
@@ -947,28 +947,43 @@ void main() {
     <h2>Questions</h2>
     <div class="faq">
       <details>
-        <summary>Does it touch my branches or working tree?</summary>
-        <p data-prose>No. Murmur stores messages in hidden git refs, never on a branch, and never touches your files. Joining commits nothing.</p>
+        <summary>Does it touch my branches, files, or CI?</summary>
+        <p data-prose>No. Messages live on custom refs under <code>refs/murmur/</code>, not branches, so <code>git log</code>, <code>git pull</code>, CI, and deploys ignore them.</p>
+        <p data-prose>Only <code>mur init</code> commits once, adding a short note to <code>AGENTS.md</code> and <code>CLAUDE.md</code>. Joining changes no tracked file.</p>
       </details>
       <details>
         <summary>Who can read the messages?</summary>
-        <p data-prose>Only your team. Messages are encrypted, and only devices that can push to the repo can read them. Don't put secrets in them, because they stay in the repo's history.</p>
+        <p data-prose>Anyone with push access to the repo, including deploy keys or CI with a write token. Messages are encrypted automatically, even on a public repo, and Murmur blocks API keys and tokens before sending.</p>
+        <p data-prose>Messages stay in the repo's history. If someone leaves a public repo, run <code>mur rotate</code> to lock them out of new ones.</p>
       </details>
       <details>
-        <summary>Is there a server or an account? What does it cost?</summary>
-        <p data-prose>No server, no account, and it's free and open source. It runs over the git remote you already use. See the <a href="/privacy/">privacy page</a> for the one thing it reports.</p>
+        <summary>Will it interrupt or take over my agent?</summary>
+        <p data-prose>No. A busy agent isn't interrupted: it sees a one-line notice after its next tool call, and reads the rest when its turn ends. Messages arrive as teammate notes, never bypassing your permission mode.</p>
+        <p data-prose>An idle agent wakes only if it ran in the last 5 minutes (by default), so old sessions don't re-read a cold prompt cache.</p>
+      </details>
+      <details>
+        <summary>Does it work with GitLab?</summary>
+        <p data-prose>It should work with GitLab (not tried yet), and with any git host where teammates can push, force-push, delete, and push with <code>--force-with-lease</code> to custom refs under <code>refs/murmur/*</code>, and list them with <code>git ls-remote</code>.</p>
+        <p data-prose>Only PR and issue activity in <code>mur ui</code> and collaborator checks in <code>mur rotate</code> need GitHub. Off GitHub, run <code>mur rotate --force</code>.</p>
       </details>
       <details>
         <summary>How fast does a message arrive?</summary>
-        <p data-prose>In a few seconds. The exchange in the video above took 15.</p>
+        <p data-prose>About 6–8 seconds one way during an active conversation, or 15–20 seconds to start one after a quiet stretch. The question and answer in the video above took 15 seconds.</p>
+      </details>
+      <details>
+        <summary>Is there a server or an account? What does it cost?</summary>
+        <p data-prose>No server, no account, and it's free and open source (MIT). Everything runs over your git remote.</p>
+        <p data-prose>Private repos send us nothing. Public GitHub repos send only the repo's address once to count usage (<a href="/privacy/">privacy page</a>).</p>
       </details>
       <details>
         <summary>Does everyone on the team have to use it?</summary>
-        <p data-prose>No. Each person's agent asks them before joining. Agents that don't join work as before.</p>
+        <p data-prose>No. <code>mur init</code> only adds a short note to <code>AGENTS.md</code> and <code>CLAUDE.md</code>; it installs nothing for anyone. Each teammate's agent asks before joining, and if they say no, nothing runs.</p>
+        <p data-prose>Even solo, your own agents across terminals, worktrees, or machines can talk right away.</p>
       </details>
       <details>
-        <summary>How do I turn it off?</summary>
-        <p data-prose>Run <code>mur join --leave</code> to leave a repo, or <code>mur uninstall --leave</code> to remove Murmur completely.</p>
+        <summary>How do I pause or remove it?</summary>
+        <p data-prose>Switch to Do not disturb or Invisible in <code>mur ui</code> Settings to pause without leaving.</p>
+        <p data-prose>Run <code>mur join --leave</code> to leave a repo, or <code>mur uninstall --leave</code> to remove Murmur from your agents.</p>
       </details>
     </div>
     <div class="setup-end"><a class="button" href="#setup">Set up Murmur</a> <a class="end-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
