@@ -278,10 +278,11 @@ func TestRegisterAntigravity(t *testing.T) {
 	if s := servers.MCPServers["murmur"]; s.Command != sb.Exe || strings.Join(s.Args, " ") != "mcp --agent antigravity" || servers.MCPServers["other"].Command != "o" {
 		t.Errorf("mcp_config.json: %+v", servers.MCPServers)
 	}
-	var hookFile map[string]map[string][]struct {
+	type handler struct {
 		Type, Command string
 		Timeout       int
 	}
+	var hookFile map[string]map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(read(t, hooks)), &hookFile); err != nil {
 		t.Fatal(err)
 	}
@@ -289,14 +290,31 @@ func TestRegisterAntigravity(t *testing.T) {
 		t.Errorf("the user's hook went: %s", read(t, hooks))
 	}
 	ours := hookFile["murmur"]
-	if len(ours) != 2 {
+	if len(ours) != 4 {
 		t.Fatalf("join's hook: %+v", ours)
 	}
-	for _, event := range []string{"PreInvocation", "Stop"} {
-		hs := ours[event]
-		if len(hs) != 1 || hs[0].Type != "command" || hs[0].Timeout != 30 || !strings.HasSuffix(hs[0].Command, " hook --event "+event+" antigravity") {
+	checkHandler := func(event string, hs []handler) {
+		t.Helper()
+		if len(hs) != 1 || hs[0].Type != "command" || hs[0].Timeout != 30 || hs[0].Command != antigravityHookCommand(sb.Exe, event) {
 			t.Errorf("%s: %+v", event, hs)
 		}
+	}
+	for _, event := range []string{"PreInvocation", "Stop"} {
+		var hs []handler
+		if err := json.Unmarshal(ours[event], &hs); err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+		checkHandler(event, hs)
+	}
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		var groups []struct {
+			Matcher string
+			Hooks   []handler
+		}
+		if err := json.Unmarshal(ours[event], &groups); err != nil || len(groups) != 1 || groups[0].Matcher != "run_command" {
+			t.Fatalf("%s: groups %+v, error %v", event, groups, err)
+		}
+		checkHandler(event, groups[0].Hooks)
 	}
 	if did, fresh, err := sb.registerAntigravityAt(h); err != nil || fresh || len(did) != 0 {
 		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
@@ -352,6 +370,38 @@ func TestAntigravityHookCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		if got := antigravityHookCommand(`C:\no such dir\with space\mur.exe`, "Stop"); got != `"C:\no such dir\with space\mur.exe" hook --event Stop antigravity` {
 			t.Errorf("got %q", got)
+		}
+	}
+}
+
+func TestAntigravityPreToolUseAllowsWhenMurIsMissing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "with space")
+	missing := filepath.Join(dir, "mur.exe")
+	command := antigravityHookCommand(missing, "PreToolUse")
+	out, err := antigravityShellCmd(command).Output()
+	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
+		t.Fatalf("missing binary: running %q printed %q, error %v", command, out, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script, body := filepath.Join(dir, "mur"), "#!/bin/sh\nprintf '{\"decision\":\"allow\",\"ok\":true}\\n'\n"
+	if runtime.GOOS == "windows" {
+		script, body = filepath.Join(dir, "mur.cmd"), "@echo {\"decision\":\"allow\",\"ok\":true}\r\n"
+	}
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hitCmd := antigravityHookCommand(script, "PreToolUse")
+	out, err = antigravityShellCmd(hitCmd).Output()
+	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow","ok":true}` {
+		t.Fatalf("existing binary: running %q printed %q, error %v", hitCmd, out, err)
+	}
+	if runtime.GOOS == "windows" {
+		quotedHit := `""` + script + `" hook --event PreToolUse antigravity || echo {"decision":"allow"}"`
+		out, err = antigravityShellCmd(quotedHit).Output()
+		if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow","ok":true}` {
+			t.Fatalf("quoted existing binary: running %q printed %q, error %v", quotedHit, out, err)
 		}
 	}
 }

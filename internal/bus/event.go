@@ -501,6 +501,9 @@ type SessionInfo struct {
 	// HookOff says Murmur's hook doesn't run for the session (proto.SessionView.HookOff, #225). A
 	// daemon from before it ignores it.
 	HookOff bool `json:"hookOff,omitempty"`
+	// TurnRoute says the session's daemon has a way to hand over a message as a turn without a
+	// hook. A daemon from before #888 leaves this unset, so peers make no promise of a turn.
+	TurnRoute bool `json:"turnRoute,omitempty"`
 	// Muted is the names of the sessions this one has muted (#27), at most MaxMuted: it gets
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.

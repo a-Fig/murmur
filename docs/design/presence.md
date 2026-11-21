@@ -52,18 +52,18 @@ session on this device also gives its worktree folder, the commits it made and t
 ID, which stay on the device. Git doesn't record which session made a commit, so the daemon watches
 tool calls for them.
 
-- **Bracketing a call.** The hook runs on `PreToolUse`, `PostToolUse` and `PostToolUseFailure`. On
-  `PreToolUse` the daemon snapshots the worktree of the hook's working directory (`attrib.Head`:
+- **Bracketing a call.** On `PreToolUse` the daemon snapshots the worktree where the tool call
+  will run (`attrib.Head`:
   HEAD, branch, every ref tip and every worktree's detached HEAD); at the call's end it snapshots
   again and credits the commits between the two to the sessions the hook speaks for. A commit made
   in that worktree during the call by a person or another session is credited too: git can't say who
   made it, and this was accepted. A tip that isn't an object in the clone, such as a branch or a
   worktree HEAD file naming a lost commit, is skipped; until #540 it failed the snapshot or the end's
   `git log` in every worktree.
-- **Pairing.** The two ends of a call share a `tool_use_id`, as does a call that fails, which fires
-  `PostToolUseFailure` instead (seen on Claude Code 2.1.312, 2026-10-29), so `git commit && git
-  push` with a failed push is still credited. A snapshot is dropped after an hour, and the oldest
-  goes past 128, so calls whose end never comes can't pile them up.
+- **Pairing.** The two ends of a call share an ID. Claude Code reports a failed call in
+  `PostToolUseFailure` (seen on 2.1.312, 2026-10-29). Antigravity includes an error in
+  `PostToolUse`. A commit made before a failed push still counts. A snapshot expires after an
+  hour, and the oldest is dropped when more than 128 are held.
 - **Which worktree.** The one the call started in, and the one it ended in if Claude Code itself
   moved (#60). A `cd` inside a Bash call leaves the hook's working directory where it was (seen on
   2.1.312, 2026-10-29), so what `cd ../other && git commit` or `git -C ../other commit` makes in
@@ -77,16 +77,16 @@ tool calls for them.
   skipped tool. As first built, with four and five `git` processes, they took 241 and 335 ms, and
   under several test runs that start took a median of 1.7 s; the start as it is now should take
   about a quarter of that (inferred, not measured).
-- **It never stops a call.** `PreToolUse` prints nothing and exits 0 whatever goes wrong, and waits
-  at most 5 s for the daemon.
+- **It never stops a call.** `PreToolUse` waits at most 5 s for the daemon. Claude Code's hook
+  prints nothing and Antigravity's returns `{"decision":"allow"}`.
 - **Where it is kept.** Each session's latest 100 credited commits are in `state.json` and nowhere
   else, for 24 hours after it stops. Presence carries only the branches it committed to, most recent
   first, at most 5.
 - **Last active** is the time of the session's last request to the daemon: any hook event or MCP
   call. It goes out with the next presence write and never causes one, so another device sees it up
   to two minutes late, and a reader works out the time on its own clock from how long before the
-  presence was written it was. An agent without the hook moves it by MCP calls only. Only Claude
-  Code has commits credited: other agents' hooks bracket no tool call.
+  presence was written it was. An agent without the hook moves it by MCP calls only. Claude Code
+  and Antigravity's hooks bracket tool calls for commit credit.
 - **Messages in `lookup`** are the page's: the last 500, read back from the bus past a restart
   (#138). A group's messages count for the sessions in it now, by their tags (#485, #445), so one a
   session got before it left the group isn't listed. That is the page's filter for a running

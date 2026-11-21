@@ -246,35 +246,34 @@ whole and the turn went on. Not tried: a Muse thread in T3 (`muse serve`), or Mu
 ## Antigravity
 
 Added 2026-11-15 (#650), at Tyler's request. Seen in T3 probe threads on Tyler's laptop with
-Antigravity's harness 1.4.5. The rest comes from the documentation built into that harness and
-from T3's bundled server. A whole turn with Murmur has not been run yet.
+Antigravity's harness 1.4.5. Reports from 1.5.13 cover live notices and hook payloads (#888, #892,
+#894).
 
 - **Homes.** T3 runs each Antigravity instance with a home of its own,
   `userdata/providers/antigravity/<sha256 of the instance ID>`, as its `GEMINI_HOME`. T3 says this
   isolates credentials, hooks and MCP servers, and nothing in its settings moves it. Join writes
   there and in `~/.gemini`. Antigravity under T3 doesn't read a project's
   `.agents/mcp_config.json` (tried, 2026-11-15).
-- **Which session.** T3 doesn't set `T3CODE_THREAD_ID` for Antigravity (pingdotgg/t3code#34024).
-  Antigravity sets `ANTIGRAVITY_CONVERSATION_ID` in what it runs, and T3 keeps that ID as the
-  thread's provider session, so the server finds its thread as Grok's and Muse's do. Its shell
-  commands have the variable. Whether its MCP servers have it too hasn't been seen. If they don't,
-  the daemon pairs the hook's `conversationId` with the server among the hook's ancestors, as it
-  does for Codex.
-- **Its programs** (#709, 2026-11-16). T3 downloads the release itself, into
+- **Which session.** Antigravity passes its conversation ID to shell commands and hooks. On
+  1.5.13 its MCP server starts without that ID. The hook finds a session moved by `mur join -C`
+  by T3's thread ID when available, or by the sole Antigravity server record of its client
+  process. The daemon pairs the hook's conversation ID with the registered session by process.
+- **Its programs** (#709, 2026-11-16). For 1.4.5, T3 downloads the release itself, into
   `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`: `agy_acp_server` (`.exe` on Windows,
   `.par` elsewhere) runs `localharness_external`, which runs the agent's shell commands: seen on
   Windows as powershell under `localharness_external.exe` under `agy_acp_server.exe` under T3.
   Both are agents to the walk above a Claude Code server (`agentAbove`), the `.par` aside, since
   what runs it, and so the name the walk would read, hasn't been seen: a claude run from an
   Antigravity thread's shell, under a T3 thread that is Claude's, isn't that thread, though it
-  inherits `T3CODE_THREAD_ID`. No `agy` or `antigravity` program is part of what T3 runs.
-- **The hook.** It is a `murmur` entry in `config/hooks.json`. Antigravity's payload doesn't name
-  its event, so the command line does: `mur hook --event Stop antigravity`. It runs on two events:
-  - `PreInvocation`, before each model call, stands for both `UserPromptSubmit` and `PostToolUse`.
-    `PostToolUse`'s answer is ignored. Its notices go back as a system message (`injectSteps`), and
-    its `lastUserInput` is the prompt #611 matches.
-  - `Stop` keeps a turn going with `"decision": "continue"`, only when `terminationReason` is
-    `NO_TOOL_CALL`.
+  inherits `T3CODE_THREAD_ID`. T3 runs `agy acp` on Windows with 1.5.13 (2026-11-20).
+- **The hook.** The `murmur` entry in `config/hooks.json` names the event on the command line
+  for older versions, as in `mur hook --event Stop antigravity`.
+  - `PreInvocation` returns notices as a system message (`injectSteps`) before each model call.
+    On invocation 0, `lastUserInput` is the prompt #611 matches.
+  - `Stop` can continue a turn after `NO_TOOL_CALL` when background work is done. Older payloads
+    can omit `fullyIdle`.
+  - `PreToolUse` and `PostToolUse` bracket `run_command` calls for commit credit. The snapshots
+    use the command's `Cwd` when supplied.
 
-  Every answer is a JSON object, `{}` when there is nothing to say. Hooks run with `cmd /c` on
-  Windows, so a path with a space is double-quoted.
+  Every answer is a JSON object. Hooks run with `cmd /c` on Windows, so a path with a space is
+  double-quoted.

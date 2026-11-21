@@ -1899,7 +1899,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
-			Muted: d.mutesOfLocked(s.id), Dropped: d.mutedropsLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
+			TurnRoute: viaOf(s.route, s.dropped.IsZero()) != "",
+			Muted:     d.mutesOfLocked(s.id), Dropped: d.mutedropsLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
 		// The name it is shown by here (lastNameLocked), unless a live session holds it now, as
 		// after a resume took it: peers would show this session by a name that reaches the other.
 		if was := d.st.SessionNames[s.id]; s.name == "" && !live[was] {

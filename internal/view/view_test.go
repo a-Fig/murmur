@@ -202,6 +202,16 @@ func TestHook(t *testing.T) {
 	}
 }
 
+func TestAntigravityInboxNotice(t *testing.T) {
+	want := `Read them with the Murmur inbox tool (call_mcp_tool with ServerName "murmur" and ToolName "inbox") when it suits your work.` + "\n"
+	for _, msgs := range [][]proto.MessageView{nil, {{From: "d/a", Subject: "hi"}}} {
+		got := HookWithInbox(nil, msgs, 1, AntigravityInboxTool)
+		if !strings.HasSuffix(got, want) || strings.Contains(got, "mcp__") {
+			t.Errorf("Antigravity notice: %q", got)
+		}
+	}
+}
+
 // sess makes a session that was last active ago ago.
 func sess(name string, ago time.Duration, doing string) proto.SessionView {
 	return proto.SessionView{Addr: "dev/" + name, Name: name, Agent: "claude-code", Branch: "main", Doing: doing,
