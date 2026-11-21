@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -280,4 +282,294 @@ func TestThePersonsUnsureSendIsRefusedAtOnce(t *testing.T) {
 	if pending != 0 {
 		t.Errorf("%d sends left pending, want none", pending)
 	}
+}
+
+// When the daemon stops, pending sends are settled against the remote first (#857): a send whose
+// push actually landed isn't reported to its sender as not sent, while one that didn't is given up.
+func TestAStoppingDaemonSettlesPendingSendsAgainstTheRemote(t *testing.T) {
+	t.Parallel()
+	cut := errors.New("the connection dropped")
+
+	t.Run("its push had landed", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(real func() error) error {
+			if err := real(); err != nil {
+				return err
+			}
+			return cut
+		}
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "already landed"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		tip, err := d.repo.RemoteRef(ctx, d.meshRef())
+		if err != nil {
+			t.Fatal(err)
+		}
+		stop()
+		d.bg.Wait()
+		d.writeMu.Lock()
+		pending, ownTip := len(d.pendSends), d.ownTip
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if pending != 0 || ownTip != tip || len(inbox) != 0 {
+			t.Errorf("after stop: %d pending, ownTip=%s (want %s), inbox=%+v", pending, ownTip, tip, inbox)
+		}
+	})
+
+	t.Run("its push hadn't landed", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		before := d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(func() error) error { return cut }
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "never landed"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		stop()
+		d.bg.Wait()
+		d.writeMu.Lock()
+		pending, ownTip := len(d.pendSends), d.ownTip
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if pending != 0 || ownTip != before {
+			t.Errorf("after stop: %d pending, ownTip=%s (want %s)", pending, ownTip, before)
+		}
+		if len(inbox) != 1 || inbox[0].Event.Subject != `Not sent: "never landed"` || !strings.Contains(inbox[0].Event.Body, errDaemonStopped.Error()) {
+			t.Errorf("sender's inbox: %+v, want one Not sent notice for daemon stop", inbox)
+		}
+	})
+
+	t.Run("one landed and a second didn't", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		d.sendFirst(t)
+		var n atomic.Int32
+		d.writeMu.Lock()
+		d.testPush = func(real func() error) error {
+			if n.Add(1) == 1 {
+				if err := real(); err != nil {
+					return err
+				}
+			}
+			return cut
+		}
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "first"}, nil); r.Error != "" {
+			t.Fatalf("first send: %s", r.Error)
+		}
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "second"}, nil); r.Error != "" {
+			t.Fatalf("second send: %s", r.Error)
+		}
+		stop()
+		d.bg.Wait()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if len(inbox) != 1 || inbox[0].Event.Subject != `Not sent: "second"` {
+			t.Errorf("sender's inbox: %+v, want Not sent only for second", inbox)
+		}
+	})
+
+	t.Run("a later commit on the remote carries it", func(t *testing.T) {
+		t.Parallel()
+		d, peer, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(real func() error) error {
+			if err := real(); err != nil {
+				return err
+			}
+			return cut
+		}
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "carried"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		// Another clone advances this device's log on top of the landed commit, so the remote's tip
+		// isn't in this clone's object store yet and must be fetched to settle.
+		ref := d.meshRef()
+		if err := peer.Fetch(ctx, []string{ref}); err != nil {
+			t.Fatal(err)
+		}
+		landedTip, err := peer.RemoteRef(ctx, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := bus.Encode(message(d, "from another clone"), bus.EventSubject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peerTip, err := peer.NewCommit(ctx, landedTip, msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := peer.Push(ctx, peerTip, ref, bus.FastForward, ""); err != nil {
+			t.Fatal(err)
+		}
+		stop()
+		d.bg.Wait()
+		d.writeMu.Lock()
+		pending, ownTip := len(d.pendSends), d.ownTip
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if pending != 0 || ownTip != peerTip || len(inbox) != 0 {
+			t.Errorf("after stop: %d pending, ownTip=%s (want %s), inbox=%+v", pending, ownTip, peerTip, inbox)
+		}
+	})
+}
+
+// A stopping daemon whose remote is unreachable or stalls still finishes promptly (bounded by
+// PendingStopLimit) and gives its pending sends up (#857).
+func TestAStoppingDaemonWithAnUnreachableRemoteGivesUpPromptly(t *testing.T) {
+	t.Parallel()
+	cut := errors.New("the connection dropped")
+
+	t.Run("remote URL is unreachable", func(t *testing.T) {
+		t.Parallel()
+		d, _, clone := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 2 * time.Second}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		before := d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(func() error) error { return cut }
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "offline stop"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		runGit(t, clone, "config", "remote.origin.url", filepath.Join(clone, "no-such-remote.git"))
+
+		start := time.Now()
+		stop()
+		d.bg.Wait()
+		took := time.Since(start)
+		if took > 10*time.Second {
+			t.Errorf("stop took %s with an unreachable remote, want it prompt", took)
+		}
+		d.writeMu.Lock()
+		pending, ownTip := len(d.pendSends), d.ownTip
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if pending != 0 || ownTip != before {
+			t.Errorf("after stop: %d pending, ownTip=%s (want %s)", pending, ownTip, before)
+		}
+		if len(inbox) != 1 || inbox[0].Event.Subject != `Not sent: "offline stop"` || !strings.Contains(inbox[0].Event.Body, errDaemonStopped.Error()) {
+			t.Errorf("sender's inbox: %+v, want one Not sent notice for daemon stop", inbox)
+		}
+	})
+
+	t.Run("remote stalls past PendingStopLimit", func(t *testing.T) {
+		t.Parallel()
+		d, _, clone := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 500 * time.Millisecond}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		before := d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(func() error) error { return cut }
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "stalled stop"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+
+		// Stall the remote check until released; cleanup releases it so no shell lingers on Windows.
+		dir := filepath.ToSlash(t.TempDir())
+		script := dir + "/stall.sh"
+		body := "#!/bin/sh\n" +
+			"touch '" + dir + "/stalled'\n" +
+			"while [ ! -f '" + dir + "/release' ]; do sleep 0.2; done\n" +
+			"touch '" + dir + "/done'\n" +
+			"exit 1\n"
+		if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, clone, "config", "remote.origin.uploadpack", "sh '"+script+"'")
+		t.Cleanup(func() {
+			if _, err := os.Stat(dir + "/stalled"); err != nil {
+				return
+			}
+			if err := os.WriteFile(dir+"/release", nil, 0o644); err != nil {
+				t.Error(err)
+				return
+			}
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+				if _, err := os.Stat(dir + "/done"); err == nil {
+					return
+				}
+			}
+			t.Error("the stalled request never ended")
+		})
+
+		start := time.Now()
+		stop()
+		d.bg.Wait()
+		took := time.Since(start)
+		if _, err := os.Stat(dir + "/stalled"); err != nil {
+			t.Fatalf("the remote wasn't asked on stop, so this tested nothing")
+		}
+		if took > 10*time.Second {
+			t.Errorf("stop took %s with a stalled remote, want it bounded by PendingStopLimit", took)
+		}
+		d.writeMu.Lock()
+		pending, ownTip := len(d.pendSends), d.ownTip
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if pending != 0 || ownTip != before {
+			t.Errorf("after stop: %d pending, ownTip=%s (want %s)", pending, ownTip, before)
+		}
+		if len(inbox) != 1 || inbox[0].Event.Subject != `Not sent: "stalled stop"` || !strings.Contains(inbox[0].Event.Body, errDaemonStopped.Error()) {
+			t.Errorf("sender's inbox: %+v, want one Not sent notice for daemon stop", inbox)
+		}
+	})
 }

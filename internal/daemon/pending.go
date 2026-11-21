@@ -26,14 +26,34 @@ import (
 //
 // A pending send is given up after Options.PendingGiveUp, pendingGiveUp by default, and its sender
 // is told in its inbox that it wasn't sent, with why in a few plain words; until then it answered
-// as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too,
-// and is then on the remote or not as its last push left it: nothing is kept across a restart.
+// as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too:
+// the daemon asks the remote first, bounded by Options.PendingStopLimit (pendingStopLimit by
+// default), so a send that landed isn't called not sent; if the remote can't be reached in time,
+// every pending send is given up as unconfirmed, and nothing is kept across a restart (#857).
 
 // pendingGiveUp is how long after its first push ended unsure a pending send is given up, at the
 // first retry to end past it. Tyler set it
 // (2026-11-16): 30 minutes was too long for a sender to believe a message went that hadn't. With
 // the backoff that is about six pushes again.
 const pendingGiveUp = 3 * time.Minute
+
+// pendingLookLimit is how long a give-up after PendingGiveUp (or consent/visibility loss) waits to
+// ask the remote whether pending sends landed.
+const pendingLookLimit = 30 * time.Second
+
+// pendingStopLimit is how long a stopping daemon waits to ask the remote whether pending sends
+// landed before giving them up (#857). It stays well inside proto.DrainTimeout (20 s) so an
+// unreachable or stalled remote doesn't hold up exit or miss saving the give-up notices; when it
+// times out, every pending send is given up as unconfirmed (absent=false) and its sender is told
+// not sent.
+const pendingStopLimit = 5 * time.Second
+
+func (d *Daemon) pendingStopLimit() time.Duration {
+	if d.opt.PendingStopLimit > 0 {
+		return d.opt.PendingStopLimit
+	}
+	return pendingStopLimit
+}
 
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It is called with writeMu held, and nothing else.
@@ -82,22 +102,21 @@ func (d *Daemon) pendingLoop() {
 	for {
 		select {
 		case <-d.bgCtx.Done():
-			d.writeMu.Lock()
-			d.pendRun = false
-			if len(d.pendSends) > 0 {
-				d.giveUpPending(context.Background(), errDaemonStopped, false)
-			}
-			d.writeMu.Unlock()
-			return
 		case <-time.After(wait):
 		}
 		wait = min(2*wait, time.Minute)
 		d.writeMu.Lock()
-		if len(d.pendSends) > 0 {
+		if len(d.pendSends) > 0 && d.bgCtx.Err() == nil {
 			d.retryPending()
 		}
 		if len(d.pendSends) == 0 {
 			d.pendRun = false
+			d.writeMu.Unlock()
+			return
+		}
+		if d.bgCtx.Err() != nil {
+			d.pendRun = false
+			d.giveUpPending(context.Background(), errDaemonStopped, d.pendingStopLimit())
 			d.writeMu.Unlock()
 			return
 		}
@@ -143,53 +162,91 @@ func (d *Daemon) retryPending() {
 			}
 		}
 	}
+	if d.bgCtx.Err() != nil {
+		return // stopping: pendingLoop settles against the remote under its stop bound
+	}
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
-		d.giveUpPending(ctx, err, true)
+		d.giveUpPending(ctx, err, pendingLookLimit)
 	}
 }
 
 // settlePendingOn settles the pending sends by tip, the remote's tip of this device's log, which
 // the next write builds on: those under it landed, and the rest are given up, as nothing will push
-// them. Caller holds writeMu and has fetched tip.
-func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) {
+// them. Caller holds writeMu and has tip locally.
+func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) (landed, givenUp int) {
 	if len(d.pendSends) == 0 {
-		return
+		return 0, 0
 	}
 	pending := d.pendSends
 	d.pendSends = nil
 	for _, p := range pending {
 		if ok, aerr := d.repo.IsAncestor(ctx, p.sha, tip); aerr == nil && ok {
 			p.settle(true, false, nil)
+			landed++
 		} else {
 			p.settle(false, aerr == nil, err)
+			givenUp++
 		}
 	}
+	return landed, givenUp
 }
 
-// giveUpPending gives up the pending sends, after err. With look, the remote is asked first, and
-// those it has are taken as landed, and the next write builds on its tip; without, or if it can't
-// be asked, on the tip the first was built on. Caller holds writeMu.
-func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
-	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
+// giveUpPending asks the remote, up to limit, which pending sends landed, settles those as landed,
+// and gives up the rest after err; the next write builds on the remote's tip. If the remote can't
+// be asked, times out, or points to junk, every pending send is given up as unconfirmed
+// (absent=false) and the next write builds on the tip the first was built on. Caller holds writeMu.
+func (d *Daemon) giveUpPending(ctx context.Context, err error, limit time.Duration) {
 	ref := d.meshRef()
-	if look {
-		lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		// A tip that isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
-		// of #818): that is as if the remote couldn't be asked.
-		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || d.repo.Fetch(lctx, []string{ref}) == nil && func() bool { ok, _ := d.repo.IsCommit(lctx, tip); return ok }()) {
-			if tip == "" { // no log there at all
-				for _, p := range d.pendSends {
-					p.settle(false, true, err)
-				}
-				d.pendSends, d.ownTip = nil, ""
-				return
+	lctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil {
+		if tip == "" { // no log there at all
+			d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
+			for _, p := range d.pendSends {
+				p.settle(false, true, err)
 			}
-			d.settlePendingOn(lctx, tip, err)
+			d.pendSends, d.ownTip = nil, ""
+			return
+		}
+		// Local git checks (IsCommit, IsAncestor) run after the remote answers, each with a fresh
+		// window so they don't fail just because lctx's remote deadline ran out right as the remote
+		// returned (or after a slow remote check under pendingLookLimit).
+		local := func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		}
+		// A tip that is already a commit here (the usual case when this clone's own push landed or
+		// didn't) needs no second round-trip to fetch. One that isn't is fetched within lctx; a tip
+		// that still isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
+		// of #818): that is as if the remote couldn't be asked.
+		cctx, ccancel := local()
+		ok, _ := d.repo.IsCommit(cctx, tip)
+		ccancel()
+		if !ok {
+			ferr := d.fetchOwn(lctx, ref)
+			if ferr != nil && lctx.Err() != nil && ctx.Err() == nil {
+				clearStaleTemp(d.opt.GitDir, d.log)
+			}
+			if ferr == nil {
+				cctx, ccancel = local()
+				ok, _ = d.repo.IsCommit(cctx, tip)
+				ccancel()
+			}
+		}
+		if ok {
+			sctx, scancel := local()
+			landed, givenUp := d.settlePendingOn(sctx, tip, err)
+			scancel()
+			if landed > 0 {
+				d.log.Printf("%d pending message(s) had already landed on the remote", landed)
+			}
+			if givenUp > 0 {
+				d.log.Printf("giving up %d message(s) whose push ended unsure: %v", givenUp, err)
+			}
 			d.ownTip = tip
 			return
 		}
 	}
+	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
 	for _, p := range d.pendSends {
 		p.settle(false, false, err)
 	}
