@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -280,4 +282,131 @@ func TestThePersonsUnsureSendIsRefusedAtOnce(t *testing.T) {
 	if pending != 0 {
 		t.Errorf("%d sends left pending, want none", pending)
 	}
+}
+
+// A daemon that stops asks the remote about its pending sends before giving them up: one whose push
+// did land isn't called not sent, so its agent doesn't send it twice; one whose push didn't is
+// (#857).
+func TestAStopAsksTheRemoteAboutAPendingSend(t *testing.T) {
+	t.Parallel()
+	for _, landed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "its push landed", false: "its push didn't land"}[landed], func(t *testing.T) {
+			t.Parallel()
+			d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+			before := d.sendFirst(t)
+			stop := d.pendingSendBeforeStop(t, func(real func() error) error {
+				if landed {
+					if err := real(); err != nil {
+						return err
+					}
+				}
+				return errors.New("the connection dropped")
+			})
+			stop()
+			d.waitPendingDone(t, 30*time.Second)
+			if tip, _ := d.repo.RemoteRef(context.Background(), d.meshRef()); (tip != before) != landed {
+				t.Fatalf("the remote's log is at %s, first send at %s: the push landed %v, want %v", tip, before, tip != before, landed)
+			}
+			if got := d.notSent(); landed && got != 0 || !landed && got != 1 {
+				t.Errorf("the sender was told %d time(s) its message wasn't sent", got)
+			}
+		})
+	}
+}
+
+// A daemon that stops while the remote doesn't answer still stops in time: it asks for
+// Options.PendingStop, then gives its pending sends up as not sent, as the remote couldn't be asked
+// (#857).
+func TestAStopWithAnUnreachableRemoteStillGivesUpPromptly(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingStop: 500 * time.Millisecond}, false)
+	d.sendFirst(t)
+	stop := d.pendingSendBeforeStop(t, func(func() error) error { return errors.New("the connection dropped") })
+	// A remote that takes the connection and never answers, as a hung one does: git's HTTP has no
+	// timeout of its own, so only the stop's bound ends the wait.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	t.Cleanup(func() { // before the rig's, so git's HTTP helper lets go of the clone
+		ln.Close()
+		mu.Lock()
+		for _, c := range conns {
+			c.Close()
+		}
+		mu.Unlock()
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	runGit(t, d.opt.GitDir, "config", "remote.origin.url", "http://"+ln.Addr().String()+"/remote.git")
+	began := time.Now()
+	stop()
+	// The bound, then up to the 5 s a killed git's helper may hold its pipes (gitx), and room.
+	d.waitPendingDone(t, 15*time.Second)
+	t.Logf("given up %v after the stop", time.Since(began).Round(time.Millisecond))
+	if got := d.notSent(); got != 1 {
+		t.Errorf("the sender was told %d time(s) its message wasn't sent, want once", got)
+	}
+}
+
+// pendingSendBeforeStop sends a message from bbbbbb whose push, push standing in for it, is left
+// pending under a background context of its own, and returns what stops the daemon's background
+// work: cancels that context.
+func (d *Daemon) pendingSendBeforeStop(t *testing.T, push func(real func() error) error) (stop func()) {
+	t.Helper()
+	bg, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	d.writeMu.Lock()
+	d.bgCtx = bg
+	d.testPush = push
+	d.writeMu.Unlock()
+	if r := d.sendWith(context.Background(), bus.Addr(d.device, "bbbbbb"), proto.Request{To: "*", Subject: "as it stops"}, nil); r.Error != "" {
+		t.Fatalf("the send: %s", r.Error)
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	if len(d.pendSends) != 1 {
+		t.Fatalf("%d sends pending, want 1", len(d.pendSends))
+	}
+	return stop
+}
+
+// waitPendingDone waits until no pendingLoop runs and nothing is pending, for up to limit.
+func (d *Daemon) waitPendingDone(t *testing.T, limit time.Duration) {
+	t.Helper()
+	for end := time.Now().Add(limit); ; time.Sleep(20 * time.Millisecond) {
+		d.writeMu.Lock()
+		done := !d.pendRun && len(d.pendSends) == 0
+		d.writeMu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(end) {
+			t.Fatalf("the pending send wasn't settled %v after the stop", limit)
+		}
+	}
+}
+
+// notSent counts the notices in bbbbbb's inbox that a message wasn't sent.
+func (d *Daemon) notSent() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for _, m := range d.st.Inbox["bbbbbb"] {
+		if strings.HasPrefix(m.Event.Subject, "Not sent: ") {
+			n++
+		}
+	}
+	return n
 }

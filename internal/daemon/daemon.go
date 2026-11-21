@@ -56,8 +56,9 @@ type Options struct {
 	// longer than a sync takes when nothing is slow.
 	OwnTipWait time.Duration
 	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
-	// each time to a minute; PendingGiveUp how long it is tried before it is given up (pending.go).
-	PendingRetry, PendingGiveUp time.Duration
+	// each time to a minute; PendingGiveUp how long it is tried before it is given up; PendingStop
+	// how long a stopping daemon asks the remote whether its pending sends landed (pending.go).
+	PendingRetry, PendingGiveUp, PendingStop time.Duration
 	// OwnFetchLimit bounds the fetch of this device's own log's tip when a write to it is refused
 	// (overRemoteTip): a send waits on it, and every other write behind writeMu. 20 s.
 	OwnFetchLimit time.Duration
@@ -203,6 +204,9 @@ func (o *Options) defaults() {
 	}
 	if o.PendingGiveUp == 0 {
 		o.PendingGiveUp = pendingGiveUp
+	}
+	if o.PendingStop == 0 {
+		o.PendingStop = pendingStop
 	}
 	if o.FetchLimit == 0 {
 		o.FetchLimit = 15 * time.Second

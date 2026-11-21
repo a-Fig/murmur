@@ -9,6 +9,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -27,13 +28,22 @@ import (
 // A pending send is given up after Options.PendingGiveUp, pendingGiveUp by default, and its sender
 // is told in its inbox that it wasn't sent, with why in a few plain words; until then it answered
 // as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too,
-// and is then on the remote or not as its last push left it: nothing is kept across a restart.
+// as nothing is kept across a restart, but the remote is asked first, as at PendingGiveUp, so a send
+// whose push did land isn't called not sent and sent twice (#857).
 
 // pendingGiveUp is how long after its first push ended unsure a pending send is given up, at the
 // first retry to end past it. Tyler set it
 // (2026-11-16): 30 minutes was too long for a sender to believe a message went that hadn't. With
 // the backoff that is about six pushes again.
 const pendingGiveUp = 3 * time.Minute
+
+// pendingStop bounds how long a stopping daemon asks the remote about its pending sends, waiting
+// for writeMu included (#857). A stop gives its background work proto.DrainTimeout in all, then
+// says goodbye and exits, whether this is done or not, and a git killed at the deadline may take
+// its WaitDelay, 5 s, more to let go: half the drain leaves room for both, and for the senders to
+// be told. A remote that hasn't answered by then, unreachable or hung, is one that couldn't be
+// asked: every pending send is told it wasn't sent, though its push may have landed, as before #857.
+const pendingStop = proto.DrainTimeout / 2
 
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It is called with writeMu held, and nothing else.
@@ -82,12 +92,15 @@ func (d *Daemon) pendingLoop() {
 	for {
 		select {
 		case <-d.bgCtx.Done():
+			// Not under bgCtx, which is cancelled: the stop's own bound (pendingStop).
+			ctx, cancel := context.WithTimeout(context.Background(), d.opt.PendingStop)
 			d.writeMu.Lock()
 			d.pendRun = false
 			if len(d.pendSends) > 0 {
-				d.giveUpPending(context.Background(), errDaemonStopped, false)
+				d.giveUpPending(ctx, errDaemonStopped, true)
 			}
 			d.writeMu.Unlock()
+			cancel()
 			return
 		case <-time.After(wait):
 		}
