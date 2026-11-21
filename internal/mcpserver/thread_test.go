@@ -33,8 +33,8 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 		t.Error("two threads share an ID")
 	}
 
-	// Only Claude Code's servers take it: an OpenCode server serves many sessions, say, and can't
-	// tell which thread is whose.
+	// Only Claude Code's and Antigravity's servers take it: an OpenCode server serves many
+	// sessions, say, and can't tell which thread is whose.
 	if h := helloFor("opencode", "/work"); h.ByThread || h.T3Thread != "" {
 		t.Errorf("opencode: %+v", h)
 	}
@@ -54,6 +54,59 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 	}
 }
 
+// Antigravity threads in T3 also receive T3CODE_THREAD_ID and register by the thread when no other
+// agent runs above them, without taking Claude Code's session or messaging socket variables (#886).
+func TestAntigravityTakesTheThreadFromTheEnvironment(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	t.Setenv(threadEnv, "thread-agy-1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "865a81aa-aaaa-bbbb-cccc-ddddeeeeffff")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+
+	first := helloFor("antigravity", "/work")
+	second := helloFor("antigravity", "/work")
+	if first.ID != second.ID || first.ID != threadID("thread-agy-1") || len(first.ID) != 6 {
+		t.Errorf("restarts registered as %s and %s, want %s", first.ID, second.ID, threadID("thread-agy-1"))
+	}
+	if first.T3Thread != "thread-agy-1" || !first.ByThread || first.T3CLI != "/t3/bin/t3" || first.T3Home != "/home/u/.t3" {
+		t.Errorf("route: %+v, byThread=%v", first.Route, first.ByThread)
+	}
+	if first.Agent != "antigravity in T3" {
+		t.Errorf("agent = %q, want antigravity in T3", first.Agent)
+	}
+	if first.ClaudeSession != "" || first.MsgSocket != "" || first.MsgToken != "" {
+		t.Errorf("took Claude Code variables: %+v", first)
+	}
+
+	// If ANTIGRAVITY_CONVERSATION_ID is also present, Native is kept while the thread gives the ID.
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "conv-agy-1")
+	withConv := helloFor("antigravity", "/work")
+	if withConv.ID != threadID("thread-agy-1") || withConv.T3Thread != "thread-agy-1" || !withConv.ByThread || withConv.Native != "conv-agy-1" {
+		t.Errorf("with conversation ID: %+v", withConv)
+	}
+
+	// An agy run from another agent's shell (claude or agy) has an agent above it: it must not
+	// take the enclosing T3 thread's identity.
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	if nested := helloFor("antigravity", "/work"); nested.ByThread || nested.T3Thread != "" || nested.ID != nativeID("conv-agy-1") {
+		t.Errorf("nested with conversation ID: %+v", nested)
+	}
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+	if nested := helloFor("antigravity", "/work"); nested.ByThread || nested.T3Thread != "" || nested.ID == threadID("thread-agy-1") {
+		t.Errorf("nested without conversation ID: %+v", nested)
+	}
+	agentAbove = func() bool { return false }
+
+	// Outside T3 (no T3CODE_CLI_PATH and not started by servingT3), T3CODE_THREAD_ID is ignored.
+	t.Setenv("T3CODE_CLI_PATH", "")
+	if outside := helloFor("antigravity", "/work"); outside.ByThread || outside.T3Thread != "" || outside.T3CLI != "" || outside.Agent != "antigravity" {
+		t.Errorf("outside T3: %+v", outside)
+	}
+}
+
 // startedLink runs a link for hello against f, as the server does inside T3, and waits for it to
 // register.
 func startedLink(t *testing.T, f *fakeDaemon, fd *finder, h proto.Hello) *link {
@@ -61,7 +114,7 @@ func startedLink(t *testing.T, f *fakeDaemon, fd *finder, h proto.Hello) *link {
 	gitDir := f.serve(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	l := &link{c: &client.Client{GitDir: gitDir}, hello: h, changed: make(chan struct{}), seek: currentSeek()}
+	l := &link{c: &client.Client{GitDir: gitDir}, hello: h, native: h.Native, changed: make(chan struct{}), seek: currentSeek()}
 	if fd != nil {
 		l.find = fd.find
 	}
@@ -128,24 +181,33 @@ func TestAServerWhoseThreadIsLiveIsASessionOfItsOwn(t *testing.T) {
 	})
 }
 
-// The walk above a server takes a claude run from an Antigravity thread's shell, under a Claude T3
-// thread, for one with an agent above it (#709): the chain seen on Windows, 2026-11-16, and its
-// Linux shape. A T3 thread's own server, under T3's node, has none.
+// The walk above a server takes a claude or agy run from an Antigravity thread's shell for one
+// with an agent above it (#709 for Antigravity 1.4.5's agy_acp_server/localharness_external, #889
+// for 1.5.13's agy). A T3 thread's own claude or agy has none.
 func TestAgentInChain(t *testing.T) {
 	t3 := filepath.Join("home", ".t3", "tools", "antigravity-acp", "win32-x64", "versions", "d24f4c73")
 	for what, c := range map[string]struct {
 		chain []string // the client first, then its parents
 		want  bool
 	}{
-		"claude from Antigravity's shell, Windows": {[]string{"claude.exe", "powershell.exe",
+		"claude from Antigravity 1.4.5's shell, Windows": {[]string{"claude.exe", "powershell.exe",
 			filepath.Join(t3, "localharness_external.exe"), filepath.Join(t3, "agy_acp_server.exe"),
 			filepath.Join(t3, "agy_acp_server.exe"), "T3 Code (Beta).exe"}, true},
-		"claude from Antigravity's shell, Linux": {[]string{"claude", "bash",
+		"claude from Antigravity 1.4.5's shell, Linux": {[]string{"claude", "bash",
 			filepath.Join(t3, "localharness_external"), filepath.Join(t3, "agy_acp_server.par")}, true},
-		"a T3 thread's own claude":     {[]string{"claude", "node", "T3 Code (Beta).exe"}, false},
-		"claude from a thread's shell": {[]string{"claude", "bash", "claude", "node"}, true},
-		"an unreadable parent":         {[]string{"claude", ""}, false},
-		"the client alone":             {[]string{"claude"}, false},
+		"claude from Antigravity 1.5.13's shell, Windows": {[]string{"claude.exe", "powershell.exe",
+			filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, true},
+		"claude from Antigravity 1.5.13's shell, Linux": {[]string{"claude", "bash",
+			filepath.Join(t3, "agy"), "t3"}, true},
+		"agy from Antigravity 1.5.13's shell, Windows": {[]string{"agy.exe", "powershell.exe",
+			filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, true},
+		"agy from a Claude thread's shell": {[]string{"agy", "bash", "claude", "node"}, true},
+		"a T3 thread's own agy, Windows":   {[]string{filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, false},
+		"a headless T3 thread's own agy":   {[]string{"agy", "t3"}, false},
+		"a T3 thread's own claude":         {[]string{"claude", "node", "T3 Code (Beta).exe"}, false},
+		"claude from a thread's shell":     {[]string{"claude", "bash", "claude", "node"}, true},
+		"an unreadable parent":             {[]string{"claude", ""}, false},
+		"the client alone":                 {[]string{"claude"}, false},
 	} {
 		got := agentInChain(len(c.chain), func(i int) (string, string, bool) {
 			return c.chain[i], "", c.chain[i] != ""
@@ -154,4 +216,28 @@ func TestAgentInChain(t *testing.T) {
 			t.Errorf("%s: %v, want %v", what, got, c.want)
 		}
 	}
+}
+
+// An Antigravity server whose thread's address stays in use drops ByThread and falls back to its
+// native ID (when known), looking up its own thread in T3's database.
+func TestAnAntigravityServerWhoseThreadIsLiveFallsBackToNative(t *testing.T) {
+	fastSeek(t)
+	t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+	t.Setenv(threadEnv, "thread-1")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "conv-nested-agy")
+	f := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.ByThread {
+			return "session ID " + h.ID + " is in use", ""
+		}
+		return "", ""
+	}}
+	fd := &finder{}
+	startedLink(t, f, fd, helloFor("antigravity", "/work"))
+	if h := f.lastHello(); h.ID != nativeID("conv-nested-agy") || h.ByThread || h.T3Thread != "" {
+		t.Fatalf("registered with %+v", h)
+	}
+	waitFor(t, "a look in T3's database", func() bool {
+		asked := fd.askedAbout()
+		return len(asked) > 0 && asked[0] == "conv-nested-agy"
+	})
 }

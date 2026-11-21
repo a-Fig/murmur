@@ -509,7 +509,8 @@ type SessionInfo struct {
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
 	// Was is the name the session went by last, while it has none (Name is empty): a new one is
-	// pending, as after Claude Code's /clear. Every device then shows it by the name its own device
+	// pending, as after Claude Code's /clear, or the session is dropped in its grace while a live
+	// replacement carries the name (#875). Every device then shows it by the name its own device
 	// does (#602). A daemon from before it ignores it.
 	Was string `json:"was,omitempty"`
 	// Dropped is the IDs of the last messages, at most MaxDropped, that this session's device

@@ -240,9 +240,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	// Two live sessions of one client session (two MCP servers in it) would share a name, and
 	// a name is an address. The later one is a session of its own.
 	route := h.Route
-	if s != nil && route.T3Thread == "" && claude == s.claudeSession {
+	if s != nil && route.T3Thread == "" && claude == s.claudeSession && (route.T3CLI != "" || agent == s.agent) {
 		// The same client session, back after its server restarted without finding its T3 thread
-		// this time: it is still that thread.
+		// this time: it is still that thread. A session outside T3 reusing a Claude-derived ID
+		// during T3's grace doesn't inherit the thread (#873).
 		route.T3Thread = s.route.T3Thread
 	}
 	base := nameKey(route.T3Thread, claude, route.Native, h.ID)

@@ -14,7 +14,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables; the hook under `hooks` there (below) | One process per session, with `MUSE_SESSION_ID` | The same ID |
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
-| Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy_acp_server` per thread, with `ANTIGRAVITY_CONVERSATION_ID` in what it runs | The same ID (seen, 2026-11-15) |
+| Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older
@@ -254,18 +254,23 @@ Antigravity's harness 1.4.5. Reports from 1.5.13 cover live notices and hook pay
   isolates credentials, hooks and MCP servers, and nothing in its settings moves it. Join writes
   there and in `~/.gemini`. Antigravity under T3 doesn't read a project's
   `.agents/mcp_config.json` (tried, 2026-11-15).
-- **Which session.** Antigravity passes its conversation ID to shell commands and hooks. On
-  1.5.13 its MCP server starts without that ID. The hook finds a session moved by `mur join -C`
-  by T3's thread ID when available, or by the sole Antigravity server record of its client
-  process. The daemon pairs the hook's conversation ID with the registered session by process.
-- **Its programs** (#709, 2026-11-16). For 1.4.5, T3 downloads the release itself, into
-  `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`: `agy_acp_server` (`.exe` on Windows,
-  `.par` elsewhere) runs `localharness_external`, which runs the agent's shell commands: seen on
-  Windows as powershell under `localharness_external.exe` under `agy_acp_server.exe` under T3.
-  Both are agents to the walk above a Claude Code server (`agentAbove`), the `.par` aside, since
-  what runs it, and so the name the walk would read, hasn't been seen: a claude run from an
-  Antigravity thread's shell, under a T3 thread that is Claude's, isn't that thread, though it
-  inherits `T3CODE_THREAD_ID`. T3 runs `agy acp` on Windows with 1.5.13 (2026-11-20).
+- **Which session.** T3 now sets `T3CODE_THREAD_ID` alongside `T3CODE_CLI_PATH` in Antigravity
+  threads (seen live on Antigravity 1.5.13, 2026-11-20, #886; earlier T3 did not,
+  pingdotgg/t3code#34024). Antigravity's MCP server takes its thread and identity from
+  `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`, as Claude Code does.
+  Antigravity passes `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks, not to MCP servers.
+  The hook finds a session moved by `mur join -C` by T3's thread ID when available, or by the sole
+  Antigravity server record of its client process (#888). The daemon pairs the hook's
+  `conversationId` with the server among the hook's ancestors (`hookNative`) and, under older T3
+  without `T3CODE_THREAD_ID`, resolves the T3 thread via `t3db.ThreadOf` as a fallback.
+- **Its programs** (#709, 2026-11-16; #889, 2026-11-20). T3 downloads the release itself, into
+  `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`. Release 1.4.5 ran `agy_acp_server`
+  (`.exe` on Windows, `.par` elsewhere) over `localharness_external`, which ran shell commands
+  (seen on Windows as powershell under `localharness_external.exe` under `agy_acp_server.exe` under
+  T3). Release 1.5.13 runs directly as `agy` (`T3 Code (Beta).exe -> agy.exe -> powershell.exe`).
+  `agy`, `agy_acp_server`, and `localharness_external` are all in `agentPrograms` for `agentAbove`,
+  so an agent run from an Antigravity thread's shell does not steal the enclosing T3 thread's
+  `T3CODE_THREAD_ID`.
 - **The hook.** The `murmur` entry in `config/hooks.json` names the event on the command line
   for older versions, as in `mur hook --event Stop antigravity`.
   - `PreInvocation` returns notices as a system message (`injectSteps`) before each model call.

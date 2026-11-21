@@ -1333,6 +1333,15 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 func (d *Daemon) rememberRouteLocked(s *session) {
 	r := s.route
 	if r.T3CLI == "" || r.T3Thread == "" {
+		// A session outside T3 reusing a Claude-derived ID a T3 thread once had no longer routes
+		// to that thread (#873). A T3 session that hasn't found its thread yet keeps the stored
+		// route until it finds it or another session takes the thread.
+		if r.T3CLI == "" && r.T3Thread == "" && !strings.HasSuffix(s.agent, " in T3") {
+			if _, ok := d.st.T3Routes[s.id]; ok {
+				delete(d.st.T3Routes, s.id)
+				d.saveLocked()
+			}
+		}
 		return
 	}
 	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
@@ -1345,13 +1354,16 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 }
 
 // retireRoutesLocked takes away the way into thread want from every other session that has it
-// and isn't running: a thread's MCP server is a new session, with an ID of its own, each time T3
-// restarts it (after 30 idle minutes) or a connection is made again, and the one it replaces, in
-// its grace or stopped, still holds the thread. A message for everyone, or for the device, goes
-// into both inboxes, and would be handed to the one thread twice, or, from the new session,
-// back to itself. What the old session had unread goes to the new one, which has the thread: with
-// its route gone it could no longer be handed over, and a session in its grace is not one whose
-// inbox the name's next holder adopts (see adoptLocked). Caller holds mu.
+// and isn't running, and clears any stale stored route for want whose session ID is now held by a
+// live session of another route (such as the command line reusing a Claude-derived ID, #873)
+// without touching that session's live route or inbox. A thread's MCP server is a new session,
+// with an ID of its own, each time T3 restarts it (after 30 idle minutes) or a connection is made
+// again, and the one it replaces, in its grace or stopped, still holds the thread. A message for
+// everyone, or for the device, goes into both inboxes, and would be handed to the one thread
+// twice, or, from the new session, back to itself. What the old session had unread goes to the
+// new one, which has the thread: with its route gone it could no longer be handed over, and a
+// session in its grace is not one whose inbox the name's next holder adopts (see adoptLocked).
+// Caller holds mu.
 func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 	for id, r := range d.st.T3Routes {
 		if id == s.id || r.Thread != want.Thread || r.Home != want.Home {
@@ -1363,6 +1375,9 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 				o.route = proto.Route{}
 			}
 			d.takeInboxLocked(s, id)
+			d.saveLocked()
+		} else if o.route.T3Thread != want.Thread || o.route.T3Home != want.Home {
+			delete(d.st.T3Routes, id)
 			d.saveLocked()
 		}
 	}

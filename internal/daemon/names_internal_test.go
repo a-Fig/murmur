@@ -445,9 +445,12 @@ func TestGivePoolSharesNameBetweenDroppedCLIAndT3(t *testing.T) {
 	defer d.mu.Unlock()
 	d.st.NamePool = []string{"bold-lark", "keen-swift"}
 	cli := &session{id: "aaaaaa", agent: "claude-code", claudeSession: "conv-pool-share",
-		key: "claude:conv-pool-share", clientPID: 700, dropped: time.Now()}
+		key: "claude:conv-pool-share", clientPID: 700, dropped: time.Now(), started: time.Now().Add(-time.Minute)}
+	// started orders the two: givePoolLocked goes by sortedSessionsLocked, and this case is the CLI
+	// session reaching the pool first. With no start times their order was the map's.
 	t3 := &session{id: "tttttt", agent: "claude-code in T3", claudeSession: "conv-pool-share",
-		key: "t3:thread-pool-share", route: proto.Route{T3Thread: "thread-pool-share"}, clientPID: 800}
+		key: "t3:thread-pool-share", route: proto.Route{T3Thread: "thread-pool-share"}, clientPID: 800,
+		started: time.Now()}
 	d.sessions[cli.id] = cli
 	d.sessions[t3.id] = t3
 

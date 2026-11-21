@@ -3,6 +3,7 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -37,7 +38,66 @@ import (
 // threadKey is a T3 thread, by T3's data directory and its ID.
 type threadKey struct{ home, thread string }
 
-// threadLoop reads the threads' state at once, then every TitleEvery.
+// hookThreadMaxTries bounds how many times the daemon asks T3's database for the thread of a
+// session whose native ID came only from a hook (#886): enough to outlast T3 flushing a new
+// thread's row, without polling forever for a nested standalone agent whose session isn't in T3.
+const hookThreadMaxTries = 10
+
+// hookThreadKey identifies one fallback t3db.ThreadOf lookup.
+type hookThreadKey struct{ cli, home, native string }
+
+// hookThreadLookup tracks fallback t3db.ThreadOf retries for one session (#886). Guarded by d.mu.
+type hookThreadLookup struct {
+	key    hookThreadKey // (cli, home, native) these tries are for
+	tries  int           // attempts made without finding a thread
+	nextAt time.Time     // earliest time for the next attempt (zero: now)
+	warned bool          // a non-ErrNotFound failure has been logged once
+}
+
+// hookThreadCand is a session eligible for a fallback t3db.ThreadOf lookup in this pass.
+type hookThreadCand struct {
+	id        string
+	sess      *session
+	agent     string
+	clientPID int
+	key       hookThreadKey
+	startedAt time.Time
+}
+
+func (c hookThreadCand) matches(s *session) bool {
+	return s != nil && s == c.sess && s.dropped.IsZero() &&
+		s.agent == c.agent && s.clientPID == c.clientPID &&
+		s.route.T3CLI == c.key.cli && s.route.T3Home == c.key.home &&
+		s.route.T3Thread == "" && s.route.Native == "" && s.hookNative == c.key.native
+}
+
+// hookThreadHit is a resolved fallback lookup waiting to be applied in refreshThreads once the
+// thread's state has been read.
+type hookThreadHit struct {
+	cand   hookThreadCand
+	thread string
+}
+
+// hookThreadBackoff is the delay after tries failed attempts, scaled by base (TitleEvery): 1x, 2x,
+// then 4x. When base <= 0 (a unit test calling refreshThreads directly), it returns 0 so each call
+// retries immediately.
+func hookThreadBackoff(base time.Duration, tries int) time.Duration {
+	if base <= 0 || tries <= 0 {
+		return 0
+	}
+	return base << min(tries-1, 2)
+}
+
+// kickThreads wakes threadLoop so a T3 session that just learned hookNative resolves its thread
+// without waiting for the next TitleEvery tick. Any lock may be held.
+func (d *Daemon) kickThreads() {
+	select {
+	case d.threadKick <- struct{}{}:
+	default:
+	}
+}
+
+// threadLoop reads the threads' state at once, then every TitleEvery or when kicked.
 func (d *Daemon) threadLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.TitleEvery)
 	defer t.Stop()
@@ -47,8 +107,101 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-d.threadKick:
 		}
 	}
+}
+
+// findHookThreads looks up the T3 thread in T3's database for each live Antigravity T3 session
+// whose MCP server registered without T3Thread or Native, once a hook has reported its provider
+// session ID (hookNative, #886). Limited to Antigravity so a multi-session client like Codex's
+// shared app-server cannot bind one thread's hook to another session. Reads run outside d.mu, are
+// deduplicated per (cli, home, native) within a pass, retry with bounded backoff, and log
+// non-ErrNotFound errors at most once per session.
+func (d *Daemon) findHookThreads(ctx context.Context) []hookThreadHit {
+	now := time.Now()
+	d.mu.Lock()
+	var cands []hookThreadCand
+	for _, s := range d.sortedSessionsLocked() {
+		if !s.dropped.IsZero() || !isAgent(s.agent, "antigravity") || s.route.T3CLI == "" || s.route.T3Thread != "" || s.route.Native != "" || s.hookNative == "" {
+			continue
+		}
+		k := hookThreadKey{cli: s.route.T3CLI, home: s.route.T3Home, native: s.hookNative}
+		if s.hookThread.key != k {
+			s.hookThread = hookThreadLookup{key: k}
+		}
+		if s.hookThread.tries >= hookThreadMaxTries {
+			continue
+		}
+		if !s.hookThread.nextAt.IsZero() && now.Before(s.hookThread.nextAt) {
+			continue
+		}
+		cands = append(cands, hookThreadCand{id: s.id, sess: s, agent: s.agent, clientPID: s.clientPID, key: k, startedAt: now})
+	}
+	d.mu.Unlock()
+	if len(cands) == 0 {
+		return nil
+	}
+
+	threadOf := d.opt.ThreadOf
+	if threadOf == nil {
+		threadOf = t3db.ThreadOf
+	}
+	type result struct {
+		thread string
+		err    error
+	}
+	results := make(map[hookThreadKey]result, len(cands))
+	for _, c := range cands {
+		if _, done := results[c.key]; done {
+			continue
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		thread, err := threadOf(ctx, c.key.cli, c.key.home, c.key.native)
+		if ctx.Err() != nil {
+			return nil
+		}
+		results[c.key] = result{thread: thread, err: err}
+	}
+
+	type warning struct {
+		addr string
+		err  error
+	}
+	var hits []hookThreadHit
+	var warns []warning
+	d.mu.Lock()
+	for _, c := range cands {
+		s := d.sessions[c.id]
+		if !c.matches(s) {
+			continue
+		}
+		res := results[c.key]
+		if res.err == nil && res.thread != "" {
+			hits = append(hits, hookThreadHit{cand: c, thread: res.thread})
+			continue
+		}
+		if s.hookThread.key != c.key {
+			s.hookThread = hookThreadLookup{key: c.key}
+		}
+		s.hookThread.tries++
+		if delay := hookThreadBackoff(d.opt.TitleEvery, s.hookThread.tries); delay > 0 {
+			s.hookThread.nextAt = c.startedAt.Add(delay)
+		} else {
+			s.hookThread.nextAt = time.Time{}
+		}
+		if res.err != nil && !errors.Is(res.err, t3db.ErrNotFound) && !s.hookThread.warned {
+			s.hookThread.warned = true
+			warns = append(warns, warning{addr: bus.Addr(d.device, c.id), err: res.err})
+		}
+	}
+	d.mu.Unlock()
+	for _, w := range warns {
+		d.log.Printf("can't find the T3 thread of session %s (%v)", w.addr, w.err)
+	}
+	return hits
 }
 
 // refreshThreads reads the state of every thread a session here is in, or a stopped session whose
@@ -56,6 +209,7 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 // a message would wake a session (see wakeChangedLocked), and any change lets the handoffs look
 // again.
 func (d *Daemon) refreshThreads(ctx context.Context) {
+	hits := d.findHookThreads(ctx)
 	kids := d.refreshKids(ctx) // before the inboxes and commits of delegates are seen to, below
 	d.mu.Lock()
 	routes := map[threadKey]t3Route{}
@@ -69,6 +223,15 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			who[k] = bus.Addr(d.device, id)
 		}
 	}
+	for _, h := range hits {
+		if h.cand.matches(d.sessions[h.cand.id]) {
+			k := threadKey{h.cand.key.home, h.thread}
+			routes[k] = t3Route{CLI: h.cand.key.cli, Home: h.cand.key.home, Thread: h.thread}
+			if who[k] == "" {
+				who[k] = bus.Addr(d.device, h.cand.id)
+			}
+		}
+	}
 	for id, r := range d.st.T3Routes {
 		if d.sessions[id] == nil && d.receivesLocked(id) {
 			k := threadKey{r.Home, r.Thread}
@@ -80,6 +243,10 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	}
 	d.mu.Unlock()
 
+	threadState := d.opt.ThreadState
+	if threadState == nil {
+		threadState = t3db.StateOf
+	}
 	read := map[threadKey]t3db.State{}
 	readAt := map[threadKey]time.Time{}
 	failed := map[threadKey]error{}
@@ -88,7 +255,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			return
 		}
 		readAt[k] = time.Now()
-		st, err := d.opt.ThreadState(ctx, r.CLI, r.Home, r.Thread)
+		st, err := threadState(ctx, r.CLI, r.Home, r.Thread)
 		if err != nil {
 			failed[k] = err
 			continue
@@ -135,6 +302,25 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 		d.threads[k] = st
 		delete(d.threadWarned, k)
+	}
+	// Apply hookNative-resolved T3 threads only after their thread state is cached above, so a
+	// newly resolved delegate, settled thread, or busy run is known before setRouteLocked wakes
+	// pushLoop (#886). If ThreadState failed and no prior state is cached, hold the route until a
+	// later pass succeeds.
+	for _, h := range hits {
+		s := d.sessions[h.cand.id]
+		if !h.cand.matches(s) {
+			continue
+		}
+		k := threadKey{h.cand.key.home, h.thread}
+		if _, ok := d.threads[k]; !ok {
+			continue
+		}
+		r := s.route
+		r.T3Thread = h.thread
+		s.hookThread = hookThreadLookup{}
+		d.setRouteLocked(s, r)
+		changed, settled = true, true
 	}
 	// A turn the hook saw start and no Stop end, as one the user interrupted, is over once a read
 	// that began after the hook last ran finds no run (#202). Only a read the loop above kept: one a
