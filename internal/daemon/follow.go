@@ -729,21 +729,21 @@ func (d *Daemon) hookOffLocked(s *session) bool {
 // session's first call may come at the start of a turn whose prompt preceded the hook's install.
 const hookGrace = time.Minute
 
-// peerHookOffLocked is hookOffLocked for the session at dev/sess, on this device or, as its
-// presence says, another, and the session's agent. Caller holds mu.
-func (d *Daemon) peerHookOffLocked(dev, sess string) (off bool, agent string) {
+// peerHookOffLocked reports whether the hook is off and whether the daemon has a route to deliver
+// a turn without it, from the live session here or another device's presence. Caller holds mu.
+func (d *Daemon) peerHookOffLocked(dev, sess string) (off, turnRoute bool) {
 	if dev == d.device {
 		if s := d.sessions[sess]; s != nil {
-			return d.hookOffLocked(s), s.agent
+			return d.hookOffLocked(s), viaOf(s.route, s.dropped.IsZero()) != ""
 		}
-		return false, ""
+		return false, false
 	}
 	if p := d.peers[dev]; p != nil {
 		for _, s := range p.pres.Sessions {
 			if s.ID == sess {
-				return s.HookOff, s.Agent
+				return s.HookOff, s.TurnRoute
 			}
 		}
 	}
-	return false, ""
+	return false, false
 }

@@ -1045,7 +1045,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		offline := d.offlineLocked(dev, sess)
 		// Do not disturb doesn't hold a message from this device's person to its own sessions (#777).
 		dnd := d.peerDNDLocked(dev, sess) && !(dev == d.device && from == d.personAddr())
-		hookOff, agent := d.peerHookOffLocked(dev, sess)
+		hookOff, turnRoute := d.peerHookOffLocked(dev, sess)
 		noWake := d.peerNoWakeLocked(dev, sess, wake)
 		// A T3 thread T3 stopped while it was idle has no session, but its route is kept and a message
 		// wakes it as one does an idle session, if the wake setting lets it (#669).
@@ -1075,9 +1075,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 		case known && noWake != "":
 			note = noWakeNote(nameOr(toName, at), noWake, hookOff)
 		case known && hookOff:
-			// Without the hook the daemon hands the message over as a turn where it can (in T3, or
-			// Claude Code's socket), at once, which T3 queues if the session is busy.
-			if strings.HasSuffix(agent, " in T3") || agent == "claude-code" {
+			if turnRoute {
 				note = nameOr(toName, at) + "'s hook isn't running, so it won't be told while it works: it gets this as its next turn."
 			} else {
 				note = nameOr(toName, at) + "'s hook isn't running, so it sees this when it next reads its inbox."

@@ -22,8 +22,8 @@
 // which OpenCode 1 doesn't tell apart (#446; internal/join/opencodeplugin.go).
 //
 // It never blocks or fails the agent: any problem, including no daemon running, means it
-// prints nothing and exits 0. Before a tool call it never prints anything at all, and the time it
-// can hold the call up is bounded by BracketTimeout.
+// gives no instructions to the agent and exits 0. The time it can hold a tool call up is bounded
+// by BracketTimeout. Antigravity's hook returns an event-specific JSON response.
 package hook
 
 import (
@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -41,6 +42,7 @@ import (
 	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -86,14 +88,17 @@ type input struct {
 	// Prompt is, on UserPromptSubmit, what the turn begins with (Claude Code, and Codex, whose
 	// payload takes Claude Code's shape). Pi's and OpenCode's extensions send none.
 	Prompt string `json:"prompt"`
-	// Antigravity's own payload (#650), in camelCase: the conversation's ID, the workspace it runs
-	// in (the hook runs in the folder of hooks.json), the turn's prompt, and, on Stop, why the turn
-	// ended, NO_TOOL_CALL at a turn's ordinary end (its harness's documentation, 1.4.5).
-	ConversationID    string   `json:"conversationId"`
-	WorkspacePaths    []string `json:"workspacePaths"`
-	LastUserInput     string   `json:"lastUserInput"`
-	TerminationReason string   `json:"terminationReason"`
-	InvocationNum     int      `json:"invocationNum"`
+	// Antigravity's camelCase payload (#650). Older versions supplied workspace paths in place of
+	// cwd. At an ordinary turn end, Stop supplies NO_TOOL_CALL.
+	ConversationID    string               `json:"conversationId"`
+	WorkspacePaths    []string             `json:"workspacePaths"`
+	LastUserInput     string               `json:"lastUserInput"`
+	TerminationReason string               `json:"terminationReason"`
+	InvocationNum     int                  `json:"invocationNum"`
+	FullyIdle         *bool                `json:"fullyIdle"`
+	ToolCall          *antigravityToolCall `json:"toolCall"`
+	StepIdx           *int                 `json:"stepIdx"`
+	Error             string               `json:"error"`
 }
 
 type output struct {
@@ -207,7 +212,7 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 					pids = []int{who.ClientPID}
 				}
 			}
-			if rec, ok := ownRecord(agent, in.SessionID, here.Of(dir, pids)); ok {
+			if rec, ok := ownRecord(agent, in.SessionID, os.Getenv(t3.ThreadEnv), here.Of(dir, pids)); ok {
 				return rec.GitDir, true
 			}
 		}
@@ -219,8 +224,7 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 	return gitDir, false
 }
 
-// ownRecord picks, from the records of the servers the agent's process started, the one of the
-// hook's session, whose ID is native.
+// ownRecord picks the hook's session from the records of the nearest ancestor with live servers.
 //
 // Claude Code names its own process (CLAUDE_PID), which runs one session, so its one record is the
 // session's. Another agent's hook has only its ancestors to go by, and a record found among them
@@ -230,23 +234,41 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 // which this session's hasn't published. Taking such a record would send the hook to the wrong
 // clone's daemon, where it could be taken for the record's session and given its messages
 // (internal/daemon, agentHookSessionsLocked), or stop it where that session is in no repository.
-// So for another agent the record has to carry the hook's own session ID: Grok's server has it
-// from the start, and Codex's learns it from the first call to one of Murmur's tools.
-func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
+// Matching the agent and the native or T3 thread ID identifies the record even in a shared client.
+func ownRecord(agent, native, t3Thread string, recs []here.Session) (here.Session, bool) {
 	if agent == "" {
 		if len(recs) == 1 {
 			return recs[0], true
 		}
 		return here.Session{}, false
 	}
-	var mine []here.Session
+	var nativeRec, threadRec here.Session
+	var nativeMatches, threadMatches int
 	for _, r := range recs {
+		if r.Agent != "" && r.Agent != agent && !strings.HasPrefix(r.Agent, agent+" ") {
+			continue
+		}
 		if native != "" && r.Native == native {
-			mine = append(mine, r)
+			nativeRec, nativeMatches = r, nativeMatches+1
+		}
+		if t3Thread != "" && r.T3Thread == t3Thread && (r.Native == "" || r.Native == native) {
+			threadRec, threadMatches = r, threadMatches+1
 		}
 	}
-	if len(mine) == 1 {
-		return mine[0], true
+	if nativeMatches == 1 {
+		return nativeRec, true
+	}
+	if threadMatches == 1 {
+		return threadRec, true
+	}
+	// Each agy client process runs one conversation and starts its own MCP server. Only
+	// accept the sole record for that PID with neither ID known and an Antigravity label.
+	// The label rules out a parent Claude Code or Codex whose record was the nearest one.
+	if agent == Antigravity && len(recs) == 1 {
+		r := recs[0]
+		if r.Native == "" && r.T3Thread == "" && (r.Agent == Antigravity || strings.HasPrefix(r.Agent, Antigravity+" ")) {
+			return r, true
+		}
 	}
 	return here.Session{}, false
 }
@@ -282,19 +304,23 @@ func KnownAgent(agent string) bool {
 func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 
 // RunFor is Run for agent, "" for Claude Code. It does nothing for an agent it doesn't know, rather
-// than take another agent's hook for Claude Code's. Another agent's hook brackets no tool call, as
-// join installs it on no PreToolUse (#225), and sends no transcript, which is Claude Code's format.
+// than take another agent's hook for Claude Code's. Claude Code's hook sends its transcript.
 func RunFor(agent string, stdin io.Reader, stdout io.Writer) { RunForEvent(agent, "", stdin, stdout) }
 
-// RunForEvent is RunFor with the event its command line names, for an agent whose payload doesn't:
-// Antigravity, whose hook answers every event with a JSON object, {} where it has nothing to say.
+// RunForEvent is RunFor with the event its command line names. Antigravity's hook answers every
+// event with a JSON object.
 func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if agent == Antigravity {
 		w := &written{w: stdout}
 		stdout = w
 		defer func() {
 			if !w.any {
-				io.WriteString(w.w, "{}\n")
+				answer := "{}\n"
+				if event == preTool {
+					// Antigravity delegates to its next hook or default policy on "allow".
+					answer = "{\"decision\":\"allow\"}\n"
+				}
+				io.WriteString(w.w, answer)
 			}
 		}()
 	}
@@ -337,13 +363,13 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		turnEnd(agent, in, who, stdout)
 		return
 	}
-	op := bracketOp(in)
-	if agent != "" {
-		op = ""
+	var op string
+	if agent == "" || agent == Antigravity && in.ToolName == antigravityCommand {
+		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
-	// does, and a PreToolUse prints nothing at all.
-	wantNotices := in.Event != preTool && in.Event != postFailure
+	// does. Antigravity receives its notices in PreInvocation.
+	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool)
 	if !wantNotices && op == "" {
 		return
 	}
@@ -363,9 +389,14 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	// A bracket names the repository the call ran in, which the daemon watches only if it is its
 	// own: a session moved into this clone works in another, and its commits there aren't credited.
-	callDir := gitDir
-	if op != "" && placed {
-		callDir, _ = findClone(ctx, in.Cwd)
+	callDir, callCwd := gitDir, in.Cwd
+	if op != "" {
+		if agent == Antigravity && in.ToolCall.Args.Cwd != "" {
+			callCwd = in.ToolCall.Args.Cwd
+		}
+		if placed || callCwd != in.Cwd {
+			callDir, _ = findClone(ctx, callCwd)
+		}
 	}
 	// The end of a call is sent alongside the notices request. The daemon answers it at once and
 	// finds the call's commits after, so neither holds up the notices or the agent.
@@ -376,7 +407,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 			defer wg.Done()
 			defer func() { recover() }()
 			r := who
-			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, in.Cwd, callDir
+			r.Op, r.ToolUseID, r.Cwd, r.GitDir = op, in.ToolUseID, callCwd, callDir
 			c.Do(ctx, r)
 		}()
 	}
@@ -403,7 +434,11 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if !wantNotices || err != nil {
 		return
 	}
-	text := view.Hook(resp.Read, resp.Messages, resp.Unread)
+	inbox := view.InboxTool
+	if agent == Antigravity {
+		inbox = view.AntigravityInboxTool
+	}
+	text := view.HookWithInbox(resp.Read, resp.Messages, resp.Unread, inbox)
 	if text == "" {
 		return
 	}

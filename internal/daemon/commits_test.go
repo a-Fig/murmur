@@ -22,7 +22,7 @@ import (
 )
 
 // Tests of the commits a session is credited with, of when it was last active, and of lookup
-// (#21). A tool call is bracketed by the Claude Code hook: the daemon snapshots the worktree at
+// (#21). A tool call is bracketed by a hook: the daemon snapshots the worktree at
 // the call's start and credits the commits that appeared by its end.
 
 // tree is the clone's own working directory.
@@ -572,6 +572,49 @@ func TestHookBracketsToolCalls(t *testing.T) {
 		if out.Len() != 0 {
 			t.Errorf("hook printed %q for input %q", out.String(), in)
 		}
+	}
+}
+
+func TestAntigravityToolHooksCreditCommits(t *testing.T) {
+	slowHook(t)
+	a := newDevice(t, newRemote(t))
+	wt := a.linkedTree("wt-agy", "feat-agy")
+	conn, resp, err := a.c.Hello(context.Background(),
+		proto.Hello{ID: "aaaaaa", Agent: "antigravity", Cwd: a.tree(), ClientPID: os.Getppid()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	name := a.named(resp.Self)
+	run := func(event, tool, id, toolErr, want string) {
+		t.Helper()
+		payload, err := json.Marshal(map[string]any{
+			"conversationId": "conv-1", "cwd": a.tree(), "error": toolErr,
+			"toolCall": map[string]any{
+				"id": id, "name": tool, "args": map[string]string{"Cwd": wt},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		hook.RunForEvent(hook.Antigravity, event, bytes.NewReader(payload), &out)
+		if out.String() != want+"\n" {
+			t.Fatalf("%s %s printed %q, want %s", event, tool, out.String(), want)
+		}
+	}
+	const allow = `{"decision":"allow"}`
+	run("PreToolUse", "run_command", "first", "", allow)
+	first := commitFile(t, wt, "agy.txt")
+	run("PostToolUse", "run_command", "first", "", "{}")
+	run("PreToolUse", "view_file", "read", "", allow)
+	commitFile(t, wt, "during-read.txt")
+	run("PostToolUse", "view_file", "read", "", "{}")
+	run("PreToolUse", "run_command", "last", "", allow)
+	last := commitFile(t, wt, "then-failed.txt")
+	run("PostToolUse", "run_command", "last", "exit status 1", "{}")
+	if got := commitSHAs(a.look("aaaaaa", name)); !slices.Equal(got, []string{first, last}) {
+		t.Errorf("credited %v, want %s and %s", got, first, last)
 	}
 }
 

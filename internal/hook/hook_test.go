@@ -154,6 +154,7 @@ func TestAnotherAgentsHookFindsItsSessionsClone(t *testing.T) {
 		{"a sibling's record", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: there, On: true}}, false},
 		{"the record of the Claude Code that started the agent", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code", ClaudeSession: "thread-1", GitDir: there, On: true}}, false},
 		{"that agent's record, in no repository", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code"}}, false},
+		{"the record of the Antigravity that started Codex", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "antigravity", GitDir: there}}, false},
 		{"the session's record beside a sibling's", []here.Session{
 			{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-1", GitDir: there, On: true},
 			{ServerPID: os.Getppid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: filepath.Join(works, ".git"), On: true}}, true},

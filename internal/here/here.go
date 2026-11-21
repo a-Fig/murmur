@@ -35,10 +35,11 @@ type Session struct {
 	// Native is the agent's own ID for the session, where the server knows it: Codex's thread ID
 	// once one of Murmur's tools has been called, Grok's session ID from the start. A hook carries
 	// the same ID, which is how it tells its session's record from another's of its process.
-	Native string `json:"native,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	GitDir string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
-	On     bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
+	Native   string `json:"native,omitempty"`
+	T3Thread string `json:"t3Thread,omitempty"` // the thread's ID, even when no delivery route is known
+	Agent    string `json:"agent,omitempty"`
+	GitDir   string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
+	On       bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
 	// Fixed says the server can't be moved: one OpenCode server serves every session in its
 	// directory, so moving it for one would move them all. Its record still stops the search up
 	// the process tree, or join would move an agent further up (a Claude Code that started it).
