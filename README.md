@@ -104,7 +104,7 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 1              | T3 Code               | turn      | waits for the turn to end, then a turn |
-| Muse Code (untested)    | T3 Code               | turn      | notice after its next tool call        |
+| Muse Code               | T3 Code               | turn      | notice after its next tool call        |
 | Muse Code               | a terminal            | inbox     | notice after its next tool call        |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
