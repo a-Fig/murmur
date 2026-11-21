@@ -14,9 +14,7 @@ import (
 )
 
 // skillsDir is where agent home h reads user skills, each a folder with a SKILL.md, "" for an
-// agent with no documented place. The four were taken from each agent's documentation on
-// 2026-11-08, not tried in a session: Claude Code and Pi read <dir>/skills, Codex
-// $CODEX_HOME/skills, OpenCode ~/.config/opencode/skills. Muse Code and Grok document none.
+// agent with no documented place.
 func skillsDir(a agent, h agentHome) string {
 	switch a.driver {
 	case "claudeAgent", "codex", "opencode", "pi":
@@ -34,20 +32,27 @@ func skillsDir(a agent, h agentHome) string {
 	return ""
 }
 
-// joinSkillsDir is skillsDir for join: none for Antigravity's homes unless Antigravity is
-// installed in one of them, homes, as ~/.gemini is Gemini CLI's too (#741). Any of them will do:
-// T3's instances read the skills in ~/.gemini through T3's link, and a T3 that runs Antigravity
-// says nothing of ~/.gemini itself. Uninstall still uses skillsDir.
+// joinSkillsDir checks that the agent is installed before writing its skills. Antigravity can
+// run in T3 before ~/.gemini exists. Any installed Antigravity home is enough to write the
+// shared skills there, which T3 links into its instances (#741). Gemini CLI also uses ~/.gemini.
 func (e Env) joinSkillsDir(a agent, h agentHome, homes []agentHome) string {
-	if a.driver == "antigravity" && !slices.ContainsFunc(homes, e.hasAntigravity) {
+	dir := skillsDir(a, h)
+	if dir == "" {
 		return ""
 	}
-	return skillsDir(a, h)
+	if a.driver == "antigravity" {
+		if slices.ContainsFunc(homes, e.hasAntigravity) {
+			return dir
+		}
+	} else if isDir(h.Dir) {
+		return dir
+	}
+	return ""
 }
 
 // installSkills writes Murmur's skills into dir, an agent's skills folder, and updates ones an
 // older mur wrote. A SKILL.md of the same name without skills.Marker is a user's own, and is left
-// alone with a note. Only called for an agent that is installed, whose home exists.
+// alone with a note. Only called for an agent that is installed.
 func installSkills(dir, label string) (did, notes []string, err error) {
 	var wrote []string
 	verb := "installed"
