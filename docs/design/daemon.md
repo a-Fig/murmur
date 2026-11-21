@@ -45,11 +45,11 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   its first push (Tyler, 2026-11-16; 30 was too long) it is given up and called not sent: the sender
   gets a notice in its inbox saying so, and why in a few plain words ("the push kept timing out"),
   not git's. A daemon that stops asks the remote first under a bounded budget (`PendingStopLimit`,
-  12 s by default, inside `proto.DrainTimeout`), settling sends the remote already has as landed
-  and giving up the rest; if `writeMu` or the remote runs past the budget, every pending send is
-  given up as unconfirmed so its sender is still told before exit. Nothing is kept across a
-  restart, and a send whose push ends unsure as it stops says so, as before
-  (`internal/daemon/pending.go`, #857).
+  12 s by default, started when stop begins and inside `proto.DrainTimeout`), settling sends the
+  remote already has as landed and giving up the rest even if `writeMu` is held; if the remote
+  can't answer in time, every pending send is given up as unconfirmed so its sender is still told
+  before exit. Nothing is kept across a restart, and a send whose push ends unsure as it stops says
+  so, as before (`internal/daemon/pending.go`, #857).
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
   session returns. A session still connected when the daemon stops counts as stopped from then
   (#736): until 2026-11-16 no stop was recorded for it, and one that didn't reconnect within two

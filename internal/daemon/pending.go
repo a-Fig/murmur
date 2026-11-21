@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -28,10 +29,10 @@ import (
 // is told in its inbox that it wasn't sent, with why in a few plain words; until then it answered
 // as a send that landed, with nothing added (Tyler, 2026-11-16). As the daemon stops, pendingLoop
 // asks the remote first under one overall Options.PendingStopLimit budget (pendingStopLimit by
-// default), settling sends the remote already has as landed and giving up the rest; if writeMu
-// stays held past the remote portion of the budget or the remote can't be reached in time, every
-// pending send is given up as unconfirmed and its sender is told not sent before the loop exits.
-// Nothing is kept across a restart (#857).
+// default, started when bgCtx is cancelled), settling sends the remote already has as landed and
+// giving up the rest even if writeMu is held; if the remote can't answer in time, every pending
+// send is given up as unconfirmed and its sender is told not sent before the loop exits. Nothing
+// is kept across a restart (#857).
 
 // pendingGiveUp is how long after its first push ended unsure a pending send is given up, at the
 // first retry to end past it. Tyler set it
@@ -44,21 +45,29 @@ const pendingGiveUp = 3 * time.Minute
 const pendingLookLimit = 30 * time.Second
 
 // pendingStopLimit is the overall budget a stopping daemon gives to settling pending sends before
-// giving them up (#857): waiting for writeMu, asking the remote, local git checks, and saving
-// give-up notices. It stays inside proto.DrainTimeout (20 s), which is followed by d.goodbye()
-// (up to proto.GoodbyeTimeout, 15 s); client.Stop only waits 10 s for exit before returning, so
-// this bounds the pending drain rather than total shutdown time. When the remote portion expires
-// (leaving pendingStopReserve for gitx's 5 s WaitDelay plus local checks and saving), every
-// pending send is given up as unconfirmed (absent=false) and its sender is told not sent.
-const (
-	pendingStopLimit   = 12 * time.Second
-	pendingStopReserve = 6 * time.Second
-)
+// giving them up (#857), measured from when bgCtx is cancelled. At the default 12 s it splits into
+// 5 s for the remote lookup, 2 s for local git checks (IsCommit, IsAncestor), and 5 s reserved for
+// gitx's cmd.WaitDelay if either the remote or a local git command is killed at its deadline.
+//
+// Worst-case wall time from stop start:
+//   - Remote stalls: 5 s remote + up to 5 s WaitDelay + state save (~10 s).
+//   - Remote answers right before 5 s, then a local git check stalls: 5 s remote + 2 s local + up
+//     to 5 s WaitDelay + state save (~12 s).
+//   - Stop arrives mid-retry: the stop clock still started at bgCtx cancellation, so a slow unwind
+//     eats into the same 5 s remote window (skipping the remote once past 5 s); however, if the
+//     in-flight retry itself takes longer than 12 s to unwind, or saving state / acquiring mu
+//     stalls, pendingLoop can exceed 12 s and Run's 20 s proto.DrainTimeout caps how long exit waits
+//     for it.
+//
+// proto.DrainTimeout (20 s) is followed by d.goodbye() (up to proto.GoodbyeTimeout, 15 s);
+// client.Stop only waits 10 s for exit before returning, so this bounds the pending drain rather
+// than total shutdown time. When the remote lookup fails or times out, every pending send is given
+// up as unconfirmed (absent=false) and its sender is told not sent.
+const pendingStopLimit = 12 * time.Second
 
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It may be called with or without writeMu held
-// (stopPending calls it without writeMu when the stop budget expires while writeMu is held), and
-// never with pendMu or mu held.
+// (stopPending runs without writeMu when writeMu is held), and never with pendMu or mu held.
 type settleFunc func(landed, absent bool, err error)
 
 type pendingSend struct {
@@ -143,40 +152,36 @@ func (d *Daemon) lockWriteUntil(ctx context.Context) bool {
 	}
 }
 
-// stopPending settles pending sends as the daemon stops under one overall PendingStopLimit budget,
-// reserving time for gitx's WaitDelay, local checks, and saving notices. When holdingWrite is false,
-// it waits for writeMu only until the remote deadline; if the lock is still held then, it skips the
-// remote and still tells every sender not sent before returning.
-func (d *Daemon) stopPending(holdingWrite bool) {
+// stopPending settles pending sends as the daemon stops under one overall PendingStopLimit budget
+// measured from started (when bgCtx was cancelled), reserving time for local git checks and gitx's
+// 5 s WaitDelay. Reading the remote tip and checking local ancestry do not write the bus, so when
+// writeMu is already held by another goroutine stopPending checks the remote without waiting for
+// writeMu (skipping only the d.ownTip update, which writeMu guards).
+func (d *Daemon) stopPending(started time.Time, holdingWrite bool) {
 	limit := d.opt.PendingStopLimit
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), limit)
-	defer stopCancel()
-	deadline, _ := stopCtx.Deadline()
-	remoteCtx, remoteCancel := context.WithDeadline(stopCtx, deadline.Add(-min(pendingStopReserve, limit/2)))
+	waitReserve := min(5*time.Second, limit/2)
+	localReserve := min(2*time.Second, (limit-waitReserve)/3)
+	stopDeadline := started.Add(limit)
+	localDeadline := stopDeadline.Add(-waitReserve)
+	remoteDeadline := localDeadline.Add(-localReserve)
+
+	localCtx, localCancel := context.WithDeadline(context.Background(), localDeadline)
+	defer localCancel()
+	remoteCtx, remoteCancel := context.WithDeadline(localCtx, remoteDeadline)
 	defer remoteCancel()
+
 	if !holdingWrite {
-		if !d.lockWriteUntil(remoteCtx) {
-			d.pendMu.Lock()
-			pending := d.pendSends
-			d.pendSends = nil
-			d.pendRun = false
-			d.pendMu.Unlock()
-			if len(pending) > 0 {
-				d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(pending), errDaemonStopped)
-				for _, p := range pending {
-					p.settle(false, false, errDaemonStopped)
-				}
-			}
-			return
+		if d.writeMu.TryLock() {
+			holdingWrite = true
+			defer d.writeMu.Unlock()
 		}
-		defer d.writeMu.Unlock()
 	}
 	d.pendMu.Lock()
 	d.pendRun = false
 	has := len(d.pendSends) > 0
 	d.pendMu.Unlock()
 	if has {
-		d.giveUpPending(stopCtx, remoteCtx, errDaemonStopped, true)
+		d.giveUpPending(localCtx, remoteCtx, errDaemonStopped, true, holdingWrite)
 	}
 }
 
@@ -184,17 +189,30 @@ func (d *Daemon) stopPending(holdingWrite bool) {
 // longer each time, to a minute, until it lands or is given up.
 func (d *Daemon) pendingLoop() {
 	defer d.bg.Done()
+	// Record when stop begins so an interrupted retry's unwind counts against PendingStopLimit.
+	var stopAt atomic.Int64
+	stopWatch := context.AfterFunc(d.bgCtx, func() {
+		stopAt.Store(time.Now().UnixNano())
+	})
+	defer stopWatch()
+	stopStart := func() time.Time {
+		if ns := stopAt.Load(); ns != 0 {
+			return time.Unix(0, ns)
+		}
+		return time.Now()
+	}
+
 	wait := d.opt.PendingRetry
 	for {
 		select {
 		case <-d.bgCtx.Done():
-			d.stopPending(false)
+			d.stopPending(stopStart(), false)
 			return
 		case <-time.After(wait):
 		}
 		wait = min(2*wait, time.Minute)
 		if !d.lockWriteUntil(d.bgCtx) {
-			d.stopPending(false)
+			d.stopPending(stopStart(), false)
 			return
 		}
 		if d.hasPending() && d.bgCtx.Err() == nil {
@@ -211,7 +229,7 @@ func (d *Daemon) pendingLoop() {
 			return
 		}
 		if d.bgCtx.Err() != nil {
-			d.stopPending(true)
+			d.stopPending(stopStart(), true)
 			d.writeMu.Unlock()
 			return
 		}
@@ -246,8 +264,10 @@ func (d *Daemon) retryPending() {
 		if tip, rerr := d.repo.RemoteRef(ctx, ref); rerr == nil {
 			if over, oerr := d.overRemoteTip(ctx, ref, tip); oerr == nil {
 				if !over {
-					d.settlePendingOn(ctx, tip, err)
-					d.ownTip = tip
+					d.settlePendingOn(ctx, tip, err, true)
+					if !d.hasPending() {
+						d.ownTip = tip
+					}
 					return
 				}
 				if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
@@ -263,69 +283,111 @@ func (d *Daemon) retryPending() {
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
 		rctx, rcancel := context.WithTimeout(ctx, pendingLookLimit)
 		defer rcancel()
-		d.giveUpPending(ctx, rctx, err, false)
+		d.giveUpPending(ctx, rctx, err, false, true)
 	}
 }
 
-// settlePendingOn settles the pending sends by tip, the remote's tip of this device's log, which
-// the next write builds on: those under it landed, and the rest are given up, as nothing will push
-// them. Caller holds writeMu and has tip locally.
-func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) {
-	pending := d.takePending()
-	if len(pending) == 0 {
+// settlePendingOn settles pending sends by tip, the remote's tip of this device's log, which the
+// next write builds on: those under it landed, and the rest are given up, as nothing will push
+// them. Every send's ancestry is decided before any settle callback runs so a stop triggered in an
+// earlier callback can't cancel later checks; when leaveOnStop is true and a stop cancels ctx
+// mid-check, undecided sends stay pending for stopPending to settle under its budget (#857).
+// Caller has tip locally.
+func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error, leaveOnStop bool) {
+	d.pendMu.Lock()
+	snap := slices.Clone(d.pendSends)
+	d.pendMu.Unlock()
+	if len(snap) == 0 {
 		return
 	}
-	for _, p := range pending {
-		if ok, aerr := d.repo.IsAncestor(ctx, p.sha, tip); aerr == nil && ok {
+	type verdict struct {
+		landed, absent bool
+	}
+	verdicts := make(map[string]verdict, len(snap))
+	for _, p := range snap {
+		ok, aerr := d.repo.IsAncestor(ctx, p.sha, tip)
+		if aerr != nil && leaveOnStop && ctx.Err() != nil && d.bgCtx != nil && d.bgCtx.Err() != nil {
+			break
+		}
+		verdicts[p.sha] = verdict{landed: aerr == nil && ok, absent: aerr == nil}
+	}
+	if len(verdicts) == 0 {
+		return
+	}
+	d.pendMu.Lock()
+	var settled, keep []pendingSend
+	for _, p := range d.pendSends {
+		if _, ok := verdicts[p.sha]; ok {
+			settled = append(settled, p)
+		} else {
+			keep = append(keep, p)
+		}
+	}
+	d.pendSends = keep
+	d.pendMu.Unlock()
+	for _, p := range settled {
+		v := verdicts[p.sha]
+		if v.landed {
 			p.settle(true, false, nil)
 		} else {
-			p.settle(false, aerr == nil, err)
+			p.settle(false, v.absent, err)
 		}
 	}
 }
 
 // giveUpPending asks the remote (bounded by remoteCtx) which pending sends landed, settles those as
-// landed, and gives up the rest after err; the next write builds on the remote's tip. Local git
-// checks run under localCtx. If the remote can't be asked, times out, or points to junk, every
-// pending send is given up as unconfirmed (absent=false) and the next write builds on the tip the
-// first was built on — except when !forStop and the daemon began stopping during the lookup, in
-// which case the sends are left pending for stopPending to settle under its own budget (#857).
-// Caller holds writeMu.
-func (d *Daemon) giveUpPending(localCtx, remoteCtx context.Context, err error, forStop bool) {
+// landed, and gives up the rest after err; when holdingWrite is true, the next write builds on the
+// remote's tip. Local git checks run under localCtx. If the remote can't be asked, times out, or
+// points to junk, every pending send is given up as unconfirmed (absent=false) and (when
+// holdingWrite) the next write builds on the tip the first was built on — except when !forStop and
+// the daemon began stopping during the lookup, in which case the sends are left pending for
+// stopPending to settle under its own budget (#857).
+func (d *Daemon) giveUpPending(localCtx, remoteCtx context.Context, err error, forStop, holdingWrite bool) {
 	ref := d.meshRef()
-	if tip, rerr := d.repo.RemoteRef(remoteCtx, ref); rerr == nil {
-		if tip == "" { // no log there at all
-			pending := d.takePending()
-			if len(pending) > 0 {
-				d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(pending), err)
+	if remoteCtx.Err() == nil {
+		if tip, rerr := d.repo.RemoteRef(remoteCtx, ref); rerr == nil {
+			if tip == "" { // no log there at all
+				pending := d.takePending()
+				if len(pending) > 0 {
+					d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(pending), err)
+				}
+				for _, p := range pending {
+					p.settle(false, true, err)
+				}
+				if holdingWrite {
+					d.ownTip = ""
+				}
+				return
 			}
-			for _, p := range pending {
-				p.settle(false, true, err)
+			// A tip that is already a commit here (the usual case when this clone's own push landed
+			// or didn't) needs no second round-trip to fetch. One that isn't is fetched within
+			// remoteCtx; a tip that still isn't a commit, junk pushed over the log, is no tip to
+			// build on (Sol's review of #818): that is as if the remote couldn't be asked.
+			ok, _ := d.repo.IsCommit(localCtx, tip)
+			if !ok && remoteCtx.Err() == nil {
+				var ferr error
+				if holdingWrite {
+					ferr = d.fetchOwn(remoteCtx, ref)
+				} else {
+					ferr = d.repo.Fetch(remoteCtx, []string{ref})
+				}
+				if ferr != nil && remoteCtx.Err() != nil && localCtx.Err() == nil {
+					clearStaleTemp(d.opt.GitDir, d.log)
+				}
+				if ferr == nil {
+					ok, _ = d.repo.IsCommit(localCtx, tip)
+				}
 			}
-			d.ownTip = ""
-			return
-		}
-		// A tip that is already a commit here (the usual case when this clone's own push landed or
-		// didn't) needs no second round-trip to fetch. One that isn't is fetched within remoteCtx; a
-		// tip that still isn't a commit, junk pushed over the log, is no tip to build on (Sol's
-		// review of #818): that is as if the remote couldn't be asked.
-		ok, _ := d.repo.IsCommit(localCtx, tip)
-		if !ok {
-			ferr := d.fetchOwn(remoteCtx, ref)
-			if ferr != nil && remoteCtx.Err() != nil && localCtx.Err() == nil {
-				clearStaleTemp(d.opt.GitDir, d.log)
+			if ok {
+				if !forStop && d.bgCtx != nil && d.bgCtx.Err() != nil {
+					return // stopping mid-lookup: leave pending for stopPending under its stop budget
+				}
+				d.settlePendingOn(localCtx, tip, err, !forStop)
+				if holdingWrite && !d.hasPending() {
+					d.ownTip = tip
+				}
+				return
 			}
-			if ferr == nil {
-				ok, _ = d.repo.IsCommit(localCtx, tip)
-			}
-		}
-		if ok {
-			if !forStop && d.bgCtx != nil && d.bgCtx.Err() != nil {
-				return // stopping mid-lookup: leave pending for stopPending under its stop budget
-			}
-			d.settlePendingOn(localCtx, tip, err)
-			d.ownTip = tip
-			return
 		}
 	}
 	if !forStop && d.bgCtx != nil && d.bgCtx.Err() != nil {
@@ -338,7 +400,9 @@ func (d *Daemon) giveUpPending(localCtx, remoteCtx context.Context, err error, f
 	for _, p := range pending {
 		p.settle(false, false, err)
 	}
-	d.ownTip = d.pendBase
+	if holdingWrite {
+		d.ownTip = d.pendBase
+	}
 }
 
 // errDaemonStopped is what a pending send is given up with as the daemon stops.

@@ -528,6 +528,89 @@ func TestAStoppingDaemonSettlesPendingSendsAgainstTheRemote(t *testing.T) {
 			t.Errorf("after stop: %d pending, ownTip=%s (want %s), inbox=%+v", pending, ownTip, peerTip, inbox)
 		}
 	})
+
+	t.Run("stop lands during ancestry settlement", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(real func() error) error {
+			if err := real(); err != nil {
+				return err
+			}
+			return cut
+		}
+		d.writeMu.Unlock()
+		var firstLanded, secondLanded atomic.Bool
+		if err := d.appendEventIf(ctx, message(d, "first"), nil, func(l, _ bool, _ error) {
+			firstLanded.Store(l)
+			if l {
+				stop()
+			}
+		}); !errors.As(err, new(pendingError)) {
+			t.Fatalf("first send ended with %v, want pending", err)
+		}
+		if err := d.appendEventIf(ctx, message(d, "second"), nil, func(l, _ bool, _ error) {
+			secondLanded.Store(l)
+		}); !errors.As(err, new(pendingError)) {
+			t.Fatalf("second send ended with %v, want pending", err)
+		}
+		d.writeMu.Lock()
+		d.giveUpPending(stopCtx, stopCtx, errors.New("expired"), false, true)
+		d.writeMu.Unlock()
+		d.bg.Wait()
+		if !firstLanded.Load() || !secondLanded.Load() {
+			t.Errorf("settled landed: first=%v second=%v, want both true", firstLanded.Load(), secondLanded.Load())
+		}
+	})
+
+	t.Run("landed send settles even when writeMu is held", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 5 * time.Second}, false)
+		stopCtx, stop := context.WithCancel(context.Background())
+		defer stop()
+		d.writeMu.Lock()
+		d.bgCtx = stopCtx
+		d.writeMu.Unlock()
+		ctx := context.Background()
+		d.sendFirst(t)
+		d.writeMu.Lock()
+		d.testPush = func(real func() error) error {
+			if err := real(); err != nil {
+				return err
+			}
+			return cut
+		}
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "landed under held lock"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		d.writeMu.Lock()
+		start := time.Now()
+		stop()
+		d.bg.Wait()
+		took := time.Since(start)
+		d.writeMu.Unlock()
+		if took > 5*time.Second {
+			t.Errorf("stop took %s with writeMu held, want prompt remote check", took)
+		}
+		d.pendMu.Lock()
+		pending := len(d.pendSends)
+		d.pendMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		if pending != 0 || len(inbox) != 0 {
+			t.Errorf("after stop with writeMu held: %d pending, inbox=%+v, want landed with no Not sent notice", pending, inbox)
+		}
+	})
 }
 
 // A stopping daemon whose remote is unreachable or stalls still finishes promptly (bounded by
@@ -578,7 +661,7 @@ func TestAStoppingDaemonWithAnUnreachableRemoteGivesUpPromptly(t *testing.T) {
 
 	t.Run("remote stalls past PendingStopLimit", func(t *testing.T) {
 		t.Parallel()
-		d, _, clone := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 500 * time.Millisecond}, false)
+		d, _, clone := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 1500 * time.Millisecond}, false)
 		stopCtx, stop := context.WithCancel(context.Background())
 		defer stop()
 		d.writeMu.Lock()
@@ -646,9 +729,9 @@ func TestAStoppingDaemonWithAnUnreachableRemoteGivesUpPromptly(t *testing.T) {
 		}
 	})
 
-	t.Run("writeMu held past PendingStopLimit", func(t *testing.T) {
+	t.Run("writeMu held with unreachable remote still gives up promptly", func(t *testing.T) {
 		t.Parallel()
-		d, _, clone := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 300 * time.Millisecond}, false)
+		d, _, clone := rateRig(t, Options{PendingRetry: time.Hour, PendingStopLimit: 2 * time.Second}, false)
 		stopCtx, stop := context.WithCancel(context.Background())
 		defer stop()
 		d.writeMu.Lock()
@@ -660,21 +743,10 @@ func TestAStoppingDaemonWithAnUnreachableRemoteGivesUpPromptly(t *testing.T) {
 		d.testPush = func(func() error) error { return cut }
 		d.writeMu.Unlock()
 		from := bus.Addr(d.device, "bbbbbb")
-		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "lock held"}, nil); r.Error != "" {
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "lock held offline"}, nil); r.Error != "" {
 			t.Fatalf("the send: %s", r.Error)
 		}
-
-		// Record any attempt to contact the remote during stop; none should happen once the lock
-		// wait exhausts the remote portion of the budget.
-		dir := filepath.ToSlash(t.TempDir())
-		script := dir + "/contact.sh"
-		body := "#!/bin/sh\n" +
-			"touch '" + dir + "/contacted'\n" +
-			"exec git upload-pack \"$1\"\n"
-		if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		runGit(t, clone, "config", "remote.origin.uploadpack", "sh '"+script+"'")
+		runGit(t, clone, "config", "remote.origin.url", filepath.Join(clone, "no-such-remote.git"))
 
 		d.writeMu.Lock()
 		start := time.Now()
@@ -684,10 +756,7 @@ func TestAStoppingDaemonWithAnUnreachableRemoteGivesUpPromptly(t *testing.T) {
 		d.writeMu.Unlock()
 
 		if took > 5*time.Second {
-			t.Errorf("stop took %s with writeMu held, want it bounded by PendingStopLimit", took)
-		}
-		if _, err := os.Stat(dir + "/contacted"); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("the remote was contacted after writeMu was held past PendingStopLimit (stat err: %v)", err)
+			t.Errorf("stop took %s with writeMu held and unreachable remote, want it prompt", took)
 		}
 		d.pendMu.Lock()
 		pending := len(d.pendSends)
@@ -698,7 +767,7 @@ func TestAStoppingDaemonWithAnUnreachableRemoteGivesUpPromptly(t *testing.T) {
 		if pending != 0 {
 			t.Errorf("%d sends left pending, want none", pending)
 		}
-		if len(inbox) != 1 || inbox[0].Event.Subject != `Not sent: "lock held"` || !strings.Contains(inbox[0].Event.Body, errDaemonStopped.Error()) {
+		if len(inbox) != 1 || inbox[0].Event.Subject != `Not sent: "lock held offline"` || !strings.Contains(inbox[0].Event.Body, errDaemonStopped.Error()) {
 			t.Errorf("sender's inbox: %+v, want one Not sent notice for daemon stop", inbox)
 		}
 	})
