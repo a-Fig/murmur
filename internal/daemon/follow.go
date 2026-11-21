@@ -256,7 +256,11 @@ func (d *Daemon) keptForLocked(id string) string {
 // device. That session's ID is the thread's then. A thread named before servers took their ID from
 // it has its name at the address of the session that first had it, a Claude-derived one, and every
 // device names that address and no other: another would show as a bare address on other devices
-// once it stopped. The server takes the ID the reply's Self names. Caller holds mu.
+// once it stopped. If another session (such as the command line on a resumed conversation, #873)
+// currently holds that ID, h keeps its thread-derived ID so the two don't collide on one address
+// and the conversation can move cleanly; a live session of this same thread still holds it, so a
+// second server for the thread is refused as in use. The server takes the ID the reply's Self
+// names. Caller holds mu.
 func (d *Daemon) threadIDLocked(h *proto.Hello) string {
 	if !h.ByThread || h.T3Thread == "" {
 		return h.ID
@@ -272,6 +276,9 @@ func (d *Daemon) threadIDLocked(h *proto.Hello) string {
 	}
 	if last, ok := d.st.SessionNames[id]; ok && last != name {
 		return h.ID // that session went on to another conversation, whose inbox it may hold
+	}
+	if o := d.sessions[id]; o != nil && o.route.T3Thread != h.T3Thread {
+		return h.ID // another session (such as the command line on this conversation) holds id (#873)
 	}
 	return id
 }

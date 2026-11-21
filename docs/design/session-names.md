@@ -277,9 +277,12 @@ knew the rest.
   T3's database.
 - **Threads named before #642** have their name in the registry at the address of the session that
   first had it, made from a Claude session ID. A hello that says it was made from the thread
-  (`ByThread`, protocol 22) is registered at that address when it is this device's and still goes
-  by that name, and the server goes by the ID its reply names. A hello without it, from a server
-  started before an update, is never moved.
+  (`ByThread`, protocol 22) is registered at that address when it is this device's, still goes by
+  that name, and is not held by another session (such as the command line resuming the same
+  conversation, #873), and the server goes by the ID its reply names. When another session holds
+  that address, the thread keeps its own thread-derived address so the conversation can move
+  without colliding on one ID. A hello without `ByThread`, from a server started before an update,
+  is never moved.
 - **Hooks** still find a session by `CLAUDE_PID`, then by Claude session ID, never by thread. A hook
   of the new instance's process finds the session once its server has registered; one of the old
   process, if any runs after that, finds nothing and changes nothing.

@@ -1333,6 +1333,15 @@ func (d *Daemon) outOfInboxLocked(id string, m *inMsg, verb, how string) {
 func (d *Daemon) rememberRouteLocked(s *session) {
 	r := s.route
 	if r.T3CLI == "" || r.T3Thread == "" {
+		// A session outside T3 reusing a Claude-derived ID a T3 thread once had no longer routes
+		// to that thread (#873). A T3 session that hasn't found its thread yet keeps the stored
+		// route until it finds it or another session takes the thread.
+		if r.T3CLI == "" && r.T3Thread == "" && !strings.HasSuffix(s.agent, " in T3") {
+			if _, ok := d.st.T3Routes[s.id]; ok {
+				delete(d.st.T3Routes, s.id)
+				d.saveLocked()
+			}
+		}
 		return
 	}
 	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
@@ -1363,6 +1372,9 @@ func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 				o.route = proto.Route{}
 			}
 			d.takeInboxLocked(s, id)
+			d.saveLocked()
+		} else if o.route.T3Thread != want.Thread || o.route.T3Home != want.Home {
+			delete(d.st.T3Routes, id)
 			d.saveLocked()
 		}
 	}
