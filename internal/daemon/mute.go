@@ -75,13 +75,12 @@ func (d *Daemon) nameOfLocked(addr string) string {
 	return d.lastNameLocked(addr)
 }
 
-type peerNameKey struct{ dev, name string }
-
 // nameGivenUpLocked reports whether addr is a session currently listed without a name whose name
 // has moved to another session on the same device: a session that gave its name up and waits for
 // a new one (#875). Neither its label nor a mute of that name follows it once another session on
-// its device holds the name. A session that has left presence is not one: its old messages still
-// go by the name its conversation resumed under. Caller holds mu.
+// its device holds the name. A session that has left presence is not one (its old messages still
+// go by the name its conversation resumed under), nor is a dropped predecessor in its grace whose
+// presence still carries Was equal to name. Caller holds mu.
 func (d *Daemon) nameGivenUpLocked(addr, name string) bool {
 	if name == "" {
 		return false
@@ -115,7 +114,7 @@ func (d *Daemon) nameGivenUpLocked(addr, name string) bool {
 			continue
 		}
 		if s.ID == id {
-			if s.Name == "" {
+			if s.Name == "" && s.Was != name {
 				unnamed = true
 			}
 		} else if s.Name == name {
@@ -128,7 +127,7 @@ func (d *Daemon) nameGivenUpLocked(addr, name string) bool {
 	if heldByOther {
 		return true
 	}
-	h := d.peerHolders[peerNameKey{dev, name}]
+	h := d.st.PeerHolders[peerHolderKey(dev, name)].ID
 	return h != "" && h != id
 }
 
@@ -343,6 +342,62 @@ func (d *Daemon) mutersLocked(from, dev string) []string {
 type peerName struct {
 	Name string    `json:"name"`
 	At   time.Time `json:"at"` // to the hour
+}
+
+type peerHolder struct {
+	ID string    `json:"id"`
+	At time.Time `json:"at"` // to the hour
+}
+
+// maxPeerHolders bounds PeerHolders in state.json even if a peer transfers many names within
+// sessionNameKeep (#875).
+const maxPeerHolders = 1000
+
+func peerHolderKey(dev, name string) string { return dev + "/" + name }
+
+// notePeerHolderLocked records that session id on peer device dev holds name when it differs from
+// the registry's address (Used[name]), or clears an existing transfer if id is the address in Used
+// again (#875). Entries older than sessionNameKeep are pruned, and the map is capped at
+// maxPeerHolders by evicting the oldest entries. It says whether the state changed. Caller holds
+// mu.
+func (d *Daemon) notePeerHolderLocked(dev, name, id string) bool {
+	if dev == "" || name == "" || id == "" {
+		return false
+	}
+	key := peerHolderKey(dev, name)
+	if d.st.Used[name] == bus.Addr(dev, id) {
+		if _, ok := d.st.PeerHolders[key]; ok {
+			delete(d.st.PeerHolders, key)
+			return true
+		}
+		return false
+	}
+	now := time.Now().UTC().Truncate(time.Hour)
+	if ph, ok := d.st.PeerHolders[key]; ok && ph.ID == id && ph.At.Equal(now) {
+		return false
+	}
+	if d.st.PeerHolders == nil {
+		d.st.PeerHolders = map[string]peerHolder{}
+	}
+	for k, ph := range d.st.PeerHolders {
+		if now.Sub(ph.At) > sessionNameKeep {
+			delete(d.st.PeerHolders, k)
+		}
+	}
+	if _, exists := d.st.PeerHolders[key]; !exists {
+		for len(d.st.PeerHolders) >= maxPeerHolders {
+			var oldestKey string
+			var oldestAt time.Time
+			for k, ph := range d.st.PeerHolders {
+				if oldestKey == "" || ph.At.Before(oldestAt) || ph.At.Equal(oldestAt) && k < oldestKey {
+					oldestKey, oldestAt = k, ph.At
+				}
+			}
+			delete(d.st.PeerHolders, oldestKey)
+		}
+	}
+	d.st.PeerHolders[key] = peerHolder{id, now}
+	return true
 }
 
 // notePeerNameLocked records name as the one another device's session at addr is shown by, and

@@ -428,17 +428,16 @@ type Daemon struct {
 	// page saves state.json once and not once for each tags event in it (see applyPageLocked).
 	savesHeld bool
 
-	mu          sync.Mutex
-	sessions    map[string]*session
-	peers       map[string]*peer
-	peerHolders map[peerNameKey]string // (peer device, name) → session ID last shown holding it (#875)
-	known       map[string]string      // local copy of each bus ref: ref → SHA last fetched
-	st          state
-	recent      []proto.EventView
-	lastActive  time.Time
-	mode        syncMode
-	pending     []bus.Event // what arrived while down, for sessions that reconnect
-	heldTags    []bus.Event // changes to tags read then for sessions not known yet (holdForLocked)
+	mu         sync.Mutex
+	sessions   map[string]*session
+	peers      map[string]*peer
+	known      map[string]string // local copy of each bus ref: ref → SHA last fetched
+	st         state
+	recent     []proto.EventView
+	lastActive time.Time
+	mode       syncMode
+	pending    []bus.Event // what arrived while down, for sessions that reconnect
+	heldTags   []bus.Event // changes to tags read then for sessions not known yet (holdForLocked)
 	// heldPrompts are turns' prompts that came while no session of their client was connected, kept
 	// for the session's return (holdPromptLocked).
 	heldPrompts []heldPrompt
@@ -940,6 +939,12 @@ type state struct {
 	// device's presence, its pending one's Was included, and when it was last seen (#602): neither
 	// the registry nor Used says which of an address's names is the latest. Kept sessionNameKeep.
 	PeerNames map[string]peerName `json:"peerNames,omitempty"`
+	// PeerHolders is, by "<device>/<name>", the session ID on that peer device last shown holding
+	// name when it differs from the registry's address (Used[name]), and when it was last seen
+	// (#875). Kept for sessionNameKeep (and capped by maxPeerHolders) so a receiver restart does
+	// not forget that a still-unnamed session gave its name up even after the taker has left
+	// presence.
+	PeerHolders map[string]peerHolder `json:"peerHolders,omitempty"`
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
 	// NamesLeft is, by session key, the name the key had on the device this clone was before it

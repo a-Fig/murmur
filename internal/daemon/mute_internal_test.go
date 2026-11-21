@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -266,7 +267,9 @@ func TestASessionThatGaveItsNameUpIsNotShownOrMutedByIt(t *testing.T) {
 		{ID: "tttttt", Name: "calm-zebra"},
 		{ID: "xxxxxx", Name: ""},
 	}}}
-	d.peerHolders = map[peerNameKey]string{{there, "calm-zebra"}: "tttttt"}
+	if !d.notePeerHolderLocked(there, "calm-zebra", "tttttt") {
+		t.Fatal("notePeerHolderLocked did not record transfer")
+	}
 
 	eGiver := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: giver, To: "*", Subject: "from giver", At: time.Now().UTC()}
 	eTaker := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: taker, To: "*", Subject: "from taker", At: time.Now().UTC()}
@@ -286,13 +289,54 @@ func TestASessionThatGaveItsNameUpIsNotShownOrMutedByIt(t *testing.T) {
 		t.Error("peer handoff: mute of calm-zebra did not hold against taker")
 	}
 
-	// Even if the taker stops while the giver still waits unnamed, peerHolders remembers the move.
+	// Even if the taker stops while the giver still waits unnamed, PeerHolders remembers the move
+	// — including across a restart of the receiving daemon (serialized through state.json).
 	d.peers[there].pres.Sessions = []bus.SessionInfo{{ID: "xxxxxx", Name: ""}}
 	if got := d.nameOfLocked(giver); got != "" {
 		t.Errorf("after taker stopped while giver still unnamed: nameOfLocked=%q, want empty", got)
 	}
 	if d.mutedHereLocked("bbbbbb", eGiver) {
 		t.Error("after taker stopped while giver still unnamed: mute followed giver")
+	}
+	raw, err := json.Marshal(d.st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restarted state
+	if err := json.Unmarshal(raw, &restarted); err != nil {
+		t.Fatal(err)
+	}
+	d2 := &Daemon{device: d.device, opt: Options{MuteGrace: -1},
+		sessions: map[string]*session{"bbbbbb": {id: "bbbbbb", name: "quiet-otter"}},
+		peers:    map[string]*peer{there: {pres: bus.Presence{Device: there, Sessions: []bus.SessionInfo{{ID: "xxxxxx", Name: ""}}}}},
+		st:       restarted}
+	for _, s := range shownNames(d2, eGiver) {
+		want := ""
+		if s.where == "activity" {
+			want = giver
+		}
+		if s.name != want {
+			t.Errorf("after receiver restart: %s shows giver as %q, want %q", s.where, s.name, want)
+		}
+	}
+	if d2.mutedHereLocked("bbbbbb", eGiver) {
+		t.Error("after receiver restart: mute of calm-zebra followed giver")
+	}
+
+	// A dropped predecessor in its grace still carries Was=calm-zebra alongside the live
+	// replacement: it is NOT treated as a giver, so its messages still show calm-zebra and mutes
+	// still apply to it.
+	d.peers[there].pres.Sessions = []bus.SessionInfo{
+		{ID: "tttttt", Name: "calm-zebra"},
+		{ID: "xxxxxx", Name: "", Was: "calm-zebra"},
+	}
+	for _, s := range shownNames(d, eGiver) {
+		if s.name != "calm-zebra" {
+			t.Errorf("predecessor in grace: %s shows %q, want calm-zebra", s.where, s.name)
+		}
+	}
+	if !d.mutedHereLocked("bbbbbb", eGiver) {
+		t.Error("predecessor in grace: mute of calm-zebra did not hold")
 	}
 
 	// Once the giver has left presence, it is a departed session and its old messages still show
@@ -304,7 +348,10 @@ func TestASessionThatGaveItsNameUpIsNotShownOrMutedByIt(t *testing.T) {
 
 	// A different device claiming the name in its presence must not unlabel or unmute there's
 	// pending session after /clear (#604).
-	d.peerHolders = map[peerNameKey]string{{there, "calm-zebra"}: "xxxxxx"}
+	d.notePeerHolderLocked(there, "calm-zebra", "xxxxxx") // original session holds it again: clears transfer
+	if len(d.st.PeerHolders) != 0 {
+		t.Errorf("reclaiming original session left PeerHolders=%v, want empty", d.st.PeerHolders)
+	}
 	d.peers[there].pres.Sessions = []bus.SessionInfo{{ID: "xxxxxx", Name: "", Was: "calm-zebra"}}
 	d.peers[rogue] = &peer{pres: bus.Presence{Device: rogue, Sessions: []bus.SessionInfo{{ID: "eeeeee", Name: "calm-zebra"}}}}
 	if got := d.nameOfLocked(giver); got != "calm-zebra" {
@@ -342,5 +389,31 @@ func TestASessionThatGaveItsNameUpIsNotShownOrMutedByIt(t *testing.T) {
 	}
 	if !d.mutedHereLocked("bbbbbb", eLocalTaker) || !d.hasMutedLocked(d.device, "bbbbbb", localTaker) || !d.hasMutedLocked(there, "rrrrrr", localTaker) {
 		t.Error("local handoff: mute of dusty-crane did not hold against local taker")
+	}
+}
+
+// PeerHolders only stores transfers (not steady-state Used matches), prunes entries past
+// sessionNameKeep, and stays capped at maxPeerHolders (#875).
+func TestPeerHoldersPruningAndCap(t *testing.T) {
+	t.Parallel()
+	const there = "there-0002"
+	d := &Daemon{device: "here-0001", st: state{Used: map[string]string{"steady-name": bus.Addr(there, "aaaaaa")}}}
+	if d.notePeerHolderLocked(there, "steady-name", "aaaaaa") || len(d.st.PeerHolders) != 0 {
+		t.Fatalf("steady-state holder stored in PeerHolders: %v", d.st.PeerHolders)
+	}
+	old := time.Now().UTC().Truncate(time.Hour).Add(-sessionNameKeep - 2*time.Hour)
+	d.st.PeerHolders = map[string]peerHolder{
+		peerHolderKey(there, "stale-name"): {ID: "oldold", At: old},
+	}
+	if !d.pruneSessionNamesLocked(time.Now()) || len(d.st.PeerHolders) != 0 {
+		t.Fatalf("pruneSessionNamesLocked did not drop stale PeerHolders entry: %v", d.st.PeerHolders)
+	}
+	for i := 0; i < maxPeerHolders+10; i++ {
+		name := fmt.Sprintf("moved-%04d", i)
+		d.st.Used[name] = bus.Addr(there, "orig00")
+		d.notePeerHolderLocked(there, name, "taker0")
+	}
+	if len(d.st.PeerHolders) != maxPeerHolders {
+		t.Errorf("PeerHolders grew to %d, want cap %d", len(d.st.PeerHolders), maxPeerHolders)
 	}
 }

@@ -1309,11 +1309,10 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 				liveOnDev = map[string]bool{}
 			}
 			liveOnDev[s.Name] = true
-			if d.peerHolders == nil {
-				d.peerHolders = map[peerNameKey]string{}
-			}
-			d.peerHolders[peerNameKey{dev, s.Name}] = s.ID
 			if d.notePresenceNameLocked(s.Name, bus.Addr(dev, s.ID)) {
+				seen = true
+			}
+			if d.notePeerHolderLocked(dev, s.Name, s.ID) {
 				seen = true
 			}
 		}
@@ -1323,10 +1322,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	}
 	for _, s := range pres.Sessions {
 		if s.ID != bus.PersonSession && s.Name == "" && s.Was != "" && !liveOnDev[s.Was] {
-			if d.peerHolders == nil {
-				d.peerHolders = map[peerNameKey]string{}
+			if d.notePeerHolderLocked(dev, s.Was, s.ID) {
+				seen = true
 			}
-			d.peerHolders[peerNameKey{dev, s.Was}] = s.ID
 		}
 	}
 	for name, id := range pres.Names { // the same, from a presence this device can't open
@@ -1912,18 +1910,21 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.noWake = "" // as noWakeLocked says of it
 			continue      // offline: listed in Offline instead
 		}
-		name := s.name
+		name, was := s.name, ""
 		if !s.dropped.IsZero() && live[name] {
-			name = ""
+			// A dropped predecessor in its grace still belongs to this conversation: clear Name so
+			// peers route to the live replacement, but keep Was so peers still label its messages
+			// and hold mutes under that name (#875).
+			name, was = "", s.name
 		}
-		info := bus.SessionInfo{ID: s.id, Name: name, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
+		info := bus.SessionInfo{ID: s.id, Name: name, Was: was, Agent: s.agent, Branch: s.branch, Doing: s.shownDoing(),
 			Started: s.started.UTC(), Committed: d.committedLocked(s.id), Tags: d.tagsOfLocked(s), HookOff: d.hookOffLocked(s),
 			Muted: d.mutesOfLocked(s.id), Dropped: d.mutedropsLocked(s.id), NoWake: d.noWakeLocked(s.id, wake)}
 		// The name it is shown by here (lastNameLocked), unless another session on this device
 		// took it, as after a resume or a handoff (#875): peers would show this session by a name
 		// that reaches the other.
-		if was := d.st.SessionNames[s.id]; s.name == "" && !live[was] && !d.nameGivenUpLocked(bus.Addr(d.device, s.id), was) {
-			info.Was = was
+		if prev := d.st.SessionNames[s.id]; s.name == "" && !live[prev] && !d.nameGivenUpLocked(bus.Addr(d.device, s.id), prev) {
+			info.Was = prev
 		}
 		s.noWake = info.NoWake
 		if !s.lastActive.IsZero() {

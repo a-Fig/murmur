@@ -417,6 +417,12 @@ func (d *Daemon) pruneSessionNamesLocked(now time.Time) bool {
 		}
 		changed = true
 	}
+	for k, ph := range d.st.PeerHolders {
+		if now.Sub(ph.At) > sessionNameKeep {
+			delete(d.st.PeerHolders, k)
+			changed = true
+		}
+	}
 	return changed
 }
 
