@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -135,6 +136,84 @@ func TestASenderIsToldOfAGivenUpSend(t *testing.T) {
 	if e := inbox[1].Event; !strings.Contains(e.Body, "given up: the push kept failing.") {
 		t.Errorf("the notice of a send whose pushes failed: %+v", e)
 	}
+}
+
+// A pending send given up because git couldn't log in to the remote or access the repository tells
+// the sender so, and asks the user to check their login and access rather than retrying (#858).
+// Auth phrases that appear only in git's command arguments with empty stderr don't trigger it.
+func TestAGivenUpSendSaysWhenTheRemoteRefusedCredentials(t *testing.T) {
+	t.Parallel()
+	gitErr := func(stderr string) error {
+		return &gitx.Error{
+			Args:   []string{"push", "origin", "sha:refs/murmur/mesh/dev"},
+			Stderr: stderr,
+			Err:    errors.New("exit status 128"),
+		}
+	}
+	wantAuth := "Your message to quiet-otter couldn't be pushed, and was given up: git couldn't log in to the remote or access the repository. Ask your user to check their git login and access before sending again."
+	wantPlain := "Your message to quiet-otter couldn't be pushed, and was given up: the push kept failing. Send it again if it still matters."
+	for _, c := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"https auth failed", gitErr("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/a/b.git/'\n"), wantAuth},
+		{"ssh permission denied", gitErr("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n"), wantAuth},
+		{"terminal prompts disabled", gitErr("fatal: could not read Username for 'https://github.com': terminal prompts disabled\n"), wantAuth},
+		{"wrapped git error", fmt.Errorf("push failed: %w", gitErr("remote: Permission to a/b.git denied to alice.\nfatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403\n")), wantAuth},
+		{"repository not found", gitErr("remote: Repository not found.\nfatal: repository 'https://github.com/a/b.git/' not found\n"), wantAuth},
+		{"host key verification failed", gitErr("Host key verification failed.\nfatal: Could not read from remote repository.\n"), wantAuth},
+		{"auth words only in args with empty stderr", &gitx.Error{
+			Args:   []string{"push", "origin", "sha:refs/murmur/Authentication failed"},
+			Stderr: "  \n",
+			Err:    errors.New("exit status 128"),
+		}, wantPlain},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			d, _, _ := rateRig(t, Options{}, false)
+			from := bus.Addr(d.device, "bbbbbb")
+			d.mu.Lock()
+			d.givenUpLocked(from, "auth check", "quiet-otter", c.err)
+			inbox := d.st.Inbox["bbbbbb"]
+			d.mu.Unlock()
+			if len(inbox) != 1 {
+				t.Fatalf("the sender's inbox: %+v", inbox)
+			}
+			if e := inbox[0].Event; e.Subject != `Not sent: "auth check"` || !d.isTellNotice(e) || e.Body != c.want {
+				t.Errorf("the give-up notice: %+v, want body %q", e, c.want)
+			}
+		})
+	}
+
+	t.Run("pending send given up after auth failure", func(t *testing.T) {
+		t.Parallel()
+		d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+		ctx := context.Background()
+		d.sendFirst(t)
+		authErr := gitErr("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/a/b.git/'\n")
+		d.writeMu.Lock()
+		d.testPush = func(func() error) error { return authErr }
+		d.writeMu.Unlock()
+		from := bus.Addr(d.device, "bbbbbb")
+		if r := d.sendWith(ctx, from, proto.Request{To: "*", Subject: "after expiry"}, nil); r.Error != "" {
+			t.Fatalf("the send: %s", r.Error)
+		}
+		d.writeMu.Lock()
+		d.pendFrom = time.Now().Add(-time.Hour)
+		d.retryPending()
+		d.writeMu.Unlock()
+		d.mu.Lock()
+		inbox := d.st.Inbox["bbbbbb"]
+		d.mu.Unlock()
+		wantAll := "Your message to * couldn't be pushed, and was given up: git couldn't log in to the remote or access the repository. Ask your user to check their git login and access before sending again."
+		if len(inbox) != 1 {
+			t.Fatalf("the sender's inbox has %d messages, want 1", len(inbox))
+		}
+		if got := inbox[0].Event.Body; got != wantAll {
+			t.Errorf("the give-up notice body:\n got: %q\nwant: %q", got, wantAll)
+		}
+	})
 }
 
 // sendFirst writes a message to d's log and returns the tip of the remote's after it.
