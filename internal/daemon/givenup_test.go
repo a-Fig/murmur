@@ -89,10 +89,15 @@ func muteStaysWithTheNameAfterHandoff(t *testing.T,
 	if r := b.mute("bbbbbb", name, false); r.Error != "" {
 		t.Fatalf("bob mutes %s: %s", name, r.Error)
 	}
-	// Wait until b has read alice's mute from presence.
-	eventually(t, "giver's send to alice to be refused", func() bool {
-		return b.do(proto.Request{Op: proto.OpSend, Session: "xxxxxx", To: aliceName, Subject: "before handoff"}).Error != ""
+	// Wait until b has read alice's mute from presence (via lookup, so no probe message is sent
+	// to the bus before the mute is known) and confirm giver is refused before the handoff.
+	eventually(t, "b to see alice's mute of "+name, func() bool {
+		l := b.do(proto.Request{Op: proto.OpLookup, Session: "xxxxxx", Name: aliceName})
+		return l.Lookup != nil && slices.Contains(l.Lookup.Muted, name)
 	})
+	if r := b.do(proto.Request{Op: proto.OpSend, Session: "xxxxxx", To: aliceName, Subject: "before handoff"}); r.Error == "" {
+		t.Fatalf("giver %s (%s) wasn't refused sending to %s before handoff", giver, name, aliceName)
+	}
 
 	// Handoff while no pool name is available: giver gives name up and waits for a new one.
 	taker := handoff(b, g)
