@@ -235,7 +235,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	}
 	h.ID = d.threadIDLocked(h)
 	s := d.sessions[h.ID]
-	if s != nil && s.dropped.IsZero() && (s.hold == nil || h.T3Thread != "" && s.route.T3Thread != h.T3Thread) {
+	// A held session is taken over by its thread's server, or, with no thread named yet, only if it
+	// is still a server's (a command in that server's grace): a command's own session would be a
+	// conversation outside the thread taking it.
+	if s != nil && s.dropped.IsZero() && (s.hold == nil || (h.T3Thread != "" || s.byCommand) && s.route.T3Thread != h.T3Thread) {
 		d.mu.Unlock()
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
