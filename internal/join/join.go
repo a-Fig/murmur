@@ -231,8 +231,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				codexFresh = true
 			case j == 0 && a.driver == "pi" && e.looksLikePi():
 				// The advice for the Pi running join covers it.
-			case a.driver == "antigravity" && e.looksLikeAntigravity():
-				antigravityFresh = antigravityFresh || sameEntry(h.Dir, e.GeminiHome)
+			// The advice for the Antigravity running join covers its own home. Its other homes
+			// (~/.gemini, another instance) fall through, so their open sessions hear to restart.
+			case a.driver == "antigravity" && e.looksLikeAntigravity() && sameEntry(h.Dir, e.GeminiHome):
+				antigravityFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}

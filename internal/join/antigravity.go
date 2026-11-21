@@ -53,13 +53,12 @@ func antigravityHomeOf(t3Settings, id string) string {
 	return filepath.Join(filepath.Dir(t3Settings), "providers", "antigravity", hex.EncodeToString(sum[:]))
 }
 
-// isT3AntigravityHome recognizes a managed GEMINI_HOME without T3's settings.
+// isT3AntigravityHome recognizes a managed GEMINI_HOME without T3's settings, by its path:
+// userdata/providers/antigravity/<64 hex>, as written or through a link. Its contents say nothing:
+// a plain ~/.gemini holds antigravity-acp/ too when Antigravity runs over ACP outside T3.
 func isT3AntigravityHome(dir string) bool {
 	if dir == "" {
 		return false
-	}
-	if isDir(filepath.Join(dir, antigravityACP)) && !isDir(filepath.Join(dir, antigravityCLI)) && !isDir(filepath.Join(dir, "antigravity")) {
-		return true
 	}
 	if hasAntigravityInstanceLayout(dir) {
 		return true

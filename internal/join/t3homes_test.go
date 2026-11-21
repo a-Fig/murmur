@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -274,6 +275,11 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 			if err != nil || !strings.Contains(r.Tell[0], "To load its tools, open a new thread") {
 				t.Fatalf("join: %v\n%s", err, r)
 			}
+			// Join just added Murmur to the standalone home too, whose open sessions need restarting.
+			const othersRestart = "Antigravity loads MCP servers only when a session starts"
+			if tell := strings.Join(r.Tell, "\n"); strings.Contains(tell, othersRestart) != (c.cliHome || c.onPath) {
+				t.Errorf("advice about the standalone home:\n%s", tell)
+			}
 			if !strings.Contains(r.String(), "Not done:\n") || !strings.Contains(r.String(), "  - Antigravity (later in T3 Code): open a thread") || exists(later) {
 				t.Errorf("join with an unused T3 instance:\n%s", r)
 			}
@@ -315,7 +321,10 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 			}
 
 			mustMakeDir(t, later)
-			if r, err := Join(t.Context(), sb.Env, p.Top); err != nil || !strings.Contains(r.Tell[0], "within a few seconds") || strings.Contains(strings.Join(r.Tell, "\n"), "was just added") {
+			// This session's home was registered already; the instance just opened is fresh, and its
+			// sessions are told to restart.
+			if r, err := Join(t.Context(), sb.Env, p.Top); err != nil || !strings.Contains(r.Tell[0], "within a few seconds") ||
+				!strings.Contains(strings.Join(r.Tell, "\n"), "was just added to Antigravity. "+othersRestart) {
 				t.Fatalf("join after opening a different instance: %v\n%s", err, r)
 			}
 			write(t, sb.T3Settings, fmt.Sprintf(settings, false, bin, bin))
@@ -357,9 +366,8 @@ func TestJoinAndUninstallRecognizeManagedGeminiHome(t *testing.T) {
 			case "junction":
 				write(t, sb.T3Settings, `{"providerInstances":{"active":{"driver":"antigravity","enabled":true}}}`)
 			case "missing settings":
+				// T3's settings aren't found, so only the home's path says it is T3's.
 				sb.T3Settings = ""
-				inst = filepath.Join(sb.root, "unlisted")
-				mustMakeDir(t, filepath.Join(inst, "antigravity-acp"))
 			case "junction with invalid settings":
 				write(t, sb.T3Settings, `{`)
 			}
@@ -395,6 +403,80 @@ func TestJoinAndUninstallRecognizeManagedGeminiHome(t *testing.T) {
 				t.Error("uninstall missed the managed home or followed its skills link")
 			}
 		})
+	}
+}
+
+// A plain ~/.gemini is the user's own even when it holds only antigravity-acp/, as it does for
+// anyone running Antigravity over ACP outside T3: its skills go there, and uninstall takes them out.
+func TestPlainGeminiHomeWithACPIsNotT3s(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	sb.Home = filepath.Join(sb.root, "home")
+	sb.GeminiHome = filepath.Join(sb.Home, ".gemini")
+	sb.LookPath = func(name string) (string, error) {
+		if name == "agy" {
+			return filepath.Join(sb.root, exeName("agy")), nil
+		}
+		return "", exec.ErrNotFound
+	}
+	mustMakeDir(t, filepath.Join(sb.GeminiHome, "antigravity-acp"))
+	if isT3AntigravityHome(sb.GeminiHome) {
+		t.Fatal("a plain ~/.gemini with antigravity-acp/ was taken for T3's")
+	}
+	homes, _ := sb.homes()
+	if got := homes[agentIndex("antigravity")]; len(got) != 1 || got[0].T3Own || got[0].Label != "Antigravity" || !samePath(got[0].Dir, sb.GeminiHome) {
+		t.Fatalf("Antigravity homes: %+v", got)
+	}
+	p := startJoinTestDaemon(t)
+	if r, err := Join(t.Context(), sb.Env, p.Top); err != nil {
+		t.Fatalf("join: %v\n%s", err, r)
+	}
+	skill := filepath.Join(sb.GeminiHome, "config", "skills", "murmur", "SKILL.md")
+	if !exists(skill) {
+		t.Error("join installed no skills in ~/.gemini")
+	}
+	if r, err := Uninstall(t.Context(), sb.Env, true); err != nil {
+		t.Fatalf("uninstall: %v\n%s", err, r)
+	}
+	if exists(skill) {
+		t.Error("uninstall left the skills in ~/.gemini")
+	}
+}
+
+// An instance turned off in T3's global settings but on for this project (87fb8153) is the home
+// the session runs in: it keeps T3Own, gets the server, hook and rule, no skills folder of its own,
+// and no note that it was turned off.
+func TestJoinRegistersPerProjectT3AntigravityHome(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	sb.Home = filepath.Join(sb.root, "home")
+	sb.T3Settings = filepath.Join(sb.root, ".t3", "userdata", "settings.json")
+	sb.GeminiHome = antigravityHomeOf(sb.T3Settings, "active")
+	sb.Getenv = envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_THREAD_ID": "thread-1"}).Getenv
+	write(t, sb.T3Settings, `{"providerInstances":{"active":{"driver":"antigravity","enabled":false}}}`)
+	inst := sb.GeminiHome
+	mustMakeDir(t, inst)
+
+	homes, _ := sb.homes()
+	if !slices.ContainsFunc(homes[agentIndex("antigravity")], func(h agentHome) bool { return h.T3Own && samePath(h.Dir, inst) }) {
+		t.Fatalf("Antigravity homes: %+v", homes[agentIndex("antigravity")])
+	}
+	p := startJoinTestDaemon(t)
+	r, err := Join(t.Context(), sb.Env, p.Top)
+	if err != nil {
+		t.Fatalf("join: %v\n%s", err, r)
+	}
+	for _, name := range []string{"mcp_config.json", "hooks.json"} {
+		if !strings.Contains(read(t, filepath.Join(inst, "config", name)), `"murmur"`) {
+			t.Errorf("missing T3 registration in %s", name)
+		}
+	}
+	if !strings.Contains(read(t, filepath.Join(inst, "antigravity-acp", "settings.json")), `"mcp(murmur/*)"`) {
+		t.Error("missing T3 tool approval")
+	}
+	if exists(filepath.Join(inst, "config", "skills")) {
+		t.Error("created a skills folder in T3's instance home")
+	}
+	if strings.Contains(r.String(), "turned off") {
+		t.Errorf("said the instance this session runs in is turned off:\n%s", r)
 	}
 }
 
