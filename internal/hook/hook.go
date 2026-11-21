@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -41,6 +42,7 @@ import (
 	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -86,14 +88,20 @@ type input struct {
 	// Prompt is, on UserPromptSubmit, what the turn begins with (Claude Code, and Codex, whose
 	// payload takes Claude Code's shape). Pi's and OpenCode's extensions send none.
 	Prompt string `json:"prompt"`
-	// Antigravity's own payload (#650), in camelCase: the conversation's ID, the workspace it runs
-	// in (the hook runs in the folder of hooks.json), the turn's prompt, and, on Stop, why the turn
-	// ended, NO_TOOL_CALL at a turn's ordinary end (its harness's documentation, 1.4.5).
-	ConversationID    string   `json:"conversationId"`
-	WorkspacePaths    []string `json:"workspacePaths"`
-	LastUserInput     string   `json:"lastUserInput"`
-	TerminationReason string   `json:"terminationReason"`
-	InvocationNum     int      `json:"invocationNum"`
+	// Antigravity's own payload (#650, #892, #894), in camelCase: the conversation's ID, the
+	// workspace it runs in (the hook runs in the folder of hooks.json), the turn's prompt, on Stop
+	// why the turn ended (NO_TOOL_CALL at a turn's ordinary end) and whether background tasks are
+	// idle (fullyIdle), and on PreToolUse/PostToolUse the tool call, step index and any error
+	// (Antigravity 1.5.13, 2026-11-20).
+	ConversationID    string               `json:"conversationId"`
+	WorkspacePaths    []string             `json:"workspacePaths"`
+	LastUserInput     string               `json:"lastUserInput"`
+	TerminationReason string               `json:"terminationReason"`
+	InvocationNum     int                  `json:"invocationNum"`
+	FullyIdle         *bool                `json:"fullyIdle"`
+	ToolCall          *antigravityToolCall `json:"toolCall"`
+	StepIdx           *int                 `json:"stepIdx"`
+	Error             string               `json:"error"`
 }
 
 type output struct {
@@ -143,6 +151,14 @@ var cannotRun = map[string]bool{
 	"WebFetch": true, "WebSearch": true,
 	"TodoWrite": true, "ToolSearch": true, "AskUserQuestion": true,
 	"EnterPlanMode": true, "ExitPlanMode": true,
+	// Antigravity's non-shell tools (defense in depth alongside join's run_command matcher, #894).
+	"read_file": true, "write_file": true, "edit_file": true,
+	"search_web": true, "ask_question": true,
+	"list_resources": true, "read_resource": true,
+	"view_file": true, "view_file_outline": true, "view_code_item": true,
+	"list_dir": true, "find_by_name": true, "grep_search": true,
+	"write_to_file": true, "replace_file_content": true, "multi_replace_file_content": true,
+	"read_url_content": true,
 }
 
 // claudePID is the Claude Code process this hook runs under, which Claude Code gives hooks as
@@ -207,7 +223,7 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 					pids = []int{who.ClientPID}
 				}
 			}
-			if rec, ok := ownRecord(agent, in.SessionID, here.Of(dir, pids)); ok {
+			if rec, ok := ownRecord(agent, in.SessionID, os.Getenv(t3.ThreadEnv), here.Of(dir, pids)); ok {
 				return rec.GitDir, true
 			}
 		}
@@ -220,7 +236,7 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 }
 
 // ownRecord picks, from the records of the servers the agent's process started, the one of the
-// hook's session, whose ID is native.
+// hook's session, whose ID is native and whose T3 thread (if any) is t3Thread.
 //
 // Claude Code names its own process (CLAUDE_PID), which runs one session, so its one record is the
 // session's. Another agent's hook has only its ancestors to go by, and a record found among them
@@ -230,9 +246,23 @@ func sessionClone(ctx context.Context, agent string, in input, who proto.Request
 // which this session's hasn't published. Taking such a record would send the hook to the wrong
 // clone's daemon, where it could be taken for the record's session and given its messages
 // (internal/daemon, agentHookSessionsLocked), or stop it where that session is in no repository.
-// So for another agent the record has to carry the hook's own session ID: Grok's server has it
-// from the start, and Codex's learns it from the first call to one of Murmur's tools.
-func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
+//
+// Matching proceeds in three narrow steps:
+//  1. Exact native session ID match (r.Native == native): Grok's and Muse's servers have it from
+//     the start, and Codex's learns it from its first call to one of Murmur's tools.
+//  2. Inside T3 (t3Thread != ""): a unique record for the same T3 thread and matching agent whose
+//     Native is absent or matches. Antigravity doesn't pass ANTIGRAVITY_CONVERSATION_ID to its MCP
+//     server, so Native is empty, while both server and hook see T3CODE_THREAD_ID (#888). Checking
+//     isAgent keeps another agent run inside a T3 thread's shell from taking the outer thread's
+//     record; checking r.Native == "" || r.Native == native keeps a different conversation's record
+//     out.
+//  3. Standalone Antigravity (outside T3, t3Thread == ""): each agy conversation runs its own
+//     process with a single mur mcp --agent antigravity child. Requiring len(recs) == 1,
+//     isAgent(r.Agent, Antigravity), r.Native == "" and r.T3Thread == "" rules out cross-agent
+//     nesting (another agent's record has another Agent), multi-session processes (len(recs) != 1),
+//     records already bound to another conversation (r.Native != ""), and T3 thread records when
+//     a standalone hook runs with no T3CODE_THREAD_ID (r.T3Thread != "").
+func ownRecord(agent, native, t3Thread string, recs []here.Session) (here.Session, bool) {
 	if agent == "" {
 		if len(recs) == 1 {
 			return recs[0], true
@@ -245,10 +275,34 @@ func ownRecord(agent, native string, recs []here.Session) (here.Session, bool) {
 			mine = append(mine, r)
 		}
 	}
-	if len(mine) == 1 {
-		return mine[0], true
+	if len(mine) > 0 {
+		if len(mine) == 1 {
+			return mine[0], true
+		}
+		return here.Session{}, false
+	}
+	if t3Thread != "" {
+		var byThread []here.Session
+		for _, r := range recs {
+			if r.T3Thread == t3Thread && isAgent(r.Agent, agent) && (r.Native == "" || r.Native == native) {
+				byThread = append(byThread, r)
+			}
+		}
+		if len(byThread) == 1 {
+			return byThread[0], true
+		}
+	}
+	if agent == Antigravity && t3Thread == "" && len(recs) == 1 {
+		if r := recs[0]; r.Native == "" && r.T3Thread == "" && isAgent(r.Agent, Antigravity) {
+			return r, true
+		}
 	}
 	return here.Session{}, false
+}
+
+// isAgent says a server record's Agent ("antigravity", or "antigravity in T3") is agent.
+func isAgent(sessionAgent, agent string) bool {
+	return sessionAgent == agent || strings.HasPrefix(sessionAgent, agent+" ")
 }
 
 // Run reads a hook payload from stdin and writes the hook's answer, if any, to stdout. It is
@@ -282,19 +336,26 @@ func KnownAgent(agent string) bool {
 func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 
 // RunFor is Run for agent, "" for Claude Code. It does nothing for an agent it doesn't know, rather
-// than take another agent's hook for Claude Code's. Another agent's hook brackets no tool call, as
-// join installs it on no PreToolUse (#225), and sends no transcript, which is Claude Code's format.
+// than take another agent's hook for Claude Code's. Non-Claude hooks other than Antigravity (#894)
+// bracket no tool call, as join installs them on no PreToolUse (#225), and none sends a transcript,
+// which is Claude Code's format.
 func RunFor(agent string, stdin io.Reader, stdout io.Writer) { RunForEvent(agent, "", stdin, stdout) }
 
 // RunForEvent is RunFor with the event its command line names, for an agent whose payload doesn't:
-// Antigravity, whose hook answers every event with a JSON object, {} where it has nothing to say.
+// Antigravity, whose hook answers every event with a JSON object: {"decision":"allow"} on
+// PreToolUse (delegating to the next hook / default policy, #894) and {} elsewhere when it has
+// nothing to say.
 func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if agent == Antigravity {
 		w := &written{w: stdout}
 		stdout = w
 		defer func() {
 			if !w.any {
-				io.WriteString(w.w, "{}\n")
+				if event == preTool {
+					io.WriteString(w.w, "{\"decision\":\"allow\"}\n")
+				} else {
+					io.WriteString(w.w, "{}\n")
+				}
 			}
 		}()
 	}
@@ -338,12 +399,14 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	op := bracketOp(in)
-	if agent != "" {
+	if agent != "" && agent != Antigravity {
 		op = ""
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
-	// does, and a PreToolUse prints nothing at all.
-	wantNotices := in.Event != preTool && in.Event != postFailure
+	// does, and a PreToolUse prints nothing at all (for Antigravity, its defer writes
+	// {"decision":"allow"}). Antigravity ignores PostToolUse stdout and runs PreInvocation right
+	// after, so notices wait for PreInvocation there (#894).
+	wantNotices := in.Event != preTool && in.Event != postFailure && !(agent == Antigravity && in.Event == postTool)
 	if !wantNotices && op == "" {
 		return
 	}
@@ -403,7 +466,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if !wantNotices || err != nil {
 		return
 	}
-	text := view.Hook(resp.Read, resp.Messages, resp.Unread)
+	text := view.HookFor(agent, resp.Read, resp.Messages, resp.Unread)
 	if text == "" {
 		return
 	}

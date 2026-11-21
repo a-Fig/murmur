@@ -14,9 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/view"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -777,5 +780,155 @@ func TestCreditedCommitsSurviveAStopAndARestart(t *testing.T) {
 	a.helloAgain("aaaaaa", false)
 	if det := a.look("aaaaaa", name); !det.Running || !slices.Equal(commitSHAs(det), []string{sha}) {
 		t.Fatalf("after the session returned: %+v", det)
+	}
+}
+
+// Antigravity's PreToolUse and PostToolUse hooks credit commits to the session end to end (#894),
+// including after `mur join -C` moves a scratch T3 session whose here.Session has Native == ""
+// (#888): PreToolUse prints {"decision":"allow"}, PostToolUse prints {} without consuming notices
+// (leaving them for the next PreInvocation), failing calls and stepIdx fallbacks still close the
+// bracket, and non-shell tools in cannotRun are skipped.
+func TestAntigravityHookBracketsCommits(t *testing.T) {
+	slowHook(t)
+	sessDir := t.TempDir()
+	t.Setenv(brand.SessionsDirEnv, sessDir)
+	t.Setenv(t3.ThreadEnv, "thread-agy-commit")
+
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	wt := a.linkedTree("wt-agy", "feat-agy")
+	conn, resp, err := a.c.Hello(context.Background(), proto.Hello{
+		ID: "aaaaaa", Agent: "antigravity in T3", Cwd: wt, ClientPID: os.Getppid(),
+	})
+	if err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	alice := resp.Self
+	bob, _ := b.session("bbbbbb", "")
+	name := a.named(alice)
+	eventually(t, "presence", func() bool { return b.seesSession(alice) && a.seesSession(bob) })
+
+	// Publish a moved-session here.Session with Native == "" and T3Thread set, while the hook's
+	// top-level cwd is a scratch folder outside any repo (#888).
+	scratch := t.TempDir()
+	if err := here.Publish(sessDir, here.Session{
+		ServerPID: os.Getpid(),
+		ClientPID: os.Getppid(),
+		T3Thread:  "thread-agy-commit",
+		Agent:     "antigravity in T3",
+		GitDir:    a.gitDir,
+		On:        true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { here.Withdraw(sessDir, os.Getpid()) })
+
+	runAgy := func(event string, payload map[string]any) string {
+		t.Helper()
+		b, _ := json.Marshal(payload)
+		var out bytes.Buffer
+		hook.RunForEvent(hook.Antigravity, event, bytes.NewReader(b), &out)
+		return out.String()
+	}
+
+	// Queue a message for alice: PostToolUse must not consume it; PreInvocation must deliver it.
+	b.nameIs(alice, name)
+	if r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: name, Subject: "agy check"}); !r.OK {
+		t.Fatalf("send: %s", r.Error)
+	}
+	eventually(t, "the message to reach a", func() bool { return logHas(a, "agy check") })
+
+	// 1. Normal run_command commit with args.Cwd pointing to wt while top-level cwd is scratch.
+	call1 := map[string]any{
+		"conversationId": "conv-agy-1",
+		"cwd":            scratch,
+		"workspacePaths": []string{scratch},
+		"toolCall": map[string]any{
+			"id":   "toolu_a1",
+			"name": "run_command",
+			"args": map[string]any{"CommandLine": "git commit -m one", "Cwd": wt},
+		},
+	}
+	if out := runAgy("PreToolUse", call1); out != "{\"decision\":\"allow\"}\n" {
+		t.Fatalf("PreToolUse printed %q, want allow", out)
+	}
+	sha1 := commitFile(t, wt, "agy1.txt")
+	if out := runAgy("PostToolUse", call1); out != "{}\n" {
+		t.Fatalf("PostToolUse printed %q, want {}", out)
+	}
+	if got := commitSHAs(a.look("aaaaaa", name)); !slices.Equal(got, []string{sha1}) {
+		t.Fatalf("after call1 credited %v, want %s", got, sha1)
+	}
+
+	// PreInvocation right after PostToolUse receives the unread notice without mcp__murmur__inbox.
+	preOut := runAgy("PreInvocation", map[string]any{
+		"conversationId": "conv-agy-1",
+		"cwd":            scratch,
+		"workspacePaths": []string{scratch},
+		"invocationNum":  1,
+	})
+	if !strings.Contains(preOut, "agy check") || strings.Contains(preOut, "mcp__murmur__inbox") {
+		t.Errorf("PreInvocation printed %q, want notice for 'agy check' without mcp__murmur__inbox", preOut)
+	}
+
+	// 2. Failing command (error != "") still closes the bracket and credits commits made before failure.
+	call2 := map[string]any{
+		"conversationId": "conv-agy-1",
+		"cwd":            scratch,
+		"toolCall": map[string]any{
+			"id":   "toolu_a2",
+			"name": "run_command",
+			"args": map[string]any{"CommandLine": "git commit && exit 1", "Cwd": wt},
+		},
+	}
+	if out := runAgy("PreToolUse", call2); out != "{\"decision\":\"allow\"}\n" {
+		t.Fatalf("PreToolUse (call2) printed %q", out)
+	}
+	sha2 := commitFile(t, wt, "agy2.txt")
+	call2End := map[string]any{
+		"conversationId": "conv-agy-1",
+		"cwd":            scratch,
+		"error":          "exit status 1",
+		"toolCall":       call2["toolCall"],
+	}
+	if out := runAgy("PostToolUse", call2End); out != "{}\n" {
+		t.Fatalf("PostToolUse (error) printed %q", out)
+	}
+
+	// 3. stepIdx fallback when toolCall.id is absent.
+	call3 := map[string]any{
+		"conversationId": "conv-agy-1",
+		"cwd":            scratch,
+		"stepIdx":        4,
+		"toolCall": map[string]any{
+			"name": "run_command",
+			"args": map[string]any{"CommandLine": "git commit -m step", "Cwd": wt},
+		},
+	}
+	runAgy("PreToolUse", call3)
+	sha3 := commitFile(t, wt, "agy3.txt")
+	runAgy("PostToolUse", call3)
+
+	// 4. Non-shell tool (read_file) in cannotRun is not bracketed.
+	readCall := map[string]any{
+		"conversationId": "conv-agy-1",
+		"cwd":            scratch,
+		"toolCall": map[string]any{
+			"id":   "toolu_read",
+			"name": "read_file",
+			"args": map[string]any{"Path": filepath.Join(wt, "agy1.txt")},
+		},
+	}
+	runAgy("PreToolUse", readCall)
+	commitFile(t, wt, "during-read.txt")
+	runAgy("PostToolUse", readCall)
+
+	det := a.look("aaaaaa", name)
+	if got := commitSHAs(det); !slices.Equal(got, []string{sha1, sha2, sha3}) {
+		t.Fatalf("credited %v, want [%s %s %s]", got, sha1, sha2, sha3)
+	}
+	if !slices.Equal(det.Committed, []string{"feat-agy"}) {
+		t.Errorf("committed to %v, want [feat-agy]", det.Committed)
 	}
 }

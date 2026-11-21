@@ -158,3 +158,75 @@ func TestARemovedRecordIsWrittenAgain(t *testing.T) {
 	here.Withdraw(hdir, os.Getpid())
 	waitFor(t, "the record to be written again", func() bool { _, ok := mine(t, hdir); return ok })
 }
+
+// Inside T3, an MCP server publishes T3CODE_THREAD_ID on its here.Session record so hooks of
+// agents that don't pass a conversation ID to MCP servers (Antigravity) still find the session
+// after `mur join -C` moves it (#888). Servers nested under another agent or shared across
+// sessions (OpenCode) leave T3Thread empty; a server that learns its thread from T3's database
+// publishes it once found.
+func TestHereRecordCarriesT3Thread(t *testing.T) {
+	t.Run("antigravity in T3 keeps T3Thread across a move", func(t *testing.T) {
+		t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+		t.Setenv(threadEnv, "thread-agy-1")
+		hdir := t.TempDir()
+		f := &fakeDaemon{}
+		top, gitDir := joinedRepo(t, f)
+		openWith(t, Options{Agent: "antigravity", Version: "test", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+
+		var rec here.Session
+		waitFor(t, "the server's record", func() (ok bool) { rec, ok = mine(t, hdir); return })
+		if rec.T3Thread != "thread-agy-1" || rec.Agent != "antigravity in T3" || rec.GitDir != "" {
+			t.Fatalf("passive record: %+v", rec)
+		}
+		if err := here.Ask(hdir, rec, top, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "moved record", func() bool {
+			r, _ := mine(t, hdir)
+			return r.On && r.GitDir == gitDir && r.T3Thread == "thread-agy-1"
+		})
+	})
+
+	t.Run("nested agent does not claim parent T3Thread", func(t *testing.T) {
+		t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+		t.Setenv(threadEnv, "thread-parent")
+		prev := agentAbove
+		agentAbove = func() bool { return true }
+		t.Cleanup(func() { agentAbove = prev })
+		hdir := t.TempDir()
+		openWith(t, Options{Agent: "antigravity", Version: "test", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+		var rec here.Session
+		waitFor(t, "the server's record", func() (ok bool) { rec, ok = mine(t, hdir); return })
+		if rec.T3Thread != "" {
+			t.Errorf("nested server claimed T3Thread %q", rec.T3Thread)
+		}
+	})
+
+	t.Run("shared server omits T3Thread", func(t *testing.T) {
+		t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+		t.Setenv(threadEnv, "thread-shared")
+		hdir := t.TempDir()
+		openWith(t, Options{Agent: "opencode", Version: "test", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+		var rec here.Session
+		waitFor(t, "the server's record", func() (ok bool) { rec, ok = mine(t, hdir); return })
+		if rec.T3Thread != "" {
+			t.Errorf("shared server published T3Thread %q", rec.T3Thread)
+		}
+	})
+
+	t.Run("thread learned from T3 database is published", func(t *testing.T) {
+		t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+		t.Setenv("MUSE_SESSION_ID", "muse-sess-1")
+		prev := threadOf
+		threadOf = func(context.Context, string, string, string) (string, error) { return "thread-from-db", nil }
+		t.Cleanup(func() { threadOf = prev })
+		hdir := t.TempDir()
+		f := &fakeDaemon{}
+		top, _ := joinedRepo(t, f)
+		openWith(t, Options{Agent: "muse", Version: "test", Dir: top, Poll: 25 * time.Millisecond, HereDir: hdir})
+		waitFor(t, "record with DB T3Thread", func() bool {
+			r, ok := mine(t, hdir)
+			return ok && r.T3Thread == "thread-from-db" && r.Native == "muse-sess-1"
+		})
+	})
+}

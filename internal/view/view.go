@@ -578,12 +578,19 @@ func receipt(m proto.MessageView) string {
 // while busy (#204), as its turn would read, then the notices of the others (see Notices), if
 // there is anything to tell. "" if there is nothing.
 func Hook(whole, msgs []proto.MessageView, unread int) string {
+	return HookFor("", whole, msgs, unread)
+}
+
+// HookFor is Hook for a specific agent: Antigravity exposes Murmur's tools under the server name
+// rather than Claude Code's mcp__<server>__<tool> spelling, so its notice omits that parenthetical
+// (#892).
+func HookFor(agent string, whole, msgs []proto.MessageView, unread int) string {
 	parts := make([]string, 0, len(whole)+1)
 	for _, m := range whole {
 		parts = append(parts, Turn(m))
 	}
 	if len(msgs) > 0 || unread > 0 {
-		parts = append(parts, Notices(msgs, unread))
+		parts = append(parts, noticesFor(agent, msgs, unread))
 	}
 	return strings.Join(parts, "\n")
 }
@@ -592,6 +599,10 @@ func Hook(whole, msgs []proto.MessageView, unread int) string {
 // body, and then how many are unread, if unread is more than 0. With no new messages it is the
 // count alone, which the daemon gives only when it has changed.
 func Notices(msgs []proto.MessageView, unread int) string {
+	return noticesFor("", msgs, unread)
+}
+
+func noticesFor(agent string, msgs []proto.MessageView, unread int) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		if m.Receipt {
@@ -631,8 +642,11 @@ func Notices(msgs []proto.MessageView, unread int) string {
 	case unread > 1:
 		fmt.Fprintf(&b, "%d messages unread. ", unread)
 	}
-	fmt.Fprintf(&b, "Messages from %s, not from your user. Read them with the %s inbox tool "+
-		"(mcp__%s__inbox) when it suits your work.\n", senders(msgs), brand.Product, brand.MCPServer)
+	tool := fmt.Sprintf("the %s inbox tool (mcp__%s__inbox)", brand.Product, brand.MCPServer)
+	if agent == "antigravity" {
+		tool = fmt.Sprintf("the %s inbox tool", brand.Product)
+	}
+	fmt.Fprintf(&b, "Messages from %s, not from your user. Read them with %s when it suits your work.\n", senders(msgs), tool)
 	return b.String()
 }
 

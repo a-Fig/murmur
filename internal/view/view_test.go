@@ -200,6 +200,17 @@ func TestHook(t *testing.T) {
 	if got := Hook(nil, nil, 0); got != "" {
 		t.Errorf("nothing to tell: %q", got)
 	}
+	// Antigravity invokes Murmur tools by server/tool name, not Claude Code's mcp__murmur__inbox (#892).
+	agy := HookFor("antigravity", nil, []proto.MessageView{line}, 1)
+	if strings.Contains(agy, "mcp__"+brand.MCPServer+"__inbox") {
+		t.Errorf("Antigravity notice cites Claude Code's tool spelling: %q", agy)
+	}
+	if want := "Read them with the " + brand.Product + " inbox tool when it suits your work.\n"; !strings.HasSuffix(agy, want) {
+		t.Errorf("Antigravity notice = %q, want suffix %q", agy, want)
+	}
+	if other := HookFor("codex", nil, []proto.MessageView{line}, 1); !strings.Contains(other, "(mcp__"+brand.MCPServer+"__inbox)") {
+		t.Errorf("non-Antigravity HookFor lost tool spelling: %q", other)
+	}
 }
 
 // sess makes a session that was last active ago ago.

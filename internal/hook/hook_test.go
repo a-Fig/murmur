@@ -20,6 +20,7 @@ import (
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/view"
 )
 
@@ -33,6 +34,7 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv(brand.SessionsDirEnv, dir)
 	os.Unsetenv("CLAUDE_PID")
+	os.Unsetenv(t3.ThreadEnv)
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

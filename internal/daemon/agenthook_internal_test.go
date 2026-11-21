@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"io"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,6 +148,8 @@ func TestHookOff(t *testing.T) {
 		{"pi in T3", long, false, true},
 		{"muse", long, false, true},
 		{"muse in T3", long, false, true},
+		{"antigravity", long, false, true},
+		{"antigravity in T3", long, false, true},
 		{"codex", long, true, false},
 		{"codex", time.Now(), false, false},  // in its grace
 		{"codex", time.Time{}, false, false}, // no tool call: maybe nothing to tell
@@ -176,4 +180,99 @@ func ids(ss []*session) []string {
 		out = append(out, s.id)
 	}
 	return out
+}
+
+// A send to a session whose hook isn't running says "it gets this as its next turn" only when the
+// daemon has a turn-delivery route for it (#888): Antigravity in T3 (whose MCP server has no
+// T3Thread), a T3 session without a thread, or a Claude Code session without a messaging socket
+// gets "it sees this when it next reads its inbox." instead.
+func TestPeerCanTurnAndHookOffSendNote(t *testing.T) {
+	d, _, _ := rateRig(t, rateOptions(), false)
+	long := time.Now().Add(-2 * hookGrace)
+	addLocal := func(id, agent string, route proto.Route, dropped bool) string {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		s := d.newSessionLocked(&proto.Hello{ID: id, Route: route}, agent, "", id)
+		s.route = route
+		s.toolCalled = long
+		if dropped {
+			s.dropped = time.Now()
+		}
+		return bus.Addr(d.device, id)
+	}
+
+	agyT3 := addLocal("agyt30", "antigravity in T3", proto.Route{T3CLI: "/t3/bin/t3"}, false)
+	codexNoThread := addLocal("cdx000", "codex in T3", proto.Route{T3CLI: "/t3/bin/t3"}, false)
+	codexT3 := addLocal("cdx111", "codex in T3", proto.Route{T3CLI: "/t3/bin/t3", T3Thread: "th-codex"}, false)
+	claudeNoSock := addLocal("cld000", "claude-code", proto.Route{}, false)
+	claudeSock := addLocal("cld111", "claude-code", proto.Route{MsgSocket: "/tmp/s", MsgToken: "tok"}, false)
+	claudeSockDropped := addLocal("cld222", "claude-code", proto.Route{MsgSocket: "/tmp/s", MsgToken: "tok"}, true)
+	claudeT3Dropped := addLocal("cld333", "claude-code in T3", proto.Route{T3CLI: "/t3/bin/t3", T3Thread: "th-c"}, true)
+	codexCLI := addLocal("cdx222", "codex", proto.Route{CodexCLI: "/bin/codex", Native: "th-1"}, false)
+	agyLocal := addLocal("agy000", "antigravity", proto.Route{}, false)
+
+	d.mu.Lock()
+	if d.st.Pins == nil {
+		d.st.Pins = map[string]*keyPin{}
+	}
+	d.st.Pins["peer-0002"] = &keyPin{Box: bus.BoxPublic(bus.NewBoxKey())}
+	d.peers["peer-0002"] = &peer{
+		lastChange: time.Now(),
+		pres: bus.Presence{
+			Device: "peer-0002",
+			At:     time.Now().UTC(),
+			Sessions: []bus.SessionInfo{
+				{ID: "p11111", Agent: "antigravity in T3", HookOff: true},
+				{ID: "p22222", Agent: "claude-code in T3", HookOff: true},
+				{ID: "p33333", Agent: "claude-code", HookOff: true},
+				{ID: "p44444", Agent: "codex", HookOff: true},
+			},
+		},
+	}
+	for _, tc := range []struct {
+		addr, agent string
+		want        bool
+	}{
+		{agyT3, "antigravity in T3", false},
+		{codexNoThread, "codex in T3", false},
+		{codexT3, "codex in T3", true},
+		{claudeNoSock, "claude-code", false},
+		{claudeSock, "claude-code", true},
+		{claudeSockDropped, "claude-code", false},
+		{claudeT3Dropped, "claude-code in T3", true},
+		{codexCLI, "codex", true},
+		{agyLocal, "antigravity", false},
+		{"peer-0002/p11111", "antigravity in T3", false},
+		{"peer-0002/p22222", "claude-code in T3", true},
+		{"peer-0002/p33333", "claude-code", true},
+		{"peer-0002/p44444", "codex", false},
+	} {
+		dev, sess := bus.SplitAddr(tc.addr)
+		if got := d.peerCanTurnLocked(dev, sess, tc.agent); got != tc.want {
+			t.Errorf("peerCanTurnLocked(%s, %q) = %v, want %v", tc.addr, tc.agent, got, tc.want)
+		}
+	}
+	d.mu.Unlock()
+
+	ctx := context.Background()
+	for _, tc := range []struct {
+		what, to, wantSubstr, forbidSubstr string
+	}{
+		{"local antigravity in T3 without route", agyT3, "when it next reads its inbox.", "as its next turn"},
+		{"local codex in T3 without T3Thread", codexNoThread, "when it next reads its inbox.", "as its next turn"},
+		{"local codex in T3 with T3Thread", codexT3, "as its next turn.", "next reads its inbox"},
+		{"local claude-code without socket", claudeNoSock, "when it next reads its inbox.", "as its next turn"},
+		{"local claude-code with socket", claudeSock, "as its next turn.", "next reads its inbox"},
+		{"local codex with CodexCLI and Native", codexCLI, "as its next turn.", "next reads its inbox"},
+		{"remote antigravity in T3", "peer-0002/p11111", "when it next reads its inbox.", "as its next turn"},
+		{"remote claude-code in T3", "peer-0002/p22222", "as its next turn.", "next reads its inbox"},
+	} {
+		resp := d.handle(ctx, proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: tc.to, Subject: "ping"})
+		if !resp.OK {
+			t.Fatalf("%s: send failed: %s", tc.what, resp.Error)
+		}
+		if !strings.Contains(resp.Note, tc.wantSubstr) || strings.Contains(resp.Note, tc.forbidSubstr) {
+			t.Errorf("%s: note = %q, want %q and not %q", tc.what, resp.Note, tc.wantSubstr, tc.forbidSubstr)
+		}
+	}
 }

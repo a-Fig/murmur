@@ -747,3 +747,16 @@ func (d *Daemon) peerHookOffLocked(dev, sess string) (off bool, agent string) {
 	}
 	return false, ""
 }
+
+// peerCanTurnLocked says whether the daemon on dev can hand a message over to session sess as a
+// turn (deliver.go). On this device the session's own route decides (viaOf), so a T3 session
+// without a known T3Thread (such as Antigravity in T3, #888) or a Claude Code session without a
+// messaging socket isn't claimed to get a turn. On another device routes stay local, so its
+// presence's agent stands in, excluding Antigravity in T3. Caller holds mu.
+func (d *Daemon) peerCanTurnLocked(dev, sess, agent string) bool {
+	if dev == d.device {
+		s := d.sessions[sess]
+		return s != nil && viaOf(d.routeOfLocked(sess), s.dropped.IsZero()) != ""
+	}
+	return (strings.HasSuffix(agent, " in T3") && !isAgent(agent, "antigravity")) || agent == "claude-code"
+}

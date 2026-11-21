@@ -161,9 +161,15 @@ func (s *server) initHere() {
 	if isClaude(s.opt.Agent) {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
+	var thread string
+	if !sharedAgent(s.opt.Agent) {
+		if v := os.Getenv(threadEnv); v != "" && !agentAbove() {
+			thread = v
+		}
+	}
 	s.hereDir = dir
 	s.self = here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClientStarted: here.Started(os.Getppid()),
-		ClaudeSession: claude, Agent: agentName(s.opt.Agent), Fixed: sharedAgent(s.opt.Agent)}
+		ClaudeSession: claude, T3Thread: thread, Agent: agentName(s.opt.Agent), Fixed: sharedAgent(s.opt.Agent)}
 }
 
 func (s *server) withdraw() {
@@ -211,9 +217,12 @@ func (s *server) publish() {
 	s.mu.Unlock()
 	if l != nil {
 		// The agent's own ID for the session, once known: the hook finds its session's record by
-		// it (#422).
+		// it (#422). If the link also learned its T3 thread from T3's database, publish that too.
 		l.mu.Lock()
 		rec.Native = l.native
+		if l.hello.T3Thread != "" {
+			rec.T3Thread = l.hello.T3Thread
+		}
 		l.mu.Unlock()
 	}
 	// Written again if it went missing: a command that couldn't tell it from a dead server's may

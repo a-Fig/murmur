@@ -112,22 +112,31 @@ func setJSONIn(file string, path []string, v any) (changed bool, err error) {
 	return true, nil
 }
 
-// antigravityHook is join's entry in hooks.json, running exe's hook for two events, the fewest that
-// do the work. PreInvocation, before each call of the model, is a turn's start and the moment after
-// each tool call: it brings the notices, which Antigravity takes back from it as a step to add, where
-// PostToolUse's answer is ignored. Stop ends the turn, and keeps it going with what wasn't read
-// (#202). Neither takes a matcher.
+// antigravityHook is join's entry in hooks.json, running exe's hook for four events:
+// PreInvocation (before each call of the model: a turn's start and after each tool call, bringing
+// notices as an injected step where PostToolUse's answer is ignored), Stop (ending the turn and
+// keeping it going with what wasn't read, #202), and PreToolUse/PostToolUse matched on run_command
+// so the daemon credits commits made by shell commands (#894). PreInvocation and Stop take flat
+// handler lists; PreToolUse and PostToolUse take matcher groups (Antigravity 1.5.13, 2026-11-20).
 func antigravityHook(exe string) *jsonedit.Object {
-	handler := func(event string) []any {
+	handler := func(event string) *jsonedit.Object {
 		h := jsonedit.New()
 		h.Set("type", "command")
 		h.Set("command", antigravityHookCommand(exe, event))
 		h.Set("timeout", codexHookTimeout)
-		return []any{h}
+		return h
+	}
+	matched := func(event, matcher string) []any {
+		g := jsonedit.New()
+		g.Set("matcher", matcher)
+		g.Set("hooks", []any{handler(event)})
+		return []any{g}
 	}
 	o := jsonedit.New()
-	o.Set("PreInvocation", handler("PreInvocation"))
-	o.Set("Stop", handler("Stop"))
+	o.Set("PreInvocation", []any{handler("PreInvocation")})
+	o.Set("Stop", []any{handler("Stop")})
+	o.Set("PreToolUse", matched("PreToolUse", "run_command"))
+	o.Set("PostToolUse", matched("PostToolUse", "run_command"))
 	return o
 }
 

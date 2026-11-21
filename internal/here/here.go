@@ -36,9 +36,13 @@ type Session struct {
 	// once one of Murmur's tools has been called, Grok's session ID from the start. A hook carries
 	// the same ID, which is how it tells its session's record from another's of its process.
 	Native string `json:"native,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	GitDir string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
-	On     bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
+	// T3Thread is the T3 Code thread ID, where the server knows it (from T3CODE_THREAD_ID when not
+	// nested under another agent, or from T3's database). Agents whose MCP server doesn't receive
+	// their own conversation ID (Antigravity) still share T3CODE_THREAD_ID with their hooks (#888).
+	T3Thread string `json:"t3Thread,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	GitDir   string `json:"gitDir,omitempty"` // the clone it is placed in, "" if none
+	On       bool   `json:"on,omitempty"`     // registered with that clone's daemon, tools listed
 	// Fixed says the server can't be moved: one OpenCode server serves every session in its
 	// directory, so moving it for one would move them all. Its record still stops the search up
 	// the process tree, or join would move an agent further up (a Claude Code that started it).
