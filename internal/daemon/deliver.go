@@ -887,6 +887,7 @@ func (d *Daemon) nextPushLocked(id string, wake pageSettings) *pushJob {
 			views[i].Explained = explained[e.From] || d.explainedLocked(id, e.From) // recorded once it is handed over
 		}
 		views[i].GroupKnown = bus.IsGroup(e.To) && (explained[e.To] || d.explainedLocked(id, e.To)) // likewise
+		views[i].ByCommand = d.byCommandLocked(id)
 		introduced[e.From] = true
 		if !bus.IsGroup(e.To) {
 			explained[e.From] = true
@@ -1344,7 +1345,7 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 		}
 		return
 	}
-	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread}
+	want := t3Route{CLI: r.T3CLI, Home: r.T3Home, Thread: r.T3Thread, Command: s.byCommand}
 	d.retireRoutesLocked(s, want)
 	d.dropHandedLocked(s.id)
 	if d.st.T3Routes[s.id] != want {
@@ -1363,15 +1364,18 @@ func (d *Daemon) rememberRouteLocked(s *session) {
 // twice, or, from the new session, back to itself. What the old session had unread goes to the
 // new one, which has the thread: with its route gone it could no longer be handed over, and a
 // session in its grace is not one whose inbox the name's next holder adopts (see adoptLocked).
+// A session a shell command holds (#913) is let go the same way when one with a server of its own
+// finds the thread: the thread is that one's now, and its own tools stand over the commands.
 // Caller holds mu.
 func (d *Daemon) retireRoutesLocked(s *session, want t3Route) {
 	for id, r := range d.st.T3Routes {
 		if id == s.id || r.Thread != want.Thread || r.Home != want.Home {
 			continue
 		}
-		if o := d.sessions[id]; o == nil || !o.dropped.IsZero() {
+		if o := d.sessions[id]; o == nil || !o.dropped.IsZero() || o.hold != nil && s.hold == nil {
 			delete(d.st.T3Routes, id)
 			if o != nil {
+				d.releaseHoldLocked(o, false)
 				o.route = proto.Route{}
 			}
 			d.takeInboxLocked(s, id)

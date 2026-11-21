@@ -199,6 +199,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, fail("hello needs a session ID of lowercase letters, digits and dashes"))
 		return
 	}
+	if h.Command && (h.T3CLI == "" || h.T3Thread == "") {
+		writeResp(conn, fail("a command's session is a T3 thread's, and its hello names no thread"))
+		return
+	}
 	agent := bus.OneLine(h.Agent, 40)
 	if agent == "" {
 		agent = "unknown"
@@ -220,12 +224,27 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	d.mu.Lock()
+	if o := d.liveInThreadLocked(h.T3Home, h.T3Thread); h.Command && o != nil {
+		// The thread has its session already, through its server or an earlier command: the
+		// command is that session, and nothing changes.
+		name := o.name
+		d.mu.Unlock()
+		writeResp(conn, proto.Response{OK: true, Self: bus.Addr(d.device, o.id), Name: name, NamePending: name == ""})
+		return
+	}
 	h.ID = d.threadIDLocked(h)
 	s := d.sessions[h.ID]
-	if s != nil && s.dropped.IsZero() {
+	if s != nil && s.dropped.IsZero() && (s.hold == nil || s.route.T3Thread != h.T3Thread) {
 		d.mu.Unlock()
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
+	}
+	// A server of the thread's own takes over the session a command holds, as it would one in its
+	// grace (#913).
+	d.releaseHoldLocked(s, true)
+	var hold *commandHold
+	if h.Command {
+		hold = &commandHold{end: make(chan struct{})}
 	}
 	// A session in its grace, taken over by a server of the same process, keeps the Claude ID the
 	// daemon has for it: the server may be a new one, started with the ID its process had at first,
@@ -273,6 +292,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		s.agent, s.cwd, s.claudeSession, s.branch, s.reconnect = agent, h.Cwd, claude, branch, h.Reconnect
 		s.clientPID = h.ClientPID
+		s.byCommand, s.hold = h.Command, hold
 		s.route = route
 		d.rememberRouteLocked(s)
 		s.worktree = worktree
@@ -282,8 +302,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.key = key
 		d.setNameLocked(s, d.nameForKeyLocked(s, key))
 		s.dropped = time.Time{}
-		close(s.takeover)
-		s.takeover = nil
+		if s.takeover != nil { // nil for a session a command held
+			close(s.takeover)
+			s.takeover = nil
+		}
 	} else {
 		// Before the session takes a name from the pool, which wakes the assigner: the session's
 		// presence goes out ahead of its name's assignment and its start on the log.
@@ -292,6 +314,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		s = d.newSessionLocked(h, agent, branch, key)
 		s.worktree = worktree
+		s.byCommand, s.hold = h.Command, hold
 		s.route = route
 		d.rememberRouteLocked(s)
 	}
@@ -350,9 +373,16 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 	}
 
-	stopWatch := context.AfterFunc(ctx, func() { conn.Close() })
-	io.Copy(io.Discard, r) // returns when the session's process closes the connection, or dies
-	stopWatch()
+	if hold != nil {
+		conn.Close() // the command has its answer, and exits
+		if !d.waitHold(ctx, s, hold) {
+			return // a new hello carries the session on
+		}
+	} else {
+		stopWatch := context.AfterFunc(ctx, func() { conn.Close() })
+		io.Copy(io.Discard, r) // returns when the session's process closes the connection, or dies
+		stopWatch()
+	}
 
 	d.mu.Lock()
 	d.lastActive = time.Now()
