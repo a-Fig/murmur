@@ -287,9 +287,10 @@ func helloFor(agent, cwd string) proto.Hello {
 	return h
 }
 
-// threadEnv is t3.ThreadEnv, the thread's ID, which T3 gives the Claude Code process it runs and so
-// its MCP servers. Only Claude Code's servers take it: Codex's start with a bare environment, Muse
-// passes on only what join lists, and Pi and Grok weren't tried.
+// threadEnv is t3.ThreadEnv, the thread's ID, which T3 gives the Claude Code and Antigravity
+// processes it runs and so their MCP servers (#642, #886). Only their servers take it: Codex's
+// start with a bare environment, Muse passes on only what join lists, OpenCode shares one server
+// across threads, and Pi and Grok weren't tried.
 const threadEnv = t3.ThreadEnv
 
 // agentAbove says whether an agent's program runs above the client that started this server. Every
@@ -328,13 +329,14 @@ func agentInChain(n int, at func(i int) (exe, comm string, ok bool)) bool {
 }
 
 // agentPrograms are the agents' programs agentAbove looks for, by name. Antigravity, as T3 runs it
-// (release 1.4.5), is agy_acp_server, whose localharness_external runs the agent's shell commands:
+// in release 1.4.5, is agy_acp_server, whose localharness_external runs the agent's shell commands:
 // seen on Windows, 2026-11-16 (#709), as powershell under localharness_external.exe under
 // agy_acp_server.exe. Elsewhere T3's agy_acp_server is agy_acp_server.par, not listed: what runs it,
 // and so the name the walk would read, hasn't been seen; localharness_external, a native program
-// there too, is reached first.
+// there too, is reached first. Release 1.5.13 runs directly as agy (seen on Windows, 2026-11-20,
+// #889: powershell.exe under agy.exe under T3), so agy is listed too alongside the 1.4.5 names.
 var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
-	"opencode": true, "pi": true, "gemini": true, "agy_acp_server": true, "localharness_external": true}
+	"opencode": true, "pi": true, "gemini": true, "agy": true, "agy_acp_server": true, "localharness_external": true}
 
 // passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
 // shells, and what runs a command for one.
@@ -373,6 +375,11 @@ func threadID(thread string) string { return nativeID("t3:" + thread) }
 // isClaude says whether the server runs for Claude Code: `mcp` with no agent, as join registers it
 // there, or with claude-code.
 func isClaude(agent string) bool { return agent == "" || agent == "claude-code" }
+
+// takesThreadEnv says whether agent's MCP server may take its T3 thread from threadEnv: Claude
+// Code (#642) and Antigravity (#886), each of which runs one server per thread and passes T3's
+// environment on to it.
+func takesThreadEnv(agent string) bool { return isClaude(agent) || agent == "antigravity" }
 
 // nativeEnv names, for each agent that has one, the variable its MCP servers get the session's own
 // ID in: the ID T3 Code keeps for the thread's provider session, and so how the thread is found.
@@ -431,7 +438,7 @@ func routeWith(agent string, t3 t3Seen) proto.Route {
 }
 
 // t3Seen is what the environment says of T3: its command line, if the session is in T3, and
-// whether T3 runs the client, Claude Code, as a thread (see threadEnv).
+// whether T3 runs the client (Claude Code or Antigravity) as a thread (see threadEnv).
 type t3Seen struct {
 	cli    string
 	thread bool
@@ -442,16 +449,16 @@ type t3Seen struct {
 // T3CODE_CLI_PATH, but its headless server (`t3 serve`, 0.1.9, seen 2026-11-16) doesn't: it gives
 // the Claude Code it runs the thread's ID and T3CODE_HOME. Taken for outside T3 without one, such a
 // session was handed messages through the messaging socket, which starts no turn under T3, and
-// they were lost (#780). Only Claude Code's thread is found this way, as only it is known to have
-// the thread's variable (threadEnv). Codex's server has neither variable, as Codex starts it with
-// only what join forwards, and the thread's ID reaches only the commands Codex runs: there
-// T3CODE_HOME, which join forwards too, says to look for the t3 above Codex, and the thread comes
-// from the tool calls' _meta as in T3's app (#802). A codex run from a thread's shell inherits
-// T3CODE_HOME: agentAbove finds the thread's own codex above it, and codexT3 takes only a t3 that
-// runs Codex itself, for the walk can stop short of that codex, at a tmux, say.
+// they were lost (#780). Antigravity receives T3CODE_THREAD_ID from T3 too (seen 2026-11-20, #886),
+// so takesThreadEnv covers both Claude Code and Antigravity. Codex's server has neither variable,
+// as Codex starts it with only what join forwards, and the thread's ID reaches only the commands
+// Codex runs: there T3CODE_HOME, which join forwards too, says to look for the t3 above Codex, and
+// the thread comes from the tool calls' _meta as in T3's app (#802). A codex run from a thread's
+// shell inherits T3CODE_HOME: agentAbove finds the thread's own codex above it, and codexT3 takes
+// only a t3 that runs Codex itself, for the walk can stop short of that codex, at a tmux, say.
 func t3Of(agent string) t3Seen {
 	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
-	seen.thread = isClaude(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
+	seen.thread = takesThreadEnv(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
 	switch {
 	case seen.cli != "":
 	case seen.thread:
@@ -462,8 +469,8 @@ func t3Of(agent string) t3Seen {
 	return seen
 }
 
-// servingT3 is the `t3` that runs the client (Claude Code or Codex, the server's parent), as t3Of
-// finds it, and whether the client is the thread at all. A variable, so that tests needn't have T3.
+// servingT3 is the `t3` that runs the client (the server's parent), as t3Of finds it, and whether
+// the client is the thread at all. A variable, so that tests needn't have T3.
 var servingT3 = func() (cli string, thread bool) {
 	parent, read := "", false
 	if pids := proc.Ancestors(os.Getppid(), 2); len(pids) == 2 {
@@ -1296,6 +1303,9 @@ func (l *link) clientSession() string {
 	if l.native != "" {
 		return l.native
 	}
+	if l.hello.Native != "" {
+		return l.hello.Native
+	}
 	return l.hello.ClaudeSession
 }
 
@@ -1594,12 +1604,16 @@ func (l *link) run(ctx context.Context) {
 					byThread := l.hello.ByThread
 					if byThread {
 						// The thread's session is live and stays so: this process isn't the
-						// thread's own (a claude run from the thread's shell inherits
+						// thread's own (a claude or agy run from the thread's shell inherits
 						// T3CODE_THREAD_ID), or the thread's last provider session hasn't let
 						// go. It is a session of its own, whose thread T3's database may name,
 						// as before #642.
 						l.hello.ByThread, l.hello.T3Thread = false, ""
-						l.hello.ID = sessionID(l.hello.ClaudeSession)
+						if l.hello.Native != "" {
+							l.hello.ID = nativeID(l.hello.Native)
+						} else {
+							l.hello.ID = sessionID(l.hello.ClaudeSession)
+						}
 					} else {
 						l.hello.ID = bus.RandHex(6)
 					}

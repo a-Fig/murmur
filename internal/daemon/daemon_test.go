@@ -139,6 +139,8 @@ type device struct {
 	tail *logTail
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// threadOf, if set, stands in for T3's database provider-thread lookup (the daemon's ThreadOf).
+	threadOf func(ctx context.Context, cli, home, native string) (string, error)
 	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
 	codexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
 	// tellWait is TellWait, how long a sender that asked to be told waits (#276); zero takes the
@@ -269,7 +271,7 @@ func (d *device) start() {
 			SessionGrace: d.grace, StoppedInbox: d.keep, FileKeep: d.fileKeep, FilePrune: d.filePrune, FilesPerDay: d.filesPerDay, FilesHeld: d.filesHeld, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
-			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, ThreadOf: d.threadOf,
 			CodexLineage: d.codexLineage, Clones: d.clones, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
