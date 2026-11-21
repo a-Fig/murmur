@@ -37,18 +37,44 @@ type commandHold struct {
 	takeover chan struct{}
 }
 
-// liveInThreadLocked is a session live in T3 thread (home, thread), nil if none is. Caller holds mu.
+// liveInThreadLocked is the session live in T3 thread (home, thread), nil if none is. Where there
+// are two, one with a server of its own stands over one a command holds, and one keyed by the thread
+// (so with its name) over another, then the lower ID: the same one each time. Caller holds mu.
 func (d *Daemon) liveInThreadLocked(home, thread string) *session {
+	if thread == "" {
+		return nil
+	}
+	key := nameKey(thread, "", "", "")
+	rank := func(s *session) int {
+		r := 0
+		if s.hold != nil {
+			r += 2
+		}
+		if s.key != key {
+			r++
+		}
+		return r
+	}
 	var found *session
 	for _, s := range d.sessions {
-		if s.dropped.IsZero() && s.route.T3Thread == thread && s.route.T3Home == home {
-			if s.hold == nil {
-				return s // a session with a server of its own over one a command holds
-			}
+		if !s.dropped.IsZero() || s.route.T3Thread != thread || s.route.T3Home != home {
+			continue
+		}
+		if found == nil || rank(s) < rank(found) || rank(s) == rank(found) && s.id < found.id {
 			found = s
 		}
 	}
 	return found
+}
+
+// releaseHeldInThreadLocked lets go every session a command holds in T3 thread (home, thread) but
+// except. Caller holds mu.
+func (d *Daemon) releaseHeldInThreadLocked(home, thread, except string) {
+	for id, s := range d.sessions {
+		if id != except && s.hold != nil && s.route.T3Thread == thread && s.route.T3Home == home {
+			d.releaseHoldLocked(s, false)
+		}
+	}
 }
 
 // releaseHoldLocked lets s's hold go: taken if another hello takes s over, else s ends. Caller holds
@@ -87,7 +113,9 @@ func (d *Daemon) waitHold(ctx context.Context, s *session, h *commandHold) bool 
 	for {
 		select {
 		case <-ctx.Done():
-			return true
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return !h.taken // a hello that took the session over just now stops it itself
 		case <-h.end:
 			d.mu.Lock()
 			defer d.mu.Unlock()

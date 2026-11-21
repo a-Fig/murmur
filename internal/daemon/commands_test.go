@@ -134,3 +134,62 @@ func TestAServerThatFindsTheThreadLaterTakesTheCommandsName(t *testing.T) {
 	eventually(t, "the command's session to stop", func() bool { return logHas(b, "/c5c5c5 stopped") })
 	b.nameIs(codex, name)
 }
+
+// A server whose own hello names the thread, at an ID of its own, lets the command's session go and
+// takes its name, as one that finds the thread later does.
+func TestAServerHelloWithTheThreadTakesTheCommandsName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-c6": {LastRun: time.Now()}}}
+	b := newDeviceWith(t, remote, func(d *device) { d.grace = 200 * time.Millisecond; d.threadState = threads.read })
+
+	name := b.named(commandHello(t, b, "c6c6c6", exe, "thread-c6"))
+	server := hello(t, b, proto.Hello{ID: "e6e6e6", Agent: "codex in T3", Route: proto.Route{T3CLI: exe, T3Thread: "thread-c6"}})
+	eventually(t, "the command's session to stop", func() bool { return logHas(b, "/c6c6c6 stopped") })
+	b.nameIs(server, name)
+}
+
+// A command in the grace of a session with a server of its own leaves it that server's: its agent
+// stays, and the server, back without its thread found yet, takes it over again.
+func TestACommandInAServersGraceLeavesItTheServers(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-c7": {LastRun: time.Now()}}}
+	b := newDeviceWith(t, remote, func(d *device) { d.grace = time.Hour; d.threadState = threads.read })
+
+	h := proto.Hello{ID: "a7a7a7", Agent: "claude-code in T3", ClaudeSession: "conv-7", ClientPID: 700, ByThread: true,
+		Route: proto.Route{T3CLI: exe, T3Thread: "thread-c7"}}
+	conn, resp, err := b.c.Hello(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := resp.Self
+	conn.Close()
+	eventually(t, "the server's grace", func() bool { return !registered(b, "a7a7a7") })
+
+	if got := commandHello(t, b, "a7a7a7", exe, "thread-c7"); got != self {
+		t.Fatalf("the command registered %s, want %s", got, self)
+	}
+	agent := ""
+	for _, dev := range b.do(proto.Request{Op: proto.OpWho, Session: "a7a7a7"}).Devices {
+		for _, s := range dev.Sessions {
+			if strings.HasSuffix(s.Addr, "/a7a7a7") {
+				agent = s.Agent
+			}
+		}
+	}
+	if agent != "claude-code in T3" {
+		t.Errorf("after the command the session's agent is %q", agent)
+	}
+	h.Route.T3Thread, h.ByThread = "", false
+	back, bresp, err := b.c.Hello(context.Background(), h)
+	if err != nil {
+		t.Fatalf("the server back: %v", err)
+	}
+	t.Cleanup(func() { back.Close() })
+	if bresp.Self != self {
+		t.Errorf("the server came back as %s, want %s", bresp.Self, self)
+	}
+}

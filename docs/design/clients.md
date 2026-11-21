@@ -303,7 +303,10 @@ what the tools of those names do (`internal/mcpserver/commands.go`, rendered by 
   `threadID(thread)`, the one a Claude or Antigravity thread's own server registers, so the
   address and name are the thread's whichever registers first. If a session is live in the thread
   already (its MCP server's), the command acts as it. A command under two agents' programs (an
-  agent started from another's thread shell) has the outer thread's variable, and stops.
+  agent started from another's thread shell) has the outer thread's variable, and stops. The walk
+  knows only the agents in `agentPrograms`: an unknown harness started from a Claude thread's shell
+  isn't seen, and acts as that thread. So does a person typing in T3's terminal for the thread,
+  which has the variable too: the thread's session, as its agent is.
 - **Lifetime.** A command's hello closes with the command, so the daemon holds the session
   (`proto.Hello.Command`, protocol 24): live while the thread is in use, which is a run going in
   T3's database or a command or run in the last 30 minutes, about as long as T3 keeps an idle
