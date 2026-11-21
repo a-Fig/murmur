@@ -41,7 +41,9 @@ on: not a message to it, to its device, to a group it is in, or to everyone.
   inbox shows for it is always one a mute holds against (#502). A sender's own device refuses it, or
   names the muters of a message to many, by the same names: the one it has in presence, or every
   one its address has held while it has none (#602), so a sender waiting on a new name isn't sent
-  past a mute of its old one. The cost: a later conversation
+  past a mute of its old one. A name that has moved to another session on the same device while the
+  sender is listed without one is left out of both sides, so a mute stays with the name's holder
+  and doesn't follow the session that gave it up (#875, 2026-11-20). The cost: a later conversation
   nobody muted, at that address, has what it sends dropped once it has left presence, and is told
   it was muted (#466). The name each address last showed in presence (`peerNames`, #602) would
   narrow that; the receiving check doesn't use it yet.

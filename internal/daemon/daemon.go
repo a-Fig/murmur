@@ -949,6 +949,12 @@ type state struct {
 	// device's presence, its pending one's Was included, and when it was last seen (#602): neither
 	// the registry nor Used says which of an address's names is the latest. Kept sessionNameKeep.
 	PeerNames map[string]peerName `json:"peerNames,omitempty"`
+	// PeerHolders is, by "<device>/<name>", the session ID on that peer device last shown holding
+	// name when it differs from the registry's address (Used[name]), and when it was last seen
+	// (#875). Kept for sessionNameKeep (and capped by maxPeerHolders) so a receiver restart does
+	// not forget that a still-unnamed session gave its name up even after the taker has left
+	// presence.
+	PeerHolders map[string]peerHolder `json:"peerHolders,omitempty"`
 	// NameKeys is the name each of this device's session keys was given, for good.
 	NameKeys map[string]string `json:"nameKeys,omitempty"`
 	// NamesLeft is, by session key, the name the key had on the device this clone was before it
