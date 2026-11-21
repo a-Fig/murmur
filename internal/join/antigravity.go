@@ -189,8 +189,8 @@ func setJSONIn(file string, path []string, v any) (changed, added bool, err erro
 	return true, added, nil
 }
 
-// allowAntigravityTools adds Murmur's rule to the settings at path. Its errors don't name the file,
-// which the note they go in names already.
+// allowAntigravityTools adds Murmur's rule to the settings at path. Its own errors don't name the
+// file, which the note they go in names already; an error from the file system may still.
 func allowAntigravityTools(path string) (bool, error) {
 	b, err := jsonedit.ReadText(resolveLinks(path))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
