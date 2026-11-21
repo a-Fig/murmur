@@ -501,8 +501,8 @@ func TestJoinReportsMalformedAntigravityApproval(t *testing.T) {
 	} {
 		write(t, path, c.settings)
 		r, err := Join(t.Context(), sb.Env, p.Top)
-		if err != nil || !p.Joined() || len(r.Notes) != 1 || !strings.Contains(r.Notes[0], path) ||
-			!strings.Contains(r.Notes[0], `"mcp(murmur/*)"`) || !strings.Contains(r.Notes[0], c.reason) {
+		want := `Antigravity: couldn't add "mcp(murmur/*)" to permissions.allow in ` + path + ": " + c.reason + "."
+		if err != nil || !p.Joined() || len(r.Notes) != 1 || r.Notes[0] != want {
 			t.Fatalf("join with %s: %v\n%s", c.settings, err, r)
 		}
 		if read(t, path) != c.settings || !exists(filepath.Join(sb.GeminiHome, "config", "mcp_config.json")) ||
@@ -537,7 +537,9 @@ func TestJoinReportsDeniedAntigravityApproval(t *testing.T) {
 	}
 	p := startJoinTestDaemon(t)
 	r, err := Join(t.Context(), sb.Env, p.Top)
-	if err != nil || len(r.Notes) != 1 || !strings.Contains(r.Notes[0], `"mcp(murmur/*)"`) || !strings.Contains(r.Notes[0], path) {
+	want := `Antigravity (active in T3 Code): couldn't add "mcp(murmur/*)" to permissions.allow in ` + path +
+		", so Murmur's tools will ask before each call. Add it by hand, outside Antigravity."
+	if err != nil || len(r.Notes) != 1 || r.Notes[0] != want {
 		t.Fatalf("join: %v\n%s", err, r)
 	}
 	if read(t, path) != original || !exists(filepath.Join(sb.GeminiHome, "config", "mcp_config.json")) || !exists(filepath.Join(sb.GeminiHome, "config", "hooks.json")) {

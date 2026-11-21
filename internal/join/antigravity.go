@@ -35,7 +35,11 @@ const (
 
 var antigravityAllowPath = []string{"permissions", "allow"}
 
-var errAntigravityApproval = errors.New("couldn't add the tool approval rule")
+// approvalNote is a tool approval rule join couldn't add. It is a note, not a problem: the server
+// and the hook still run, and Murmur's tools ask before each call.
+type approvalNote string
+
+func (n approvalNote) Error() string { return string(n) }
 
 // antigravityArgs are the server's arguments in Antigravity's config.
 var antigravityArgs = []string{"mcp", "--agent", "antigravity"}
@@ -123,12 +127,12 @@ func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err e
 	}
 	settings := filepath.Join(h.Dir, settingsDir, "settings.json")
 	allowed, err := allowAntigravityTools(settings)
+	couldnt := fmt.Sprintf("couldn't add %q to permissions.allow in %s", antigravityAllowRule, settings)
 	if errors.Is(err, os.ErrPermission) {
-		return did, fresh, fmt.Errorf("%w %q in %s. Add it to permissions.allow outside Antigravity", errAntigravityApproval, antigravityAllowRule, settings)
+		return did, fresh, approvalNote(couldnt + ", so " + brand.Product + "'s tools will ask before each call. Add it by hand, outside Antigravity.")
 	}
 	if err != nil {
-		// Tool approval is optional. The server and hook can still run.
-		return did, fresh, fmt.Errorf("%w %q. %v", errAntigravityApproval, antigravityAllowRule, err)
+		return did, fresh, approvalNote(couldnt + ": " + err.Error() + ".")
 	}
 	if allowed {
 		did = append(did, h.Label+": allowed "+brand.Product+"'s tools ("+settings+")")
@@ -185,22 +189,25 @@ func setJSONIn(file string, path []string, v any) (changed, added bool, err erro
 	return true, added, nil
 }
 
+// allowAntigravityTools adds Murmur's rule to the settings at path. Its errors don't name the file,
+// which the note they go in names already.
 func allowAntigravityTools(path string) (bool, error) {
-	text, err := readConfig(path)
-	if err != nil {
+	b, err := jsonedit.ReadText(resolveLinks(path))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
+	text := string(b)
 	if strings.TrimSpace(text) == "" {
 		text = "{}\n"
 	}
 	raw, found, err := jsonedit.GetIn(text, antigravityAllowPath)
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", path, err)
+		return false, err
 	}
 	if found {
 		var rules []any
 		if err := json.Unmarshal([]byte(raw), &rules); err != nil || rules == nil {
-			return false, fmt.Errorf("%s: permissions.allow isn't a list", path)
+			return false, errors.New("permissions.allow isn't a list")
 		}
 		if slices.Contains(rules, any(antigravityAllowRule)) {
 			return false, nil
@@ -208,15 +215,15 @@ func allowAntigravityTools(path string) (bool, error) {
 	}
 	out, changed, err := jsonedit.AppendIn(text, antigravityAllowPath, antigravityAllowRule)
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", path, err)
+		return false, err
 	}
 	if !changed {
 		return false, nil
 	}
-	if err := writeJSONConfig(path, out, 0o600); err != nil {
+	if err := parses(out); err != nil {
 		return false, err
 	}
-	return true, nil
+	return true, writeAtomic(path, []byte(out), 0o600)
 }
 
 // antigravityHook is join's entry in hooks.json, running exe's hook for two events, the fewest that

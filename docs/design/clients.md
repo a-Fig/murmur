@@ -255,12 +255,12 @@ registered MCP server picked up its tools from `notifications/tools/list_changed
   per-instance MCP and hook configuration once T3 has made the home. Standalone Antigravity gets
   its own registration. T3 links each instance's skills to `~/.gemini/config/skills`. Antigravity
   under T3 doesn't read a project's `.agents/mcp_config.json` (tried, 2026-11-15).
-- **Which session.** T3 now sets `T3CODE_THREAD_ID` alongside `T3CODE_CLI_PATH` in Antigravity
-  threads (seen live on Antigravity 1.5.13, 2026-11-20, #886; earlier T3 did not,
-  pingdotgg/t3code#34024). Antigravity's MCP server takes its thread and identity from
-  `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`, as Claude Code does.
-  Antigravity passes `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks, not to MCP servers.
-  Under older T3 without `T3CODE_THREAD_ID`, the daemon pairs the hook's `conversationId` with the
+- **Which session.** T3 passes `T3CODE_THREAD_ID` to Antigravity (seen 2026-11-20, #886; earlier
+  T3 did not, pingdotgg/t3code#34024) and keeps `ANTIGRAVITY_CONVERSATION_ID`, which Antigravity
+  sets in its shell commands, as the thread's provider session. Antigravity's MCP server takes its
+  thread and identity from `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`,
+  as Claude Code does. Antigravity gives `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks,
+  not to MCP servers. Under older T3 without `T3CODE_THREAD_ID`, the daemon pairs the hook's `conversationId` with the
   server among the hook's ancestors (`hookNative`) and resolves the T3 thread via `t3db.ThreadOf`
   as a fallback.
 - **Tool approval.** Join adds `mcp(murmur/*)` to `permissions.allow` in

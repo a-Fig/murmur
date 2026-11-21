@@ -209,7 +209,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			steps.start("adding " + brand.Product + " to " + h.Label)
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
-			if errors.Is(err, errAntigravityApproval) {
+			if note := approvalNote(""); errors.As(err, &note) {
 				r.Notes = append(r.Notes, h.Label+": "+err.Error())
 			} else if err != nil {
 				problem(h.Label, err)

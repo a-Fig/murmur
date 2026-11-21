@@ -54,11 +54,7 @@ has the session at work (below).
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message written to the socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle session hasn't been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model) |
 | Codex or OpenCode 2 outside T3 | the client's own command line | Yes (2026-11-11) |
-| Muse, Grok or Antigravity outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No (standalone Antigravity unverified) |
-
-In T3 Code with Antigravity 1.5.13 (2026-11-20), `PreInvocation` delivered notices during a turn
-and `Stop` continued the turn with unread messages. An already registered MCP server picked up
-its tools from `notifications/tools/list_changed`. See [Antigravity](clients.md#antigravity).
+| Muse, Grok or Antigravity outside T3 (Antigravity not tried), or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
 
 What the agent reads:
 

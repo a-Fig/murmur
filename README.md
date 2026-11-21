@@ -114,9 +114,6 @@ sender and subject, added after the agent's next tool call; the agent reads the 
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
 used one of Murmur's tools.
 
-In T3 Code with Antigravity 1.5.13, `PreInvocation` delivered notices, `Stop` continued the turn,
-and an already registered server picked up its tools during the session (2026-11-20).
-
 ## For humans
 
 | Command                | What it does |
