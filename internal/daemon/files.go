@@ -300,10 +300,11 @@ func (d *Daemon) openSendRoots(sender fileSender) *sendRoots {
 			if route.T3Home != "" && home != filepath.Clean(route.T3Home) {
 				break // an explicit T3 home belongs to this session
 			}
-			if root, ok := s.openAntigravityTemp(home); ok {
-				if !s.add(root) {
-					root.r.Close()
-				}
+			root, matched, ok := s.openAntigravityTemp(home)
+			if ok && !s.add(root) {
+				root.r.Close()
+			}
+			if matched {
 				break
 			}
 		}
@@ -313,37 +314,41 @@ func (d *Daemon) openSendRoots(sender fileSender) *sendRoots {
 
 // openAntigravityTemp opens only T3's temp subtree. The home in the route may be an alias,
 // so pin it first, then open each child as the directory looked at, with no link in its place.
-func (s *sendRoots) openAntigravityTemp(home string) (sendRoot, bool) {
+// matched reports whether home holds a T3 userdata database, so the caller fails closed on that
+// home instead of falling through to another T3 installation if antigravity-tmp is absent or linked.
+func (s *sendRoots) openAntigravityTemp(home string) (sendRoot, bool, bool) {
 	root, ok := s.open(home)
 	if !ok {
-		return sendRoot{}, false
+		return sendRoot{}, false, false
 	}
+	matched := false
 	for _, part := range []string{"userdata", "antigravity-tmp"} {
 		if part == "antigravity-tmp" {
 			// A CLI on PATH may live outside T3's home. Check for its database in userdata.
 			if info, err := root.r.Lstat(filepath.Base(t3.StateDB(home))); err != nil || !info.Mode().IsRegular() {
 				root.r.Close()
-				return sendRoot{}, false
+				return sendRoot{}, false, false
 			}
+			matched = true
 		}
 		info, err := root.r.Lstat(part)
 		if err != nil || !info.IsDir() || linkIn(info, func() error { _, err := root.r.Readlink(part); return err }) {
 			root.r.Close()
-			return sendRoot{}, false
+			return sendRoot{}, matched, false
 		}
 		next, err := root.r.OpenRoot(part)
 		root.r.Close()
 		if err != nil {
-			return sendRoot{}, false
+			return sendRoot{}, matched, false
 		}
 		id, err := next.Stat(".")
 		if err != nil || !os.SameFile(id, info) {
 			next.Close()
-			return sendRoot{}, false
+			return sendRoot{}, matched, false
 		}
 		root = sendRoot{filepath.Join(root.path, part), next, id}
 	}
-	return root, true
+	return root, true, true
 }
 
 // add adds root, unless it is one already, or is the git directory or inside it: a registration an

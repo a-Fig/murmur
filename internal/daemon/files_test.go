@@ -720,6 +720,11 @@ func TestSendReadsT3AntigravityTempFiles(t *testing.T) {
 			refused(t, "plain", note)
 			if tc.name == "default" {
 				refused(t, tc.name, localNote)
+				// A CLI home that has a state database but no antigravity-tmp fails closed instead of falling back to ~/.t3.
+				cliNoTmp := filepath.Join(base, "cli-no-tmp")
+				putFile(t, filepath.Join(cliNoTmp, "userdata", "statev2.sqlite"))
+				register(t, "cli-no-tmp", antigravity, proto.Route{T3CLI: filepath.Join(cliNoTmp, "bin", "t3")})
+				refused(t, "cli-no-tmp", note)
 				// An explicit network home must neither open nor fall back to the valid default home.
 				register(t, "network-home", antigravity, proto.Route{T3Home: `\\server\share\t3`, T3Thread: "network-thread"})
 				refused(t, "network-home", note)
