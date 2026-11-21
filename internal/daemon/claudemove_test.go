@@ -598,3 +598,318 @@ func TestAThreadClearedWhileItsNameIsPushedDoesNotShareALiveName(t *testing.T) {
 		t.Errorf("two live sessions share the name %s (%s and %s)", t3Name, resp.Self, cli)
 	}
 }
+
+// A conversation begun in T3, named before T3's server knew the thread, is resumed on the command
+// line. T3, reopening the thread while the command line runs, registers at its thread's ID, takes
+// the conversation's name and unread messages, and leaves the command line at its own address with
+// a name of its own (#873).
+func TestT3ReopensAThreadWhileTheCommandLineHasItsConversation(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	hello := func(h proto.Hello) (string, error) {
+		conn, resp, err := b.c.Hello(context.Background(), h)
+		if err == nil {
+			t.Cleanup(func() { conn.Close() })
+		}
+		return resp.Self, err
+	}
+
+	// T3's server registers before it knows the thread, at an ID made from the Claude session.
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-1", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-1", T3CLI: "/opt/t3/bin/t3"}})
+	conn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+
+	// The command line resumes the conversation, at the same ID.
+	cli, err := hello(proto.Hello{ID: "xxxxxx", Agent: "claude-code", ClaudeSession: "conv-1", ClientPID: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.nameIs(cli, name)
+
+	// T3 reopens the thread, with its ID made from the thread.
+	h := proto.Hello{ID: "tttttt", Agent: "claude-code in T3", ClaudeSession: "conv-1", ClientPID: 1000,
+		Route: proto.Route{T3Thread: "thread-1", T3CLI: "/opt/t3/bin/t3"}, ByThread: true}
+	tconn, tresp, err := b.c.Hello(context.Background(), h)
+	if err != nil {
+		t.Fatalf("T3 reopened the thread while the command line runs: %v", err)
+	}
+	t.Cleanup(func() { tconn.Close() })
+	t3 := tresp.Self
+	if !strings.HasSuffix(t3, "/tttttt") {
+		t.Errorf("T3 registered as %s, want .../tttttt", t3)
+	}
+	b.nameIs(t3, name)
+	eventually(t, "the command line to have a name of its own", func() bool {
+		other := b.nameOf(cli)
+		return other != "" && other != name
+	})
+
+	// T3's server restarts: the thread's session comes back at its own address, with the name.
+	tconn.Close()
+	eventually(t, "T3 to stop again", func() bool { return busLines(b, t3, "stopped") == 1 })
+	h.ClientPID = 1100
+	again, aresp, err := b.c.Hello(context.Background(), h)
+	if err != nil {
+		t.Fatalf("T3 back: %v", err)
+	}
+	t.Cleanup(func() { again.Close() })
+	if aresp.Self != t3 {
+		t.Errorf("T3 restarted as %s, want %s", aresp.Self, t3)
+	}
+	b.nameIs(aresp.Self, name)
+}
+
+// When T3 reopens a late-named thread while the command line holds its Claude-derived address, T3
+// takes the conversation's unread messages, and the command line's session no longer carries the
+// thread's stored T3 route after it yields and stops (#873).
+func TestT3ReopensLateThreadTakesUnreadAndClearsStaleCLIRoute(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, calls := useFakeT3(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-u1", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-u1", T3CLI: exe}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+
+	cli, cconn := b.claudeIn("xxxxxx", 900, "conv-u1", "")
+	b.nameIs(cli, name)
+	sender, _ := b.claudeIn("ssssss", 600, "conv-sender", "")
+	b.named(sender)
+	b.send("ssssss", name, "unread before T3 reopened", "")
+
+	before := len(calls())
+	t3Conn, t3Resp, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "tttttt", Agent: "claude-code in T3", ClaudeSession: "conv-u1", ClientPID: 1000,
+		Route: proto.Route{T3Thread: "thread-u1", T3CLI: exe}, ByThread: true,
+	})
+	if err != nil {
+		t.Fatalf("T3 reopen hello: %v", err)
+	}
+	t.Cleanup(func() { t3Conn.Close() })
+	t3 := t3Resp.Self
+	if !strings.HasSuffix(t3, "/tttttt") {
+		t.Fatalf("T3 registered as %s, want .../tttttt", t3)
+	}
+	b.nameIs(t3, name)
+	eventually(t, "unread handed to T3", func() bool { return len(calls()) > before })
+	if left := b.do(proto.Request{Op: proto.OpInbox, Session: "xxxxxx"}).Messages; len(left) != 0 {
+		t.Errorf("command line kept %d unread after T3 took the conversation", len(left))
+	}
+
+	var cliNew string
+	eventually(t, "command line to get a name of its own", func() bool {
+		cliNew = b.nameOf(cli)
+		return cliNew != "" && cliNew != name
+	})
+	cconn.Close()
+	eventually(t, "command line to stop", func() bool { return busLines(b, cli, "stopped") == 2 })
+
+	// A message to the stopped command-line session's new name must not wake thread-u1.
+	afterStop := len(calls())
+	sendResp := b.do(proto.Request{Op: proto.OpSend, Session: "ssssss", To: cliNew, Subject: "for CLI only"})
+	if sendResp.Error != "" {
+		t.Fatalf("send to %s: %s", cliNew, sendResp.Error)
+	}
+	if strings.Contains(sendResp.Note, "wakes") {
+		t.Errorf("stopped CLI session %s still has a T3 route: %q", cliNew, sendResp.Note)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if len(calls()) != afterStop {
+		t.Errorf("sending to stopped CLI session %s woke T3 (%d calls, had %d)", cliNew, len(calls()), afterStop)
+	}
+}
+
+// If the command line resumed a late-named T3 conversation and is in its grace when T3 reopens the
+// thread, T3 registers at its thread's ID instead of hijacking the command line's grace; when the
+// command line reconnects, it keeps its address with a name of its own (#873).
+func TestT3ReopensAThreadWhileTheCommandLineIsInGrace(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-g1", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-g1", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+
+	// Give the command line a long grace so it stays in grace across T3's hello and its own reconnect.
+	b.stop()
+	b.grace = time.Hour
+	b.start()
+
+	cli, cconn := b.claudeIn("xxxxxx", 900, "conv-g1", "")
+	b.nameIs(cli, name)
+	cconn.Close()
+	eventually(t, "command line to enter grace", func() bool {
+		return b.do(proto.Request{Op: proto.OpStatus, Session: "xxxxxx", Doing: "probe"}).Error != ""
+	})
+
+	t3, _ := b.claudeIn("tttttt", 1000, "conv-g1", "thread-g1")
+	if !strings.HasSuffix(t3, "/tttttt") {
+		t.Errorf("T3 registered as %s, want .../tttttt", t3)
+	}
+	b.nameIs(t3, name)
+
+	// The command line reconnects from its grace without colliding on xxxxxx, and gets a name of its own.
+	backConn, backResp, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "xxxxxx", Agent: "claude-code", ClaudeSession: "conv-g1", ClientPID: 900, Reconnect: true,
+	})
+	if err != nil {
+		t.Fatalf("command line reconnect from grace: %v", err)
+	}
+	t.Cleanup(func() { backConn.Close() })
+	b.nameIs(t3, name)
+	eventually(t, "reconnected command line to have a name of its own", func() bool {
+		other := b.nameOf(backResp.Self)
+		return other != "" && other != name
+	})
+}
+
+// If the command line resumes a late-named T3 conversation while T3's session is still in its
+// grace, the command line must not inherit the thread's route, so T3 can still reopen its thread
+// while the command line runs (#873).
+func TestT3ReopensAfterCommandLineResumedDuringT3Grace(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, time.Hour, time.Hour)
+
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-rg", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-rg", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "T3 to enter grace", func() bool {
+		return b.do(proto.Request{Op: proto.OpStatus, Session: "xxxxxx", Doing: "probe"}).Error != ""
+	})
+
+	cli, _ := b.claudeIn("xxxxxx", 900, "conv-rg", "")
+	b.nameIs(cli, name)
+
+	t3, _ := b.claudeIn("tttttt", 1000, "conv-rg", "thread-rg")
+	if !strings.HasSuffix(t3, "/tttttt") {
+		t.Errorf("T3 registered as %s, want .../tttttt", t3)
+	}
+	b.nameIs(t3, name)
+	eventually(t, "command line to have a name of its own", func() bool {
+		other := b.nameOf(cli)
+		return other != "" && other != name
+	})
+}
+
+// After /clear in a late-named T3 thread, the old conversation resumed on the command line holds
+// the thread's registered address and name. Reopening the thread in T3 on the new conversation
+// registers at the thread's own ID with a name of its own, without colliding on the command line's
+// address (#873).
+func TestT3ReopensAfterClearWhileCommandLineHasOldConversation(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-cl1", ClientPID: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-cl", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	b.hook("conv-cl2", 800) // /clear in T3
+	b.nameIs(resp.Self, name)
+	conn.Close()
+	eventually(t, "T3 to stop", func() bool { return busLines(b, resp.Self, "stopped") == 1 })
+
+	cli, _ := b.claudeIn("xxxxxx", 900, "conv-cl1", "")
+	b.nameIs(cli, name)
+
+	t3, _ := b.claudeIn("tttttt", 1000, "conv-cl2", "thread-cl")
+	if !strings.HasSuffix(t3, "/tttttt") {
+		t.Errorf("T3 registered as %s, want .../tttttt", t3)
+	}
+	if got := b.named(t3); got == name {
+		t.Errorf("T3 took %s from the live command-line session", name)
+	}
+	b.nameIs(cli, name)
+}
+
+// A command-line session that takes over a late-named T3 session during T3's grace doesn't inherit
+// the thread key, so a subsequent /clear on the command line moves it to a new name rather than
+// keeping T3's thread name (#873).
+func TestCLIClearAfterTakingT3GraceGetsANewName(t *testing.T) {
+	t.Parallel()
+	b := newTimedDevice(t, newRemote(t), time.Hour, time.Hour)
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-old", ClientPID: 800,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-clear", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "T3 to enter grace", func() bool {
+		return b.do(proto.Request{Op: proto.OpStatus, Session: "xxxxxx", Doing: "probe"}).Error != ""
+	})
+
+	cli, _ := b.claudeIn("xxxxxx", 900, "conv-old", "")
+	b.nameIs(cli, name)
+	b.hook("conv-new", 900)
+	if got := b.named(cli); got == name {
+		t.Errorf("CLI /clear kept T3's name %s", name)
+	}
+}
+
+// A second ByThread server for a live thread is still refused as in use even when the live holder
+// has no T3 CLI path (as under headless t3 serve), because threadIDLocked matches on the live
+// session's T3Thread rather than T3CLI (#873).
+func TestNestedThreadServerIsRefusedWhenLiveHolderHasNoT3CLI(t *testing.T) {
+	t.Parallel()
+	b := newTimedDevice(t, newRemote(t), time.Hour, time.Hour)
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-old", ClientPID: 800,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-no-cli"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+
+	nested, _, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "tttttt", Agent: "claude-code in T3", ClaudeSession: "conv-nested", ClientPID: 900,
+		ByThread: true, Route: proto.Route{T3Thread: "thread-no-cli"},
+	})
+	if err == nil {
+		t.Cleanup(func() { nested.Close() })
+	}
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("nested process accepted or wrong error: %v", err)
+	}
+}

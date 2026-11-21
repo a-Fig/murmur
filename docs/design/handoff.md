@@ -67,6 +67,10 @@ over.
   thread wakes up to 30 s later than a working one would; it still pushes presence every 2 minutes,
   about 720 pushes a day. `mur join --leave` and `mur stop` end it at once. A sender is told such a thread is idle and the message wakes it, or that
   the wake setting won't let it (#669); it used to be told the session had stopped, which read as gone.
+  If the command line takes the conversation over at that session's address, the stored route is
+  cleared: messages for a stopped command-line session wait in its inbox rather than waking the old
+  T3 thread, avoiding waking a thread whose conversation may have changed (#873). T3 registering
+  again restores the route.
 
 ## Claude Code outside T3: the messaging socket
 
