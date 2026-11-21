@@ -14,7 +14,9 @@ import (
 )
 
 // skillsDir is where agent home h reads user skills, each a folder with a SKILL.md, "" for an
-// agent with no documented place.
+// agent with no documented place. The four were taken from each agent's documentation on
+// 2026-11-08, not tried in a session: Claude Code and Pi read <dir>/skills, Codex
+// $CODEX_HOME/skills, OpenCode ~/.config/opencode/skills. Muse Code and Grok document none.
 func skillsDir(a agent, h agentHome) string {
 	switch a.driver {
 	case "claudeAgent", "codex", "opencode", "pi":
