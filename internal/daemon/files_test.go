@@ -2,11 +2,13 @@ package daemon_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -664,6 +666,112 @@ func TestSendReadsFilesOnlyFromTheCloneAndTemp(t *testing.T) {
 				t.Errorf("%s: %q, want it refused as a network path", path, err)
 			}
 		}
+	}
+}
+
+func TestSendReadsT3AntigravityTempFiles(t *testing.T) {
+	base, temp := t.TempDir(), t.TempDir()
+	profile := filepath.Join(base, "profile")
+	t.Setenv("HOME", profile)
+	t.Setenv("USERPROFILE", profile)
+	a := newDeviceWith(t, newRemote(t), func(d *device) { d.tempDir = temp })
+	recipient, _ := a.session("plain", "")
+	const antigravity = "antigravity in T3"
+	register := func(t *testing.T, id, agent string, route proto.Route) {
+		t.Helper()
+		conn, _, err := a.c.Hello(context.Background(), proto.Hello{ID: id, Agent: agent, Route: route})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+	}
+	send := func(session, path string) string {
+		return a.do(proto.Request{Op: proto.OpSend, Session: session, To: recipient, Subject: "a file", Files: []string{path}}).Error
+	}
+	refused := func(t *testing.T, session, path string) {
+		t.Helper()
+		if err := send(session, path); !strings.Contains(err, refusedSend) || !strings.Contains(err, "copy it into "+temp) {
+			t.Errorf("sending %s: %q, want a refusal with the temp folder to copy into", path, err)
+		} else {
+			t.Log(err)
+		}
+	}
+	explicit, cli, fallback := filepath.Join(base, "explicit"), filepath.Join(base, "cli"), filepath.Join(profile, ".t3")
+	local := filepath.Join(base, "local")
+	localNote := putFile(t, filepath.Join(local, "userdata", "antigravity-tmp", "hash", "run-1", "note.txt"))
+	cases := []struct {
+		name, home string
+		route      proto.Route
+	}{
+		{"explicit", explicit, proto.Route{T3Home: explicit, T3Thread: "explicit-thread"}},
+		{"from-cli", cli, proto.Route{T3CLI: filepath.Join(cli, "bin", "t3.cmd")}},
+		{"default", fallback, proto.Route{T3CLI: filepath.Join(local, "bin", "t3")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			register(t, tc.name, antigravity, tc.route)
+			userdata := filepath.Join(tc.home, "userdata")
+			tmp := filepath.Join(userdata, "antigravity-tmp")
+			state := putFile(t, filepath.Join(userdata, "statev2.sqlite"))
+			note := putFile(t, filepath.Join(tmp, "hash", "run-1", "note.txt"))
+			if err := send(tc.name, note); err != "" {
+				t.Errorf("sending %s: %s", note, err)
+			}
+			refused(t, "plain", note)
+			if tc.name == "default" {
+				refused(t, tc.name, localNote)
+				// A CLI home that has a state database but no antigravity-tmp fails closed instead of falling back to ~/.t3.
+				cliNoTmp := filepath.Join(base, "cli-no-tmp")
+				putFile(t, filepath.Join(cliNoTmp, "userdata", "statev2.sqlite"))
+				register(t, "cli-no-tmp", antigravity, proto.Route{T3CLI: filepath.Join(cliNoTmp, "bin", "t3")})
+				refused(t, "cli-no-tmp", note)
+				// An explicit network home must neither open nor fall back to the valid default home.
+				register(t, "network-home", antigravity, proto.Route{T3Home: `\\server\share\t3`, T3Thread: "network-thread"})
+				refused(t, "network-home", note)
+			}
+			if tc.name != "explicit" {
+				other := tc.name + "-other-home"
+				register(t, other, antigravity, proto.Route{T3Home: explicit, T3Thread: other})
+				refused(t, other, note)
+				return
+			}
+			register(t, "same-home", antigravity, proto.Route{T3Home: explicit, T3Thread: "same-thread"})
+			if err := send("same-home", note); err != "" {
+				t.Errorf("sending the same file from another Antigravity session in this T3 home: %s", err)
+			}
+			register(t, "claude-in-t3", "claude-code in T3", proto.Route{T3Home: explicit, T3Thread: "claude-thread"})
+			refused(t, "claude-in-t3", note)
+			refused(t, tc.name, state)
+			for _, path := range []string{"settings.json", "providers/antigravity/antigravity-oauth-token"} {
+				refused(t, tc.name, putFile(t, filepath.Join(userdata, path)))
+			}
+			refused(t, tc.name, tmp+string(filepath.Separator)+filepath.Join("..", "settings.json"))
+			t.Run("links", func(t *testing.T) {
+				linkDir := func(target, link string) {
+					t.Helper()
+					if filepath.VolumeName(target) != "" {
+						// A junction is available on Windows without symlink privileges.
+						if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+							t.Fatalf("mklink /J: %v\n%s", err, out)
+						}
+					} else if err := os.Symlink(target, link); err != nil {
+						t.Fatal(err)
+					}
+				}
+				linkedHome := t.TempDir()
+				linkDir(userdata, filepath.Join(linkedHome, "userdata"))
+				register(t, "linked-home", antigravity, proto.Route{T3Home: linkedHome, T3Thread: "linked-thread"})
+				refused(t, "linked-home", filepath.Join(linkedHome, "userdata", "antigravity-tmp", "hash", "run-1", "note.txt"))
+				link := filepath.Join(tmp, "link")
+				linkDir(filepath.Join(userdata, "providers"), link)
+				refused(t, tc.name, filepath.Join(link, "antigravity", "antigravity-oauth-token"))
+				if err := os.Rename(tmp, tmp+"-old"); err != nil {
+					t.Fatal(err)
+				}
+				linkDir(userdata, tmp)
+				refused(t, tc.name, filepath.Join(tmp, "settings.json"))
+			})
+		})
 	}
 }
 

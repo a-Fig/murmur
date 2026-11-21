@@ -491,20 +491,57 @@ func (d *Daemon) noSuchNameLocked(name string) string {
 // namesByAddrLocked is lastNameLocked for every address at once: the name to show for each session
 // this daemon knows a name of, when it has none in presence. Caller holds mu.
 func (d *Daemon) namesByAddrLocked() map[string]string {
+	// Precompute the addresses currently listed without a name so the scan over Used skips
+	// nameGivenUpLocked for every other address (almost all of them).
+	var unnamed map[string]bool
+	for _, s := range d.sessions {
+		if s.name == "" {
+			if unnamed == nil {
+				unnamed = map[string]bool{}
+			}
+			unnamed[bus.Addr(d.device, s.id)] = true
+		}
+	}
+	for dev, p := range d.peers {
+		for _, s := range p.pres.Sessions {
+			if s.ID != bus.PersonSession && s.Name == "" {
+				if unnamed == nil {
+					unnamed = map[string]bool{}
+				}
+				unnamed[bus.Addr(dev, s.ID)] = true
+			}
+		}
+	}
+	givenUp := func(addr, name string) bool {
+		return unnamed[addr] && d.nameGivenUpLocked(addr, name)
+	}
+
 	byAddr := map[string]string{}
 	for name, addr := range d.st.Used {
-		if cur := byAddr[addr]; addr != "" && (cur == "" || name < cur) {
+		if addr == "" || givenUp(addr, name) {
+			continue
+		}
+		if cur := byAddr[addr]; cur == "" || name < cur {
 			byAddr[addr] = name
 		}
 	}
 	for addr, pn := range d.st.PeerNames { // another device's, by its presence's latest (#602)
 		if dev, _ := bus.SplitAddr(addr); dev != d.device && pn.Name != "" {
-			byAddr[addr] = pn.Name
+			if givenUp(addr, pn.Name) {
+				delete(byAddr, addr)
+			} else {
+				byAddr[addr] = pn.Name
+			}
 		}
 	}
 	for id, name := range d.st.SessionNames {
 		if name != "" {
-			byAddr[bus.Addr(d.device, id)] = name
+			addr := bus.Addr(d.device, id)
+			if givenUp(addr, name) {
+				delete(byAddr, addr)
+			} else {
+				byAddr[addr] = name
+			}
 		}
 	}
 	return byAddr

@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/scrub"
+	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -252,7 +253,13 @@ type sendRoot struct {
 	id   os.FileInfo // what it is, looked at through r
 }
 
-func (d *Daemon) openSendRoots() *sendRoots {
+// fileSender is the session's identity and route when the daemon accepted its send request.
+type fileSender struct {
+	agent string
+	route proto.Route
+}
+
+func (d *Daemon) openSendRoots(sender fileSender) *sendRoots {
 	s := &sendRoots{vols: map[string]*os.Root{}}
 	gitDir, err := s.local(d.opt.GitDir)
 	var git sendRoot
@@ -288,7 +295,60 @@ func (d *Daemon) openSendRoots() *sendRoots {
 			root.r.Close()
 		}
 	}
+	if route := sender.route; sender.agent == "antigravity in T3" && (route.T3CLI != "" || route.T3Thread != "") {
+		for _, home := range t3.Homes(route.T3CLI, route.T3Home) {
+			if route.T3Home != "" && home != filepath.Clean(route.T3Home) {
+				break // an explicit T3 home belongs to this session
+			}
+			root, matched, ok := s.openAntigravityTemp(home)
+			if ok && !s.add(root) {
+				root.r.Close()
+			}
+			if matched {
+				break
+			}
+		}
+	}
 	return s
+}
+
+// openAntigravityTemp opens only T3's temp subtree. The home in the route may be an alias,
+// so pin it first, then open each child as the directory looked at, with no link in its place.
+// matched reports whether home holds a T3 userdata database, so the caller fails closed on that
+// home instead of falling through to another T3 installation if antigravity-tmp is absent or linked.
+func (s *sendRoots) openAntigravityTemp(home string) (sendRoot, bool, bool) {
+	root, ok := s.open(home)
+	if !ok {
+		return sendRoot{}, false, false
+	}
+	matched := false
+	for _, part := range []string{"userdata", "antigravity-tmp"} {
+		if part == "antigravity-tmp" {
+			// A CLI on PATH may live outside T3's home. Check for its database in userdata.
+			if info, err := root.r.Lstat(filepath.Base(t3.StateDB(home))); err != nil || !info.Mode().IsRegular() {
+				root.r.Close()
+				return sendRoot{}, false, false
+			}
+			matched = true
+		}
+		info, err := root.r.Lstat(part)
+		if err != nil || !info.IsDir() || linkIn(info, func() error { _, err := root.r.Readlink(part); return err }) {
+			root.r.Close()
+			return sendRoot{}, matched, false
+		}
+		next, err := root.r.OpenRoot(part)
+		root.r.Close()
+		if err != nil {
+			return sendRoot{}, matched, false
+		}
+		id, err := next.Stat(".")
+		if err != nil || !os.SameFile(id, info) {
+			next.Close()
+			return sendRoot{}, matched, false
+		}
+		root = sendRoot{filepath.Join(root.path, part), next, id}
+	}
+	return root, true, true
 }
 
 // add adds root, unless it is one already, or is the git directory or inside it: a registration an
@@ -637,7 +697,7 @@ func (d *Daemon) sendTemp() string {
 // readSendFiles reads the files an agent's send names, each no larger than a file may be, and only
 // from where sendRoots allows. A path is followed through its links first, and the file read is
 // the one it leads to, so a link in temp to ~/.ssh is refused (openSend).
-func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile, error) {
+func (d *Daemon) readSendFiles(sender fileSender, paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
 		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
@@ -660,13 +720,13 @@ func (d *Daemon) readSendFiles(ctx context.Context, paths []string) ([]sendFile,
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	s := d.openSendRoots()
+	s := d.openSendRoots(sender)
 	defer s.Close()
 	for _, path := range paths {
 		f, err := s.openSend(path)
 		switch {
 		case errors.Is(err, errOutside):
-			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folder, the only places send reads files from: copy it into %s and send it from there", path, d.sendTemp())
+			return nil, fmt.Errorf("%s isn't in this repo's clone or the temp folders send reads from: copy it into %s and send it from there", path, d.sendTemp())
 		case errors.Is(err, errNotFile):
 			return nil, fmt.Errorf("%s isn't a file", path)
 		case err != nil:
