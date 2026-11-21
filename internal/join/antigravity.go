@@ -149,6 +149,11 @@ func antigravityHookCommand(exe, event string) string {
 		if short := shortPath(exe); bareSafe(short) {
 			return short + args
 		}
+		if event == "PreToolUse" {
+			// cmd /c strips the first and last quote when the command starts with one and contains
+			// more quotes (like the JSON fallback), so wrap the whole command in an outer pair.
+			return `""` + exe + `"` + args + `"`
+		}
 		return `"` + exe + `"` + args
 	}
 	if event == "PreToolUse" {

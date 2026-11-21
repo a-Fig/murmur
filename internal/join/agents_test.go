@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -376,16 +375,34 @@ func TestAntigravityHookCommand(t *testing.T) {
 }
 
 func TestAntigravityPreToolUseAllowsWhenMurIsMissing(t *testing.T) {
-	command := antigravityHookCommand(filepath.Join(t.TempDir(), "missing binary", "mur.exe"), "PreToolUse")
-	cmd := exec.Command("sh", "-c", command)
-	if runtime.GOOS == "windows" {
-		// Let cmd expand the command verbatim, including the quotes in the JSON.
-		cmd = exec.Command("cmd", "/d", "/c", "%MURMUR_TEST_HOOK_COMMAND%")
-		cmd.Env = append(os.Environ(), "MURMUR_TEST_HOOK_COMMAND="+command)
-	}
-	out, err := cmd.Output()
+	dir := filepath.Join(t.TempDir(), "with space")
+	missing := filepath.Join(dir, "mur.exe")
+	command := antigravityHookCommand(missing, "PreToolUse")
+	out, err := antigravityShellCmd(command).Output()
 	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
-		t.Fatalf("running %q printed %q, error %v", command, out, err)
+		t.Fatalf("missing binary: running %q printed %q, error %v", command, out, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script, body := filepath.Join(dir, "mur"), "#!/bin/sh\nprintf '{\"decision\":\"allow\",\"ok\":true}\\n'\n"
+	if runtime.GOOS == "windows" {
+		script, body = filepath.Join(dir, "mur.cmd"), "@echo {\"decision\":\"allow\",\"ok\":true}\r\n"
+	}
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hitCmd := antigravityHookCommand(script, "PreToolUse")
+	out, err = antigravityShellCmd(hitCmd).Output()
+	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow","ok":true}` {
+		t.Fatalf("existing binary: running %q printed %q, error %v", hitCmd, out, err)
+	}
+	if runtime.GOOS == "windows" {
+		quotedHit := `""` + script + `" hook --event PreToolUse antigravity || echo {"decision":"allow"}"`
+		out, err = antigravityShellCmd(quotedHit).Output()
+		if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow","ok":true}` {
+			t.Fatalf("quoted existing binary: running %q printed %q, error %v", quotedHit, out, err)
+		}
 	}
 }
 
