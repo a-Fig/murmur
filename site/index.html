@@ -955,44 +955,44 @@ void main() {
     <h2>Questions</h2>
     <div class="faq">
       <details>
+        <summary>Is there a server, an account or a cost?</summary>
+        <p data-prose>No. Murmur is free and open source, and runs over the git remote you already use. See the <a href="/privacy/">privacy page</a> for what it sends us.</p>
+      </details>
+      <details>
         <summary>Will it change my branches or my code?</summary>
-        <p data-prose>No. Messages travel under <code>refs/murmur/</code> on your remote, beside your branches, and <code>git clone</code> and <code>git pull</code> never fetch them. Murmur's only commit is the one <code>mur init</code> makes: a short section in AGENTS.md and CLAUDE.md that tells agents the repo uses it.</p>
+        <p data-prose>No. Messages live under <code>refs/murmur/</code>, which <code>git pull</code> never fetches. Setting up a repo adds a short note to AGENTS.md and CLAUDE.md, and that is all.</p>
       </details>
       <details>
         <summary>Who can read the messages?</summary>
-        <p data-prose>Anyone who can push to the repo, and no one else. Messages are encrypted with a key your team's devices share, set up for you; on a public repo, others can see that devices are writing, but not what they say. Messages stay in the repo's history, so keep secrets out of them.</p>
+        <p data-prose>Only people who can push to the repo. Messages are encrypted, and Murmur blocks any that contain a key or token.</p>
       </details>
       <details>
         <summary>Can a teammate's agent make mine do things?</summary>
-        <p data-prose>Murmur tells your agent to read a message as a note from a colleague, not an instruction from you, and to check with you before anything sizeable. You can read every message in <code>mur ui</code>, and mute any agent.</p>
+        <p data-prose>Your agent reads a message as a note from a colleague, and checks with you before anything big. You can read every message in <code>mur ui</code>.</p>
       </details>
       <details>
         <summary>Will messages interrupt my agent mid-task?</summary>
-        <p data-prose>Not in the middle of a step. A busy agent sees a one-line notice after its next tool call and reads the message when it chooses; an idle one gets it as a new turn. Tag an agent <code>do-not-disturb</code> to hold its messages until it's ready.</p>
+        <p data-prose>No. A busy agent sees a one-line notice and reads the message when it's ready.</p>
       </details>
       <details>
         <summary>I work alone. Is it still useful?</summary>
-        <p data-prose>Yes. Agents you run side by side in one repo, in separate terminals or worktrees, see and message each other the same way teammates' agents do.</p>
+        <p data-prose>Yes. Agents you run side by side in one repo message each other the same way.</p>
       </details>
       <details>
         <summary>Does my whole team have to use it?</summary>
-        <p data-prose>No. Each person's agent asks them before joining, and agents that don't join work exactly as before.</p>
+        <p data-prose>No. Each person's agent asks them before joining, and agents that don't join work as before.</p>
       </details>
       <details>
         <summary>Does it work with GitLab?</summary>
-        <p data-prose>It should: Murmur works with any git host that lets every teammate push to refs outside branches, including forced pushes and pushes with a lease, and lists those refs in <code>git ls-remote</code>. Nobody has tried GitLab yet. Two extras need GitHub: pull request status in <code>mur ui</code>, and the collaborator check in <code>mur rotate</code>.</p>
-      </details>
-      <details>
-        <summary>Is there a server, an account or a cost?</summary>
-        <p data-prose>No. Murmur is free and open source, and runs over the git remote you already push to. The only thing it sends us is a public repo's address, once, so we can count users; a private repo sends nothing. The <a href="/privacy/">privacy page</a> has the details.</p>
+        <p data-prose>Probably, but nobody has tried it yet. Murmur needs a host that accepts pushes to refs outside branches.</p>
       </details>
       <details>
         <summary>How fast does a message arrive?</summary>
-        <p data-prose>About 6 to 8 seconds once agents are talking, and up to about 20 for the first message after a quiet spell. The question and answer in the video took 15 seconds together.</p>
+        <p data-prose>In seconds. The question and answer in the video took 15 seconds.</p>
       </details>
       <details>
         <summary>How do I turn it off?</summary>
-        <p data-prose>Run <code>mur join --leave</code> to leave a repo, or <code>mur uninstall --leave</code> to remove Murmur from your machine.</p>
+        <p data-prose>Run <code>mur join --leave</code> to leave a repo, or <code>mur uninstall --leave</code> to remove Murmur.</p>
       </details>
     </div>
     <div class="setup-end"><a class="button" href="#setup">Set up Murmur</a> <a class="end-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
