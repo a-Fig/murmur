@@ -319,8 +319,42 @@ func TestRegisterAntigravity(t *testing.T) {
 	if did, fresh, err := sb.registerAntigravityAt(h); err != nil || fresh || len(did) != 0 {
 		t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
 	}
+	if exists(filepath.Join(sb.GeminiHome, "antigravity-cli")) {
+		t.Error("registered CLI permissions without a CLI install")
+	}
 	if r := antigravityRemoval(sb.Env, h); !strings.Contains(r, mcp) || !strings.Contains(r, hooks) {
 		t.Errorf("removal: %q", r)
+	}
+}
+
+func TestRegisterAntigravityPreservesToolPermissions(t *testing.T) {
+	for _, dir := range []string{"antigravity-cli", "antigravity-acp"} {
+		t.Run(dir, func(t *testing.T) {
+			sb := newSandbox(t, false)
+			h := agentHome{Dir: filepath.Join(sb.root, "gemini"), Label: "Antigravity", T3Own: dir == "antigravity-acp"}
+			path := filepath.Join(h.Dir, dir, "settings.json")
+			write(t, path, `{"model":"mine", "permissions":{"allow":["mcp(other/*)"], "deny":["mcp(blocked/*)"]}}`)
+			did, fresh, err := sb.registerAntigravityAt(h)
+			if err != nil || !fresh || len(did) != 3 {
+				t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
+			}
+			got := read(t, path)
+			for _, want := range []string{`"model":"mine"`, `"deny":["mcp(blocked/*)"]`, `"mcp(other/*)"`, `"mcp(murmur/*)"`} {
+				if strings.Count(got, want) != 1 {
+					t.Errorf("want one %s in %s", want, got)
+				}
+			}
+			// An existing rule before another rule keeps its place and the file stays byte-for-byte.
+			const already = `{"permissions":{"allow":["mcp(murmur/*)", "mcp(other/*)"]}}`
+			write(t, path, already)
+			if did, fresh, err := sb.registerAntigravityAt(h); err != nil || fresh || len(did) != 0 || read(t, path) != already {
+				t.Errorf("second: did=%q fresh=%v err=%v", did, fresh, err)
+			}
+			sb.Exe = filepath.Join(sb.root, "moved", exeName("mur"))
+			if did, fresh, err := sb.registerAntigravityAt(h); err != nil || fresh || len(did) != 2 {
+				t.Errorf("moved server: did=%q fresh=%v err=%v", did, fresh, err)
+			}
+		})
 	}
 }
 

@@ -245,24 +245,29 @@ whole and the turn went on. Not tried: a Muse thread in T3 (`muse serve`), or Mu
 
 ## Antigravity
 
-Added 2026-11-15 (#650), at Tyler's request. Seen in T3 probe threads on Tyler's laptop with
-Antigravity's harness 1.4.5. Reports from 1.5.13 cover live notices and hook payloads (#888, #892,
-#894).
+Added 2026-11-15 (#650), at Tyler's request. Tested in T3 Code on Antigravity 1.5.13 on
+2026-11-20. `PreInvocation` delivered notices, `Stop` continued the turn, and an already
+registered MCP server picked up its tools from `notifications/tools/list_changed`. Reports from
+1.5.13 also cover hook payloads (#888, #892, #894).
 
 - **Homes.** T3 runs each Antigravity instance with a home of its own,
   `userdata/providers/antigravity/<sha256 of the instance ID>`, as its `GEMINI_HOME`. T3 says this
   isolates credentials, hooks and MCP servers, and nothing in its settings moves it. Join writes
-  there and in `~/.gemini`. Antigravity under T3 doesn't read a project's
-  `.agents/mcp_config.json` (tried, 2026-11-15).
-- **Which session.** T3 now sets `T3CODE_THREAD_ID` alongside `T3CODE_CLI_PATH` in Antigravity
-  threads (seen live on Antigravity 1.5.13, 2026-11-20, #886; earlier T3 did not,
-  pingdotgg/t3code#34024). Antigravity's MCP server takes its thread and identity from
-  `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`, as Claude Code does.
-  Antigravity passes `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks, not to MCP servers.
-  The hook finds a session moved by `mur join -C` by T3's thread ID when available, or by the sole
-  Antigravity server record of its client process (#888). The daemon pairs the hook's
-  `conversationId` with the server among the hook's ancestors (`hookNative`) and, under older T3
-  without `T3CODE_THREAD_ID`, resolves the T3 thread via `t3db.ThreadOf` as a fallback.
+  per-instance MCP and hook configuration once T3 has made the home. Standalone Antigravity gets
+  its own registration. T3 links each instance's skills to `~/.gemini/config/skills`. Antigravity
+  under T3 doesn't read a project's `.agents/mcp_config.json` (tried, 2026-11-15).
+- **Which session.** T3 passes `T3CODE_THREAD_ID` to Antigravity (seen 2026-11-20, #886; earlier
+  T3 did not, pingdotgg/t3code#34024) and keeps `ANTIGRAVITY_CONVERSATION_ID`, which Antigravity
+  sets in its shell commands, as the thread's provider session. Antigravity's MCP server takes its
+  thread and identity from `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`,
+  as Claude Code does. Antigravity gives `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks,
+  not to MCP servers. The hook finds a session moved by `mur join -C` by T3's thread ID when
+  available, or by the sole Antigravity server record of its client process (#888). The daemon pairs
+  the hook's `conversationId` with the server among the hook's ancestors (`hookNative`) and, under
+  older T3 without `T3CODE_THREAD_ID`, resolves the T3 thread via `t3db.ThreadOf` as a fallback.
+- **Tool approval.** Join adds `mcp(murmur/*)` to `permissions.allow` in
+  `antigravity-acp/settings.json` in a T3 instance's home or `antigravity-cli/settings.json` in a
+  standalone CLI's home (Antigravity 1.5.13). A settings file join can't edit leaves a note with the rule and path.
 - **Its programs** (#709, 2026-11-16; #889, 2026-11-20). T3 downloads the release itself, into
   `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`. Release 1.4.5 ran `agy_acp_server`
   (`.exe` on Windows, `.par` elsewhere) over `localharness_external`, which ran shell commands

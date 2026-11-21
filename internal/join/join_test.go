@@ -414,4 +414,7 @@ func TestLeaveInACloneThatNeverJoined(t *testing.T) {
 	if len(r.Did) != 1 || !strings.Contains(r.Did[0], "Nothing to undo") {
 		t.Errorf("did %q", r.Did)
 	}
+	if got := r.Tell[0]; !strings.Contains(got, "Claude Code, Pi and Antigravity sessions lose its tools within seconds") || !strings.Contains(got, "In Codex, the tools stay listed") {
+		t.Errorf("leave advice: %q", got)
+	}
 }

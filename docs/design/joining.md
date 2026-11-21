@@ -189,6 +189,7 @@ after `mur join`, since the agent that ran it started before the server was regi
 | T3 Code, Codex | Ignored (2026-10-30: a new thread loads it from `config.toml`; an older one still lacks it on its next turn) | Ignored | A new thread |
 | Pi 0.99.0, terminal (2026-11-17, #864) | Ignored: the extension that registers it loads as a session starts | Honored: the tools came within seconds of a join and went within seconds of a leave | `/reload`, or a new session |
 | T3 Code, Pi | Ignored | Honored, by the same Pi | A new thread: Pi's RPC mode, which T3 runs, has no `/reload` |
+| Antigravity 1.5.13 (T3 Code, 2026-11-20, #890) | Ignored | Honored within seconds | A new thread in T3 Code, or restart `agy` in a terminal |
 
 Join tells a Pi session apart by `PI_CODING_AGENT=true`, which Pi sets for every process it starts.
 A Claude Code or Codex that Pi started inherits it, so their own variables win; a Pi that Codex

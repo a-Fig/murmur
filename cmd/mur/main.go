@@ -74,9 +74,10 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, muse's, or pi's and
-                                opencode's through Murmur's extension and plugin (reads the
-                                payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
+                                muse's, opencode's or pi's; reads the payload on stdin
+  mur hook --event EVENT antigravity
+                                Antigravity's hook, for EVENT; reads the payload on stdin
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
