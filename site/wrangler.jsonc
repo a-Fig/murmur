@@ -1,5 +1,6 @@
 // Publishes this folder at murmur.afig.dev as a Cloudflare Worker with static assets (#111).
-// `npx wrangler deploy` from this folder; the custom domain makes Cloudflare create the DNS
+// .github/workflows/site.yml deploys it when a push to main changes it (#914), and `npx wrangler deploy`
+// from this folder does it by hand; the custom domain makes Cloudflare create the DNS
 // record and certificate in the afig.dev zone.
 {
   "name": "murmur-site",
