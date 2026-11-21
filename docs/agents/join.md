@@ -31,7 +31,8 @@ joining does:
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
   approved so they run without asking each time where the agent has a setting for that
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
-  Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
+  Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok; `mcp(murmur/*)` in
+  Antigravity's `permissions.allow`); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
   session. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi and
@@ -144,7 +145,9 @@ What `mur join` prints says which case this is, and how to get the tools if they
 - OpenCode: it reads its config again by itself; the tools are there from the next turn.
 - Pi in a terminal: type `/reload`, or start a new session.
 - Pi in T3 Code: open a new thread.
-- Muse Code, Grok or Antigravity: start a new session (in T3 Code, a new thread).
+- Antigravity: if Murmur was already registered, the tools appear within seconds. If it was just
+  added, open a new thread in T3 Code or restart `agy` in this repo.
+- Muse Code or Grok: start a new session (in T3 Code, a new thread).
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to
 use them: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md

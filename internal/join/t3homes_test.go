@@ -2,10 +2,19 @@ package join
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/daemon"
+	"github.com/a-Fig/murmur/internal/skills"
 )
 
 // t3Settings is a T3 settings.json like the one on Tyler's laptop (2026-11-01), as far as join
@@ -181,6 +190,211 @@ func TestHomesAreDeduplicated(t *testing.T) {
 		"b": {"driver": "claudeAgent", "config": {"homePath": "`+filepath.ToSlash(strings.ToUpper(sb.ClaudeDir[:1])+sb.ClaudeDir[1:])+`/"}}}}`)
 	if byAgent, _ := sb.homes(); len(byAgent[0]) != 1 {
 		t.Errorf("claude homes %+v", byAgent[0])
+	}
+}
+
+func TestAntigravityHomeDedupKeepsT3Ownership(t *testing.T) {
+	sb := newSandbox(t, false)
+	sb.T3Settings = filepath.Join(sb.root, "settings.json")
+	sb.GeminiHome = antigravityHomeOf(sb.T3Settings, "work")
+	bin := filepath.Join(sb.root, exeName("agy"))
+	write(t, bin, "")
+	write(t, sb.T3Settings, fmt.Sprintf(`{"providerInstances":{"work":{"driver":"antigravity","enabled":true,"config":{"binaryPath":%q}}}}`, bin))
+	for _, off := range []bool{false, true} {
+		homes, _ := sb.homesWith(off)
+		got := homes[agentIndex("antigravity")]
+		want := agentHome{Dir: sb.GeminiHome, Bin: bin, T3Own: true, Label: "Antigravity (work in T3 Code)"}
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("off=%v: homes = %+v, want %+v", off, got, want)
+		}
+	}
+}
+
+func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
+	for _, c := range []struct {
+		name                 string
+		bin, onPath, cliHome bool
+	}{
+		{name: "bundled"},
+		{name: "configured binary", bin: true, cliHome: true},
+		{name: "agy on PATH", onPath: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sb, _ := uninstallSandbox(t)
+			sb.Home = filepath.Join(sb.root, "home")
+			sb.T3Settings = filepath.Join(sb.root, ".t3", "userdata", "settings.json")
+			sb.GeminiHome = antigravityHomeOf(sb.T3Settings, "active")
+			sb.Getenv = envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_THREAD_ID": "thread-1"}).Getenv
+			bin := ""
+			if c.bin {
+				bin = filepath.Join(sb.root, exeName("agy"))
+				write(t, bin, "")
+			}
+			sb.LookPath = func(name string) (string, error) {
+				if name == "agy" && c.onPath {
+					return filepath.Join(sb.root, exeName("agy")), nil
+				}
+				return "", exec.ErrNotFound
+			}
+			settings := `{"providerInstances":{
+				"active":{"driver":"antigravity","enabled":%t,"config":{"binaryPath":%q}},
+				"later":{"driver":"antigravity","enabled":true,"config":{"binaryPath":%q}}
+			}}`
+			write(t, sb.T3Settings, fmt.Sprintf(settings, true, bin, bin))
+			standalone := filepath.Join(sb.Home, ".gemini")
+			inst := sb.GeminiHome
+			later := antigravityHomeOf(sb.T3Settings, "later")
+			acp := filepath.Join(inst, "antigravity-acp", "settings.json")
+			cli := filepath.Join(standalone, "antigravity-cli", "settings.json")
+			mustMakeDir(t, inst)
+			if c.cliHome {
+				mustMakeDir(t, filepath.Dir(cli))
+			}
+
+			homes, _ := sb.homes()
+			got := homes[agentIndex("antigravity")]
+			if len(got) != 3 || got[0].Dir != standalone || got[0].T3Own || got[1].Dir != inst || !got[1].T3Own || got[1].Bin != bin {
+				t.Fatalf("Antigravity homes: %+v", got)
+			}
+
+			p := startJoinTestDaemon(t)
+			r, err := Join(t.Context(), sb.Env, p.Top)
+			if err != nil || !strings.Contains(r.Tell[0], "Open a new thread") {
+				t.Fatalf("join: %v\n%s", err, r)
+			}
+			if !strings.Contains(r.String(), "Not done:\n  - Antigravity (later in T3 Code): open a thread") || exists(later) {
+				t.Errorf("join with an unused T3 instance:\n%s", r)
+			}
+			for _, name := range []string{"mcp_config.json", "hooks.json"} {
+				if !strings.Contains(read(t, filepath.Join(inst, "config", name)), `"murmur"`) {
+					t.Errorf("missing T3 registration in %s", name)
+				}
+			}
+			if !strings.Contains(read(t, acp), `"mcp(murmur/*)"`) {
+				t.Errorf("missing T3 tool approval in %s", acp)
+			}
+			if exists(filepath.Join(inst, "antigravity-cli")) || exists(filepath.Join(standalone, "antigravity-acp")) {
+				t.Error("wrote approval to the wrong app data directory")
+			}
+			standaloneMCP := filepath.Join(standalone, "config", "mcp_config.json")
+			if c.cliHome || c.onPath {
+				if !strings.Contains(read(t, cli), `"mcp(murmur/*)"`) || !strings.Contains(read(t, standaloneMCP), `"murmur"`) {
+					t.Error("missing registration or approval for standalone Antigravity")
+				}
+			} else if exists(cli) || exists(standaloneMCP) {
+				t.Error("registered standalone Antigravity with only T3 installed")
+			}
+			for _, s := range skills.All() {
+				if read(t, filepath.Join(standalone, "config", "skills", s.Name, "SKILL.md")) != string(s.Text) {
+					t.Errorf("missing skill %s in the user's home", s.Name)
+				}
+			}
+			if exists(filepath.Join(inst, "config", "skills")) {
+				t.Error("created a skills folder in T3's instance home")
+			}
+
+			mustMakeDir(t, later)
+			if r, err := Join(t.Context(), sb.Env, p.Top); err != nil || !strings.Contains(r.Tell[0], "within a few seconds") || strings.Contains(strings.Join(r.Tell, "\n"), "new thread") {
+				t.Fatalf("join after opening a different instance: %v\n%s", err, r)
+			}
+			write(t, sb.T3Settings, fmt.Sprintf(settings, false, bin, bin))
+			if r, err := Uninstall(t.Context(), sb.Env, true); err != nil {
+				t.Fatalf("uninstall: %v\n%s", err, r)
+			}
+			for _, path := range []string{acp, cli, standaloneMCP, filepath.Join(inst, "config", "mcp_config.json"), filepath.Join(inst, "config", "hooks.json")} {
+				if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), "murmur") || err != nil && !os.IsNotExist(err) {
+					t.Errorf("after uninstall, %s = %q, err = %v", path, b, err)
+				}
+			}
+			for _, s := range skills.All() {
+				if exists(filepath.Join(standalone, "config", "skills", s.Name, "SKILL.md")) {
+					t.Errorf("uninstall left the user's %s skill", s.Name)
+				}
+			}
+			if exists(filepath.Join(inst, "config", "skills")) {
+				t.Error("uninstall changed T3's skills directory")
+			}
+		})
+	}
+}
+
+func TestJoinReportsDeniedAntigravityApproval(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	sb.Home = filepath.Join(sb.root, "home")
+	sb.T3Settings = filepath.Join(sb.root, "settings.json")
+	sb.GeminiHome = antigravityHomeOf(sb.T3Settings, "active")
+	sb.Getenv = envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_THREAD_ID": "thread-1"}).Getenv
+	write(t, sb.T3Settings, `{"providerInstances":{"active":{"driver":"antigravity","enabled":true}}}`)
+	path := filepath.Join(sb.GeminiHome, "antigravity-acp", "settings.json")
+	const original = `{"model":"mine"}`
+	write(t, path, original)
+	protected, mode := filepath.Dir(path), os.FileMode(0o500)
+	if runtime.GOOS == "windows" {
+		protected, mode = path, 0o444
+	}
+	if err := os.Chmod(protected, mode); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(protected, 0o755) })
+	if err := writeAtomic(path, []byte(original), 0o600); err == nil {
+		t.Skip("the test process can replace the protected settings file")
+	} else if !errors.Is(err, os.ErrPermission) {
+		t.Fatal(err)
+	}
+	p := startJoinTestDaemon(t)
+	r, err := Join(t.Context(), sb.Env, p.Top)
+	if err != nil || len(r.Notes) != 1 || !strings.Contains(r.Notes[0], `"mcp(murmur/*)"`) || !strings.Contains(r.Notes[0], path) {
+		t.Fatalf("join: %v\n%s", err, r)
+	}
+	if read(t, path) != original || !exists(filepath.Join(sb.GeminiHome, "config", "mcp_config.json")) || !exists(filepath.Join(sb.GeminiHome, "config", "hooks.json")) {
+		t.Errorf("join didn't keep settings and install the server and hook:\n%s", r)
+	}
+}
+
+func mustMakeDir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Join normally starts its own executable as the daemon. Give it a daemon with a local git
+// remote so it can exercise the real join path from the test binary.
+func startJoinTestDaemon(t *testing.T) Place {
+	t.Helper()
+	p, _ := clone(t)
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	git(t, p.Top, "init", "--bare", remote)
+	git(t, p.Top, "remote", "add", "origin", remote)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		defer close(done)
+		runErr = daemon.Run(ctx, daemon.Options{GitDir: p.GitDir, NamePool: -1})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		if runErr != nil {
+			t.Errorf("daemon: %v", runErr)
+		}
+	})
+	ready, stop := context.WithTimeout(t.Context(), 15*time.Second)
+	defer stop()
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := client.Connect(ready, p.GitDir, false); err == nil {
+			return p
+		}
+		select {
+		case <-done:
+			t.Fatalf("daemon exited before it was ready: %v", runErr)
+		case <-ready.Done():
+			t.Fatal("daemon wasn't ready within 15 seconds")
+		case <-tick.C:
+		}
 	}
 }
 

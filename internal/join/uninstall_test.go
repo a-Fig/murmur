@@ -134,6 +134,35 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	}
 }
 
+func TestUnregisterAntigravityRemovesToolApprovalFromBothSettings(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "gemini"), Label: "Antigravity", T3Own: true}
+	cli := filepath.Join(h.Dir, "antigravity-cli", "settings.json")
+	acp := filepath.Join(h.Dir, "antigravity-acp", "settings.json")
+	write(t, cli, `{"permissions":{"allow":["mcp(murmur/*)", "mcp(murmur/*)"]}, "model":"mine"}`)
+	write(t, acp, `{"permissions":{"allow":["mcp(other/*)", "mcp(murmur/*)"], "deny":["mcp(blocked/*)"]}}`)
+	if got := antigravityRemoval(sb.Env, h); !strings.Contains(got, cli) || !strings.Contains(got, acp) || strings.Count(got, `"mcp(murmur/*)"`) != 2 {
+		t.Errorf("manual removal: %q", got)
+	}
+	if did, _, err := sb.unregisterAntigravityAt(t.Context(), []agentHome{h}); err != nil || len(did) != 2 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if got := read(t, cli); strings.Contains(got, `"permissions"`) || !strings.Contains(got, `"model":"mine"`) {
+		t.Errorf("CLI settings: %s", got)
+	}
+	if got := read(t, acp); strings.Contains(got, "murmur/") || !strings.Contains(got, `"allow":["mcp(other/*)"]`) || !strings.Contains(got, `"deny":["mcp(blocked/*)"]`) {
+		t.Errorf("ACP settings: %s", got)
+	}
+	if got := antigravityRemoval(sb.Env, h); got != "" {
+		t.Errorf("manual removal after uninstall: %q", got)
+	}
+	const empty = `{"permissions":{"allow":[]}}`
+	write(t, cli, empty)
+	if did, _, err := sb.unregisterAntigravityAt(t.Context(), []agentHome{h}); err != nil || len(did) != 0 || read(t, cli) != empty {
+		t.Errorf("second unregister: did=%q err=%v", did, err)
+	}
+}
+
 // OpenCode 1's shape comes out too, and its "permission" keeps what the user had in it.
 func TestUninstallOpenCodeV1(t *testing.T) {
 	sb, _ := uninstallSandbox(t)

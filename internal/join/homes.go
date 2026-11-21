@@ -167,6 +167,15 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		if !ok {
 			continue
 		}
+		if h.T3Own && samePath(h.Dir, byAgent[i][0].Dir) {
+			// T3 sets GEMINI_HOME to its own instance directory. Keep the user's home for
+			// standalone Antigravity and for the skills T3 links into its instances.
+			if e.Home != "" {
+				byAgent[i][0].Dir = filepath.Join(e.Home, ".gemini")
+			} else if !in.On && !off {
+				byAgent[i][0].Dir = ""
+			}
+		}
 		if !in.On && !off {
 			// Said only of a configuration that nothing else registers in: one that is the agent's
 			// default gets the server whatever T3 does with it.
@@ -179,7 +188,9 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		for j, o := range byAgent[i] {
 			if samePath(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
 				dup = dup || sameCodexKey(a, o, h)
-				if o.Bin == "" {
+				if h.T3Own {
+					byAgent[i][j] = h
+				} else if o.Bin == "" {
 					byAgent[i][j].Bin = h.Bin // the default home, with the command T3 runs it by
 				}
 			}

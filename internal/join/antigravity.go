@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -22,11 +25,16 @@ import (
 // T3 Code runs it with a home of its own for each provider instance, which it says isolates
 // credentials, hooks and MCP servers: <T3's userdata>/providers/antigravity/<sha256 of the
 // instance's ID, in hex> (T3's resolveAntigravityInstanceDirectories, seen on T3 0.1.x). Nothing in
-// T3's settings moves it, so join registers there for each instance, as well as in the default.
-//
-// Antigravity gives the commands it runs ANTIGRAVITY_CONVERSATION_ID, the ID T3 keeps for the
-// thread's session (seen in a T3 thread's shell, 2026-11-15; not yet seen in an MCP server's), which
-// is how Murmur's server finds its thread.
+// T3's settings moves it. Join registers each initialized instance and the standalone install.
+const (
+	antigravityCLI       = "antigravity-cli"
+	antigravityACP       = "antigravity-acp"
+	antigravityAllowRule = "mcp(" + brand.MCPServer + "/*)"
+)
+
+var antigravityAllowPath = []string{"permissions", "allow"}
+
+var errAntigravityApprovalDenied = errors.New("couldn't write the tool approval rule")
 
 // antigravityArgs are the server's arguments in Antigravity's config.
 var antigravityArgs = []string{"mcp", "--agent", "antigravity"}
@@ -44,10 +52,8 @@ func antigravityHomeOf(t3Settings, id string) string {
 	return filepath.Join(filepath.Dir(t3Settings), "providers", "antigravity", hex.EncodeToString(sum[:]))
 }
 
-// registerAntigravityAt puts Murmur's server and hook in Antigravity's config in h. Antigravity isn't
-// touched where it isn't there: T3 makes an instance's home when it first runs it, and ~/.gemini
-// alone is Gemini CLI's too, so the default home counts only with the agy command or a folder only
-// Antigravity makes there.
+// registerAntigravityAt installs Murmur's server, hook and tool approval in h. Fresh means the
+// server was just added. T3 makes its instance's home when it first runs it.
 func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err error) {
 	if h.Dir == "" || !e.hasAntigravity(h) {
 		return nil, false, nil
@@ -56,7 +62,7 @@ func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err e
 	entry := jsonedit.New()
 	entry.Set("command", e.Exe)
 	entry.Set("args", toAny(antigravityArgs))
-	changed, err := setJSONIn(path, []string{"mcpServers", brand.MCPServer}, entry)
+	changed, fresh, err := setJSONIn(path, []string{"mcpServers", brand.MCPServer}, entry)
 	if err != nil {
 		return nil, false, err
 	}
@@ -64,33 +70,54 @@ func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err e
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
 	}
 	hooks := filepath.Join(h.Dir, "config", "hooks.json")
-	hooked, err := setJSONIn(hooks, []string{antigravityHookName}, antigravityHook(e.Exe))
+	hooked, _, err := setJSONIn(hooks, []string{antigravityHookName}, antigravityHook(e.Exe))
 	if err != nil {
-		return did, changed, err
+		return did, fresh, err
 	}
 	if hooked {
 		did = append(did, h.Label+": added "+brand.Product+"'s hook, in every project ("+hooks+")")
 	}
-	return did, changed, nil
+	settingsDir := antigravityACP
+	if !h.T3Own {
+		settingsDir = antigravityCLI
+		// Antigravity 1.5.13 (2026-11-20) stores approvals in the CLI or ACP app data.
+		// The shared antigravity/ folder alone doesn't establish a standalone CLI install.
+		if _, err := e.look("agy"); err != nil && !isDir(filepath.Join(h.Dir, settingsDir)) {
+			return did, fresh, nil
+		}
+	}
+	settings := filepath.Join(h.Dir, settingsDir, "settings.json")
+	allowed, err := allowAntigravityTools(settings)
+	if errors.Is(err, os.ErrPermission) {
+		// Antigravity's sandbox can protect its own settings. The server and hook are usable.
+		return did, fresh, fmt.Errorf("%w in %s. Add %q to permissions.allow there if Antigravity prompts for %s's tools", errAntigravityApprovalDenied, settings, antigravityAllowRule, brand.Product)
+	}
+	if allowed {
+		did = append(did, h.Label+": allowed "+brand.Product+"'s tools ("+settings+")")
+	}
+	return did, fresh, err
 }
 
 // hasAntigravity says Antigravity is installed for home h.
 func (e Env) hasAntigravity(h agentHome) bool {
-	if h.Bin != "" || h.T3Own && isDir(h.Dir) {
+	if h.T3Own {
+		return isDir(h.Dir)
+	}
+	if h.Bin != "" {
 		return true
 	}
 	if _, err := e.look("agy"); err == nil {
 		return true
 	}
-	return !h.T3Own && (isDir(filepath.Join(h.Dir, "antigravity")) || isDir(filepath.Join(h.Dir, "antigravity-cli")))
+	return isDir(filepath.Join(h.Dir, "antigravity")) || isDir(filepath.Join(h.Dir, antigravityCLI))
 }
 
 // setJSONIn sets path in the JSON file at path to v, making the file, and its directory, if they
-// aren't there. changed is false where it was v already.
-func setJSONIn(file string, path []string, v any) (changed bool, err error) {
+// aren't there. Added reports whether the key was new.
+func setJSONIn(file string, path []string, v any) (changed, added bool, err error) {
 	b, err := os.ReadFile(file)
 	if err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, false, err
 	}
 	text := string(b)
 	if strings.TrimSpace(text) == "" {
@@ -98,16 +125,55 @@ func setJSONIn(file string, path []string, v any) (changed bool, err error) {
 	}
 	out, changed, err := jsonedit.SetIn(text, path, v)
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", file, err)
+		return false, false, fmt.Errorf("%s: %w", file, err)
+	}
+	if !changed {
+		return false, false, nil
+	}
+	if _, found, err := jsonedit.GetIn(text, path); err != nil {
+		return false, false, fmt.Errorf("%s: %w", file, err)
+	} else {
+		added = !found
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		return false, false, err
+	}
+	if err := writeAtomic(file, []byte(out), 0o600); err != nil {
+		return false, false, fmt.Errorf("%s: %w", file, err)
+	}
+	return true, added, nil
+}
+
+func allowAntigravityTools(path string) (bool, error) {
+	text, err := readConfig(path)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "{}\n"
+	}
+	raw, found, err := jsonedit.GetIn(text, antigravityAllowPath)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	if found {
+		var rules []any
+		if err := json.Unmarshal([]byte(raw), &rules); err != nil || rules == nil {
+			return false, fmt.Errorf("%s: permissions.allow isn't a list", path)
+		}
+		if slices.Contains(rules, any(antigravityAllowRule)) {
+			return false, nil
+		}
+	}
+	out, changed, err := jsonedit.AppendIn(text, antigravityAllowPath, antigravityAllowRule)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
 	}
 	if !changed {
 		return false, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+	if err := writeJSONConfig(path, out, 0o600); err != nil {
 		return false, err
-	}
-	if err := writeAtomic(file, []byte(out), 0o600); err != nil {
-		return false, fmt.Errorf("%s: %w", file, err)
 	}
 	return true, nil
 }
@@ -147,7 +213,7 @@ func antigravityHookCommand(exe, event string) string {
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'" + args
 }
 
-// antigravityRemoval is the removal for Antigravity: the server, and join's hook.
+// antigravityRemoval tells how to remove the server, hook and tool approval by hand.
 func antigravityRemoval(_ Env, h agentHome) string {
 	var steps []string
 	for _, f := range []struct {
@@ -167,10 +233,18 @@ func antigravityRemoval(_ Env, h agentHome) string {
 			steps = append(steps, f.what+path)
 		}
 	}
+	for _, dir := range []string{antigravityCLI, antigravityACP} {
+		path := filepath.Join(h.Dir, dir, "settings.json")
+		if text, err := readConfig(path); err == nil && text != "" {
+			if _, found, _ := jsonedit.RemoveIn(text, antigravityAllowPath, antigravityAllowRule); found {
+				steps = append(steps, "delete \""+antigravityAllowRule+"\" from permissions.allow in "+path)
+			}
+		}
+	}
 	return strings.Join(steps, "; ")
 }
 
-// unregisterAntigravityAt takes Murmur's server and hook out of an Antigravity home.
+// unregisterAntigravityAt takes Murmur's server, hook and tool approval out of an Antigravity home.
 func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
 	for _, f := range []struct {
@@ -178,10 +252,12 @@ func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, no
 		steps []func(string) (string, bool, error)
 		what  string
 	}{
-		{"mcp_config.json", []func(string) (string, bool, error){deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers")}, "the " + brand.MCPServer + " MCP server"},
-		{"hooks.json", []func(string) (string, bool, error){deleteStep(antigravityHookName)}, brand.Product + "'s hook"},
+		{filepath.Join("config", "mcp_config.json"), []func(string) (string, bool, error){deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers")}, "the " + brand.MCPServer + " MCP server"},
+		{filepath.Join("config", "hooks.json"), []func(string) (string, bool, error){deleteStep(antigravityHookName)}, brand.Product + "'s hook"},
+		{filepath.Join(antigravityCLI, "settings.json"), []func(string) (string, bool, error){removeAntigravityAllow}, "the rule that allowed " + brand.Product + "'s tools"},
+		{filepath.Join(antigravityACP, "settings.json"), []func(string) (string, bool, error){removeAntigravityAllow}, "the rule that allowed " + brand.Product + "'s tools"},
 	} {
-		path := filepath.Join(h.Dir, "config", f.file)
+		path := filepath.Join(h.Dir, f.file)
 		text, err := readConfig(path)
 		if err != nil || text == "" {
 			if err != nil {
@@ -202,4 +278,13 @@ func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, no
 		did = append(did, h.Label+": removed "+f.what+" ("+path+")")
 	}
 	return did, notes, nil
+}
+
+func removeAntigravityAllow(text string) (string, bool, error) {
+	out, removed, err := jsonedit.RemoveIn(text, antigravityAllowPath, antigravityAllowRule)
+	if err != nil || !removed {
+		return out, removed, err
+	}
+	out, _, err = jsonSteps(out, emptyStep(antigravityAllowPath...), emptyStep("permissions"))
+	return out, true, err
 }
