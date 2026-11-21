@@ -287,3 +287,33 @@ registered MCP server picked up its tools from `notifications/tools/list_changed
 
   Every answer is a JSON object. Hooks run with `cmd /c` on Windows, so a path with a space is
   double-quoted.
+
+## Any agent in T3 Code: the shell commands
+
+2026-11-21, #913 (Tyler approved option 2 that day). `mur join` gives tools only to agents it knows,
+so an agent T3 runs that Murmur has no join for (Kiro, fx, any agent from the ACP registry) had
+none. Every harness can run a command, so `mur who`, `mur send`, `mur inbox` and `mur status` do
+what the tools of those names do (`internal/mcpserver/commands.go`, rendered by `internal/view`).
+`lookup`, `tags` and `mute` stay tools only.
+
+- **Which session.** The command's shell has the thread's ID in `T3CODE_THREAD_ID`. Read in T3
+  0.1.11's source (2026-11-21, not run): its Claude, Codex, Pi, Antigravity, Kiro, fx and
+  ACP-registry drivers set it in the agent's process, so in its shell; Grok's drops it, and
+  OpenCode, Muse and Cursor never set it. There the commands stop and say so. The session's ID is
+  `threadID(thread)`, the one a Claude or Antigravity thread's own server registers, so the
+  address and name are the thread's whichever registers first. If a session is live in the thread
+  already (its MCP server's), the command acts as it. A command under two agents' programs (an
+  agent started from another's thread shell) has the outer thread's variable, and stops.
+- **Lifetime.** A command's hello closes with the command, so the daemon holds the session
+  (`proto.Hello.Command`, protocol 24): live while the thread is in use, which is a run going in
+  T3's database or a command or run in the last 30 minutes, about as long as T3 keeps an idle
+  provider, and so an MCP session, running. A thread T3 shows settled ends it sooner. Then it stops
+  as any session does, and its route stays kept, so a message still wakes the thread (handoff.md, "A
+  thread that is idle"); the next command registers it again at the same address. A server of the
+  thread's own takes the session over from a hold. A daemon restart ends holds, and the next command
+  makes one again.
+- **Delivery.** A turn through `t3 thread send`, as for any T3 thread, and its last line says to
+  answer with `mur send`. There is no hook, so no notice mid-turn: busy or idle comes from T3's
+  database (#699), and a message waits for the turn's end.
+- **Not covered.** Files and `tell_me` in `mur send`; a harness outside T3, which has no thread ID
+  to name its session by.
