@@ -62,6 +62,7 @@ func TestACommandsSessionStaysAfterItsHello(t *testing.T) {
 	if !slices.Contains(c.Args, "thread-c1") || !strings.Contains(c.Stdin, "for the command's session") {
 		t.Errorf("T3 was asked %q with %q", c.Args, c.Stdin)
 	}
+	t.Logf("the turn T3 was handed:\n%s", c.Stdin)
 	if want := "Reply with `" + brand.Command + " send`"; !strings.Contains(c.Stdin, want) {
 		t.Errorf("the turn doesn't say to answer with the command:\n%s", c.Stdin)
 	}
@@ -114,4 +115,22 @@ func TestACommandsSessionEndsWithItsThread(t *testing.T) {
 	commandHello(t, b, "c4c4c4", exe, "thread-c4")
 	// Watched in the log: a request as the session would be the session at work.
 	eventually(t, "the session to stop with its thread idle", func() bool { return logHas(b, "/c4c4c4 stopped") })
+}
+
+// A server of the thread's that registered at an ID of its own, as Codex's does, and finds the
+// thread later, lets the command's session go and takes its name.
+func TestAServerThatFindsTheThreadLaterTakesTheCommandsName(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-c5": {LastRun: time.Now()}}}
+	b := newDeviceWith(t, remote, func(d *device) { d.grace = 200 * time.Millisecond; d.threadState = threads.read })
+
+	name := b.named(commandHello(t, b, "c5c5c5", exe, "thread-c5"))
+	codex := hello(t, b, proto.Hello{ID: "d5d5d5", Agent: "codex in T3", Route: proto.Route{T3CLI: exe}})
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "d5d5d5", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-c5"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	eventually(t, "the command's session to stop", func() bool { return logHas(b, "/c5c5c5 stopped") })
+	b.nameIs(codex, name)
 }

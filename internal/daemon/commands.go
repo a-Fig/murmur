@@ -27,10 +27,14 @@ var commandIdle = 30 * time.Minute
 var holdCheck = time.Minute
 
 // commandHold is a held session's hold. end is closed when it is let go; taken says another hello
-// took the session over, which then carries it on, and not that it ended.
+// took the session over, which then carries it on, and not that it ended. A hold let go otherwise
+// starts the session's grace there and then, under mu, with takeover the grace's channel: a session
+// that finds the thread at that moment (retireRoutesLocked) then takes its name, which a session
+// still live would keep from it (uniqueKeyLocked).
 type commandHold struct {
-	end   chan struct{}
-	taken bool
+	end      chan struct{}
+	taken    bool
+	takeover chan struct{}
 }
 
 // liveInThreadLocked is a session live in T3 thread (home, thread), nil if none is. Caller holds mu.
@@ -54,6 +58,10 @@ func (d *Daemon) releaseHoldLocked(s *session, taken bool) {
 		return
 	}
 	s.hold.taken = taken
+	if !taken {
+		s.hold.takeover = make(chan struct{})
+		s.dropped, s.takeover = time.Now(), s.hold.takeover
+	}
 	close(s.hold.end)
 	s.hold = nil
 }

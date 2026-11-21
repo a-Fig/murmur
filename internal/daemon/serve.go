@@ -373,11 +373,13 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 	}
 
+	var takeover chan struct{}
 	if hold != nil {
 		conn.Close() // the command has its answer, and exits
 		if !d.waitHold(ctx, s, hold) {
 			return // a new hello carries the session on
 		}
+		takeover = hold.takeover // its grace began as the hold was let go; nil if the daemon is stopping
 	} else {
 		stopWatch := context.AfterFunc(ctx, func() { conn.Close() })
 		io.Copy(io.Discard, r) // returns when the session's process closes the connection, or dies
@@ -391,8 +393,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.mu.Unlock()
 		return
 	}
-	takeover := make(chan struct{})
-	s.dropped, s.takeover = time.Now(), takeover
+	if takeover == nil {
+		takeover = make(chan struct{})
+		s.dropped, s.takeover = time.Now(), takeover
+	}
 	d.mu.Unlock()
 
 	var over <-chan struct{} // nil, so never, unless a test ends the grace
