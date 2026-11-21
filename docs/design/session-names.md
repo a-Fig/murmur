@@ -172,7 +172,9 @@ names routes by it all the same.
   after it was last seen (`peerNames`). One never seen in presence goes by the first by spelling
   of the names the registry gave its address: the registry keeps no order of them, and a record's
   time is its writer's clock. That can be an older name; a send to it reaches the same session, as
-  above.
+  above. A session still listed without a name whose name has moved to another session on the same
+  device — as after a Codex or Claude Code handoff with no name set aside — is shown by its address
+  instead, not by the name the other session holds (#875, 2026-11-20).
 - **A name held by another session** (#37, #46). A `/resume` back to an earlier conversation can put
   its name on a session whose Murmur ID isn't the one the registry has. A daemon records in its
   state file the last session to hold each name and the last name each of its sessions held. A
