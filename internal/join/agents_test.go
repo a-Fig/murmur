@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -295,7 +296,7 @@ func TestRegisterAntigravity(t *testing.T) {
 	}
 	checkHandler := func(event string, hs []handler) {
 		t.Helper()
-		if len(hs) != 1 || hs[0].Type != "command" || hs[0].Timeout != 30 || !strings.HasSuffix(hs[0].Command, " hook --event "+event+" antigravity") {
+		if len(hs) != 1 || hs[0].Type != "command" || hs[0].Timeout != 30 || hs[0].Command != antigravityHookCommand(sb.Exe, event) {
 			t.Errorf("%s: %+v", event, hs)
 		}
 	}
@@ -371,6 +372,20 @@ func TestAntigravityHookCommand(t *testing.T) {
 		if got := antigravityHookCommand(`C:\no such dir\with space\mur.exe`, "Stop"); got != `"C:\no such dir\with space\mur.exe" hook --event Stop antigravity` {
 			t.Errorf("got %q", got)
 		}
+	}
+}
+
+func TestAntigravityPreToolUseAllowsWhenMurIsMissing(t *testing.T) {
+	command := antigravityHookCommand(filepath.Join(t.TempDir(), "missing binary", "mur.exe"), "PreToolUse")
+	cmd := exec.Command("sh", "-c", command)
+	if runtime.GOOS == "windows" {
+		// Let cmd expand the command verbatim, including the quotes in the JSON.
+		cmd = exec.Command("cmd", "/d", "/c", "%MURMUR_TEST_HOOK_COMMAND%")
+		cmd.Env = append(os.Environ(), "MURMUR_TEST_HOOK_COMMAND="+command)
+	}
+	out, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
+		t.Fatalf("running %q printed %q, error %v", command, out, err)
 	}
 }
 

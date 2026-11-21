@@ -140,6 +140,9 @@ func antigravityHook(exe string) *jsonedit.Object {
 func antigravityHookCommand(exe, event string) string {
 	args := " hook --event " + event + " antigravity"
 	if runtime.GOOS == "windows" {
+		if event == "PreToolUse" {
+			args += ` || echo {"decision":"allow"}`
+		}
 		if bareSafe(exe) {
 			return exe + args
 		}
@@ -147,6 +150,9 @@ func antigravityHookCommand(exe, event string) string {
 			return short + args
 		}
 		return `"` + exe + `"` + args
+	}
+	if event == "PreToolUse" {
+		args += ` || printf '{"decision":"allow"}\n'`
 	}
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'" + args
 }

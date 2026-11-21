@@ -3,6 +3,7 @@ package hook
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 )
 
 // Antigravity's hook (#650). Join names the event on the command line for compatibility with
@@ -32,9 +33,6 @@ type antigravityToolCall struct {
 // whether the hook acts on event.
 func fromAntigravity(in *input, event string) bool {
 	in.SessionID, in.Event, in.Prompt = in.ConversationID, "", ""
-	if in.Cwd == "" && len(in.WorkspacePaths) > 0 {
-		in.Cwd = in.WorkspacePaths[0]
-	}
 	switch event {
 	case "PreInvocation":
 		in.Event = "UserPromptSubmit"
@@ -58,11 +56,17 @@ func fromAntigravity(in *input, event string) bool {
 			in.Event = postFailure
 		}
 		in.ToolName, in.ToolUseID = in.ToolCall.Name, in.ToolCall.ID
+		if cwd := in.ToolCall.Args.Cwd; in.ToolName == antigravityCommand && cwd != "" && in.Cwd != "" && !filepath.IsAbs(cwd) {
+			in.ToolCall.Args.Cwd = filepath.Join(in.Cwd, cwd)
+		}
 		if in.ToolUseID == "" && in.StepIdx != nil {
 			in.ToolUseID = fmt.Sprintf("step-%d", *in.StepIdx)
 		}
 	default:
 		return false
+	}
+	if in.Cwd == "" && len(in.WorkspacePaths) > 0 {
+		in.Cwd = in.WorkspacePaths[0]
 	}
 	return true
 }

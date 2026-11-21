@@ -162,6 +162,10 @@ func TestAntigravityToolHooks(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	relative, err := filepath.Rel(repo, sub)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		event, name, id, err, cwd, op, useID string
 		step                                 *int
@@ -170,6 +174,7 @@ func TestAntigravityToolHooks(t *testing.T) {
 		{"PostToolUse", "run_command", "toolu_01", "", "", proto.OpToolEnd, "toolu_01", new(4)},
 		{"PreToolUse", "run_command", "", "", sub, proto.OpToolStart, "step-0", new(0)},
 		{"PostToolUse", "run_command", "", "exit status 1", sub, proto.OpToolEnd, "step-0", new(0)},
+		{"PreToolUse", "run_command", "relative", "", relative, proto.OpToolStart, "relative", nil},
 		{"PreToolUse", "view_file", "reader", "", "", "", "", nil},
 		{"PostToolUse", "view_file", "reader", "", "", "", "", nil},
 		{"PreToolUse", "run_command", "", "", "", "", "", nil},
@@ -207,7 +212,7 @@ func TestAntigravityToolHooks(t *testing.T) {
 		}
 		wantCwd, wantGitDir := repo, gitDir
 		if c.cwd != "" {
-			wantCwd, wantGitDir = c.cwd, filepath.Join(other, ".git")
+			wantCwd, wantGitDir = sub, filepath.Join(other, ".git")
 		}
 		if len(got) != 1 || got[0].Op != c.op || got[0].ToolUseID != c.useID ||
 			got[0].Agent != hook.Antigravity || got[0].ClaudeSession != "conv-1" || got[0].Cwd != wantCwd {
