@@ -633,11 +633,14 @@ func TestT3ReopensAThreadWhileTheCommandLineHasItsConversation(t *testing.T) {
 	b.nameIs(cli, name)
 
 	// T3 reopens the thread, with its ID made from the thread.
-	t3, err := hello(proto.Hello{ID: "tttttt", Agent: "claude-code in T3", ClaudeSession: "conv-1", ClientPID: 1000,
-		Route: proto.Route{T3Thread: "thread-1", T3CLI: "/opt/t3/bin/t3"}, ByThread: true})
+	h := proto.Hello{ID: "tttttt", Agent: "claude-code in T3", ClaudeSession: "conv-1", ClientPID: 1000,
+		Route: proto.Route{T3Thread: "thread-1", T3CLI: "/opt/t3/bin/t3"}, ByThread: true}
+	tconn, tresp, err := b.c.Hello(context.Background(), h)
 	if err != nil {
 		t.Fatalf("T3 reopened the thread while the command line runs: %v", err)
 	}
+	t.Cleanup(func() { tconn.Close() })
+	t3 := tresp.Self
 	if !strings.HasSuffix(t3, "/tttttt") {
 		t.Errorf("T3 registered as %s, want .../tttttt", t3)
 	}
@@ -646,6 +649,20 @@ func TestT3ReopensAThreadWhileTheCommandLineHasItsConversation(t *testing.T) {
 		other := b.nameOf(cli)
 		return other != "" && other != name
 	})
+
+	// T3's server restarts: the thread's session comes back at its own address, with the name.
+	tconn.Close()
+	eventually(t, "T3 to stop again", func() bool { return busLines(b, t3, "stopped") == 1 })
+	h.ClientPID = 1100
+	again, aresp, err := b.c.Hello(context.Background(), h)
+	if err != nil {
+		t.Fatalf("T3 back: %v", err)
+	}
+	t.Cleanup(func() { again.Close() })
+	if aresp.Self != t3 {
+		t.Errorf("T3 restarted as %s, want %s", aresp.Self, t3)
+	}
+	b.nameIs(aresp.Self, name)
 }
 
 // When T3 reopens a late-named thread while the command line holds its Claude-derived address, T3
@@ -836,4 +853,63 @@ func TestT3ReopensAfterClearWhileCommandLineHasOldConversation(t *testing.T) {
 		t.Errorf("T3 took %s from the live command-line session", name)
 	}
 	b.nameIs(cli, name)
+}
+
+// A command-line session that takes over a late-named T3 session during T3's grace doesn't inherit
+// the thread key, so a subsequent /clear on the command line moves it to a new name rather than
+// keeping T3's thread name (#873).
+func TestCLIClearAfterTakingT3GraceGetsANewName(t *testing.T) {
+	t.Parallel()
+	b := newTimedDevice(t, newRemote(t), time.Hour, time.Hour)
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-old", ClientPID: 800,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-clear", T3CLI: "/opt/t3/bin/t3"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+	conn.Close()
+	eventually(t, "T3 to enter grace", func() bool {
+		return b.do(proto.Request{Op: proto.OpStatus, Session: "xxxxxx", Doing: "probe"}).Error != ""
+	})
+
+	cli, _ := b.claudeIn("xxxxxx", 900, "conv-old", "")
+	b.nameIs(cli, name)
+	b.hook("conv-new", 900)
+	if got := b.named(cli); got == name {
+		t.Errorf("CLI /clear kept T3's name %s", name)
+	}
+}
+
+// A second ByThread server for a live thread is still refused as in use even when the live holder
+// has no T3 CLI path (as under headless t3 serve), because threadIDLocked matches on the live
+// session's T3Thread rather than T3CLI (#873).
+func TestNestedThreadServerIsRefusedWhenLiveHolderHasNoT3CLI(t *testing.T) {
+	t.Parallel()
+	b := newTimedDevice(t, newRemote(t), time.Hour, time.Hour)
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "xxxxxx", Agent: "claude-code in T3", ClaudeSession: "conv-old", ClientPID: 800,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	b.named(resp.Self)
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "xxxxxx", Route: &proto.Route{T3Thread: "thread-no-cli"}}); r.Error != "" {
+		t.Fatalf("route: %s", r.Error)
+	}
+
+	nested, _, err := b.c.Hello(context.Background(), proto.Hello{
+		ID: "tttttt", Agent: "claude-code in T3", ClaudeSession: "conv-nested", ClientPID: 900,
+		ByThread: true, Route: proto.Route{T3Thread: "thread-no-cli"},
+	})
+	if err == nil {
+		t.Cleanup(func() { nested.Close() })
+	}
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("nested process accepted or wrong error: %v", err)
+	}
 }
