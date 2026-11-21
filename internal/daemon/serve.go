@@ -498,6 +498,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	if sess == "" {
 		sess = proto.CLISession
 	}
+	var sender fileSender
 	d.mu.Lock()
 	now := time.Now()
 	d.lastActive = now
@@ -505,6 +506,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 	// Whatever a session's MCP server asks is the session at work (#21). The CLI's calls are a
 	// human's, and hooks, which reach here as the CLI, mark the sessions they speak for themselves.
 	if s := d.sessions[sess]; registered && s != nil {
+		if req.Op == proto.OpSend && len(req.Files) > 0 {
+			sender = fileSender{agent: s.agent, route: s.route}
+		}
 		d.touchLocked(s, now)
 		if toolOps[req.Op] && s.toolCalled.IsZero() {
 			s.toolCalled = now
@@ -562,7 +566,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return proto.Response{OK: true, Self: from, Note: "status set"}
 
 	case proto.OpSend:
-		return d.send(ctx, from, req)
+		return d.sendFrom(ctx, from, req, sender, nil)
 
 	case proto.OpTags:
 		if len(req.For) > 0 {
@@ -900,6 +904,10 @@ func (d *Daemon) send(ctx context.Context, from string, req proto.Request) proto
 // sendWith is send with files that aren't paths for the daemon to read (req.Files): the page's
 // person's, which the browser uploaded.
 func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, uploads []sendFile) proto.Response {
+	return d.sendFrom(ctx, from, req, fileSender{}, uploads)
+}
+
+func (d *Daemon) sendFrom(ctx context.Context, from string, req proto.Request, sender fileSender, uploads []sendFile) proto.Response {
 	to := strings.TrimSpace(req.To)
 	// A device's group is the device (#463): the message goes on the bus to the device, as one sent
 	// to its ID does, so every daemon delivers it, older ones too, and only to that device's
@@ -1113,7 +1121,7 @@ func (d *Daemon) sendWith(ctx context.Context, from string, req proto.Request, u
 	if len(req.Files) > 0 || len(uploads) > 0 {
 		// The files go out first, on a ref of the message's own, so a daemon that reads the event
 		// finds them there (files.go).
-		read, err := d.readSendFiles(req.Session, req.Files)
+		read, err := d.readSendFiles(sender, req.Files)
 		if err != nil {
 			return refuse(proto.RefusedSend, "not sent: "+err.Error())
 		}

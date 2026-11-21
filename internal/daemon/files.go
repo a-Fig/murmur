@@ -253,7 +253,13 @@ type sendRoot struct {
 	id   os.FileInfo // what it is, looked at through r
 }
 
-func (d *Daemon) openSendRoots(sender string) *sendRoots {
+// fileSender is the session's identity and route when the daemon accepted its send request.
+type fileSender struct {
+	agent string
+	route proto.Route
+}
+
+func (d *Daemon) openSendRoots(sender fileSender) *sendRoots {
 	s := &sendRoots{vols: map[string]*os.Root{}}
 	gitDir, err := s.local(d.opt.GitDir)
 	var git sendRoot
@@ -270,11 +276,7 @@ func (d *Daemon) openSendRoots(sender string) *sendRoots {
 	} else {
 		d.log.Printf("looking at the git directory %s, for where a send may read files: it can't be opened", d.opt.GitDir)
 	}
-	var route proto.Route
 	d.mu.Lock()
-	if ss := d.sessions[sender]; ss != nil {
-		route = ss.route
-	}
 	for _, ss := range d.sessions {
 		if filepath.IsAbs(ss.cwd) && !netPath(ss.cwd) {
 			s.sessions = append(s.sessions, filepath.Clean(ss.cwd))
@@ -293,7 +295,7 @@ func (d *Daemon) openSendRoots(sender string) *sendRoots {
 			root.r.Close()
 		}
 	}
-	if d.opt.TempDir == "" && (route.T3CLI != "" || route.T3Thread != "") {
+	if route := sender.route; sender.agent == "antigravity in T3" && (route.T3CLI != "" || route.T3Thread != "") {
 		for _, home := range t3.Homes(route.T3CLI, route.T3Home) {
 			if route.T3Home != "" && home != filepath.Clean(route.T3Home) {
 				break // an explicit T3 home belongs to this session
@@ -317,6 +319,13 @@ func (s *sendRoots) openAntigravityTemp(home string) (sendRoot, bool) {
 		return sendRoot{}, false
 	}
 	for _, part := range []string{"userdata", "antigravity-tmp"} {
+		if part == "antigravity-tmp" {
+			// A CLI on PATH may live outside T3's home. Check for its database in userdata.
+			if info, err := root.r.Lstat(filepath.Base(t3.StateDB(home))); err != nil || !info.Mode().IsRegular() {
+				root.r.Close()
+				return sendRoot{}, false
+			}
+		}
 		info, err := root.r.Lstat(part)
 		if err != nil || !info.IsDir() || linkIn(info, func() error { _, err := root.r.Readlink(part); return err }) {
 			root.r.Close()
@@ -683,7 +692,7 @@ func (d *Daemon) sendTemp() string {
 // readSendFiles reads the files an agent's send names, each no larger than a file may be, and only
 // from where sendRoots allows. A path is followed through its links first, and the file read is
 // the one it leads to, so a link in temp to ~/.ssh is refused (openSend).
-func (d *Daemon) readSendFiles(sender string, paths []string) ([]sendFile, error) {
+func (d *Daemon) readSendFiles(sender fileSender, paths []string) ([]sendFile, error) {
 	if len(paths) > bus.MaxFiles {
 		return nil, fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(paths))
 	}
