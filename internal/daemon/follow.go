@@ -681,7 +681,9 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 		return byID
 	}
 	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
-		byProcess[0].hookNative = req.ClaudeSession
+		s := byProcess[0]
+		s.hookNative = req.ClaudeSession
+		d.findHookThreadLocked(s)
 		return byProcess
 	}
 	for _, s := range byProcess {

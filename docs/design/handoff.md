@@ -5,17 +5,17 @@ over.
 
 ## T3 Code
 
-- **Finding the thread** (#56). Claude Code's MCP server takes the thread from `T3CODE_THREAD_ID`
-  ([session names](session-names.md#one-address-per-t3-thread)). Every other server, and a Claude
-  Code one that can't use it, looks the provider's own session up in T3's database:
-  `statev2.sqlite` in T3's data directory (`T3CODE_HOME`, the directory the CLI's `bin` is in, or
-  `~/.t3`), table
+- **Finding the thread** (#56, #886). Claude Code and Antigravity MCP servers take the thread from
+  `T3CODE_THREAD_ID` when T3 runs them directly. The fallback looks the provider's session up in
+  T3's database. The daemon can use the ID from an Antigravity hook when the MCP server has
+  neither ID. T3 stores this in `statev2.sqlite` in its data directory (`T3CODE_HOME`, the
+  directory the CLI's `bin` is in, or `~/.t3`), in
   `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId` is
-  the Claude Code session ID or the Codex thread ID, beside `thread_id` (seen on T3 0.1.x,
-  2026-10-29). The ID comes from the hook or `CLAUDE_CODE_SESSION_ID` for Claude Code, and from a
-  tool call's `_meta.threadId` for Codex. The lookup only reads: SQLite's read-only mode (never
-  immutable, which would ignore the write-ahead log and miss the newest threads), at most 1.5 s on a
-  lock and 4 s in all, and any trouble leaves the session as it was.
+  provider's session ID, beside `thread_id` (seen on T3 0.1.x, 2026-10-29). The ID comes from the
+  hook or `CLAUDE_CODE_SESSION_ID` for Claude Code, and from a tool call's `_meta.threadId` for
+  Codex. The lookup uses SQLite's read-only mode so it can see the write-ahead log. Each attempt
+  waits up to 1.5 s on a lock and 4 s overall. The Antigravity hook fallback retries for up to
+  3 minutes while T3 writes the provider row.
 - **SQLite in Go.** The reader is `modernc.org/sqlite`, SQLite translated to Go, so `mur` stays one
   binary built without a C compiler for every platform. The cost is size: with the rest of that
   change, the Windows binary grew from 17.7 MB to 23.8 MB (12.3 MB to 16.2 MB built with `-s -w`) on

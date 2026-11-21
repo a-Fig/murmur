@@ -148,6 +148,8 @@ type Options struct {
 	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// ThreadOf looks up a T3 thread by provider session ID (t3db.ThreadOf). Tests can replace it.
+	ThreadOf func(ctx context.Context, cli, home, native string) (string, error)
 	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), for
 	// the sessions another session started (codexkids.go). Tests put a stand-in here.
 	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
@@ -283,6 +285,9 @@ func (o *Options) defaults() {
 	}
 	if o.ThreadState == nil {
 		o.ThreadState = t3db.StateOf
+	}
+	if o.ThreadOf == nil {
+		o.ThreadOf = t3db.ThreadOf
 	}
 	if o.CodexLineage == nil {
 		o.CodexLineage = title.CodexLineage

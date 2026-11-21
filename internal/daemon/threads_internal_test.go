@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,61 @@ func threadsDaemon(t *testing.T) *Daemon {
 	d.handedTo, d.handing = map[threadKey][]handed{}, map[handing]bool{}
 	d.kick, d.pushKick = make(chan struct{}, 1), make(chan struct{}, 1)
 	return d
+}
+
+func TestAntigravityT3HookLookupRetriesAndLeavesANewerRouteAlone(t *testing.T) {
+	t.Parallel()
+	d := threadsDaemon(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	d.bgCtx = ctx
+	t.Cleanup(func() { cancel(); d.bg.Wait() })
+
+	route := proto.Route{T3CLI: "/t3/bin/t3", T3Home: "/t3"}
+	s := &session{id: "aaaaaa", agent: "antigravity in T3", clientPID: 100, route: route}
+	d.sessions[s.id] = s
+	var calls atomic.Int32
+	retrying, release := make(chan struct{}), make(chan struct{})
+	d.opt.ThreadOf = func(ctx context.Context, cli, home, native string) (string, error) {
+		if cli != route.T3CLI || home != route.T3Home || native != "agy-conversation" {
+			t.Errorf("looked up %q in %q via %q", native, home, cli)
+		}
+		switch calls.Add(1) {
+		case 1:
+			return "", t3db.ErrNotFound
+		case 2:
+			close(retrying)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		return "old-thread", nil
+	}
+	hook := proto.Request{Agent: "antigravity", ClaudeSession: "agy-conversation", Ancestors: []int{100}}
+	d.mu.Lock()
+	d.agentHookSessionsLocked(hook)
+	d.mu.Unlock()
+	select {
+	case <-retrying:
+	case <-ctx.Done():
+		t.Fatal("the lookup did not retry after a missing row")
+	}
+	if !d.mu.TryLock() {
+		t.Fatal("the lookup held the daemon mutex while reading T3's database")
+	}
+	d.agentHookSessionsLocked(hook)
+	d.agentHookSessionsLocked(hook)
+	s.route.T3Thread = "new-thread"
+	d.mu.Unlock()
+	close(release)
+	d.bg.Wait()
+	if got := calls.Load(); got != 2 {
+		t.Errorf("lookups = %d, want one attempt and its retry", got)
+	}
+	if got := s.route.T3Thread; got != "new-thread" {
+		t.Errorf("the hook's lookup replaced the newer route with %q", got)
+	}
 }
 
 // inT3 registers session id as running in T3 thread "thread-<id>", last at work ago.

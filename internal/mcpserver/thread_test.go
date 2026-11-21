@@ -33,7 +33,7 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 		t.Error("two threads share an ID")
 	}
 
-	// Only Claude Code's servers take it: an OpenCode server serves many sessions, say, and can't
+	// An OpenCode server serves many sessions, say, and can't
 	// tell which thread is whose.
 	if h := helloFor("opencode", "/work"); h.ByThread || h.T3Thread != "" {
 		t.Errorf("opencode: %+v", h)
@@ -51,6 +51,72 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 	t.Setenv("T3CODE_CLI_PATH", "")
 	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != sessionID("a4ca6bbb-aaaa-bbbb-cccc-ddddeeeeffff") {
 		t.Errorf("outside T3: %+v", h)
+	}
+}
+
+func TestAntigravityRegistersByItsT3Thread(t *testing.T) {
+	t.Setenv(threadEnv, "thread-agy")
+	t.Setenv("T3CODE_HOME", "/t3")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "claude-socket")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "claude-token")
+
+	oldServing, oldAbove := servingT3, agentAbove
+	t.Cleanup(func() { servingT3, agentAbove = oldServing, oldAbove })
+	for _, cli := range []string{"/t3/bin/t3", ""} {
+		name := "desktop"
+		if cli == "" {
+			name = "t3 serve"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("T3CODE_CLI_PATH", cli)
+			servingT3 = func() (string, bool) {
+				if cli != "" {
+					t.Fatal("looked for t3 serve with a CLI path in the environment")
+				}
+				return "/t3/bin/t3", true
+			}
+			if seen := t3Of("antigravity"); seen.cli != "/t3/bin/t3" || !seen.thread {
+				t.Errorf("t3Of = %+v", seen)
+			}
+			h := helloFor("antigravity", "/work")
+			if h.ID != threadID("thread-agy") || h.T3Thread != "thread-agy" || !h.ByThread || h.Native != "" ||
+				h.T3CLI != "/t3/bin/t3" || h.T3Home != "/t3" || h.Agent != "antigravity in T3" ||
+				h.MsgSocket != "" || h.MsgToken != "" {
+				t.Errorf("hello = %+v", h)
+			}
+		})
+	}
+}
+
+func TestAgentsInAT3ShellKeepTheirOwnIdentity(t *testing.T) {
+	t.Setenv(threadEnv, "outer-thread")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-inner")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "agy-inner")
+	oldServing, oldAbove := servingT3, agentAbove
+	t.Cleanup(func() { servingT3, agentAbove = oldServing, oldAbove })
+	servingT3 = func() (string, bool) {
+		t.Fatal("looked for t3 serve for an agent started in another agent's shell")
+		return "", false
+	}
+	for _, tc := range []struct {
+		agent, id string
+		chain     []string
+	}{
+		{"claude-code", sessionID("claude-inner"), []string{"claude.exe", "powershell.exe", "agy.exe"}},
+		{"antigravity", nativeID("agy-inner"), []string{"agy", "bash", "claude"}},
+		{"antigravity", nativeID("agy-inner"), []string{"agy.exe", "powershell.exe", "agy.exe"}},
+	} {
+		agentAbove = func() bool {
+			return agentInChain(len(tc.chain), func(i int) (string, string, bool) { return tc.chain[i], "", true })
+		}
+		for _, cli := range []string{"/t3/bin/t3", ""} {
+			t.Setenv("T3CODE_CLI_PATH", cli)
+			h := helloFor(tc.agent, "/work")
+			if h.ByThread || h.T3Thread != "" || h.ID != tc.id || h.T3CLI != cli {
+				t.Errorf("hello for %v with T3 CLI %q = %+v", tc.chain, cli, h)
+			}
+		}
 	}
 }
 
@@ -142,6 +208,9 @@ func TestAgentInChain(t *testing.T) {
 			filepath.Join(t3, "agy_acp_server.exe"), "T3 Code (Beta).exe"}, true},
 		"claude from Antigravity's shell, Linux": {[]string{"claude", "bash",
 			filepath.Join(t3, "localharness_external"), filepath.Join(t3, "agy_acp_server.par")}, true},
+		"claude from agy.exe's shell":  {[]string{"claude.exe", "powershell.exe", filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, true},
+		"claude from agy's shell":      {[]string{"claude", "bash", filepath.Join(t3, "agy"), "node"}, true},
+		"a T3 thread's own agy":        {[]string{"agy.exe", "T3 Code (Beta).exe"}, false},
 		"a T3 thread's own claude":     {[]string{"claude", "node", "T3 Code (Beta).exe"}, false},
 		"claude from a thread's shell": {[]string{"claude", "bash", "claude", "node"}, true},
 		"an unreadable parent":         {[]string{"claude", ""}, false},

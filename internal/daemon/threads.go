@@ -37,6 +37,42 @@ import (
 // threadKey is a T3 thread, by T3's data directory and its ID.
 type threadKey struct{ home, thread string }
 
+// findHookThreadLocked starts one search when a hook supplies the conversation ID of an
+// Antigravity session whose MCP server has neither ID. Caller holds mu. The hook can return
+// while the lookup runs. T3 may still be writing the provider row, so retry with a bounded backoff.
+func (d *Daemon) findHookThreadLocked(s *session) {
+	route, native, pid, agent := s.route, s.hookNative, s.clientPID, s.agent
+	if !isAgent(agent, "antigravity") || route.T3CLI == "" || route.T3Thread != "" || native == "" ||
+		d.bgCtx == nil || d.bgCtx.Err() != nil {
+		return
+	}
+	d.bg.Go(func() {
+		ctx, cancel := context.WithTimeout(d.bgCtx, 3*time.Minute)
+		defer cancel()
+		for delay := time.Second; ctx.Err() == nil; delay = min(2*delay, 15*time.Second) {
+			thread, err := d.opt.ThreadOf(ctx, route.T3CLI, route.T3Home, native)
+			found := err == nil && thread != ""
+			d.mu.Lock()
+			current := ctx.Err() == nil && d.sessions[s.id] == s && s.hookNative == native &&
+				s.clientPID == pid && s.agent == agent && s.route == route
+			if current && found {
+				resolved := route
+				resolved.T3Thread = thread
+				d.setRouteLocked(s, resolved)
+			}
+			d.mu.Unlock()
+			if !current || found {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
+	})
+}
+
 // threadLoop reads the threads' state at once, then every TitleEvery.
 func (d *Daemon) threadLoop(ctx context.Context) {
 	t := time.NewTicker(d.opt.TitleEvery)
