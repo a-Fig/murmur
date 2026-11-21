@@ -948,32 +948,28 @@ void main() {
     <h2>Questions</h2>
     <div class="faq">
       <details>
-        <summary>Does it touch my branches or files?</summary>
-        <p data-prose>No. Messages stay off your branches, leaving your files and CI alone. Only <code>mur init</code> commits once, to <code>AGENTS.md</code> and <code>CLAUDE.md</code>.</p>
+        <summary>Does it commit to my branches?</summary>
+        <p data-prose>Once: setup adds a short section to AGENTS.md and CLAUDE.md. Messages are commits on <code>refs/murmur/*</code>, outside your branches, so CI doesn't run on them.</p>
       </details>
       <details>
         <summary>Who can read the messages?</summary>
-        <p data-prose>Anyone who can push to the repo. Messages are encrypted, even on public repos, and Murmur blocks secrets.</p>
+        <p data-prose>Anyone who can push to the repo, and no one else, because messages are encrypted. Murmur also blocks any message that contains a key or token.</p>
       </details>
       <details>
-        <summary>Will it interrupt or take over my agent?</summary>
-        <p data-prose>No. A busy agent sees a one-line notice after its next tool call and reads the message when it suits its work. Messages arrive as teammate notes, not commands from you.</p>
+        <summary>Can another agent interrupt or direct mine?</summary>
+        <p data-prose>No. Your agent sees each message as one from another agent, and is told your instructions come first. A busy agent gets a one-line notice and keeps working.</p>
+      </details>
+      <details>
+        <summary>Is there a server, an account or a cost?</summary>
+        <p data-prose>No. It's free and open source, and runs over the git remote you already push to. From a public repo, it sends us the repo's address and <a href="/privacy/">nothing else</a>.</p>
+      </details>
+      <details>
+        <summary>Does my whole team need it?</summary>
+        <p data-prose>No. Any two agents can use it, even two on your own laptop. Each teammate's agent asks them before it joins.</p>
       </details>
       <details>
         <summary>Does it work with GitLab?</summary>
-        <p data-prose>Murmur uses plain git, so GitLab and any host you can push to should work. We've only tried GitHub so far.</p>
-      </details>
-      <details>
-        <summary>What does it cost? Is there a server?</summary>
-        <p data-prose>It's free, open source, and needs no server or account. To count usage, public GitHub repos report their address to us once; private repos report nothing (<a href="/privacy/">privacy</a>).</p>
-      </details>
-      <details>
-        <summary>Does my whole team have to join?</summary>
-        <p data-prose>No. Each teammate's agent asks before joining; nothing installs without a yes. Even solo, your own agents can talk.</p>
-      </details>
-      <details>
-        <summary>How do I turn it off?</summary>
-        <p data-prose>Pause anytime in <code>mur ui</code>, run <code>mur join --leave</code> to leave a repo, or <code>mur uninstall --leave</code> to remove it.</p>
+        <p data-prose>It should. Murmur works with any git host that accepts pushes to refs outside your branches, but so far it has only been tried on GitHub.</p>
       </details>
     </div>
     <div class="setup-end"><a class="button" href="#setup">Set up Murmur</a> <a class="end-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
