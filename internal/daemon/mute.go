@@ -75,25 +75,90 @@ func (d *Daemon) nameOfLocked(addr string) string {
 	return d.lastNameLocked(addr)
 }
 
+type peerNameKey struct{ dev, name string }
+
+// nameGivenUpLocked reports whether addr is a session currently listed without a name whose name
+// has moved to another session on the same device: a session that gave its name up and waits for
+// a new one (#875). Neither its label nor a mute of that name follows it once another session on
+// its device holds the name. A session that has left presence is not one: its old messages still
+// go by the name its conversation resumed under. Caller holds mu.
+func (d *Daemon) nameGivenUpLocked(addr, name string) bool {
+	if name == "" {
+		return false
+	}
+	dev, id := bus.SplitAddr(addr)
+	if dev == "" || id == "" || id == bus.PersonSession {
+		return false
+	}
+	if dev == d.device {
+		s := d.sessions[id]
+		if s == nil || s.name != "" {
+			return false
+		}
+		if h := d.st.NameHolders[name]; h != "" && h != id {
+			return true
+		}
+		for _, o := range d.sessions {
+			if o.id != id && o.dropped.IsZero() && o.name == name {
+				return true
+			}
+		}
+		return false
+	}
+	p := d.peers[dev]
+	if p == nil {
+		return false
+	}
+	unnamed, heldByOther := false, false
+	for _, s := range p.pres.Sessions {
+		if s.ID == bus.PersonSession {
+			continue
+		}
+		if s.ID == id {
+			if s.Name == "" {
+				unnamed = true
+			}
+		} else if s.Name == name {
+			heldByOther = true
+		}
+	}
+	if !unnamed {
+		return false
+	}
+	if heldByOther {
+		return true
+	}
+	h := d.peerHolders[peerNameKey{dev, name}]
+	return h != "" && h != id
+}
+
 // lastNameLocked is the name a session is shown by when it has none in presence: it has left, or
 // its new name hasn't landed yet (a follow to a new conversation, as after /clear, leaves it with
 // none until the name is pushed). It is the same every time and in every place: the inbox,
 // activity, lookup and the mute checks (#502), so the name an agent replies to or mutes is the one
 // it was shown. One of this device's goes by the name it took last (SessionNames), which this
-// device knows; for one waiting on a new name, that is its previous one. Another device's goes by
-// the name its presence last showed it by (PeerNames, #602), or, never seen there, the first by
-// spelling of the names the registry gave its address, as the registry keeps no order of them.
-// namesByAddrLocked gives
-// the same for every address at once. "" for an address with none. Caller holds mu.
+// device knows; for one waiting on a new name, that is its previous one, unless another session on
+// this device holds that name now (#875). Another device's goes by the name its presence last
+// showed it by (PeerNames, #602), or, never seen there, the first by spelling of the names the
+// registry gave its address, as the registry keeps no order of them — again leaving out a name
+// that has moved to another session on the same device while this one waits unnamed (#875).
+// namesByAddrLocked gives the same for every address at once. "" for an address with none. Caller
+// holds mu.
 func (d *Daemon) lastNameLocked(addr string) string {
 	dev, id := bus.SplitAddr(addr)
 	if dev == d.device && d.st.SessionNames[id] != "" {
-		return d.st.SessionNames[id]
+		if name := d.st.SessionNames[id]; !d.nameGivenUpLocked(addr, name) {
+			return name
+		}
+		return ""
 	}
 	// Another device's, by the name its presence last showed it by: the name its own device shows
 	// it by, so every device agrees (#602).
 	if dev != d.device && d.st.PeerNames[addr].Name != "" {
-		return d.st.PeerNames[addr].Name
+		if name := d.st.PeerNames[addr].Name; !d.nameGivenUpLocked(addr, name) {
+			return name
+		}
+		return ""
 	}
 	if names := d.heldNamesLocked(addr); len(names) > 0 {
 		return names[0]
@@ -105,16 +170,17 @@ func (d *Daemon) lastNameLocked(addr string) string {
 // those the registry gave the address, and for one of this device's, the name it took last, which
 // the registry may have down for another session ID (a conversation resumed under a new one). An
 // address holds more than one when its client started a new conversation in the same session
-// (Claude Code's /clear). Caller holds mu.
+// (Claude Code's /clear). A name that has moved to another session on the same device while addr
+// is listed without one is left out (#875). Caller holds mu.
 func (d *Daemon) heldNamesLocked(addr string) []string {
 	var names []string
 	for name, a := range d.st.Used {
-		if a == addr {
+		if a == addr && !d.nameGivenUpLocked(addr, name) {
 			names = append(names, name)
 		}
 	}
 	if dev, id := bus.SplitAddr(addr); dev == d.device {
-		if name := d.st.SessionNames[id]; name != "" && !slices.Contains(names, name) {
+		if name := d.st.SessionNames[id]; name != "" && !d.nameGivenUpLocked(addr, name) && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}

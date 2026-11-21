@@ -243,3 +243,104 @@ func TestAnotherDevicesSessionIsShownByItsLatestName(t *testing.T) {
 		t.Errorf("a named session's presence kept Was %q", was)
 	}
 }
+
+// A session currently listed without a name whose name has moved to another session on the same
+// device isn't labeled by or muted under that name, on either the owning device or a peer, even if
+// the registry and PeerNames still record it — while the taker is still muted under it, another
+// device claiming the name doesn't clear it, and a stopped predecessor still shows the name (#875).
+func TestASessionThatGaveItsNameUpIsNotShownOrMutedByIt(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{MuteGrace: -1}, false)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	const there, rogue = "there-0002", "rogue-0003"
+	giver := bus.Addr(there, "xxxxxx")
+	taker := bus.Addr(there, "tttttt")
+	d.sessions["bbbbbb"] = &session{id: "bbbbbb", name: "quiet-otter"}
+	d.st.Mutes = map[string]map[string]time.Time{"quiet-otter": {"calm-zebra": time.Now().Add(-time.Hour)}}
+	// Giver held brave-heron before /clear, then calm-zebra, then gave calm-zebra to taker.
+	d.st.Used["brave-heron"] = giver
+	d.st.Used["calm-zebra"] = giver
+	d.notePeerNameLocked(giver, "calm-zebra")
+	d.peers[there] = &peer{pres: bus.Presence{Device: there, Sessions: []bus.SessionInfo{
+		{ID: "tttttt", Name: "calm-zebra"},
+		{ID: "xxxxxx", Name: ""},
+	}}}
+	d.peerHolders = map[peerNameKey]string{{there, "calm-zebra"}: "tttttt"}
+
+	eGiver := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: giver, To: "*", Subject: "from giver", At: time.Now().UTC()}
+	eTaker := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: taker, To: "*", Subject: "from taker", At: time.Now().UTC()}
+	for _, s := range shownNames(d, eGiver) {
+		want := ""
+		if s.where == "activity" {
+			want = giver
+		}
+		if s.name != want {
+			t.Errorf("peer handoff: %s shows giver as %q, want %q", s.where, s.name, want)
+		}
+	}
+	if d.mutedHereLocked("bbbbbb", eGiver) {
+		t.Error("peer handoff: mute of calm-zebra followed giver")
+	}
+	if !d.mutedHereLocked("bbbbbb", eTaker) {
+		t.Error("peer handoff: mute of calm-zebra did not hold against taker")
+	}
+
+	// Even if the taker stops while the giver still waits unnamed, peerHolders remembers the move.
+	d.peers[there].pres.Sessions = []bus.SessionInfo{{ID: "xxxxxx", Name: ""}}
+	if got := d.nameOfLocked(giver); got != "" {
+		t.Errorf("after taker stopped while giver still unnamed: nameOfLocked=%q, want empty", got)
+	}
+	if d.mutedHereLocked("bbbbbb", eGiver) {
+		t.Error("after taker stopped while giver still unnamed: mute followed giver")
+	}
+
+	// Once the giver has left presence, it is a departed session and its old messages still show
+	// its name (as for a stopped predecessor of a resumed conversation).
+	d.peers[there].pres.Sessions = []bus.SessionInfo{{ID: "tttttt", Name: "calm-zebra"}}
+	if got := d.nameOfLocked(giver); got != "calm-zebra" {
+		t.Errorf("departed predecessor: nameOfLocked=%q, want calm-zebra", got)
+	}
+
+	// A different device claiming the name in its presence must not unlabel or unmute there's
+	// pending session after /clear (#604).
+	d.peerHolders = map[peerNameKey]string{{there, "calm-zebra"}: "xxxxxx"}
+	d.peers[there].pres.Sessions = []bus.SessionInfo{{ID: "xxxxxx", Name: "", Was: "calm-zebra"}}
+	d.peers[rogue] = &peer{pres: bus.Presence{Device: rogue, Sessions: []bus.SessionInfo{{ID: "eeeeee", Name: "calm-zebra"}}}}
+	if got := d.nameOfLocked(giver); got != "calm-zebra" {
+		t.Errorf("rogue device claim: nameOfLocked=%q, want calm-zebra", got)
+	}
+	if !d.mutedHereLocked("bbbbbb", eGiver) {
+		t.Error("rogue device claim: pending session bypassed mute")
+	}
+
+	// Local device handoff: local giver waits unnamed while local taker holds the name.
+	localGiver := bus.Addr(d.device, "gggggg")
+	localTaker := bus.Addr(d.device, "hhhhhh")
+	d.sessions["gggggg"] = &session{id: "gggggg"}
+	d.sessions["hhhhhh"] = &session{id: "hhhhhh", name: "dusty-crane"}
+	d.st.Used["dusty-crane"] = localGiver
+	d.st.SessionNames["gggggg"] = "dusty-crane"
+	d.st.SessionNames["hhhhhh"] = "dusty-crane"
+	d.st.NameHolders["dusty-crane"] = "hhhhhh"
+	d.st.Mutes["quiet-otter"]["dusty-crane"] = time.Now().Add(-time.Hour)
+	d.peers[there].pres.Sessions = []bus.SessionInfo{{ID: "rrrrrr", Name: "stern-ibis", Muted: []string{"dusty-crane"}}}
+
+	eLocalGiver := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: localGiver, To: "*", Subject: "local giver", At: time.Now().UTC()}
+	eLocalTaker := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: localTaker, To: "*", Subject: "local taker", At: time.Now().UTC()}
+	for _, s := range shownNames(d, eLocalGiver) {
+		want := ""
+		if s.where == "activity" {
+			want = localGiver
+		}
+		if s.name != want {
+			t.Errorf("local handoff: %s shows giver as %q, want %q", s.where, s.name, want)
+		}
+	}
+	if d.mutedHereLocked("bbbbbb", eLocalGiver) || d.hasMutedLocked(d.device, "bbbbbb", localGiver) || d.hasMutedLocked(there, "rrrrrr", localGiver) {
+		t.Error("local handoff: mute of dusty-crane followed local giver")
+	}
+	if !d.mutedHereLocked("bbbbbb", eLocalTaker) || !d.hasMutedLocked(d.device, "bbbbbb", localTaker) || !d.hasMutedLocked(there, "rrrrrr", localTaker) {
+		t.Error("local handoff: mute of dusty-crane did not hold against local taker")
+	}
+}

@@ -428,16 +428,17 @@ type Daemon struct {
 	// page saves state.json once and not once for each tags event in it (see applyPageLocked).
 	savesHeld bool
 
-	mu         sync.Mutex
-	sessions   map[string]*session
-	peers      map[string]*peer
-	known      map[string]string // local copy of each bus ref: ref → SHA last fetched
-	st         state
-	recent     []proto.EventView
-	lastActive time.Time
-	mode       syncMode
-	pending    []bus.Event // what arrived while down, for sessions that reconnect
-	heldTags   []bus.Event // changes to tags read then for sessions not known yet (holdForLocked)
+	mu          sync.Mutex
+	sessions    map[string]*session
+	peers       map[string]*peer
+	peerHolders map[peerNameKey]string // (peer device, name) → session ID last shown holding it (#875)
+	known       map[string]string      // local copy of each bus ref: ref → SHA last fetched
+	st          state
+	recent      []proto.EventView
+	lastActive  time.Time
+	mode        syncMode
+	pending     []bus.Event // what arrived while down, for sessions that reconnect
+	heldTags    []bus.Event // changes to tags read then for sessions not known yet (holdForLocked)
 	// heldPrompts are turns' prompts that came while no session of their client was connected, kept
 	// for the session's return (holdPromptLocked).
 	heldPrompts []heldPrompt
