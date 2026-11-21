@@ -351,8 +351,9 @@
   .agents img { width: 22px; height: 22px; object-fit: contain; flex: none; }
   .agents .t3 { background: var(--blue); color: var(--cream); }
   .agents .t3 img { border-radius: 5px; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55); }
-  .agents .t3 a { display: flex; align-items: center; justify-content: center; gap: 10px; color: inherit; text-decoration: none; }
-  .agents .t3 a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  /* Only the name is the link, so a tap elsewhere on the tile shows its hint on a phone. */
+  .agents .t3 a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 4px; }
+  .agents .t3 a:hover { text-decoration-color: var(--cream); }
   .agents .t3 a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
   /* Where Murmur works best, a message starts a new turn in T3 Code and on its own: T3 Code and
      those agents get a thicker outline. */
@@ -363,7 +364,7 @@
     padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; text-align: left;
     opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; }
   .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
-  .agents li:not(.t3):focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
+  .agents li:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
   @media (max-width: 759px) { .agents { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .agents-note { margin-top: 12px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); text-wrap: pretty; }
   .uses-lead { margin-top: 10px; font-size: 17px; line-height: 1.5; max-width: 64ch; color: var(--ink-soft); text-wrap: pretty; }
@@ -906,7 +907,7 @@ void main() {
   <div class="setup-in">
     <h2>Supported</h2>
     <ul class="agents">
-      <li class="t3 best" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn."><a href="https://github.com/pingdotgg/t3code"><img src="/agents/t3.svg" alt="" width="22" height="22">T3 Code</a></li>
+      <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn."><img src="/agents/t3.svg" alt="" width="22" height="22"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></li>
       <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/claude.svg" alt="" width="22" height="22">Claude Code</li>
       <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/codex.svg" alt="" width="22" height="22">Codex</li>
       <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/opencode.svg" alt="" width="22" height="22">OpenCode</li>
