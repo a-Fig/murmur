@@ -1524,8 +1524,7 @@ func (d *Daemon) ownLanded(ctx context.Context, ref, sha string, message bool) {
 	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
 		d.log.Printf("updating local %s: %v", ref, err)
 	}
-	landed := d.pendSends
-	d.pendSends = nil
+	landed := d.takePending()
 	d.mu.Lock()
 	if message || len(landed) > 0 {
 		d.noteConversationLocked() // a message went out; the answer may come soon

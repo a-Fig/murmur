@@ -57,8 +57,8 @@ type Options struct {
 	OwnTipWait time.Duration
 	// PendingRetry is the first wait before a send whose push ended unsure is pushed again, doubled
 	// each time to a minute; PendingGiveUp how long it is tried before it is given up; and
-	// PendingStopLimit how long a stopping daemon waits to ask the remote whether pending sends
-	// landed before giving them up (pending.go).
+	// PendingStopLimit the overall budget a stopping daemon gives to settling pending sends against
+	// the remote before giving them up (pending.go).
 	PendingRetry, PendingGiveUp, PendingStopLimit time.Duration
 	// OwnFetchLimit bounds the fetch of this device's own log's tip when a write to it is refused
 	// (overRemoteTip): a send waits on it, and every other write behind writeMu. 20 s.
@@ -631,10 +631,14 @@ type Daemon struct {
 	writeMu  sync.Mutex // serializes appends to this device's log
 	// ownTip is the tip of this device's log that the next write builds on: the remote's, as last
 	// known, or a send's still pending on top of it (pending.go). Under writeMu, as is the rest.
-	ownTip    string
+	ownTip string
+	// pendMu guards pendSends and pendRun so stopPending can give up pending sends without waiting
+	// indefinitely on writeMu if the stop budget runs out. Always taken after writeMu when both are
+	// held, and never held across network calls, git calls, or settle callbacks.
+	pendMu    sync.Mutex
 	pendSends []pendingSend
-	pendBase  string    // the tip the first pending send was built on, which had landed
-	pendFrom  time.Time // when the first pending send's push ended unsure
+	pendBase  string    // the tip the first pending send was built on, which had landed (under writeMu)
+	pendFrom  time.Time // when the first pending send's push ended unsure (under writeMu)
 	pendRun   bool      // pendingLoop is running
 	// testPush, set only by tests, stands in for a push of this device's log: it is given the real
 	// one to call, or not.
