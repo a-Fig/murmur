@@ -177,16 +177,17 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		}
 		if h.T3Own && sameHome(h.Dir, e.GeminiHome) {
 			managedGemini = true
-			if !in.On && !off {
-				byAgent[i][0].Dir = ""
-			}
 		}
 		if !in.On && !off {
-			// Said only of a configuration that nothing else registers in: one that is the agent's
-			// default gets the server whatever T3 does with it.
-			if !samePath(h.Dir, byAgent[i][0].Dir) || !samePath(h.JSON, byAgent[i][0].JSON) {
-				notes = append(notes, a.label+" as T3 Code's \""+in.Name+"\" is turned off in T3, so its configuration ("+h.Dir+") was left alone; `"+brand.Command+" join` again after turning it on registers it")
+			// Said only of a configuration that nothing else registers in: one that is the caller's
+			// active home (e.g. a per-project T3 override) still gets registered, with T3Own kept.
+			if sameHome(h.Dir, byAgent[i][0].Dir) && samePath(h.JSON, byAgent[i][0].JSON) {
+				if h.T3Own {
+					byAgent[i][0] = h
+				}
+				continue
 			}
+			notes = append(notes, a.label+" as T3 Code's \""+in.Name+"\" is turned off in T3, so its configuration ("+h.Dir+") was left alone; `"+brand.Command+" join` again after turning it on registers it")
 			continue
 		}
 		dup := false
