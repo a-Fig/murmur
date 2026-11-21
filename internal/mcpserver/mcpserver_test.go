@@ -45,6 +45,9 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "T3CODE_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
 		os.Unsetenv(k)
 	}
+	for _, k := range nativeEnv {
+		os.Unsetenv(k)
+	}
 	// And under an agent, perhaps: the tests of T3's thread variable say whether one is above.
 	agentAbove = func() bool { return false }
 	// Nor started by a t3, which would make a client with T3's thread variable the thread: the tests

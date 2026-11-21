@@ -80,6 +80,46 @@ func TestHeadlessT3IsFound(t *testing.T) {
 	}
 }
 
+// Antigravity under T3's headless server (`t3 serve`) has T3CODE_THREAD_ID and T3CODE_HOME without
+// T3CODE_CLI_PATH (#886): it finds the serving `t3` like Claude Code does, without taking Claude
+// Code's messaging socket.
+func TestHeadlessT3AntigravityIsFound(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	t.Setenv(threadEnv, "thread-agy-1")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
+	t.Cleanup(func() { servingT3 = func() (string, bool) { return "", false } })
+	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	h := helloFor("antigravity", "/work")
+	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-agy-1"}); h.Route != want {
+		t.Errorf("route %+v, want %+v", h.Route, want)
+	}
+	if !h.ByThread || h.ID != threadID("thread-agy-1") || h.Agent != "antigravity in T3" {
+		t.Errorf("hello %+v: want registered by thread as antigravity in T3", h)
+	}
+
+	servingT3 = func() (string, bool) { return "", true }
+	h = helloFor("antigravity", "/work")
+	if h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.Route.MsgSocket != "" || h.ByThread || h.Agent != "antigravity" {
+		t.Errorf("with no t3 found: %+v", h)
+	}
+
+	servingT3 = func() (string, bool) { return "", false }
+	h = helloFor("antigravity", "/work")
+	if h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.ByThread || h.Agent != "antigravity" {
+		t.Errorf("under another parent (tmux/editor): %+v", h)
+	}
+
+	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	if h := helloFor("antigravity", "/work"); h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.ByThread || h.Agent != "antigravity" {
+		t.Errorf("under another agent: %+v", h)
+	}
+}
+
 // finder stands in for T3's database: it has the threads in threads, but answers the first
 // misses calls, whoever is asked about, as a database without the row yet would. It records what
 // it was asked.

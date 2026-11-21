@@ -5,9 +5,11 @@ over.
 
 ## T3 Code
 
-- **Finding the thread** (#56). Claude Code's MCP server takes the thread from `T3CODE_THREAD_ID`
-  ([session names](session-names.md#one-address-per-t3-thread)). Every other server, and a Claude
-  Code one that can't use it, looks the provider's own session up in T3's database:
+- **Finding the thread** (#56, #886). Claude Code's and Antigravity's MCP servers take the thread
+  from `T3CODE_THREAD_ID` ([session names](session-names.md#one-address-per-t3-thread)). Every
+  other server, and one that doesn't get the variable (such as Antigravity under older T3, where
+  the daemon resolves the hook's `conversationId`), looks the provider's own session up in T3's
+  database:
   `statev2.sqlite` in T3's data directory (`T3CODE_HOME`, the directory the CLI's `bin` is in, or
   `~/.t3`), table
   `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId` is
@@ -164,11 +166,11 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   ([delegates](delegates.md)).
 - *Not covered* (#446): Muse and Grok outside T3, neither installed where this was built. A T3 Codex
   session whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3. T3's headless
-  server (`t3 serve`, 0.1.9) sets no `T3CODE_CLI_PATH` at all: a Claude Code thread there is known
-  by `T3CODE_THREAD_ID` and reached through the `t3` that runs it (its parent, else the one on
-  PATH). With none found it gets no messaging socket, which starts no turn under T3; a Claude Code
-  whose parent is some other program (tmux, an editor) only inherited the variable and keeps its
-  own route (#780, 2026-11-16). OpenCode's one MCP
+  server (`t3 serve`, 0.1.9) sets no `T3CODE_CLI_PATH` at all: a Claude Code or Antigravity thread
+  there is known by `T3CODE_THREAD_ID` and reached through the `t3` that runs it (its parent, else
+  the one on PATH). With none found Claude Code gets no messaging socket, which starts no turn
+  under T3; a client whose parent is some other program (tmux, an editor) only inherited the
+  variable and keeps its own route (#780, #886). OpenCode's one MCP
   process per directory has the environment of whoever started the shared server, so a T3 thread on
   a server a terminal started reads as outside T3, and the other way round (not tried). Codex's
   desktop app wasn't looked at, and only Windows was tried with the real programs.

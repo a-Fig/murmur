@@ -148,6 +148,10 @@ type Options struct {
 	// long it has been idle (see threads.go): t3db.StateOf. Tests put a stand-in here. It is read
 	// every TitleEvery.
 	ThreadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// ThreadOf finds a T3 thread from a provider session's native ID in T3's database, used as a
+	// fallback when a hook learns the native ID for a T3 session whose MCP server had neither
+	// T3CODE_THREAD_ID nor Native (see threads.go, #886): t3db.ThreadOf. Tests put a stand-in here.
+	ThreadOf func(ctx context.Context, cli, home, native string) (string, error)
 	// CodexLineage reads who started a Codex thread from Codex's state (title.CodexLineage), for
 	// the sessions another session started (codexkids.go). Tests put a stand-in here.
 	CodexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
@@ -283,6 +287,9 @@ func (o *Options) defaults() {
 	}
 	if o.ThreadState == nil {
 		o.ThreadState = t3db.StateOf
+	}
+	if o.ThreadOf == nil {
+		o.ThreadOf = t3db.ThreadOf
 	}
 	if o.CodexLineage == nil {
 		o.CodexLineage = title.CodexLineage
@@ -651,10 +658,11 @@ type Daemon struct {
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
 
-	kick     chan struct{}
-	pollWake chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
-	pushKick chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
-	fileKick chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
+	kick       chan struct{}
+	pollWake   chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
+	pushKick   chan struct{} // wakes pushLoop, which hands messages over to sessions as turns
+	threadKick chan struct{} // wakes threadLoop when a hook learns a T3 session's native ID (#886)
+	fileKick   chan struct{} // wakes fileLoop, which fetches the files messages for sessions here carry
 	// pruneOwed says a prune of the remote's files refs was passed over, or cut short, because
 	// the device was invisible (pruneFiles), and is run once it no longer is. Only fileLoop's
 	// goroutine writes it.
@@ -756,6 +764,8 @@ type session struct {
 	hookSeen   bool
 	toolCalled time.Time
 	hookNative string
+	// hookThread tracks fallback lookups of route.T3Thread from hookNative (#886). Under mu.
+	hookThread hookThreadLookup
 	// unlogged says the session was a child when it registered, so neither its start nor its stop
 	// goes on the bus (#487).
 	unlogged bool
@@ -1371,7 +1381,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		sessions: map[string]*session{}, peers: map[string]*peer{}, known: map[string]string{},
 		caughtUp: map[string]bool{}, unfetched: map[string]fetchFail{}, junkTried: map[string]time.Time{},
 		kick: make(chan struct{}, 1), pollWake: make(chan struct{}, 1), nameKick: make(chan struct{}, 1), nameSrc: opt.NameSource,
-		pushKick: make(chan struct{}, 1), fileKick: make(chan struct{}, 1), fileOne: make(chan struct{}, 1), fileMiss: map[string]fileMiss{}, markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
+		pushKick: make(chan struct{}, 1), threadKick: make(chan struct{}, 1), fileKick: make(chan struct{}, 1), fileOne: make(chan struct{}, 1), fileMiss: map[string]fileMiss{}, markKick: make(chan struct{}, 1), pushSem: make(chan struct{}, maxPushes), pushOne: make(chan struct{}, 1),
 		actIDs: map[string]bool{}, actSeen: map[string]sessSeen{}, historyKick: make(chan struct{}, 1),
 		pushing: map[string]bool{}, pushWarned: map[string]bool{}, introduced: map[string]map[string]bool{}, pushedAt: map[string]time.Time{},
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
