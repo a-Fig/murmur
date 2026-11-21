@@ -191,11 +191,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	defer steps.stop()
 
 	// Per user: the MCP server, registered once for every repo this user opens, in every
-	// configuration of each agent. Only the default ones' news shapes the advice: those are the
-	// agent running join's.
+	// configuration of each agent. Advice about the calling agent depends on its own home.
 	byAgent, notes := e.homes()
 	r.Notes = append(r.Notes, notes...)
-	var claudeFresh, codexFresh bool
+	var claudeFresh, codexFresh, antigravityFresh bool
 	var othersFresh []string
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
@@ -203,16 +202,21 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			if cut() {
 				break
 			}
+			if h.T3Own && !isDir(h.Dir) {
+				r.Notes = append(r.Notes, h.Label+": open a thread with this instance to set it up, then run `"+brand.Command+" join` again.")
+				continue
+			}
 			steps.start("adding " + brand.Product + " to " + h.Label)
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
-			if err != nil {
+			if note := approvalNote(""); errors.As(err, &note) {
+				r.Notes = append(r.Notes, h.Label+": "+err.Error())
+			} else if err != nil {
 				problem(h.Label, err)
 				claudeOK = claudeOK && a.driver != "claudeAgent"
 			}
-			// The home exists once registering found the agent installed, even where it then
-			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
-			if dir := e.joinSkillsDir(a, h, byAgent[i]); dir != "" && isDir(h.Dir) {
+			// A problem registering the server doesn't prevent installing skills.
+			if dir := e.joinSkillsDir(a, h, byAgent[i]); dir != "" {
 				did, notes, err := installSkills(dir, h.Label)
 				r.Did, r.Notes = append(r.Did, did...), append(r.Notes, notes...)
 				if err != nil {
@@ -227,6 +231,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				codexFresh = true
 			case j == 0 && a.driver == "pi" && e.looksLikePi():
 				// The advice for the Pi running join covers it.
+			// The advice for the Antigravity running join covers its own home. Its other homes
+			// (~/.gemini, another instance) fall through, so their open sessions hear to restart.
+			case a.driver == "antigravity" && e.looksLikeAntigravity() && sameEntry(h.Dir, e.GeminiHome):
+				antigravityFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -294,7 +302,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return e.cutShort(r, parent, steps.now, consentErr == nil)
 	}
 
-	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
+	r.Tell = e.advice(claudeFresh, codexFresh, antigravityFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
@@ -443,7 +451,7 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
 	r.Tell = []string{
-		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code and Pi; in Codex the tools stay listed until the session ends, and say they are off if called.",
+		brand.Product + " is off for this repo. Open Claude Code, Pi and Antigravity sessions lose its tools within seconds. In Codex, the tools stay listed until the session ends and report that they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
@@ -487,8 +495,8 @@ func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
 // just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse reads
-// its servers when a session starts, Pi then and on /reload in its terminal (2026-11-17, #864), and
-// Grok and Antigravity are believed to read them as Muse does (their documentation).
+// its servers when a session starts, as does Antigravity (1.5.13, 2026-11-20). Pi reads them then
+// and on /reload in its terminal (2026-11-17, #864). Grok documents loading them at startup.
 func othersAdvice(labels []string) string {
 	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
 	if slices.Contains(labels, "OpenCode") {
@@ -534,7 +542,7 @@ func servingT3(getenv func(string) string) string {
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
 // (docs/design/joining.md, "Reloading MCP servers").
-func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
+func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
 	}
@@ -569,6 +577,16 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.looksLikeCodex():
 		out = append(out, brand.Product+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
 			"start a new session in this repo to get them.")
+	case e.looksLikeAntigravity():
+		restart := "restart `agy` in this repo"
+		if e.inT3() {
+			restart = "open a new thread in this project"
+		}
+		if antigravityFresh {
+			out = append(out, brand.Product+" was just added to Antigravity. To load its tools, "+restart+".")
+		} else {
+			out = append(out, brand.Product+" is on for this repo. Antigravity should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
+		}
 	default:
 		out = append(out, brand.Product+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Product+" was already registered with Claude Code, "+
 			"and otherwise after a restart (press Stop and send a message in T3; `claude --continue` in a terminal). "+
@@ -578,6 +596,13 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 		out = append(out, "Codex sessions already open won't have it; ones started from now on will.")
 	}
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
+}
+
+// Claude Code, Codex or Pi started from Antigravity inherit its shell markers and take precedence.
+// The markers are the same in reverse, so Antigravity started from one of them gets their advice.
+func (e Env) looksLikeAntigravity() bool {
+	return (e.getenv("ANTIGRAVITY_AGENT") == "1" || e.getenv("ANTIGRAVITY_CONVERSATION_ID") != "") &&
+		e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi()
 }
 
 // looksLikePi reports whether the agent running join is Pi, which sets PI_CODING_AGENT=true for

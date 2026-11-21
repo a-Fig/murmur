@@ -84,10 +84,10 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
-`mur join` also installs three skills for the agents that read them (Claude Code, Codex, OpenCode
-and Pi): one on when Murmur is worth a turn, one on coordinating over several messages, and
-`murmur-manager`, which a session follows only once you tell it to manage your team of agents as
-your COO. Their source is in [`internal/skills`](internal/skills).
+`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi and Antigravity.
+Two help agents decide when to use Murmur and coordinate over several messages. The third,
+`murmur-manager`, is for an agent you ask to manage your team as COO. Their source is in
+[`internal/skills`](internal/skills).
 
 ## Supported agents
 
