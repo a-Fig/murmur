@@ -683,7 +683,7 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
 		s := byProcess[0]
 		s.hookNative = req.ClaudeSession
-		if s.hookNative != "" && s.route.T3CLI != "" && s.route.T3Thread == "" {
+		if isAgent(s.agent, "antigravity") && s.hookNative != "" && s.route.T3CLI != "" && s.route.T3Thread == "" {
 			d.kickThreads()
 		}
 		return byProcess

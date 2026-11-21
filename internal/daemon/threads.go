@@ -58,8 +58,17 @@ type hookThreadLookup struct {
 type hookThreadCand struct {
 	id        string
 	sess      *session
+	agent     string
+	clientPID int
 	key       hookThreadKey
 	startedAt time.Time
+}
+
+func (c hookThreadCand) matches(s *session) bool {
+	return s != nil && s == c.sess && s.dropped.IsZero() &&
+		s.agent == c.agent && s.clientPID == c.clientPID &&
+		s.route.T3CLI == c.key.cli && s.route.T3Home == c.key.home &&
+		s.route.T3Thread == "" && s.route.Native == "" && s.hookNative == c.key.native
 }
 
 // hookThreadHit is a resolved fallback lookup waiting to be applied in refreshThreads once the
@@ -103,16 +112,18 @@ func (d *Daemon) threadLoop(ctx context.Context) {
 	}
 }
 
-// findHookThreads looks up the T3 thread in T3's database for each live T3 session whose MCP
-// server registered without T3Thread or Native, once a hook has reported its provider session ID
-// (hookNative, #886). Reads run outside d.mu, are deduplicated per (cli, home, native) within a
-// pass, retry with bounded backoff, and log non-ErrNotFound errors at most once per session.
+// findHookThreads looks up the T3 thread in T3's database for each live Antigravity T3 session
+// whose MCP server registered without T3Thread or Native, once a hook has reported its provider
+// session ID (hookNative, #886). Limited to Antigravity so a multi-session client like Codex's
+// shared app-server cannot bind one thread's hook to another session. Reads run outside d.mu, are
+// deduplicated per (cli, home, native) within a pass, retry with bounded backoff, and log
+// non-ErrNotFound errors at most once per session.
 func (d *Daemon) findHookThreads(ctx context.Context) []hookThreadHit {
 	now := time.Now()
 	d.mu.Lock()
 	var cands []hookThreadCand
 	for _, s := range d.sortedSessionsLocked() {
-		if !s.dropped.IsZero() || s.route.T3CLI == "" || s.route.T3Thread != "" || s.route.Native != "" || s.hookNative == "" {
+		if !s.dropped.IsZero() || !isAgent(s.agent, "antigravity") || s.route.T3CLI == "" || s.route.T3Thread != "" || s.route.Native != "" || s.hookNative == "" {
 			continue
 		}
 		k := hookThreadKey{cli: s.route.T3CLI, home: s.route.T3Home, native: s.hookNative}
@@ -125,7 +136,7 @@ func (d *Daemon) findHookThreads(ctx context.Context) []hookThreadHit {
 		if !s.hookThread.nextAt.IsZero() && now.Before(s.hookThread.nextAt) {
 			continue
 		}
-		cands = append(cands, hookThreadCand{id: s.id, sess: s, key: k, startedAt: now})
+		cands = append(cands, hookThreadCand{id: s.id, sess: s, agent: s.agent, clientPID: s.clientPID, key: k, startedAt: now})
 	}
 	d.mu.Unlock()
 	if len(cands) == 0 {
@@ -164,9 +175,7 @@ func (d *Daemon) findHookThreads(ctx context.Context) []hookThreadHit {
 	d.mu.Lock()
 	for _, c := range cands {
 		s := d.sessions[c.id]
-		if s == nil || s != c.sess || !s.dropped.IsZero() ||
-			s.route.T3CLI != c.key.cli || s.route.T3Home != c.key.home || s.route.T3Thread != "" ||
-			s.route.Native != "" || s.hookNative != c.key.native {
+		if !c.matches(s) {
 			continue
 		}
 		res := results[c.key]
@@ -215,9 +224,7 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		}
 	}
 	for _, h := range hits {
-		if s := d.sessions[h.cand.id]; s != nil && s == h.cand.sess && s.dropped.IsZero() &&
-			s.route.T3CLI == h.cand.key.cli && s.route.T3Home == h.cand.key.home && s.route.T3Thread == "" &&
-			s.route.Native == "" && s.hookNative == h.cand.key.native {
+		if h.cand.matches(d.sessions[h.cand.id]) {
 			k := threadKey{h.cand.key.home, h.thread}
 			routes[k] = t3Route{CLI: h.cand.key.cli, Home: h.cand.key.home, Thread: h.thread}
 			if who[k] == "" {
@@ -296,14 +303,17 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 		d.threads[k] = st
 		delete(d.threadWarned, k)
 	}
-	// Apply hookNative-resolved T3 threads after recording their thread states above, so a newly
-	// resolved delegate, settled thread, or busy run is known before setRouteLocked wakes pushLoop
-	// (#886).
+	// Apply hookNative-resolved T3 threads only after their thread state is cached above, so a
+	// newly resolved delegate, settled thread, or busy run is known before setRouteLocked wakes
+	// pushLoop (#886). If ThreadState failed and no prior state is cached, hold the route until a
+	// later pass succeeds.
 	for _, h := range hits {
 		s := d.sessions[h.cand.id]
-		if s == nil || s != h.cand.sess || !s.dropped.IsZero() ||
-			s.route.T3CLI != h.cand.key.cli || s.route.T3Home != h.cand.key.home || s.route.T3Thread != "" ||
-			s.route.Native != "" || s.hookNative != h.cand.key.native {
+		if !h.cand.matches(s) {
+			continue
+		}
+		k := threadKey{h.cand.key.home, h.thread}
+		if _, ok := d.threads[k]; !ok {
 			continue
 		}
 		r := s.route

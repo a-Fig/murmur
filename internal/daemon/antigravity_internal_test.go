@@ -196,6 +196,9 @@ func TestHookNativeFallbackDisconnectRaces(t *testing.T) {
 			d.sessions[s.id] = &session{id: s.id, agent: "antigravity in T3", key: "session:" + s.id,
 				route: proto.Route{T3CLI: "/t3"}}
 		}},
+		{"grace takeover changed clientPID", func(d *Daemon, s *session) {
+			s.clientPID = 999
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -262,7 +265,7 @@ func TestHookNativeFallbackNativeArrivesDuringLookup(t *testing.T) {
 			t.Parallel()
 			d, _ := hookFallbackDaemon(t)
 			s := &session{
-				id: "aaaaaa", agent: "codex in T3", key: "session:aaaaaa", name: "brisk-finch",
+				id: "aaaaaa", agent: "antigravity in T3", key: "session:aaaaaa", name: "brisk-finch",
 				route: proto.Route{T3CLI: "/t3"}, hookNative: "conv-wrong",
 			}
 			d.sessions["aaaaaa"] = s
@@ -377,5 +380,59 @@ func TestHookNativeFallbackDelegateStateAppliedInSamePass(t *testing.T) {
 	}
 	if parent, child := d.parentOfLocked("kidkid"); !child || parent != "parent" {
 		t.Errorf("parentOfLocked = (%q, %v), want (parent, true)", parent, child)
+	}
+}
+
+// Only Antigravity sessions use the hookNative -> ThreadOf fallback (preventing Codex's shared
+// app-server PID from binding the wrong thread), and a failed ThreadState read holds the resolved
+// route back until state is cached so a delegate or settled thread cannot be woken without state.
+func TestHookNativeFallbackSkipsNonAntigravityAndHoldsFailedState(t *testing.T) {
+	t.Parallel()
+	d, _ := hookFallbackDaemon(t)
+	var lookups []string
+	d.opt.ThreadOf = func(_ context.Context, _, _, native string) (string, error) {
+		lookups = append(lookups, native)
+		return "thread-" + native, nil
+	}
+	failState := true
+	d.opt.ThreadState = func(_ context.Context, _, _, thread string) (t3db.State, error) {
+		if failState {
+			return t3db.State{}, errors.New("sqlite busy")
+		}
+		return t3db.State{Parent: "thread-parent"}, nil
+	}
+	d.sessions["codex1"] = &session{
+		id: "codex1", agent: "codex in T3", key: "session:codex1", name: "gray-fox",
+		clientPID: 500, route: proto.Route{T3CLI: "/t3"}, hookNative: "codex-other-thread",
+	}
+	d.sessions["agydel"] = &session{
+		id: "agydel", agent: "antigravity in T3", key: "session:agydel", name: "tiny-owl",
+		clientPID: 600, route: proto.Route{T3CLI: "/t3"}, hookNative: "conv-del",
+	}
+
+	d.refreshThreads(context.Background())
+
+	d.mu.Lock()
+	if len(lookups) != 1 || lookups[0] != "conv-del" {
+		t.Errorf("ThreadOf lookups = %v, want [conv-del] only (Codex must be skipped)", lookups)
+	}
+	if d.sessions["codex1"].route.T3Thread != "" {
+		t.Errorf("codex1 got T3Thread=%q, want empty", d.sessions["codex1"].route.T3Thread)
+	}
+	if d.sessions["agydel"].route.T3Thread != "" {
+		t.Errorf("agydel exposed T3Thread=%q before ThreadState succeeded", d.sessions["agydel"].route.T3Thread)
+	}
+	d.mu.Unlock()
+
+	failState = false
+	d.refreshThreads(context.Background())
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if got := d.sessions["agydel"].route.T3Thread; got != "thread-conv-del" {
+		t.Errorf("agydel T3Thread = %q after state succeeded, want thread-conv-del", got)
+	}
+	if !d.offMeshLocked("agydel") {
+		t.Error("agydel delegate is still on the mesh after ThreadState succeeded")
 	}
 }
