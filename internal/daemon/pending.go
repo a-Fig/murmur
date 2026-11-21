@@ -9,6 +9,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // A send whose push ended unsure (unsureError: it timed out or lost its connection with the push
@@ -209,30 +210,36 @@ func (d *Daemon) givenUpLocked(from, subject, to string, err error) {
 	if dev != d.device || sess == "" {
 		return
 	}
-	body := fmt.Sprintf("Your message to %s couldn't be pushed, and was given up: %s. Send it again if it still matters.", to, givenUpWhy(err))
+	why, next := givenUpWhy(err)
+	body := fmt.Sprintf("Your message to %s couldn't be pushed, and was given up: %s. %s", to, why, next)
 	d.addInboxLocked(sess, bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
 		From: bus.Addr(d.device, bus.ReceiptFrom), To: addr, At: time.Now().UTC(),
 		Subject: fmt.Sprintf("Not sent: %q", subject), Body: body})
 }
 
-// givenUpWhy says, in a few plain words, why a pending send was given up: git's own words, such as
-// "context deadline exceeded: signal: killed", tell an agent nothing (Tyler, 2026-11-16).
-func givenUpWhy(err error) string {
+// givenUpWhy says, in a few plain words, why a pending send was given up, and what the sender
+// should do next: git's own words, such as "context deadline exceeded: signal: killed", tell an
+// agent nothing (Tyler, 2026-11-16). When git couldn't log in to the remote or access the
+// repository, retrying won't help until the user fixes it (#858).
+func givenUpWhy(err error) (why, next string) {
+	next = "Send it again if it still matters."
 	switch {
 	case errors.Is(err, errDaemonStopped):
-		return err.Error()
+		return err.Error(), next
 	case errors.Is(err, errSendOff):
-		return "sending files was turned off"
+		return "sending files was turned off", next
 	case errors.Is(err, ErrNoConsent):
-		return "this clone left " + brand.Product
+		return "this clone left " + brand.Product, next
 	case errors.Is(err, ErrInvisible):
-		return "this device went invisible"
+		return "this device went invisible", next
 	case errors.Is(err, bus.ErrRejected), errors.Is(err, bus.ErrRefused):
-		return "the remote refused it"
+		return "the remote refused it", next
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		return "the push kept timing out"
+		return "the push kept timing out", next
+	case err != nil && errorClass(err, errorText(err), false) == web.ErrAuth:
+		return "git couldn't log in to the remote or access the repository", "Ask your user to check their git login and access before sending again."
 	}
-	return "the push kept failing"
+	return "the push kept failing", next
 }
 
 // pendingStill says every pending send may still go out: no Send files switch one's files need has

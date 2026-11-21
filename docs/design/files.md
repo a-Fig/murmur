@@ -178,7 +178,12 @@ Tyler left the numbers to us (2026-11-15); they are `MaxFiles`, `MaxFile` and `M
   any sandbox the agent runs in, so an agent that was tricked, or a sandboxed one, could otherwise
   send anything the user can read (`~/.ssh`, cloud credentials, other repos) to the whole team. It
   reads only from the clone's worktrees and the temp folder (`os.TempDir`, and `/tmp` on macOS and
-  Linux), and never from the clone's git directory, whose config can hold a remote's credentials.
+  Linux). An Antigravity session in T3 can also send from any run under its T3 home's
+  `userdata/antigravity-tmp` (#893). T3 puts each run's temp folder there, setting `TEMP` and `TMP`
+  on Windows and `TMPDIR` on macOS and Linux. The daemon opens `userdata` and `antigravity-tmp`
+  as directories, requires a regular `statev2.sqlite` inside `userdata`, and refuses links in
+  place of any of the three. The clone's git directory is always refused, as its config can hold
+  a remote's credentials.
   Each folder is opened as an `os.Root`, and every later look and the read go through that
   handle, so the folder checked is the one read from even if its path becomes a link after. The
   worktree a file is in is found above it (#772): the nearest folder with a `.git` that, looked at
