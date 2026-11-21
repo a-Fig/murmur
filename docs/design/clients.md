@@ -14,7 +14,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables; the hook under `hooks` there (below) | One process per session, with `MUSE_SESSION_ID` | The same ID |
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
-| Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy_acp_server` per thread, with `ANTIGRAVITY_CONVERSATION_ID` in what it runs | The same ID (seen, 2026-11-15) |
+| Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One ACP process per thread, with `ANTIGRAVITY_CONVERSATION_ID` in its shell commands | T3 records the conversation ID as the provider session and passes `T3CODE_THREAD_ID` to Antigravity (2026-11-20) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older
