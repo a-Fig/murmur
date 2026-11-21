@@ -163,6 +163,25 @@ func TestUnregisterAntigravityRemovesToolApprovalFromBothSettings(t *testing.T) 
 	}
 }
 
+func TestUnregisterAntigravityContinuesAfterMalformedFiles(t *testing.T) {
+	h := agentHome{Dir: t.TempDir(), Label: "Antigravity", T3Own: true}
+	cli := filepath.Join(h.Dir, "antigravity-cli", "settings.json")
+	acp := filepath.Join(h.Dir, "antigravity-acp", "settings.json")
+	mcp := filepath.Join(h.Dir, "config", "mcp_config.json")
+	hook := filepath.Join(h.Dir, "config", "hooks.json")
+	write(t, cli, `{`)
+	write(t, mcp, `{`)
+	write(t, acp, `{"permissions":{"allow":["mcp(murmur/*)"]}}`)
+	write(t, hook, `{"murmur":{}, "other":{}}`)
+	did, _, err := (Env{}).unregisterAntigravityAt(t.Context(), []agentHome{h})
+	if err == nil || !strings.Contains(err.Error(), cli) || !strings.Contains(err.Error(), mcp) || len(did) != 2 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if read(t, cli) != `{` || read(t, mcp) != `{` || strings.Contains(read(t, acp), `"permissions"`) || strings.Contains(read(t, hook), `"murmur"`) {
+		t.Error("unregister didn't clean up the valid files independently")
+	}
+}
+
 // OpenCode 1's shape comes out too, and its "permission" keeps what the user had in it.
 func TestUninstallOpenCodeV1(t *testing.T) {
 	sb, _ := uninstallSandbox(t)

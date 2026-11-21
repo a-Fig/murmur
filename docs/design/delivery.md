@@ -49,14 +49,16 @@ has the session at work (below).
 
 | Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode, Muse or Antigravity (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| Antigravity in T3 Code | the hook's notice and `inbox` | Pending [#886](https://github.com/a-Fig/murmur/issues/886) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message written to the socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle session hasn't been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model) |
 | Codex or OpenCode 2 outside T3 | the client's own command line | Yes (2026-11-11) |
-| Muse, Grok or Antigravity outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
+| Muse, Grok or Antigravity outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No (standalone Antigravity unverified) |
 
 In T3 Code with Antigravity 1.5.13 (2026-11-20), `PreInvocation` delivered notices during a turn
-and `Stop` continued the turn with unread messages. See [Antigravity](clients.md#antigravity).
+and `Stop` continued the turn with unread messages. An already registered MCP server picked up
+its tools from `notifications/tools/list_changed`. See [Antigravity](clients.md#antigravity).
 
 What the agent reads:
 

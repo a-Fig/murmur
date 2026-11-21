@@ -27,14 +27,15 @@ import (
 // instance's ID, in hex> (T3's resolveAntigravityInstanceDirectories, seen on T3 0.1.x). Nothing in
 // T3's settings moves it. Join registers each initialized instance and the standalone install.
 const (
-	antigravityCLI       = "antigravity-cli"
-	antigravityACP       = "antigravity-acp"
+	antigravityCLI = "antigravity-cli"
+	antigravityACP = "antigravity-acp"
+	// Uninstall removes Murmur's allow rule, including one added by hand.
 	antigravityAllowRule = "mcp(" + brand.MCPServer + "/*)"
 )
 
 var antigravityAllowPath = []string{"permissions", "allow"}
 
-var errAntigravityApprovalDenied = errors.New("couldn't write the tool approval rule")
+var errAntigravityApproval = errors.New("couldn't add the tool approval rule")
 
 // antigravityArgs are the server's arguments in Antigravity's config.
 var antigravityArgs = []string{"mcp", "--agent", "antigravity"}
@@ -52,10 +53,45 @@ func antigravityHomeOf(t3Settings, id string) string {
 	return filepath.Join(filepath.Dir(t3Settings), "providers", "antigravity", hex.EncodeToString(sum[:]))
 }
 
+// isT3AntigravityHome recognizes a managed GEMINI_HOME without T3's settings.
+func isT3AntigravityHome(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if isDir(filepath.Join(dir, antigravityACP)) && !isDir(filepath.Join(dir, antigravityCLI)) && !isDir(filepath.Join(dir, "antigravity")) {
+		return true
+	}
+	if hasAntigravityInstanceLayout(dir) {
+		return true
+	}
+	// On Windows EvalSymlinks can leave a junction as written, but Readlink reads its target.
+	if target, err := os.Readlink(dir); err == nil {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(dir), target)
+		}
+		dir = target
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	return hasAntigravityInstanceLayout(dir)
+}
+
+func hasAntigravityInstanceLayout(dir string) bool {
+	decoded, err := hex.DecodeString(filepath.Base(dir))
+	if err != nil || len(decoded) != sha256.Size {
+		return false
+	}
+	provider := filepath.Dir(dir)
+	return samePath(filepath.Base(provider), "antigravity") &&
+		samePath(filepath.Base(filepath.Dir(provider)), "providers") &&
+		samePath(filepath.Base(filepath.Dir(filepath.Dir(provider))), "userdata")
+}
+
 // registerAntigravityAt installs Murmur's server, hook and tool approval in h. Fresh means the
 // server was just added. T3 makes its instance's home when it first runs it.
 func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err error) {
-	if h.Dir == "" || !e.hasAntigravity(h) {
+	if !e.hasAntigravity(h) {
 		return nil, false, nil
 	}
 	path := filepath.Join(h.Dir, "config", "mcp_config.json")
@@ -89,8 +125,11 @@ func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err e
 	settings := filepath.Join(h.Dir, settingsDir, "settings.json")
 	allowed, err := allowAntigravityTools(settings)
 	if errors.Is(err, os.ErrPermission) {
-		// Antigravity's sandbox can protect its own settings. The server and hook are usable.
-		return did, fresh, fmt.Errorf("%w in %s. Add %q to permissions.allow there if Antigravity prompts for %s's tools", errAntigravityApprovalDenied, settings, antigravityAllowRule, brand.Product)
+		return did, fresh, fmt.Errorf("%w %q in %s. Add it to permissions.allow outside Antigravity", errAntigravityApproval, antigravityAllowRule, settings)
+	}
+	if err != nil {
+		// Tool approval is optional. The server and hook can still run.
+		return did, fresh, fmt.Errorf("%w %q. %v", errAntigravityApproval, antigravityAllowRule, err)
 	}
 	if allowed {
 		did = append(did, h.Label+": allowed "+brand.Product+"'s tools ("+settings+")")
@@ -100,6 +139,9 @@ func (e Env) registerAntigravityAt(h agentHome) (did []string, fresh bool, err e
 
 // hasAntigravity says Antigravity is installed for home h.
 func (e Env) hasAntigravity(h agentHome) bool {
+	if h.Dir == "" || h.SkillsOnly {
+		return false
+	}
 	if h.T3Own {
 		return isDir(h.Dir)
 	}
@@ -215,6 +257,9 @@ func antigravityHookCommand(exe, event string) string {
 
 // antigravityRemoval tells how to remove the server, hook and tool approval by hand.
 func antigravityRemoval(_ Env, h agentHome) string {
+	if h.SkillsOnly {
+		return ""
+	}
 	var steps []string
 	for _, f := range []struct {
 		file string
@@ -247,6 +292,10 @@ func antigravityRemoval(_ Env, h agentHome) string {
 // unregisterAntigravityAt takes Murmur's server, hook and tool approval out of an Antigravity home.
 func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
+	if h.SkillsOnly {
+		return nil, nil, nil
+	}
+	var problems []error
 	for _, f := range []struct {
 		file  string
 		steps []func(string) (string, bool, error)
@@ -261,23 +310,25 @@ func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, no
 		text, err := readConfig(path)
 		if err != nil || text == "" {
 			if err != nil {
-				return did, notes, err
+				problems = append(problems, err)
 			}
 			continue
 		}
 		out, changed, err := jsonSteps(text, f.steps...)
 		if err != nil {
-			return did, notes, fmt.Errorf("%s: %w", path, err)
+			problems = append(problems, fmt.Errorf("%s: %w", path, err))
+			continue
 		}
 		if !changed {
 			continue
 		}
 		if err := writeJSONConfig(path, out, 0o600); err != nil {
-			return did, notes, err
+			problems = append(problems, err)
+			continue
 		}
 		did = append(did, h.Label+": removed "+f.what+" ("+path+")")
 	}
-	return did, notes, nil
+	return did, notes, errors.Join(problems...)
 }
 
 func removeAntigravityAllow(text string) (string, bool, error) {

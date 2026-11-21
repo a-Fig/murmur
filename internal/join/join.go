@@ -209,7 +209,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			steps.start("adding " + brand.Product + " to " + h.Label)
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
-			if errors.Is(err, errAntigravityApprovalDenied) {
+			if errors.Is(err, errAntigravityApproval) {
 				r.Notes = append(r.Notes, h.Label+": "+err.Error())
 			} else if err != nil {
 				problem(h.Label, err)
@@ -232,7 +232,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			case j == 0 && a.driver == "pi" && e.looksLikePi():
 				// The advice for the Pi running join covers it.
 			case a.driver == "antigravity" && e.looksLikeAntigravity():
-				antigravityFresh = antigravityFresh || samePath(h.Dir, e.GeminiHome)
+				antigravityFresh = antigravityFresh || sameEntry(h.Dir, e.GeminiHome)
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -575,12 +575,16 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []
 	case e.looksLikeCodex():
 		out = append(out, brand.Product+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
 			"start a new session in this repo to get them.")
-	case e.looksLikeAntigravity() && antigravityFresh && e.inT3():
-		out = append(out, brand.Product+" was just added to Antigravity. Open a new thread in this project to load its tools.")
-	case e.looksLikeAntigravity() && antigravityFresh:
-		out = append(out, brand.Product+" was just added to Antigravity. Restart `agy` in this repo to load its tools.")
 	case e.looksLikeAntigravity():
-		out = append(out, brand.Product+" is on for this repo. Antigravity should show its tools in this session within a few seconds.")
+		restart := "restart `agy` in this repo"
+		if e.inT3() {
+			restart = "open a new thread in this project"
+		}
+		if antigravityFresh {
+			out = append(out, brand.Product+" was just added to Antigravity. To load its tools, "+restart+".")
+		} else {
+			out = append(out, brand.Product+" is on for this repo. Antigravity should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
+		}
 	default:
 		out = append(out, brand.Product+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Product+" was already registered with Claude Code, "+
 			"and otherwise after a restart (press Stop and send a message in T3; `claude --continue` in a terminal). "+
@@ -592,7 +596,8 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
 }
 
-// Antigravity's shell variables also reach agents it starts. Their markers take precedence.
+// Claude Code, Codex or Pi started from Antigravity inherit its shell markers and take precedence.
+// The markers are the same in reverse, so Antigravity started from one of them gets their advice.
 func (e Env) looksLikeAntigravity() bool {
 	return (e.getenv("ANTIGRAVITY_AGENT") == "1" || e.getenv("ANTIGRAVITY_CONVERSATION_ID") != "") &&
 		e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi()

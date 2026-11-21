@@ -261,15 +261,10 @@ registered MCP server picked up its tools from `notifications/tools/list_changed
   among the hook's ancestors, as it does for Codex.
 - **Tool approval.** Join adds `mcp(murmur/*)` to `permissions.allow` in
   `antigravity-acp/settings.json` in a T3 instance's home or `antigravity-cli/settings.json` in a
-  standalone CLI's home (Antigravity 1.5.13). A denied write leaves a note with the rule and path.
-- **Its programs** (#709, 2026-11-16). T3 downloads the release itself, into
-  `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`: `agy_acp_server` (`.exe` on Windows,
-  `.par` elsewhere) runs `localharness_external`, which runs the agent's shell commands: seen on
-  Windows as powershell under `localharness_external.exe` under `agy_acp_server.exe` under T3.
-  Both are agents to the walk above a Claude Code server (`agentAbove`), the `.par` aside, since
-  what runs it, and so the name the walk would read, hasn't been seen: a claude run from an
-  Antigravity thread's shell, under a T3 thread that is Claude's, isn't that thread, though it
-  inherits `T3CODE_THREAD_ID`. No `agy` or `antigravity` program is part of what T3 runs.
+  standalone CLI's home (Antigravity 1.5.13). A settings file join can't edit leaves a note with the rule and path.
+- **Its programs.** In T3 on Windows with Antigravity 1.4.5, `agy_acp_server.exe` ran
+  `localharness_external.exe`, which launched shell commands (#709, 2026-11-16). On 1.5.13, T3
+  runs `agy.exe acp` directly and it launches the shell (#889, 2026-11-20).
 - **The hook.** It is a `murmur` entry in `config/hooks.json`. Antigravity's payload doesn't name
   its event, so the command line does: `mur hook --event Stop antigravity`. It runs on two events:
   - `PreInvocation`, before each model call, stands for both `UserPromptSubmit` and `PostToolUse`.

@@ -100,31 +100,37 @@ func TestAdviceForAntigravity(t *testing.T) {
 		fresh bool
 		want  string
 	}{
-		{"first join in T3", map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_THREAD_ID": "thread-1"}, true, "Open a new thread in this project"},
-		{"first join in a terminal", map[string]string{"ANTIGRAVITY_CONVERSATION_ID": "conv-1"}, true, "Restart `agy` in this repo"},
-		{"already registered in T3", map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, false, "in this session within a few seconds"},
-		{"already registered in a terminal", map[string]string{"ANTIGRAVITY_CONVERSATION_ID": "conv-1"}, false, "in this session within a few seconds"},
+		{"first join in T3", map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_THREAD_ID": "thread-1"}, true, "To load its tools, open a new thread in this project"},
+		{"first join in a terminal", map[string]string{"ANTIGRAVITY_CONVERSATION_ID": "conv-1"}, true, "To load its tools, restart `agy` in this repo"},
+		{"already registered in T3", map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, false, "after a minute, open a new thread in this project"},
+		{"already registered in a terminal", map[string]string{"ANTIGRAVITY_CONVERSATION_ID": "conv-1"}, false, "after a minute, restart `agy` in this repo"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := envWith(c.vars)
 			got := e.advice(false, false, c.fresh, false)[0]
-			if !e.looksLikeAntigravity() || !strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) {
+			if !e.looksLikeAntigravity() || !strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) ||
+				(!c.fresh && !strings.Contains(got, "within a few seconds")) {
 				t.Errorf("advice: %q", got)
 			}
 		})
 	}
 }
 
-func TestAntigravityYieldsToNestedAgents(t *testing.T) {
-	for _, c := range []struct{ key, value, want string }{
-		{"CLAUDECODE", "1", "show up in this conversation"},
-		{"CODEX_THREAD_ID", "codex-1", "Codex"},
-		{"PI_CODING_AGENT", "true", "type /reload in Pi"},
+func TestAntigravityWithInheritedAgentMarkers(t *testing.T) {
+	for _, c := range []struct{ name, key, value, want string }{
+		{"Claude", "CLAUDECODE", "1", "show up in this conversation"},
+		{"Codex", "CODEX_THREAD_ID", "codex-1", "Codex"},
+		{"Pi", "PI_CODING_AGENT", "true", "type /reload in Pi"},
 	} {
-		e := envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "conv-1", c.key: c.value})
-		got := e.advice(false, false, true, false)[0]
-		if e.looksLikeAntigravity() || strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) {
-			t.Errorf("%s: advice %q", c.key, got)
+		// Either launch order leaves the same markers in the inner agent's shell.
+		for _, name := range []string{c.name + " under Antigravity", "Antigravity under " + c.name} {
+			t.Run(name, func(t *testing.T) {
+				e := envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "conv-1", c.key: c.value})
+				got := e.advice(false, false, true, false)[0]
+				if e.looksLikeAntigravity() || strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) {
+					t.Errorf("advice %q", got)
+				}
+			})
 		}
 	}
 	if envWith(map[string]string{"ANTIGRAVITY_AGENT": "0"}).looksLikeAntigravity() {

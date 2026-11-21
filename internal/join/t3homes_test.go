@@ -132,7 +132,7 @@ func TestJoinRegistersInEveryHomeT3Runs(t *testing.T) {
 		}
 		return n
 	}
-	if count("claudeAgent") != 3 || count("codex") != 2 || count("muse") != 1 || count("opencode") != 0 || count("grok") != 1 || count("antigravity") != 1 {
+	if count("claudeAgent") != 3 || count("codex") != 2 || count("muse") != 1 || count("opencode") != 0 || count("grok") != 1 || count("antigravity") != 2 {
 		t.Fatalf("homes %+v", byAgent)
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), `Pi as T3 Code's "Pi" is turned off`) {
@@ -212,12 +212,13 @@ func TestAntigravityHomeDedupKeepsT3Ownership(t *testing.T) {
 
 func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 	for _, c := range []struct {
-		name                 string
-		bin, onPath, cliHome bool
+		name                         string
+		bin, onPath, cliHome, custom bool
 	}{
 		{name: "bundled"},
 		{name: "configured binary", bin: true, cliHome: true},
 		{name: "agy on PATH", onPath: true},
+		{name: "custom GEMINI_HOME", onPath: true, custom: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			sb, _ := uninstallSandbox(t)
@@ -238,12 +239,22 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 			}
 			settings := `{"providerInstances":{
 				"active":{"driver":"antigravity","enabled":%t,"config":{"binaryPath":%q}},
-				"later":{"driver":"antigravity","enabled":true,"config":{"binaryPath":%q}}
+				"later":{"driver":"antigravity","enabled":true,"config":{"binaryPath":%q}},
+				"unused":{"driver":"antigravity","enabled":false}
 			}}`
 			write(t, sb.T3Settings, fmt.Sprintf(settings, true, bin, bin))
-			standalone := filepath.Join(sb.Home, ".gemini")
 			inst := sb.GeminiHome
+			shared := filepath.Join(sb.Home, ".gemini")
+			standalone, activeIndex := shared, 1
+			if c.custom {
+				standalone = filepath.Join(sb.root, "custom-gemini")
+				sb.GeminiHome, activeIndex = standalone, 2
+			}
 			later := antigravityHomeOf(sb.T3Settings, "later")
+			unused := antigravityHomeOf(sb.T3Settings, "unused")
+			untouched := filepath.Join(unused, "config", "mcp_config.json")
+			const userConfig = `{"mcpServers":{"other":{}}}`
+			write(t, untouched, userConfig)
 			acp := filepath.Join(inst, "antigravity-acp", "settings.json")
 			cli := filepath.Join(standalone, "antigravity-cli", "settings.json")
 			mustMakeDir(t, inst)
@@ -253,17 +264,21 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 
 			homes, _ := sb.homes()
 			got := homes[agentIndex("antigravity")]
-			if len(got) != 3 || got[0].Dir != standalone || got[0].T3Own || got[1].Dir != inst || !got[1].T3Own || got[1].Bin != bin {
+			if len(got) != activeIndex+2 || got[0].Dir != shared || got[0].T3Own || got[0].SkillsOnly != c.custom ||
+				got[activeIndex].Dir != inst || !got[activeIndex].T3Own || got[activeIndex].Bin != bin {
 				t.Fatalf("Antigravity homes: %+v", got)
 			}
 
 			p := startJoinTestDaemon(t)
 			r, err := Join(t.Context(), sb.Env, p.Top)
-			if err != nil || !strings.Contains(r.Tell[0], "Open a new thread") {
+			if err != nil || !strings.Contains(r.Tell[0], "To load its tools, open a new thread") {
 				t.Fatalf("join: %v\n%s", err, r)
 			}
-			if !strings.Contains(r.String(), "Not done:\n  - Antigravity (later in T3 Code): open a thread") || exists(later) {
+			if !strings.Contains(r.String(), "Not done:\n") || !strings.Contains(r.String(), "  - Antigravity (later in T3 Code): open a thread") || exists(later) {
 				t.Errorf("join with an unused T3 instance:\n%s", r)
+			}
+			if !strings.Contains(strings.Join(r.Notes, "\n"), `T3 Code's "unused" is turned off`) || read(t, untouched) != userConfig || exists(filepath.Join(unused, "config", "hooks.json")) {
+				t.Errorf("join with a disabled T3 instance:\n%s", r)
 			}
 			for _, name := range []string{"mcp_config.json", "hooks.json"} {
 				if !strings.Contains(read(t, filepath.Join(inst, "config", name)), `"murmur"`) {
@@ -284,9 +299,15 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 			} else if exists(cli) || exists(standaloneMCP) {
 				t.Error("registered standalone Antigravity with only T3 installed")
 			}
+			if c.custom && (exists(filepath.Join(shared, "config", "mcp_config.json")) || exists(filepath.Join(shared, "antigravity-cli"))) {
+				t.Error("registered in the shared skills home despite a custom GEMINI_HOME")
+			}
 			for _, s := range skills.All() {
 				if read(t, filepath.Join(standalone, "config", "skills", s.Name, "SKILL.md")) != string(s.Text) {
 					t.Errorf("missing skill %s in the user's home", s.Name)
+				}
+				if c.custom && read(t, filepath.Join(shared, "config", "skills", s.Name, "SKILL.md")) != string(s.Text) {
+					t.Errorf("missing shared T3 skill %s", s.Name)
 				}
 			}
 			if exists(filepath.Join(inst, "config", "skills")) {
@@ -294,7 +315,7 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 			}
 
 			mustMakeDir(t, later)
-			if r, err := Join(t.Context(), sb.Env, p.Top); err != nil || !strings.Contains(r.Tell[0], "within a few seconds") || strings.Contains(strings.Join(r.Tell, "\n"), "new thread") {
+			if r, err := Join(t.Context(), sb.Env, p.Top); err != nil || !strings.Contains(r.Tell[0], "within a few seconds") || strings.Contains(strings.Join(r.Tell, "\n"), "was just added") {
 				t.Fatalf("join after opening a different instance: %v\n%s", err, r)
 			}
 			write(t, sb.T3Settings, fmt.Sprintf(settings, false, bin, bin))
@@ -307,7 +328,7 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 				}
 			}
 			for _, s := range skills.All() {
-				if exists(filepath.Join(standalone, "config", "skills", s.Name, "SKILL.md")) {
+				if exists(filepath.Join(standalone, "config", "skills", s.Name, "SKILL.md")) || exists(filepath.Join(shared, "config", "skills", s.Name, "SKILL.md")) {
 					t.Errorf("uninstall left the user's %s skill", s.Name)
 				}
 			}
@@ -315,6 +336,97 @@ func TestJoinAndUninstallFromT3Antigravity(t *testing.T) {
 				t.Error("uninstall changed T3's skills directory")
 			}
 		})
+	}
+}
+
+func TestJoinAndUninstallRecognizeManagedGeminiHome(t *testing.T) {
+	for _, mode := range []string{"junction", "missing settings", "junction with invalid settings"} {
+		t.Run(mode, func(t *testing.T) {
+			sb, _ := uninstallSandbox(t)
+			sb.Home = filepath.Join(sb.root, "home")
+			sb.T3Settings = filepath.Join(sb.root, "userdata", "settings.json")
+			sb.Getenv = envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "T3CODE_THREAD_ID": "thread-1"}).Getenv
+			sb.LookPath = func(name string) (string, error) {
+				if name == "agy" {
+					return filepath.Join(sb.root, exeName("agy")), nil
+				}
+				return "", exec.ErrNotFound
+			}
+			inst := antigravityHomeOf(sb.T3Settings, "active")
+			switch mode {
+			case "junction":
+				write(t, sb.T3Settings, `{"providerInstances":{"active":{"driver":"antigravity","enabled":true}}}`)
+			case "missing settings":
+				sb.T3Settings = ""
+				inst = filepath.Join(sb.root, "unlisted")
+				mustMakeDir(t, filepath.Join(inst, "antigravity-acp"))
+			case "junction with invalid settings":
+				write(t, sb.T3Settings, `{`)
+			}
+			mustMakeDir(t, inst)
+			sb.GeminiHome = inst
+			if mode != "missing settings" {
+				sb.GeminiHome = filepath.Join(sb.root, "gemini-alias")
+				linkAntigravityDir(t, inst, sb.GeminiHome)
+			}
+			p := startJoinTestDaemon(t)
+			r, err := Join(t.Context(), sb.Env, p.Top)
+			if err != nil || !strings.Contains(r.Tell[0], "was just added to Antigravity") {
+				t.Fatalf("join: %v\n%s", err, r)
+			}
+			acp := filepath.Join(inst, "antigravity-acp", "settings.json")
+			mcp := filepath.Join(inst, "config", "mcp_config.json")
+			instanceSkills := filepath.Join(inst, "config", "skills")
+			sharedSkill := filepath.Join(sb.Home, ".gemini", "config", "skills", "murmur", "SKILL.md")
+			if exists(instanceSkills) || exists(filepath.Join(inst, "antigravity-cli")) || !exists(sharedSkill) ||
+				!strings.Contains(read(t, acp), `"mcp(murmur/*)"`) || !strings.Contains(read(t, mcp), `"murmur"`) {
+				t.Errorf("join used the wrong home:\n%s", r)
+			}
+			// An instance's skills link can point outside the shared home. Only remove shared skills.
+			linkedSkills := filepath.Join(sb.root, "other-skills")
+			linkedSkill := filepath.Join(linkedSkills, "murmur", "SKILL.md")
+			write(t, linkedSkill, read(t, sharedSkill))
+			linkAntigravityDir(t, linkedSkills, instanceSkills)
+			if r, err := Uninstall(t.Context(), sb.Env, true); err != nil {
+				t.Fatalf("uninstall: %v\n%s", err, r)
+			}
+			if !exists(linkedSkill) || !sameEntry(instanceSkills, linkedSkills) || exists(sharedSkill) ||
+				strings.Contains(read(t, acp), `"mcp(murmur/*)"`) || strings.Contains(read(t, mcp), `"murmur"`) {
+				t.Error("uninstall missed the managed home or followed its skills link")
+			}
+		})
+	}
+}
+
+func linkAntigravityDir(t *testing.T, target, link string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+			t.Fatalf("making a junction: %v\n%s", err, out)
+		}
+		return
+	}
+	linkOrSkip(t, target, link)
+}
+
+func TestJoinReportsMalformedAntigravityApproval(t *testing.T) {
+	sb, _ := uninstallSandbox(t)
+	path := filepath.Join(sb.GeminiHome, "antigravity-cli", "settings.json")
+	p := startJoinTestDaemon(t)
+	for _, c := range []struct{ settings, reason string }{
+		{`{"permissions":[]}`, `"permissions" isn't an object`},
+		{`{"permissions":{"allow":true}}`, "permissions.allow isn't a list"},
+	} {
+		write(t, path, c.settings)
+		r, err := Join(t.Context(), sb.Env, p.Top)
+		if err != nil || !p.Joined() || len(r.Notes) != 1 || !strings.Contains(r.Notes[0], path) ||
+			!strings.Contains(r.Notes[0], `"mcp(murmur/*)"`) || !strings.Contains(r.Notes[0], c.reason) {
+			t.Fatalf("join with %s: %v\n%s", c.settings, err, r)
+		}
+		if read(t, path) != c.settings || !exists(filepath.Join(sb.GeminiHome, "config", "mcp_config.json")) ||
+			!exists(filepath.Join(sb.GeminiHome, "config", "hooks.json")) {
+			t.Errorf("join didn't keep settings and install the server and hook:\n%s", r)
+		}
 	}
 }
 

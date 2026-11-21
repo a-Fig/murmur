@@ -145,8 +145,8 @@ What `mur join` prints says which case this is, and how to get the tools if they
 - OpenCode: it reads its config again by itself; the tools are there from the next turn.
 - Pi in a terminal: type `/reload`, or start a new session.
 - Pi in T3 Code: open a new thread.
-- Antigravity: if Murmur was already registered, the tools appear within seconds. If it was just
-  added, open a new thread in T3 Code or restart `agy` in this repo.
+- Antigravity: if Murmur was already registered, the tools should appear within seconds. If it was
+  just added or the tools are missing after a minute, open a new T3 thread or restart `agy` in this repo.
 - Muse Code or Grok: start a new session (in T3 Code, a new thread).
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to

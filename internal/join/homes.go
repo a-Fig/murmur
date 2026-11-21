@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -23,6 +24,8 @@ type agentHome struct {
 	Named bool
 	// T3Own says T3 made Dir for one instance and manages what is in it (Antigravity's).
 	T3Own bool
+	// SkillsOnly is the shared Antigravity skills home when the standalone home is elsewhere.
+	SkillsOnly bool
 }
 
 // agent is one of the coding agents join registers the server with.
@@ -155,8 +158,9 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 	}
 	instances, err := readT3Instances(e.T3Settings)
 	if err != nil {
-		notes = append(notes, "T3 Code's settings ("+e.T3Settings+") couldn't be read, so only each agent's default configuration was registered in: "+err.Error())
+		notes = append(notes, "Couldn't read T3 Code's settings ("+e.T3Settings+"). Some provider instances may be missing. "+err.Error())
 	}
+	managedGemini := false
 	for _, in := range instances {
 		i := agentIndex(in.Driver)
 		if i < 0 {
@@ -167,12 +171,13 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		if !ok {
 			continue
 		}
-		if h.T3Own && samePath(h.Dir, byAgent[i][0].Dir) {
-			// T3 sets GEMINI_HOME to its own instance directory. Keep the user's home for
-			// standalone Antigravity and for the skills T3 links into its instances.
-			if e.Home != "" {
-				byAgent[i][0].Dir = filepath.Join(e.Home, ".gemini")
-			} else if !in.On && !off {
+		sameHome := samePath
+		if h.T3Own {
+			sameHome = sameEntry
+		}
+		if h.T3Own && sameHome(h.Dir, e.GeminiHome) {
+			managedGemini = true
+			if !in.On && !off {
 				byAgent[i][0].Dir = ""
 			}
 		}
@@ -186,7 +191,7 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		}
 		dup := false
 		for j, o := range byAgent[i] {
-			if samePath(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
+			if sameHome(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
 				dup = dup || sameCodexKey(a, o, h)
 				if h.T3Own {
 					byAgent[i][j] = h
@@ -199,6 +204,23 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 			byAgent[i] = append(byAgent[i], h)
 		}
 	}
+	i := agentIndex("antigravity")
+	homes := byAgent[i]
+	if !managedGemini && isT3AntigravityHome(e.GeminiHome) {
+		managedGemini = true
+		homes[0].T3Own = true
+		homes[0].Label += " (T3 Code)"
+	}
+	if e.Home != "" {
+		shared := filepath.Join(e.Home, ".gemini")
+		alreadyListed := slices.ContainsFunc(homes, func(h agentHome) bool { return sameEntry(h.Dir, shared) })
+		usesShared := managedGemini || slices.ContainsFunc(homes, func(h agentHome) bool { return h.T3Own && (off || isDir(h.Dir)) })
+		if usesShared && !alreadyListed && !isT3AntigravityHome(shared) {
+			// When GEMINI_HOME is T3's, use ~/.gemini for standalone registration too.
+			homes = append([]agentHome{{Dir: shared, Label: agents[i].label, SkillsOnly: !managedGemini}}, homes...)
+		}
+	}
+	byAgent[i] = homes
 	return byAgent, notes
 }
 
