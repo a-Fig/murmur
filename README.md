@@ -98,8 +98,8 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
-| Antigravity            | T3 Code               | inbox ([#886](https://github.com/a-Fig/murmur/issues/886) tracks idle turns) | notice after its next tool call |
-| Antigravity (untested) | a terminal            | inbox     | notice after its next tool call        |
+| Antigravity (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
