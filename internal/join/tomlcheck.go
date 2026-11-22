@@ -19,7 +19,7 @@ func checkTOMLEdit(before, after string) error {
 	if _, err := toml.Decode(after, new(map[string]any)); err == nil {
 		return nil
 	} else if _, berr := toml.Decode(before, new(map[string]any)); berr == nil {
-		return fmt.Errorf("%s's edit would have made it invalid TOML (%v), so it left the file as it was; this is a bug in %s, please report it", brand.Product, err, brand.Product)
+		return fmt.Errorf("not changed: %s's edit would have made this file invalid TOML (%v), so the file is as it was. This is a bug in %s; please report it", brand.Product, err, brand.Product)
 	}
 	return nil
 }
