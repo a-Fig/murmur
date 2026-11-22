@@ -26,8 +26,10 @@ import (
 //
 // A pending send is given up after Options.PendingGiveUp, pendingGiveUp by default, and its sender
 // is told in its inbox that it wasn't sent, with why in a few plain words; until then it answered
-// as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too,
-// and is then on the remote or not as its last push left it: nothing is kept across a restart.
+// as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too:
+// nothing is kept across a restart. The remote is asked first then as well, for pendingStopLook, so
+// that a send it has isn't called not sent (#857); one it couldn't be asked about is on the remote
+// or not as its last push left it.
 
 // pendingGiveUp is how long after its first push ended unsure a pending send is given up, at the
 // first retry to end past it. Tyler set it
@@ -42,6 +44,12 @@ const pendingGiveUp = 3 * time.Minute
 // writeMu has 90 s (serve.go), and its own push, cut short by a longer wait, would more often end
 // unsure, which the person's send from the page is told at once as not sent.
 const pendingLook = 20 * time.Second
+
+// pendingStopLook bounds the same asking as the daemon stops. The stop waits DrainTimeout, 20 s,
+// for its background work in any case, and then pushes its goodbye, so these few seconds make no
+// stop longer than one could be already; they are short so that a stop with the network down, which
+// is when sends are pending, isn't held the whole of that time for an answer that won't come.
+const pendingStopLook = 5 * time.Second
 
 // pushLook is how long a push that failed may go on past its time, asking the remote where the ref
 // is (bus.Repo.Push).
@@ -97,7 +105,7 @@ func (d *Daemon) pendingLoop() {
 			d.writeMu.Lock()
 			d.pendRun = false
 			if len(d.pendSends) > 0 {
-				d.giveUpPending(errDaemonStopped, false)
+				d.giveUpPending(errDaemonStopped, true)
 			}
 			d.writeMu.Unlock()
 			return
@@ -213,7 +221,13 @@ func (d *Daemon) giveUpPending(err error, look bool) {
 	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
 	ref := d.meshRef()
 	if look {
-		lctx, cancel := context.WithTimeout(d.bgCtx, pendingLook)
+		// A stopping daemon's context is done, and would fail the asking at once: it asks in a short
+		// time of its own (#857).
+		from, limit := d.bgCtx, pendingLook
+		if from.Err() != nil {
+			from, limit = context.Background(), pendingStopLook
+		}
+		lctx, cancel := context.WithTimeout(from, limit)
 		defer cancel()
 		// A tip that isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
 		// of #818): that is as if the remote couldn't be asked.
