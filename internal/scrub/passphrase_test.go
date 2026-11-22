@@ -30,6 +30,24 @@ func TestBlocksPassphrases(t *testing.T) {
 		`"password_hint": "or set DB_PASSWORD=Sup3rS3cretPass! in env"`,
 		`Set API_KEY=" in .env, then SECRET_TOKEN="Xk9mPq2LvR7tN4wZ"`,
 		`"token": "Xk9mPq2LvR7tN4wZ'x"`,
+		// Found in the third review (2026-11-21): one everyday word, a $ for an s, and a config's
+		// or a form's real password under a name like a form's.
+		`"password": "Max Power 2019 rocket"`,
+		`"password": "strong horse 42 battery"`,
+		`"password": "set the table 42 now"`,
+		`"password": "menos es mas 42 siempre"`,
+		`"password": "moins cher 42 toujours"`,
+		`"password": "see you at 42 noon"`,
+		`"password": "same old 77 story"`,
+		`"password": "short stack 9 pancakes"`,
+		`"password": "weak tea 3 cups daily"`,
+		`"password": "step lively 7 friends"`,
+		`"password": "below zero 12 kelvin"`,
+		`"password": "Pa$$w0rd 42 my secret"`,
+		`"password": "Ca$h money 42 rocket"`,
+		`"password": "Blue$ky 42 rocket launch"`,
+		`ADMIN_RESET_PASSWORD="purple monkey 42 dishwasher"`,
+		`{"change_password": "purple monkey 42 dishwasher"}`,
 	} {
 		err := Check(s)
 		if err == nil {
@@ -77,7 +95,6 @@ func TestPassesPasswordProse(t *testing.T) {
 		`ADMIN_PASSWORD: "TODO set in prod v2"`,
 		`password: "$db_pass 2 fallback"`,
 		`"password": "$1 or $2 from args"`,
-		`"password": "Blue$ky 42 rocket launch"`, // missed: $ky reads as a variable
 		`"password": "Passwort muss mindestens 8 Zeichen lang sein"`,
 		`"password": "Debe tener al menos 8 caracteres"`,
 		`"password": "Au moins 8 caractères"`,

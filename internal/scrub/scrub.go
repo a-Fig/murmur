@@ -83,11 +83,12 @@ var assignment = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|P
 // all of which is the secret (#948). Only its first word used to be checked, so
 // "purple monkey 42 dishwasher" passed, and stayed in the bus's history. The name ends in the
 // word, as `db_password` and `SMTP_PASSWD2` do: `passwordExpired` or `password_hint` holds text
-// about a password ("Expired 30 days ago"), not one, and so do a form's `reset_password` or
-// `forgot_password` ("Link expires in 24 hours").
+// about a password ("Expired 30 days ago"), not one, and so do a form's own `reset_password` or
+// `forgot_password` ("Link expires in 24 hours"), named by that alone: `ADMIN_RESET_PASSWORD` is
+// a config's password, and `change_password` is often the field a new one is sent in.
 var (
 	passwordName = regexp.MustCompile(`(?i)PASS(WORD|WD|PHRASE)_?[0-9]*$`)
-	passwordForm = regexp.MustCompile(`(?i)(RESET|CHANGE|FORGOT|FORGOTTEN|ONE_?TIME)_?PASS(WORD|WD)`)
+	passwordForm = regexp.MustCompile(`(?i)^(RESET|FORGOT|FORGOTTEN|ONE_?TIME)_?PASS(WORD|WD)$`)
 )
 
 // publicKeyToken is .NET's name for the public identity of a signed assembly
@@ -173,45 +174,64 @@ func quotedValue(rest string) (string, bool) {
 // looksPassphrase says whether a password's quoted value of several words is a passphrase rather
 // than prose or a placeholder. It holds to looksSecret's rules, with spaces allowed: 12 characters
 // or more, letters mixed with digits, and none of the characters of code or a placeholder ({, <,
-// (, % or a $ that starts a variable: ${, $(, $name, $1). So a passphrase of words alone passes,
-// as `PASSWORD=correcthorsebatterystaple` does. Prose under a password's own name is a form's
-// validation message ("Must be at least 12 characters") or a note in its place ("TODO set in prod
-// v2"), with a word a passphrase rarely has: one of proseWords.
+// (, % or a $ that starts a word and a variable: ${, $(, $name, $1). A $ inside a word stands for
+// an s (Pa$$w0rd, Ca$h). So a passphrase of words alone passes, as
+// `PASSWORD=correcthorsebatterystaple` does. Prose under a password's own name is a form's
+// validation message ("Must be at least 12 characters"), with one of formWords, which a
+// passphrase rarely has, or a note in its place ("TODO set in prod v2"), with two of noteWords:
+// each of those is an everyday word ("Max Power 2019 rocket"), and only two of them together
+// read as a note.
 func looksPassphrase(v string) bool {
 	if len(v) < 12 || !lettersAndDigits(v) {
 		return false
 	}
+	prev := ' '
 	for i, r := range v {
-		if r == '$' && i+1 < len(v) && variableStart.MatchString(v[i+1:]) {
+		if r == '$' && wordStart(prev) && i+1 < len(v) && variableStart.MatchString(v[i+1:]) {
 			return false
 		}
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) && !strings.ContainsRune("-_+/=.~!@#?,;:&*^$'", r) {
 			return false
 		}
+		prev = r
 	}
+	notes := 0
 	for _, w := range strings.FieldsFunc(strings.ToLower(v), func(r rune) bool { return !unicode.IsLetter(r) }) {
-		if proseWords[w] {
+		if formWords[w] {
 			return false
 		}
+		if noteWords[w] {
+			notes++
+		}
 	}
-	return true
+	return notes < 2
+}
+
+// wordStart says a character before a $ leaves it at the start of a word: a space, or punctuation
+// a variable follows (`=$HOME`, `"$1"`), but not a letter, a digit or another $.
+func wordStart(prev rune) bool {
+	return unicode.IsSpace(prev) || strings.ContainsRune(`"'=:,;/`, prev)
 }
 
 // variableStart is what follows a $ that starts a shell or template variable.
 var variableStart = regexp.MustCompile(`^[{(A-Za-z0-9_]`)
 
-// proseWords are words of a form's text about a password, or of a note in its place, kept to
-// those a passphrase rarely has. "Characters" and "at least" are here in a few languages besides
-// English, for an agent working on a form's translations.
-var proseWords = map[string]bool{}
+// formWords are words of a form's text about a password that a passphrase rarely has, one of
+// which marks a value as that text. "Characters" is here in a few languages besides English, for
+// an agent working on a form's translations. noteWords are words of a note left in a password's
+// place, or a form's status text, two of which mark a value as one.
+var formWords, noteWords = map[string]bool{}, map[string]bool{}
 
 func init() {
 	for _, w := range strings.Fields(`must least characters chars char digit digits letter letters
-		number numbers symbol symbols enter invalid incorrect required minimum maximum min max allowed
-		your example password passwords passphrase short weak strong strength todo tbd redacted see
-		set same stored vault step below ticket
-		zeichen mindestens caracteres caractères moins menos caratteri tekens`) {
-		proseWords[w] = true
+		number numbers symbol symbols enter invalid incorrect required minimum maximum allowed your
+		example password passwords passphrase zeichen caracteres caractères caratteri tekens`) {
+		formWords[w] = true
+	}
+	for _, w := range strings.Fields(`set same see not yet short weak strong strength min max more add
+		todo tbd redacted stored vault step below ticket staging prod production dev changed expires
+		expired sent ago days hours minutes seconds`) {
+		noteWords[w] = true
 	}
 }
 
