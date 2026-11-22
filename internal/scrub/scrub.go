@@ -10,8 +10,10 @@ package scrub
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 )
 
 type pattern struct {
@@ -133,11 +135,16 @@ func blocked(what string) error {
 // credential says whether rest, the text after an assignment's sign, starts with a credential
 // assigned to name. Its first word, up to a space or a quote, after an opening quote if there is
 // one, is looksSecret's to judge (publicKeyToken's 16 hex digits aside). Under a password's name a
-// quoted value with spaces in it is judged whole too, as a passphrase (looksPassphrase).
+// quoted value with spaces in it is judged whole too, as a passphrase (looksPassphrase). A quoted
+// value is judged as quotedValue reads it, with JSON's escapes decoded.
 func credential(name, rest string) bool {
-	first := strings.TrimLeft(rest, `"'`)
-	if len(rest)-len(first) > 1 {
-		first = rest[1:] // only one quote opens a value
+	v, quoted := quotedValue(rest)
+	first := v
+	if !quoted {
+		first = strings.TrimLeft(rest, `"'`)
+		if len(rest)-len(first) > 1 {
+			first = rest[1:] // only one quote opens a value
+		}
 	}
 	if i := strings.IndexFunc(first, func(r rune) bool { return unicode.IsSpace(r) || r == '"' || r == '\'' }); i >= 0 {
 		first = first[:i]
@@ -145,12 +152,12 @@ func credential(name, rest string) bool {
 	if looksSecret(first) && !(publicKeyToken.MatchString(name) && hex16.MatchString(first)) {
 		return true
 	}
-	v, ok := quotedValue(rest)
-	return ok && strings.IndexFunc(v, unicode.IsSpace) >= 0 && passwordName.MatchString(name) && !passwordForm.MatchString(name) && looksPassphrase(v)
+	return quoted && strings.IndexFunc(v, unicode.IsSpace) >= 0 && passwordName.MatchString(name) && !passwordForm.MatchString(name) && looksPassphrase(v)
 }
 
 // quotedValue reads the quoted string rest starts with, closed on its line: in double quotes, with
-// JSON's backslash escapes, or in single quotes, where YAML writes a quote as two.
+// JSON's backslash escapes decoded (jsonUnescape), or in single quotes, where YAML writes a quote as
+// two.
 func quotedValue(rest string) (string, bool) {
 	if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
 		return "", false
@@ -164,11 +171,82 @@ func quotedValue(rest string) (string, bool) {
 			j++
 		case c == q && q == '\'' && j > 1 && j+1 < len(rest) && rest[j+1] == '\'':
 			j++ // '' inside a single-quoted value
+		case c == q && q == '"':
+			return jsonUnescape(rest[1:j]), true
 		case c == q:
 			return rest[1:j], true
 		}
 	}
 	return "", false
+}
+
+// jsonUnescape decodes JSON's backslash escapes in s, a double-quoted value's text, so the value is
+// judged by what it says: a serialized config or tool call writes a passphrase's tab as \t, and its
+// backslash, read as written, marked the value as code and let it through (#967). An escape JSON
+// doesn't have is kept as written.
+func jsonUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 == len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		switch e := s[i+1]; e {
+		case '"', '\\', '/':
+			b.WriteByte(e)
+		case 'b':
+			b.WriteByte('\b')
+		case 'f':
+			b.WriteByte('\f')
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'u':
+			r, n := jsonRune(s[i:])
+			if n == 0 {
+				b.WriteByte('\\')
+				continue
+			}
+			b.WriteRune(r)
+			i += n - 1
+			continue
+		default:
+			b.WriteByte('\\')
+			continue
+		}
+		i++
+	}
+	return b.String()
+}
+
+// jsonRune reads the \uXXXX escape s starts with, with the low half after it of a surrogate pair,
+// and returns the rune and the bytes it read: 0 for an escape that isn't one.
+func jsonRune(s string) (rune, int) {
+	hex := func(s string) (rune, bool) {
+		if len(s) < 6 || s[0] != '\\' || s[1] != 'u' {
+			return 0, false
+		}
+		n, err := strconv.ParseUint(s[2:6], 16, 32)
+		return rune(n), err == nil
+	}
+	r, ok := hex(s)
+	if !ok {
+		return 0, 0
+	}
+	if utf16.IsSurrogate(r) {
+		if lo, ok := hex(s[6:]); ok {
+			if pair := utf16.DecodeRune(r, lo); pair != unicode.ReplacementChar {
+				return pair, 12
+			}
+		}
+	}
+	return r, 6
 }
 
 // looksPassphrase says whether a password's quoted value of several words is a passphrase rather

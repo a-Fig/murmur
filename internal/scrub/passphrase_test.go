@@ -48,6 +48,16 @@ func TestBlocksPassphrases(t *testing.T) {
 		`"password": "Blue$ky 42 rocket launch"`,
 		`ADMIN_RESET_PASSWORD="purple monkey 42 dishwasher"`,
 		`{"change_password": "purple monkey 42 dishwasher"}`,
+		// JSON's escapes, as a serialized config or tool call carries them, are read as what they
+		// stand for: a \t is the tab, not a backslash that marks the value as code (#967).
+		`{"password":"purple\tmonkey 42 dishwasher"}`,
+		`{"password":"purple monkey\n42 dishwasher"}`,
+		`{"password":"purple monkey 42 dishwasher"}`,
+		`{"password":"purple\tmonkey\t42\tdishwasher"}`,
+		`{"password":"a\/b monkey 42 dishwasher"}`,
+		// A first word is read decoded too, under any name.
+		`{"api_key":"Xk9mPq2LvR7tN4wZ\n"}`,
+		`{"secret":"Xk9mPq2LvR7tN4wZ\tnext"}`,
 	} {
 		err := Check(s)
 		if err == nil {
@@ -113,9 +123,38 @@ func TestPassesPasswordProse(t *testing.T) {
 		`"password": ""`,
 		`"token": "see step 2 and 3 of setup"`,
 		`"api_key": "from vault path kv/app2"`,
+		// Escaped, prose and placeholders still pass (#967).
+		`{"password":"Must be at least 12 characters\n"}`,
+		`{"password":"TODO\tset in prod v2"}`,
+		`{"password":"\u003cyour password 1\u003e"}`,
+		`{"password":"C:\\keys\\db 2 backup"}`,
+		`{"password":"say \"hi\" 42 times"}`,
+		`{"token":"see step 2\tand 3"}`,
 	} {
 		if err := Check(s); err != nil {
 			t.Errorf("blocked %q: %v", s, err)
+		}
+	}
+}
+
+// JSON's escapes are decoded, a surrogate pair to its one rune, and an escape JSON lacks stays as
+// written.
+func TestJSONUnescape(t *testing.T) {
+	for in, want := range map[string]string{
+		`plain`:       "plain",
+		`a\tb\nc\rd`:  "a\tb\nc\rd",
+		`\"q\" \ \/`:  `"q" \ /`,
+		`\b\f`:        "\b\f",
+		`Aé`:          "Aé",
+		`😀 x`:         "😀 x",
+		`\ud83d lone`: "� lone",
+		`\x41 \q`:     `\x41 \q`,
+		`\u12 short`:  `\u12 short`,
+		`\uZZZZ`:      `\uZZZZ`,
+		`end\`:        `end\`,
+	} {
+		if got := jsonUnescape(in); got != want {
+			t.Errorf("jsonUnescape(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
