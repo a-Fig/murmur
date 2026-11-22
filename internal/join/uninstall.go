@@ -201,7 +201,7 @@ func (e Env) leftovers() []string {
 	}
 	return append(out,
 		"In each clone that joined, the daemon's folder (.git/"+brand.StateDir+") and the bus's local refs (refs/"+brand.Name+"/), which nothing reads any more. "+
-			"`git for-each-ref --format='delete %(refname)' refs/"+brand.Name+"/ | git update-ref --stdin` removes the refs.",
+			"`git for-each-ref --format='delete %(refname)' refs/"+brand.Name+"/ | git update-ref --no-deref --stdin` removes the refs.",
 		"The "+brand.Product+" section in a repo's AGENTS.md and CLAUDE.md, which is the team's: it stays, and asks an agent there whether to join again.",
 		"Agent sessions already open keep "+brand.Product+"'s server running until they end, and it does nothing; new ones don't start it.")
 }
@@ -574,6 +574,9 @@ func (e Env) unregisterCodex(_ context.Context, groups [][]agentHome) (did, note
 			}
 			return nil, false
 		})
+		if err == nil && out != text {
+			err = checkTOMLEdit(text, out)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", c.path, err)
 		}
@@ -887,6 +890,9 @@ func (e Env) unregisterGrokAt(_ context.Context, hs []agentHome) (did, notes []s
 		var allowed bool
 		if err == nil {
 			out, allowed, err = removeTOMLListItem(out, "permission", "allow", grokAllow, "config.toml")
+		}
+		if err == nil && out != text {
+			err = checkTOMLEdit(text, out)
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", path, err)

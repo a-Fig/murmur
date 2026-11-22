@@ -216,8 +216,17 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		defer close(read)
 		branch, worktree = branchOf(ctx, h.Cwd), worktreeOf(ctx, h.Cwd)
 	}()
+	// So is the state of the T3 thread the hello names: a
+	// delegate is one from its first send, not from the next refresh of the threads (#945).
+	var thread helloThread
+	classified := make(chan struct{})
+	go func() {
+		defer close(classified)
+		thread = d.readHelloThread(ctx, h.Route)
+	}()
 	d.awaitFirstSync(ctx)
 	<-read
+	<-classified
 	// Resolving the branch runs git, long enough for a leave to land after handleConn's check.
 	if !d.consented() {
 		writeResp(conn, fail(ErrNoConsent.Error()+", or has left since"))
@@ -226,7 +235,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.mu.Lock()
 	if o := d.liveInThreadLocked(h.T3Home, h.T3Thread); h.Command && o != nil {
 		// The thread has its session already, through its server or an earlier command: the
-		// command is that session, and nothing changes but that it was at work.
+		// command is that session, and nothing changes but that it was at work, and that its thread
+		// may be read now where it couldn't be before.
+		d.noteHelloThreadLocked(thread, o.id)
 		d.touchLocked(o, time.Now())
 		name := o.name
 		d.mu.Unlock()
@@ -243,6 +254,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
 	}
+	d.noteHelloThreadLocked(thread, h.ID) // in the same hold of mu as the session's registration
 	// A server of the thread's own takes over the session a command holds, as it would one in its
 	// grace (#913).
 	d.releaseHoldLocked(s, true)
@@ -357,7 +369,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	if d.readHeldPromptsLocked(s) {
 		d.saveLocked() // a turn handed over started while the session was away (#658)
 	}
-	_, kid := d.kids[s.id]
+	_, kid := d.parentOfLocked(s.id) // a Codex or hook's child, or a T3 delegate (#945)
 	d.lastActive = time.Now()
 	d.kickPoll() // a session is live: look at the remote at once, and at the faster rate
 	if h.Reconnect {
@@ -662,9 +674,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		if req.Route == nil {
 			return fail("route needs a route")
 		}
+		// A route that names a T3 thread at last, as a Codex session's does once a tool call has
+		// given its thread ID, is read as a hello's is: a delegate is one from the call that brought
+		// the route, not from the next refresh of the threads (#966).
+		thread := d.readHelloThread(ctx, *req.Route)
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		if s := d.sessions[sess]; s != nil {
+			d.noteHelloThreadLocked(thread, s.id) // in the same hold of mu as the route
 			d.setRouteLocked(s, *req.Route)
 		}
 		return proto.Response{OK: true, Self: from}

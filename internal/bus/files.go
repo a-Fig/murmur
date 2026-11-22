@@ -497,8 +497,9 @@ func (r *Repo) objectDir() (string, bool) {
 	return filepath.Join(r.Git.Dir, "objects"), false
 }
 
-// DeleteLocal removes a local ref, if it is there.
+// DeleteLocal removes a local ref, if it is there. A symbolic ref is removed itself, not the ref it
+// names (--no-deref, #965), which could be the checked-out branch.
 func (r *Repo) DeleteLocal(ctx context.Context, ref string) error {
-	_, err := r.Git.Run(ctx, "", "update-ref", "-d", ref)
+	_, err := r.Git.Run(ctx, "", "update-ref", "--no-deref", "-d", ref)
 	return err
 }

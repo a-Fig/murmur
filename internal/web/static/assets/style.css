@@ -22,6 +22,14 @@
     U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+@font-face {
+  font-family: "Rubik Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 900;
+  src: url("/assets/fonts/rubik-latin-wght-normal.woff2") format("woff2-variations");
+}
+
 /* Tailwind CSS v4 palette, the steps T3 Code's themes use. */
 :root {
   --white: #fff;
@@ -42,8 +50,8 @@
 }
 
 /*
- * T3 Code's dark theme (index.css :root under @variant dark), the default. Dim and Light, below,
- * change only these tokens.
+ * Base tokens from T3 Code's dark theme (index.css :root under @variant dark). The page starts
+ * with Dim's overrides below.
  */
 :root {
   color-scheme: dark;
@@ -134,7 +142,7 @@
 }
 
 /*
- * Three more themes, picked in Settings and set on <html data-theme>. Dim is soft greys, as the page
+ * Themes are picked in Settings and set on <html data-theme>. Dim is soft greys, as the page
  * looked before it followed T3 Code (#179): a dark sidebar, a lighter list, and the conversation
  * lightest. Light is T3 Code's light theme (index.css :root).
  */
@@ -176,7 +184,7 @@
   --secondary-label: #a3a6b0;
 }
 
-:root[data-theme="light"] {
+:root:is([data-theme="light"], [data-theme="sky"]) {
   color-scheme: light;
   --background: oklch(99.2% 0 0);
   --foreground: oklch(21% 0.006 285.885);
@@ -215,7 +223,7 @@
   --edge: color-mix(in oklab, var(--foreground) 55%, transparent);
   --dot-off: var(--muted-foreground);
 }
-[data-theme="light"] [data-app-sidebar] {
+:is([data-theme="light"], [data-theme="sky"]) [data-app-sidebar] {
   --sidebar: oklch(98.5% 0 0);
   --sidebar-foreground: oklch(21% 0.006 285.885);
   --sidebar-muted-foreground: oklch(48% 0.016 285.938);
@@ -325,6 +333,43 @@
   --dot-off: color-mix(in oklab, #a9b6e6 80%, transparent);
   --scrollbar-thumb: rgb(255 251 234 / 14%);
   --scrollbar-thumb-hover: rgb(255 251 234 / 22%);
+}
+
+/* Sky uses the Figma v3 palette and Rubik, with Light's status colors and the usual panes. */
+:root[data-theme="sky"] {
+  --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --background: #f4f8fd;
+  --foreground: #05224d;
+  --muted-foreground: #3a4f73;
+  --primary: #1767b0;
+  --info: var(--primary);
+  --info-foreground: var(--primary);
+  --secondary: #e9f2fb;
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --accent: #e3eefb;
+  --accent-foreground: var(--foreground);
+  --message-surface: #fff1bb;
+  --border: #cbdbee;
+  --input: #b8cee7;
+  --row-hover: #eaf2fb;
+  --row-selected: #dceafb;
+  --composer-edge: var(--border);
+  --surface-grain: none;
+}
+[data-theme="sky"] [data-app-sidebar] {
+  --sidebar: #e3eefb;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-icon: var(--muted-foreground);
+  --sidebar-row-hover: #dbe9f8;
+  --sidebar-row-active: #cbdff5;
+  --sidebar-row-selected: #d1e3f7;
+  --sidebar-border: var(--border);
+  --secondary-label: var(--muted-foreground);
+}
+[data-theme="sky"] .chat-pane {
+  background: linear-gradient(155deg, #fffdf4 10%, #f7fbff 55%, #e9f3ff);
 }
 
 /* Base. */

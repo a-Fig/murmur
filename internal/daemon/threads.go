@@ -11,6 +11,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -28,8 +29,11 @@ import (
 //     subagent thread; and a session a hook or Codex's state says another started, see codexkids.go) is
 //     off the mesh in the same ways, and goes through its parent (Tyler,
 //     2026-11-07): it can't send or set a status, and what it commits is credited to the session
-//     of its parent thread here, if there is one. A session that wants it messages the parent. It
-//     may have taken a name before its thread was read; nobody sees the name.
+//     of its parent thread here, if there is one. A session that wants it messages the parent. A
+//     thread is read as its session registers too (readHelloThread, #945), and as a route names it
+//     (a Codex session's, #966), so a delegate is one from
+//     its first operation; if that read fails, it is one from the next refresh, and the name it
+//     took meanwhile is seen by nobody.
 //
 // The database is read every TitleEvery, outside every lock, one query per thread, for the threads
 // of the sessions here and of those stopped whose route is kept. What was last read stands while a
@@ -362,6 +366,14 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			d.log.Printf("can't read the state of the T3 thread of session %s (%v); what was last read stands", who[k], err)
 		}
 	}
+	// A thread no session is in any more is forgotten. That is judged by the sessions now, not by
+	// routes, which was read before this pass's reads: a session that registered meanwhile keeps
+	// the state its hello read (#945).
+	for _, s := range d.sessions {
+		if r := s.route; r.T3CLI != "" && r.T3Thread != "" {
+			routes[threadKey{r.T3Home, r.T3Thread}] = t3Route{}
+		}
+	}
 	for k, st := range d.threads {
 		if _, ok := routes[k]; !ok {
 			delete(d.threads, k)
@@ -379,6 +391,62 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	}
 	if changed || kids {
 		d.kickPush()
+	}
+}
+
+// helloThread is the state of the T3 thread a hello names, read as the session registers (#945);
+// ok is false when nothing was read.
+type helloThread struct {
+	key threadKey
+	st  t3db.State
+	at  time.Time
+	ok  bool
+}
+
+// readHelloThread reads, outside every lock, the state of the T3 thread route names. A refresh reads a thread only after a session is in it, so without this a
+// delegate registering would be on the mesh until the next one: its first send would go out, and
+// who would list it. That is how the hook's fallback holds a route (findHookThreads, #886), done here
+// in the hello. A failed read is left to the refresh, which logs it.
+func (d *Daemon) readHelloThread(ctx context.Context, route proto.Route) helloThread {
+	if route.T3CLI == "" || route.T3Thread == "" {
+		return helloThread{}
+	}
+	// Read though the thread is known now: the hello may wait seconds for the first sync, and a
+	// refresh in that time may forget a thread no session is in any more.
+	k := threadKey{route.T3Home, route.T3Thread}
+	threadState := d.opt.ThreadState
+	if threadState == nil {
+		threadState = t3db.StateOf
+	}
+	at := time.Now()
+	st, err := threadState(ctx, route.T3CLI, route.T3Home, route.T3Thread)
+	if err != nil {
+		return helloThread{}
+	}
+	return helloThread{key: k, st: st, at: at, ok: true}
+}
+
+// noteHelloThreadLocked keeps what readHelloThread read for session id, unless a refresh has read
+// the thread since, and logs what a refresh would have: the next one finds nothing changed. Caller
+// holds mu.
+func (d *Daemon) noteHelloThreadLocked(t helloThread, id string) {
+	if !t.ok {
+		return
+	}
+	if _, known := d.threads[t.key]; known {
+		return
+	}
+	d.threads[t.key], d.threadRead[t.key] = t.st, t.at
+	delete(d.threadWarned, t.key)
+	who := bus.Addr(d.device, id)
+	if t.st.Settled {
+		d.log.Printf("the T3 thread of session %s is settled, so it is offline", who)
+	}
+	if t.st.Parent != "" {
+		d.log.Printf("session %s is in a thread another thread started, so it is off the mesh", who)
+	}
+	if t.st.Settled || t.st.Parent != "" || t.st.Model != "" {
+		d.kickPresence() // a session back from its grace may be listed, and the model: tag is derived
 	}
 }
 

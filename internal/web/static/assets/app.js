@@ -13,16 +13,16 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
-// The page's look, chosen in Settings and kept in this browser: black like T3 Code, soft greys like
-// a chat app, light, or the website's blue, butter and cream. style.css keys each one on <html data-theme>.
+// The theme is chosen in Settings and kept in this browser. style.css reads it from <html data-theme>.
 const THEME_KEY = NAME + ":theme";
 const THEMES = [
   ["dark", "Dark"],
   ["dim", "Dim"],
   ["light", "Light"],
   ["murmur", "Murmur"],
+  ["sky", "Sky"],
 ];
-let theme = "dark";
+let theme = document.documentElement.dataset.theme;
 try {
   const t = localStorage.getItem(THEME_KEY);
   if (THEMES.some(([id]) => id === t)) theme = t;
@@ -5477,6 +5477,7 @@ const THEME_TIPS = {
   dim: "Soft dark-grey page, lighter than Dark; saved only in this browser",
   light: "White page with dark text; saved only in this browser",
   murmur: "Cream page with ink text and blue accents, like the Murmur website; saved only in this browser",
+  sky: "Pale blue panes with navy text, Rubik and butter message bubbles; saved only in this browser",
 };
 
 function themeSection() {

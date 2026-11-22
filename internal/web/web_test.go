@@ -297,7 +297,8 @@ func TestTokenRequired(t *testing.T) {
 
 	// The page itself loads without the token, so it can read it from the fragment.
 	for _, path := range []string{"/", "/assets/app.js", "/assets/style.css",
-		"/assets/icons.js", "/assets/favicon.svg", "/assets/fonts/inter-latin-wght-normal.woff2", "/assets/THIRD_PARTY_NOTICES"} {
+		"/assets/icons.js", "/assets/favicon.svg", "/assets/fonts/inter-latin-wght-normal.woff2",
+		"/assets/fonts/rubik-latin-wght-normal.woff2", "/assets/THIRD_PARTY_NOTICES"} {
 		if resp := h.do("GET", path, host, "", ""); resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s without token: %d, want 200", path, resp.StatusCode)
 		}
@@ -458,6 +459,9 @@ func TestIndex(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(b), "<title>"+brand.Product+"</title>") {
 		t.Errorf("index doesn't carry the brand name:\n%s", b)
+	}
+	if !strings.Contains(string(b), `data-theme="dim"`) {
+		t.Errorf("index doesn't start in Dim:\n%s", b)
 	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
 		t.Errorf("CSP = %q", csp)

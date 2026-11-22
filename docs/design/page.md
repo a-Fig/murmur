@@ -97,9 +97,8 @@ from it is in [a person on the page](people.md).
   holds no controls, so they don't open it. Tyler chose the banner
   look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
   which #656 headed with its details, hold little more than the card does.
-- **Themes** (2026-11-09), kept in the browser: Dark (T3 Code's), Dim (the page's greys before it
-  followed T3 Code), Light, and since 2026-11-10 Murmur (the website's palette; `docs/brand.md`).
-  Each is a set of color tokens over one design, so a theme costs only its palette.
+- **Themes** are kept in the browser. Dim is the default as of 2026-11-21 (#939).
+  Dark, Light, Murmur and Sky are also available in Settings (`docs/brand.md`).
 - **Recent is a feed of what agents did** (2026-11-12, #448, Tyler's request), not only of what they
   said: sessions joining or leaving, status and tag changes, commits, and pull requests and issues
   opened, merged or closed.

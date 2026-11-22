@@ -142,7 +142,8 @@ func commandSession(ctx context.Context) (func(proto.Request) (proto.Response, e
 	cancel()
 	if errors.Is(err, t3db.ErrNotFound) {
 		return nil, fmt.Errorf("T3's database has no thread %s, which %s names", thread, threadEnv)
-	} // any other failure to read it leaves the daemon to find out
+	} // any other failure to read it leaves the daemon to find out. The daemon reads the thread's
+	// state itself as the session registers, so a delegate is one from its first command (#945).
 	h := proto.Hello{ID: threadID(thread), Agent: "agent in T3", Cwd: cwd, ByThread: true, Command: true,
 		Route: proto.Route{T3CLI: cli, T3Home: home, T3Thread: thread}}
 	c := &client.Client{GitDir: place.GitDir, Spawn: true, MaySpawn: place.Active}
