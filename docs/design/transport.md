@@ -39,7 +39,12 @@ address once ([counting use](counting.md)).
   tree or index, where people and agents are working at the same moment. Bus commits carry git's
   empty tree, so fetching them brings nothing else. They are pushed with `--no-verify` and unsigned:
   a `pre-push` hook that runs the tests, or a signing prompt, on every message would make the bus
-  unusable. They only ever go to `refs/murmur/*`.
+  unusable. They only ever go to `refs/murmur/*`. Nor does bus traffic write any other local ref or
+  run any hook (#950): a fetch writes only the refs it names (`--refmap=`), a push turns off git's
+  update of the pushed ref's remote-tracking copy, and every command run on the git directory points
+  `core.hooksPath` at a directory nothing creates. A remote's fetch refspecs can map a bus ref onto
+  a branch, which each message would otherwise move, and the `reference-transaction` hook runs on
+  every ref written.
 - **No signature per event** (#155), so a device can write events that claim to come from another.
   Only accounts with push access can write `refs/murmur/*` (a fork can't), and any of them could
   already push code; a signature would stop one teammate posing as another's device, and little
