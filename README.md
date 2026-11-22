@@ -106,14 +106,17 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 | [OpenCode 1](https://murmur.afig.dev/agents/opencode/)                | T3 Code               | turn      | waits for the turn to end, then a turn |
 | [Muse Code](https://murmur.afig.dev/agents/muse-code/)                | T3 Code               | turn      | notice after its next tool call        |
 | [Muse Code](https://murmur.afig.dev/agents/muse-code/)                | a terminal            | inbox     | notice after its next tool call        |
+| Any other (untested)                                                  | T3 Code               | turn      | waits for the turn to end, then a turn |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
 idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
 sender and subject, added after the agent's next tool call; the agent reads the message with
 `inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
-used one of Murmur's tools. Each agent's page has its setup, what to expect and what to do when it
-isn't working; [T3 Code's](https://murmur.afig.dev/agents/t3-code/) covers every agent in it.
+used one of Murmur's tools. An agent Murmur has no tools for, such as Kiro in T3 Code, runs
+`mur who` and `mur send` in its thread's shell instead. Each agent's page has its setup, what to
+expect and what to do when it isn't working; [T3 Code's](https://murmur.afig.dev/agents/t3-code/)
+covers every agent in it.
 
 ## For humans
 

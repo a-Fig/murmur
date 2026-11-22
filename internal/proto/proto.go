@@ -97,7 +97,9 @@ const (
 //	22: a hello's ByThread (#642): the daemon may register a T3 thread at the address its name
 //	    already has. One of 21 or less would register it at a new one.
 //	23: a send's Files (#570): a daemon of 22 or less would send the message without them.
-const Protocol = 23
+//	24: a hello's Command (#913): a session `mur who` or `mur send` registers stays while its T3
+//	    thread is in use. A daemon of 23 or less would drop it a minute after the command exits.
+const Protocol = 24
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
@@ -348,6 +350,11 @@ type Hello struct {
 	// register the thread at the address its name already has. A server from before it, still
 	// running after an update, sends the thread it found too, but keeps its own ID.
 	ByThread bool `json:"byThread,omitempty"`
+	// Command says a shell command (`mur who`, `mur send`) registers the session, for a harness
+	// with no Murmur tools (#913). Its connection closes with the command, so the daemon keeps the
+	// session for as long as its T3 thread is in use, which Route must name. If a session is live in
+	// that thread already, the command acts as it, and nothing is registered.
+	Command bool `json:"command,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route
 }
@@ -551,6 +558,9 @@ type MessageView struct {
 	// before, which said in full that it is in the group, how to answer and how to leave: this one
 	// ends with a short line (#184). Always false for a message that wasn't sent to a group.
 	GroupKnown bool `json:"groupKnown,omitempty"`
+	// ByCommand says the session this goes to as a turn has the shell commands and no tools
+	// (Hello.Command): its turn says to answer with `mur send` (#913).
+	ByCommand bool `json:"byCommand,omitempty"`
 	// Told is when the hook's notice told the session of this message, for one given whole after:
 	// its turn says so (#355). Zero for a message no notice told of.
 	Told time.Time `json:"told,omitzero"`

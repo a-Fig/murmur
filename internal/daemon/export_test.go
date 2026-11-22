@@ -1,5 +1,7 @@
 package daemon
 
+import "time"
+
 // SetMaxWholeReply sets maxWholeReply for a test, and returns what puts it back.
 func SetMaxWholeReply(n int) func() {
 	was := maxWholeReply
@@ -38,4 +40,12 @@ func SetGraceBegins(f func(id string) <-chan struct{}) func() {
 	was := graceBegins
 	graceBegins = f
 	return func() { graceBegins = was }
+}
+
+// SetCommandHold sets how long a command's session is held with its thread idle (commandIdle), and
+// how often that is looked at (holdCheck), and returns what puts both back (#913).
+func SetCommandHold(idle, check time.Duration) func() {
+	wasIdle, wasCheck := commandIdle, holdCheck
+	commandIdle, holdCheck = idle, check
+	return func() { commandIdle, holdCheck = wasIdle, wasCheck }
 }
