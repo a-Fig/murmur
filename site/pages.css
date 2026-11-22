@@ -52,7 +52,7 @@ body {
   background-blend-mode: soft-light, normal, normal, normal;
 }
 .top::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--grain); background-size: 180px 180px; mix-blend-mode: overlay; opacity: .12; }
-.top-in { max-width: 1040px; margin: 0 auto; }
+.top-in { max-width: 1080px; margin: 0 auto; }
 
 /* Back to the home page: the daemon page's glass pill, which fills with butter on hover. */
 .back {
@@ -90,7 +90,7 @@ h1 { margin-top: clamp(40px, 9vh, 88px); font-size: clamp(40px, 5.2vw, 68px); fo
 
 /* ---------- The sheet: cream, rounded at the top, as page 2 of the home page meets the blue ---------- */
 .sheet { flex: 1; background: var(--cream); color: var(--ink); border-radius: var(--sheet) var(--sheet) 0 0; padding: clamp(36px, 7vh, 72px) var(--gutter) clamp(48px, 9vh, 88px); }
-.sheet-in { max-width: 1040px; margin: 0 auto; }
+.sheet-in { max-width: 1080px; margin: 0 auto; }
 
 /* Setup's list: a heavy rule on top, a hairline under each row, the name of the thing on the left. */
 .facts { border-top: 2px solid var(--ink); }
@@ -121,7 +121,7 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--badge-bg); color:
 
 /* ---------- The foot: the same four links at the end of every page, after <main>, on the sheet's cream ---------- */
 .site-foot { background: var(--cream); padding: 0 var(--gutter); }
-.site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.site-foot nav { max-width: 1080px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
 .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
 .site-foot li + li::before { content: "·"; padding: 0 12px; color: var(--ink-soft); opacity: .6; }
 .site-foot a { color: var(--ink-soft); font-size: 14px; font-weight: 500; text-decoration: none; }
