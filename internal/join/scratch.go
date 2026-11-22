@@ -46,7 +46,8 @@ var tempRoots = func() []string {
 		if !filepath.IsAbs(r) { // "/tmp" on Windows
 			continue
 		}
-		for _, p := range []string{filepath.Clean(r), resolved(r)} {
+		short, _ := filepath.EvalSymlinks(r) // which expands Windows' short names, as RUNNER~1
+		for _, p := range []string{filepath.Clean(r), resolved(r), short} {
 			if p != "" && filepath.Dir(p) != p {
 				roots = append(roots, p)
 			}
@@ -55,21 +56,39 @@ var tempRoots = func() []string {
 	return roots
 }
 
-// resolved is path with the links in the part of it that exists resolved, "" where none of it can
-// be: a folder not made yet is resolved through the nearest one above it that is.
-func resolved(path string) string {
-	rest := ""
-	for p := filepath.Clean(path); ; {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(r, rest)
-		}
-		up := filepath.Dir(p)
-		if up == p {
-			return ""
-		}
-		rest = filepath.Join(filepath.Base(p), rest)
-		p = up
+// resolved is path with every link in it followed, as a write there would follow them: symbolic
+// links, Windows junctions, which EvalSymlinks leaves as written (since Go 1.23), and links whose
+// target isn't there yet. A part that doesn't exist is kept as named. "" past 40 links, a loop.
+func resolved(path string) string { return resolveIn(filepath.Clean(path), 40) }
+
+func resolveIn(path string, hops int) string {
+	vol := filepath.VolumeName(path)
+	cur := vol
+	if strings.HasPrefix(path[len(vol):], string(filepath.Separator)) {
+		cur += string(filepath.Separator)
 	}
+	for _, part := range strings.Split(path[len(vol):], string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		next := filepath.Join(cur, part)
+		fi, err := os.Lstat(next)
+		if err == nil && fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			if target, err := os.Readlink(next); err == nil {
+				if hops == 0 {
+					return ""
+				}
+				if !filepath.IsAbs(target) {
+					target = filepath.Join(cur, target)
+				}
+				if next = resolveIn(filepath.Clean(target), hops-1); next == "" {
+					return ""
+				}
+			}
+		}
+		cur = next
+	}
+	return cur
 }
 
 // inTemp says path is in one of the temporary folders, or, unless strict, is one. A home (strict)

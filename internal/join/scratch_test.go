@@ -1,6 +1,7 @@
 package join
 
 import (
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -174,22 +175,45 @@ func TestAScratchHomesJoinRuns(t *testing.T) {
 	}
 }
 
-// A link in a scratch home to the user's own folders leads outside it: T3's settings through it
-// aren't read, and a configuration through it, one not made yet included, is left alone.
+// A link in a scratch home to the user's own folders leads outside it, as a symbolic link or a
+// Windows junction, which EvalSymlinks doesn't follow: T3's settings through it aren't read, and a
+// configuration through it, or through a link to a folder not made yet, is left alone.
 func TestAScratchHomesLinkOutIsOutside(t *testing.T) {
-	sb := scratchSandbox(t)
-	real := filepath.Join(sb.root, "real")
-	write(t, filepath.Join(real, ".t3", "userdata", "settings.json"), t3Settings(real))
-	mustMakeDir(t, sb.Home)
-	linkOrSkip(t, filepath.Join(real, ".t3"), filepath.Join(sb.Home, ".t3"))
-	linkOrSkip(t, real, filepath.Join(sb.Home, "real"))
-	sb.T3Settings = filepath.Join(sb.Home, ".t3", "userdata", "settings.json")
-	sb.CodexHome = filepath.Join(sb.Home, "real", "codex-not-made-yet")
-	byAgent, notes := sb.homes()
-	if got := dirsOf(byAgent[agentIndex("codex")]); len(got) != 1 || got[0] != "" {
-		t.Errorf("Codex homes %q, want the one through the link left alone", got)
-	}
-	if note := strings.Join(notes, "\n"); !strings.Contains(note, "listed in "+sb.T3Settings) || strings.Contains(note, "personal claude") {
-		t.Errorf("notes:\n%s", note)
+	for _, kind := range []string{"symlink", "junction"} {
+		t.Run(kind, func(t *testing.T) {
+			sb := scratchSandbox(t)
+			real := filepath.Join(sb.root, "real")
+			write(t, filepath.Join(real, ".t3", "userdata", "settings.json"), t3Settings(real))
+			mustMakeDir(t, sb.Home)
+			link := func(target, at string) {
+				if kind == "symlink" {
+					linkOrSkip(t, target, at)
+					return
+				}
+				// A junction needs no privilege, so it is how a Windows user links a folder.
+				if _, err := exec.LookPath("cmd"); err != nil {
+					t.Skip("junctions are Windows'")
+				}
+				if out, err := exec.Command("cmd", "/c", "mklink", "/J", at, target).CombinedOutput(); err != nil {
+					t.Fatalf("mklink /J: %v\n%s", err, out)
+				}
+			}
+			link(filepath.Join(real, ".t3"), filepath.Join(sb.Home, ".t3"))
+			link(real, filepath.Join(sb.Home, "real"))
+			link(filepath.Join(real, "claude-not-made-yet"), filepath.Join(sb.Home, "dangling"))
+			sb.T3Settings = filepath.Join(sb.Home, ".t3", "userdata", "settings.json")
+			sb.CodexHome = filepath.Join(sb.Home, "real", "codex-not-made-yet")
+			sb.ClaudeDir = filepath.Join(sb.Home, "dangling")
+			sb.ClaudeJSON = filepath.Join(sb.ClaudeDir, ".claude.json")
+			byAgent, notes := sb.homes()
+			for _, driver := range []string{"claudeAgent", "codex"} {
+				if got := dirsOf(byAgent[agentIndex(driver)]); len(got) != 1 || got[0] != "" {
+					t.Errorf("%s homes %q, want the one through the link left alone", driver, got)
+				}
+			}
+			if note := strings.Join(notes, "\n"); !strings.Contains(note, "listed in "+sb.T3Settings) || strings.Contains(note, "personal claude") {
+				t.Errorf("notes:\n%s", note)
+			}
+		})
 	}
 }
