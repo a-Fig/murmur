@@ -135,6 +135,20 @@ var newPage = web.New
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	page := newPage(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
+	prefs, err := web.ReadPreferences(d.dir)
+	if err != nil {
+		d.log.Printf("reading page preferences: %v", err)
+	}
+	err = page.WithPreferences(prefs, d.opt.ThemePath, func(next web.Preferences) error {
+		err := writeJSON(filepath.Join(d.dir, web.PreferencesFile), next)
+		if err != nil {
+			d.log.Printf("saving page preferences: %v", err)
+		}
+		return err
+	})
+	if err != nil {
+		d.log.Printf("importing the clone's page theme: %v", err)
+	}
 	if d.opt.Repos != nil {
 		page.WithRepos(d.opt.Repos)
 	}

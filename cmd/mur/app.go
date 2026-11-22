@@ -20,6 +20,7 @@ import (
 	"github.com/a-Fig/murmur/internal/desktop"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/logfile"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // runApp opens the page in a window of its own (#23; docs/design/desktop.md). It starts the window
@@ -131,13 +132,16 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	}
 	f := &follower{cfg: cfg, gitDir: gitDir, page: pageOf}
 	f.remember()
+	themePath, _ := web.ThemePath()
+	theme, _ := web.ReadTheme(themePath)
 	return desktop.Run(ctx, desktop.Options{
-		Page:     addr,
-		Follow:   f.follow,
-		Open:     browse,
-		Debug:    *devtools,
-		Instance: inst,
-		Switch:   f.switchTo,
+		Page:       addr,
+		LightFrame: !web.DarkFrame(theme),
+		Follow:     f.follow,
+		Open:       browse,
+		Debug:      *devtools,
+		Instance:   inst,
+		Switch:     f.switchTo,
 	})
 }
 

@@ -310,8 +310,12 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		record = d
 		repos = clones.Picker{Dir: d, Self: *gitDir, Joined: join.Joined}
 	}
-	err := run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle, PageListener: inherited,
-		Clones: record, Repos: repos,
+	themePath, err := web.ThemePath()
+	if err != nil {
+		logger.Printf("couldn't find the shared theme file: %v", err)
+	}
+	err = run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle, PageListener: inherited,
+		Clones: record, Repos: repos, ThemePath: themePath,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)

@@ -97,8 +97,16 @@ from it is in [a person on the page](people.md).
   holds no controls, so they don't open it. Tyler chose the banner
   look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
   which #656 headed with its details, hold little more than the card does.
-- **Themes** are kept in the browser. Dim is the default as of 2026-11-21 (#939).
-  Dark, Light, Murmur and Sky are also available in Settings (`docs/brand.md`).
+- **Themes** are palettes over the same design. Dim is the default (#939). The daemon includes
+  its saved theme in the page's HTML so it can paint in that palette before JavaScript runs.
+- **Page preferences** (#941). The theme lives in `murmur/app/theme` in the user's config directory.
+  Every daemon reads it on page load, so the same palette follows the app and the browser across
+  repos. Only mine and folded Tags live in `.git/murmur/page-preferences.json` because each repo
+  has its own conversations and tags. The daemon writes these files through the authenticated
+  `/api/preferences` endpoint. The first old browser or webview to supply a missing choice
+  fills it in. A saved choice takes precedence over any old copy. Sidebar width stays with the
+  browser or webview because their windows can be different sizes. The light-mode surprise also
+  keeps its own history in each. The page token stays in session storage.
 - **Recent is a feed of what agents did** (2026-11-12, #448, Tyler's request), not only of what they
   said: sessions joining or leaving, status and tag changes, commits, and pull requests and issues
   opened, merged or closed.
@@ -146,11 +154,11 @@ from it is in [a person on the page](people.md).
   mute ([mutes](mutes.md)), with a button to undo those of this device's sessions.
 - **Settings is one screen per repo, grouped by topic** (2026-11-16, #775, Tyler's choice of a
   proposal). It grew a section per feature, with rows named by scope ("Device default" twice). A
-  device is one clone, so every setting but two is the open repo's, and the page says which repo
+  device is one clone, so the settings are the open repo's, and the page says which repo
   and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
   (availability, waking, what a working session is shown, and each session's own, folded until
-  opened), Files and Mutes. Below a line, "For every repo": the theme, kept in this browser, and
-  About. Every setting is a segmented control, on/off ones included (Tyler, 2026-11-17, #862).
+  opened), Files and Mutes. Appearance and About follow under "For every repo". Every setting is a
+  segmented control, on/off ones included (Tyler, 2026-11-17, #862).
   The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
   and repo are nearly the same thing here, and people come with a question, not a scope. A page
   that changes every repo at once is #816.

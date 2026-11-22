@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -61,9 +62,13 @@ type Server struct {
 	prs   *prCache
 	gh    *ghCache
 	mux   *http.ServeMux
-	page  []byte
 	repos Repos   // nil: no picker
 	keys  keyring // one-time keys that open the page from another clone's (#348)
+
+	prefMu          sync.Mutex
+	preferences     Preferences
+	savePreferences func(Preferences) error
+	themePath       string
 }
 
 // New returns the page's handler. token is the page's own, not the one that opens the daemon to
@@ -83,12 +88,6 @@ func NewWithPRs(src Source, token string, prs LookupPRs) *Server {
 // events lists none.
 func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub) *Server {
 	s := &Server{src: src, token: token, prs: newPRCache(prs), gh: newGHCache(events), mux: http.NewServeMux()}
-	var page bytes.Buffer
-	if err := index.Execute(&page, struct{ Name, Command string }{brand.Product, brand.Command}); err != nil {
-		panic(err) // the template is embedded, so this is a bug, not a condition
-	}
-	s.page = page.Bytes()
-
 	assets, err := fs.Sub(static, "static")
 	if err != nil {
 		panic(err)
@@ -108,6 +107,9 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 	s.mux.HandleFunc("GET /api/activity", s.getActivity)
 	s.mux.HandleFunc("GET /api/settings", s.getSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.putSettings)
+	s.mux.HandleFunc("GET /api/preferences", s.getPreferences)
+	s.mux.HandleFunc("POST /api/preferences", s.updatePreferences)
+	s.mux.HandleFunc("PATCH /api/preferences", s.updatePreferences)
 	s.mux.HandleFunc("POST /api/unmute", s.postUnmute)
 	s.mux.HandleFunc("POST /api/tags", s.postTags)
 	s.mux.HandleFunc("POST /api/restart", s.postRestart)
@@ -217,9 +219,18 @@ func (s *Server) authorized(r *http.Request) bool {
 }
 
 func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(s.page)
+	p := s.currentPreferences()
+	var page bytes.Buffer
+	if err := index.Execute(&page, struct {
+		Name, Command, Theme string
+		SavedTheme           bool
+	}{brand.Product, brand.Command, p.theme(), p.Theme != ""}); err != nil {
+		http.Error(w, "couldn't render the page", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(page.Bytes())
 }
 
 // stateResponse is State with each branch's open pull request, by branch name. Branches with

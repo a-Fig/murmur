@@ -160,7 +160,7 @@ func newBox(t *testing.T) *box {
 // env is the environment a command runs in: the real one, except for everything that says whose
 // machine this is and which agent is running the command.
 func (b *box) env() []string {
-	drop := map[string]bool{"HOME": true, "USERPROFILE": true, "CLAUDE_CONFIG_DIR": true, "CODEX_HOME": true, "PATH": true,
+	drop := map[string]bool{"HOME": true, "USERPROFILE": true, "APPDATA": true, "CLAUDE_CONFIG_DIR": true, "CODEX_HOME": true, "PATH": true,
 		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "T3CODE_THREAD_ID": true, "CODEX_THREAD_ID": true,
 		"CODEX_SANDBOX": true, "CODEX_CI": true, "XDG_CONFIG_HOME": true, jointest.LogEnv: true,
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
@@ -175,7 +175,7 @@ func (b *box) env() []string {
 		}
 	}
 	return append(env,
-		"HOME="+b.home, "USERPROFILE="+b.home,
+		"HOME="+b.home, "USERPROFILE="+b.home, "APPDATA="+filepath.Join(b.home, "AppData", "Roaming"),
 		"CLAUDE_CONFIG_DIR="+b.claudeDir, "CODEX_HOME="+b.codexHome,
 		jointest.LogEnv+"="+b.log, brand.SessionsDirEnv+"="+filepath.Join(b.root, "sessions"),
 		clones.DirEnv+"="+filepath.Join(b.root, "clones"),
