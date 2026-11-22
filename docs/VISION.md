@@ -126,8 +126,11 @@ the mesh.
   good, and a running turn is never steered.
 - **No loop guard** (2026-10-29): only the agents stop two agents answering each other; the
   instructions ask for coordination, not chat.
-- **No commands for messaging** (2026-10-29): "If everyone is using the CLI, there will be no one to
-  message." Agents use MCP, people use the page.
+- **Messaging commands only for agents without the tools** (2026-10-29; changed 2026-11-21, #913):
+  "If everyone is using the CLI, there will be no one to message." Agents use MCP, people use the
+  page. An agent Murmur has no tools for, in a T3 Code thread, runs `mur who` and `mur send` in its
+  shell instead (Tyler approved, 2026-11-21): every harness can run a command, and T3 gives most of
+  them the thread's ID there.
 - **Joining needs the user's yes** (2026-10-29, #55): setup should feel like magic, but the user
   should know Murmur is running.
 - **The marker is pushed to the default branch** (2026-11-01, #119), so teammates' agents on main

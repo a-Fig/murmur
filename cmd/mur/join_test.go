@@ -351,23 +351,22 @@ func TestJoinNeedsTheMarker(t *testing.T) {
 	}
 }
 
-// The commands for people are gone, and the help doesn't list them: agents message through MCP,
-// people through the page.
-func TestTheMessagingCommandsAreGone(t *testing.T) {
+// The messaging commands are for an agent Murmur has no tools for, in a T3 Code thread (#913): with
+// no thread to be, they stop and say why, with no daemon started. The help lists them, and log is
+// gone.
+func TestTheMessagingCommandsNeedAThread(t *testing.T) {
 	b := newBox(t)
-	for _, cmd := range []string{"who", "send", "inbox", "log"} {
-		out, code := b.run(b.clone, cmd)
-		if code != 2 || !strings.Contains(out, "unknown command") {
-			t.Errorf("mur %s: exit %d, want 2 and an unknown command\n%s", cmd, code, out)
+	if out, code := b.run(b.clone, "log"); code != 2 || !strings.Contains(out, "unknown command") {
+		t.Errorf("mur log: exit %d, want 2 and an unknown command\n%s", code, out)
+	}
+	for _, args := range [][]string{{"who"}, {"send", "quiet-otter", "a subject"}, {"inbox"}, {"status", "x"}} {
+		out, code := b.run(b.clone, args...)
+		if code != 1 || !strings.Contains(out, "isn't on for this repo") && !strings.Contains(out, "T3CODE_THREAD_ID") {
+			t.Errorf("mur %s: exit %d, want 1 and why it can't run\n%s", args[0], code, out)
 		}
 	}
 	help := b.mustRun(b.clone, "help")
-	for _, gone := range []string{"mur who", "mur send", "mur inbox", "mur log"} {
-		if strings.Contains(help, gone) {
-			t.Errorf("help still lists %q:\n%s", gone, help)
-		}
-	}
-	for _, kept := range []string{"mur init", "mur join", "mur ui", "mur stop"} {
+	for _, kept := range []string{"mur init", "mur join", "mur ui", "mur stop", "mur who", "mur send"} {
 		if !strings.Contains(help, kept) {
 			t.Errorf("help doesn't list %q:\n%s", kept, help)
 		}

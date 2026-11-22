@@ -973,10 +973,18 @@ func objectSchema(properties map[string]*jsonschema.Schema, required ...string) 
 // the rest, so the rest aren't tried: a session waiting to register would otherwise wait once per
 // recipient.
 func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []string, subject, body, tell string, files []string) (*mcp.CallToolResult, any, error) {
+	out, sent := sendEachVia(func(req proto.Request) (proto.Response, error) { return s.callFrom(ctx, mreq, req) },
+		to, subject, body, tell, files)
+	res := text(out)
+	res.IsError = !sent
+	return res, nil, nil
+}
+
+// sendEachVia is sendEach, making each send with call: the tool's, or a shell command's (#913). It
+// returns what to show, and whether anything was sent.
+func sendEachVia(call func(proto.Request) (proto.Response, error), to []string, subject, body, tell string, files []string) (string, bool) {
 	if len(to) > maxRecipients {
-		r := text(fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)))
-		r.IsError = true
-		return r, nil, nil
+		return fmt.Sprintf("Not sent: a send can name at most %d recipients, and this one names %d.", maxRecipients, len(to)), false
 	}
 	order := make([]int, 0, len(to))
 	for pass := range 2 {
@@ -1006,7 +1014,7 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 			rs[i].Same = first
 			continue
 		}
-		resp, err := s.callFrom(ctx, mreq, proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body, TellMe: tell, Files: files})
+		resp, err := call(proto.Request{Op: proto.OpSend, To: r, Subject: subject, Body: body, TellMe: tell, Files: files})
 		resp = untold(resp, err, tell)
 		if err != nil {
 			rs[i].Err = err.Error()
@@ -1020,9 +1028,7 @@ func (s *server) sendEach(ctx context.Context, mreq *mcp.CallToolRequest, to []s
 			reached[resp.Messages[0].To] = r
 		}
 	}
-	res := text(view.SentEach(rs))
-	res.IsError = !sent
-	return res, nil, nil
+	return view.SentEach(rs), sent
 }
 
 // untold adds to a sent message's note that its sender won't be told how far it got, though it

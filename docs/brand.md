@@ -114,7 +114,8 @@ it already had, so this palette stayed and the logo files were colored to match.
 
 The wordmark is Fredoka One and ships as outlines, so nothing loads the font. The site is set in
 Inter; the only Fredoka on it is the logo's own letters. The Figma
-file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
+file proposes Rubik for text and JetBrains Mono for commands. The desktop page's Sky theme
+uses Rubik.
 
 ## The mur ui page
 
@@ -126,6 +127,10 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
+
+Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 design (#416).
+A pale blue sidebar and conversation list frame a cream-to-sky thread, with butter for
+a person's own messages. The panes keep the desktop page's spacing and hierarchy.
 
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is

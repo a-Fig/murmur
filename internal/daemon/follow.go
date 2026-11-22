@@ -730,7 +730,7 @@ var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity",
 // which join writes, if Codex changed how it hashes a hook), or it fails. It is told from this side
 // because the trust join writes can break with no error anywhere. Caller holds mu.
 func (d *Daemon) hookOffLocked(s *session) bool {
-	if s.hookSeen || s.toolCalled.IsZero() || time.Since(s.toolCalled) < hookGrace {
+	if s.byCommand || s.hookSeen || s.toolCalled.IsZero() || time.Since(s.toolCalled) < hookGrace {
 		return false
 	}
 	for _, a := range hookedAgents {
