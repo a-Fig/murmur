@@ -1,6 +1,7 @@
 package join
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -93,5 +94,58 @@ func TestCheckTOMLEdit(t *testing.T) {
 	}
 	if err := checkTOMLEdit(invalid, invalid+"b = 2\n"); err != nil {
 		t.Errorf("a file that was invalid already: %v", err)
+	}
+}
+
+// Grok's allow rule keeps config.toml valid TOML, with its line endings and its final newline or lack
+// of one, wherever [permission] is (#969). A CRLF file with no final newline whose last table was
+// [permission], without allow, used to end in a lone \r, so checkTOMLEdit refused it and join failed
+// on a valid file.
+func TestAddTOMLListItemKeepsTheFilesForm(t *testing.T) {
+	server := "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"grok\"]\n\n"
+	for name, body := range map[string]string{
+		"no table":                  server + "x = 1",
+		"the table, empty":          server + "[permission]",
+		"the table, other keys":     server + "[permission]\nask = [\"y\"]",
+		"the table, an allow":       server + "[permission]\nallow = [\"y\"]",
+		"the table, then more":      "[permission]\nask = [\"y\"]\n\n[tui]\nx = 1",
+		"the table, a comment last": server + "[permission]\nask = [\"y\"]\n# mine",
+		"the table, a blank last":   server + "[permission]\nask = [\"y\"]\n   ",
+		"the table, a string last":  server + "[permission]\nnote = \"\"\"\nhi\n\"\"\"",
+	} {
+		for _, nl := range []string{"\n", "\r\n"} {
+			for _, final := range []bool{true, false} {
+				before := strings.ReplaceAll(body, "\n", nl)
+				if final {
+					before += nl
+				}
+				label := name + map[string]string{"\n": ", LF", "\r\n": ", CRLF"}[nl] + map[bool]string{true: ", final newline", false: ", none"}[final]
+				out, changed, err := addTOMLListItem(before, "permission", "allow", grokAllow, "config.toml")
+				if err == nil {
+					err = checkTOMLEdit(before, out)
+				}
+				if err != nil || !changed {
+					t.Errorf("%s: changed=%v err=%v\n%q", label, changed, err, out)
+					continue
+				}
+				var cfg struct{ Permission struct{ Allow []string } }
+				if _, err := toml.Decode(out, &cfg); err != nil {
+					t.Errorf("%s: not valid TOML: %v\n%q", label, err, out)
+					continue
+				}
+				if !slices.Contains(cfg.Permission.Allow, grokAllow) {
+					t.Errorf("%s: allow = %q\n%q", label, cfg.Permission.Allow, out)
+				}
+				if nl == "\r\n" && strings.Count(out, "\n") != strings.Count(out, "\r\n") {
+					t.Errorf("%s: a line without CRLF: %q", label, out)
+				}
+				if nl == "\n" && strings.Contains(out, "\r") {
+					t.Errorf("%s: a CR in an LF file: %q", label, out)
+				}
+				if strings.HasSuffix(out, "\n") != final && strings.Contains(body, "[permission]") {
+					t.Errorf("%s: final newline %v, want %v: %q", label, !final, final, out)
+				}
+			}
+		}
 	}
 }

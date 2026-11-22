@@ -112,8 +112,13 @@ func addTOMLListItem(text, table, key, item, file string) (out string, changed b
 		return b.String(), true, nil
 	}
 	block := append([]string(nil), lines[start+1:end]...)
+	open = ""
 	for i, raw := range block {
 		line := strings.TrimRight(raw, "\r")
+		inString := open != ""
+		if open = tomlLineEnd(line, open); inString {
+			continue // the text of a multi-line string, though it reads `allow = [...]` (#968)
+		}
 		path, val, ok := keyValue(line)
 		if !ok || len(path) != 1 || path[0] != key {
 			continue
@@ -138,6 +143,19 @@ func addTOMLListItem(text, table, key, item, file string) (out string, changed b
 	}
 	if nl == "\r\n" {
 		entry += "\r"
+		// After the file's last line, which has no newline, the entry takes the CRLF that line lacks
+		// and goes without one, as that line did: a \r of its own at the very end would be a lone CR,
+		// which TOML forbids, and checkTOMLEdit would refuse a valid file (#969, as #783 for Codex).
+		if at == len(block) && end == len(lines) {
+			last := &lines[start]
+			if at > 0 {
+				last = &block[at-1]
+			}
+			if !strings.HasSuffix(*last, "\r") {
+				*last += "\r"
+			}
+			entry = strings.TrimSuffix(entry, "\r")
+		}
 	}
 	block = append(block[:at], append([]string{entry}, block[at:]...)...)
 	rebuilt := append(append(append([]string(nil), lines[:start+1]...), block...), lines[end:]...)

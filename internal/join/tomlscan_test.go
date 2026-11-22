@@ -3,6 +3,8 @@ package join
 import (
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestTOMLLineEnd(t *testing.T) {
@@ -80,5 +82,53 @@ func TestAddTOMLListItemFindsItsTablePastQuotes(t *testing.T) {
 		if out, changed, err := addTOMLListItem(text, "permission", "allow", "x", "config.toml"); err != nil || changed || out != text {
 			t.Errorf("%s: changed=%v err=%v:\n%s", name, changed, err, out)
 		}
+	}
+}
+
+// A line of a multi-line string in Murmur's table is the value's, whatever it starts with: one that
+// reads `args = ...` or `command = ...` isn't taken for the key and rewritten (#968). Both versions
+// of the file parse, so checkTOMLEdit can't catch it, and the user's value would change unseen.
+func TestCodexEditLeavesKeysInAMultilineStringAlone(t *testing.T) {
+	for name, value := range map[string]string{
+		"basic":   "description = \"\"\"\nargs = [\"keep\", \"me\"]\ncommand = \"keep\"\nenv_vars = [\"KEEP\"]\n\"\"\"\n",
+		"literal": "description = '''\nargs = [\"keep\", \"me\"]\ncommand = \"keep\"\nenv_vars = [\"KEEP\"]\n'''\n",
+	} {
+		for _, nl := range []string{"\n", "\r\n"} {
+			before := strings.ReplaceAll("[mcp_servers.murmur]\n"+value, "\n", nl)
+			out, changed, err := editCodexConfig(before, "/opt/mur")
+			if err != nil || !changed {
+				t.Errorf("%s: changed=%v err=%v", name, changed, err)
+				continue
+			}
+			if !strings.Contains(out, strings.ReplaceAll(value, "\n", nl)) {
+				t.Errorf("%s: the string changed:\n%q", name, out)
+			}
+			var cfg struct {
+				MCPServers map[string]struct {
+					Command, Description string
+					Args                 []string
+					EnvVars              []string `toml:"env_vars"`
+				} `toml:"mcp_servers"`
+			}
+			if _, err := toml.Decode(out, &cfg); err != nil {
+				t.Errorf("%s: not valid TOML: %v\n%q", name, err, out)
+				continue
+			}
+			if s := cfg.MCPServers["murmur"]; s.Command != "/opt/mur" || len(s.Args) != 3 || len(s.EnvVars) != 3 {
+				t.Errorf("%s: the table join wrote: %+v\n%q", name, s, out)
+			}
+			if again, changed, err := editCodexConfig(out, "/opt/mur"); err != nil || changed || again != out {
+				t.Errorf("%s: the second edit changed=%v err=%v:\n%q", name, changed, err, again)
+			}
+		}
+	}
+}
+
+// Grok's allow list isn't taken from a multi-line string in [permission] either.
+func TestAddTOMLListItemLeavesAMultilineStringAlone(t *testing.T) {
+	value := "note = \"\"\"\nallow = [\"keep\"]\n\"\"\"\n"
+	out, changed, err := addTOMLListItem("[permission]\n"+value, "permission", "allow", "x", "config.toml")
+	if err != nil || !changed || !strings.Contains(out, value) || !strings.Contains(out, "\nallow = [\"x\"]") {
+		t.Errorf("changed=%v err=%v:\n%q", changed, err, out)
 	}
 }
