@@ -1,0 +1,12 @@
+The logos in this folder are their owners' marks, shown beside each product's name to say Murmur
+works with it. All were taken from T3 Code (https://github.com/pingdotgg/t3code, MIT), so they match
+what T3 Code shows for each agent:
+
+t3.svg           assets/prod/logo.svg
+claude.svg       apps/marketing/public/harnesses/claude-ai-icon.svg
+antigravity.svg  apps/marketing/public/harnesses/antigravity.svg
+codex.svg        the OpenAI icon in apps/web/src/components/Icons.tsx
+opencode.svg     packages/provider-opencode/src/client.ts (light theme)
+pi.svg           packages/provider-pi/src/client.ts (light theme)
+muse.svg         packages/provider-muse/src/client.ts
+grok.svg         packages/provider-grok/src/client.ts (light theme)
