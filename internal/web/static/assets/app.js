@@ -5507,14 +5507,14 @@ const THEME_TIPS = {
   dim: "Soft dark-grey page, lighter than Dark",
   light: "White page with dark text",
   murmur: "Cream page with ink text and blue accents, like the Murmur website",
-  sky: "Pale blue panes with navy text and butter message bubbles",
+  sky: "Pale blue panes with navy text, Rubik and butter message bubbles",
 };
 
 function themeSection() {
   return h(
     "section",
     { class: "section" },
-    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance"), h("p", { class: "section-note" }, "Shared by the app and browser for this repo.")),
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance"), h("p", { class: "section-note" }, "Shared by the app and browser on this device.")),
     h(
       "div",
       { class: "group" },
@@ -5557,7 +5557,7 @@ function themeSection() {
 
 // Settings (#775, Tyler, 2026-11-16) is one screen for the repo that is open, grouped by what each
 // setting is about: you, messages to your sessions, files, mutes. Every one of those is this
-// repo's, since a device is one clone. A page for every repo at once is #816.
+// repo's, since a device is one clone. The theme and About apply to every repo.
 function settingsSection(key, title, note, ...rows) {
   return h(
     "section",
@@ -5728,7 +5728,7 @@ function settingsPage() {
     ),
   );
 
-  sections.push(themeSection(), h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), versionSection()));
+  sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
   return h("div", { class: "page" }, settingsScope(), sections);
 }
 

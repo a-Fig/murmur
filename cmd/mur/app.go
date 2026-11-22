@@ -132,10 +132,11 @@ func runApp(ctx context.Context, args []string, out io.Writer) error {
 	}
 	f := &follower{cfg: cfg, gitDir: gitDir, page: pageOf}
 	f.remember()
-	prefs, _ := web.ReadPreferences(client.StateDir(gitDir))
+	themePath, _ := web.ThemePath()
+	theme, _ := web.ReadTheme(themePath)
 	return desktop.Run(ctx, desktop.Options{
 		Page:       addr,
-		LightFrame: !prefs.DarkFrame(),
+		LightFrame: !web.DarkFrame(theme),
 		Follow:     f.follow,
 		Open:       browse,
 		Debug:      *devtools,

@@ -22,19 +22,19 @@ type Preferences struct {
 func (p Preferences) theme() string { return cmp.Or(p.Theme, "dim") }
 
 // DarkFrame is the color scheme the desktop window uses before the page loads.
-func (p Preferences) DarkFrame() bool {
-	return p.Theme != "light" && p.Theme != "murmur" && p.Theme != "sky"
+func DarkFrame(theme string) bool {
+	return theme != "light" && theme != "murmur" && theme != "sky"
 }
 
-func (p Preferences) valid() bool {
-	switch p.Theme {
+func validTheme(theme string) bool {
+	switch theme {
 	case "", "dark", "dim", "light", "murmur", "sky":
 		return true
 	}
 	return false
 }
 
-// ReadPreferences is used by the daemon and by the app before it makes its window.
+// ReadPreferences reads the clone's filters and any theme saved by an older build.
 func ReadPreferences(dir string) (Preferences, error) {
 	var p Preferences
 	b, err := os.ReadFile(filepath.Join(dir, PreferencesFile))
@@ -48,7 +48,7 @@ func ReadPreferences(dir string) (Preferences, error) {
 		// The next successful change replaces the unreadable file with valid preferences.
 		return Preferences{}, err
 	}
-	if !p.valid() {
+	if !validTheme(p.Theme) {
 		// Keep the other choices if a newer version saved a theme this build lacks.
 		p.Theme = ""
 	}
@@ -57,14 +57,24 @@ func ReadPreferences(dir string) (Preferences, error) {
 
 // WithPreferences sets the initial preferences and their disk writer before serving the page.
 // Without a writer, as on the devserver, changes last for the lifetime of the server.
-func (s *Server) WithPreferences(p Preferences, save func(Preferences) error) {
-	s.preferences, s.savePreferences = p, save
+func (s *Server) WithPreferences(p Preferences, themePath string, save func(Preferences) error) error {
+	s.preferences, s.savePreferences, s.themePath = p, save, themePath
+	if themePath != "" && p.Theme != "" {
+		_, err := saveTheme(themePath, p.Theme, true)
+		s.preferences.Theme = ""
+		return err
+	}
+	return nil
 }
 
 func (s *Server) currentPreferences() Preferences {
 	s.prefMu.Lock()
 	defer s.prefMu.Unlock()
-	return s.preferences
+	p := s.preferences
+	if s.themePath != "" {
+		p.Theme, _ = ReadTheme(s.themePath)
+	}
+	return p
 }
 
 func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
@@ -79,12 +89,16 @@ func (s *Server) updatePreferences(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !p.valid() {
+	if !validTheme(p.Theme) {
 		writeError(w, http.StatusBadRequest, "unknown theme")
 		return
 	}
 	s.prefMu.Lock()
 	defer s.prefMu.Unlock()
+	theme := ""
+	if s.themePath != "" {
+		theme, p.Theme = p.Theme, ""
+	}
 	was := s.preferences
 	next := Preferences{cmp.Or(p.Theme, was.Theme), cmp.Or(p.OnlyMine, was.OnlyMine), cmp.Or(p.TagsFolded, was.TagsFolded)}
 	if r.Method == http.MethodPost {
@@ -97,5 +111,17 @@ func (s *Server) updatePreferences(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.preferences = next
+	if s.themePath != "" {
+		var err error
+		if theme == "" {
+			next.Theme, err = ReadTheme(s.themePath)
+		} else {
+			next.Theme, err = saveTheme(s.themePath, theme, r.Method == http.MethodPost)
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "couldn't save page preferences")
+			return
+		}
+	}
 	writeJSON(w, next)
 }

@@ -139,13 +139,16 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	if err != nil {
 		d.log.Printf("reading page preferences: %v", err)
 	}
-	page.WithPreferences(prefs, func(next web.Preferences) error {
+	err = page.WithPreferences(prefs, d.opt.ThemePath, func(next web.Preferences) error {
 		err := writeJSON(filepath.Join(d.dir, web.PreferencesFile), next)
 		if err != nil {
 			d.log.Printf("saving page preferences: %v", err)
 		}
 		return err
 	})
+	if err != nil {
+		d.log.Printf("importing the clone's page theme: %v", err)
+	}
 	if d.opt.Repos != nil {
 		page.WithRepos(d.opt.Repos)
 	}

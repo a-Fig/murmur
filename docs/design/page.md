@@ -99,9 +99,10 @@ from it is in [a person on the page](people.md).
   which #656 headed with its details, hold little more than the card does.
 - **Themes** are palettes over the same design. Dim is the default (#939). The daemon includes
   its saved theme in the page's HTML so it can paint in that palette before JavaScript runs.
-- **Page preferences** (#941). Theme, Only mine, and folded Tags live in
-  `.git/murmur/page-preferences.json` for this clone, shared by its browser tabs and desktop app
-  on the next load. The daemon writes that file atomically through the authenticated
+- **Page preferences** (#941). The theme lives in `murmur/app/theme` in the user's config directory.
+  Every daemon reads it on page load, so the same palette follows the app and the browser across
+  repos. Only mine and folded Tags live in `.git/murmur/page-preferences.json` because each repo
+  has its own conversations and tags. The daemon writes these files through the authenticated
   `/api/preferences` endpoint. The first old browser or webview to supply a missing choice
   fills it in. A saved choice takes precedence over any old copy. Sidebar width stays with the
   browser or webview because their windows can be different sizes. The light-mode surprise also
@@ -156,7 +157,7 @@ from it is in [a person on the page](people.md).
   device is one clone, so the settings are the open repo's, and the page says which repo
   and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
   (availability, waking, what a working session is shown, and each session's own, folded until
-  opened), Files, Mutes and Appearance. About follows under "For every repo". Every setting is a
+  opened), Files and Mutes. Appearance and About follow under "For every repo". Every setting is a
   segmented control, on/off ones included (Tyler, 2026-11-17, #862).
   The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
   and repo are nearly the same thing here, and people come with a question, not a scope. A page

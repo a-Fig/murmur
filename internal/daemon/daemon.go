@@ -178,6 +178,8 @@ type Options struct {
 	Clones string
 	// Repos, if set, lets the page list this machine's clones and switch to another's page (#348).
 	Repos web.Repos
+	// ThemePath is the user's theme file shared across clones.
+	ThemePath string
 }
 
 const defaultPageAddr = "127.0.0.1:0"

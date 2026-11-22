@@ -8,6 +8,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -67,6 +68,7 @@ type Server struct {
 	prefMu          sync.Mutex
 	preferences     Preferences
 	savePreferences func(Preferences) error
+	themePath       string
 }
 
 // New returns the page's handler. token is the page's own, not the one that opens the daemon to
@@ -217,13 +219,18 @@ func (s *Server) authorized(r *http.Request) bool {
 }
 
 func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	p := s.currentPreferences()
-	index.Execute(w, struct {
+	var page bytes.Buffer
+	if err := index.Execute(&page, struct {
 		Name, Command, Theme string
 		SavedTheme           bool
-	}{brand.Product, brand.Command, p.theme(), p.Theme != ""})
+	}{brand.Product, brand.Command, p.theme(), p.Theme != ""}); err != nil {
+		http.Error(w, "couldn't render the page", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(page.Bytes())
 }
 
 // stateResponse is State with each branch's open pull request, by branch name. Branches with

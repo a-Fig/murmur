@@ -708,7 +708,7 @@ func TestPagePreferencesPersist(t *testing.T) {
 	pg = d.page()
 	var got web.Preferences
 	pg.get(path, &got)
-	if got.Theme != "sky" || got.DarkFrame() || got.OnlyMine == nil || *got.OnlyMine || got.TagsFolded == nil || !*got.TagsFolded {
+	if got.Theme != "sky" || web.DarkFrame(got.Theme) || got.OnlyMine == nil || *got.OnlyMine || got.TagsFolded == nil || !*got.TagsFolded {
 		t.Fatalf("saved preferences: %+v", got)
 	}
 	code, html := pg.call("GET", "/", "", "")
