@@ -180,6 +180,11 @@ func buildCommit(ctx context.Context, g, own gitx.Git, tip string) (sha string, 
 			return "", nil, nil, err
 		}
 		e := s.edit(b, exists)
+		if e.change && !e.remove && len(e.data) > maxRepoFile {
+			// As writeOut refuses for a working tree: a file the edit took past what read reads would
+			// count as unmarked, and the next init would stop on it (Opus review of 29cf0f5d).
+			return "", nil, nil, fmt.Errorf("%s would be over %d MiB, more than %s reads", s.name, maxRepoFile>>20, brand.Command)
+		}
 		if e.change {
 			f := t.files[real]
 			f.data, f.exists, f.changed = e.data, !e.remove, true
