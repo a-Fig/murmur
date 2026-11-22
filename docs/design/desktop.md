@@ -28,7 +28,7 @@ Only what a browser tab can't do:
 
 The window gives the page three functions. `murmurApp` takes what the page shows (its host, the
 unread count, the theme) and the messages to the person as they arrive; the page calls it only when
-one of those changes (`tellApp` in `app.js`). A script the window runs in every document sends
+one of those changes (`tellApp` in `sync.js`). A script the window runs in every document sends
 `murmurOpen` every link to another origin, which opens it in the browser, and `murmurHere` the
 document's host. Any page in the window could call them, so none does anything a page shouldn't: they
 set a title and a count, show a notification, open an http or https address in the browser, and

@@ -7,18 +7,15 @@ import (
 	"testing"
 )
 
-// The page names each person's ghost and accessory from two lists in app.js (#579); every name has
-// to have a file that scripts/ghosts.py drew, or a session's face loses a layer.
+// The page names each person's ghost and accessory from two lists in its scripts (#579); every name
+// has to have a file that scripts/ghosts.py drew, or a session's face loses a layer.
 func TestGhostFilesExist(t *testing.T) {
-	src, err := fs.ReadFile(static, "static/assets/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
+	src := []byte(pageSource(t))
 	lists := map[string]string{"GHOSTS": "ghost-", "GHOST_ACCESSORIES": "acc-"}
 	for list, prefix := range lists {
 		m := regexp.MustCompile(`const ` + list + ` = \[([^\]]*)\]`).FindSubmatch(src)
 		if m == nil {
-			t.Fatalf("app.js has no %s list", list)
+			t.Fatalf("the page has no %s list", list)
 		}
 		var names []string
 		for _, q := range strings.Split(string(m[1]), ",") {

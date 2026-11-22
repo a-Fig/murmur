@@ -131,7 +131,7 @@ func TestTheAppBehindAnotherWindowIsHidden(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "page.js")
 	names := []string{"api", "inApp"}
-	if b, _ := static.ReadFile("static/assets/app.js"); strings.Contains(string(b), "\nfunction appSaysFront(") {
+	if strings.Contains(pageSource(t), "\nfunction appSaysFront(") {
 		names = append(names, "pageHidden", "appSaysFront")
 	}
 	if err := os.WriteFile(src, []byte(pageFunctions(t, names...)+"\nlet poll;"), 0o644); err != nil {

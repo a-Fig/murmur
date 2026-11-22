@@ -1399,7 +1399,7 @@ a.g-pr:hover {
   transform: scale(0.9);
 }
 
-/* The page's tooltip (app.js showTip), as T3 Code's: small, in the inverse of the page, quick to
+/* The page's tooltip (tips.js showTip), as T3 Code's: small, in the inverse of the page, quick to
  * show and to move. A long one wraps. */
 .tip {
   white-space: pre-line; /* a list, as a message's receipts are, goes one to a line */
@@ -4668,7 +4668,7 @@ a.g-pr:hover {
   }
 }
 
-/* The flash of going from a dark theme to Light (app.js flashbang): the whole page white for a
+/* The flash of going from a dark theme to Light (preferences.js flashbang): the whole page white for a
  * moment, then the page fading back in. Clicks pass through it. */
 .flashbang {
   position: fixed;
