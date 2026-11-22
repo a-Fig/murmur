@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -135,26 +136,26 @@ func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Reques
 	switch {
 	case given && (len(words) == 1 || len(words) == 2):
 		body := ""
+		var err error
 		if len(words) == 2 {
-			var err error
 			if body, err = sendText(words[1], stdin); err != nil {
 				return proto.Request{}, err
 			}
 		}
 		req := proto.Request{Op: proto.OpSend, To: words[0]}
-		req.Subject, req.Body = subjectAndBody(subject, body)
-		return req, nil
+		req.Subject, req.Body, err = subjectAndBody(subject, body)
+		return req, err
 	case !given && len(words) == 2:
 		text, err := sendText(words[1], stdin)
 		if err != nil {
 			return proto.Request{}, err
 		}
-		if strings.TrimSpace(bus.Text(text, len(text))) == "" {
+		if strings.TrimSpace(bus.Text(text, math.MaxInt)) == "" { // judged whole: a malformed byte cleans to 3 (#1037)
 			return proto.Request{}, errors.New("nothing to send: the message is empty")
 		}
 		req := proto.Request{Op: proto.OpSend, To: words[0]}
-		req.Subject, req.Body = subjectFor(text)
-		return req, nil
+		req.Subject, req.Body, err = subjectFor(text)
+		return req, err
 	case !given && len(words) == 3:
 		body, err := sendText(words[2], stdin)
 		if err != nil {
@@ -163,8 +164,8 @@ func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Reques
 		fmt.Fprintf(stderr, "%[1]s send TO SUBJECT BODY is the old form, and still works. "+
 			"The new one takes the message as one text: %[1]s send TO TEXT, or %[1]s send TO --subject SUBJECT TEXT.\n", brand.Command)
 		req := proto.Request{Op: proto.OpSend, To: words[0]}
-		req.Subject, req.Body = subjectAndBody(words[1], body)
-		return req, nil
+		req.Subject, req.Body, err = subjectAndBody(words[1], body)
+		return req, err
 	}
 	return proto.Request{}, fmt.Errorf("usage: %[1]s send TO TEXT, or %[1]s send TO --subject SUBJECT [TEXT], with TEXT in quotes; - as TEXT reads it from standard input", brand.Command)
 }

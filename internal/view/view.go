@@ -279,7 +279,7 @@ func Inbox(r proto.Response) string {
 			fmt.Fprintf(&b, "To: %s\n", m.To)
 		}
 		body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
-		if !repeatsSubject(m.Subject, body) {
+		if !RepeatsSubject(m.Subject, body) {
 			fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
 		}
 		if body != "" {
@@ -331,13 +331,13 @@ func files(m proto.MessageView) string {
 	return b.String()
 }
 
-// repeatsSubject says a subject is only the start of the body, cut short and ended with "…" or
+// RepeatsSubject says a subject is only the start of the body, cut short and ended with "…" or
 // "...". That is what web.SplitText makes of a message a person writes on the page with no subject
 // and a first line too long for one; printing both would give the agent that line twice (#552), so
 // Turn and Inbox print the body alone, whoever sent it: an agent's cut subject repeats its body
 // just the same. The page hides a person's such subject by the same rule (personText in
 // internal/web/static/assets/messages.js). body is the body as the view prints it, trimmed.
-func repeatsSubject(subject, body string) bool {
+func RepeatsSubject(subject, body string) bool {
 	if body == "" {
 		return false
 	}
@@ -437,7 +437,7 @@ func Turn(m proto.MessageView) string {
 	}
 	b.WriteString(":\n")
 	body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
-	if !repeatsSubject(m.Subject, body) {
+	if !RepeatsSubject(m.Subject, body) {
 		fmt.Fprintf(&b, "\n%s\n", quotedBody(m.Subject)) // a subject can forge a header as a body line can
 	}
 	if body != "" {

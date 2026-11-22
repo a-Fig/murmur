@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1161,33 +1163,76 @@ func text(s string) *mcp.CallToolResult {
 // oneLine cuts a subject or a status to what the daemon keeps of it (bus.OneLine at 120). The
 // daemon reads a request's line only up to a cap, before its token is checked, so a subject far
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
-func oneLine(s string) string { return bus.OneLine(s, 120) }
+func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
 // subjectFor makes it a subject and body. A send with a body is as it was: its subject is cut.
-// A body is blank as the daemon judges one, after the invisible characters it drops.
-func subjectAndBody(subject, body string) (string, string) {
-	if strings.TrimSpace(bus.Text(body, len(body))) != "" || oneLine(subject) == strings.TrimSpace(subject) {
-		return oneLine(subject), body
+// A body is blank as the daemon judges one, after the invisible characters it drops, and only if
+// the daemon would take it: one over its cap is the agent's to hear about (#1037).
+func subjectAndBody(subject, body string) (string, string, error) {
+	blank := len(body) <= bus.MaxBody && strings.TrimSpace(bus.Text(body, math.MaxInt)) == ""
+	if !blank || oneLine(subject) == strings.TrimSpace(subject) {
+		return oneLine(subject), body, nil
 	}
 	return subjectFor(subject)
 }
+
+// errTooLong is subjectFor's refusal of a text whose body would be over the daemon's cap. The
+// daemon's own would name a body the agent never gave (#1037).
+var errTooLong = fmt.Errorf("not sent: the message is over %d KB, and the bus keeps everything forever; split it into several messages", bus.MaxBody>>10)
 
 // subjectFor makes the subject of a message an agent wrote as one text, and the body that goes
 // with it: `mur send TO TEXT`, and a send tool call whose subject is the whole text (subjectAndBody).
 // It splits the text as the page splits a person's (web.SplitText): a first line that fits is the
 // subject and the rest is the body; otherwise the opening words are the subject and the body has
-// the whole text. A first line of only the invisible characters the daemon drops keeps the whole
-// text, as one cut subject. Every agent's send that needs a subject made gets it here, so making it
-// another way, such as with a small model (#1023), is a change to this function alone.
-func subjectFor(text string) (subject, body string) {
-	first, rest := web.SplitText(text)
-	if oneLine(first) == "" {
-		return oneLine(text), strings.TrimSpace(text)
+// the whole text. The first line is the first with something the daemon keeps, and it fits or not
+// as the daemon keeps it, without the invisible characters it drops, which take no room (#1037).
+// The body is the text as written, not as cleaned: the daemon checks it for secrets both ways, as
+// dropping a zero-width space can join a key to the next word. A first line that ends in "…" and
+// starts the rest, as a cut one would, keeps the whole text in the body, as a turn shows the body
+// alone then (view.RepeatsSubject). Every agent's send that needs a subject made gets it here, so
+// making it another way, such as with a small model (#1023), is a change to this function alone.
+func subjectFor(text string) (subject, body string, err error) {
+	whole := strings.TrimSpace(text)
+	first, rest := "", text
+	for rest != "" && oneLine(first) == "" {
+		first, rest = cutLine(rest)
 	}
-	return oneLine(first), rest
+	// Cleaned as the daemon stores it, a malformed byte as U+FFFD, so RepeatsSubject below sees
+	// the subject a turn will.
+	if subject = bus.OneLine(bus.Text(first, math.MaxInt), math.MaxInt); utf8.RuneCountInString(subject) <= maxSubject {
+		body = strings.TrimSpace(rest)
+	} else {
+		subject, _ = web.SplitText(subject) // the opening words, cut where a word ends
+		body = whole
+	}
+	if view.RepeatsSubject(subject, strings.TrimSpace(bus.Text(body, math.MaxInt))) {
+		body = whole
+	}
+	if len(body) > bus.MaxBody {
+		return "", "", errTooLong
+	}
+	return subject, body, nil
+}
+
+// maxSubject is the longest a subject is: oneLine's cut.
+const maxSubject = 120
+
+// cutLine cuts s at its first line break, of any kind bus.Text reads as one.
+func cutLine(s string) (line, rest string) {
+	i := strings.IndexFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\v' || r == '\f' || r == 0x85 || r == 0x2028 || r == 0x2029
+	})
+	if i < 0 {
+		return s, ""
+	}
+	_, n := utf8.DecodeRuneInString(s[i:])
+	if strings.HasPrefix(s[i:], "\r\n") {
+		n = 2
+	}
+	return s[:i], s[i+n:]
 }
 
 // fullPath makes a path a send names a full one, from this server's working directory, which is
@@ -1323,7 +1368,10 @@ func (s *server) tools(srv *mcp.Server) {
 			to := recipients(in.To)
 			files := fullPaths([]string(in.Files))
 			tell := strings.TrimSpace(in.TellMe)
-			subject, body := subjectAndBody(in.Subject, in.Body)
+			subject, body, err := subjectAndBody(in.Subject, in.Body)
+			if err != nil {
+				return result(nil, proto.Response{}, fmt.Errorf("%w, or put the text in a file and send that with files", err))
+			}
 			if len(to) > 1 {
 				return s.sendEach(ctx, req, to, subject, body, tell, files)
 			}
