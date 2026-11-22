@@ -170,7 +170,7 @@ test('llms.txt follows llmstxt.org and says when to use Murmur', () => {
   assert.match(intro, /How to call it/);
   // The tools it names are the ones the use page documents.
   const use = readFileSync(join(root, '..', 'docs', 'agents', 'use.md'), 'utf8');
-  for (const tool of ['who', 'lookup', 'status', 'tags', 'send', 'inbox']) {
+  for (const tool of ['who', 'lookup', 'status', 'tags', 'send', 'inbox', 'mute']) {
     assert.ok(intro.includes('`' + tool + '`'), `llms.txt doesn't name ${tool}`);
     assert.ok(use.includes('`' + tool + '`'), `use.md doesn't document ${tool}`);
   }
