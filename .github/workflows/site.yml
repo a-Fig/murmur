@@ -66,10 +66,10 @@ jobs:
             echo "::error::Found no earlier successful deploy to compare site/migrations with. Apply any new migration, then run this workflow by hand."
             exit 1
           fi
-          # On one line: ::error:: takes only the first.
-          changed=$(git diff --no-renames --name-only "$base" HEAD -- site/migrations | tr '\n' ' ')
+          changed=$(git diff --no-renames --name-only "$base" HEAD -- site/migrations)
           if [ -n "$changed" ]; then
-            echo "::error::site/migrations changed since $base, the last deploy: $changed. Apply it, then run this workflow by hand."
+            # On one line: ::error:: takes only the first.
+            echo "::error::site/migrations changed since $base, the last deploy: ${changed//$'\n'/ }. Apply it, then run this workflow by hand."
             exit 1
           fi
       - if: env.HAS_TOKEN != 'true'
