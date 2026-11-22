@@ -46,7 +46,7 @@ func TestTheSendToolRefusesARawSecretInTheSubject(t *testing.T) {
 	if got := f.requestsOf(proto.OpSend); len(got) != 0 {
 		t.Errorf("the daemon was asked to send %+v", got)
 	}
-	res = callListTool(t, f, "send", map[string]any{"to": "quiet-otter", "subject": strings.Repeat("x", bus.MaxBody+1024)})
+	res = callListTool(t, &fakeDaemon{}, "send", map[string]any{"to": "quiet-otter", "subject": strings.Repeat("x", bus.MaxBody+1024)})
 	if text := res.Content[0].(*mcp.TextContent).Text; !res.IsError || !strings.Contains(text, "message is over 32 KB") || !strings.Contains(text, "put the text in a file") {
 		t.Errorf("send of a text too long: error %v, %q", res.IsError, text)
 	}
