@@ -643,7 +643,8 @@
      group centred in it. */
   @media (max-width: 600px) {
     .st-trim { min-height: 100vh; min-height: 100svh; padding: 0 20px 28px; }
-    .st-trim .agent-note { padding-top: 14px; max-width: 320px; font-size: 12.5px; line-height: 1.45; opacity: .85; }
+    /* No note for agents on a phone (2026-11-21): nobody sets up a coding agent from one. */
+    .st-trim .agent-note { display: none; }
     .st-trim h1 { font-size: clamp(27px, 8.2vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
     .st-trim .st-copy p { font-size: 15.5px; line-height: 1.55; max-width: 34ch; margin-top: 16px; }
     .st-trim .button { margin-top: 26px; padding: 14px 24px; font-size: 15.5px; }
