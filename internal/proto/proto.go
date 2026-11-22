@@ -390,8 +390,8 @@ type Response struct {
 	ClaudeSession string `json:"claudeSession,omitempty"`
 	// ThreadUnread says, in the reply to a hello or an OpRoute that names a T3 thread, that the
 	// daemon couldn't read the thread's state, so it doesn't know whether another thread started it
-	// (#980). A T3 Codex session's MCP server makes no change until a reply says otherwise. A daemon
-	// from before it never says so, and the server goes on as before.
+	// (#980). A T3 Codex session's MCP server then tells it the route again before its first change,
+	// and goes on whatever the answer (#993). A daemon from before it never says so.
 	ThreadUnread bool `json:"threadUnread,omitempty"`
 
 	Devices []Device `json:"devices,omitempty"`

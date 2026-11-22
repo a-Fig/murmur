@@ -22,15 +22,14 @@ started.
   learns from its first tool call's `_meta.threadId`: the route that tells the daemon is read the
   same way, and a call the daemon refuses a delegate (`send`, `status`, `tags`, `mute`) waits until
   the server has looked the thread up and told the daemon, so a Codex delegate's first `send` is
-  refused too (#966). Such a call goes on only once the daemon's reply to the hello or the route has
-  said it read the thread (`Response.ThreadUnread`, #980). If the lookup or the daemon's read failed,
-  the call tries both again, up to 3 s for the lookup and 15 s for the route, and if they fail
-  again it changes nothing and tells the agent to try again in a few seconds. The cost: a T3
-  database Murmur can't read stops a T3 Codex session's changes until it can, which after a change
-  to T3's schema means until a release of Murmur reads the new one. A Codex thread T3's database
-  has had no row for since its first call 10 s ago (a `codex` run from a T3 thread's shell, which
-  inherits T3's variables) is taken not to be T3's, and isn't held; before then it is, since T3
-  may not yet have written a new thread's row. `who`, `lookup` and `inbox` never wait.
+  refused too (#966). If the lookup failed, or the daemon's reply to the hello or the route says it
+  couldn't read the thread (`Response.ThreadUnread`, #980), the first such call looks the thread up
+  and tells the daemon once more, which classifies a thread whose row T3 wrote late; the lookup
+  gives up after 3 s and the route after 15 s. Then the call goes on whatever the answer: it fails
+  open, as a Claude Code session in T3 does (Tyler, 2026-11-22, #993: a delegate's message going out
+  is awkward, not harmful, and a T3 database Murmur can't read mustn't stop T3's sessions sending).
+  Only the calls that come during the first lookup, and the first one after it fails, wait; `who`,
+  `lookup` and `inbox` never do.
   Until that first call a Codex delegate is listed, as any delegate is when the read fails or T3
   hasn't written its thread's row yet; once its thread is read, the name it took meanwhile is seen
   by nobody. A Claude Code session in T3 has its thread from its environment, and still goes on
