@@ -101,27 +101,19 @@ func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
 
 // The section sends agents to two pages by address. A page that isn't where the address says, or
 // that has lost what the section promises of it, would leave an agent holding a link to nothing.
-// Since #934 the page on joining is short: it sends the agent to its own agent's page, and that to
-// the steps every agent shares, so the promises are checked along that path.
+// Since #934 the page on joining is short: it sends the agent to its own agent's page on the site,
+// which is that agent's file with the steps every agent shares after it, so the promises are
+// checked along that path.
 func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
-	// The file in this repo a page's address serves: raw GitHub's from main, or the site's.
-	file := func(url string) string {
-		switch {
-		case strings.HasPrefix(url, brand.Site+"/agents/"):
-			return "docs/agents/harnesses/" + strings.TrimSuffix(strings.TrimPrefix(url, brand.Site+"/agents/"), ".md") + ".md"
-		case strings.HasPrefix(url, brand.Site+"/"):
-			return "docs/agents/" + strings.TrimPrefix(url, brand.Site+"/") + ".md"
-		}
-		return url[strings.Index(url, "/main/")+len("/main/"):]
-	}
-	page := func(url string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(file(url))))
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("a page links to %s, and the repo has no such file: %v", url, err)
+			t.Fatalf("a page is missing: %v", err)
 		}
 		return string(b)
 	}
-	join, use, steps := page(brand.JoinDoc), page(brand.UseDoc), page(brand.StepsDoc)
+	raw := func(url string) string { return read(url[strings.Index(url, "/main/")+len("/main/"):]) }
+	join, use, steps := raw(brand.JoinDoc), raw(brand.UseDoc), read("docs/agents/steps.md")
 	siteUse := brand.Site + "/use"
 	for _, want := range []string{"Ask your user", brand.InstallSh, brand.InstallPs1, "mur version", "mur join", "mur join --leave", "mur init", FallbackBranch, siteUse} {
 		if !strings.Contains(steps, want) {
@@ -133,30 +125,28 @@ func TestTheAgentPagesExistAndSayWhatTheSectionPromises(t *testing.T) {
 			t.Errorf("the page on using Murmur doesn't say %q", want)
 		}
 	}
-	// Both short pages list every agent's page, and each of those sends the agent through the
-	// shared steps and on to the tools. The page on setting Murmur up is linked from the README
-	// rather than the section.
-	setup := page(brand.SetupDoc)
-	agents := []string{"claude-code", "codex", "opencode", "pi", "muse-code", "grok", "antigravity"}
-	for _, name := range agents {
-		md := brand.AgentPage(name) + ".md"
-		for doc, text := range map[string]string{"joining": join, "setting Murmur up": setup} {
-			if !strings.Contains(text, md) {
-				t.Errorf("the page on %s doesn't link to %s", doc, md)
-			}
-		}
-		text := page(md)
-		for _, want := range []string{brand.StepsDoc, siteUse} {
-			if !strings.Contains(text, want) {
-				t.Errorf("%s doesn't say %q", md, want)
-			}
+	// join.md lists every agent's page, and says where the same text is on GitHub for when the
+	// site can't be reached.
+	for _, want := range []string{"Ask your user", "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/steps.md", "docs/agents/harnesses/"} {
+		if !strings.Contains(join, want) {
+			t.Errorf("the page on joining doesn't say %q", want)
 		}
 	}
-	if !strings.Contains(page(brand.AgentPage("t3-code")+".md"), brand.Site+"/join") {
-		t.Errorf("T3 Code's page doesn't send the agent to its own agent's page")
+	for _, name := range []string{"claude-code", "codex", "opencode", "pi", "muse-code", "grok", "antigravity"} {
+		if !strings.Contains(join, brand.AgentDoc(name)) {
+			t.Errorf("the page on joining doesn't link to %s", brand.AgentDoc(name))
+		}
+		if text := read("docs/agents/harnesses/" + name + ".md"); !strings.HasPrefix(text, "# Murmur in ") {
+			t.Errorf("%s's file doesn't start with its title:\n%s", name, text)
+		}
 	}
-	if readme, err := os.ReadFile(filepath.Join("..", "..", "README.md")); err != nil || !strings.Contains(string(readme), brand.SetupDoc) {
-		t.Errorf("the README doesn't link to the page on setting Murmur up (%v)", err)
+	// The page on setting Murmur up is linked from the README rather than the section; the site
+	// serves join.md there, and setup.md, for old links, points to join.md.
+	if !strings.Contains(read("docs/agents/setup.md"), brand.JoinDoc) {
+		t.Error("setup.md doesn't point to join.md")
+	}
+	if readme := read("README.md"); !strings.Contains(readme, brand.SetupDoc) {
+		t.Errorf("the README doesn't link to the page on setting Murmur up, %s", brand.SetupDoc)
 	}
 }
 

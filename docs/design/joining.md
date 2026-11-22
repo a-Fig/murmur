@@ -15,8 +15,9 @@ Agents message through MCP, and people use the page.
   lines, since every agent that opens the repo reads it whole (Tyler, 2026-10-29, after a first
   version of about twenty): the repo uses Murmur, and two links into `docs/agents/` by raw GitHub
   address, which work without login. `join.md` is for an agent without the tools: it sends the agent
-  to its own agent's page (`docs/agents/harnesses/`), which sends it through `steps.md` (ask the
-  user, say what joining does, install, run `mur join`); `use.md` is for one with them. A test holds the links
+  to its own agent's page on the site, which is its file in `docs/agents/harnesses/` with `steps.md`
+  after it (ask the user, say what joining does, install, run `mur join`); `use.md` is for one with
+  them. A test holds the links
   to files that exist. An older `init` put an `.mcp.json` entry and a hook in
   `.claude/settings.json`; `init` now removes Murmur's own entries from those. Committing installs
   nothing on a teammate's machine.

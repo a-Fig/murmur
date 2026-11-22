@@ -157,11 +157,14 @@ func TestAdviceLinksTheAgentsPage(t *testing.T) {
 		vars map[string]string
 		want string
 	}{
-		{map[string]string{"CLAUDECODE": "1"}, "https://murmur.afig.dev/agents/claude-code"},
-		{map[string]string{"CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "https://murmur.afig.dev/agents/codex"},
-		{map[string]string{"PI_CODING_AGENT": "true"}, "https://murmur.afig.dev/agents/pi"},
-		{map[string]string{"ANTIGRAVITY_AGENT": "1"}, "https://murmur.afig.dev/agents/antigravity"},
-		{map[string]string{}, "https://murmur.afig.dev/#supported"},
+		{map[string]string{"CLAUDECODE": "1"}, "https://murmur.afig.dev/agents/#claude-code"},
+		{map[string]string{"CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "https://murmur.afig.dev/agents/#codex"},
+		{map[string]string{"PI_CODING_AGENT": "true"}, "https://murmur.afig.dev/agents/#pi"},
+		{map[string]string{"ANTIGRAVITY_AGENT": "1"}, "https://murmur.afig.dev/agents/#antigravity"},
+		{map[string]string{"OPENCODE": "1"}, "https://murmur.afig.dev/agents/#opencode"},
+		{map[string]string{"MUSE_SESSION_ID": "s1"}, "https://murmur.afig.dev/agents/#muse-code"},
+		{map[string]string{"CLAUDECODE": "1", "OPENCODE": "1"}, "https://murmur.afig.dev/agents/#claude-code"},
+		{map[string]string{}, "https://murmur.afig.dev/agents/"},
 	} {
 		got := strings.Join(envWith(c.vars).advice(false, false, false, false), "\n")
 		if !strings.Contains(got, c.want) {

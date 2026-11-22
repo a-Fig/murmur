@@ -6,6 +6,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { HARNESSES } from '../src/worker.js';
+import { build } from '../src/build-agents.mjs';
 
 const SITE = 'https://murmur.afig.dev';
 const root = fileURLToPath(new URL('..', import.meta.url)); // site/
@@ -16,8 +17,8 @@ const read = path => readFileSync(join(root, path), 'utf8');
 function source(url) {
   assert.ok(url.startsWith(SITE + '/'), `${url} is not on ${SITE}`);
   const path = url.slice(SITE.length);
-  const page = /^\/(setup|join|use|steps)$/.exec(path)?.[1];
-  if (page) return join(root, '..', 'docs', 'agents', `${page}.md`);
+  const page = /^\/(setup|join|use)$/.exec(path)?.[1];
+  if (page) return join(root, '..', 'docs', 'agents', `${page === 'use' ? 'use' : 'join'}.md`);
   const harness = /^\/agents\/([a-z0-9-]+)\.md$/.exec(path)?.[1];
   if (harness) return join(root, '..', 'docs', 'agents', 'harnesses', `${harness}.md`);
   return join(root, path.endsWith('/') ? path + 'index.html' : path);
@@ -47,7 +48,7 @@ test('the sitemap follows the sitemaps.org protocol and lists pages that exist',
     assert.match(lastmod ?? '', /^\d{4}-\d{2}-\d{2}$/, `${loc}'s lastmod`);
     assert.ok(!Number.isNaN(Date.parse(lastmod)) && lastmod <= today, `${loc}'s lastmod ${lastmod}`);
   }
-  for (const page of ['/', '/daemon/', '/more/', '/about/', '/privacy/', '/contact/', '/setup', '/join', '/use', ...HARNESSES.map(h => `/agents/${h}/`)]) assert.ok(seen.has(SITE + page), `${page} missing`);
+  for (const page of ['/', '/daemon/', '/more/', '/about/', '/privacy/', '/contact/', '/setup', '/join', '/use', '/agents/']) assert.ok(seen.has(SITE + page), `${page} missing`);
 });
 
 test('robots.txt allows crawling and names the sitemap', () => {
@@ -108,17 +109,18 @@ for (const [page, title] of [['about', /About/], ['privacy', /Privacy/], ['conta
   });
 }
 
-test('the privacy page dates itself and points at steps.md as the full account', () => {
+test('the privacy page dates itself and is the full account of what Murmur sends', () => {
   const html = read('privacy/index.html');
   assert.match(visibleText(html), /As of \d{4}-\d{2}-\d{2}/);
-  assert.ok(html.includes('docs/agents/steps.md#what-murmurafigdev-receives-and-why'));
-  assert.match(readFileSync(join(root, '..', 'docs', 'agents', 'steps.md'), 'utf8'), /^## What murmur\.afig\.dev receives, and why$/m);
+  for (const what of ['murmur.afig.dev/v1/repo', 'refs/murmur/reported', 'internal/publicrepo']) assert.ok(html.includes(what), what);
+  // The steps an agent follows say it in a line and send the rest here.
+  assert.ok(readFileSync(join(root, '..', 'docs', 'agents', 'steps.md'), 'utf8').includes(`${SITE}/privacy/`));
   // Every host the page names as one a browser contacts is one the page really loads.
   for (const host of ['fonts.googleapis.com', 'fonts.gstatic.com']) assert.ok(html.includes(`href="https://${host}`), host);
 });
 
 test('every page ends with the same links, and each one leads somewhere', () => {
-  const pages = ['index.html', 'daemon/index.html', 'more/index.html', 'about/index.html', 'privacy/index.html', 'contact/index.html', ...HARNESSES.map(h => `agents/${h}/index.html`)];
+  const pages = ['index.html', 'daemon/index.html', 'more/index.html', 'about/index.html', 'privacy/index.html', 'contact/index.html', 'agents/index.html'];
   for (const file of pages) {
     const html = read(file);
     const foot = /<footer class="site-foot">([\s\S]*?)<\/footer>/.exec(html)?.[1];
@@ -180,21 +182,22 @@ test('llms.txt follows llmstxt.org and says when to use Murmur', () => {
   }
 });
 
-// Each agent has a page for people, the home page's Supported tile links to it, and llms.txt lists
-// its markdown for agents (#934).
+// Each agent has a section on the page for people, built from the file its markdown page is made of,
+// and the home page's Supported tiles, README and llms.txt lead to it (#934).
+test('the page on each agent is built from docs/agents/harnesses, and is up to date', () => {
+  const html = read('agents/index.html');
+  assert.equal(html.replace(/\r\n/g, '\n'), build(), 'site/agents/index.html is out of date: run node site/src/build-agents.mjs');
+  checkMeta(html, `${SITE}/agents/`);
+  for (const [h2] of html.matchAll(/<h2>[\s\S]*?<\/h2>/g)) assert.match(h2, /^<h2>[^<]+<\/h2>$/, h2);
+});
+
 for (const name of HARNESSES) {
-  test(`the page for ${name} exists for people and agents, and is linked`, () => {
-    const file = `agents/${name}/index.html`;
-    assert.ok(existsSync(join(root, file)), `${file} missing`);
-    const html = read(file);
-    checkMeta(html, `${SITE}/agents/${name}/`);
-    assert.match(/<title>([^<]+)<\/title>/.exec(html)?.[1] ?? '', /^Murmur in /);
-    assert.ok(html.includes(`<link rel="alternate" type="text/markdown" href="/agents/${name}.md"`), 'the markdown alternate');
-    for (const [h2] of html.matchAll(/<h2>[\s\S]*?<\/h2>/g)) assert.match(h2, /^<h2>[^<]+<\/h2>$/, `${name}: ${h2}`);
-    for (const h2 of ['Setup', 'What it’s like', 'If it isn’t working']) assert.ok(html.includes(`<h2>${h2}</h2>`), `${name} has no ${h2}`);
-    assert.ok(existsSync(source(`${SITE}/agents/${name}.md`)), `docs/agents/harnesses/${name}.md missing`);
-    assert.ok(read('index.html').includes(`<a href="/agents/${name}/">`), `the home page doesn't link to ${name}'s page`);
+  test(`${name} has a section for people and a page for agents, and both are linked`, () => {
+    assert.ok(read('agents/index.html').includes(`<section class="fact" id="${name}">`), `no section for ${name}`);
+    assert.ok(read('agents/index.html').includes(`${SITE}/agents/${name}.md`), `the section doesn't give ${name}'s page for agents`);
+    assert.ok(read('index.html').includes(`<a href="/agents/#${name}">`), `the home page doesn't link to ${name}'s section`);
     assert.ok(read('llms.txt').includes(`(${SITE}/agents/${name}.md)`), `llms.txt doesn't list ${name}'s page`);
+    assert.ok(readFileSync(join(root, '..', 'README.md'), 'utf8').includes(`${SITE}/agents/#${name}`), `the README doesn't link to ${name}'s section`);
   });
 }
 

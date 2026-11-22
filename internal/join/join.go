@@ -599,9 +599,10 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
 }
 
-// agentPageLine names the page about Murmur in the agent running join (#934): what a message is
-// like there and what to do when it isn't working. Where join can't tell the agent, it names the
-// list of them, as advice does.
+// agentPageLine names the section about Murmur in the agent running join (#934): what a message is
+// like there and what to do when it isn't working. OpenCode sets OPENCODE=1 for its shell (2.2.0,
+// 2026-11-21); an agent another one started inherits its variables, so those come after the
+// agents advice tells apart. Where join can't tell the agent, it names the whole page.
 func (e Env) agentPageLine() string {
 	var name, page string
 	switch {
@@ -613,8 +614,12 @@ func (e Env) agentPageLine() string {
 		name, page = "Codex", "codex"
 	case e.looksLikeAntigravity():
 		name, page = "Antigravity", "antigravity"
+	case e.getenv("OPENCODE") == "1":
+		name, page = "OpenCode", "opencode"
+	case e.getenv("MUSE_SESSION_ID") != "":
+		name, page = "Muse Code", "muse-code"
 	default:
-		return "How " + brand.Product + " works in each agent: " + brand.Site + "/#supported"
+		return "How " + brand.Product + " works in each agent: " + brand.Site + "/agents/"
 	}
 	return "How " + brand.Product + " works in " + name + ": " + brand.AgentPage(page)
 }

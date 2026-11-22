@@ -43,19 +43,16 @@ const (
 
 	// JoinDoc and UseDoc are the pages the marker in a repo's AGENTS.md and CLAUDE.md sends an
 	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools
-	// (docs/agents/use.md). SetupDoc (docs/agents/setup.md) is how an agent sets Murmur up in a
-	// repo that doesn't use it yet, for a user who asked; the README points to it. They read
-	// without login, as the repo is public.
-	JoinDoc  = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md"
-	UseDoc   = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
-	SetupDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md"
+	// (docs/agents/use.md). They read without login, as the repo is public. join.md sends the agent
+	// on to its own agent's page, AgentDoc.
+	JoinDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md"
+	UseDoc  = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
 
-	// Site is Murmur's website. Each agent Murmur works in has a page there, AgentPage, for people,
-	// and the same address plus .md for an agent (site/agents/, docs/agents/harnesses/, #934).
-	// setup.md and join.md send an agent to its page, and that sends it to StepsDoc
-	// (docs/agents/steps.md), the steps every agent shares.
+	// Site is Murmur's website. SetupDoc is how an agent sets Murmur up in a repo that doesn't use
+	// it yet, for a user who asked; the README and the site point to it. The site serves join.md
+	// there too, since setting up and joining start the same way (#934).
 	Site     = "https://murmur.afig.dev"
-	StepsDoc = Site + "/steps"
+	SetupDoc = Site + "/setup"
 
 	// InstallSh and InstallPs1 are the one-line installs docs/agents/steps.md tells an agent to run. The docs
 	// spell them out, so a test holds them to these.
@@ -77,6 +74,10 @@ const (
 	PageListenerEnv = "MURMUR_PAGE_LISTENER"
 )
 
-// AgentPage is the address of the page about Murmur in one agent, by its name there, such as
-// "claude-code".
-func AgentPage(name string) string { return Site + "/agents/" + name }
+// AgentPage is the section about Murmur in one agent on the site's page for people, by the agent's
+// name there, such as "claude-code" (site/agents/index.html, built from docs/agents/harnesses/).
+func AgentPage(name string) string { return Site + "/agents/#" + name }
+
+// AgentDoc is the same agent's page for an agent: its file in docs/agents/harnesses/, with
+// docs/agents/steps.md after it.
+func AgentDoc(name string) string { return Site + "/agents/" + name + ".md" }
