@@ -32,8 +32,9 @@ var ErrCantEnd = errors.New("ending a process by its ID isn't supported on this 
 // not finished is lost.
 //
 // The path is the one the process was started from. A program replaced while it runs keeps its
-// process: Linux then reports the path with " (deleted)" after it, and on Windows the installers
-// rename the running file aside (mur.exe.old-...), so the path is the renamed one.
+// process: Linux then reports the path with " (deleted)" after it, and on Windows install.ps1
+// renames the running file aside (mur.exe.old-...), so the path is the renamed one. The updater
+// links it to a second name instead (#944), and the path stays mur.exe.
 func End(pid int, is func(exe string) bool) error {
 	if pid <= 1 { // 0 and negative numbers name process groups to kill(2), and 1 is init
 		return ErrGone
