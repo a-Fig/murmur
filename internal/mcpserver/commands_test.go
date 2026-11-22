@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
@@ -114,6 +115,64 @@ func TestCommandRequests(t *testing.T) {
 			got.Body != c.want.Body || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
 			t.Errorf("%s %q: %+v, want %+v", c.name, c.args, got, c.want)
 		}
+	}
+}
+
+// A send given only a subject too long for one, or of several lines, keeps the whole text in the
+// body, where it used to be cut to the subject's 120 characters and the rest dropped (#1021). With
+// a body, the subject is cut as before.
+func TestSendKeepsALongSubjectWithNoBody(t *testing.T) {
+	long := strings.Repeat("word ", 60) + "end"
+	got, err := commandRequest("send", []string{"a", long}, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body != strings.TrimSpace(long) {
+		t.Errorf("body %q, want the whole text", got.Body)
+	}
+	if n := utf8.RuneCountInString(got.Subject); n > 120 || !strings.HasPrefix(got.Subject, "word word") || !strings.HasSuffix(got.Subject, "…") {
+		t.Errorf("subject %q (%d runes)", got.Subject, n)
+	}
+
+	got, err = commandRequest("send", []string{"a", "first line\nsecond line"}, strings.NewReader(""))
+	if err != nil || got.Subject != "first line" || got.Body != "second line" {
+		t.Errorf("two lines: %+v, %v", got, err)
+	}
+
+	got, err = commandRequest("send", []string{"a", long, "the body"}, strings.NewReader(""))
+	if err != nil || got.Body != "the body" || utf8.RuneCountInString(got.Subject) != 120 {
+		t.Errorf("with a body: %+v, %v", got, err)
+	}
+
+	got, err = commandRequest("send", []string{"a", "short"}, strings.NewReader(""))
+	if err != nil || got.Subject != "short" || got.Body != "" {
+		t.Errorf("short: %+v, %v", got, err)
+	}
+}
+
+// subjectAndBody's edges (Opus review of dc334c5d): CRLF, a blank or invisible body, and a first
+// line of only invisible characters, which keeps the whole text rather than a subject of nothing.
+func TestSubjectAndBodyEdges(t *testing.T) {
+	long := strings.Repeat("word ", 60) + "end"
+	for _, c := range []struct{ subject, body, wantSubject, wantBody string }{
+		{"first\r\nsecond", "", "first", "second"},
+		{"short", "  ", "short", "  "},
+		{"\u200b\nreal text", "", "real text", "\u200b\nreal text"},
+		{"fits\n" + long, "", "fits", long},
+		{"a  b", "", "a b", ""},
+	} {
+		s, b := subjectAndBody(c.subject, c.body)
+		if s != c.wantSubject || b != c.wantBody {
+			t.Errorf("subjectAndBody(%q, %q) = %q, %q; want %q, %q", c.subject, c.body, s, b, c.wantSubject, c.wantBody)
+		}
+	}
+	if s, b := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > 120 {
+		t.Errorf("invisible body: %q, %q", s, b)
+	}
+	// A body past the daemon's cap whose text starts late is still a body: judged whole, not cut.
+	late := strings.Repeat("\n", 40<<10) + "important"
+	if _, b := subjectAndBody(long, late); b != late {
+		t.Errorf("a long body that starts with blank lines was replaced")
 	}
 }
 

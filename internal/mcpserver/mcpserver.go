@@ -35,6 +35,7 @@ import (
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
 	"github.com/a-Fig/murmur/internal/view"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // Instructions reach the agent through the MCP initialize result; Claude Code puts them in its
@@ -1162,6 +1163,24 @@ func text(s string) *mcp.CallToolResult {
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
 func oneLine(s string) string { return bus.OneLine(s, 120) }
 
+// subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
+// to one line of 120 characters, so a send with no body and a longer subject, or one of several
+// lines, would lose the rest without a word (#1021). It is split as the page splits a person's
+// text instead (web.SplitText): the opening words are the subject, and the body has the whole
+// text. A send with a body is as it was: its subject is cut.
+// A body is blank as the daemon judges one, after the invisible characters it drops; and a split
+// whose first line was only such characters keeps the whole text as one cut subject, as before.
+func subjectAndBody(subject, body string) (string, string) {
+	if strings.TrimSpace(bus.Text(body, len(body))) != "" || oneLine(subject) == strings.TrimSpace(subject) {
+		return oneLine(subject), body
+	}
+	first, rest := web.SplitText(subject)
+	if oneLine(first) == "" {
+		return oneLine(subject), strings.TrimSpace(subject)
+	}
+	return oneLine(first), rest
+}
+
 // fullPath makes a path a send names a full one, from this server's working directory, which is
 // the agent's: the daemon that reads the files runs somewhere else. On Windows an agent in Git Bash
 // writes C:\Users as /c/Users, which is put back. Any other path there that starts at a root with
@@ -1295,13 +1314,14 @@ func (s *server) tools(srv *mcp.Server) {
 			to := recipients(in.To)
 			files := fullPaths([]string(in.Files))
 			tell := strings.TrimSpace(in.TellMe)
+			subject, body := subjectAndBody(in.Subject, in.Body)
 			if len(to) > 1 {
-				return s.sendEach(ctx, req, to, oneLine(in.Subject), in.Body, tell, files)
+				return s.sendEach(ctx, req, to, subject, body, tell, files)
 			}
 			if len(to) == 1 {
 				in.To = to[0]
 			}
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: oneLine(in.Subject), Body: in.Body, TellMe: tell, Files: files})
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpSend, To: in.To, Subject: subject, Body: body, TellMe: tell, Files: files})
 			return result(view.Sent, untold(resp, err, tell), err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "Read your unread messages from other agents, with the name of who sent them. " +
