@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -301,6 +302,22 @@ func TestTokenRequired(t *testing.T) {
 		"/assets/fonts/rubik-latin-wght-normal.woff2", "/assets/THIRD_PARTY_NOTICES"} {
 		if resp := h.do("GET", path, host, "", ""); resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s without token: %d, want 200", path, resp.StatusCode)
+		}
+	}
+	// The page is native modules (#1015), and the browser fetches each one without the token, with a
+	// script's content type: a module served as anything else is refused.
+	modules, err := fs.Glob(static, "static/assets/*.js")
+	if err != nil || len(modules) < 2 {
+		t.Fatalf("page modules: %v, %v", modules, err)
+	}
+	for _, m := range modules {
+		path := strings.TrimPrefix(m, "static")
+		resp := h.do("GET", path, host, "", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s without token: %d, want 200", path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
+			t.Errorf("GET %s: content type %q, want a JavaScript one", path, ct)
 		}
 	}
 	if resp := h.do("GET", "/assets/", host, "", ""); resp.StatusCode != http.StatusNotFound {

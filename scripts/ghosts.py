@@ -5,7 +5,7 @@ or none: 16 x 16 = 256 faces. The ghosts carry no tile, so it can take the sessi
 colour (#571) or any tone, and their bodies are light tints that read on all twelve device
 hues. Every body shares one head and one pair of eye positions, so each accessory fits every
 ghost. The script also writes docs/ghosts.html, a sheet of every combination. The page picks
-from GHOSTS and GHOST_ACCESSORIES in app.js, which list these names in this order.
+from GHOSTS and GHOST_ACCESSORIES in messages.js, which list these names in this order.
 
 Usage: python scripts/ghosts.py
 """
