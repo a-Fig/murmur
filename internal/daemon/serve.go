@@ -233,10 +233,11 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	d.mu.Lock()
-	d.noteHelloThreadLocked(thread) // in the same hold of mu as the session's registration
 	if o := d.liveInThreadLocked(h.T3Home, h.T3Thread); h.Command && o != nil {
 		// The thread has its session already, through its server or an earlier command: the
-		// command is that session, and nothing changes but that it was at work.
+		// command is that session, and nothing changes but that it was at work, and that its thread
+		// may be read now where it couldn't be before.
+		d.noteHelloThreadLocked(thread, o.id)
 		d.touchLocked(o, time.Now())
 		name := o.name
 		d.mu.Unlock()
@@ -253,6 +254,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return
 	}
+	d.noteHelloThreadLocked(thread, h.ID) // in the same hold of mu as the session's registration
 	// A server of the thread's own takes over the session a command holds, as it would one in its
 	// grace (#913).
 	d.releaseHoldLocked(s, true)

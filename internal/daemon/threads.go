@@ -365,6 +365,14 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 			d.log.Printf("can't read the state of the T3 thread of session %s (%v); what was last read stands", who[k], err)
 		}
 	}
+	// A thread no session is in any more is forgotten. That is judged by the sessions now, not by
+	// routes, which was read before this pass's reads: a session that registered meanwhile keeps
+	// the state its hello read (#945).
+	for _, s := range d.sessions {
+		if r := s.route; r.T3CLI != "" && r.T3Thread != "" {
+			routes[threadKey{r.T3Home, r.T3Thread}] = t3Route{}
+		}
+	}
 	for k, st := range d.threads {
 		if _, ok := routes[k]; !ok {
 			delete(d.threads, k)
@@ -422,9 +430,10 @@ func (d *Daemon) readHelloThread(ctx context.Context, route proto.Route) helloTh
 	return helloThread{key: k, st: st, at: at, ok: true}
 }
 
-// noteHelloThreadLocked keeps what readHelloThread read, unless a refresh has read the thread since.
-// Caller holds mu.
-func (d *Daemon) noteHelloThreadLocked(t helloThread) {
+// noteHelloThreadLocked keeps what readHelloThread read for session id, unless a refresh has read
+// the thread since, and logs what a refresh would have: the next one finds nothing changed. Caller
+// holds mu.
+func (d *Daemon) noteHelloThreadLocked(t helloThread, id string) {
 	if !t.ok {
 		return
 	}
@@ -432,6 +441,17 @@ func (d *Daemon) noteHelloThreadLocked(t helloThread) {
 		return
 	}
 	d.threads[t.key], d.threadRead[t.key] = t.st, t.at
+	delete(d.threadWarned, t.key)
+	who := bus.Addr(d.device, id)
+	if t.st.Settled {
+		d.log.Printf("the T3 thread of session %s is settled, so it is offline", who)
+	}
+	if t.st.Parent != "" {
+		d.log.Printf("session %s is in a thread another thread started, so it is off the mesh", who)
+	}
+	if t.st.Settled || t.st.Parent != "" || t.st.Model != "" {
+		d.kickPresence() // a session back from its grace may be listed, and the model: tag is derived
+	}
 }
 
 // threadStateLocked is what T3's database last said about the thread session id is in, and false

@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -200,5 +201,38 @@ func TestDelegateIsOneFromItsFirstOperation(t *testing.T) {
 	}
 	if resp := b.trySend("bbbbbb", bossName, "the parent's own"); !resp.OK {
 		t.Errorf("the parent's send: %q", resp.Error)
+	}
+}
+
+// A delegate that registers while a refresh of the threads is reading stays one when that pass
+// ends: the pass's list of threads was made before the delegate's hello, and the state the hello
+// read isn't dropped as a thread nobody is in (#945). The parent's thread is slow to read, so a
+// pass is going most of the time.
+func TestDelegateRegisteringDuringARefreshStaysOne(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{"thread-boss": {LastRun: time.Now()}}}
+	const n = 4
+	for i := range n {
+		threads.set(fmt.Sprintf("thread-kid%d", i), t3db.State{Parent: "thread-boss", LastRun: time.Now()})
+	}
+	slow := func(ctx context.Context, cli, home, thread string) (t3db.State, error) {
+		if thread == "thread-boss" {
+			time.Sleep(300 * time.Millisecond)
+		}
+		return threads.read(ctx, cli, home, thread)
+	}
+	b := newDeviceWith(t, remote, func(d *device) { d.titleEvery = 20 * time.Millisecond; d.threadState = slow })
+	boss, _ := b.sessionRoute("bbbbbb", "claude-boss", proto.Route{T3CLI: exe, T3Thread: "thread-boss"})
+	bossName := b.named(boss)
+	for i := range n {
+		id := fmt.Sprintf("kid%d%d%d", i, i, i)
+		b.sessionRoute(id, "claude-"+id, proto.Route{T3CLI: exe, T3Thread: fmt.Sprintf("thread-kid%d", i)})
+		for end := time.Now().Add(600 * time.Millisecond); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+			if resp := b.trySend(id, bossName, "from a delegate"); resp.OK {
+				t.Fatalf("delegate %s sent once a refresh going as it registered had ended", id)
+			}
+		}
 	}
 }
