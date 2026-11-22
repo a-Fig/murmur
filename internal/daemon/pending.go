@@ -50,11 +50,12 @@ const pendingLook = 20 * time.Second
 // long after the stop began it may still start; later than that, the sends are given up unasked,
 // as they were before #857. The stop waits up to DrainTimeout, 20 s, for its background work, this
 // with it, and then releases the clone's lock. An asking begun by 5 s is over by 15 s: its 5 s, and
-// 5 s more that a git cut off at its time may take to end (gitx's WaitDelay). So the notices it
-// leaves are saved before the lock goes, and the next daemon, which an update starts at once,
-// doesn't have its state written over. The 5 s is short because sends are pending mostly when the
-// network is down, and a stop then shouldn't wait long for an answer that won't come: such a stop
-// takes up to 10 s more than it did, within the 35 s any stop may take.
+// 5 s more that a git cut off at its time may take to end (gitx's WaitDelay), and the milliseconds
+// of a fetch's last local steps, which run past its time. So the notices it leaves are saved before
+// the lock goes, and the next daemon, which an update starts at once, doesn't have its state
+// written over. The 5 s is short because sends are pending mostly when the network is down, and a
+// stop then shouldn't wait long for an answer that won't come: such a stop takes up to 10 s more
+// than it did, within the 35 s any stop may take.
 const (
 	pendingStopLook = 5 * time.Second
 	pendingStopBy   = 5 * time.Second
@@ -111,7 +112,7 @@ func (d *Daemon) pendingLoop() {
 	// nothing: the loop may learn of the stop late, from inside a retry that it cut off.
 	began := time.Now()
 	var stopped atomic.Int64
-	defer context.AfterFunc(d.bgCtx, func() { stopped.Store(int64(time.Since(began))) })()
+	defer context.AfterFunc(d.bgCtx, func() { stopped.Store(max(1, int64(time.Since(began)))) })()
 	wait := d.opt.PendingRetry
 	for {
 		select {
