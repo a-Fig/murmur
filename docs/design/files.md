@@ -64,7 +64,7 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
   and key, and the ref's name. So whoever can read a message can read its files, and nobody else.
   A file is bound to its ref and its place on it, and a receiver holds what it opens to the
   event's size and SHA-256. It is bound to the ref and not the message so that several messages
-  can one day share an upload.
+  can share an upload, which they have since #739 ([below](#limits)).
 - **Fetched before the message is queued.** A daemon that reads a message with files for one of
   its sessions fetches the ref, saves the files under `.git/murmur/files/`, never the working
   tree, and only then queues the message, so a path in a turn works when the agent

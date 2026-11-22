@@ -6,7 +6,9 @@ join. So a repo that uses Murmur says so in a section of `AGENTS.md` and `CLAUDE
 without Murmur's tools asks its user whether to join; and on a yes it installs mur and runs `mur
 join`, which does the rest. Tyler also decided that messaging gets no commands (`who`, `send`,
 `inbox` and `log` were removed): "If everyone is using the CLI, there will be no one to message."
-Agents message through MCP, and people use the page.
+Agents message through MCP, and people use the page. Since 2026-11-21 (#913) an agent Murmur has no
+tools for runs `mur who`, `mur send`, `mur inbox` and `mur status` in its shell instead ([any agent
+in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 
 ## The marker
 
@@ -68,9 +70,9 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
   hook (2026-11-09), since it would carry this machine's path to mur into the next commit.
 - **Run again**, `join` changes nothing and says so; it fills in what is missing and repoints an
   entry whose binary moved.
-- **`mur join --leave`** removes the consent and the hooks and stops the daemon. It leaves the
-  server registered, since that is per user and does nothing where the user hasn't joined, and says
-  how to remove it.
+- **`mur join --leave`** removes the consent and the hook an older join put in each working tree,
+  and stops the daemon. It leaves the server registered, with its hooks, since those are
+  per user and do nothing where the user hasn't joined, and says how to remove them.
 - **What it prints**: what it did, what went wrong, and "Tell your user", chosen from which agent
   ran it (see [reloading MCP servers](#reloading-mcp-servers)), so the agent can say exactly what to
   do next.
