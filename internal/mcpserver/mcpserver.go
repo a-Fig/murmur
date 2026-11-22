@@ -32,6 +32,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/scrub"
 	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
@@ -1171,9 +1172,17 @@ func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 // subjectFor makes it a subject and body. A send with a body is as it was: its subject is cut.
 // A body is blank as the daemon judges one, after the invisible characters it drops, and only if
 // the daemon would take it: one over its cap is the agent's to hear about (#1037).
+//
+// The subject is checked for secrets here as the agent wrote it, as only its cleaned line goes to
+// the daemon, which checks that. The daemon checks a body both ways, as dropping a zero-width space
+// can join a key to the next word, so that AKIA…EXAMPLE<U+200B>note ends in no word boundary: as a
+// subject, a key so written went out (#1044). subjectFor checks the first line it makes one of.
 func subjectAndBody(subject, body string) (string, string, error) {
 	blank := len(body) <= bus.MaxBody && strings.TrimSpace(bus.Text(body, math.MaxInt)) == ""
 	if !blank || oneLine(subject) == strings.TrimSpace(subject) {
+		if err := scrub.Check(subject); err != nil {
+			return "", "", err
+		}
 		return oneLine(subject), body, nil
 	}
 	return subjectFor(subject)
@@ -1199,6 +1208,9 @@ func subjectFor(text string) (subject, body string, err error) {
 	first, rest := "", text
 	for rest != "" && oneLine(first) == "" {
 		first, rest = cutLine(rest)
+	}
+	if err := scrub.Check(first); err != nil {
+		return "", "", err // as subjectAndBody does
 	}
 	// Cleaned as the daemon stores it, a malformed byte as U+FFFD, so RepeatsSubject below sees
 	// the subject a turn will.
@@ -1369,8 +1381,11 @@ func (s *server) tools(srv *mcp.Server) {
 			files := fullPaths([]string(in.Files))
 			tell := strings.TrimSpace(in.TellMe)
 			subject, body, err := subjectAndBody(in.Subject, in.Body)
+			if errors.Is(err, errTooLong) {
+				err = fmt.Errorf("%w, or put the text in a file and send that with files", err)
+			}
 			if err != nil {
-				return result(nil, proto.Response{}, fmt.Errorf("%w, or put the text in a file and send that with files", err))
+				return result(nil, proto.Response{}, err)
 			}
 			if len(to) > 1 {
 				return s.sendEach(ctx, req, to, subject, body, tell, files)
