@@ -339,6 +339,45 @@
   .setup-end { margin-top: 28px; }
   .credit { margin-top: 40px; font-size: 13.5px; color: var(--ink-soft); }
   .credit a { color: inherit; text-underline-offset: 3px; }
+  /* What you see (#928): the mur ui page in real use, in a demo repo with made-up names. */
+  #see { --ink-soft: #3A4670; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
+  #see h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  .see-top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 18px 32px; }
+  .see-lead { margin-top: 10px; font-size: 17px; line-height: 1.6; color: var(--ink-soft); }
+  .see-lead code { padding: 2px 7px; border-radius: 6px; background: #DCE6FF; color: #1640BF; font: 600 15px/1.4 var(--mono); }
+  .ghosts { list-style: none; padding: 0; display: flex; gap: 16px; }
+  .ghosts li { display: grid; justify-items: center; gap: 8px; font: 500 12px/1 var(--mono); color: var(--ink-soft); white-space: nowrap; }
+  .gh { position: relative; width: 54px; height: 54px; border-radius: 50%; background: var(--c); animation: bob 3.4s ease-in-out infinite; animation-delay: calc(var(--i) * -.7s); }
+  .gh img { position: absolute; inset: 0; width: 100%; height: 100%; }
+  @keyframes bob { 50% { transform: translateY(-5px); } }
+  .see { margin-top: 26px; display: grid; gap: 14px; }
+  .see-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .see-tabs button { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; text-align: left; padding: 14px 16px 16px; border: 1.5px solid var(--rule); border-radius: var(--r-md); background: transparent; color: var(--ink); font: inherit; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+  .see-tabs button:hover { background: var(--cream-2); }
+  .see-tabs button[aria-selected="true"] { background: var(--cream-2); border-color: var(--ink); }
+  .see-tabs button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+  .see-tabs b { display: block; font-size: 16.5px; font-weight: 700; letter-spacing: -.015em; }
+  .see-tabs span { display: block; margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--ink-soft); }
+  .see-tabs i { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--blue); transform: scaleX(0); transform-origin: left; }
+  .see-win { border-radius: 14px; overflow: hidden; background: #1E1E21; box-shadow: 0 34px 70px -34px rgba(14, 27, 69, .6), 0 0 0 1px rgba(14, 27, 69, .14); }
+  .see-bar { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; background: #2A2A2E; }
+  .see-bar i { width: 11px; height: 11px; border-radius: 50%; background: #48484F; }
+  .see-media { position: relative; aspect-ratio: 8 / 5; }
+  .see-media > * { display: block; width: 100%; height: 100%; object-fit: cover; }
+  /* Without JS the three stack, each with its own controls; with it, the tabs pick one. */
+  #see:not(.js) .see-tabs { display: none; }
+  #see:not(.js) .see-media { aspect-ratio: auto; display: grid; gap: 2px; }
+  #see.js .see-media > * { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .3s ease, visibility 0s .3s; }
+  #see.js .see-media > .on { opacity: 1; visibility: visible; transition: opacity .3s ease; }
+  @media (max-width: 760px) {
+    .see-tabs { grid-template-columns: 1fr; }
+    .ghosts { gap: 12px; }
+    .ghosts li { font-size: 0; gap: 0; }
+    .gh { width: 44px; height: 44px; }
+    .see-tabs button { padding: 11px 14px 13px; }
+    #see.js .see-tabs button[aria-selected="false"] span { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .gh { animation: none; } }
   /* What agents use it for, and Questions (2026-11-16): on Setup's cream, either side of it. */
   #uses, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
@@ -874,6 +913,33 @@ void main() {
   </div></div>
 </section>
 
+<section id="see">
+  <div class="setup-in">
+    <div class="see-top">
+      <div>
+        <h2>What you see</h2>
+        <p class="see-lead" data-prose><code data-artifact>mur ui</code> opens a page with every agent and every message.<br><code data-artifact>mur app</code> opens it in a window of its own.</p>
+      </div>
+      <ul class="ghosts" aria-hidden="true"><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-mumble.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>ultra-crater</li><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-natter.svg" alt="" width="54" height="54"><img src="/ghosts/acc-glasses.svg" alt="" width="54" height="54"></span>stony-snail</li><li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-mumble.svg" alt="" width="54" height="54"></span>marine-leopard</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-rumor.svg" alt="" width="54" height="54"><img src="/ghosts/acc-flower.svg" alt="" width="54" height="54"></span>candid-cradle</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-jabber.svg" alt="" width="54" height="54"></span>affable-salmon</li></ul>
+    </div>
+    <div class="see">
+      <div class="see-tabs" role="tablist" aria-label="Moments on the mur ui page">
+        <button type="button" role="tab" id="see-t0" aria-controls="see-m" aria-selected="true"><b>See every agent</b><span data-prose>On every teammate's laptop, with its branch and what it's doing.</span><i></i></button>
+        <button type="button" role="tab" id="see-t1" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Watch them talk</b><span data-prose>Messages between agents show up here as they're sent.</span><i></i></button>
+        <button type="button" role="tab" id="see-t2" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><span data-prose>Its reply comes back to you on the page.</span><i></i></button>
+      </div>
+      <div class="see-win">
+        <div class="see-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="see-media" id="see-m" role="tabpanel" aria-labelledby="see-t0">
+          <img class="on" src="/ui-team.webp" width="1600" height="1000" alt="The mur ui page listing five agents on three laptops: alice-laptop, carol-laptop and bob-laptop. Each has a ghost, a name, its branch, and what it's doing, such as ultra-crater, moving sessions to signed cookies.">
+          <video muted playsinline controls preload="none" poster="/ui-group-first.webp" aria-label="A new message arrives in group:ci from marine-leopard: CI cache is fixed on main. Alice opens it, and two replies arrive from agents on Bob's laptop: candid-cradle rebased and went green, and affable-salmon takes the one flaky test left."><source src="/ui-group.mp4" type="video/mp4"></video>
+          <video muted playsinline controls preload="none" poster="/ui-you-first.webp" aria-label="Alice clicks Message beside her agent ultra-crater and types: Bob's split is on main. Rebase onto it before you push. The page shows Waiting for ultra-crater, then its reply: Rebased on main. Tests pass. Pushing feat/cookie-sessions now."><source src="/ui-you.mp4" type="video/mp4"></video>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="uses">
   <div class="setup-in">
     <h2>What it gives your agents</h2>
@@ -893,11 +959,6 @@ void main() {
         <div class="cmds"><code data-artifact>group:api</code></div>
         <h3>Talk in a group</h3>
         <p data-prose>Every agent with the tag group:api gets the messages sent to it, like a group chat.</p>
-      </li>
-      <li>
-        <div class="cmds"><code data-artifact>mur ui</code><code data-artifact>mur app</code></div>
-        <h3>See every agent and message</h3>
-        <p data-prose>Opens a page that shows every agent and every message, in your browser or its own window. You can message any agent from it.</p>
       </li>
     </ul>
   </div>
@@ -1035,6 +1096,66 @@ void main() {
     if (e.isIntersecting) { if (wanted) film.play().catch(() => {}); }
     else if (!film.paused) { hiding = true; film.pause(); }
   }, { threshold: .6 }).observe(film);
+
+  // What you see: the tabs play their moments in turn while the window is on screen. A tab someone
+  // picks plays once and stays. With reduced motion nothing plays by itself: each clip shows its last
+  // frame, and a click on a tab or the clip plays it.
+  const see = document.getElementById('see');
+  if (see) {
+    see.classList.add('js');
+    const tabs = [...see.querySelectorAll('[role=tab]')];
+    const media = [...see.querySelectorAll('.see-media > *')];
+    const panel = document.getElementById('see-m');
+    const STILL = 5200;
+    let i = 0, auto = !still, onScreen = false, timer = 0, t0 = 0, raf = 0;
+    const isVideo = m => m.tagName === 'VIDEO';
+    media.forEach(m => { if (isVideo(m)) { m.controls = false; m.preload = 'metadata'; if (still) m.poster = m.poster.replace('-first', '-last'); } });
+    const bar = p => tabs.forEach((t, k) => { t.lastElementChild.style.transform = `scaleX(${k === i ? p : 0})`; });
+    const tick = () => {
+      const m = media[i];
+      bar(isVideo(m) ? (m.duration ? m.currentTime / m.duration : 0) : Math.min(1, (performance.now() - t0) / STILL));
+      raf = requestAnimationFrame(tick);
+    };
+    const stop = () => { clearTimeout(timer); cancelAnimationFrame(raf); media.forEach(m => { if (isVideo(m)) m.pause(); }); };
+    // run plays the current tab: from the start when asked, else from where it was.
+    const run = (fromStart, asked) => {
+      stop();
+      if (!onScreen || (still && !asked)) return;
+      const m = media[i];
+      if (isVideo(m)) {
+        if (fromStart) m.currentTime = 0;
+        m.play().catch(() => {});
+      } else {
+        t0 = performance.now();
+        if (auto) timer = setTimeout(() => show((i + 1) % media.length), STILL);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    const show = (n, asked) => {
+      i = n;
+      tabs.forEach((t, k) => { t.setAttribute('aria-selected', String(k === n)); t.tabIndex = k === n ? 0 : -1; });
+      media.forEach((m, k) => m.classList.toggle('on', k === n));
+      panel.setAttribute('aria-labelledby', tabs[n].id);
+      bar(0);
+      run(true, asked);
+    };
+    media.forEach((m, k) => {
+      if (!isVideo(m)) return;
+      m.addEventListener('ended', () => { cancelAnimationFrame(raf); bar(1); if (auto) show((k + 1) % media.length); });
+      m.addEventListener('click', () => { if (m.paused) run(m.ended, true); else stop(); });
+    });
+    tabs.forEach((t, k) => {
+      t.addEventListener('click', () => { auto = false; show(k, true); });
+      t.addEventListener('keydown', e => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+        if (!d) return;
+        e.preventDefault();
+        const n = (k + d + tabs.length) % tabs.length;
+        tabs[n].focus(); auto = false; show(n, true);
+      });
+    });
+    new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; if (onScreen) run(false); else stop(); }, { threshold: .5 }).observe(panel);
+  }
 
   // Copy buttons on the install commands; hidden without JS.
   document.querySelectorAll('.copy').forEach(b => {
