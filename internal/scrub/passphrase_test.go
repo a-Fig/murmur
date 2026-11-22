@@ -52,7 +52,7 @@ func TestBlocksPassphrases(t *testing.T) {
 		// stand for: a \t is the tab, not a backslash that marks the value as code (#967).
 		`{"password":"purple\tmonkey 42 dishwasher"}`,
 		`{"password":"purple monkey\n42 dishwasher"}`,
-		`{"password":"purple monkey 42 dishwasher"}`,
+		`{"password":"purple\u0020monkey 42 dishwasher"}`,
 		`{"password":"purple\tmonkey\t42\tdishwasher"}`,
 		`{"password":"a\/b monkey 42 dishwasher"}`,
 		// A first word is read decoded too, under any name.
@@ -141,17 +141,19 @@ func TestPassesPasswordProse(t *testing.T) {
 // written.
 func TestJSONUnescape(t *testing.T) {
 	for in, want := range map[string]string{
-		`plain`:       "plain",
-		`a\tb\nc\rd`:  "a\tb\nc\rd",
-		`\"q\" \ \/`:  `"q" \ /`,
-		`\b\f`:        "\b\f",
-		`Aé`:          "Aé",
-		`😀 x`:         "😀 x",
-		`\ud83d lone`: "� lone",
-		`\x41 \q`:     `\x41 \q`,
-		`\u12 short`:  `\u12 short`,
-		`\uZZZZ`:      `\uZZZZ`,
-		`end\`:        `end\`,
+		`plain`:          "plain",
+		`a\tb\nc\rd`:     "a\tb\nc\rd",
+		`\"q\" \\ \/`:    `"q" \ /`,
+		`\\u0041`:        `\u0041`,
+		`\b\f`:           "\b\f",
+		`\u0041\u00e9`:   "Aé",
+		`\ud83d\ude00 x`: "\U0001F600 x",
+		`\ude00\ud83d`:   "\uFFFD\uFFFD",
+		`\ud83d lone`:    "\uFFFD lone",
+		`\x41 \q`:        `\x41 \q`,
+		`\u12 short`:     `\u12 short`,
+		`\uZZZZ`:         `\uZZZZ`,
+		`end\`:           `end\`,
 	} {
 		if got := jsonUnescape(in); got != want {
 			t.Errorf("jsonUnescape(%q) = %q, want %q", in, got, want)
