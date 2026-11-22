@@ -159,6 +159,67 @@ func TestAGiveUpAfterAPushTimedOutStillAsksTheRemote(t *testing.T) {
 	}
 }
 
+// A daemon that stops asks the remote before it gives its pending sends up: one that an earlier
+// push landed is settled as landed, and one the remote doesn't have as absent, where both were
+// called not sent, unasked (#857).
+func TestAStoppingDaemonAsksTheRemoteBeforeItGivesUp(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour}, false)
+	ctx := context.Background()
+	before := d.sendFirst(t) // a tip to build on
+	running, stop := context.WithCancel(ctx)
+	defer stop()
+	type settled struct {
+		landed, absent bool
+	}
+	cut := errors.New("the connection dropped")
+	var n atomic.Int32
+	d.writeMu.Lock()
+	d.bgCtx = running
+	d.testPush = func(real func() error) error {
+		if n.Add(1) == 1 { // the first send's push lands, and says it didn't
+			if err := real(); err != nil {
+				return err
+			}
+		}
+		return cut // the second send's is lost
+	}
+	d.writeMu.Unlock()
+	first, second := make(chan settled, 1), make(chan settled, 1)
+	for _, c := range []struct {
+		subject string
+		got     chan settled
+	}{{"landed", first}, {"lost", second}} {
+		err := d.appendEventIf(ctx, message(d, c.subject), nil, func(landed, absent bool, _ error) {
+			c.got <- settled{landed, absent}
+		})
+		if !errors.As(err, new(pendingError)) {
+			t.Fatalf("the send of %q ended with %v, want it pending", c.subject, err)
+		}
+	}
+	stop()
+	for _, c := range []struct {
+		name string
+		got  chan settled
+		want settled
+	}{{"the send the remote has", first, settled{landed: true}}, {"the send it doesn't have", second, settled{absent: true}}} {
+		select {
+		case s := <-c.got:
+			if s != c.want {
+				t.Errorf("%s settled %+v, want %+v", c.name, s, c.want)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s was never settled", c.name)
+		}
+	}
+	d.bg.Wait()
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	if tip, err := d.repo.RemoteRef(ctx, d.meshRef()); err != nil || d.ownTip != tip || tip == before {
+		t.Errorf("the next write would build on %s; the remote's tip is %s (%v), and was %s before the sends", d.ownTip, tip, err, before)
+	}
+}
+
 // A later write that lands carries a send pending under it along.
 func TestALaterSendCarriesAPendingOne(t *testing.T) {
 	t.Parallel()
