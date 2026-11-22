@@ -187,8 +187,20 @@ test('the home page\'s links within the page each lead to a section on it, and t
   const anchors = [...html.matchAll(/<a [^>]*href="#([^"]+)"/g)].map(m => m[1]);
   assert.ok(anchors.length > 0);
   for (const id of anchors) assert.ok(ids.has(id), `#${id} has no element`);
-  const hero = /<main class="st[^"]*">([\s\S]*?)<\/main>/.exec(html)?.[1] ?? '';
+  // A tab names the panel it shows.
+  for (const [, id] of html.matchAll(/\saria-controls="([^"]+)"/g)) assert.ok(ids.has(id), `aria-controls="${id}" has no element`);
+  const hero = /<section class="st" id="top">([\s\S]*?)<\/section>/.exec(html)?.[1] ?? '';
   // It copies Setup's prompt with JS; without JS, or when the clipboard refuses, it goes to Setup.
   assert.match(hero, /<a class="button st-prompt" href="#setup">/, 'the hero\'s button goes to Setup');
-  assert.match(html, /<div class="cmd"><span>Prompt<\/span><code[^>]*>Set up Murmur in this repo/, 'Setup\'s first command is the prompt the hero copies');
+  const prompt = /<div class="cmd[^"]*"><span>Prompt<\/span><code[^>]*>([^<]+)<\/code>/.exec(html)?.[1] ?? '';
+  assert.match(prompt, /^Set up Murmur in this repo/, 'Setup\'s first command is the prompt the hero copies');
+  // The hero shows the prompt too, so what a visitor reads there is what the button copies.
+  assert.equal(/<div class="prompt"[^>]*><code[^>]*>([^<]+)<\/code>/.exec(hero)?.[1], prompt, 'the hero shows Setup\'s prompt');
+});
+
+test('the home page is one <main>, with the hero first in it', () => {
+  const html = read('index.html');
+  assert.equal((html.match(/<main\b/g) || []).length, 1);
+  assert.ok(html.indexOf('<main>') < html.indexOf('<section class="st" id="top">'));
+  assert.ok(html.indexOf('<section id="faq">') < html.indexOf('</main>'), 'the sections are inside <main>');
 });

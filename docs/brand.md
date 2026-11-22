@@ -43,29 +43,26 @@ color is a change of `fill`, not a new drawing.
 - README: the banner at the top, the icon at the foot.
 - Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
   on its sign-in gate.
-- Home page: the lockup behind the hero's reeded glass (on a phone, the wordmark there and the
-  mark at the hero's foot), the mark in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
-  lockup at the start of the footer.
+- Home page: the lockup at the start of the bar that stays at the top of the window, the mark
+  behind the hero's reeded glass, the mark again at the end of the page, looking over the footer,
+  and the lockup at the start of the footer.
 - About, Privacy, Contact and Other ways to use Murmur: the mark in the back pill, the lockup in
   the footer.
 - The daemon page: the mark in the back pill, the lockup in the footer, in cream.
 - The stats pages: the mark on the header's blue tile.
 - `site/og.jpg`, the card a shared link shows: the home page's hero.
 
-The hero's lockup (2026-11-12, #488) is the one place the logo is changed, and Tyler chose each
-change from drafts. It took the place of the word "murmur" in Inter. The mark is drawn at 85% of its
-size in `lockup-on-blue.svg` and the letters at 145%, on the same base line: at the file's
-proportions the letters were small enough that the glass broke them apart. Both are blurred and bent
-by the glass, at under half the strength the Inter word had (11 against 24), which is the most the
-mark's eyes survive. The eyes of that mark, and of the one in the corner, follow the pointer by a few
+The hero's mark (2026-11-21) is the one place the logo is changed. It is the mark alone, the two
+agents with no letters, blurred and bent by the glass at under half the strength the light behind
+it gets (11 against 24), which is the most the eyes survive. In front of the glass, over each
+agent, is a message: a question from one and the other's answer. Until then the hero held the whole
+lockup behind the glass, as wide as the window (#488), and the name is now the lockup in the bar.
+The eyes of the hero's mark, and of the one at the end of the page, follow the pointer by a few
 units; they stay holes cut from the designer's shapes, and nothing moves on a touch screen or with
 reduced motion.
 
-On a phone (600px and narrower, #498) the hero is cleaner: the wordmark alone in butter where the
-lockup is, the mark in cream at the hero's foot with its lower third below the edge, and only the
-headline and the button over the glass; the sentence that explains Murmur opens How it works
-instead. The wordmark is behind the gentlest glass (scale 4), as Tyler asked on 2026-11-12 for less
-bend in it than #498's draft had.
+On a phone (600px and narrower) the glass is gentler (scale 4), as Tyler asked on 2026-11-12 for
+less bend than #498's draft had.
 
 ## Color
 
@@ -153,7 +150,7 @@ every combination; a change to the set means running it again.
 the wide film, at about 14 frames a second, 960px wide. A change to the palette means rendering all
 of them again.
 
-`site/og.jpg` is a capture of the home page's hero (2026-11-12, #488; before that it was the film's
-last frame). It was taken in Chromium at 1200x735 and twice the pixel density, with the hero's
-minimum height set to 735px and the line for agents hidden, at a moment the glint was crossing, and
-scaled down to 1200x735. All six pages share it, so a change to the hero means taking it again.
+`site/og.jpg` is a capture of the home page's hero, at 1200x735: the lockup, the headline, the
+sentence under it and the mark with its two messages, without the bar's links or the prompt.
+`site/src/render-og.mjs` takes it. All six pages share it, so a change to the hero means taking it
+again, and a change to what it shows means updating the `og:image:alt` of each.
