@@ -36,10 +36,15 @@ import (
 const pendingGiveUp = 3 * time.Minute
 
 // pendingLook bounds asking the remote which pending sends it has, as they are given up or dropped.
-// retryPending keeps it back from the push before it, so that both fit in one push's time: a send
-// waiting on writeMu has 90 s (serve.go), and its own push, cut short by a longer wait, would more
-// often end unsure, which the person's send from the page is told at once as not sent.
+// retryPending keeps it back from the push before it, so that writeMu is held no longer than
+// before the asking had time of its own: a push's time and pushLook, 75 s. A send waiting on
+// writeMu has 90 s (serve.go), and its own push, cut short by a longer wait, would more often end
+// unsure, which the person's send from the page is told at once as not sent.
 const pendingLook = 20 * time.Second
+
+// pushLook is how long a push that failed may go on past its time, asking the remote where the ref
+// is (bus.Repo.Push).
+const pushLook = 15 * time.Second
 
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It is called with writeMu held, and nothing else.
@@ -115,12 +120,19 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). The push
-	// that may be the last, whose failing gives the sends up, leaves pendingLook of it for asking
-	// the remote.
+	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). A retry
+	// that may end past the give-up time is the last: its push leaves pendingLook of that time for
+	// asking the remote, and only it gives the sends up for their age. One that ran past the time
+	// all the same leaves them to the next, which is the last.
 	start, limit := time.Now(), d.opt.PendingPush
-	if left := limit - pendingLook; left > 0 && time.Since(d.pendFrom)+limit >= d.opt.PendingGiveUp {
+	last := time.Since(d.pendFrom)+limit+pushLook >= d.opt.PendingGiveUp
+	if left := limit - pendingLook; last && left > 0 {
 		limit = left
+	}
+	// room says the remote can still be asked within the push's time. A test's short push time
+	// keeps none back.
+	room := func() bool {
+		return d.opt.PendingPush <= pendingLook || time.Since(start)+pendingLook <= d.opt.PendingPush
 	}
 	ctx, cancel := context.WithTimeout(d.bgCtx, limit)
 	defer cancel()
@@ -132,7 +144,7 @@ func (d *Daemon) retryPending() {
 	if errors.Is(err, errSendOff) {
 		// Send files went off as the push waited its turn. If the wait left no time to ask the
 		// remote, the next retry drops them as it starts; nothing is pushed until then.
-		if time.Since(start)+pendingLook <= d.opt.PendingPush {
+		if room() {
 			d.dropSwitchedOff()
 		}
 		return
@@ -159,7 +171,10 @@ func (d *Daemon) retryPending() {
 			}
 		}
 	}
-	if errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
+	// A clone that left, or a device gone invisible, pushes nothing more: its sends are given up now,
+	// or by the next retry if this one's wait for its turn left no time to ask the remote.
+	gone := errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible)
+	if gone && room() || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
 		d.giveUpPending(err, true)
 	}
 }
