@@ -77,8 +77,7 @@ func TestAFailedImportStillReadsTheSavedPreferences(t *testing.T) {
 	}
 	got := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n"))
 	want := "the read works: POST,GET onlyMine=true tagsFolded=false theme=light/light kept=Murmur:theme,Murmur:only-mine\n" +
-		"the read fails: POST,GET onlyMine=false tagsFolded=false theme=sky/sky kept=Murmur:theme,Murmur:only-mine
-" +
+		"the read fails: POST,GET onlyMine=false tagsFolded=false theme=sky/sky kept=Murmur:theme,Murmur:only-mine\n" +
 		"no answer: POST onlyMine=false tagsFolded=false theme=sky/sky kept=Murmur:theme,Murmur:only-mine"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
