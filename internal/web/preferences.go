@@ -45,6 +45,7 @@ func ReadPreferences(dir string) (Preferences, error) {
 		return p, err
 	}
 	if err := json.Unmarshal(b, &p); err != nil {
+		// The next successful change replaces the unreadable file with valid preferences.
 		return Preferences{}, err
 	}
 	if !p.valid() {

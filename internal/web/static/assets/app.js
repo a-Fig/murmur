@@ -43,7 +43,7 @@ async function loadPreferences(era) {
   const fields = Object.keys(legacy);
   const migration = fields.length ? { method: "POST", body: JSON.stringify(legacy) } : {};
   try {
-    const saved = await api("/api/preferences", migration);
+    const saved = await api("/api/preferences", { ...migration, signal: AbortSignal.timeout(2000) });
     if (era !== tokenEra) return;
     theme = saved.theme || initialTheme;
     document.documentElement.dataset.theme = theme;
