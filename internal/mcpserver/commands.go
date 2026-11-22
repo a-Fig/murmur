@@ -98,8 +98,8 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 //
 // The old form, with three words after send, is the one v0.5.1 documents and agents and scripts
 // already run, and the new form has two, so three still mean SUBJECT BODY, as they did. A note on
-// stderr gives the new form. Only a call whose text was a literal -, -- or --subject sends
-// something different now.
+// stderr gives the new form. Only `TO -`, which now reads stdin, and a call with a word that is --
+// or the option, which now mean what they say here, are taken differently than before.
 func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Request, error) {
 	var words []string
 	subject, given := "", false
