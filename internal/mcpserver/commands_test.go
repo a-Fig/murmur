@@ -150,6 +150,27 @@ func TestSendKeepsALongSubjectWithNoBody(t *testing.T) {
 	}
 }
 
+// subjectAndBody's edges (Opus review of dc334c5d): CRLF, a blank or invisible body, and a first
+// line of only invisible characters, which keeps the whole text rather than a subject of nothing.
+func TestSubjectAndBodyEdges(t *testing.T) {
+	long := strings.Repeat("word ", 60) + "end"
+	for _, c := range []struct{ subject, body, wantSubject, wantBody string }{
+		{"first\r\nsecond", "", "first", "second"},
+		{"short", "  ", "short", "  "},
+		{"\u200b\nreal text", "", "real text", "\u200b\nreal text"},
+		{"fits\n" + long, "", "fits", long},
+		{"a  b", "", "a b", ""},
+	} {
+		s, b := subjectAndBody(c.subject, c.body)
+		if s != c.wantSubject || b != c.wantBody {
+			t.Errorf("subjectAndBody(%q, %q) = %q, %q; want %q, %q", c.subject, c.body, s, b, c.wantSubject, c.wantBody)
+		}
+	}
+	if s, b := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > 120 {
+		t.Errorf("invisible body: %q, %q", s, b)
+	}
+}
+
 func TestAgentsInChain(t *testing.T) {
 	for _, c := range []struct {
 		chain []string

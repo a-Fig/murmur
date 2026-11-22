@@ -1168,11 +1168,17 @@ func oneLine(s string) string { return bus.OneLine(s, 120) }
 // lines, would lose the rest without a word (#1021). It is split as the page splits a person's
 // text instead (web.SplitText): the opening words are the subject, and the body has the whole
 // text. A send with a body is as it was: its subject is cut.
+// A body is blank as the daemon judges one, after the invisible characters it drops; and a split
+// whose first line was only such characters keeps the whole text as one cut subject, as before.
 func subjectAndBody(subject, body string) (string, string) {
-	if strings.TrimSpace(body) == "" && oneLine(subject) != strings.TrimSpace(subject) {
-		subject, body = web.SplitText(subject)
+	if strings.TrimSpace(bus.Text(body, bus.MaxBody)) != "" || oneLine(subject) == strings.TrimSpace(subject) {
+		return oneLine(subject), body
 	}
-	return oneLine(subject), body
+	first, rest := web.SplitText(subject)
+	if oneLine(first) == "" {
+		return oneLine(subject), strings.TrimSpace(subject)
+	}
+	return oneLine(first), rest
 }
 
 // fullPath makes a path a send names a full one, from this server's working directory, which is
