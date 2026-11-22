@@ -22,10 +22,10 @@ started.
   learns from its first tool call's `_meta.threadId`: the route that tells the daemon is read the
   same way, and a call that changes something (anything but `who` and `lookup`) waits until the
   server has looked the thread up and told the daemon, so a Codex delegate's first `send` is refused
-  too (#966). Only the calls that come during that first lookup wait, and only as long as it takes
-  (at most 3 s, as a rule milliseconds). Only if a
-  read fails, or T3 hasn't written the thread's row by then, is it on the mesh until the next
-  refresh, and a name it took then is seen by nobody.
+  too (#966). Only the calls that come during that first lookup wait, and only as long as it and
+  the route take (milliseconds as a rule; the lookup gives up after 3 s). Until that first call a
+  Codex delegate is listed, as any delegate is when the read fails or T3 hasn't written its thread's
+  row yet; once its thread is read, the name it took meanwhile is seen by nobody.
   A Claude Code subagent inside one session never registers at all.
 - **Pi** (2026-11-11, #457) has no subagents of its own; packages add them. `pi-subagents` (0.31.0)
   runs each as a child `pi` that loads the user's extensions, Murmur's among them, and sets

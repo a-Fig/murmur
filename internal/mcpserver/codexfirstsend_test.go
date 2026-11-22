@@ -67,7 +67,7 @@ func sentAfterRoute(f *fakeDaemon, thread string) (routed, sent bool) {
 // The first call is a send: the daemon hears the thread before the send reaches it.
 func TestACodexFirstSendWaitsForItsThread(t *testing.T) {
 	fastSeek(t)
-	f := &fakeDaemon{}
+	f := &fakeDaemon{routeDelay: 100 * time.Millisecond}
 	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
 	s := codexInT3(t, f, fd, 300*time.Millisecond)
 	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
@@ -82,7 +82,7 @@ func TestACodexFirstSendWaitsForItsThread(t *testing.T) {
 // started.
 func TestACodexReadDoesntWaitButTheSendAfterItDoes(t *testing.T) {
 	fastSeek(t)
-	f := &fakeDaemon{}
+	f := &fakeDaemon{routeDelay: 100 * time.Millisecond}
 	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
 	slow := 500 * time.Millisecond
 	s := codexInT3(t, f, fd, slow)
@@ -117,7 +117,7 @@ func TestACodexThreadFoundDuringTheHelloIsToldBeforeTheSend(t *testing.T) {
 	t.Setenv("T3CODE_HOME", "")
 	t.Setenv(threadEnv, "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	f := &fakeDaemon{helloGate: make(chan struct{})}
+	f := &fakeDaemon{helloGate: make(chan struct{}), routeDelay: 100 * time.Millisecond}
 	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
 	gitDir := f.serve(t)
 	ctx, cancel := context.WithCancel(context.Background())

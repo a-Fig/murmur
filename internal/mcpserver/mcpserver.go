@@ -858,7 +858,8 @@ func changes(op string) bool { return op != proto.OpWho && op != proto.OpLookup 
 // the Codex thread a tool call named, and told the daemon what it found (#966). The daemon reads the
 // thread's lineage as it hears it, so a delegate's first send is refused rather than sent. Only the
 // calls that come while that first look is going wait, and it is bounded: the lookup by its timeout
-// and the route by sendRoute's.
+// and the route by sendRoute's. The wait ends with the link too, since a server shutting down may
+// never start the look.
 func (s *server) awaitThread(ctx context.Context) {
 	s.mu.Lock()
 	l := s.link
@@ -872,9 +873,14 @@ func (s *server) awaitThread(ctx context.Context) {
 	if looked == nil {
 		return
 	}
+	var gone <-chan struct{}
+	if l.ctx != nil {
+		gone = l.ctx.Done()
+	}
 	select {
 	case <-looked:
 	case <-ctx.Done():
+	case <-gone:
 	}
 }
 
@@ -1324,6 +1330,11 @@ func (l *link) spawn(f func()) {
 func (l *link) set(up bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.setLocked(up, err)
+}
+
+// setLocked is set for a caller that holds mu.
+func (l *link) setLocked(up bool, err error) {
 	l.up, l.err = up, err
 	close(l.changed)
 	l.changed = make(chan struct{})
@@ -1697,24 +1708,30 @@ func (l *link) run(ctx context.Context) {
 			// (see Hello.ByThread).
 			l.hello.ID = id
 		}
-		// The thread may have been found after this hello was made, when tellRoute had no session
-		// to tell: the daemon hasn't got it.
-		stale, route, id := l.hello.Route != h.Route, l.hello.Route, l.hello.ID
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
+		// The route may have changed after this hello was made, when tellRoute had no session to tell:
+		// the daemon hasn't got it. A subagent's call that came meanwhile, or a T3 thread found then, is
+		// told before the link is up, so the call, which waits for this registration, goes on after the
+		// daemon has made the session a child or read whether its thread is a delegate's (#487, #966).
+		// The route is checked again in the hold of mu that puts the link up: one changed after that
+		// finds the link up, and its tellRoute sends it before the call goes on.
 		told := h.Route
-		if stale && (route.Child || route.T3Thread != h.Route.T3Thread) {
-			// A subagent's call came while the hello was on its way, or the T3 thread was found
-			// then: the daemon hears that the session is a child, or reads whether its thread is a
-			// delegate's (#966), before the call, which waits for this registration, goes on.
+		for {
+			l.mu.Lock()
+			route, id := l.hello.Route, l.hello.ID
+			if route == told || !route.Child && route.T3Thread == told.T3Thread {
+				l.setLocked(true, nil)
+				l.mu.Unlock()
+				break
+			}
+			l.mu.Unlock()
 			l.sendRoute(ctx, id, route)
 			told = route
 		}
-		l.set(true, nil)
-		// Anything learned since, up to the moment the link was up, when tellRoute could still
-		// find it down, is sent now.
+		// Anything else learned since the hello was made is sent now.
 		l.mu.Lock()
-		stale = l.hello.Route != told
+		stale := l.hello.Route != told
 		l.mu.Unlock()
 		if stale {
 			l.spawn(func() { l.tellRoute(ctx) })
