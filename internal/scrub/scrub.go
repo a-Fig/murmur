@@ -74,15 +74,17 @@ var patterns = []pattern{
 }
 
 // assignment finds NAME=value lines whose name says secret. The value is checked separately
-// (see looksSecret), so that `API_KEY = process.env.API_KEY` in a code discussion passes. Its
-// submatches are the name, then a value in double quotes (JSON's escapes allowed), one in single
-// quotes, or a bare one, which ends at a space or a quote, as an unclosed quoted one does.
-var assignment = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[A-Z0-9_]*)["']?\s*[:=]\s*(?:"((?:[^"\\\n]|\\.)*)"|'([^'\n]*)'|["']?([^\s"']+))`)
+// (see looksSecret), so that `API_KEY = process.env.API_KEY` in a code discussion passes. It
+// matches the name and the sign only, its submatch the name: the value is read after it (value),
+// so an assignment inside another's quoted value, `"note": "set API_KEY=… here"`, is found too.
+var assignment = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[A-Z0-9_]*)["']?\s*[:=]\s*`)
 
 // passwordName is a name whose quoted value may be a passphrase, words with spaces between them,
 // all of which is the secret (#948). Only its first word used to be checked, so
-// "purple monkey 42 dishwasher" passed, and stayed in the bus's history.
-var passwordName = regexp.MustCompile(`(?i)PASS(WORD|WD|PHRASE)`)
+// "purple monkey 42 dishwasher" passed, and stayed in the bus's history. The name ends in the
+// word, as `db_password` and `SMTP_PASSWD2` do: `passwordExpired` or `password_hint` holds text
+// about a password ("Expired 30 days ago"), not one.
+var passwordName = regexp.MustCompile(`(?i)PASS(WORD|WD|PHRASE)_?[0-9]*$`)
 
 // publicKeyToken is .NET's name for the public identity of a signed assembly
 // (publicKeyToken="6595b64144ccf1df"), in every Windows program's manifest and in .NET config
@@ -109,9 +111,8 @@ func Check(texts ...string) error {
 				}
 			}
 		}
-		for _, m := range assignment.FindAllStringSubmatch(t, -1) {
-			value, quoted := m[2]+m[3]+m[4], m[4] == ""
-			if credential(m[1], value, quoted) && !(publicKeyToken.MatchString(m[0]) && hex16.MatchString(value)) {
+		for _, m := range assignment.FindAllStringSubmatchIndex(t, -1) {
+			if credential(t[m[2]:m[3]], t[m[1]:]) {
 				return blocked("a credential assignment")
 			}
 		}
@@ -124,33 +125,63 @@ func blocked(what string) error {
 		"stays in the repo's history; remove it and send again", what)
 }
 
-// credential says whether the value assigned to name is one. A bare value, or a quoted one without
-// a space, is looksSecret's to judge, as is the first word of a quoted one with spaces. Under a
-// password's name the whole of a quoted one is judged too, as a passphrase (looksPassphrase).
-func credential(name, value string, quoted bool) bool {
-	first, spaced := value, false
-	if i := strings.IndexFunc(value, unicode.IsSpace); i >= 0 {
-		first, spaced = value[:i], true
+// credential says whether rest, the text after an assignment's sign, starts with a credential
+// assigned to name. Its first word, up to a space or a quote, after an opening quote if there is
+// one, is looksSecret's to judge (publicKeyToken's 16 hex digits aside). Under a password's name a
+// quoted value with spaces in it is judged whole too, as a passphrase (looksPassphrase).
+func credential(name, rest string) bool {
+	first := strings.TrimLeft(rest, `"'`)
+	if len(rest)-len(first) > 1 {
+		first = rest[1:] // only one quote opens a value
 	}
-	if looksSecret(first) {
+	if i := strings.IndexFunc(first, func(r rune) bool { return unicode.IsSpace(r) || r == '"' || r == '\'' }); i >= 0 {
+		first = first[:i]
+	}
+	if looksSecret(first) && !(publicKeyToken.MatchString(name) && hex16.MatchString(first)) {
 		return true
 	}
-	return quoted && spaced && passwordName.MatchString(name) && looksPassphrase(value)
+	v, ok := quotedValue(rest)
+	return ok && strings.IndexFunc(v, unicode.IsSpace) >= 0 && passwordName.MatchString(name) && looksPassphrase(v)
+}
+
+// quotedValue reads the quoted string rest starts with, closed on its line: in double quotes, with
+// JSON's backslash escapes, or in single quotes, where YAML writes a quote as two.
+func quotedValue(rest string) (string, bool) {
+	if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
+		return "", false
+	}
+	q := rest[0]
+	for j := 1; j < len(rest); j++ {
+		switch c := rest[j]; {
+		case c == '\n':
+			return "", false
+		case q == '"' && c == '\\':
+			j++
+		case c == q && q == '\'' && j > 1 && j+1 < len(rest) && rest[j+1] == '\'':
+			j++ // '' inside a single-quoted value
+		case c == q:
+			return rest[1:j], true
+		}
+	}
+	return "", false
 }
 
 // looksPassphrase says whether a password's quoted value of several words is a passphrase rather
 // than prose or a placeholder. It holds to looksSecret's rules, with spaces allowed: 12 characters
-// or more, letters mixed with digits, and none of the characters of code or a placeholder ($, {,
-// <, ( or %). So a passphrase of words alone passes, as `PASSWORD=correcthorsebatterystaple` does.
-// Prose under a password's name is a form's label or its validation message ("Must be at least 12
-// characters", "Enter your password"), and it has a word a passphrase rarely does: one of
-// proseWords.
+// or more, letters mixed with digits, and none of the characters of code or a placeholder ({, <,
+// (, % or a $ that starts ${, $( or $NAME). So a passphrase of words alone passes, as
+// `PASSWORD=correcthorsebatterystaple` does. Prose under a password's own name is a form's
+// validation message ("Must be at least 12 characters"), with a word a passphrase rarely has: one
+// of proseWords.
 func looksPassphrase(v string) bool {
 	if len(v) < 12 || !lettersAndDigits(v) {
 		return false
 	}
-	for _, r := range v {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune(" -_+/=.~!@#?,&*^", r) {
+	for i, r := range v {
+		if r == '$' && i+1 < len(v) && (strings.IndexByte("{(_", v[i+1]) >= 0 || v[i+1] >= 'A' && v[i+1] <= 'Z') {
+			return false
+		}
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) && !strings.ContainsRune("-_+/=.~!@#?,;:&*^$'", r) {
 			return false
 		}
 	}
@@ -162,14 +193,13 @@ func looksPassphrase(v string) bool {
 	return true
 }
 
-// proseWords are words of a form's text about a password, which mark a value as that text.
+// proseWords are words of a form's text about a password, kept to those a passphrase rarely has.
 var proseWords = map[string]bool{}
 
 func init() {
-	for _, w := range strings.Fields(`a an the is are be at least of to in for with and or not no
-		your enter type use must should can characters chars char digits digit number numbers letters
-		symbols minimum min maximum max length long required invalid incorrect wrong here example
-		placeholder password passwords passphrase passwd secret token key`) {
+	for _, w := range strings.Fields(`must least characters chars char digit digits letter letters
+		number numbers symbol symbols enter invalid incorrect required minimum maximum allowed your
+		example password passwords passphrase`) {
 		proseWords[w] = true
 	}
 }

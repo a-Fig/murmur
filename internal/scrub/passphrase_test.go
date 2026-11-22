@@ -16,6 +16,21 @@ func TestBlocksPassphrases(t *testing.T) {
 		`SMTP_PASSWD="Tr0ub4dor 3xyz"`,
 		`{"password":"my dog Rex 2019!"}`,
 		`"password": "abc123def456ghi7 later"`, // a first word that looks secret, as before
+		// Found in review (2026-11-21): sentences, a $ that names no variable, punctuation, a tab,
+		// and YAML's doubled quote.
+		`"password": "Mary had a little lamb 1987"`,
+		`"password": "the purple cow 42 jumps"`,
+		`"password": "long key 42 for my door"`,
+		`"password": "Blue$ky 42 rocket launch"`,
+		`"password": "purple monkey 42 dishwasher;"`,
+		"\"password\": \"purple\tmonkey 42 dishwasher\"",
+		`password: 'it''s 42 purple monkeys'`,
+		// An assignment inside another's quoted value, and one after a stray quote, as before.
+		`"secret_note": "use SECRET_KEY=Xk9mPq2LvR7tN4wZ instead"`,
+		`"token_help": "run with API_KEY=Xk9mPq2LvR7tN4wZ set"`,
+		`"password_hint": "or set DB_PASSWORD=Sup3rS3cretPass! in env"`,
+		`Set API_KEY=" in .env, then SECRET_TOKEN="Xk9mPq2LvR7tN4wZ"`,
+		`"token": "Xk9mPq2LvR7tN4wZ'x"`,
 	} {
 		err := Check(s)
 		if err == nil {
@@ -26,11 +41,26 @@ func TestBlocksPassphrases(t *testing.T) {
 	}
 }
 
-// What a form or its docs say about a password, under a password's name, passes, and so does a
-// value under another name, whose first word alone is judged, as before.
+// What a form or its docs say about a password passes, under a password's own name or one about it,
+// and so does a value under another name, whose first word alone is judged, as before.
 func TestPassesPasswordProse(t *testing.T) {
 	for _, s := range []string{
 		`"password": "Must be at least 12 characters"`,
+		`"password": "At least 8 characters, 1 number"`,
+		`"password": "$DB_PASS 2 backup copy"`,
+		`publicKeyToken="6595b64144ccf1df extra"`,
+		// Names about a password, found in review (2026-11-21).
+		`"passwordExpired": "Expired 30 days ago"`,
+		`"password_attempts": "3 attempts left"`,
+		`"passwordUpdatedAt": "November 21 2026"`,
+		`"password_changed": "Changed on 21 Nov 2026"`,
+		`"password_reset_sent": "Email sent 2 minutes ago"`,
+		`"passwordStrength": "Strong 4 out 4"`,
+		`"password_strength_label_3": "Good, add 2 more"`,
+		`password_hash: "bcrypt cost 12"`,
+		`"password_rotation": "every 90 days"`,
+		`"password_policy": "NIST 800 63B"`,
+		`PASSWORD_HASHER: "Argon2 PasswordHasher"`,
 		`"passwordHint": "Use 8 or more characters with 1 digit"`,
 		`"passwordPolicy": "12 chars min, 1 upper"`,
 		`"password_error": "Invalid password, try again 3 times"`,
