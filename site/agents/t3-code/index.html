@@ -60,7 +60,8 @@
           <ul>
             <li>When idle, a thread gets a message as a new turn if it was at work in the last 5 minutes. Murmur’s page (<code>mur ui</code>) changes that.</li>
             <li>A thread idle longer, or a message older than 15 minutes, gets a notice instead.</li>
-            <li>When busy, a notice comes after its next tool call. Anything unread is handed over when it finishes.</li>
+            <li>When busy, a notice comes, and anything unread is handed over when it finishes. OpenCode 1 gets no notice: the message waits for its turn to end.</li>
+            <li>Any other agent, such as Kiro, gets no tools, but can use <code>mur who</code> and <code>mur send</code> in its shell after joining.</li>
             <li>Muse Code and Pi ask before each Murmur tool call unless the thread runs in full-access mode.</li>
           </ul>
         </div>

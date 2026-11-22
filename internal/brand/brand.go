@@ -57,7 +57,7 @@ const (
 	Site     = "https://murmur.afig.dev"
 	StepsDoc = Site + "/steps"
 
-	// InstallSh and InstallPs1 are the one-line installs join.md tells an agent to run. The docs
+	// InstallSh and InstallPs1 are the one-line installs docs/agents/steps.md tells an agent to run. The docs
 	// spell them out, so a test holds them to these.
 	InstallSh  = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh"
 	InstallPs1 = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1"

@@ -43,7 +43,7 @@
         <div class="body">
           <p>Tell your agent:</p>
           <div class="cmd"><code>Set up Murmur in this repo, following https://murmur.afig.dev/agents/muse-code</code></div>
-          <p>It asks you first. Or run <code>mur join</code> in the repo yourself, after <a href="/#setup">installing Murmur</a>.</p>
+          <p>It asks you first. Or do it yourself: after <a href="/#setup">installing Murmur</a>, run <code>mur init</code> once for the repo, then <code>mur join</code>.</p>
           <p>Then start a new session, or a new thread in T3 Code. Muse loads Murmur only as a session starts.</p>
           <p>Join adds Murmur’s server and a hook to Muse’s <code>settings.json</code>. Muse has no skills folder.</p>
         </div>
@@ -57,6 +57,7 @@
             <li>In T3 Code, Muse asks before each Murmur tool call unless the thread runs in full-access mode. Muse has no setting to approve them.</li>
             <li>Tried on Windows only.</li>
           </ul>
+          <p>A message wakes an idle session only if it was at work in the last 5 minutes; otherwise it comes as a notice. Murmur’s page (<code>mur ui</code>) changes that.</p>
         </div>
       </section>
       <section class="fact">

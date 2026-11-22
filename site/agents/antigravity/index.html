@@ -43,9 +43,9 @@
         <div class="body">
           <p>Tell your agent:</p>
           <div class="cmd"><code>Set up Murmur in this repo, following https://murmur.afig.dev/agents/antigravity</code></div>
-          <p>It asks you first. Or run <code>mur join</code> in the repo yourself, after <a href="/#setup">installing Murmur</a>.</p>
+          <p>It asks you first. Or do it yourself: after <a href="/#setup">installing Murmur</a>, run <code>mur init</code> once for the repo, then <code>mur join</code>.</p>
           <p>The tools come within seconds if Murmur was already added. If not, open a new thread in T3 Code, or restart <code>agy</code> in a terminal.</p>
-          <p>Join adds Murmur’s server, an allow rule for its tools, a hook and three skills to Antigravity’s home, and to the home T3 Code gives each Antigravity it runs.</p>
+          <p>Join adds Murmur’s server, an allow rule for its tools and a hook to Antigravity’s home, and to the home T3 Code gives each Antigravity it runs. Three skills go in <code>~/.gemini</code>, which T3 shares.</p>
         </div>
       </section>
       <section class="fact">
@@ -56,6 +56,7 @@
             <li>When idle, a message should start a new turn in T3 Code, and wait in the inbox in a terminal. Neither is tried yet.</li>
             <li>Nothing to approve.</li>
           </ul>
+          <p>A message wakes an idle session only if it was at work in the last 5 minutes; otherwise it comes as a notice. Murmur’s page (<code>mur ui</code>) changes that.</p>
         </div>
       </section>
       <section class="fact">

@@ -78,7 +78,7 @@ function withGitHub(answer, fn) {
     try { await fn(asked); } finally { Object.assign(globalThis, saved); }
   };
 }
-const ok = url => new Response(`page at ${url}, linking https://murmur.afig.dev/steps and https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh\n`);
+const ok = url => new Response(`page at ${url}, linking https://murmur.afig.dev/steps, https://murmur.afig.dev/agents/pi.md, https://murmur.afig.dev/v1/repo and https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh\n`);
 const ctx = { waitUntil() {} };
 const getIn = (e, path, headers = {}) => worker.fetch(new Request(`https://murmur.afig.dev${path}`, { headers }), e, ctx);
 const RAW = 'https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/';
@@ -127,5 +127,8 @@ test('a preview reads the pages from its branch, and points their links at itsel
   assert.equal(asked[0], 'https://raw.githubusercontent.com/a-Fig/murmur/refs/heads/t3/some-branch/docs/agents/harnesses/codex.md');
   assert.ok(text.includes('https://harness-docs-murmur-site.example.workers.dev/steps'));
   assert.ok(text.includes('https://raw.githubusercontent.com/a-Fig/murmur/refs/heads/t3/some-branch/install.sh'));
-  assert.ok(!text.includes('https://murmur.afig.dev/'));
+  assert.ok(text.includes('https://harness-docs-murmur-site.example.workers.dev/agents/pi.md'));
+  // Where mur reports a public repo is named as it is, not as the preview.
+  assert.ok(text.includes('https://murmur.afig.dev/v1/repo'));
+  assert.equal(text.match(/https:\/\/murmur\.afig\.dev\//g).length, 1);
 }));

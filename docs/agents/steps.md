@@ -10,8 +10,8 @@ Don't install or run anything yet. Look at AGENTS.md and CLAUDE.md at the top of
 - If either has a section that starts with `<!-- murmur:start -->`, the repo is set up. You only
   join.
 - If neither has one, the repo isn't set up. Go on only if your user asked you to set Murmur up
-  here; otherwise leave Murmur alone. Run `git --version`: mur needs git 2.31 or later. Find the
-  default branch: the remote is the one `git config murmur.remote` names, else origin, and
+  here; otherwise leave Murmur alone. Run `git --version`: mur needs git 2.31 or later, so if it
+  is older, tell your user to update git and stop. Find the default branch: the remote is the one `git config murmur.remote` names, else origin, and
   `git ls-remote --symref <remote> HEAD` names its default branch.
 
 Then ask your user whether to join Murmur here, and say what joining does:
@@ -24,7 +24,10 @@ Then ask your user whether to join Murmur here, and say what joining does:
   after verifying its SHA-256 checksum. `git config --global murmur.update false` turns that off;
   set it before joining if your user wants it off.
 - Murmur is added to every coding agent your user has installed (Claude Code, Codex, OpenCode,
-  Muse Code, Pi, Grok, Antigravity), once for the user, and to every account of them T3 Code runs.
+  Muse Code, Pi, Grok, Antigravity), once for the user, and to every account of them T3 Code runs:
+  its MCP server, its tools approved to run without asking where the agent has a setting for that,
+  and a hook (in OpenCode a plugin, in Pi an extension) that runs around tool calls in every
+  project. In Codex, join also marks that hook approved, so Codex never shows its review screen.
   Your agent's page says what goes where for it. Where Murmur isn't joined, all of it does nothing.
 - A background process talks to the repo's git remote under `refs/murmur/`. No tracked file
   changes, and nothing is committed or pushed to a branch. It ends 10 minutes after the last agent
@@ -60,7 +63,8 @@ for this OS:
       irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex
 
 Your shell may not see the new PATH until it restarts: run mur by the full path the installer
-printed.
+printed. If `mur version` still prints a version older than 0.2.0, stop and tell your user: its
+`init` wouldn't push the section anywhere.
 
 ## 3. Set the repo up, if it isn't
 
@@ -83,7 +87,8 @@ In the repo (any folder inside the clone), run, with a timeout of 2 minutes or m
 
 If your session started outside the repo, run `mur join -C <the repo's folder>`: your session then
 moves into Murmur in that repo without a restart. It is safe to run twice. If it prints a
-"Problems" section, tell your user what it says; running it again retries.
+"Problems" section, tell your user what it says; running it again retries. A step that gets stuck
+gives up within about 100 seconds and says which; run it once more before telling your user.
 
 If it says the repo doesn't say it uses Murmur, fetch from the remote Murmur uses
 (`git fetch <remote>`) and run it again. Never run `mur init` to get past this unless your user
@@ -97,7 +102,8 @@ Say, in your own words, what it set up. Then run, in the repo:
 
 It opens your user's browser on a page of every session in this repo and the messages between
 them. If no browser opens, give your user the address it printed, and no one else: it carries a key
-to the page.
+to the page. Tell your user too that a message wakes an idle session only if it was at work in the
+last 5 minutes, and otherwise comes as a notice; the page's settings change that.
 
 Now go back to your agent's page to get the tools. Don't say they are there until they show up in
 your list of tools. Once they do, read https://murmur.afig.dev/use
@@ -123,7 +129,8 @@ which anyone can read. The site keeps counts of sessions, messages, devices and 
 no names, emails, messages, code or IP addresses; to count each device and person once, it keeps a
 short unsalted hash of a device's ID, its owner's git user name, and the GitHub account matched to
 that owner. A private repo is never read. https://murmur.afig.dev/privacy/ lists everything the
-site keeps. The code is `internal/publicrepo`, and `docs/design/counting.md` has the design.
+site keeps. Each repo's totals show on the count's public run page in GitHub Actions; the rest is
+seen only by Murmur's maintainer and people given a key. The code is `internal/publicrepo`, and `docs/design/counting.md` has the design.
 
 There is no setting to turn it off: the address is already public.
 

@@ -127,9 +127,10 @@ async function agentPage(request, env, ctx, page, atRoot) {
       `If your user asked you to set Murmur up, follow it, and ask your user before you install or run anything. ` +
       `The other agent pages: ${SITE}/join (joining a repo that already uses Murmur) and ${SITE}/use (the tools). An index: ${SITE}/llms.txt.\n\n` + text;
   }
-  // A preview's pages link to the preview and to its branch, so an agent following them stays on it.
+  // A preview's links to the other agent pages go to the preview and its branch, so an agent
+  // following them stays on it. Other addresses, such as where mur reports a public repo, stay.
   if (env?.DOCS_REF) {
-    text = text.replaceAll(SITE + '/', new URL(request.url).origin + '/')
+    text = text.replace(/https:\/\/murmur\.afig\.dev\/(?=(?:setup|join|use|steps)(?![\w-])|agents\/)/g, new URL(request.url).origin + '/')
       .replaceAll('https://raw.githubusercontent.com/a-Fig/murmur/main/', rawBase(env));
   }
   const headers = {

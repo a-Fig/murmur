@@ -13,7 +13,7 @@ In `~/.gemini` (`$GEMINI_HOME`), and in the home T3 Code gives each Antigravity 
   `antigravity-acp/settings.json`), so its tools run without asking;
 - a `murmur` entry in `config/hooks.json`, run before each model call, around shell commands and at
   the end of a turn in every project, which tells a busy session about messages;
-- three skills in `config/skills/`.
+- three skills in `config/skills/` of `~/.gemini` only, which T3 links into its own homes.
 
 ## Getting the tools
 
