@@ -45,7 +45,7 @@ daemon is started through WMI so it outlives that session (2026-10-29).
   its first push (Tyler, 2026-11-16; 30 was too long) it is given up and called not sent: the sender
   gets a notice in its inbox saying so, and why in a few plain words ("the push kept timing out"),
   not git's. A daemon that stops gives up what is pending, and keeps nothing across a restart. It
-  asks the remote first, for 5 s at most and only in the stop's first 10 s, so a send that did land
+  asks the remote first, for 5 s and only in the stop's first 5 s, so a send that did land
   isn't called not sent (#857, 2026-11-22); a stop waits up to 20 s for its background work. A send
   whose push ends unsure as it stops says so, as before (`internal/daemon/pending.go`).
 - **A stopped session's inbox is kept 24 hours**, across daemon restarts, and given back if the
