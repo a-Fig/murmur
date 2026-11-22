@@ -70,3 +70,34 @@ func TestFilterSaveWhenThemeFileIsUnavailable(t *testing.T) {
 		t.Fatalf("filter should save without losing the old theme: status %d, saved %+v", w.Code, saved)
 	}
 }
+
+// The page saves that it asked for a star (#974) before it shows the ask. The choice is kept with
+// the clone's other preferences, and neither a later change to one of those nor an old browser's
+// import undoes it.
+func TestStarAskedIsKept(t *testing.T) {
+	var saved Preferences
+	server := NewWithPRs(newFake(), testToken, noPRs)
+	if err := server.WithPreferences(Preferences{}, "", func(p Preferences) error {
+		saved = p
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server)
+	t.Cleanup(httpServer.Close)
+	h := &harness{t: t, srv: httpServer}
+	const endpoint = "/api/preferences"
+	if p := decode[Preferences](t, h.do(http.MethodGet, endpoint, "", testToken, "")); p.StarAsked != nil {
+		t.Fatalf("a new clone hasn't asked: %+v", p)
+	}
+	decode[Preferences](t, h.do(http.MethodPatch, endpoint, "", testToken, `{"starAsked":true}`))
+	if saved.StarAsked == nil || !*saved.StarAsked {
+		t.Fatalf("starAsked wasn't saved: %+v", saved)
+	}
+	decode[Preferences](t, h.do(http.MethodPatch, endpoint, "", testToken, `{"onlyMine":true}`))
+	decode[Preferences](t, h.do(http.MethodPost, endpoint, "", testToken, `{"tagsFolded":true}`))
+	p := decode[Preferences](t, h.do(http.MethodGet, endpoint, "", testToken, ""))
+	if p.StarAsked == nil || !*p.StarAsked || saved.StarAsked == nil || !*saved.StarAsked {
+		t.Fatalf("starAsked should outlast other changes: served %+v, saved %+v", p, saved)
+	}
+}

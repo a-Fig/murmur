@@ -19,6 +19,7 @@ import { conversationOf, composers, composing, deviceMode, namesOf } from "./mes
 import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } from "./files.js";
 import { askForName } from "./picker.js";
 import { minuteEdits, cancelMinutes } from "./settings.js";
+import { askForStarAfter } from "./star.js";
 
 export {
   deliver, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
@@ -337,6 +338,7 @@ async function poll() {
     ui.conn = "ok";
     announceArrivals(arrived);
     tellApp(appNotes(arrived));
+    askForStarAfter(arrived);
     if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     if (era !== tokenEra) return;

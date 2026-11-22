@@ -17,6 +17,9 @@ type Preferences struct {
 	Theme      string `json:"theme,omitempty"`
 	OnlyMine   *bool  `json:"onlyMine,omitempty"`
 	TagsFolded *bool  `json:"tagsFolded,omitempty"`
+	// StarAsked is set once the page has asked the person to star Murmur on GitHub (#974), so
+	// neither the app nor a browser asks again. It stays on this device, off the bus.
+	StarAsked *bool `json:"starAsked,omitempty"`
 }
 
 func (p Preferences) theme() string { return cmp.Or(p.Theme, "dim") }
@@ -113,9 +116,9 @@ func (s *Server) updatePreferences(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	was := s.preferences
-	next := Preferences{cmp.Or(p.Theme, was.Theme), cmp.Or(p.OnlyMine, was.OnlyMine), cmp.Or(p.TagsFolded, was.TagsFolded)}
+	next := Preferences{cmp.Or(p.Theme, was.Theme), cmp.Or(p.OnlyMine, was.OnlyMine), cmp.Or(p.TagsFolded, was.TagsFolded), cmp.Or(p.StarAsked, was.StarAsked)}
 	if importing {
-		next = Preferences{cmp.Or(was.Theme, p.Theme), cmp.Or(was.OnlyMine, p.OnlyMine), cmp.Or(was.TagsFolded, p.TagsFolded)}
+		next = Preferences{cmp.Or(was.Theme, p.Theme), cmp.Or(was.OnlyMine, p.OnlyMine), cmp.Or(was.TagsFolded, p.TagsFolded), cmp.Or(was.StarAsked, p.StarAsked)}
 	}
 	if s.themePath != "" {
 		// Keep an old clone theme on disk until the shared file can take it.
