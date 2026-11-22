@@ -105,7 +105,8 @@ them. If no browser opens, give your user the address it printed, and no one els
 to the page. Tell your user too that a message wakes an idle session only if it was at work in the
 last 5 minutes, and otherwise comes as a notice; the page's settings change that.
 
-Now go back to your agent's page to get the tools. Don't say they are there until they show up in
+Now go back to your agent's page to get the tools (an agent without tools in a T3 Code thread:
+to the shell commands in the last section of https://murmur.afig.dev/use). Don't say they are there until they show up in
 your list of tools. Once they do, read https://murmur.afig.dev/use
 
 ## What murmur.afig.dev receives, and why
