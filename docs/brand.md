@@ -114,7 +114,8 @@ it already had, so this palette stayed and the logo files were colored to match.
 
 The wordmark is Fredoka One and ships as outlines, so nothing loads the font. The site is set in
 Inter; the only Fredoka on it is the logo's own letters. The Figma
-file proposes Rubik for text and JetBrains Mono for commands; neither was adopted.
+file proposes Rubik for text and JetBrains Mono for commands. The desktop page's Sky theme
+uses Rubik.
 
 ## The mur ui page
 
@@ -126,6 +127,10 @@ pressed, and butter for a person's own messages. The sidebar is ink, not blue. C
 5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
 a step darker for cream. Dark stays the default.
+
+Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 design (#416).
+A pale blue sidebar and conversation list frame a cream-to-sky thread, with butter for
+a person's own messages. The panes keep the desktop page's spacing and hierarchy.
 
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
@@ -139,19 +144,6 @@ accessory (`ghostOf` in `app.js`), so it wears the same one everywhere. Every bo
 and eye line, so each accessory fits every ghost; some, like the bubble, reach past the tile's edge,
 and the page doesn't clip them. `scripts/ghosts.py` writes them and `docs/ghosts.html`, a sheet of
 every combination; a change to the set means running it again.
-
-### The v3 page
-
-A second page, `/assets/v3/page.html` (`internal/web/static/assets/v3/`), builds the Figma file's
-"mur ui v3" screens as they are drawn, on the same `/api` and the same `#token=`. It is apart
-from the page above, not a theme of it (2026-11-11). It is set in Rubik, takes its colors and
-backdrop from the Figma frames, and has Light and Dark.
-
-Each agent there is a cat from `internal/web/static/assets/cats/`: the 54 looks in the Figma
-file's "Cat Avatar — gallery" as of 2026-11-11. That is six tones (Butter, Cream, Blue, Navy, Sky,
-Ginger; Gold was dropped) and not every face in every tone. A name hashes to one of them, so an
-agent keeps its cat everywhere. A change to the gallery means exporting the cats again and
-updating the list in `v3/app.js`.
 
 ## Renders
 
