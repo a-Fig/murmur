@@ -74,8 +74,15 @@ var patterns = []pattern{
 }
 
 // assignment finds NAME=value lines whose name says secret. The value is checked separately
-// (see looksSecret), so that `API_KEY = process.env.API_KEY` in a code discussion passes.
-var assignment = regexp.MustCompile(`(?i)\b[A-Z0-9_]*(SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[A-Z0-9_]*["']?\s*[:=]\s*["']?([^\s"']+)`)
+// (see looksSecret), so that `API_KEY = process.env.API_KEY` in a code discussion passes. Its
+// submatches are the name, then a value in double quotes (JSON's escapes allowed), one in single
+// quotes, or a bare one, which ends at a space or a quote, as an unclosed quoted one does.
+var assignment = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[A-Z0-9_]*)["']?\s*[:=]\s*(?:"((?:[^"\\\n]|\\.)*)"|'([^'\n]*)'|["']?([^\s"']+))`)
+
+// passwordName is a name whose quoted value may be a passphrase, words with spaces between them,
+// all of which is the secret (#948). Only its first word used to be checked, so
+// "purple monkey 42 dishwasher" passed, and stayed in the bus's history.
+var passwordName = regexp.MustCompile(`(?i)PASS(WORD|WD|PHRASE)`)
 
 // publicKeyToken is .NET's name for the public identity of a signed assembly
 // (publicKeyToken="6595b64144ccf1df"), in every Windows program's manifest and in .NET config
@@ -103,7 +110,8 @@ func Check(texts ...string) error {
 			}
 		}
 		for _, m := range assignment.FindAllStringSubmatch(t, -1) {
-			if looksSecret(m[2]) && !(publicKeyToken.MatchString(m[0]) && hex16.MatchString(m[2])) {
+			value, quoted := m[2]+m[3]+m[4], m[4] == ""
+			if credential(m[1], value, quoted) && !(publicKeyToken.MatchString(m[0]) && hex16.MatchString(value)) {
 				return blocked("a credential assignment")
 			}
 		}
@@ -114,6 +122,56 @@ func Check(texts ...string) error {
 func blocked(what string) error {
 	return fmt.Errorf("not sent: this contains what looks like %s. Everything sent through the bus "+
 		"stays in the repo's history; remove it and send again", what)
+}
+
+// credential says whether the value assigned to name is one. A bare value, or a quoted one without
+// a space, is looksSecret's to judge, as is the first word of a quoted one with spaces. Under a
+// password's name the whole of a quoted one is judged too, as a passphrase (looksPassphrase).
+func credential(name, value string, quoted bool) bool {
+	first, spaced := value, false
+	if i := strings.IndexFunc(value, unicode.IsSpace); i >= 0 {
+		first, spaced = value[:i], true
+	}
+	if looksSecret(first) {
+		return true
+	}
+	return quoted && spaced && passwordName.MatchString(name) && looksPassphrase(value)
+}
+
+// looksPassphrase says whether a password's quoted value of several words is a passphrase rather
+// than prose or a placeholder. It holds to looksSecret's rules, with spaces allowed: 12 characters
+// or more, letters mixed with digits, and none of the characters of code or a placeholder ($, {,
+// <, ( or %). So a passphrase of words alone passes, as `PASSWORD=correcthorsebatterystaple` does.
+// Prose under a password's name is a form's label or its validation message ("Must be at least 12
+// characters", "Enter your password"), and it has a word a passphrase rarely does: one of
+// proseWords.
+func looksPassphrase(v string) bool {
+	if len(v) < 12 || !lettersAndDigits(v) {
+		return false
+	}
+	for _, r := range v {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune(" -_+/=.~!@#?,&*^", r) {
+			return false
+		}
+	}
+	for _, w := range strings.FieldsFunc(strings.ToLower(v), func(r rune) bool { return !unicode.IsLetter(r) }) {
+		if proseWords[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// proseWords are words of a form's text about a password, which mark a value as that text.
+var proseWords = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields(`a an the is are be at least of to in for with and or not no
+		your enter type use must should can characters chars char digits digit number numbers letters
+		symbols minimum min maximum max length long required invalid incorrect wrong here example
+		placeholder password passwords passphrase passwd secret token key`) {
+		proseWords[w] = true
+	}
 }
 
 // looksSecret says whether an assigned value looks like a real credential rather than code or
