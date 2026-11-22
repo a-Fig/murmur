@@ -67,10 +67,13 @@ type Repo struct {
 
 	fetchMu  sync.Mutex
 	fetching map[string]bool // the refs of each Fetch running, by their prefix (fetchPrefix)
-	// dropFetched's record: how many of its deletes failed, and how many had when a sweep last
-	// worked (swept says one has).
-	dropsFailed, sweptAt int
-	swept                bool
+	spent    []string        // the refs of Fetches that have ended, for Tidy to delete
+	lost     bool            // a Fetch couldn't list what it wrote, so the next Tidy looks at all
+	writes   uint64          // counts the Fetches and UpdateLocals begun, in the order they began
+
+	setMu  sync.Mutex        // held while bus refs are set (setRefs), so that setBy is as git has it
+	setBy  map[string]uint64 // for each bus ref set, which write set it last, by its count in writes
+	tidyMu sync.Mutex        // one Tidy at a time
 }
 
 // ReaderLinger is how long the git that KeepReader keeps stays after its last read. The daemon
@@ -197,13 +200,26 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // ref to refs/heads/main, it would set main to the bus commit, under the checkout and index, and
 // the user's next commit would sit on bus history. So the fetch writes refs of its own, under a
 // name no other ref has (fetchPrefix), and a transaction then sets each bus ref itself
-// (--no-deref). A symbolic bus ref is replaced, as UpdateLocal says. All of a fetch's refs are
-// set, or none, which costs little: the daemon fetches each ref of a batch that failed on its own.
-// Unlike git fetch's, the transaction doesn't check what each ref held before, so a fetch that
-// lands late can rewind a ref the daemon just set, which, as above, does no harm.
-func (r *Repo) Fetch(ctx context.Context, refs []string) error {
+// (--no-deref) to what the fetch brought. A symbolic bus ref is replaced, as UpdateLocal says. All
+// of a fetch's refs are set, or none, which costs little: the daemon fetches each ref of a batch
+// that failed on its own.
+//
+// It returns what it brought, each ref's commit, and that, not the ref, is what the caller reads:
+// by then another fetch may have set the ref (#979). Nor can an older write overwrite a newer one.
+// Of two writes to a ref, Fetches and UpdateLocals, the one begun later stands, whichever ends
+// first, so a slow fetch begun before a quick one can't rewind the ref when it lands. Writes are
+// put in order within this Repo; the daemon writes the bus refs through one.
+//
+// It removes none of its own refs, as a delete locks packed-refs, which another git can hold, and
+// on Git for Windows a delete waits for that lock even for a ref that isn't there; a sync's
+// fetches would each wait (#978). Tidy removes them. A ctx already done starts nothing, and leaves
+// nothing to remove.
+func (r *Repo) Fetch(ctx context.Context, refs []string) (map[string]string, error) {
 	if len(refs) == 0 {
-		return nil
+		return map[string]string{}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	own := fmt.Sprintf("%s%016x/", fetchPrefix, rand.Uint64())
 	r.fetchMu.Lock()
@@ -211,30 +227,92 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 		r.fetching = map[string]bool{}
 	}
 	r.fetching[own] = true
+	r.writes++
+	write := r.writes
 	r.fetchMu.Unlock()
 	args := []string{"-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
 		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip=" + brand.RefRoot + "*", r.Remote}
-	// update-ref reads a new value as git reads any name of an object, so each bus ref is set to
-	// what the fetch's own ref holds, read inside the transaction.
-	var set strings.Builder
-	var mine []string
+	of := map[string]string{} // each of the fetch's own refs, to the bus ref it is for
 	for _, ref := range refs {
 		at := own + strings.TrimPrefix(ref, brand.RefRoot)
 		args = append(args, "+"+ref+":"+at)
-		fmt.Fprintf(&set, "update %s %s\n", ref, at)
-		mine = append(mine, at)
+		of[at] = ref
 	}
 	_, err := r.Git.Run(ctx, "", args...)
 	// The rest is local and quick, and has a deadline of its own: the fetch may have used up its
 	// own, and on Windows a git stopped by one is killed, and can leave a lock behind.
 	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
-	if err == nil {
-		_, err = r.Git.Run(lctx, set.String(), "update-ref", "--no-deref", "--stdin")
+	// What the fetch wrote is read whether it worked or not, as one that failed may have written
+	// some; Tidy deletes those it finds.
+	out, lerr := r.Git.Run(lctx, "", "for-each-ref", "--format=%(objectname) %(refname)", strings.TrimSuffix(own, "/"))
+	tips := map[string]string{}
+	var wrote []string
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 2 && of[f[1]] != "" {
+			tips[of[f[1]]] = f[0]
+			wrote = append(wrote, f[1])
+		}
 	}
-	r.dropFetched(lctx, own, mine)
-	return err
+	if err == nil {
+		err = lerr
+	}
+	if err == nil {
+		for _, ref := range refs {
+			if tips[ref] == "" {
+				err = fmt.Errorf("the fetch of %s brought nothing", ref)
+				break
+			}
+		}
+	}
+	if err == nil {
+		if testBeforeSet != nil {
+			testBeforeSet(refs)
+		}
+		err = r.setRefs(lctx, write, tips)
+	}
+	r.fetchMu.Lock()
+	delete(r.fetching, own)
+	r.spent = append(r.spent, wrote...)
+	r.lost = r.lost || lerr != nil
+	r.fetchMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return tips, nil
+}
+
+// testBeforeSet, set only by tests, is called as a Fetch that worked is about to set the bus refs.
+var testBeforeSet func(refs []string)
+
+// setRefs sets each bus ref in tips to its commit, in one transaction, for the write'th write
+// (Fetch, UpdateLocal). A ref that a write begun later has set already is left as it is.
+func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string) error {
+	r.setMu.Lock()
+	defer r.setMu.Unlock()
+	var set strings.Builder
+	var refs []string
+	for ref, sha := range tips {
+		if r.setBy[ref] > write {
+			continue
+		}
+		fmt.Fprintf(&set, "update %s %s\n", ref, sha)
+		refs = append(refs, ref)
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	if _, err := r.Git.Run(ctx, set.String(), "update-ref", "--no-deref", "--stdin"); err != nil {
+		return err
+	}
+	if r.setBy == nil {
+		r.setBy = map[string]uint64{}
+	}
+	for _, ref := range refs {
+		r.setBy[ref] = write
+	}
+	return nil
 }
 
 // fetchPrefix begins the refs a fetch writes before it sets the bus refs (Fetch). Each fetch takes
@@ -244,51 +322,65 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 // or remote, gives one.
 const fetchPrefix = brand.RefRoot + "fetch-"
 
-// dropFetched deletes the refs a fetch wrote (Fetch), under own, and any that earlier fetches left:
-// at the first fetch, those of a daemon stopped mid-fetch, and after a delete that failed, those
-// it didn't delete. A delete locks packed-refs, which another git can hold, for a moment or, if it
-// was killed, until someone removes the lock; so it is a step of its own, after the bus refs are
-// set, and one that fails only leaves refs that nothing reads. Refs of a fetch still running in
-// this process are kept; another daemon's, for the moment two run in one clone, are not, and its
-// fetch fails and is tried again.
-func (r *Repo) dropFetched(ctx context.Context, own string, mine []string) {
+// Tidy deletes the refs of the Fetches that have ended. With all, it deletes every ref under
+// fetchPrefix but those of Fetches still running: what a daemon stopped mid-fetch left, or another
+// process. A Fetch that couldn't list what it wrote makes the next Tidy look at all of them too.
+// Whoever fetches calls it now and then, apart from the fetches (the daemon, on a timer), as a
+// delete locks packed-refs: another git can hold that lock for a moment, or, if it was killed,
+// until someone removes it. Then Tidy fails, and what it was to delete waits for the next one.
+// Another daemon's fetch, in the moment two run in one clone, can lose its refs to an all, and
+// fail, to be tried again.
+func (r *Repo) Tidy(ctx context.Context, all bool) error {
+	r.tidyMu.Lock()
+	defer r.tidyMu.Unlock()
 	r.fetchMu.Lock()
-	delete(r.fetching, own)
-	failed := r.dropsFailed
-	sweep := !r.swept || r.sweptAt != failed
+	all = all || r.lost
+	r.lost = false
 	r.fetchMu.Unlock()
-	if sweep {
+	var listed []string
+	if all {
 		out, err := r.Git.Run(ctx, "", "for-each-ref", "--format=%(refname)", brand.RefRoot)
 		if err != nil {
-			out, sweep = "", false
+			r.fetchMu.Lock()
+			r.lost = true
+			r.fetchMu.Unlock()
+			return err
 		}
-		r.fetchMu.Lock()
-		for _, ref := range strings.Fields(out) {
-			rest, ok := strings.CutPrefix(ref, fetchPrefix)
-			if !ok {
-				continue
-			}
-			name, _, _ := strings.Cut(rest, "/")
-			// Its own are already in mine, and a transaction that names a ref twice fails.
-			if at := fetchPrefix + name + "/"; at != own && !r.fetching[at] {
-				mine = append(mine, ref)
-			}
-		}
-		r.fetchMu.Unlock()
+		listed = strings.Fields(out)
 	}
-	var drop strings.Builder
-	for _, ref := range mine {
-		fmt.Fprintf(&drop, "delete %s\n", ref)
-	}
-	_, err := r.Git.Run(ctx, drop.String(), "update-ref", "--no-deref", "--stdin")
+	// What has ended is taken after the listing: a Fetch that ended before it was listed has its
+	// refs there, and one that ended after it has them in spent.
 	r.fetchMu.Lock()
-	if err != nil {
-		r.dropsFailed++
-	} else if sweep {
-		// What failed after the count was read may not have been listed: it is swept next time.
-		r.swept, r.sweptAt = true, failed
+	drop := r.spent
+	r.spent = nil
+	seen := map[string]bool{}
+	for _, ref := range drop {
+		seen[ref] = true
+	}
+	for _, ref := range listed {
+		rest, ok := strings.CutPrefix(ref, fetchPrefix)
+		name, _, _ := strings.Cut(rest, "/")
+		// A transaction that names a ref twice fails.
+		if ok && !seen[ref] && !r.fetching[fetchPrefix+name+"/"] {
+			drop = append(drop, ref)
+			seen[ref] = true
+		}
 	}
 	r.fetchMu.Unlock()
+	if len(drop) == 0 {
+		return nil
+	}
+	var del strings.Builder
+	for _, ref := range drop {
+		fmt.Fprintf(&del, "delete %s\n", ref)
+	}
+	if _, err := r.Git.Run(ctx, del.String(), "update-ref", "--no-deref", "--stdin"); err != nil {
+		r.fetchMu.Lock()
+		r.spent = append(r.spent, drop...)
+		r.fetchMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // Push sets a remote ref to sha, or deletes it if sha is "". With Lease, expect is the value
@@ -431,9 +523,13 @@ func (r *Repo) LocalRefs(ctx context.Context) (map[string]string, error) {
 // checked-out branch. Murmur replaces it rather than refusing: refs/murmur/ holds copies of the
 // remote's refs, which no symbolic ref is, and a refusal would leave that peer unread, or this
 // device unable to send, until someone found the ref and removed it by hand.
+// A Fetch begun earlier that ends later leaves it as this sets it (see Fetch).
 func (r *Repo) UpdateLocal(ctx context.Context, ref, sha string) error {
-	_, err := r.Git.Run(ctx, "", "update-ref", "--no-deref", ref, sha)
-	return err
+	r.fetchMu.Lock()
+	r.writes++
+	write := r.writes
+	r.fetchMu.Unlock()
+	return r.setRefs(ctx, write, map[string]string{ref: sha})
 }
 
 // IsCommit says whether sha names a commit here. Anything else (a tree pushed by hand, or an

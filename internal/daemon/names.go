@@ -217,19 +217,13 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 			return
 		}
 		if cur != "" {
-			if err := d.repo.Fetch(ctx, []string{brand.NamesRef}); err != nil {
-				fail(err)
-				return
-			}
 			// The fetch brings what is there now, which may be newer than what was just listed.
-			local, err := d.repo.LocalRefs(ctx)
+			tips, err := d.repo.Fetch(ctx, []string{brand.NamesRef})
 			if err != nil {
 				fail(err)
 				return
 			}
-			if sha = local[brand.NamesRef]; sha == "" {
-				sha = cur
-			}
+			sha = tips[brand.NamesRef]
 		}
 	}
 	isCommit := false

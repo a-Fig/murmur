@@ -207,7 +207,7 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 	fetch := func(ref, want string) (user int, other map[string]bool) {
 		t.Helper()
 		os.Remove(trace)
-		if err := r.Fetch(ctx, []string{ref}); err != nil {
+		if _, err := r.Fetch(ctx, []string{ref}); err != nil {
 			t.Fatalf("fetch %s: %v", ref, err)
 		}
 		if got, err := r.Git.Run(ctx, "", "rev-parse", ref); err != nil || strings.TrimSpace(got) != want {
@@ -362,13 +362,16 @@ func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 	} else if s, ok := local[dev]; ok {
 		t.Errorf("LocalRefs gave the symbolic %s as %s, main's commit", dev, s)
 	}
-	if err := r.Fetch(ctx, []string{dev, other}); err != nil {
+	if _, err := r.Fetch(ctx, []string{dev, other}); err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
 	mainStays("a fetch")
-	// A fetch that fails, of a ref the remote hasn't, leaves nothing either.
-	if err := r.Fetch(ctx, []string{brand.RefRoot + "mesh/gone"}); err == nil {
+	// A fetch that fails, of a ref the remote hasn't, leaves nothing either, once tidied.
+	if _, err := r.Fetch(ctx, []string{brand.RefRoot + "mesh/gone"}); err == nil {
 		t.Error("fetching a ref the remote hasn't worked")
+	}
+	if err := r.Tidy(ctx, false); err != nil {
+		t.Fatal(err)
 	}
 	if left := git("for-each-ref", "--format=%(refname)", brand.RefRoot); strings.Contains(left, brand.RefRoot+"fetch-") {
 		t.Errorf("fetches left their own refs:\n%s", left)
@@ -446,103 +449,5 @@ printf 0000
 	}
 	if b, err := os.ReadFile(ran); err == nil {
 		t.Errorf("bus traffic ran the clone's reference-transaction hook:\n%s", b)
-	}
-}
-
-// A fetch removes the refs it writes before it sets the bus refs (#965), when setting them fails
-// too, and while another git holds packed-refs, which a delete needs: then the bus refs are still
-// set, and what is left goes with the next fetch.
-func TestFetchLeavesNoRefsOfItsOwn(t *testing.T) {
-	root := t.TempDir()
-	remote, local := filepath.Join(root, "remote.git"), filepath.Join(root, "local.git")
-	for _, d := range []string{remote, local} {
-		if out, err := exec.Command("git", "init", "-q", "--bare", d).CombinedOutput(); err != nil {
-			t.Fatalf("git init: %v: %s", err, out)
-		}
-	}
-	ctx := context.Background()
-	r := &bus.Repo{Git: gitx.Git{Dir: local}, Remote: remote, Name: "test", Email: "test@example.invalid"}
-	ref := brand.RefRoot + "mesh/dev"
-	next := func(msg string) string {
-		t.Helper()
-		sha, err := r.NewCommit(ctx, "", msg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := r.Push(ctx, sha, ref, bus.Force, ""); err != nil {
-			t.Fatal(err)
-		}
-		return sha
-	}
-	left := func() string {
-		t.Helper()
-		out, err := exec.Command("git", "--git-dir="+local, "for-each-ref", "--format=%(refname)", brand.RefRoot).Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var own []string
-		for _, name := range strings.Fields(string(out)) {
-			if strings.HasPrefix(name, brand.RefRoot+"fetch-") {
-				own = append(own, name)
-			}
-		}
-		return strings.Join(own, " ")
-	}
-	at := func() string {
-		out, _ := exec.Command("git", "--git-dir="+local, "rev-parse", "-q", "--verify", ref).Output()
-		return strings.TrimSpace(string(out))
-	}
-	lock := func(name string) func() {
-		t.Helper()
-		p := filepath.Join(local, filepath.FromSlash(name)+".lock")
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return func() {
-			if err := os.Remove(p); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-
-	// The fetch lands, and setting the bus ref fails: another git holds its lock.
-	first := next("first")
-	unlock := lock(ref)
-	if err := r.Fetch(ctx, []string{ref}); err == nil {
-		t.Error("a fetch whose ref was locked worked")
-	}
-	unlock()
-	if got := at(); got != "" {
-		t.Errorf("a fetch that failed set %s to %s", ref, got)
-	}
-	if own := left(); own != "" {
-		t.Errorf("a fetch that failed left %s", own)
-	}
-
-	// Another git holds packed-refs: the bus ref is set all the same, and the fetch's own ref is
-	// left, until the next fetch.
-	unlock = lock("packed-refs")
-	if err := r.Fetch(ctx, []string{ref}); err != nil {
-		t.Fatalf("a fetch while packed-refs was locked: %v", err)
-	}
-	unlock()
-	if got := at(); got != first {
-		t.Errorf("%s is %q, not %s", ref, got, first)
-	}
-	if left() == "" {
-		t.Log("the fetch removed its own ref while packed-refs was locked; this git doesn't lock it to delete a loose ref")
-	}
-	second := next("second")
-	if err := r.Fetch(ctx, []string{ref}); err != nil {
-		t.Fatal(err)
-	}
-	if got := at(); got != second {
-		t.Errorf("%s is %q, not %s", ref, got, second)
-	}
-	if own := left(); own != "" {
-		t.Errorf("the next fetch left %s", own)
 	}
 }

@@ -221,22 +221,17 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	d.mu.Unlock()
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
 	// the rest of the sync goes on without it, and it is fetched again next time.
-	failed := d.fetch(ctx, changed, remote)
+	failed, tips := d.fetch(ctx, changed, remote)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if len(changed) > len(failed) {
-		// A ref can move between the listing and the fetch. A presence ref is force-pushed, so
-		// the commit listed may never have been fetched; going by it would leave that peer
-		// unread and, soon, judged stale. Go by what the fetch brought.
-		local, err := d.repo.LocalRefs(ctx)
-		if err != nil {
-			return err
-		}
-		for _, ref := range changed {
-			if sha, ok := local[ref]; ok && failed[ref] == nil {
-				remote[ref] = sha
-			}
+	// A ref can move between the listing and the fetch. A presence ref is force-pushed, so the
+	// commit listed may never have been fetched; going by it would leave that peer unread and,
+	// soon, judged stale. Go by what the fetch brought, as it says, not by the local ref, which
+	// another fetch may have set since (#979).
+	for ref, sha := range tips {
+		if failed[ref] == nil && sha != "" {
+			remote[ref] = sha
 		}
 	}
 	// Monotonic, like every observation staleness is judged by, so a jump of the wall clock
@@ -402,15 +397,16 @@ func readable(listed map[string]string) map[string]string {
 
 // fetch fetches refs in one go, or, if that fails, one by one, so that a ref git can't store here
 // costs that ref and not the rest. It returns the refs that failed and why, logging each once per
-// listed SHA. Caller holds advMu.
+// listed SHA, and what was brought for the rest. Once ctx is done, no more fetches start: the
+// sync has run out of time, and the rest wait for the next (#978). Caller holds advMu.
 //
 // Each fetch gets FetchLimit of the sync's minute, so a ref too large to fetch in time can't use up
 // the minute and fail the sync. One that runs past the limit on its own is set aside, to be fetched
 // outside the syncs (see startSlowFetchLocked). Only time can tell which ref that is: a listing gives
 // no sizes, and a filter isn't an option, since one fetch with --filter makes the user's own clone a
 // partial clone for all its later fetches.
-func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]string) map[string]error {
-	failed := map[string]error{}
+func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]string) (map[string]error, map[string]string) {
+	failed, tips := map[string]error{}, map[string]string{}
 	// A ref that failed before, at the same SHA, is fetched on its own, so it can't fail the
 	// rest, and at most once a minute, so it doesn't cost every poll.
 	var batch, alone []string
@@ -423,6 +419,7 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 			// Its fetch outside the syncs brought it. pollOnce reads what that was, though the ref
 			// may have moved since: a fetch now could run past the limit in its turn, and a ref
 			// that kept doing so would never be read.
+			tips[ref] = f.got
 			delete(d.unfetched, ref)
 		case ref == running && f.sha != listed[ref]:
 			alone = append(alone, ref) // moved during its slow fetch, and may well still be slow
@@ -440,11 +437,20 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 	timedOut := false
 	// try says whether the fetch itself ran past the limit, as opposed to the sync running out.
 	try := func(refs []string) (late bool, err error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		fctx, cancel := context.WithTimeout(ctx, d.opt.FetchLimit)
 		defer cancel()
-		err = d.repo.Fetch(fctx, refs)
+		got, err := d.repo.Fetch(fctx, refs)
+		if d.testFetched != nil {
+			d.testFetched(refs)
+		}
 		late = err != nil && fctx.Err() != nil && ctx.Err() == nil
 		timedOut = timedOut || late
+		for ref, sha := range got {
+			tips[ref] = sha
+		}
 		return late, err
 	}
 	if len(batch) > 0 {
@@ -511,7 +517,7 @@ func (d *Daemon) fetch(ctx context.Context, refs []string, listed map[string]str
 		d.slowCancel()
 	}
 	d.startSlowFetchLocked(listed)
-	return failed
+	return failed, tips
 }
 
 // startSlowFetchLocked starts the fetch of one ref set aside as slow, if one is due and none is
@@ -535,15 +541,16 @@ func (d *Daemon) startSlowFetchLocked(listed map[string]string) {
 		go func() {
 			defer d.bg.Done()
 			defer cancel()
-			d.endSlowFetch(ref, f.sha, d.repo.Fetch(ctx, []string{ref}))
+			tips, err := d.repo.Fetch(ctx, []string{ref})
+			d.endSlowFetch(ref, f.sha, tips[ref], err)
 		}()
 		return
 	}
 }
 
-// endSlowFetch records how a slow fetch of ref at sha ended. Once it has landed, the next sync reads
-// what it brought, even if the ref has moved since (see fetch).
-func (d *Daemon) endSlowFetch(ref, sha string, err error) {
+// endSlowFetch records how a slow fetch of ref at sha ended, bringing got. Once it has landed, the
+// next sync reads what it brought, even if the ref has moved since (see fetch).
+func (d *Daemon) endSlowFetch(ref, sha, got string, err error) {
 	if err != nil {
 		clearStaleTemp(d.opt.GitDir, d.log)
 	}
@@ -557,7 +564,7 @@ func (d *Daemon) endSlowFetch(ref, sha string, err error) {
 	}
 	if err == nil {
 		d.log.Printf("fetched %s, which took longer than a sync allows", ref)
-		f.landed = true
+		f.landed, f.got = true, got
 		d.unfetched[ref] = f
 		return
 	}
@@ -1602,7 +1609,49 @@ func (d *Daemon) fetchOwn(ctx context.Context, ref string) error {
 	if d.testFetch != nil {
 		return d.testFetch(ctx)
 	}
-	return d.repo.Fetch(ctx, []string{ref})
+	return d.fetchOne(ctx, ref)
+}
+
+// fetchOne fetches one ref, for a caller that goes by the ref's commit as the remote lists it.
+func (d *Daemon) fetchOne(ctx context.Context, ref string) error {
+	_, err := d.repo.Fetch(ctx, []string{ref})
+	return err
+}
+
+// tidyLoop removes the refs that fetches leave (bus.Repo.Tidy), every TidyEvery, apart from the
+// syncs: a delete can wait for packed-refs, which no sync should (#978). A bus with nothing to
+// fetch has them removed too, such as those a daemon stopped mid-fetch left (#982). Every one there
+// is looked for on the first try and an hour apart, as well as the refs of fetches this daemon
+// made; a try that fails is made again after twice the wait, up to an hour.
+func (d *Daemon) tidyLoop(ctx context.Context) {
+	wait, swept, logged := d.opt.TidyEvery, time.Time{}, false
+	for {
+		select {
+		case <-ctx.Done():
+			// What the last fetches leave goes now, if it goes quickly.
+			tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			d.repo.Tidy(tctx, false)
+			cancel()
+			return
+		case <-time.After(wait):
+		}
+		all := swept.IsZero() || time.Since(swept) > time.Hour
+		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := d.repo.Tidy(tctx, all)
+		cancel()
+		if err != nil {
+			if !logged && ctx.Err() == nil {
+				d.log.Printf("removing the refs fetches leave: %v; trying again later", err)
+				logged = true
+			}
+			wait = min(wait*2, time.Hour)
+			continue
+		}
+		if all {
+			swept = time.Now()
+		}
+		wait, logged = d.opt.TidyEvery, false
+	}
 }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather

@@ -80,7 +80,7 @@ func TestARootMergedInIsRepaired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reader.repo.Fetch(ctx, []string{brand.NamesRef}); err != nil {
+	if _, err := reader.repo.Fetch(ctx, []string{brand.NamesRef}); err != nil {
 		t.Fatal(err)
 	}
 	local, err := reader.repo.LocalRefs(ctx)
