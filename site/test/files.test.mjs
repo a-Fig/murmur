@@ -188,5 +188,7 @@ test('the home page\'s links within the page each lead to a section on it, and t
   assert.ok(anchors.length > 0);
   for (const id of anchors) assert.ok(ids.has(id), `#${id} has no element`);
   const hero = /<main class="st[^"]*">([\s\S]*?)<\/main>/.exec(html)?.[1] ?? '';
-  assert.match(hero, /<a class="button" href="#setup">/, 'the hero\'s button goes to Setup');
+  // It copies Setup's prompt with JS; without JS, or when the clipboard refuses, it goes to Setup.
+  assert.match(hero, /<a class="button st-prompt" href="#setup">/, 'the hero\'s button goes to Setup');
+  assert.match(html, /<div class="cmd"><span>Prompt<\/span><code[^>]*>Set up Murmur in this repo/, 'Setup\'s first command is the prompt the hero copies');
 });
