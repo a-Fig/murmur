@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -149,7 +150,7 @@ func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Reques
 		if err != nil {
 			return proto.Request{}, err
 		}
-		if strings.TrimSpace(bus.Text(text, len(text))) == "" {
+		if strings.TrimSpace(bus.Text(text, math.MaxInt)) == "" { // judged whole: a malformed byte cleans to 3 (#1037)
 			return proto.Request{}, errors.New("nothing to send: the message is empty")
 		}
 		req := proto.Request{Op: proto.OpSend, To: words[0]}

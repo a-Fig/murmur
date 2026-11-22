@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1162,7 +1163,7 @@ func text(s string) *mcp.CallToolResult {
 // oneLine cuts a subject or a status to what the daemon keeps of it (bus.OneLine at 120). The
 // daemon reads a request's line only up to a cap, before its token is checked, so a subject far
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
-func oneLine(s string) string { return bus.OneLine(s, 120) }
+func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
@@ -1186,23 +1187,50 @@ var errTooLong = fmt.Errorf("not sent: the message is over %d KB, and the bus ke
 // with it: `mur send TO TEXT`, and a send tool call whose subject is the whole text (subjectAndBody).
 // It splits the text as the page splits a person's (web.SplitText): a first line that fits is the
 // subject and the rest is the body; otherwise the opening words are the subject and the body has
-// the whole text. The text is split as the daemon keeps it (bus.Text), without the invisible
-// characters it drops, so they neither take a subject's room nor make a line of nothing its
-// subject (#1037). A first line that ends in "…" and starts the rest, as a cut one would, keeps
-// the whole text in the body, as a turn shows the body alone then (view.RepeatsSubject). Every
-// agent's send that needs a subject made gets it here, so making it another way, such as with a
-// small model (#1023), is a change to this function alone.
+// the whole text. The first line is the first with something the daemon keeps, and it fits or not
+// as the daemon keeps it, without the invisible characters it drops, which take no room (#1037).
+// The body is the text as written, not as cleaned: the daemon checks it for secrets both ways, as
+// dropping a zero-width space can join a key to the next word. A first line that ends in "…" and
+// starts the rest, as a cut one would, keeps the whole text in the body, as a turn shows the body
+// alone then (view.RepeatsSubject). Every agent's send that needs a subject made gets it here, so
+// making it another way, such as with a small model (#1023), is a change to this function alone.
 func subjectFor(text string) (subject, body string, err error) {
-	text = bus.Text(text, math.MaxInt)
-	first, rest := web.SplitText(text)
-	subject = oneLine(first)
-	if view.RepeatsSubject(subject, rest) {
-		rest = strings.TrimSpace(text)
+	whole := strings.TrimSpace(text)
+	first, rest := "", text
+	for rest != "" && oneLine(first) == "" {
+		first, rest = cutLine(rest)
 	}
-	if len(rest) > bus.MaxBody {
+	if subject = bus.OneLine(first, math.MaxInt); utf8.RuneCountInString(subject) <= maxSubject {
+		body = strings.TrimSpace(rest)
+	} else {
+		subject, _ = web.SplitText(subject) // the opening words, cut where a word ends
+		body = whole
+	}
+	if view.RepeatsSubject(subject, strings.TrimSpace(bus.Text(body, math.MaxInt))) {
+		body = whole
+	}
+	if len(body) > bus.MaxBody {
 		return "", "", errTooLong
 	}
-	return subject, rest, nil
+	return subject, body, nil
+}
+
+// maxSubject is the longest a subject is: oneLine's cut.
+const maxSubject = 120
+
+// cutLine cuts s at its first line break, of any kind bus.Text reads as one.
+func cutLine(s string) (line, rest string) {
+	i := strings.IndexFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\v' || r == '\f' || r == 0x85 || r == 0x2028 || r == 0x2029
+	})
+	if i < 0 {
+		return s, ""
+	}
+	_, n := utf8.DecodeRuneInString(s[i:])
+	if strings.HasPrefix(s[i:], "\r\n") {
+		n = 2
+	}
+	return s[:i], s[i+n:]
 }
 
 // fullPath makes a path a send names a full one, from this server's working directory, which is

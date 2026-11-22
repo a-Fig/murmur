@@ -247,6 +247,22 @@ func TestSubjectAndBodySolsEdges(t *testing.T) {
 	}
 }
 
+// A one-text send's body is the text as written, not as the daemon cleans it: the daemon checks
+// both for secrets, and a key a zero-width space splits from the next word is found only in the
+// raw one (Opus review of bb531e85). And `mur send` judges a text of malformed bytes by all of it.
+func TestOneTextBodyIsRaw(t *testing.T) {
+	text := "hi\nAKIA" + "IOSFODNN7EXAMPLE\u200bnote"
+	if s, b, err := subjectFor(text); err != nil || s != "hi" || b != "AKIA"+"IOSFODNN7EXAMPLE\u200bnote" {
+		t.Errorf("subjectFor(%q) = %q, %q, %v", text, s, b, err)
+	}
+	if s, b, err := subjectFor("\u200b\r\nfirst\rsecond"); err != nil || s != "first" || b != "second" {
+		t.Errorf("a CR line break and an invisible line: %q, %q, %v", s, b, err)
+	}
+	if got, err := commandRequest("send", []string{"a", "\xff\x78"}, strings.NewReader(""), io.Discard); err != nil || got.Subject == "" {
+		t.Errorf("mur send of malformed bytes: %+v, %v", got, err)
+	}
+}
+
 // A send with a real body is as it was, and no visible text of a one-text send is lost.
 func TestSubjectAndBodyKeepsEverything(t *testing.T) {
 	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait… more" || b != "the body" {
@@ -266,14 +282,14 @@ func TestSubjectAndBodyKeepsEverything(t *testing.T) {
 			continue
 		}
 		clean := strings.Fields(bus.Text(text, len(text)))
-		got := strings.Fields(b)
-		if !view.RepeatsSubject(s, b) {
+		got := strings.Fields(bus.Text(b, len(b)*3))
+		if !view.RepeatsSubject(s, strings.TrimSpace(bus.Text(b, len(b)*3))) {
 			got = append(strings.Fields(strings.TrimSuffix(strings.TrimSuffix(s, "…"), "...")), got...)
 		}
 		if strings.Join(got, " ") != strings.Join(clean, " ") && !strings.HasSuffix(s, "…") {
 			t.Errorf("subjectFor(%q) lost text: %q + %q", text, s, b)
 		}
-		if strings.HasSuffix(s, "…") && view.RepeatsSubject(s, b) && strings.Join(strings.Fields(b), " ") != strings.Join(clean, " ") {
+		if strings.HasSuffix(s, "…") && view.RepeatsSubject(s, strings.TrimSpace(bus.Text(b, len(b)*3))) && strings.Join(got, " ") != strings.Join(clean, " ") {
 			t.Errorf("subjectFor(%q): a cut subject without the whole text in the body: %q", text, b)
 		}
 	}
