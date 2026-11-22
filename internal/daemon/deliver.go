@@ -62,6 +62,16 @@ const (
 // longer be woken (see mayWakeLocked and heldLocked).
 var errNotNow = errors.New("the session may not be woken now")
 
+// errUnsaved is what a handoff ends with when the mark that it was tried couldn't be saved (a full
+// disk, say), so nothing was sent (see attempt). It is not a failed handoff: the message waits in
+// the inbox and is tried again, after unsavedWait (#952). Marked as failed, it was never handed
+// over even once the disk had room, and a session with no hook to give it a notice never heard of
+// it until it read its inbox.
+var errUnsaved = errors.New("the mark that the message was handed over can't be saved")
+
+// unsavedWaitMax is the longest a handoff waits after one whose mark couldn't be saved.
+const unsavedWaitMax = time.Minute
+
 // How a message goes into a session.
 const (
 	viaT3       = "T3"
@@ -107,8 +117,9 @@ func (d *Daemon) pushLoop(ctx context.Context) {
 		wake := d.wakeSnapshot()
 		d.mu.Lock()
 		d.endLapsedTurnsLocked(wake)
+		wait := time.Now().Before(d.unsavedUntil) // the retry after a mark that couldn't be saved kicks again
 		for _, id := range sortedKeys(d.st.Inbox) {
-			if d.updating || d.pushing[id] || ctx.Err() != nil {
+			if wait || d.updating || d.pushing[id] || ctx.Err() != nil {
 				continue
 			}
 			if m, _, _ := d.candidateLocked(id, wake); m == nil {
@@ -147,7 +158,16 @@ func (d *Daemon) pusher(ctx context.Context, id string) {
 		if job == nil || ctx.Err() != nil {
 			return
 		}
-		d.finishPush(job, d.handOver(ctx, job))
+		err := d.handOver(ctx, job)
+		d.finishPush(job, err)
+		if errors.Is(err, errUnsaved) {
+			// Its messages are still there to hand over, and would be taken again at once: this
+			// session waits for the retry finishPush set up, as every other does (see unsavedWait).
+			d.mu.Lock()
+			delete(d.pushing, id)
+			d.mu.Unlock()
+			return
+		}
 	}
 }
 
@@ -1076,9 +1096,9 @@ var (
 
 // attempt runs send, the handoff of messages msgs, after marking them Attempted and saving the mark:
 // the daemon may stop at any point of the call, and the next one has to know the messages may be
-// there. If the mark can't be saved nothing is sent, and the messages are left to the hook's notice,
-// as after any failed handoff. The mark comes off again if send never reached the way in
-// (notReached), as nothing was sent. The save is to the file, which a restart of the process finds;
+// there. If the mark can't be saved nothing is sent, and the messages wait to be tried again
+// (errUnsaved); the hook may give them as notices meanwhile. The mark comes off again if send never
+// reached the way in (notReached), as nothing was sent. The save is to the file, which a restart of the process finds;
 // a power cut may lose it.
 func (d *Daemon) attempt(msgs []*inMsg, send func() error) error {
 	if err := d.markAttempted(msgs, true); err != nil {
@@ -1103,11 +1123,12 @@ func (d *Daemon) markAttempted(msgs []*inMsg, v bool) error {
 	err := writeJSON(d.statePath(), d.st)
 	switch {
 	case err == nil:
+		d.unsavedWait = 0 // the state file takes saves again
 	case v:
 		for _, m := range msgs {
 			m.Attempted = false
 		}
-		return fmt.Errorf("not handing the message over, as the mark that it was handed over can't be saved: %w", err)
+		return fmt.Errorf("not handing the message over, as %w: %w", errUnsaved, err)
 	default:
 		d.log.Printf("saving state: %v", err)
 	}
@@ -1133,6 +1154,19 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		if err != nil {
 			d.forgetAwaitingLocked(j.id, m.Event.ID) // not handed over, so no turn holds it (#611)
 		}
+	}
+	if errors.Is(err, errUnsaved) {
+		// Nothing was sent, so the messages wait in the inbox, as for errNotNow, and are tried again
+		// later: a disk that is full now may have room then. Every handoff waits, as the state file
+		// is the device's, not the session's.
+		d.unsavedWait = min(max(2*d.unsavedWait, d.opt.PushRetry), unsavedWaitMax)
+		d.unsavedUntil = time.Now().Add(d.unsavedWait)
+		time.AfterFunc(d.unsavedWait, d.kickPush)
+		if !d.pushWarned[j.id] {
+			d.pushWarned[j.id] = true
+			d.log.Printf("session %s: %v; trying again in %s", j.addr, err, d.unsavedWait)
+		}
+		return
 	}
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {
 		// The user left, or the session may no longer be woken, on its way: it waits in the inbox,
