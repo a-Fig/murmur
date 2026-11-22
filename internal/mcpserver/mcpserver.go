@@ -1168,15 +1168,31 @@ func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
-// subjectFor makes it a subject and body. A send with a body is as it was: its subject is cut.
-// A body is blank as the daemon judges one, after the invisible characters it drops, and only if
-// the daemon would take it: one over its cap is the agent's to hear about (#1037).
+// subjectFor makes it a subject and body. A send with a body would lose the rest of such a subject
+// the same way (#1049), so what subjectFor leaves of the subject goes at the top of the body, where
+// a turn shows it and hides a subject that only repeats it (view.RepeatsSubject). Only if that
+// would put the body over the daemon's cap is the subject cut as before, rather than a send that
+// went out refused. A body is blank as the daemon judges one, after the invisible characters it
+// drops, and only if the daemon would take it: one over its cap is the agent's to hear about (#1037).
 func subjectAndBody(subject, body string) (string, string, error) {
 	blank := len(body) <= bus.MaxBody && strings.TrimSpace(bus.Text(body, math.MaxInt)) == ""
-	if !blank || oneLine(subject) == strings.TrimSpace(subject) {
+	if oneLine(subject) == strings.TrimSpace(subject) {
 		return oneLine(subject), body, nil
 	}
-	return subjectFor(subject)
+	if blank {
+		return subjectFor(subject)
+	}
+	s, rest, err := subjectFor(subject)
+	if err != nil || s == "" {
+		return oneLine(subject), body, nil
+	}
+	if rest == "" {
+		return s, body, nil
+	}
+	if joined := rest + "\n\n" + body; len(joined) <= bus.MaxBody {
+		return s, joined, nil
+	}
+	return oneLine(subject), body, nil
 }
 
 // errTooLong is subjectFor's refusal of a text whose body would be over the daemon's cap. The

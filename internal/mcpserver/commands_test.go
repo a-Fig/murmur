@@ -130,7 +130,7 @@ func TestCommandRequests(t *testing.T) {
 		// The old form, TO SUBJECT BODY, still means what it did.
 		{"send", []string{"a,b", "s", "b"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "s", Body: "b"}, false},
 		{"send", []string{"a", "s", "-"}, "the body\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "the body\n"}, false},
-		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: oneLine(long), Body: "the body"}, false},
+		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: mustSubject(long), Body: strings.TrimSpace(long) + "\n\nthe body"}, false},
 	} {
 		got, err := commandRequest(c.name, c.args, strings.NewReader(c.stdin), io.Discard)
 		if (err != nil) != c.bad {
@@ -232,7 +232,8 @@ func TestSubjectAndBodySolsEdges(t *testing.T) {
 	}
 	// 4. A body of malformed UTF-8 is a body: cleaned, its replacement character is longer than the
 	// byte it stands for.
-	if s, b, err := subjectAndBody("first\nsecond", "\xff\x78"); err != nil || s != "first second" || b != "\xff\x78" {
+	// The subject's second line goes at the top of that body (#1049).
+	if s, b, err := subjectAndBody("first\nsecond", "\xff\x78"); err != nil || s != "first" || b != "second\n\n\xff\x78" {
 		t.Errorf("a malformed body: %q, %q, %v", s, b, err)
 	}
 	// 5. A first line that a turn would take for a cut subject (view.RepeatsSubject) keeps the whole
@@ -244,6 +245,38 @@ func TestSubjectAndBodySolsEdges(t *testing.T) {
 	}
 	if view.RepeatsSubject(s, b) && !strings.Contains(b, "Wait…") {
 		t.Errorf("the first line is hidden and not in the body")
+	}
+}
+
+// A send with a body keeps all of a subject too long for one line, or of several lines: what the
+// subject can't hold goes at the top of the body, and a turn shows the body alone when the subject
+// only repeats its start (#1049, seen on 2026-11-22 as "…rather than ope..." and the rest gone).
+// A subject that fits, and a body the joined text would push over the daemon's cap, are as before.
+// mustSubject is the subject subjectFor makes of text.
+func mustSubject(text string) string {
+	s, _, _ := subjectFor(text)
+	return s
+}
+
+func TestSendWithABodyKeepsALongSubject(t *testing.T) {
+	long := "Re: PR for a theme setting: my user has me on Figma only right now, so I'm passing your request to them rather than opening one myself"
+	s, b, err := subjectAndBody(long, "No PR from me.")
+	if err != nil || utf8.RuneCountInString(s) > maxSubject || b != long+"\n\nNo PR from me." {
+		t.Fatalf("a long subject with a body: %q, %q, %v", s, b, err)
+	}
+	if !view.RepeatsSubject(s, b) {
+		t.Errorf("a turn would print the cut subject %q and then the body that repeats it", s)
+	}
+
+	if s, b, err := subjectAndBody("Title\nmore of the subject", "the body"); err != nil || s != "Title" || b != "more of the subject\n\nthe body" {
+		t.Errorf("a subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	if s, b, err := subjectAndBody("fits", "the body"); err != nil || s != "fits" || b != "the body" {
+		t.Errorf("a subject that fits: %q, %q, %v", s, b, err)
+	}
+	full := strings.Repeat("b", bus.MaxBody-10)
+	if s, b, err := subjectAndBody(long, full); err != nil || b != full || utf8.RuneCountInString(s) != maxSubject {
+		t.Errorf("a body near the cap: %d runes, %d bytes, %v", utf8.RuneCountInString(s), len(b), err)
 	}
 }
 
@@ -268,9 +301,10 @@ func TestOneTextBodyIsRaw(t *testing.T) {
 	}
 }
 
-// A send with a real body is as it was, and no visible text of a one-text send is lost.
+// A send with a real body keeps its subject's other lines at the top of the body (#1049), and no
+// visible text of a one-text send is lost.
 func TestSubjectAndBodyKeepsEverything(t *testing.T) {
-	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait… more" || b != "the body" {
+	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait…" || b != "more\n\nthe body" {
 		t.Errorf("a send with a body: %q, %q, %v", s, b, err)
 	}
 	for _, text := range []string{
