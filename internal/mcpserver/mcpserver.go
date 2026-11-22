@@ -1307,6 +1307,10 @@ type link struct {
 	looked chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
+	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
+	// before it is let go. The daemon takes a route whole, so an older one landing last would take
+	// away a thread a newer one gave, and a delegate's sends with it (#966).
+	routeMu sync.Mutex
 	// routeWarned says the daemon's refusal of the route has been logged, which is done once. logf
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
@@ -1465,6 +1469,8 @@ func (l *link) startSeek(ctx context.Context) {
 // tellRoute gives the daemon the route as it is now, if the session is registered. A server that
 // isn't yet, or whose daemon has gone, sends it in its next hello instead.
 func (l *link) tellRoute(ctx context.Context) {
+	l.routeMu.Lock()
+	defer l.routeMu.Unlock()
 	l.mu.Lock()
 	up, id, route := l.up, l.hello.ID, l.hello.Route
 	l.mu.Unlock()
@@ -1717,12 +1723,14 @@ func (l *link) run(ctx context.Context) {
 		// The route is checked again in the hold of mu that puts the link up: one changed after that
 		// finds the link up, and its tellRoute sends it before the call goes on.
 		told := h.Route
+		l.routeMu.Lock()
 		for {
 			l.mu.Lock()
 			route, id := l.hello.Route, l.hello.ID
 			if route == told || !route.Child && route.T3Thread == told.T3Thread {
 				l.setLocked(true, nil)
 				l.mu.Unlock()
+				l.routeMu.Unlock()
 				break
 			}
 			l.mu.Unlock()
