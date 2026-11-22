@@ -69,6 +69,8 @@
     --blue-tint: color-mix(in srgb, var(--blue) 10%, var(--cream));
     --blue-deep: color-mix(in srgb, var(--blue) 78%, var(--ink));
     --mono: ui-monospace, Menlo, Consolas, monospace;
+    /* The radius of the cream sheet's top edge, and how far it laps over the hero's foot. */
+    --sheet: clamp(28px, 3.2vw, 44px);
     --r-sm: 6px;
     --r-md: 12px;
     --r-lg: 16px;
@@ -215,14 +217,15 @@
   /* ---------- Page 2: How it works (the animation first, then the static route figure) ---------- */
   /* Blue is the ground under the hero; the cream sheet starts here and runs through Uses, Setup,
      Questions and the footer with one radius at its top edge. */
-  #how { --sheet: clamp(28px, 3.2vw, 44px); position: relative; background: var(--blue); color: var(--ink); }
+  /* The sheet laps over the hero's foot by its own radius, so the glass behind its rounded corners
+     is the hero's, not a flat patch of blue under it. */
+  #how { position: relative; z-index: 1; margin-top: calc(-1 * var(--sheet)); color: var(--ink); }
   #how .route { border-radius: var(--sheet) var(--sheet) 0 0; }
 
   /* The video sits first inside How it works, framed to match the route diagram below it. */
   .film-wrap { position: relative; border-radius: var(--r-lg); overflow: hidden; background: var(--blue); margin-bottom: clamp(20px, 3vw, 28px); }
   .film { display: block; width: 100%; max-height: 82vh; max-height: 82svh; aspect-ratio: 1600 / 980; object-fit: contain; background: var(--blue); }
   @media (max-aspect-ratio: 1/1), (max-width: 999px) {
-    .film-wrap { max-width: 440px; margin-left: auto; margin-right: auto; }
     .film { aspect-ratio: 392 / 800; }
   }
   .film-btn { position: absolute; right: clamp(14px, 1.8vw, 22px); bottom: clamp(14px, 1.8vw, 22px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 16px -8px rgba(14, 27, 69, .45); }
@@ -308,7 +311,6 @@
   #setup { background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) clamp(56px, 9vh, 96px); }
   .setup-in { max-width: 1040px; margin: 0 auto; }
   #setup h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
-  .works { margin-top: 10px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); }
   .inst { margin-top: 22px; display: grid; gap: 8px; }
   .inst-h { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
   .cmd { display: grid; grid-template-columns: 6.4em minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 11px 14px; border-radius: 10px; background: var(--ink); color: var(--cream); font: 13px/1.45 var(--mono); }
@@ -338,9 +340,33 @@
   .credit { margin-top: 40px; font-size: 13.5px; color: var(--ink-soft); }
   .credit a { color: inherit; text-underline-offset: 3px; }
   /* What agents use it for, and Questions (2026-11-16): on Setup's cream, either side of it. */
-  #uses, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
+  #uses, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
-  #uses h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  #uses h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  /* The agents Murmur works with, as outlined tiles of one size with each one's logo (agents/,
+     from T3 Code; agents/SOURCES.txt). T3 Code comes first, in blue, since every agent in it gets a
+     message as a new turn. */
+  .agents { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .agents li { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 10px 14px; border-radius: var(--r-md); border: 1.5px solid var(--rule); font-size: 15.5px; font-weight: 600; line-height: 1.3; color: var(--ink); }
+  .agents img { width: 22px; height: 22px; object-fit: contain; flex: none; }
+  .agents .t3 { background: var(--blue); color: var(--cream); }
+  .agents .t3 img { border-radius: 5px; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55); }
+  /* Only the name is the link, so a tap elsewhere on the tile shows its hint on a phone. */
+  .agents .t3 a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 4px; }
+  .agents .t3 a:hover { text-decoration-color: var(--cream); }
+  .agents .t3 a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
+  /* Where Murmur works best, a message starts a new turn in T3 Code and on its own: T3 Code and
+     those agents get a thicker outline. */
+  .agents .best, .agents .t3 { border: 2.5px solid var(--ink); }
+  /* A hint above each tile on hover, or on focus, which a tap gives on a phone. */
+  .agents li { position: relative; outline: none; }
+  .agents li::after { content: attr(data-hint); position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 5;
+    padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; text-align: left;
+    opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; }
+  .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
+  .agents li:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
+  @media (max-width: 759px) { .agents { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .agents-note { margin-top: 12px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); text-wrap: pretty; }
   .uses-lead { margin-top: 10px; font-size: 17px; line-height: 1.5; max-width: 64ch; color: var(--ink-soft); text-wrap: pretty; }
   .uses { list-style: none; padding: 0; margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 14px; }
   .uses li { padding: 18px 18px 20px; border-radius: var(--r-md); background: var(--cream-2); border: 1px solid #E6E0C2; }
@@ -420,24 +446,6 @@
     /* On a narrow screen the figure is redrawn for the tall hero: same shapes, smaller blur. */
     .glass .wide-g { display: none; }
     .glass .narrow { display: inline; }
-  }
-
-  /* The same glass behind page 2, quieter: only the reeds and two low ink shadows; the film covers the middle, so no accent glow.
-     Plain gradients, no blur filter, since this layer is as tall as the section. */
-  #how { isolation: isolate; overflow: clip; }
-  #how > * { position: relative; z-index: 1; }
-  #how::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background:
-      var(--flutes),
-      radial-gradient(30% 26% at 12% 70%, rgba(14, 27, 69, .3), rgba(14, 27, 69, 0) 75%),
-      radial-gradient(30% 26% at 90% 64%, rgba(14, 27, 69, .26), rgba(14, 27, 69, 0) 75%),
-      var(--blue);
-    background-blend-mode: soft-light, normal, normal, normal;
   }
 
   /* ---------- Wordmark: "murmur", lit behind the glass ---------- */
@@ -571,10 +579,10 @@
     .st .st-word { position: relative; z-index: 0; display: flex; justify-content: center; margin: 0 0 30px;
       padding: 10px 18px; color: rgba(253, 238, 140, .93); filter: blur(.8px) url(#st-reeds-xs); }
     .st .st-word svg { display: block; width: 66vw; height: auto; overflow: visible; fill: currentColor; }
-    .st .st-peek { display: block; position: absolute; z-index: 0; left: 50%; bottom: 0; width: var(--mw); translate: -50% 35%; padding: 0 20px;
+    .st .st-peek { display: block; position: absolute; z-index: 0; left: 50%; bottom: var(--sheet); width: var(--mw); translate: -50% 35%; padding: 0 20px;
       pointer-events: none; color: rgba(255, 251, 234, .94); filter: blur(.6px) url(#st-reeds-xs); }
     .st .st-peek svg { display: block; width: 100%; height: auto; overflow: visible; fill: currentColor; }
-    .st-trim .st-copy { padding-bottom: calc(var(--mw) * .42); }
+    .st-trim .st-copy { padding-bottom: calc(var(--mw) * .42 + var(--sheet)); }
   }
   /* WebKit, which is Safari and every browser on an iPhone, draws nothing at all for an element
      whose filter uses feImage or feTile (seen 2026-11-12 in Playwright's WebKit: the logo was
@@ -895,10 +903,26 @@ void main() {
   </div>
 </section>
 
+<section id="supported">
+  <div class="setup-in">
+    <h2>Supported</h2>
+    <ul class="agents">
+      <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn."><img src="/agents/t3.svg" alt="" width="22" height="22"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/claude.svg" alt="" width="22" height="22">Claude Code</li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/codex.svg" alt="" width="22" height="22">Codex</li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/opencode.svg" alt="" width="22" height="22">OpenCode</li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/pi.svg" alt="" width="22" height="22">Pi</li>
+      <li tabindex="0" data-hint="Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox."><img src="/agents/muse.svg" alt="" width="22" height="22">Muse Code</li>
+      <li tabindex="0" data-hint="Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox. Not tried yet."><img src="/agents/grok.svg" alt="" width="22" height="22">Grok</li>
+      <li tabindex="0" data-hint="Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox. Not tried yet."><img src="/agents/antigravity.svg" alt="" width="22" height="22">Antigravity</li>
+    </ul>
+    <p class="agents-note" data-prose>In T3 Code, every agent here gets a message as a new turn. On their own, Muse Code, Grok and Antigravity keep it in their inbox until they check.</p>
+  </div>
+</section>
+
 <section id="setup">
   <div class="setup-in">
     <h2>Setup</h2>
-    <p class="works" data-prose>Works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own. A message arrives as a new turn in T3 Code and in Claude Code; elsewhere it waits in the agent's inbox.</p>
     <div class="inst">
       <div class="inst-h">Quickest: tell your agent</div>
       <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
