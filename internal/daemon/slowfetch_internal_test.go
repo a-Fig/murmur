@@ -63,7 +63,7 @@ func TestEndSlowFetch(t *testing.T) {
 	end := func(sha string, err error) fetchFail {
 		t.Helper()
 		d.slowRef = ref
-		d.endSlowFetch(ref, sha, err)
+		d.endSlowFetch(ref, sha, "got "+sha, err)
 		if d.slowRef != "" {
 			t.Fatal("slowRef still set")
 		}
@@ -103,7 +103,7 @@ func TestEndSlowFetch(t *testing.T) {
 		t.Errorf("the old tip's fetch landed, and the ref isn't left to be read: %+v", f)
 	}
 	d.unfetched[ref] = fetchFail{sha: "two", slow: true}
-	if f := end("two", nil); !f.landed {
+	if f := end("two", nil); !f.landed || f.got != "got two" {
 		t.Errorf("a fetch that landed doesn't leave the ref to be read: %+v", f)
 	}
 

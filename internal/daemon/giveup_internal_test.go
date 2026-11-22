@@ -366,7 +366,7 @@ func TestAGivenUpBacklogWaitsWhenAnOlderFetchLands(t *testing.T) {
 	read := r.append("", r.message("read before"))
 	r.sync()
 	older := r.append(read, r.tagsEvent(time.Now(), "do-not-disturb"))
-	if err := r.d.repo.Fetch(r.ctx, []string{giveUpRef}); err != nil {
+	if _, err := r.d.repo.Fetch(r.ctx, []string{giveUpRef}); err != nil {
 		t.Fatal(err)
 	}
 	tip := r.append(older, r.message("given up on"))
@@ -406,7 +406,7 @@ func TestAGivenUpTipThatNeverCameWithAFetchPastTheListing(t *testing.T) {
 	gone := r.commit(read, r.message("never fetched"))
 	listed := r.append(read, r.tagsEvent(time.Now(), "do-not-disturb"))
 	past := r.append(listed, r.message("written since the listing"))
-	if err := r.d.repo.Fetch(r.ctx, []string{giveUpRef}); err != nil {
+	if _, err := r.d.repo.Fetch(r.ctx, []string{giveUpRef}); err != nil {
 		t.Fatal(err)
 	}
 	r.d.mu.Lock()
@@ -455,7 +455,11 @@ func TestAGivenUpBacklogIsReadBackForThePageOnceFetched(t *testing.T) {
 	recovered := r.failFetches()
 	r.giveUp()
 	// The rig's failed fetch brought the commits and then couldn't move the ref. One that fails on
-	// the way, as a network does, brings none: they are taken away again.
+	// the way, as a network does, brings none: they are taken away again, once the fetch's own refs
+	// are gone, as tidyLoop removes them.
+	if err := r.d.repo.Tidy(r.ctx, false); err != nil {
+		t.Fatal(err)
+	}
 	r.git(r.work, "prune", "--expire=now")
 	if ok, err := r.d.repo.IsCommit(r.ctx, tip); err != nil || ok {
 		t.Fatalf("the commits of the fetch that failed are still here (%v, %v)", ok, err)

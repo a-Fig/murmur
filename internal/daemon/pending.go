@@ -177,7 +177,7 @@ func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
 		defer cancel()
 		// A tip that isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
 		// of #818): that is as if the remote couldn't be asked.
-		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || d.repo.Fetch(lctx, []string{ref}) == nil && func() bool { ok, _ := d.repo.IsCommit(lctx, tip); return ok }()) {
+		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || d.fetchOne(lctx, ref) == nil && func() bool { ok, _ := d.repo.IsCommit(lctx, tip); return ok }()) {
 			if tip == "" { // no log there at all
 				for _, p := range d.pendSends {
 					p.settle(false, true, err)
@@ -262,7 +262,7 @@ func (d *Daemon) dropSwitchedOff(ctx context.Context) {
 	lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	ref := d.meshRef()
-	if tip, err := d.repo.RemoteRef(lctx, ref); err == nil && tip != "" && d.repo.Fetch(lctx, []string{ref}) == nil {
+	if tip, err := d.repo.RemoteRef(lctx, ref); err == nil && tip != "" && d.fetchOne(lctx, ref) == nil {
 		landed := -1
 		for k, p := range d.pendSends {
 			if ok, _ := d.repo.IsAncestor(lctx, p.sha, tip); ok {

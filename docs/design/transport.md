@@ -46,10 +46,15 @@ address once ([counting use](counting.md)).
   a branch, which each message would otherwise move, and the `reference-transaction` hook runs on
   every ref written. Nor does it write through a symbolic ref (#965): git does, so a local
   `refs/murmur/x` pointing at `refs/heads/main` would move main to a bus commit. A fetch writes
-  refs under a name of its own (`refs/murmur/fetch-<random>/`), one `update-ref --no-deref`
-  transaction sets the bus refs to them, and a second deletes them. They are apart because a
-  delete locks `packed-refs`, which the user's own git can hold; a delete that fails leaves refs
-  nothing reads, which the next fetch removes. Local updates and deletes are `--no-deref` too. A
+  refs under a name of its own (`refs/murmur/fetch-<random>/`), and one `update-ref --no-deref`
+  transaction sets the bus refs to what they hold. The fetch returns that, and the sync reads it,
+  not the bus ref, which another write may have set since (#979). Of two writes to a bus ref the
+  one begun later stands, so a slow fetch that lands last can't rewind it. The daemon deletes the
+  fetches' own refs on a timer, every 30 s, apart from the syncs (#978, #982). A delete locks
+  `packed-refs`, which the user's own git can hold, and on Git for Windows it waits for that lock
+  even for a ref that isn't there. A delete that fails is tried again after twice the wait, up to
+  an hour, and every `refs/murmur/fetch-*` is looked for at start and hourly, as a daemon stopped
+  mid-fetch leaves some. Local updates and deletes are `--no-deref` too. A
   symbolic bus ref is replaced, not refused, and reads as absent until then: `refs/murmur/` holds
   copies of the remote's refs, which a symbolic ref never is, and a refusal would leave that ref
   stuck until someone found it by hand.

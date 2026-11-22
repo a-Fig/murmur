@@ -55,7 +55,7 @@ func TestAnUnfetchableTipOverTheOwnLogFailsSendsAndIsLeft(t *testing.T) {
 				t.Fatalf("the send: %v, the remote's tip %s; want it failed and the tip left", err, tip)
 			}
 			// The tip arrives, as the sync's background fetch brings it: sends work again.
-			if err := d.repo.Fetch(bg, []string{d.meshRef()}); err != nil {
+			if _, err := d.repo.Fetch(bg, []string{d.meshRef()}); err != nil {
 				t.Fatal(err)
 			}
 			d.writeMu.Lock()

@@ -51,6 +51,8 @@ type Options struct {
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
+	// TidyEvery is how often the refs fetches leave are removed (tidyLoop): 30 s.
+	TidyEvery time.Duration
 	// OwnTipWait is how long a write to this device's log, once pushed, waits for a running sync
 	// before leaving the sync to queue it for this device's own sessions (leaveOwnTip): 2 s,
 	// longer than a sync takes when nothing is slow.
@@ -211,6 +213,9 @@ func (o *Options) defaults() {
 	}
 	if o.SlowFetchLimit == 0 {
 		o.SlowFetchLimit = 10 * time.Minute
+	}
+	if o.TidyEvery == 0 {
+		o.TidyEvery = 30 * time.Second
 	}
 	if o.ReadFirstLimit == 0 {
 		o.ReadFirstLimit = 15 * time.Second
@@ -638,6 +643,8 @@ type Daemon struct {
 	testPush func(push func() error) error
 	// testFetch, set only by tests, stands in for the fetch of this device's own log (fetchOwn).
 	testFetch func(ctx context.Context) error
+	// testFetched, set only by tests, is called after each fetch of a sync (fetch).
+	testFetched func(refs []string)
 
 	// setMu guards settings and settings.json. No other lock is held while it is taken; a mode's
 	// change (setMode) takes mu inside it.
@@ -847,6 +854,7 @@ type fetchFail struct {
 	slow   bool
 	tries  int
 	landed bool
+	got    string // what the fetch that landed brought
 }
 
 // fetchRetry is how long after its failure a ref that failed to fetch is tried again on its own.
@@ -1221,6 +1229,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.historyLoop(ctx)
 	}()
 	d.kickHistory()
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.tidyLoop(ctx)
+	}()
 
 	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
 	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
