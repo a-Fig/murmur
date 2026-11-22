@@ -615,15 +615,26 @@ function chatMessages(c) {
 function personText(m) {
   const subject = m.subject || "";
   const body = m.body || "";
-  const end = ["…", "..."].find((e) => subject.endsWith(e));
-  if (end && body && body.startsWith(subject.slice(0, -end.length))) return body;
+  if (repeatsSubject(subject, body)) return body;
   return body ? subject + "\n" + body : subject;
 }
 
-// A message's text: a person's as they wrote it, an agent's with its subject over its body.
+// repeatsSubject is RepeatsSubject in internal/view/view.go: a subject cut short with "…" or "..."
+// that is only the start of the body, compared word by word, as a subject's spaces are collapsed.
+function repeatsSubject(subject, body) {
+  const end = ["…", "..."].find((e) => subject.endsWith(e));
+  if (!end || !body) return false;
+  const stem = subject.slice(0, -end.length);
+  const words = (s) => s.trim().split(/\s+/).join(" ");
+  return body.startsWith(stem) || words(body).startsWith(words(stem));
+}
+
+// A message's text: a person's as they wrote it, an agent's with its subject over its body. An
+// agent's subject that only repeats the start of its body is left out, as a turn leaves it (#1049).
 function messageText(m) {
   if (m.fromPerson) return h("div", { class: "chat-msg-body rich" }, rich(personText(m)));
-  return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
+  const subject = m.subject && !repeatsSubject(m.subject, (m.body || "").trim()) ? m.subject : "";
+  return [subject && h("div", { class: "chat-msg-subject" }, subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
 }
 
 // A message the person wrote that isn't among the messages yet. It looks written at once, as a

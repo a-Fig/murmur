@@ -32,6 +32,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/scrub"
 	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
@@ -1170,21 +1171,40 @@ func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
 // subjectFor makes it a subject and body. A send with a body would lose the rest of such a subject
 // the same way (#1049), so what subjectFor leaves of the subject goes at the top of the body, where
-// a turn shows it and hides a subject that only repeats it (view.RepeatsSubject). Only if that
-// would put the body over the daemon's cap is the subject cut as before, rather than a send that
-// went out refused. A body is blank as the daemon judges one, after the invisible characters it
-// drops, and only if the daemon would take it: one over its cap is the agent's to hear about (#1037).
+// a turn shows it and hides a subject that only repeats it (view.RepeatsSubject). A subject whose
+// lines joined fit in one loses nothing and is joined, as before. Only if the body would go over
+// the daemon's cap is the subject cut as before, rather than a send that went out refused. A body
+// is blank as the daemon judges one, after the invisible characters it drops, and only if the
+// daemon would take it: one over its cap is the agent's to hear about (#1037).
+//
+// The subject is checked for secrets here as the agent wrote it, as only its cleaned line goes to
+// the daemon, which checks that. The daemon checks a body both ways, as dropping a zero-width space
+// can join a key to the next word, so that AKIA…EXAMPLE<U+200B>note ends in no word boundary: as a
+// subject, a key so written went out (#1044). subjectFor checks the first line it makes one of, and
+// what it leaves goes in the body, which the daemon checks as written.
 func subjectAndBody(subject, body string) (string, string, error) {
 	blank := len(body) <= bus.MaxBody && strings.TrimSpace(bus.Text(body, math.MaxInt)) == ""
-	if oneLine(subject) == strings.TrimSpace(subject) {
+	cut := func() (string, string, error) {
+		if err := scrub.Check(subject); err != nil {
+			return "", "", err
+		}
 		return oneLine(subject), body, nil
+	}
+	if oneLine(subject) == strings.TrimSpace(subject) {
+		return cut()
 	}
 	if blank {
 		return subjectFor(subject)
 	}
+	if utf8.RuneCountInString(bus.OneLine(subject, math.MaxInt)) <= maxSubject {
+		return cut() // its lines joined lose nothing
+	}
 	s, rest, err := subjectFor(subject)
+	if err != nil && !errors.Is(err, errTooLong) {
+		return "", "", err
+	}
 	if err != nil || s == "" {
-		return oneLine(subject), body, nil
+		return cut()
 	}
 	if rest == "" {
 		return s, body, nil
@@ -1192,7 +1212,7 @@ func subjectAndBody(subject, body string) (string, string, error) {
 	if joined := rest + "\n\n" + body; len(joined) <= bus.MaxBody {
 		return s, joined, nil
 	}
-	return oneLine(subject), body, nil
+	return cut()
 }
 
 // errTooLong is subjectFor's refusal of a text whose body would be over the daemon's cap. The
@@ -1215,6 +1235,9 @@ func subjectFor(text string) (subject, body string, err error) {
 	first, rest := "", text
 	for rest != "" && oneLine(first) == "" {
 		first, rest = cutLine(rest)
+	}
+	if err := scrub.Check(first); err != nil {
+		return "", "", err // as subjectAndBody does
 	}
 	// Cleaned as the daemon stores it, a malformed byte as U+FFFD, so RepeatsSubject below sees
 	// the subject a turn will.
@@ -1385,8 +1408,11 @@ func (s *server) tools(srv *mcp.Server) {
 			files := fullPaths([]string(in.Files))
 			tell := strings.TrimSpace(in.TellMe)
 			subject, body, err := subjectAndBody(in.Subject, in.Body)
+			if errors.Is(err, errTooLong) {
+				err = fmt.Errorf("%w, or put the text in a file and send that with files", err)
+			}
 			if err != nil {
-				return result(nil, proto.Response{}, fmt.Errorf("%w, or put the text in a file and send that with files", err))
+				return result(nil, proto.Response{}, err)
 			}
 			if len(to) > 1 {
 				return s.sendEach(ctx, req, to, subject, body, tell, files)

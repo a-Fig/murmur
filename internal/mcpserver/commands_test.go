@@ -232,8 +232,7 @@ func TestSubjectAndBodySolsEdges(t *testing.T) {
 	}
 	// 4. A body of malformed UTF-8 is a body: cleaned, its replacement character is longer than the
 	// byte it stands for.
-	// The subject's second line goes at the top of that body (#1049).
-	if s, b, err := subjectAndBody("first\nsecond", "\xff\x78"); err != nil || s != "first" || b != "second\n\n\xff\x78" {
+	if s, b, err := subjectAndBody("first\nsecond", "\xff\x78"); err != nil || s != "first second" || b != "\xff\x78" {
 		t.Errorf("a malformed body: %q, %q, %v", s, b, err)
 	}
 	// 5. A first line that a turn would take for a cut subject (view.RepeatsSubject) keeps the whole
@@ -248,16 +247,17 @@ func TestSubjectAndBodySolsEdges(t *testing.T) {
 	}
 }
 
-// A send with a body keeps all of a subject too long for one line, or of several lines: what the
-// subject can't hold goes at the top of the body, and a turn shows the body alone when the subject
-// only repeats its start (#1049, seen on 2026-11-22 as "…rather than ope..." and the rest gone).
-// A subject that fits, and a body the joined text would push over the daemon's cap, are as before.
 // mustSubject is the subject subjectFor makes of text.
 func mustSubject(text string) string {
 	s, _, _ := subjectFor(text)
 	return s
 }
 
+// A send with a body keeps all of a subject too long for one line: what the subject can't hold
+// goes at the top of the body, and a turn shows the body alone when the subject only repeats its
+// start (#1049, seen on 2026-11-22 as "…rather than ope..." and the rest gone). A subject that
+// fits, one whose lines joined fit, and a body the joined text would push over the daemon's cap,
+// are as before.
 func TestSendWithABodyKeepsALongSubject(t *testing.T) {
 	long := "Re: PR for a theme setting: my user has me on Figma only right now, so I'm passing your request to them rather than opening one myself"
 	s, b, err := subjectAndBody(long, "No PR from me.")
@@ -268,8 +268,17 @@ func TestSendWithABodyKeepsALongSubject(t *testing.T) {
 		t.Errorf("a turn would print the cut subject %q and then the body that repeats it", s)
 	}
 
-	if s, b, err := subjectAndBody("Title\nmore of the subject", "the body"); err != nil || s != "Title" || b != "more of the subject\n\nthe body" {
-		t.Errorf("a subject of two lines with a body: %q, %q, %v", s, b, err)
+	if s, b, err := subjectAndBody("Title\nmore of the subject", "the body"); err != nil || s != "Title more of the subject" || b != "the body" {
+		t.Errorf("a short subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	twoLong := "Title\n" + long
+	if s, b, err := subjectAndBody(twoLong, "the body"); err != nil || s != "Title" || b != long+"\n\nthe body" {
+		t.Errorf("a long subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	// Runs of spaces in the subject don't stop a turn from seeing the body repeats it.
+	spaced := strings.Replace(long, ". ", ".  ", -1) + ".  And  more  words  here."
+	if s, b, _ := subjectAndBody(spaced, "x"); !view.RepeatsSubject(s, strings.TrimSpace(b)) {
+		t.Errorf("a subject with double spaces: %q is not seen as repeating %q", s, b)
 	}
 	if s, b, err := subjectAndBody("fits", "the body"); err != nil || s != "fits" || b != "the body" {
 		t.Errorf("a subject that fits: %q, %q, %v", s, b, err)
@@ -301,10 +310,10 @@ func TestOneTextBodyIsRaw(t *testing.T) {
 	}
 }
 
-// A send with a real body keeps its subject's other lines at the top of the body (#1049), and no
-// visible text of a one-text send is lost.
+// A send with a real body and a subject whose lines joined fit is as it was, and no visible text
+// of a one-text send is lost.
 func TestSubjectAndBodyKeepsEverything(t *testing.T) {
-	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait…" || b != "more\n\nthe body" {
+	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait… more" || b != "the body" {
 		t.Errorf("a send with a body: %q, %q, %v", s, b, err)
 	}
 	for _, text := range []string{
