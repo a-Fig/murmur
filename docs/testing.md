@@ -40,6 +40,23 @@ so a developer's own settings don't change what they see (#262). As of 2026-11-0
 `publicrepo`, `setup`, `daemon` and `cmd/mur`; the others that reach it passed with all three keys
 set.
 
+## Testing `mur join` by hand
+
+A throwaway `HOME` isn't enough. Join also follows the variables that move an agent's settings,
+and an agent's shell in T3 has several: on 2026-11-21 a test join in a scratch home followed them
+and pointed the real `~/.claude_personal` and T3's Antigravity configurations at a test build that
+was deleted afterwards, so every new session failed to join (#995). Alongside `HOME`, set
+`USERPROFILE` (on Windows it is the home) and `APPDATA`, and unset `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `GEMINI_HOME`, `GROK_HOME`, `PI_CODING_AGENT_DIR`, `XDG_CONFIG_HOME` and every
+`T3CODE_*` variable (`env | grep ^T3CODE_` lists them).
+
+Since #995, join and uninstall in a home inside the temporary folder leave alone every agent
+configuration outside that folder, and name the variable that pointed there
+([joining.md](design/joining.md#what-mur-join-writes)). That is a backstop, not the setup: a scratch
+home outside the temporary folder isn't recognized. The Go tests are isolated already: `cmd/mur`'s
+`box.env` and `internal/join`'s `TestMain` clear these variables, and the stand-in `claude` refuses
+to write outside the temporary folder.
+
 ## On every pull request
 
 `.github/workflows/test.yml` runs those checks on every pull request, on a push to `main`, and by

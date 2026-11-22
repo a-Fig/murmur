@@ -170,7 +170,8 @@ func (b *box) env() []string {
 		brand.SessionsDirEnv: true, clones.DirEnv: true}
 	var env []string
 	for _, kv := range os.Environ() {
-		if k, _, _ := strings.Cut(kv, "="); !drop[strings.ToUpper(k)] && !drop[k] {
+		// Every T3 variable, not only those named: a new one may say where T3 keeps its settings.
+		if k, _, _ := strings.Cut(kv, "="); !drop[strings.ToUpper(k)] && !drop[k] && !strings.HasPrefix(strings.ToUpper(k), "T3CODE_") {
 			env = append(env, kv)
 		}
 	}

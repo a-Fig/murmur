@@ -85,6 +85,15 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
   kill, since an npm install's `claude.cmd` leaves node holding its output on Windows. A step that
   runs past 5 seconds says "mur join: still <step>" on standard error. Moving the caller's session
   in afterwards (up to 10 seconds) is outside the deadline.
+- **A test's home keeps a test's join to itself** (#995, 2026-11-22). A test join in a scratch home
+  still read the shell's `CLAUDE_CONFIG_DIR` and T3's settings, and pointed the user's own Claude
+  Code and Antigravity at a test build that was later deleted. So when the home (`HOME`,
+  `USERPROFILE`, or the one Go reads) is inside the temporary folder (`os.TempDir`, `/tmp`,
+  `/var/tmp`), join and uninstall leave every configuration outside that folder alone, don't read
+  T3's settings from outside it, and say which variable pointed there. Nobody's real home is in the
+  temporary folder, so users never see this; `--outside-home` turns it off (a container whose
+  `HOME` is under `/tmp`, say). A binary in the temporary folder isn't refused: `go run` puts one
+  there, and refusing it would be a new rule for real homes too.
 
 ## `mur uninstall`
 
