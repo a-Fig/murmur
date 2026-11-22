@@ -317,7 +317,18 @@ what the tools of those names do (`internal/mcpserver/commands.go`, rendered by 
   thread's own takes the session over from a hold. A daemon restart ends holds, and the next command
   makes one again.
 - **Delivery.** A turn through `t3 thread send`, as for any T3 thread, and its last line says to
-  answer with `mur send`. There is no hook, so no notice mid-turn: busy or idle comes from T3's
-  database (#699), and a message waits for the turn's end.
+  answer with `mur send NAME "TEXT"`, written out. There is no hook, so no notice mid-turn: busy or
+  idle comes from T3's database (#699), and a message waits for the turn's end.
+- **One text** (2026-11-22, #1027). `mur send TO TEXT` takes the whole message, and `subjectFor`
+  in `internal/mcpserver` makes its subject as the page does (`web.SplitText`): the first line if
+  it fits, else the opening words, with the whole text in the body. Agents wrote
+  `mur send NAME "<paragraph>"` to the old `TO SUBJECT [BODY]` anyway, so the paragraph was the
+  subject and was cut at 120 characters (#1021). `--subject` gives one of the agent's own. Three
+  words after `send` still mean SUBJECT BODY, the form v0.5.1 documents, with a note on stderr
+  giving the new one. A call that worked before sends what it did, unless it was `TO -` (now
+  stdin) or one of its words was `--` or the option (`--subject`, `-subject`, `--subject=…`),
+  which now mean what they say here. The send tool's
+  subject-only call goes through `subjectFor` too, so a subject a model writes (#1023) would change
+  that function alone.
 - **Not covered.** Files and `tell_me` in `mur send`; a harness outside T3, which has no thread ID
   to name its session by.

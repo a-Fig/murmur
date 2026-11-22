@@ -63,7 +63,7 @@ func TestACommandsSessionStaysAfterItsHello(t *testing.T) {
 		t.Errorf("T3 was asked %q with %q", c.Args, c.Stdin)
 	}
 	t.Logf("the turn T3 was handed:\n%s", c.Stdin)
-	if want := "Reply with `" + brand.Command + " send`"; !strings.Contains(c.Stdin, want) {
+	if want := "Reply with `" + brand.Command + " send "; !strings.Contains(c.Stdin, want) || !strings.Contains(c.Stdin, " \"TEXT\"`") {
 		t.Errorf("the turn doesn't say to answer with the command:\n%s", c.Stdin)
 	}
 }

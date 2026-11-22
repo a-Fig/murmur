@@ -448,7 +448,11 @@ func Turn(m proto.MessageView) string {
 	}
 	if bus.IsGroup(m.To) && m.GroupKnown {
 		// The session has had the long line below from this group (Tyler, 2026-11-12).
-		fmt.Fprintf(&b, "\nReply with %s to %s or %s, if a reply is needed.\n", sendWith(m), m.To, who)
+		if m.ByCommand {
+			fmt.Fprintf(&b, "\nReply with %s, or to %s alone, if a reply is needed.\n", replyTo(m, m.To), who)
+		} else {
+			fmt.Fprintf(&b, "\nReply with %s or %s, if a reply is needed.\n", replyTo(m, m.To), who)
+		}
 		return b.String()
 	}
 	if bus.IsGroup(m.To) {
@@ -457,25 +461,26 @@ func Turn(m proto.MessageView) string {
 		// added learns here that it is in the group. A person writing in a group gets this line, not
 		// their own (#484): theirs said to answer them, and the rest of the group never saw the
 		// answer. This one says to answer with send too, and is short (Tyler, 2026-11-13).
-		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s to %s, or to %s alone, if a reply is needed. Remove the tag %s from yourself to leave the group.\n",
-			m.To, sendWith(m), m.To, who, m.To)
+		fmt.Fprintf(&b, "\nYou are in %s. Reply with %s, or to %s alone, if a reply is needed. Remove the tag %s from yourself to leave the group.\n",
+			m.To, replyTo(m, m.To), who, m.To)
 		return b.String()
 	}
 	if isPerson(m) && !m.Explained {
-		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s to %s.\n", who, sendWith(m), who)
+		fmt.Fprintf(&b, "\n%s sees only what you `send`, not this conversation. Answer with %s.\n", who, replyTo(m, who))
 		return b.String()
 	}
-	fmt.Fprintf(&b, "\nReply with %s to %s if a reply is needed.\n", sendWith(m), who)
+	fmt.Fprintf(&b, "\nReply with %s if a reply is needed.\n", replyTo(m, who))
 	return b.String()
 }
 
-// sendWith is what a turn says to answer with: Murmur's send tool, or, for a session that has only
-// the shell commands, `mur send` (#913).
-func sendWith(m proto.MessageView) string {
+// replyTo is how a turn says to answer to: Murmur's send tool, or, for a session that has only the
+// shell commands (#913), the command written out, so that the agent sees the message goes as one
+// text in quotes (#1027), not as a subject and then a body.
+func replyTo(m proto.MessageView, to string) string {
 	if m.ByCommand {
-		return "`" + brand.Command + " send`"
+		return "`" + brand.Command + " send " + to + " \"TEXT\"`"
 	}
-	return brand.Product + "'s `send`"
+	return brand.Product + "'s `send` to " + to
 }
 
 // quotedBody is a turn's body with one change: a line that reads as a turn's own first
