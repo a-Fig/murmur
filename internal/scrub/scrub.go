@@ -10,6 +10,7 @@ package scrub
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -19,6 +20,9 @@ import (
 type pattern struct {
 	name string
 	re   *regexp.Regexp
+	// hints are text every match of re has one of, looked for before re is run, as most texts have
+	// none and a regexp is slow over a large file (#981). None: re is always run.
+	hints []string
 	// secret, when set, decides whether a match is one: re finds the shape, and secret tells a
 	// credential in it from prose or a placeholder in the same shape. It gets re's submatches.
 	secret func(m []string) bool
@@ -37,37 +41,37 @@ const at = `(?:^|[^A-Za-z0-9])`
 // the error call it an OpenAI key. The OpenRouter pattern therefore sits above that one, the
 // same way the Anthropic pattern already does.
 var patterns = []pattern{
-	{name: "a private key", re: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----`)}, // PEM, and PGP's BLOCK
-	{name: "an AWS access key", re: regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)},
-	{name: "a GitHub token", re: regexp.MustCompile(at + `(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|` + at + `github_pat_[A-Za-z0-9_]{50,}`)},
-	{name: "a GitLab personal access token", re: regexp.MustCompile(at + `glpat-[A-Za-z0-9_-]{20,}`)},
-	{name: "an npm token", re: regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}`)},
-	{name: "a Hugging Face token", re: regexp.MustCompile(`\bhf_[A-Za-z]{34,}`)},
-	{name: "an Anthropic API key", re: regexp.MustCompile(at + `sk-ant-[A-Za-z0-9_-]{20,}`)},
-	{name: "an OpenRouter API key", re: regexp.MustCompile(at + `sk-or-v1-[0-9a-fA-F]{64}`)},
-	{name: "an OpenAI-style API key", re: regexp.MustCompile(at + `sk-(proj|svcacct)-[A-Za-z0-9_-]{32,}|\bsk-[A-Za-z0-9_-]{32,}`)},
-	{name: "a Stripe key", re: regexp.MustCompile(at + `[rs]k_(live|test)_[A-Za-z0-9]{20,}`)},
-	{name: "a Slack token", re: regexp.MustCompile(at + `xox[abposr]-[A-Za-z0-9-]{10,}`)},
+	{name: "a private key", hints: []string{"PRIVATE KEY"}, re: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----`)}, // PEM, and PGP's BLOCK
+	{name: "an AWS access key", hints: []string{"AKIA", "ASIA"}, re: regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)},
+	{name: "a GitHub token", hints: []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"}, re: regexp.MustCompile(at + `(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|` + at + `github_pat_[A-Za-z0-9_]{50,}`)},
+	{name: "a GitLab personal access token", hints: []string{"glpat-"}, re: regexp.MustCompile(at + `glpat-[A-Za-z0-9_-]{20,}`)},
+	{name: "an npm token", hints: []string{"npm_"}, re: regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}`)},
+	{name: "a Hugging Face token", hints: []string{"hf_"}, re: regexp.MustCompile(`\bhf_[A-Za-z]{34,}`)},
+	{name: "an Anthropic API key", hints: []string{"sk-ant-"}, re: regexp.MustCompile(at + `sk-ant-[A-Za-z0-9_-]{20,}`)},
+	{name: "an OpenRouter API key", hints: []string{"sk-or-v1-"}, re: regexp.MustCompile(at + `sk-or-v1-[0-9a-fA-F]{64}`)},
+	{name: "an OpenAI-style API key", hints: []string{"sk-"}, re: regexp.MustCompile(at + `sk-(proj|svcacct)-[A-Za-z0-9_-]{32,}|\bsk-[A-Za-z0-9_-]{32,}`)},
+	{name: "a Stripe key", hints: []string{"k_live_", "k_test_"}, re: regexp.MustCompile(at + `[rs]k_(live|test)_[A-Za-z0-9]{20,}`)},
+	{name: "a Slack token", hints: []string{"xox"}, re: regexp.MustCompile(at + `xox[abposr]-[A-Za-z0-9-]{10,}`)},
 	// Slack's own docs, and many .env.example files, show T00000000/B00000000/XXXX…; a real
 	// webhook's last part is random, letters and digits both.
-	{name: "a Slack webhook URL", re: regexp.MustCompile(`hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/([A-Za-z0-9]{16,})`),
+	{name: "a Slack webhook URL", hints: []string{"hooks.slack.com/services/"}, re: regexp.MustCompile(`hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/([A-Za-z0-9]{16,})`),
 		secret: func(m []string) bool { return lettersAndDigits(m[1]) }},
-	{name: "a Google API key", re: regexp.MustCompile(at + `AIza[0-9A-Za-z_-]{35}`)},
-	{name: "a Google OAuth token", re: regexp.MustCompile(at + `ya29\.[0-9A-Za-z_-]{20,}`)},
-	{name: "an Azure storage account key", re: regexp.MustCompile(`AccountKey=[A-Za-z0-9+/]{40,}`)},
-	{name: "a JSON web token", re: regexp.MustCompile(at + `eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},
+	{name: "a Google API key", hints: []string{"AIza"}, re: regexp.MustCompile(at + `AIza[0-9A-Za-z_-]{35}`)},
+	{name: "a Google OAuth token", hints: []string{"ya29."}, re: regexp.MustCompile(at + `ya29\.[0-9A-Za-z_-]{20,}`)},
+	{name: "an Azure storage account key", hints: []string{"AccountKey="}, re: regexp.MustCompile(`AccountKey=[A-Za-z0-9+/]{40,}`)},
+	{name: "a JSON web token", hints: []string{"eyJ"}, re: regexp.MustCompile(at + `eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},
 	// A bearer token is opaque, so the word alone says nothing: "Bearer YOUR_TOKEN_HERE" or a
 	// long word in prose passes, and only a token mixing letters and digits is one.
 	{name: "a bearer token", re: regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9._~+/-]{20,}=*)`),
 		secret: func(m []string) bool { return lettersAndDigits(m[1]) }},
-	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:[^\s@/]{3,}@`)},
+	{name: "a password in a URL", hints: []string{"://"}, re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:[^\s@/]{3,}@`)},
 	// A password with a slash in it, which the pattern above stops at. A port and a path
 	// (`localhost:5173/@vite/client`) has the same shape, so what follows the last colon before the
 	// slash mustn't be a number, the part before the @ mustn't end a path, the password has to mix
 	// letters and digits, and an image digest (`…@sha256:…`) isn't a host. A user name never starts
 	// with `[`, as an IPv6 host does, with colons of its own: neither `[::1]/…` nor `[::1]:8000/…`
 	// is a user and a password.
-	{name: "a password in a URL", re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@\[]+:([^\s@/]+)(/[^\s@]*)@([A-Za-z0-9]+)`),
+	{name: "a password in a URL", hints: []string{"://"}, re: regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@\[]+:([^\s@/]+)(/[^\s@]*)@([A-Za-z0-9]+)`),
 		secret: func(m []string) bool {
 			port := m[1][strings.LastIndexByte(m[1], ':')+1:]
 			return strings.Trim(port, "0123456789") != "" && !strings.HasSuffix(m[2], "/") &&
@@ -102,29 +106,100 @@ var (
 	hex16          = regexp.MustCompile(`^[0-9A-Fa-f]{16}$`)
 )
 
-// Check returns an error naming the kind of secret if any text looks like one.
+// Check returns an error naming the kind of secret if any text looks like one. Each text is
+// checked as written, and then as JSON would read it (decodedLines).
 func Check(texts ...string) error {
 	for _, t := range texts {
-		for _, p := range patterns {
-			if p.secret == nil {
-				if p.re.MatchString(t) {
-					return blocked(p.name)
-				}
-				continue
-			}
-			for _, m := range p.re.FindAllStringSubmatch(t, -1) {
-				if p.secret(m) {
-					return blocked(p.name)
+		for d, level := t, 0; d != "" && level <= maxDecodes; level++ {
+			if level > 0 {
+				if d = decodedLines(d); d == "" {
+					break
 				}
 			}
-		}
-		for _, m := range assignment.FindAllStringSubmatchIndex(t, -1) {
-			if credential(t[m[2]:m[3]], t[m[1]:]) {
+			if name := format(d); name != "" {
+				return blocked(name)
+			}
+			if assigned(d) {
 				return blocked("a credential assignment")
 			}
 		}
 	}
 	return nil
+}
+
+// assigned says whether t holds a credential assignment.
+func assigned(t string) bool {
+	for _, m := range assignment.FindAllStringSubmatchIndex(t, -1) {
+		if credential(t[m[2]:m[3]], t[m[1]:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// format names the first of patterns that finds a secret in t, or is "".
+func format(t string) string {
+	for _, p := range patterns {
+		if p.hints != nil && !slices.ContainsFunc(p.hints, func(h string) bool { return strings.Contains(t, h) }) {
+			continue
+		}
+		if p.secret == nil {
+			if p.re.MatchString(t) {
+				return p.name
+			}
+			continue
+		}
+		for _, m := range p.re.FindAllStringSubmatch(t, -1) {
+			if p.secret(m) {
+				return p.name
+			}
+		}
+	}
+	return ""
+}
+
+// maxDecodes is how many times Check decodes a text: a JSON string of JSON escapes its escapes
+// again, as an agent's tool call that carries a serialized config does.
+const maxDecodes = 3
+
+// decodedLines is the lines of t that have a backslash, with JSON's backslash escapes decoded
+// (jsonUnescape), or "" if none changes. Check looks for secrets in it, and decodes it again for
+// each level of JSON within JSON (#981): a key in a JSON string can be written with escapes in it
+// (a webhook URL's slashes as \/, a letter as \u0067), or with an escape just before it (\n),
+// which the formats, reading the text as written, missed; and a credential assignment in JSON
+// within JSON has \" around its name. The lines are decoded whole, not each quoted string in them:
+// in prose, logs or escaped JSON the quotes don't pair reliably, and decoding changes only what
+// follows a backslash. A line without one is the same decoded, and is left out but for the line
+// before one that has, so a large file with few backslashes costs little more to check than before.
+func decodedLines(t string) string {
+	var b strings.Builder
+	changed := false
+	prev, next := "", 0 // the line before, and the index of the line after the last one kept
+	i := 0
+	for line := range strings.Lines(t) {
+		line = strings.TrimSuffix(line, "\n")
+		if strings.Contains(line, `\`) {
+			// The line before goes too, as what a match starts with can be there ("Bearer", a
+			// name). A gap where lines were left out is marked with a character no pattern runs
+			// over, so the lines on either side of it don't read as one.
+			if i > 0 && next < i {
+				if next < i-1 && b.Len() > 0 {
+					b.WriteString("\x00\n")
+				}
+				b.WriteString(prev + "\n")
+			}
+			d := jsonUnescape(line)
+			changed = changed || d != line
+			b.WriteString(d + "\n")
+			next = i + 1
+		}
+		prev = line
+		i++
+	}
+	if !changed {
+		return ""
+	}
+	return b.String()
 }
 
 func blocked(what string) error {
