@@ -148,7 +148,7 @@ func (r *Repo) ListRemote(ctx context.Context) (map[string]string, error) {
 	refs := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
 		sha, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if ok && strings.HasPrefix(ref, brand.RefRoot) {
+		if ok && strings.HasPrefix(ref, brand.RefRoot) && !strings.HasPrefix(ref, fetchPrefix) {
 			refs[ref] = sha
 		}
 	}
@@ -185,19 +185,54 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // It writes only the refs it names (--refmap=). Otherwise git also writes wherever the remote's
 // own fetch refspecs map each ref it brings, and a refspec can map a bus ref onto a branch, which
 // a fetch would then move under whoever has it checked out (#950).
+//
+// Nor does it write through a symbolic ref (#965). git fetch does: were refs/murmur/x a symbolic
+// ref to refs/heads/main, it would set main to the bus commit, under the checkout and index, and
+// the user's next commit would sit on bus history. So the fetch writes refs of its own, under a
+// name no other ref has (fetchPrefix), and one transaction then sets each bus ref itself
+// (--no-deref) and deletes them. A symbolic bus ref is replaced, as UpdateLocal says. All of a
+// fetch's refs are set, or none, which costs little: the daemon fetches each ref of a batch that
+// failed on its own.
 func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
+	own := fmt.Sprintf("%s%016x/", fetchPrefix, rand.Uint64())
 	args := []string{"-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
 		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip=" + brand.RefRoot + "*", r.Remote}
+	// update-ref reads a new value as git reads any name of an object, so each bus ref is set to
+	// what the fetch's own ref holds, read inside the transaction.
+	var set, drop strings.Builder
 	for _, ref := range refs {
-		args = append(args, "+"+ref+":"+ref)
+		at := own + strings.TrimPrefix(ref, brand.RefRoot)
+		args = append(args, "+"+ref+":"+at)
+		fmt.Fprintf(&set, "update %s %s\n", ref, at)
+		fmt.Fprintf(&drop, "delete %s\n", at)
 	}
 	_, err := r.Git.Run(ctx, "", args...)
+	if err == nil {
+		if _, err = r.Git.Run(ctx, set.String()+drop.String(), "update-ref", "--no-deref", "--stdin"); err == nil {
+			return nil
+		}
+	}
+	// What a failed fetch wrote is removed, with a deadline of its own, as the fetch's may be what
+	// failed it. A git killed as it wrote one can leave it, under a name nothing reads and where
+	// the daemon's repairs of broken refs and stale locks still look.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if _, derr := r.Git.Run(dctx, drop.String(), "update-ref", "--no-deref", "--stdin"); derr != nil {
+		err = fmt.Errorf("%w; and removing what it wrote: %v", err, derr)
+	}
 	return err
 }
+
+// fetchPrefix begins the refs a fetch writes before it sets the bus refs (Fetch). Each fetch takes
+// a name of its own under it, so none of its refs is one that was there before, symbolic or not.
+// It is under brand.RefRoot, so that `mur uninstall`'s advice removes any left behind and the
+// daemon's repairs of broken refs and stale locks reach them. Neither listing of bus refs, local
+// or remote, gives one.
+const fetchPrefix = brand.RefRoot + "fetch-"
 
 // Push sets a remote ref to sha, or deletes it if sha is "". With Lease, expect is the value
 // the remote ref must have ("" meaning it must not exist), checked atomically by the server.
@@ -317,24 +352,30 @@ func (r *Repo) noTracking(ref string) []string {
 	return []string{"-c", key + "refs/*:refs/*", "-c", key + "^refs/*"}
 }
 
-// LocalRefs returns the local copies of bus refs.
+// LocalRefs returns the local copies of bus refs. A symbolic ref is no copy (#965): git would give
+// the commit of the ref it names, a branch's perhaps, and the daemon would build its log on the
+// user's history and push that to the bus.
 func (r *Repo) LocalRefs(ctx context.Context) (map[string]string, error) {
-	out, err := r.Git.Run(ctx, "", "for-each-ref", "--format=%(objectname) %(refname)", brand.RefRoot)
+	out, err := r.Git.Run(ctx, "", "for-each-ref", "--format=%(objectname) %(refname) %(symref)", brand.RefRoot)
 	if err != nil {
 		return nil, err
 	}
 	refs := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
-		if sha, ref, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
-			refs[ref] = sha
+		if f := strings.Fields(line); len(f) == 2 && !strings.HasPrefix(f[1], fetchPrefix) {
+			refs[f[1]] = f[0]
 		}
 	}
 	return refs, nil
 }
 
-// UpdateLocal points a local bus ref at sha.
+// UpdateLocal points a local bus ref at sha. A symbolic ref there is replaced, and the ref it
+// names left alone (--no-deref, #965); otherwise git would move that ref, which could be the
+// checked-out branch. Murmur replaces it rather than refusing: refs/murmur/ holds copies of the
+// remote's refs, which no symbolic ref is, and a refusal would leave that peer unread, or this
+// device unable to send, until someone found the ref and removed it by hand.
 func (r *Repo) UpdateLocal(ctx context.Context, ref, sha string) error {
-	_, err := r.Git.Run(ctx, "", "update-ref", ref, sha)
+	_, err := r.Git.Run(ctx, "", "update-ref", "--no-deref", ref, sha)
 	return err
 }
 

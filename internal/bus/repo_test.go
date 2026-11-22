@@ -265,7 +265,9 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 // fetch refspecs map bus refs onto branches, and a reference-transaction hook, which git runs on
 // every ref it writes. Without --refmap= a fetch would move those branches, and a push would move
 // or delete them as it set what it took for their remote-tracking copies; and every fetch, push and
-// update-ref would run the hook.
+// update-ref would run the hook. Each bus ref is also made a symbolic ref to the checked-out branch
+// before it is written (#965): git writes through one, so a fetch or an update-ref would move main
+// to the bus commit, and a delete would delete main.
 func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 	root := t.TempDir()
 	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
@@ -281,7 +283,7 @@ func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	for _, args := range [][]string{{"init", "-q", "--bare", remote}, {"init", "-q", clone}} {
+	for _, args := range [][]string{{"init", "-q", "--bare", remote}, {"init", "-q", "-b", "main", clone}} {
 		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 			t.Fatalf("git init: %v: %s", err, out)
 		}
@@ -333,15 +335,69 @@ func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 			t.Fatalf("push %s: %v", ref, err)
 		}
 	}
+	// point makes each ref a symbolic ref to main, without the hook, which would count as Murmur's.
+	main := git("rev-parse", "refs/heads/main")
+	point := func(refs ...string) {
+		t.Helper()
+		for _, ref := range refs {
+			git("-c", "core.hooksPath="+filepath.Join(root, "no-hooks"), "symbolic-ref", ref, "refs/heads/main")
+		}
+	}
+	// symbolic says whether ref is still a symbolic ref; mainStays fails the test if main moved.
+	symbolic := func(ref string) bool {
+		return exec.Command("git", "-C", clone, "symbolic-ref", "-q", ref).Run() == nil
+	}
+	mainStays := func(op string) {
+		t.Helper()
+		if now, err := exec.Command("git", "-C", clone, "rev-parse", "--verify", "-q", "refs/heads/main").Output(); err != nil {
+			t.Fatalf("%s through a symbolic bus ref deleted main: %v", op, err)
+		} else if got := strings.TrimSpace(string(now)); got != main {
+			t.Fatalf("%s through a symbolic bus ref moved main from %s to %s", op, main, got)
+		}
+	}
+	point(dev, other)
+	// A symbolic ref is no copy of a bus ref: nothing is built on main's commit.
+	if local, err := r.LocalRefs(ctx); err != nil {
+		t.Fatal(err)
+	} else if s, ok := local[dev]; ok {
+		t.Errorf("LocalRefs gave the symbolic %s as %s, main's commit", dev, s)
+	}
 	if err := r.Fetch(ctx, []string{dev, other}); err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
+	mainStays("a fetch")
+	// A fetch that fails, of a ref the remote hasn't, leaves nothing either.
+	if err := r.Fetch(ctx, []string{brand.RefRoot + "mesh/gone"}); err == nil {
+		t.Error("fetching a ref the remote hasn't worked")
+	}
+	if left := git("for-each-ref", "--format=%(refname)", brand.RefRoot); strings.Contains(left, brand.RefRoot+"fetch-") {
+		t.Errorf("fetches left their own refs:\n%s", left)
+	}
+	for _, ref := range []string{dev, other} {
+		if symbolic(ref) {
+			t.Errorf("the fetch left %s symbolic", ref)
+		}
+		if got := git("rev-parse", ref); got != sha {
+			t.Errorf("the fetch set %s to %s, not the bus commit %s", ref, got, sha)
+		}
+	}
+	point(other)
 	if err := r.UpdateLocal(ctx, other, sha); err != nil {
 		t.Fatal(err)
 	}
+	mainStays("an update")
+	if symbolic(other) || git("rev-parse", other) != sha {
+		t.Errorf("the update didn't set %s itself to %s", other, sha)
+	}
+	point(other)
 	if err := r.DeleteLocal(ctx, other); err != nil {
 		t.Fatal(err)
 	}
+	mainStays("a delete")
+	if exec.Command("git", "-C", clone, "rev-parse", "--verify", "-q", other).Run() == nil {
+		t.Errorf("the delete left %s", other)
+	}
+	point(dev)
 	if err := r.Push(ctx, "", dev, bus.Force, ""); err != nil {
 		t.Fatalf("push deleting %s: %v", dev, err)
 	}
@@ -384,6 +440,7 @@ printf 0000
 		t.Fatalf("push %s, reported as refs/heads/evil: %v", renamed, err)
 	}
 
+	mainStays("a push")
 	if after := notBus(); after != before {
 		t.Errorf("bus traffic changed refs outside %s; before:\n%s\nafter:\n%s", brand.RefRoot, before, after)
 	}
