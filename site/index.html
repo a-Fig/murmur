@@ -1110,7 +1110,7 @@ void main() {
     const tabs = [...see.querySelectorAll('[role=tab]')];
     const media = [...see.querySelectorAll('.see-media > *')];
     const panel = document.getElementById('see-m');
-    const STILL = 5200;
+    const STILL = 3500;
     let i = 0, auto = !still, onScreen = false, timer = 0, t0 = 0, raf = 0;
     const isVideo = m => m.tagName === 'VIDEO';
     media.forEach(m => { if (isVideo(m)) { m.controls = false; m.preload = 'metadata'; if (still) m.poster = m.poster.replace('-first', '-last'); } });
