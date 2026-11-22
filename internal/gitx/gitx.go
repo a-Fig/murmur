@@ -9,16 +9,19 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // Git runs commands against one repository's git directory.
 type Git struct {
 	// Dir is passed as --git-dir, so no command it runs can read or write a working tree or an
-	// index. Humans and agents are editing the working tree at the same moment.
+	// index. Humans and agents are editing the working tree at the same moment. Nor does any run
+	// the clone's hooks (see dirArgs).
 	Dir string
 	// Env is added to the environment of every command, such as a GIT_INDEX_FILE of the caller's
 	// own, so that building a tree doesn't use the index the working tree's users share.
@@ -44,7 +47,24 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Run runs git with the given stdin and returns its stdout.
 func (g Git) Run(ctx context.Context, stdin string, args ...string) (string, error) {
-	return run(ctx, "", stdin, g.Env, append([]string{"--git-dir=" + g.Dir}, args...)...)
+	return run(ctx, "", stdin, g.Env, append(g.dirArgs(), args...)...)
+}
+
+// dirArgs are the options every command run against Dir starts with: Dir itself, and a hooks
+// directory that nothing creates, so no command runs the clone's hooks (#950). A fetch, a push or
+// an update-ref of a bus ref runs the reference-transaction hook, and a hook can do anything to
+// the checkout people are working in, or take seconds on every message. git looks for each hook
+// by name in core.hooksPath and runs none it can't find; a directory under Murmur's own state
+// directory is one only Murmur would write to, and on Windows it avoids what /dev/null becomes.
+// The few commands that want the user's hooks, such as `mur init`'s fast-forward, go through
+// RunIn. Hooks defined in config (hook.<name>.command), which git has planned, would not be
+// stopped by this; git 2.53 looks for hooks only in the hooks directory.
+func (g Git) dirArgs() []string {
+	dir := g.Dir
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	return []string{"--git-dir=" + g.Dir, "-c", "core.hooksPath=" + filepath.Join(dir, brand.StateDir, "no-hooks")}
 }
 
 // RunIn runs git in a working directory. It is for the few reads that need one, such as finding

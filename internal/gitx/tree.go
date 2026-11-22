@@ -23,7 +23,7 @@ const treeGone = 10 * time.Second
 // killed outright, is what it is for, so it has neither Run's retry of a start that hangs nor its
 // interrupt.
 func (g Git) RunTree(ctx context.Context, args ...string) (string, error) {
-	args = append([]string{"--git-dir=" + g.Dir}, args...)
+	args = append(g.dirArgs(), args...)
 	cmd := exec.Command("git", args...)
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), g.Env...)
 	hideWindow(cmd)

@@ -779,6 +779,9 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 func (s *server) callFrom(ctx context.Context, mreq *mcp.CallToolRequest, req proto.Request) (proto.Response, error) {
 	if !sharedAgent(s.opt.Agent) {
 		s.noteMeta(ctx, mreq)
+		if changes(req.Op) {
+			s.awaitThread(ctx)
+		}
 		return s.call(ctx, req)
 	}
 	l := s.sessionLinkFor(mreq)
@@ -844,6 +847,40 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 			ctx = context.WithoutCancel(ctx)
 		}
 		l.learnNative(ctx, c)
+	}
+}
+
+// changes says whether a call of op changes anything, which a delegate's may not: who and lookup
+// only read, and go on without waiting for the session's thread (see awaitThread).
+func changes(op string) bool { return op != proto.OpWho && op != proto.OpLookup }
+
+// awaitThread holds a call that changes something until the server has looked for the T3 thread of
+// the Codex thread a tool call named, and told the daemon what it found (#966). The daemon reads the
+// thread's lineage as it hears it, so a delegate's first send is refused rather than sent. Only the
+// calls that come while that first look is going wait, and it is bounded: the lookup by its timeout
+// and the route by sendRoute's. The wait ends with the link too, since a server shutting down may
+// never start the look.
+func (s *server) awaitThread(ctx context.Context) {
+	s.mu.Lock()
+	l := s.link
+	s.mu.Unlock()
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	looked := l.looked
+	l.mu.Unlock()
+	if looked == nil {
+		return
+	}
+	var gone <-chan struct{}
+	if l.ctx != nil {
+		gone = l.ctx.Done()
+	}
+	select {
+	case <-looked:
+	case <-ctx.Done():
+	case <-gone:
 	}
 }
 
@@ -1264,8 +1301,16 @@ type link struct {
 	// (holdFirstHello); made on first use, and nativeClosed says it is closed.
 	nativeSeen   chan struct{}
 	nativeClosed bool
+	// looked is closed once the server, inside T3, has looked for the thread of the native ID it was
+	// last given and told the daemon what it found; nil until a tool call gives one (see
+	// awaitThread).
+	looked chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
+	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
+	// before it is let go. The daemon takes a route whole, so an older one landing last would take
+	// away a thread a newer one gave, and a delegate's sends with it (#966).
+	routeMu sync.Mutex
 	// routeWarned says the daemon's refusal of the route has been logged, which is done once. logf
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
@@ -1289,6 +1334,11 @@ func (l *link) spawn(f func()) {
 func (l *link) set(up bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.setLocked(up, err)
+}
+
+// setLocked is set for a caller that holds mu.
+func (l *link) setLocked(up bool, err error) {
 	l.up, l.err = up, err
 	close(l.changed)
 	l.changed = make(chan struct{})
@@ -1419,6 +1469,8 @@ func (l *link) startSeek(ctx context.Context) {
 // tellRoute gives the daemon the route as it is now, if the session is registered. A server that
 // isn't yet, or whose daemon has gone, sends it in its next hello instead.
 func (l *link) tellRoute(ctx context.Context) {
+	l.routeMu.Lock()
+	defer l.routeMu.Unlock()
 	l.mu.Lock()
 	up, id, route := l.up, l.hello.ID, l.hello.Route
 	l.mu.Unlock()
@@ -1478,8 +1530,13 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 	l.native = id
 	l.hello.Native = id
 	l.hello.Child, l.hello.ParentNative = c.child, c.parent
+	var looked chan struct{}
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
+		if l.find != nil {
+			looked = make(chan struct{})
+			l.looked = looked
+		}
 	}
 	if !l.nativeClosed {
 		close(l.nativeSeenLocked()) // a first hello held back for it goes now (see holdFirstHello)
@@ -1513,7 +1570,11 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 		l.spawn(func() { l.tellRoute(ctx) })
 		return
 	}
+	// The call that brought the ID goes on now, and so does any later one that only reads; one that
+	// changes something waits for this (awaitThread). A session that isn't registered yet gets the
+	// thread into its hello instead, which the daemon reads the same way.
 	l.spawn(func() {
+		defer close(looked)
 		if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
 			l.tellRoute(ctx)
 		} else {
@@ -1653,23 +1714,32 @@ func (l *link) run(ctx context.Context) {
 			// (see Hello.ByThread).
 			l.hello.ID = id
 		}
-		// The thread may have been found after this hello was made, when tellRoute had no session
-		// to tell: the daemon hasn't got it.
-		stale, route, id := l.hello.Route != h.Route, l.hello.Route, l.hello.ID
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
+		// The route may have changed after this hello was made, when tellRoute had no session to tell:
+		// the daemon hasn't got it. A subagent's call that came meanwhile, or a T3 thread found then, is
+		// told before the link is up, so the call, which waits for this registration, goes on after the
+		// daemon has made the session a child or read whether its thread is a delegate's (#487, #966).
+		// The route is checked again in the hold of mu that puts the link up: one changed after that
+		// finds the link up, and its tellRoute sends it before the call goes on.
 		told := h.Route
-		if stale && route.Child {
-			// A subagent's call came while the hello was on its way: the daemon hears that the
-			// session is a child before the call, which waits for this registration, goes on.
+		l.routeMu.Lock()
+		for {
+			l.mu.Lock()
+			route, id := l.hello.Route, l.hello.ID
+			if route == told || !route.Child && route.T3Thread == told.T3Thread {
+				l.setLocked(true, nil)
+				l.mu.Unlock()
+				l.routeMu.Unlock()
+				break
+			}
+			l.mu.Unlock()
 			l.sendRoute(ctx, id, route)
 			told = route
 		}
-		l.set(true, nil)
-		// Anything learned since, up to the moment the link was up, when tellRoute could still
-		// find it down, is sent now.
+		// Anything else learned since the hello was made is sent now.
 		l.mu.Lock()
-		stale = l.hello.Route != told
+		stale := l.hello.Route != told
 		l.mu.Unlock()
 		if stale {
 			l.spawn(func() { l.tellRoute(ctx) })

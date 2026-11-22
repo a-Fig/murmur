@@ -336,18 +336,32 @@ func setTrustedHash(text, nl, key, hash string) (string, error) {
 		if nl == "\r\n" {
 			cr = "\r"
 		}
-		lines = append(lines[:at], append([]string{line + cr}, lines[at:]...)...)
+		add := line + cr
+		if at == len(lines) {
+			// After the file's last line, which has no newline: that line takes the CRLF it lacks,
+			// and the new one goes without one, as it did. A \r of its own at the very end would be
+			// a lone CR, which TOML forbids, and Codex would then refuse the file (#946, as #783).
+			if !strings.HasSuffix(lines[at-1], "\r") {
+				lines[at-1] += cr
+			}
+			add = line
+		}
+		lines = append(lines[:at], append([]string{add}, lines[at:]...)...)
 		return strings.Join(lines, "\n"), nil
 	}
 	var b strings.Builder
 	b.WriteString(text)
-	if text != "" && !strings.HasSuffix(text, "\n") {
+	final := text == "" || strings.HasSuffix(text, "\n") // a file without a final newline stays so
+	if !final {
 		b.WriteString(nl)
 	}
 	if strings.TrimSpace(text) != "" {
 		b.WriteString(nl)
 	}
-	b.WriteString("[hooks.state." + tomlKey(key) + "]" + nl + line + nl)
+	b.WriteString("[hooks.state." + tomlKey(key) + "]" + nl + line)
+	if final {
+		b.WriteString(nl)
+	}
 	return b.String(), nil
 }
 
@@ -400,6 +414,9 @@ func (e Env) installCodexHook(h agentHome) (did []string, err error) {
 		return nil, err
 	}
 	text, trustChanged, err := editCodexTrust(string(cb), trust)
+	if err == nil && trustChanged {
+		err = checkTOMLEdit(string(cb), text)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", cfg, err)
 	}

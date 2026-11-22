@@ -129,8 +129,16 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 
 	block := append([]string(nil), lines[start+1:end]...)
 	found := map[string]bool{}
+	open = ""
 	for i, raw := range block {
 		line := strings.TrimRight(raw, "\r")
+		// A line of a multi-line string is the value's, though it reads `args = [...]`: rewritten as
+		// the key, the user's value would change, and the file would still parse, so checkTOMLEdit
+		// wouldn't stop it (#968).
+		inString := open != ""
+		if open = tomlLineEnd(line, open); inString {
+			continue
+		}
 		path, val, ok := keyValue(line)
 		if !ok || len(path) != 1 {
 			continue
@@ -175,7 +183,8 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 	// table as ending. A comment below that line is the user's, about the table that follows: keys added
 	// below it would take it into Murmur's table, and uninstall would drop it with them (#755). A line
 	// of a multi-line string is the value's, whatever it starts with.
-	at, open := 0, ""
+	at := 0
+	open = ""
 	for i, raw := range block {
 		line := strings.TrimRight(raw, "\r")
 		inString := open != ""

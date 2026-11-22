@@ -64,6 +64,13 @@ type Repo struct {
 	emptyTree string
 
 	reader *gitx.Reader // set by KeepReader; nil reads with a git for each read
+
+	fetchMu  sync.Mutex
+	fetching map[string]bool // the refs of each Fetch running, by their prefix (fetchPrefix)
+	// dropFetched's record: how many of its deletes failed, and how many had when a sweep last
+	// worked (swept says one has).
+	dropsFailed, sweptAt int
+	swept                bool
 }
 
 // ReaderLinger is how long the git that KeepReader keeps stays after its last read. The daemon
@@ -148,7 +155,7 @@ func (r *Repo) ListRemote(ctx context.Context) (map[string]string, error) {
 	refs := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
 		sha, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if ok && strings.HasPrefix(ref, brand.RefRoot) {
+		if ok && strings.HasPrefix(ref, brand.RefRoot) && !strings.HasPrefix(ref, fetchPrefix) {
 			refs[ref] = sha
 		}
 	}
@@ -181,25 +188,117 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // whole history, since the server isn't told the clone has it; on a large repo #15's slow fetch
 // takes it. A clone with no bus refs yet offers nothing, which git warns of on stderr, where it
 // leads the error of a fetch that fails.
+//
+// It writes only the refs it names (--refmap=). Otherwise git also writes wherever the remote's
+// own fetch refspecs map each ref it brings, and a refspec can map a bus ref onto a branch, which
+// a fetch would then move under whoever has it checked out (#950).
+//
+// Nor does it write through a symbolic ref (#965). git fetch does: were refs/murmur/x a symbolic
+// ref to refs/heads/main, it would set main to the bus commit, under the checkout and index, and
+// the user's next commit would sit on bus history. So the fetch writes refs of its own, under a
+// name no other ref has (fetchPrefix), and a transaction then sets each bus ref itself
+// (--no-deref). A symbolic bus ref is replaced, as UpdateLocal says. All of a fetch's refs are
+// set, or none, which costs little: the daemon fetches each ref of a batch that failed on its own.
+// Unlike git fetch's, the transaction doesn't check what each ref held before, so a fetch that
+// lands late can rewind a ref the daemon just set, which, as above, does no harm.
 func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
+	own := fmt.Sprintf("%s%016x/", fetchPrefix, rand.Uint64())
+	r.fetchMu.Lock()
+	if r.fetching == nil {
+		r.fetching = map[string]bool{}
+	}
+	r.fetching[own] = true
+	r.fetchMu.Unlock()
 	args := []string{"-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
-		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
+		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip=" + brand.RefRoot + "*", r.Remote}
+	// update-ref reads a new value as git reads any name of an object, so each bus ref is set to
+	// what the fetch's own ref holds, read inside the transaction.
+	var set strings.Builder
+	var mine []string
 	for _, ref := range refs {
-		args = append(args, "+"+ref+":"+ref)
+		at := own + strings.TrimPrefix(ref, brand.RefRoot)
+		args = append(args, "+"+ref+":"+at)
+		fmt.Fprintf(&set, "update %s %s\n", ref, at)
+		mine = append(mine, at)
 	}
 	_, err := r.Git.Run(ctx, "", args...)
+	// The rest is local and quick, and has a deadline of its own: the fetch may have used up its
+	// own, and on Windows a git stopped by one is killed, and can leave a lock behind.
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if err == nil {
+		_, err = r.Git.Run(lctx, set.String(), "update-ref", "--no-deref", "--stdin")
+	}
+	r.dropFetched(lctx, own, mine)
 	return err
+}
+
+// fetchPrefix begins the refs a fetch writes before it sets the bus refs (Fetch). Each fetch takes
+// a name of its own under it, so none of its refs is one that was there before, symbolic or not.
+// It is under brand.RefRoot, so that `mur uninstall`'s advice removes any left behind and the
+// daemon's repairs of broken refs and stale locks reach them. Neither listing of bus refs, local
+// or remote, gives one.
+const fetchPrefix = brand.RefRoot + "fetch-"
+
+// dropFetched deletes the refs a fetch wrote (Fetch), under own, and any that earlier fetches left:
+// at the first fetch, those of a daemon stopped mid-fetch, and after a delete that failed, those
+// it didn't delete. A delete locks packed-refs, which another git can hold, for a moment or, if it
+// was killed, until someone removes the lock; so it is a step of its own, after the bus refs are
+// set, and one that fails only leaves refs that nothing reads. Refs of a fetch still running in
+// this process are kept; another daemon's, for the moment two run in one clone, are not, and its
+// fetch fails and is tried again.
+func (r *Repo) dropFetched(ctx context.Context, own string, mine []string) {
+	r.fetchMu.Lock()
+	delete(r.fetching, own)
+	failed := r.dropsFailed
+	sweep := !r.swept || r.sweptAt != failed
+	r.fetchMu.Unlock()
+	if sweep {
+		out, err := r.Git.Run(ctx, "", "for-each-ref", "--format=%(refname)", brand.RefRoot)
+		if err != nil {
+			out, sweep = "", false
+		}
+		r.fetchMu.Lock()
+		for _, ref := range strings.Fields(out) {
+			rest, ok := strings.CutPrefix(ref, fetchPrefix)
+			if !ok {
+				continue
+			}
+			name, _, _ := strings.Cut(rest, "/")
+			// Its own are already in mine, and a transaction that names a ref twice fails.
+			if at := fetchPrefix + name + "/"; at != own && !r.fetching[at] {
+				mine = append(mine, ref)
+			}
+		}
+		r.fetchMu.Unlock()
+	}
+	var drop strings.Builder
+	for _, ref := range mine {
+		fmt.Fprintf(&drop, "delete %s\n", ref)
+	}
+	_, err := r.Git.Run(ctx, drop.String(), "update-ref", "--no-deref", "--stdin")
+	r.fetchMu.Lock()
+	if err != nil {
+		r.dropsFailed++
+	} else if sweep {
+		// What failed after the count was read may not have been listed: it is swept next time.
+		r.swept, r.sweptAt = true, failed
+	}
+	r.fetchMu.Unlock()
 }
 
 // Push sets a remote ref to sha, or deletes it if sha is "". With Lease, expect is the value
 // the remote ref must have ("" meaning it must not exist), checked atomically by the server.
 //
 // Pushes skip the repo's hooks: a pre-push hook that runs the test suite on every message would
-// make the bus unusable, and these commits never reach a branch.
+// make the bus unusable, and these commits never reach a branch. Nor does a push of a bus ref
+// write a local ref (#950). After a push git sets, or deletes, the local ref that the remote's
+// fetch refspecs map the pushed ref to, and a refspec can map a bus ref onto a branch. So each
+// such push adds two refspecs of its own (noTracking).
 //
 // A push the server refuses as busy (see busyReasons) is sent again as it was, after a second or
 // so, up to pushTries times in all. Sending the same commit again can't write anything twice: if an
@@ -241,8 +340,8 @@ func busyWait(try int) time.Duration {
 
 // pushOnce is one try of Push. busy says the server refused it as busy, so it may be sent again.
 func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, expect string) (busy bool, err error) {
-	args := []string{"push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
-		"--recurse-submodules=no", r.Remote}
+	args := append(r.noTracking(ref), "push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
+		"--recurse-submodules=no", r.Remote)
 	switch mode {
 	case Force:
 		args = append(args, "--force")
@@ -293,24 +392,47 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	return busyReasons[reason], fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
 }
 
-// LocalRefs returns the local copies of bus refs.
+// noTracking are the options that keep a push of a bus ref from writing a local ref (#950). git
+// asks the remote's fetch refspecs which local ref tracks each ref the server says it updated, and
+// a negative refspec makes the answer none. git checks a negative refspec against what the other
+// refspecs map that ref to, not against the ref itself: git 2.31 to 2.53 do, and a pattern refspec
+// such as refs/murmur/*:refs/heads/x/* then got past one alone (seen 2026-11-21). The identity
+// refspec beside it maps every ref to itself, so the negative one rules each out first; a git that
+// checked the ref itself would rule it out too. Both cover all of refs/, not just the bus refs: a
+// server with a proc-receive hook can report the push under another name, such as a branch's
+// (Opus review). Other pushes, `mur init`'s to a branch, keep git's update of the tracking ref.
+func (r *Repo) noTracking(ref string) []string {
+	if !strings.HasPrefix(ref, brand.RefRoot) {
+		return nil
+	}
+	key := "remote." + r.Remote + ".fetch="
+	return []string{"-c", key + "refs/*:refs/*", "-c", key + "^refs/*"}
+}
+
+// LocalRefs returns the local copies of bus refs. A symbolic ref is no copy (#965): git would give
+// the commit of the ref it names, a branch's perhaps, and the daemon would build its log on the
+// user's history and push that to the bus.
 func (r *Repo) LocalRefs(ctx context.Context) (map[string]string, error) {
-	out, err := r.Git.Run(ctx, "", "for-each-ref", "--format=%(objectname) %(refname)", brand.RefRoot)
+	out, err := r.Git.Run(ctx, "", "for-each-ref", "--format=%(objectname) %(refname) %(symref)", brand.RefRoot)
 	if err != nil {
 		return nil, err
 	}
 	refs := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
-		if sha, ref, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
-			refs[ref] = sha
+		if f := strings.Fields(line); len(f) == 2 && !strings.HasPrefix(f[1], fetchPrefix) {
+			refs[f[1]] = f[0]
 		}
 	}
 	return refs, nil
 }
 
-// UpdateLocal points a local bus ref at sha.
+// UpdateLocal points a local bus ref at sha. A symbolic ref there is replaced, and the ref it
+// names left alone (--no-deref, #965); otherwise git would move that ref, which could be the
+// checked-out branch. Murmur replaces it rather than refusing: refs/murmur/ holds copies of the
+// remote's refs, which no symbolic ref is, and a refusal would leave that peer unread, or this
+// device unable to send, until someone found the ref and removed it by hand.
 func (r *Repo) UpdateLocal(ctx context.Context, ref, sha string) error {
-	_, err := r.Git.Run(ctx, "", "update-ref", ref, sha)
+	_, err := r.Git.Run(ctx, "", "update-ref", "--no-deref", ref, sha)
 	return err
 }
 
