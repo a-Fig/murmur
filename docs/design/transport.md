@@ -49,7 +49,10 @@ address once ([counting use](counting.md)).
   refs under a name of its own (`refs/murmur/fetch-<random>/`), and one `update-ref --no-deref`
   transaction sets the bus refs to what they hold. The fetch returns that, and the sync reads it,
   not the bus ref, which another write may have set since (#979). Of two writes to a bus ref the
-  one begun later stands, so a slow fetch that lands last can't rewind it. The daemon deletes the
+  one begun later stands, so a slow fetch that lands last can't rewind it. These sets go one at a
+  time, so none may wait long: git waits at most 100 ms for a ref another git holds locked, whatever
+  the clone's own lock timeout says, and a write waiting its turn gives up at its deadline
+  (#998). Before, a locked peer ref held a sent message's own ref up for 15 s. The daemon deletes the
   fetches' own refs on a timer, every 30 s, apart from the syncs (#978, #982). A delete locks
   `packed-refs`, which the user's own git can hold, and on Git for Windows it waits for that lock
   even for a ref that isn't there. A delete that fails is tried again after twice the wait, up to
