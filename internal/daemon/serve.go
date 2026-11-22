@@ -674,9 +674,14 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		if req.Route == nil {
 			return fail("route needs a route")
 		}
+		// A route that names a T3 thread at last, as a Codex session's does once a tool call has
+		// given its thread ID, is read as a hello's is: a delegate is one from the call that brought
+		// the route, not from the next refresh of the threads (#966).
+		thread := d.readHelloThread(ctx, *req.Route)
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		if s := d.sessions[sess]; s != nil {
+			d.noteHelloThreadLocked(thread, s.id) // in the same hold of mu as the route
 			d.setRouteLocked(s, *req.Route)
 		}
 		return proto.Response{OK: true, Self: from}

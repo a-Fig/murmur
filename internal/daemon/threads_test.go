@@ -236,3 +236,31 @@ func TestDelegateRegisteringDuringARefreshStaysOne(t *testing.T) {
 		}
 	}
 }
+
+// A Codex session in T3 registers before it knows its thread, and its server tells the daemon the
+// thread in a route once a tool call has given it (#966). The route is read as a hello is: the
+// delegate's send right after it is refused, and who doesn't list it, with no refresh of the
+// threads since.
+func TestDelegateIsOneFromItsLateRoute(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{
+		"thread-boss": {LastRun: time.Now()},
+		"thread-kid":  {Parent: "thread-boss", LastRun: time.Now()},
+	}}
+	b := newDeviceWith(t, remote, func(d *device) { d.titleEvery = time.Hour; d.threadState = threads.read })
+	boss, _ := b.sessionRoute("bbbbbb", "claude-boss", proto.Route{T3CLI: exe, T3Thread: "thread-boss"})
+	bossName := b.named(boss)
+
+	kid, _ := b.sessionRoute("k5k5k5", "", proto.Route{T3CLI: exe}) // a Codex server before its first call
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "k5k5k5", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-kid", Native: "codex-kid"}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if resp := b.trySend("k5k5k5", bossName, "from the delegate"); resp.OK || !strings.Contains(resp.Error, "delegate") {
+		t.Errorf("the delegate's first send: ok %v, error %q", resp.OK, resp.Error)
+	}
+	if b.listsSession(kid) {
+		t.Error("who lists the delegate")
+	}
+}

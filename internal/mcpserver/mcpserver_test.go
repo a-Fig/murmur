@@ -76,6 +76,9 @@ type fakeDaemon struct {
 	helloGate chan struct{}
 	// routeError, if set, is the daemon's answer to a route: one that has no such request.
 	routeError string
+	// routeDelay, if set, is how long a route takes to reach the daemon, so that a route sent
+	// without waiting for it is seen after a call that went on meanwhile.
+	routeDelay time.Duration
 	// sendReply, if set, is the daemon's answer to a send.
 	sendReply func(proto.Request) proto.Response
 	// helloReply, if set, may answer a hello in the daemon's place: an error to refuse it, or the
@@ -185,6 +188,9 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		return // the connection stays open until the test drops it
 	}
 	defer conn.Close()
+	if req.Op == proto.OpRoute && f.routeDelay > 0 {
+		time.Sleep(f.routeDelay)
+	}
 	f.mu.Lock()
 	if req.Op != proto.OpPing { // finding the daemon is the client's, and not a request of the session's
 		f.requests = append(f.requests, req)

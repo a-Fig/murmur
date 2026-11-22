@@ -30,7 +30,8 @@ import (
 //     off the mesh in the same ways, and goes through its parent (Tyler,
 //     2026-11-07): it can't send or set a status, and what it commits is credited to the session
 //     of its parent thread here, if there is one. A session that wants it messages the parent. A
-//     thread is read as its session registers too (readHelloThread, #945), so a delegate is one from
+//     thread is read as its session registers too (readHelloThread, #945), and as a route names it
+//     (a Codex session's, #966), so a delegate is one from
 //     its first operation; if that read fails, it is one from the next refresh, and the name it
 //     took meanwhile is seen by nobody.
 //
