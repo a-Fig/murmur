@@ -16,7 +16,10 @@ started.
   with `lineage.parentThreadId` (624 such threads on the laptop that day, none a user started), so
   it is off the mesh the same way as a settled one, and a refusal names its parent's session. It
   can't `send` or set a status; the refusal tells it to ask the thread that started it. Its commits
-  are credited to its parent's session. A name it took before its thread was read is seen by nobody.
+  are credited to its parent's session. The daemon reads a thread's state as its session registers,
+  whether a server or a shell command registers it, so a delegate's first `send` is refused and it
+  is never listed (#945). Only if that read fails is it on the mesh until the next refresh, and a
+  name it took then is seen by nobody.
   A Claude Code subagent inside one session never registers at all.
 - **Pi** (2026-11-11, #457) has no subagents of its own; packages add them. `pi-subagents` (0.31.0)
   runs each as a child `pi` that loads the user's extensions, Murmur's among them, and sets
