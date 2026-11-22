@@ -343,7 +343,9 @@ func RepeatsSubject(subject, body string) bool {
 	}
 	for _, end := range []string{"…", "..."} {
 		if stem, ok := strings.CutSuffix(subject, end); ok {
-			return strings.HasPrefix(body, stem)
+			// A subject is one line with its spaces collapsed, and the body keeps the text's own, so
+			// the two are compared word by word (#1049).
+			return strings.HasPrefix(body, stem) || strings.HasPrefix(strings.Join(strings.Fields(body), " "), strings.Join(strings.Fields(stem), " "))
 		}
 	}
 	return false

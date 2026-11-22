@@ -130,7 +130,7 @@ func TestCommandRequests(t *testing.T) {
 		// The old form, TO SUBJECT BODY, still means what it did.
 		{"send", []string{"a,b", "s", "b"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "s", Body: "b"}, false},
 		{"send", []string{"a", "s", "-"}, "the body\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "the body\n"}, false},
-		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: oneLine(long), Body: "the body"}, false},
+		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: mustSubject(long), Body: strings.TrimSpace(long) + "\n\nthe body"}, false},
 	} {
 		got, err := commandRequest(c.name, c.args, strings.NewReader(c.stdin), io.Discard)
 		if (err != nil) != c.bad {
@@ -247,6 +247,48 @@ func TestSubjectAndBodySolsEdges(t *testing.T) {
 	}
 }
 
+// mustSubject is the subject subjectFor makes of text.
+func mustSubject(text string) string {
+	s, _, _ := subjectFor(text)
+	return s
+}
+
+// A send with a body keeps all of a subject too long for one line: what the subject can't hold
+// goes at the top of the body, and a turn shows the body alone when the subject only repeats its
+// start (#1049, seen on 2026-11-22 as "…rather than ope..." and the rest gone). A subject that
+// fits, one whose lines joined fit, and a body the joined text would push over the daemon's cap,
+// are as before.
+func TestSendWithABodyKeepsALongSubject(t *testing.T) {
+	long := "Re: PR for a theme setting: my user has me on Figma only right now, so I'm passing your request to them rather than opening one myself"
+	s, b, err := subjectAndBody(long, "No PR from me.")
+	if err != nil || utf8.RuneCountInString(s) > maxSubject || b != long+"\n\nNo PR from me." {
+		t.Fatalf("a long subject with a body: %q, %q, %v", s, b, err)
+	}
+	if !view.RepeatsSubject(s, b) {
+		t.Errorf("a turn would print the cut subject %q and then the body that repeats it", s)
+	}
+
+	if s, b, err := subjectAndBody("Title\nmore of the subject", "the body"); err != nil || s != "Title more of the subject" || b != "the body" {
+		t.Errorf("a short subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	twoLong := "Title\n" + long
+	if s, b, err := subjectAndBody(twoLong, "the body"); err != nil || s != "Title" || b != long+"\n\nthe body" {
+		t.Errorf("a long subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	// Runs of spaces in the subject don't stop a turn from seeing the body repeats it.
+	spaced := strings.Replace(long, ". ", ".  ", -1) + ".  And  more  words  here."
+	if s, b, _ := subjectAndBody(spaced, "x"); !view.RepeatsSubject(s, strings.TrimSpace(b)) {
+		t.Errorf("a subject with double spaces: %q is not seen as repeating %q", s, b)
+	}
+	if s, b, err := subjectAndBody("fits", "the body"); err != nil || s != "fits" || b != "the body" {
+		t.Errorf("a subject that fits: %q, %q, %v", s, b, err)
+	}
+	full := strings.Repeat("b", bus.MaxBody-10)
+	if s, b, err := subjectAndBody(long, full); err != nil || b != full || utf8.RuneCountInString(s) != maxSubject {
+		t.Errorf("a body near the cap: %d runes, %d bytes, %v", utf8.RuneCountInString(s), len(b), err)
+	}
+}
+
 // A one-text send's body is the text as written, not as the daemon cleans it: the daemon checks
 // both for secrets, and a key a zero-width space splits from the next word is found only in the
 // raw one (Opus review of bb531e85). And `mur send` judges a text of malformed bytes by all of it.
@@ -268,7 +310,8 @@ func TestOneTextBodyIsRaw(t *testing.T) {
 	}
 }
 
-// A send with a real body is as it was, and no visible text of a one-text send is lost.
+// A send with a real body and a subject whose lines joined fit is as it was, and no visible text
+// of a one-text send is lost.
 func TestSubjectAndBodyKeepsEverything(t *testing.T) {
 	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait… more" || b != "the body" {
 		t.Errorf("a send with a body: %q, %q, %v", s, b, err)
