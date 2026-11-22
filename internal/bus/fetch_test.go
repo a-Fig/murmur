@@ -258,3 +258,62 @@ func TestAnOlderFetchDoesntRewindTheRef(t *testing.T) {
 		})
 	}
 }
+
+// A bus ref another git holds locked fails its write soon, even in a clone whose
+// core.filesRefLockTimeout says to wait forever: every Fetch and every send's UpdateLocal sets its
+// refs one at a time, and a send whose push had worked waited behind it, for another ref, until
+// the Fetch's deadline (#998).
+func TestALockedRefFailsItsWriteSoonAndHoldsUpNoOther(t *testing.T) {
+	f := newFetchRig(t) // not parallel: other tests set the package's testBeforeSet
+	peer, mine := brand.RefRoot+"mesh/peer", brand.RefRoot+"mesh/mine"
+	if out, err := exec.Command("git", "--git-dir="+f.local, "config", "core.filesRefLockTimeout", "-1").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v: %s", err, out)
+	}
+	sha := f.push(peer, "a peer's commit")
+	if _, err := f.r.Fetch(f.ctx, []string{peer}); err != nil {
+		t.Fatal(err)
+	}
+	defer f.lock(peer)()
+
+	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	locked := make(chan error, 1)
+	go func() { locked <- f.r.UpdateLocal(ctx, peer, sha) }()
+	if err := f.r.UpdateLocal(ctx, mine, sha); err != nil {
+		t.Fatalf("the write of an unlocked ref: %v", err)
+	}
+	if err := <-locked; err == nil {
+		t.Error("the write of the locked ref worked")
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("the writes took %s", took)
+	}
+	if f.at(mine) != sha {
+		t.Error("the unlocked ref wasn't set")
+	}
+}
+
+// A write that waits for another to finish setting refs gives up when its context ends (#998).
+func TestAWriteWaitingToSetRefsEndsWithItsContext(t *testing.T) {
+	f := newFetchRig(t) // not parallel: other tests set the package's testBeforeSet
+	peer, mine := brand.RefRoot+"mesh/peer", brand.RefRoot+"mesh/mine"
+	sha := f.push(peer, "a peer's commit")
+	if _, err := f.r.Fetch(f.ctx, []string{peer}); err != nil {
+		t.Fatal(err)
+	}
+	release := f.r.HoldSet()
+	defer release()
+	ctx, cancel := context.WithTimeout(f.ctx, 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.r.UpdateLocal(ctx, mine, sha) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("the write worked while another held the lock")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write was still waiting 10 s after its context ended")
+	}
+}

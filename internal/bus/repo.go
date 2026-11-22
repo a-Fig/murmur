@@ -71,7 +71,7 @@ type Repo struct {
 	lost     bool            // a Fetch couldn't list what it wrote, so the next Tidy looks at all
 	writes   uint64          // counts the Fetches and UpdateLocals begun, in the order they began
 
-	setMu  sync.Mutex        // held while bus refs are set (setRefs), so that setBy is as git has it
+	setMu  ctxMutex          // held while bus refs are set (setRefs), so that setBy is as git has it
 	setBy  map[string]uint64 // for each bus ref set, which write set it last, by its count in writes
 	tidyMu sync.Mutex        // one Tidy at a time
 }
@@ -288,9 +288,17 @@ var testBeforeSet func(refs []string)
 
 // setRefs sets each bus ref in tips to its commit, in one transaction, for the write'th write
 // (Fetch, UpdateLocal). A ref that a write begun later has set already is left as it is.
+//
+// Every Fetch and every send's UpdateLocal waits here, whatever ref it sets, so neither the wait
+// nor git's may be long (#998): the wait for setMu ends with ctx, and git waits at most
+// refLockWait for a ref another git holds locked, not for as long as the clone's
+// core.filesRefLockTimeout says, which -1 makes forever. A ref that stays locked fails its write,
+// which the caller tries again as after any failure.
 func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string) error {
-	r.setMu.Lock()
-	defer r.setMu.Unlock()
+	if err := r.setMu.lock(ctx); err != nil {
+		return err
+	}
+	defer r.setMu.unlock()
 	var set strings.Builder
 	var refs []string
 	for ref, sha := range tips {
@@ -303,7 +311,7 @@ func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string
 	if len(refs) == 0 {
 		return nil
 	}
-	if _, err := r.Git.Run(ctx, set.String(), "update-ref", "--no-deref", "--stdin"); err != nil {
+	if _, err := r.Git.Run(ctx, set.String(), "-c", refLockWait, "update-ref", "--no-deref", "--stdin"); err != nil {
 		return err
 	}
 	if r.setBy == nil {
@@ -314,6 +322,31 @@ func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string
 	}
 	return nil
 }
+
+// refLockWait is how long setRefs's git waits for a ref another git holds locked: git's own default,
+// 100 ms, which a clone's config may have changed.
+const refLockWait = "core.filesRefLockTimeout=100"
+
+// ctxMutex is a mutex whose wait ends with a context. Its zero value is unlocked.
+type ctxMutex struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func (m *ctxMutex) lock(ctx context.Context) error {
+	m.once.Do(func() { m.ch = make(chan struct{}, 1) })
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case m.ch <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *ctxMutex) unlock() { <-m.ch }
 
 // fetchPrefix begins the refs a fetch writes before it sets the bus refs (Fetch). Each fetch takes
 // a name of its own under it, so none of its refs is one that was there before, symbolic or not.
