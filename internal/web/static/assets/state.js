@@ -37,6 +37,8 @@ const ui = {
   recentWho: "", // or only one session's, by name
   settings: null,
   settingsError: "",
+  updates: null, // the machine's update setting (#1045), loaded when Settings opens
+  updatesBusy: false, // a change to it is on its way
   preferenceError: "",
   rowErrors: {},
   filter: null, // a session name

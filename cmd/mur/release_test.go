@@ -57,3 +57,21 @@ func TestReleaseWatch(t *testing.T) {
 		t.Errorf("dev build told of %s", v.Latest)
 	}
 }
+
+// The page tells updates turned off from a failed check, and shows a release going back to
+// stable installed even though it is older than the one running (#1045).
+func TestReleaseWatchOffAndGoingBack(t *testing.T) {
+	w := newReleaseWatch("0.3.1-nightly.20261121", t.TempDir())
+	w.report(update.Status{Off: true})
+	if v := w.page(); !v.Off || v.Auto {
+		t.Errorf("off: %+v", v)
+	}
+	w.report(update.Status{Latest: "0.3.2", Failed: true})
+	if v := w.page(); v.Off || v.Auto {
+		t.Errorf("failed: %+v", v)
+	}
+	w.report(update.Status{Latest: "0.3.0", Installed: true})
+	if v := w.page(); v.Latest != "0.3.0" || v.Off {
+		t.Errorf("gone back to stable: %+v", v)
+	}
+}

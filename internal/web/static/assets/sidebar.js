@@ -16,6 +16,7 @@ import { tagsOf, shownSessions, tagsGroup, tagButton } from "./tags.js";
 import { avatar, deviceColor, copyText, modeNote } from "./messages.js";
 import { startChat, askForName } from "./picker.js";
 import { settingsRow } from "./settings.js";
+import { updatesRow } from "./updates.js";
 
 export {
   setDrawer, pickSession, connBadge, sidebar, humanTag, restartStuck, updateInfo, versionSection,
@@ -356,7 +357,7 @@ function updateInfo() {
   if (v.ready) return { kind: "ready", text: "Restart to update", title: NAME + to + " is installed. Restart its daemon onto it now.", act: restartNow };
   if (!v.latest) return null;
   if (v.auto) return { kind: "auto", text: "Updating to " + v.latest, title: NAME + " installs it on its own." };
-  return { kind: "manual", text: v.latest + " is out", title: "Updates are off or failing here. Settings has the command that installs it.", act: () => go("settings") };
+  return { kind: "manual", text: v.latest + " is out", title: (v.off ? "Updates are off here." : "The last update failed here.") + " Settings has the command that installs it.", act: () => go("settings") };
 }
 
 function updateIcon(info) {
@@ -415,7 +416,7 @@ function versionSection() {
   } else if (v.latest && v.auto) {
     description = v.latest + " is out, and installing on its own.";
   } else if (v.latest) {
-    description = v.latest + " is out. Updates are off or failing here; this installs it:";
+    description = v.latest + (v.off ? " is out. Updates are off here; this installs it:" : " is out. The last update failed here; this installs it:");
   }
   const row = settingsRow("version", NAME + " " + v.running, description, control);
   if (v.latest && !v.auto && !v.ready && !ui.restarting && v.install) {
@@ -432,7 +433,7 @@ function versionSection() {
       ),
     );
   }
-  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row));
+  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row, updatesRow()));
 }
 
 // The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking

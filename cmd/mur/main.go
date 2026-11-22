@@ -67,6 +67,10 @@ For humans:
   mur nickname [NAME|--clear]   call this clone's device NAME, such as your own name: teammates see it
                                 beside the device's ID; --clear takes it off; alone, says what the
                                 device is called
+  mur updates [off|on|nightly|back]
+                                how Murmur updates itself on this machine: off, stable releases (on),
+                                or prereleases and nightlies too; back goes back to the latest stable
+                                from a prerelease, until a newer release is out; alone, says what applies
   mur stop                      stop this clone's daemon
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.
@@ -134,6 +138,8 @@ func main() {
 		err = runJoin(ctx, args, os.Stdout)
 	case "nickname":
 		err = runNickname(ctx, args, os.Stdout)
+	case "updates":
+		err = runUpdates(ctx, args, os.Stdout)
 	case "stop":
 		err = runStop(ctx, args, os.Stdout)
 	case "rotate":
@@ -300,6 +306,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	log.SetOutput(out)
 	logger := log.New(out, "", log.LstdFlags)
 	releases := newReleaseWatch(version, *gitDir)
+	updates := updateSetting{running: version, gitDir: *gitDir, check: make(chan struct{}, 1)}
 	inherited := page
 	page = nil // Run takes it
 	// The record of this machine's clones, for the page's repo picker (#348). Without it the page
@@ -320,9 +327,10 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		Clones: record, Repos: repos, ThemePath: themePath,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report, Check: updates.check}, restart)
 		},
 		Version: releases.page,
+		Updates: updates,
 		Report: func(ctx context.Context) {
 			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})

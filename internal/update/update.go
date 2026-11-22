@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
@@ -38,6 +37,9 @@ type Options struct {
 	Getenv   func(string) string
 	Log      *log.Logger
 	Every    time.Duration
+	// Check asks for a check soon, as when a person changes the update setting: at once, or
+	// checkGap after the last one. Nil: only the hourly ones.
+	Check <-chan struct{}
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -61,13 +63,9 @@ type Status struct {
 // After says release version a comes after b. Development builds ("-dev") never do.
 func After(a, b string) bool { return newer(a, b) }
 
+// Off says updates are off in the clone at gitDir: MURMUR_NO_UPDATE, or murmur.update false.
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
-	v := strings.TrimSpace(getenv("MURMUR_NO_UPDATE"))
-	if v != "" && v != "0" && !strings.EqualFold(v, "false") {
-		return true
-	}
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--type=bool", "--get", "murmur.update")
-	return err == nil && strings.TrimSpace(out) == "false"
+	return envOff(getenv) || last(configValues(ctx, gitDir, updateKey, "--type=bool"), "").value == "false"
 }
 
 // Prerelease says whether git config chooses the prerelease channel (`murmur.channel prerelease`),
@@ -75,9 +73,12 @@ func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 // channel. It is a key of its own because daemons from before it read murmur.update as a bool, and
 // they ignore this one, so they keep taking stable releases until one of those brings the channel.
 func Prerelease(ctx context.Context, gitDir string) bool {
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--get", "murmur.channel")
-	return err == nil && strings.EqualFold(strings.TrimSpace(out), "prerelease")
+	return strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "").value, "prerelease")
 }
+
+// checkGap is the least time between a check and one a changed setting asks for (Options.Check),
+// so that clicking through the choices can't spend GitHub's hourly allowance for this address.
+var checkGap = 10 * time.Second
 
 // Run checks immediately and hourly. Network failures wait quietly until the next check.
 // A successful install calls restart once; its caller waits for handoffs before stopping.
@@ -128,12 +129,17 @@ func Run(ctx context.Context, o Options, restart func()) {
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var checked time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-o.Check:
+			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			continue
 		case <-timer.C:
 		}
+		checked = time.Now()
 		if Off(ctx, o.Getenv, o.GitDir) {
 			report(Status{Off: true})
 		} else {
@@ -231,7 +237,14 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
-	rel, err := pick(ctx, o, Prerelease(ctx, o.GitDir))
+	// Going back to stable from a prerelease (Back) takes the latest stable release, older or not.
+	// After that, nothing installs that isn't newer than the prerelease, on either channel.
+	skip := skipped(ctx, o.GitDir, o.Version)
+	if skip == "" {
+		clearSkip(ctx, o)
+	}
+	back := skip != "" && same(skip, o.Version)
+	rel, err := pick(ctx, o, !back && Prerelease(ctx, o.GitDir))
 	if err != nil {
 		return false, latest, err
 	}
@@ -240,8 +253,15 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
-	if !newer(rel.Tag, o.Version) {
+	switch {
+	case back:
+		if same(rel.Tag, o.Version) {
+			return false, latest, nil
+		}
+	case !newer(rel.Tag, o.Version):
 		return false, latest, nil
+	case skip != "" && !newer(rel.Tag, skip):
+		return false, "", nil // held back: nothing to show, nothing to install
 	}
 	name := assetName(o.OS, o.Arch)
 	if name == "" {
@@ -280,8 +300,22 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
+	if !back {
+		clearSkip(ctx, o) // a release newer than the one gone back from is in place
+	}
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
+}
+
+// clearSkip takes murmur.updateSkip off once it holds nothing back, so a later prerelease that
+// misbehaves starts from no hold. It is the global key Back writes; a repo's own is left alone.
+func clearSkip(ctx context.Context, o Options) {
+	if last(configValues(ctx, o.GitDir, skipKey), "global").value == "" {
+		return
+	}
+	if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
+		o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+	}
 }
 
 type release struct {
@@ -513,13 +547,19 @@ func Checked(gitDir string) time.Time {
 	return fi.ModTime()
 }
 
-// Newer returns the latest release the clone's daemon last saw, if it is newer than version, else "".
+// Newer returns the latest release the clone's daemon last saw, if it is newer than version and
+// not held back by a return to stable (Back), else "".
 func Newer(gitDir, version string) string {
 	var l latest
 	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
 		json.Unmarshal(b, &l)
 	}
-	if l.Latest != "" && newer(l.Latest, version) {
+	if l.Latest == "" || !newer(l.Latest, version) {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if skip := skipped(ctx, gitDir, version); skip == "" || newer(l.Latest, skip) {
 		return l.Latest
 	}
 	return ""

@@ -1852,6 +1852,13 @@ a.g-pr:hover {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+/* Updates: going back to stable, when offered, beside the choices (#1045). */
+.updates-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
 /* A fold of per-session rows under a device default. */
 .row-fold {
   display: flex;

@@ -43,16 +43,32 @@ updater need one manual install to get it.
     new daemon detaches it before taking it up.
 - **On the page**, a newer release shows above Settings: "Restart to update" while an installed
   update waits on the open page, "Updating to X" while the daemon will install it, and "X is out"
-  with the install command when updates are off or the last check failed. It learns the latest
-  release from the updater, else from the `latest.json` a daemon in this clone recorded, and never
-  asks GitHub itself; `mur version` hears of newer releases the same way.
-- **Opting out.** `git config --global murmur.update false`; a repo's own git config overrides it,
-  and it is read on each check. `MURMUR_NO_UPDATE=1` opts out a daemon started with it. Agents
-  explain updates and the opt-out before joining (`docs/agents/join.md`). `git config murmur.channel
-  prerelease` opts into prereleases and nightlies (#244, Tyler, 2026-11-08), so a release runs on
-  our own machines before a stable tag sends it to everyone (`docs/releasing.md`). A binary shared
-  across clones shares their update settings too, so to keep every clone from updating it, use the
-  global setting without local overrides.
+  with the install command when updates are off here or the last check failed, which it says apart.
+  It learns the latest release from the updater, else from the `latest.json` a daemon in this clone
+  recorded, and never asks GitHub itself; `mur version` hears of newer releases the same way.
+- **The setting** (#1045, Tyler, 2026-11-22) is one per machine: Off, On (stable releases, the
+  default) or On, nightly (prereleases and nightlies too), in Settings' About and as `mur updates
+  [off|on|nightly]`. It is the global git config, since one binary serves every clone: Off is
+  `murmur.update false`, nightly is `murmur.channel prerelease` (#244, so a release runs on our own
+  machines before a stable tag sends it to everyone, `docs/releasing.md`), and On is neither. Both
+  are read on each check, so a change needs no restart; the page's change also asks its daemon for a
+  check within seconds (10 s apart at most, against GitHub's hourly allowance per address), while
+  other clones' daemons and `mur updates` wait for the hourly one.
+  - *Overrides.* A repo's own git config, the system's, and `MURMUR_NO_UPDATE=1` on the daemon
+    still win, as git's order has them. The page and `mur updates` show the machine's choice and,
+    under it, what applies here and why ("Off here: this repo's git config sets murmur.update"),
+    so a choice that isn't in effect never shows as if it were. The endpoint (`/api/updates`) takes
+    the page's token, as every call does, and only the three choices.
+  - *From nightly to On* doesn't go back to an older stable release: the updater installs only a
+    version newer than the one running, so a nightly stays until a stable release passes it.
+- **Going back to stable** (#1045, Tyler, 2026-11-22), for a prerelease that misbehaves. "Go back to
+  stable" in Settings, or `mur updates back`, is offered only while a prerelease runs and updates
+  are on here. It writes the prerelease's version to the global `murmur.updateSkip`, and the next
+  check installs GitHub's latest stable release in its place, older or not, through the same
+  verified download, rename and restart; never an older one than that. From then on nothing installs
+  that isn't newer than the prerelease, on either channel: the next nightly after it, or the next
+  stable after it, and the page says which ("On stable until the next nightly after X"). The key is
+  taken off once a newer version is in place, or found running.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.

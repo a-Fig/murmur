@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -49,12 +51,54 @@ func (w *releaseWatch) page() web.Version {
 	if !w.last.Installed && w.recorded != "" && (latest == "" || update.After(w.recorded, latest)) {
 		latest = w.recorded
 	}
-	if latest != "" && update.After(latest, w.running) {
+	// An installed release is shown even when it is older: going back to stable from a
+	// prerelease (#1045) installs one, and a restart starts it.
+	if latest != "" && (w.last.Installed || update.After(latest, w.running)) {
 		// A prerelease (on the prerelease channel) is pinned: the installers' default is older.
 		v.Latest, v.Install = latest, installLine(latest)
 	}
 	// Until the updater's first check, which waits for the daemon's first sync, updates count as
 	// on: they are unless turned off, and the first check says so within seconds.
 	v.Auto = !w.heard || (!w.last.Off && !w.last.Failed)
+	v.Off = w.heard && w.last.Off
 	return v
+}
+
+// updateSetting is the page's Updates (#1045): the machine's setting in the global git config. A
+// change asks the updater for a check soon, so a choice of On, or going back to stable, takes
+// effect in seconds rather than at the hourly check, and the page's banner follows a choice of Off.
+type updateSetting struct {
+	running, gitDir string
+	check           chan struct{}
+}
+
+func (u updateSetting) nudge() {
+	select {
+	case u.check <- struct{}{}:
+	default: // one is already asked for
+	}
+}
+
+func webSetting(s update.Setting) web.UpdateSetting {
+	return web.UpdateSetting{Choice: s.Choice, Effective: s.Effective, Why: s.Why, Hold: s.Hold, CanGoBack: s.CanGoBack}
+}
+
+func (u updateSetting) UpdateSetting(ctx context.Context) (web.UpdateSetting, error) {
+	return webSetting(update.Read(ctx, os.Getenv, u.gitDir, u.running)), nil
+}
+
+func (u updateSetting) SetUpdates(ctx context.Context, choice string) (web.UpdateSetting, error) {
+	s, err := update.Set(ctx, os.Getenv, u.gitDir, u.running, choice)
+	if err == nil {
+		u.nudge()
+	}
+	return webSetting(s), err
+}
+
+func (u updateSetting) BackToStable(ctx context.Context) (web.UpdateSetting, error) {
+	s, err := update.Back(ctx, os.Getenv, u.gitDir, u.running)
+	if err == nil {
+		u.nudge()
+	}
+	return webSetting(s), err
 }

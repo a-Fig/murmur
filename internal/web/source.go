@@ -108,6 +108,9 @@ type Version struct {
 	// Auto says Latest is being installed without the user: updates are on and the last check
 	// went through.
 	Auto bool `json:"auto,omitempty"`
+	// Off says the last check found updates off here, so Latest isn't coming on its own; else a
+	// Latest that isn't Auto is one whose check or install failed.
+	Off bool `json:"off,omitempty"`
 	// Install is the command that installs the latest release by hand, for this OS.
 	Install string `json:"install,omitempty"`
 	// Daemon tells this daemon from the one that replaces it, even at the same version (a
