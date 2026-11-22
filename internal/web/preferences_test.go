@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,5 +47,26 @@ func TestSharedThemeAcrossServers(t *testing.T) {
 	html, err := io.ReadAll(resp.Body)
 	if err != nil || !strings.Contains(string(html), `data-theme="light"`) {
 		t.Fatalf("second clone should paint in Light before JavaScript: status %d, error %v", resp.StatusCode, err)
+	}
+}
+
+func TestFilterSaveWhenThemeFileIsUnavailable(t *testing.T) {
+	// A directory in place of the theme file makes reads fail even when tests run as root.
+	path := filepath.Join(t.TempDir(), "theme")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var saved Preferences
+	var server Server
+	if err := server.WithPreferences(Preferences{Theme: "sky"}, path, func(p Preferences) error {
+		saved = p
+		return nil
+	}); err == nil {
+		t.Fatal("import should fail when the theme file can't be read")
+	}
+	w := httptest.NewRecorder()
+	server.updatePreferences(w, httptest.NewRequest(http.MethodPatch, "/api/preferences", strings.NewReader(`{"onlyMine":true}`)))
+	if w.Code != http.StatusOK || saved.Theme != "sky" || saved.OnlyMine == nil || !*saved.OnlyMine {
+		t.Fatalf("filter should save without losing the old theme: status %d, saved %+v", w.Code, saved)
 	}
 }

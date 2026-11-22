@@ -61,7 +61,9 @@ func (s *Server) WithPreferences(p Preferences, themePath string, save func(Pref
 	s.preferences, s.savePreferences, s.themePath = p, save, themePath
 	if themePath != "" && p.Theme != "" {
 		_, err := saveTheme(themePath, p.Theme, true)
-		s.preferences.Theme = ""
+		if err == nil {
+			s.preferences.Theme = ""
+		}
 		return err
 	}
 	return nil
@@ -72,7 +74,8 @@ func (s *Server) currentPreferences() Preferences {
 	defer s.prefMu.Unlock()
 	p := s.preferences
 	if s.themePath != "" {
-		p.Theme, _ = ReadTheme(s.themePath)
+		shared, _ := ReadTheme(s.themePath)
+		p.Theme = cmp.Or(shared, p.Theme)
 	}
 	return p
 }
@@ -95,14 +98,31 @@ func (s *Server) updatePreferences(w http.ResponseWriter, r *http.Request) {
 	}
 	s.prefMu.Lock()
 	defer s.prefMu.Unlock()
-	theme := ""
+	importing := r.Method == http.MethodPost
+	var shared string
 	if s.themePath != "" {
-		theme, p.Theme = p.Theme, ""
+		if p.Theme == "" {
+			shared, _ = ReadTheme(s.themePath)
+		} else {
+			var err error
+			shared, err = saveTheme(s.themePath, p.Theme, importing)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "couldn't save page preferences")
+				return
+			}
+		}
 	}
 	was := s.preferences
 	next := Preferences{cmp.Or(p.Theme, was.Theme), cmp.Or(p.OnlyMine, was.OnlyMine), cmp.Or(p.TagsFolded, was.TagsFolded)}
-	if r.Method == http.MethodPost {
+	if importing {
 		next = Preferences{cmp.Or(was.Theme, p.Theme), cmp.Or(was.OnlyMine, p.OnlyMine), cmp.Or(was.TagsFolded, p.TagsFolded)}
+	}
+	if s.themePath != "" {
+		// Keep an old clone theme on disk until the shared file can take it.
+		next.Theme = was.Theme
+		if shared != "" || p.Theme != "" {
+			next.Theme = ""
+		}
 	}
 	if next != was && s.savePreferences != nil {
 		if err := s.savePreferences(next); err != nil {
@@ -111,17 +131,6 @@ func (s *Server) updatePreferences(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.preferences = next
-	if s.themePath != "" {
-		var err error
-		if theme == "" {
-			next.Theme, err = ReadTheme(s.themePath)
-		} else {
-			next.Theme, err = saveTheme(s.themePath, theme, r.Method == http.MethodPost)
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "couldn't save page preferences")
-			return
-		}
-	}
+	next.Theme = cmp.Or(shared, next.Theme)
 	writeJSON(w, next)
 }

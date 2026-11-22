@@ -27,6 +27,14 @@ func ReadTheme(path string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
+	theme, err := readThemeFile(path)
+	if !validTheme(theme) {
+		theme = ""
+	}
+	return theme, err
+}
+
+func readThemeFile(path string) (string, error) {
 	var b []byte
 	err := retryThemeFile(func() (err error) {
 		b, err = os.ReadFile(path)
@@ -35,11 +43,7 @@ func ReadTheme(path string) (string, error) {
 		}
 		return err
 	})
-	theme := strings.TrimSpace(string(b))
-	if !validTheme(theme) {
-		theme = ""
-	}
-	return theme, err
+	return strings.TrimSpace(string(b)), err
 }
 
 func saveTheme(path, theme string, importing bool) (string, error) {
@@ -56,8 +60,11 @@ func saveTheme(path, theme string, importing bool) (string, error) {
 		return "", err
 	}
 	defer lock.Close()
-	current, err := ReadTheme(path)
+	current, err := readThemeFile(path)
 	if err != nil || current == theme || importing && current != "" {
+		if !validTheme(current) {
+			current = ""
+		}
 		return current, err
 	}
 	f, err := os.CreateTemp(dir, ".theme-*")
