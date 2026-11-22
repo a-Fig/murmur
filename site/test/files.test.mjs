@@ -176,9 +176,9 @@ test('llms.txt follows llmstxt.org and says when to use Murmur', () => {
   }
 });
 
-test('the tests and package.json are not published with the site', () => {
+test('the tests, the npm files and node_modules are not published with the site', () => {
   const ignored = read('.assetsignore').split('\n');
-  assert.ok(ignored.includes('test') && ignored.includes('package.json'));
+  for (const name of ['test', 'package.json', 'package-lock.json', 'node_modules']) assert.ok(ignored.includes(name), name);
 });
 
 test('the home page\'s links within the page each lead to a section on it, and the hero leads to Setup', () => {

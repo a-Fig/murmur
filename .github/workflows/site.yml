@@ -6,9 +6,9 @@
 # It needs two repo secrets: CLOUDFLARE_API_TOKEN, a token with the "Edit Cloudflare Workers"
 # permissions for the account and the afig.dev zone, and CLOUDFLARE_ACCOUNT_ID. Without them the
 # job warns and deploys nothing. D1 migrations (site/migrations) are still applied by hand, since one
-# changes data that a redeploy can't undo: a push that adds one fails here instead of deploying code
-# ahead of its schema. Apply it (`npx wrangler d1 migrations apply murmur-usage --remote`), then run
-# this workflow by hand.
+# changes data that a redeploy can't undo: a push that changes site/migrations since the last
+# successful run fails here instead of deploying code ahead of its schema. Apply it (`npx wrangler d1
+# migrations apply murmur-usage --remote`), then run this workflow by hand.
 name: site
 
 on:
@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # to find the last successful run, which the migration check compares against
 
 # One deploy at a time, in push order, so an older commit never lands after a newer one.
 concurrency:
@@ -40,6 +41,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+          # The migration check diffs against an older commit. Without blobs the whole history is small.
+          fetch-depth: 0
+          filter: blob:none
       # The same tests a pull request runs (test.yml), on the runner's own node as there, so a commit
       # pushed to main without one can't publish a broken site. On node 22 the census's deadline tests
       # end with their promises pending (2026-11-22, the first run), so the tests come before setup-node.
@@ -48,24 +52,36 @@ jobs:
       - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           node-version: 22
-      - name: Stop if the push adds a D1 migration
+      # Compared with the commit the last successful run deployed, not with the push's `before`: a
+      # push after one this check stopped, or after one whose queued run a newer push cancelled, would
+      # otherwise deploy that push's migration unapplied (#943). A run by hand skips the check, since
+      # it's how a migration is marked applied, and becomes the next run's base.
+      - name: Stop if site/migrations changed since the last deploy
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
         run: |
-          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER" --jq '.files[].filename')
-          if echo "$files" | grep -q '^site/migrations/'; then
-            echo "::error::This push adds a D1 migration. Apply it, then run this workflow by hand."
+          base=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/site.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty')
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}"; then
+            echo "::error::Found no earlier successful deploy to compare site/migrations with. Apply any new migration, then run this workflow by hand."
+            exit 1
+          fi
+          changed=$(git diff --no-renames --name-only "$base" HEAD -- site/migrations)
+          if [ -n "$changed" ]; then
+            echo "::error::site/migrations changed since $base, the last deploy: $changed. Apply it, then run this workflow by hand."
             exit 1
           fi
       - if: env.HAS_TOKEN != 'true'
         run: echo "::warning::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID isn't set, so the site wasn't deployed."
+      # wrangler and every package under it, from site/package-lock.json, installed in a step without
+      # the Cloudflare secrets (#949). `npx wrangler@x` pinned only wrangler itself, and resolved the
+      # rest at deploy time, with the token in the environment.
+      - if: env.HAS_TOKEN == 'true'
+        working-directory: site
+        run: npm ci
       - if: env.HAS_TOKEN == 'true'
         working-directory: site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        # Pinned: an unpinned npx takes whatever wrangler was published last.
-        run: npx --yes wrangler@4.103.0 deploy
+        run: node_modules/.bin/wrangler deploy
