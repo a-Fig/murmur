@@ -22,7 +22,7 @@ function inline(text) {
   let s = text.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
   s = escape(s)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/https:\/\/[^\s<]+[^\s<.,;:)]/g, url => {
+    .replace(/https:\/\/[^\s<&]+[^\s<&.,;:)]/g, url => {
       const design = /\/docs\/design\/([\w-]+\.md)/.exec(url)?.[1];
       return `<a href="${url}">${design ? 'docs/design/' + design : url.replace(/^https:\/\//, '')}</a>`;
     });
