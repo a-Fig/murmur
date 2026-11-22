@@ -167,3 +167,38 @@ func TestDelegateIsReachedThroughItsParent(t *testing.T) {
 		t.Errorf("the parent's send: %q", resp.Error)
 	}
 }
+
+// A delegate is one from its first operation (#945), with no refresh of the threads since it
+// registered: a shell command's session on a cold daemon, and a server's in a thread registering
+// for the first time on a daemon already at work. Its first send is refused, and who never lists
+// it.
+func TestDelegateIsOneFromItsFirstOperation(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{
+		"thread-boss": {LastRun: time.Now()},
+		"thread-cmd":  {Parent: "thread-boss", LastRun: time.Now()},
+		"thread-srv":  {Parent: "thread-boss", LastRun: time.Now()},
+	}}
+	// The threads are read at the daemon's start, before any session, and not again for an hour.
+	b := newDeviceWith(t, remote, func(d *device) { d.titleEvery = time.Hour; d.threadState = threads.read })
+
+	cmd := commandHello(t, b, "c3c3c3", exe, "thread-cmd") // the daemon's first session
+	boss, _ := b.sessionRoute("bbbbbb", "claude-boss", proto.Route{T3CLI: exe, T3Thread: "thread-boss"})
+	bossName := b.named(boss)
+	if resp := b.trySend("c3c3c3", bossName, "from the command"); resp.OK || !strings.Contains(resp.Error, "delegate") {
+		t.Errorf("the command delegate's first send: ok %v, error %q", resp.OK, resp.Error)
+	}
+
+	srv, _ := b.sessionRoute("d4d4d4", "claude-srv", proto.Route{T3CLI: exe, T3Thread: "thread-srv"})
+	if resp := b.trySend("d4d4d4", bossName, "from the server"); resp.OK || !strings.Contains(resp.Error, "delegate") {
+		t.Errorf("the server delegate's first send: ok %v, error %q", resp.OK, resp.Error)
+	}
+	if b.listsSession(cmd) || b.listsSession(srv) {
+		t.Errorf("who lists a delegate: command %v, server %v", b.listsSession(cmd), b.listsSession(srv))
+	}
+	if resp := b.trySend("bbbbbb", bossName, "the parent's own"); !resp.OK {
+		t.Errorf("the parent's send: %q", resp.Error)
+	}
+}

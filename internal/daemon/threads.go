@@ -11,6 +11,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -28,8 +29,10 @@ import (
 //     subagent thread; and a session a hook or Codex's state says another started, see codexkids.go) is
 //     off the mesh in the same ways, and goes through its parent (Tyler,
 //     2026-11-07): it can't send or set a status, and what it commits is credited to the session
-//     of its parent thread here, if there is one. A session that wants it messages the parent. It
-//     may have taken a name before its thread was read; nobody sees the name.
+//     of its parent thread here, if there is one. A session that wants it messages the parent. A
+//     thread is read as its session registers too (readHelloThread, #945), so a delegate is one from
+//     its first operation; if that read fails, it is one from the next refresh, and the name it
+//     took meanwhile is seen by nobody.
 //
 // The database is read every TitleEvery, outside every lock, one query per thread, for the threads
 // of the sessions here and of those stopped whose route is kept. What was last read stands while a
@@ -380,6 +383,55 @@ func (d *Daemon) refreshThreads(ctx context.Context) {
 	if changed || kids {
 		d.kickPush()
 	}
+}
+
+// helloThread is the state of the T3 thread a hello names, read as the session registers (#945);
+// ok is false when nothing was read.
+type helloThread struct {
+	key threadKey
+	st  t3db.State
+	at  time.Time
+	ok  bool
+}
+
+// readHelloThread reads, outside every lock, the state of the T3 thread route names, if nothing has
+// been read of it yet. A refresh reads a thread only after a session is in it, so without this a
+// delegate registering would be on the mesh until the next one: its first send would go out, and
+// who would list it. That is how the hook's fallback holds a route (findHookThreads, #886), done here
+// in the hello. A failed read is left to the refresh, which logs it.
+func (d *Daemon) readHelloThread(ctx context.Context, route proto.Route) helloThread {
+	if route.T3CLI == "" || route.T3Thread == "" {
+		return helloThread{}
+	}
+	k := threadKey{route.T3Home, route.T3Thread}
+	d.mu.Lock()
+	_, known := d.threads[k]
+	d.mu.Unlock()
+	if known {
+		return helloThread{}
+	}
+	threadState := d.opt.ThreadState
+	if threadState == nil {
+		threadState = t3db.StateOf
+	}
+	at := time.Now()
+	st, err := threadState(ctx, route.T3CLI, route.T3Home, route.T3Thread)
+	if err != nil {
+		return helloThread{}
+	}
+	return helloThread{key: k, st: st, at: at, ok: true}
+}
+
+// noteHelloThreadLocked keeps what readHelloThread read, unless a refresh has read the thread since.
+// Caller holds mu.
+func (d *Daemon) noteHelloThreadLocked(t helloThread) {
+	if !t.ok {
+		return
+	}
+	if _, known := d.threads[t.key]; known {
+		return
+	}
+	d.threads[t.key], d.threadRead[t.key] = t.st, t.at
 }
 
 // threadStateLocked is what T3's database last said about the thread session id is in, and false
