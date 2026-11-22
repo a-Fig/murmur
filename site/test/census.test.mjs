@@ -324,11 +324,26 @@ test('a run in which every repo is skipped or unreadable fails', async t => {
 });
 
 // GitHub's API, never answering: each request waits until it is aborted.
+//
+// A real fetch holds a socket open while it waits. This one holds a timer, because the abort comes
+// from AbortSignal.timeout, whose own timer doesn't keep node running: with nothing else pending,
+// node 22's test runner took the test as never ending, and cancelled it and every test after it
+// in the file (#933).
 function hangingApi(t) {
   const asked = [];
+  const held = new Set();
+  t.after(() => held.forEach(clearInterval));
   t.mock.method(globalThis, 'fetch', (url, init) => {
     asked.push(String(url));
-    return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+    const hold = setInterval(() => {}, 1000);
+    held.add(hold);
+    return new Promise((_, reject) =>
+      init.signal.addEventListener('abort', () => {
+        clearInterval(hold);
+        held.delete(hold);
+        reject(init.signal.reason);
+      }),
+    );
   });
   return asked;
 }
