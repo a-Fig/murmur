@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -41,7 +42,7 @@ func TestASendCommandRegistersTheThreadsSession(t *testing.T) {
 	f := &fakeDaemon{}
 	commandRepo(t, f)
 	var out strings.Builder
-	if err := Command(context.Background(), "send", []string{"quiet-otter", "the subject", "-"}, strings.NewReader("the body\n"), &out); err != nil {
+	if err := Command(context.Background(), "send", []string{"quiet-otter", "the subject", "-"}, strings.NewReader("the body\n"), &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	h := f.lastHello()
@@ -77,7 +78,7 @@ func TestACommandWithNoThreadOfItsOwnStops(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			c.set(t)
-			err := Command(context.Background(), "who", nil, nil, &strings.Builder{})
+			err := Command(context.Background(), "who", nil, nil, &strings.Builder{}, io.Discard)
 			switch {
 			case err == nil:
 				t.Fatal("ran")
@@ -92,21 +93,40 @@ func TestACommandWithNoThreadOfItsOwnStops(t *testing.T) {
 }
 
 func TestCommandRequests(t *testing.T) {
+	long := strings.Repeat("word ", 60) + "end"
 	for _, c := range []struct {
-		name string
-		args []string
-		want proto.Request
-		bad  bool
+		name  string
+		args  []string
+		stdin string
+		want  proto.Request
+		bad   bool
 	}{
-		{"who", []string{"model:opus*"}, proto.Request{Op: proto.OpWho, Tags: []string{"model:opus*"}}, false},
-		{"status", []string{"moving", "auth"}, proto.Request{Op: proto.OpStatus, Doing: "moving auth"}, false},
-		{"inbox", nil, proto.Request{Op: proto.OpInbox}, false},
-		{"inbox", []string{"x"}, proto.Request{}, true},
-		{"send", []string{"a"}, proto.Request{}, true},
-		{"send", []string{"a,b", "s", "b"}, proto.Request{Op: proto.OpSend, To: "a,b", Subject: "s", Body: "b"}, false},
-		{"lookup", nil, proto.Request{}, true},
+		{"who", []string{"model:opus*"}, "", proto.Request{Op: proto.OpWho, Tags: []string{"model:opus*"}}, false},
+		{"status", []string{"moving", "auth"}, "", proto.Request{Op: proto.OpStatus, Doing: "moving auth"}, false},
+		{"inbox", nil, "", proto.Request{Op: proto.OpInbox}, false},
+		{"inbox", []string{"x"}, "", proto.Request{}, true},
+		{"lookup", nil, "", proto.Request{}, true},
+		// The new form: one text, its subject made from it (#1027).
+		{"send", []string{"a"}, "", proto.Request{}, true},
+		{"send", []string{"a,b", "short"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "short"}, false},
+		{"send", []string{"a", "the subject\nthe body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "the subject", Body: "the body"}, false},
+		{"send", []string{"a", "-"}, "from stdin\nand more\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "from stdin", Body: "and more"}, false},
+		{"send", []string{"a", "-"}, " \n", proto.Request{}, true},
+		{"send", []string{"a", ""}, "", proto.Request{}, true},
+		{"send", []string{"a", "too", "many", "words"}, "", proto.Request{}, true},
+		// --subject gives the subject, wherever it is, and the text is then the whole body.
+		{"send", []string{"a", "--subject", "s", "one\ntwo"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "one\ntwo"}, false},
+		{"send", []string{"--subject=s", "a", "-"}, "piped\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "piped\n"}, false},
+		{"send", []string{"a", "-subject", "s"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "s"}, false},
+		{"send", []string{"a", "text", "--subject"}, "", proto.Request{}, true},
+		{"send", []string{"a", "--subject", "s", "b", "c"}, "", proto.Request{}, true},
+		{"send", []string{"a", "--", "--subject"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "--subject"}, false},
+		// The old form, TO SUBJECT BODY, still means what it did.
+		{"send", []string{"a,b", "s", "b"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "s", Body: "b"}, false},
+		{"send", []string{"a", "s", "-"}, "the body\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "the body\n"}, false},
+		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: oneLine(long), Body: "the body"}, false},
 	} {
-		got, err := commandRequest(c.name, c.args, strings.NewReader(""))
+		got, err := commandRequest(c.name, c.args, strings.NewReader(c.stdin), io.Discard)
 		if (err != nil) != c.bad {
 			t.Errorf("%s %q: error %v", c.name, c.args, err)
 			continue
@@ -118,12 +138,26 @@ func TestCommandRequests(t *testing.T) {
 	}
 }
 
-// A send given only a subject too long for one, or of several lines, keeps the whole text in the
-// body, where it used to be cut to the subject's 120 characters and the rest dropped (#1021). With
-// a body, the subject is cut as before.
-func TestSendKeepsALongSubjectWithNoBody(t *testing.T) {
+// The old form says, on stderr, what the new one is; the new form says nothing there.
+func TestTheOldSendFormSaysTheNewOne(t *testing.T) {
+	var note strings.Builder
+	if _, err := commandRequest("send", []string{"a", "s", "b"}, strings.NewReader(""), &note); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(note.String(), "old form") || !strings.Contains(note.String(), "send TO TEXT") {
+		t.Errorf("note %q", note.String())
+	}
+	note.Reset()
+	if _, err := commandRequest("send", []string{"a", "one text"}, strings.NewReader(""), &note); err != nil || note.Len() != 0 {
+		t.Errorf("the new form: %v, note %q", err, note.String())
+	}
+}
+
+// A long text keeps all of itself in the body, where the subject's 120 characters used to cut it
+// (#1021): the opening words are the subject.
+func TestSendKeepsALongTextWhole(t *testing.T) {
 	long := strings.Repeat("word ", 60) + "end"
-	got, err := commandRequest("send", []string{"a", long}, strings.NewReader(""))
+	got, err := commandRequest("send", []string{"a", long}, strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,20 +167,9 @@ func TestSendKeepsALongSubjectWithNoBody(t *testing.T) {
 	if n := utf8.RuneCountInString(got.Subject); n > 120 || !strings.HasPrefix(got.Subject, "word word") || !strings.HasSuffix(got.Subject, "…") {
 		t.Errorf("subject %q (%d runes)", got.Subject, n)
 	}
-
-	got, err = commandRequest("send", []string{"a", "first line\nsecond line"}, strings.NewReader(""))
-	if err != nil || got.Subject != "first line" || got.Body != "second line" {
-		t.Errorf("two lines: %+v, %v", got, err)
-	}
-
-	got, err = commandRequest("send", []string{"a", long, "the body"}, strings.NewReader(""))
-	if err != nil || got.Body != "the body" || utf8.RuneCountInString(got.Subject) != 120 {
-		t.Errorf("with a body: %+v, %v", got, err)
-	}
-
-	got, err = commandRequest("send", []string{"a", "short"}, strings.NewReader(""))
-	if err != nil || got.Subject != "short" || got.Body != "" {
-		t.Errorf("short: %+v, %v", got, err)
+	got, err = commandRequest("send", []string{"a", "--subject", long}, strings.NewReader(""), io.Discard)
+	if err != nil || got.Body != strings.TrimSpace(long) || !strings.HasSuffix(got.Subject, "…") {
+		t.Errorf("a long --subject and no text: %+v, %v", got, err)
 	}
 }
 

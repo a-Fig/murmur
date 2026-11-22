@@ -1165,18 +1165,27 @@ func oneLine(s string) string { return bus.OneLine(s, 120) }
 
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
-// lines, would lose the rest without a word (#1021). It is split as the page splits a person's
-// text instead (web.SplitText): the opening words are the subject, and the body has the whole
-// text. A send with a body is as it was: its subject is cut.
-// A body is blank as the daemon judges one, after the invisible characters it drops; and a split
-// whose first line was only such characters keeps the whole text as one cut subject, as before.
+// lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
+// subjectFor makes it a subject and body. A send with a body is as it was: its subject is cut.
+// A body is blank as the daemon judges one, after the invisible characters it drops.
 func subjectAndBody(subject, body string) (string, string) {
 	if strings.TrimSpace(bus.Text(body, len(body))) != "" || oneLine(subject) == strings.TrimSpace(subject) {
 		return oneLine(subject), body
 	}
-	first, rest := web.SplitText(subject)
+	return subjectFor(subject)
+}
+
+// subjectFor makes the subject of a message an agent wrote as one text, and the body that goes
+// with it: `mur send TO TEXT`, and a send tool call whose subject is the whole text (subjectAndBody).
+// It splits the text as the page splits a person's (web.SplitText): a first line that fits is the
+// subject and the rest is the body; otherwise the opening words are the subject and the body has
+// the whole text. A first line of only the invisible characters the daemon drops keeps the whole
+// text, as one cut subject. Every agent's send that needs a subject made gets it here, so making it
+// another way, such as with a small model (#1023), is a change to this function alone.
+func subjectFor(text string) (subject, body string) {
+	first, rest := web.SplitText(text)
 	if oneLine(first) == "" {
-		return oneLine(subject), strings.TrimSpace(subject)
+		return oneLine(text), strings.TrimSpace(text)
 	}
 	return oneLine(first), rest
 }

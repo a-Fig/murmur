@@ -39,10 +39,10 @@ var errNoThread = fmt.Errorf("this command finds its session from %s, which T3 C
 // shell: the variable is that thread's, and the command isn't.
 var errInheritedThread = fmt.Errorf("%s here is the T3 thread of an agent above this one, which started it, so it doesn't name this session", t3.ThreadEnv)
 
-// Command runs the shell command name with args, reading a body from stdin where asked and
-// writing what the tool would answer to stdout.
-func Command(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) error {
-	req, err := commandRequest(name, args, stdin)
+// Command runs the shell command name with args, reading a message from stdin where asked and
+// writing what the tool would answer to stdout, and a note on how it was asked to stderr.
+func Command(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	req, err := commandRequest(name, args, stdin, stderr)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func Command(ctx context.Context, name string, args []string, stdin io.Reader, s
 }
 
 // commandRequest is the daemon request command name makes of its arguments.
-func commandRequest(name string, args []string, stdin io.Reader) (proto.Request, error) {
+func commandRequest(name string, args []string, stdin io.Reader, stderr io.Writer) (proto.Request, error) {
 	switch name {
 	case "who":
 		return proto.Request{Op: proto.OpWho, Tags: args}, nil
@@ -86,26 +86,95 @@ func commandRequest(name string, args []string, stdin io.Reader) (proto.Request,
 	case "status":
 		return proto.Request{Op: proto.OpStatus, Doing: oneLine(strings.Join(args, " "))}, nil
 	case "send":
-		if len(args) < 2 || len(args) > 3 {
-			return proto.Request{}, fmt.Errorf("usage: %s send TO SUBJECT [BODY|-]", brand.Command)
-		}
-		req := proto.Request{Op: proto.OpSend, To: args[0], Subject: args[1]}
-		if len(args) == 3 {
-			req.Body = args[2]
-			if req.Body == "-" {
-				// A little over the most the daemon takes, so that a longer body is refused by it,
-				// with its reason, and not cut here.
-				b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
-				if err != nil {
-					return proto.Request{}, fmt.Errorf("reading the body: %w", err)
-				}
-				req.Body = string(b)
-			}
-		}
-		req.Subject, req.Body = subjectAndBody(req.Subject, req.Body)
-		return req, nil
+		return sendRequest(args, stdin, stderr)
 	}
 	return proto.Request{}, fmt.Errorf("unknown command %q", name)
+}
+
+// sendRequest is `mur send TO TEXT`: the message as one text, whose subject subjectFor makes, as
+// the page does for a person (#1027). Agents wrote `mur send TO "<paragraph>"` to the old
+// `mur send TO SUBJECT [BODY]` anyway (#1021), so the one text is the default and --subject S, the
+// option, gives a subject of the agent's own, with the text as the body.
+//
+// The old form, with three words after send, is the one v0.5.1 documents and agents and scripts
+// already run, and the new form has two, so three still mean SUBJECT BODY, as they did. A note on
+// stderr gives the new form; nothing changes what a call that worked before sends.
+func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Request, error) {
+	var words []string
+	subject, given := "", false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if v, ok := strings.CutPrefix(a, "--subject="); ok {
+			subject, given = v, true
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "-subject="); ok {
+			subject, given = v, true
+			continue
+		}
+		if a == "--subject" || a == "-subject" {
+			if i+1 == len(args) {
+				return proto.Request{}, errors.New("--subject needs the subject after it")
+			}
+			subject, given = args[i+1], true
+			i++
+			continue
+		}
+		words = append(words, a)
+	}
+	switch {
+	case given && (len(words) == 1 || len(words) == 2):
+		body := ""
+		if len(words) == 2 {
+			var err error
+			if body, err = sendText(words[1], stdin); err != nil {
+				return proto.Request{}, err
+			}
+		}
+		req := proto.Request{Op: proto.OpSend, To: words[0]}
+		req.Subject, req.Body = subjectAndBody(subject, body)
+		return req, nil
+	case !given && len(words) == 2:
+		text, err := sendText(words[1], stdin)
+		if err != nil {
+			return proto.Request{}, err
+		}
+		if strings.TrimSpace(bus.Text(text, len(text))) == "" {
+			return proto.Request{}, errors.New("nothing to send: the message is empty")
+		}
+		req := proto.Request{Op: proto.OpSend, To: words[0]}
+		req.Subject, req.Body = subjectFor(text)
+		return req, nil
+	case !given && len(words) == 3:
+		body, err := sendText(words[2], stdin)
+		if err != nil {
+			return proto.Request{}, err
+		}
+		fmt.Fprintf(stderr, "%[1]s send TO SUBJECT BODY is the old form, and still works. "+
+			"The new one takes the message as one text: %[1]s send TO TEXT, or %[1]s send TO --subject SUBJECT TEXT.\n", brand.Command)
+		req := proto.Request{Op: proto.OpSend, To: words[0]}
+		req.Subject, req.Body = subjectAndBody(words[1], body)
+		return req, nil
+	}
+	return proto.Request{}, fmt.Errorf("usage: %[1]s send TO TEXT, or %[1]s send TO --subject SUBJECT [TEXT], with TEXT in quotes; - as TEXT reads it from standard input", brand.Command)
+}
+
+// sendText is a send's text: the word given, or standard input for -.
+func sendText(word string, stdin io.Reader) (string, error) {
+	if word != "-" {
+		return word, nil
+	}
+	// A little over the most the daemon takes, so that a longer text is refused by it, with its
+	// reason, and not cut here.
+	b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("reading the message: %w", err)
+	}
+	return string(b), nil
 }
 
 // commandSession registers the session of the T3 thread the command runs in, and returns how to

@@ -64,6 +64,31 @@ func TestTurn(t *testing.T) {
 	}
 }
 
+// A turn to a session that has only the shell commands (#913) writes the command out, the message
+// one text in quotes (#1027), however the message came.
+func TestACommandsTurnWritesTheCommandOut(t *testing.T) {
+	cmd := "`" + brand.Command + " send "
+	for _, tc := range []struct {
+		what string
+		m    proto.MessageView
+		want string
+	}{
+		{"an agent", proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "x", Subject: "ping"},
+			"Reply with " + cmd + "quiet-otter \"TEXT\"` if a reply is needed.\n"},
+		{"a person", proto.MessageView{From: "dev-0001/human", FromName: "tyler", To: "x", Subject: "ping"},
+			"tyler sees only what you `send`, not this conversation. Answer with " + cmd + "tyler \"TEXT\"`.\n"},
+		{"a group", proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "group:ui", Subject: "ping"},
+			"Reply with " + cmd + "group:ui \"TEXT\"`, or to quiet-otter alone, if a reply is needed. Remove the tag group:ui"},
+		{"a group heard from", proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "group:ui", Subject: "ping", GroupKnown: true},
+			"\nReply with " + cmd + "group:ui \"TEXT\"`, or to quiet-otter alone, if a reply is needed.\n"},
+	} {
+		tc.m.ByCommand = true
+		if got := Turn(tc.m); !strings.Contains(got, tc.want) {
+			t.Errorf("%s:\n got %q\nwant it to have %q", tc.what, got, tc.want)
+		}
+	}
+}
+
 // Whatever the body holds is the sender's own text: apart from a line that reads as one Murmur
 // starts a message with (quoted, #297: here the inbox's envelope), it is neither quoted nor
 // wrapped, and it can't close or forge the lines around it, which are Murmur's. A body past the
