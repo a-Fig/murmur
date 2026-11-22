@@ -203,10 +203,10 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 // the remote ref must have ("" meaning it must not exist), checked atomically by the server.
 //
 // Pushes skip the repo's hooks: a pre-push hook that runs the test suite on every message would
-// make the bus unusable, and these commits never reach a branch. Nor does a push write a local
-// ref (#950). After a push git sets, or deletes, the local ref that the remote's fetch refspecs
-// map the pushed ref to, and a refspec can map a bus ref onto a branch. So each push adds two
-// refspecs of its own (noTracking).
+// make the bus unusable, and these commits never reach a branch. Nor does a push of a bus ref
+// write a local ref (#950). After a push git sets, or deletes, the local ref that the remote's
+// fetch refspecs map the pushed ref to, and a refspec can map a bus ref onto a branch. So each
+// such push adds two refspecs of its own (noTracking).
 //
 // A push the server refuses as busy (see busyReasons) is sent again as it was, after a second or
 // so, up to pushTries times in all. Sending the same commit again can't write anything twice: if an
@@ -248,7 +248,7 @@ func busyWait(try int) time.Duration {
 
 // pushOnce is one try of Push. busy says the server refused it as busy, so it may be sent again.
 func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, expect string) (busy bool, err error) {
-	args := append(r.noTracking(), "push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
+	args := append(r.noTracking(ref), "push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
 		"--recurse-submodules=no", r.Remote)
 	switch mode {
 	case Force:
@@ -300,16 +300,21 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	return busyReasons[reason], fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
 }
 
-// noTracking are the options that keep a push from writing a local ref (#950). git asks the
-// remote's fetch refspecs which local ref tracks the pushed one, and a negative refspec for the bus
-// refs makes the answer none. git checks a negative refspec against what the other refspecs map
-// to the pushed ref, not against the ref itself: git 2.31 to 2.53 do, and a pattern refspec such
-// as refs/murmur/*:refs/heads/x/* then got past one alone (seen 2026-11-21). The identity refspec
-// beside it maps every bus ref to itself, so the negative refspec rules each one out first. A git
-// that checked the pushed ref itself would rule it out too.
-func (r *Repo) noTracking() []string {
+// noTracking are the options that keep a push of a bus ref from writing a local ref (#950). git
+// asks the remote's fetch refspecs which local ref tracks each ref the server says it updated, and
+// a negative refspec makes the answer none. git checks a negative refspec against what the other
+// refspecs map that ref to, not against the ref itself: git 2.31 to 2.53 do, and a pattern refspec
+// such as refs/murmur/*:refs/heads/x/* then got past one alone (seen 2026-11-21). The identity
+// refspec beside it maps every ref to itself, so the negative one rules each out first; a git that
+// checked the ref itself would rule it out too. Both cover all of refs/, not just the bus refs: a
+// server with a proc-receive hook can report the push under another name, such as a branch's
+// (Opus review). Other pushes, `mur init`'s to a branch, keep git's update of the tracking ref.
+func (r *Repo) noTracking(ref string) []string {
+	if !strings.HasPrefix(ref, brand.RefRoot) {
+		return nil
+	}
 	key := "remote." + r.Remote + ".fetch="
-	return []string{"-c", key + brand.RefRoot + "*:" + brand.RefRoot + "*", "-c", key + "^" + brand.RefRoot + "*"}
+	return []string{"-c", key + "refs/*:refs/*", "-c", key + "^refs/*"}
 }
 
 // LocalRefs returns the local copies of bus refs.

@@ -57,7 +57,8 @@ func (g Git) Run(ctx context.Context, stdin string, args ...string) (string, err
 // by name in core.hooksPath and runs none it can't find; a directory under Murmur's own state
 // directory is one only Murmur would write to, and on Windows it avoids what /dev/null becomes.
 // The few commands that want the user's hooks, such as `mur init`'s fast-forward, go through
-// RunIn.
+// RunIn. Hooks defined in config (hook.<name>.command), which git has planned, would not be
+// stopped by this; git 2.53 looks for hooks only in the hooks directory.
 func (g Git) dirArgs() []string {
 	dir := g.Dir
 	if abs, err := filepath.Abs(dir); err == nil {

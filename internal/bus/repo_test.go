@@ -273,9 +273,11 @@ func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 	git := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", clone, "-c", "user.name=u", "-c", "user.email=u@example.invalid"}, args...)...)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
-			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, stderr.String())
 		}
 		return strings.TrimSpace(string(out))
 	}
@@ -286,16 +288,31 @@ func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 	}
 	git("commit", "-q", "--allow-empty", "-m", "work")
 	git("branch", "side")
-	side := git("rev-parse", "side")
 	git("remote", "add", "origin", remote)
 	git("config", "--add", "remote.origin.fetch", "+"+brand.RefRoot+"mesh/dev:refs/heads/side")
 	git("config", "--add", "remote.origin.fetch", "+"+brand.RefRoot+"*:refs/heads/stolen/*")
+	// Every ref outside the bus, compared at the end: branches, remote-tracking refs, tags.
+	notBus := func() string {
+		t.Helper()
+		var keep []string
+		for _, line := range strings.Split(git("for-each-ref", "--format=%(refname) %(objectname)"), "\n") {
+			if !strings.HasPrefix(line, brand.RefRoot) {
+				keep = append(keep, line)
+			}
+		}
+		return strings.Join(keep, "\n")
+	}
+	before := notBus()
+	hooks := filepath.Join(clone, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	hook := "#!/bin/sh\necho \"$1\" >> '" + filepath.ToSlash(ran) + "'\n"
-	if err := os.WriteFile(filepath.Join(clone, ".git", "hooks", "reference-transaction"), []byte(hook), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(hook), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The hook runs as set up, so its silence below is Murmur's doing.
-	git("update-ref", "refs/heads/probe", side)
+	git("update-ref", "refs/heads/probe", "HEAD")
 	if _, err := os.Stat(ran); err != nil {
 		t.Fatalf("the hook didn't run for git itself: %v", err)
 	}
@@ -328,9 +345,44 @@ func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
 	if err := r.Push(ctx, "", dev, bus.Force, ""); err != nil {
 		t.Fatalf("push deleting %s: %v", dev, err)
 	}
+	if err := r.Push(ctx, sha, dev, bus.Lease, ""); err != nil {
+		t.Fatalf("leased push %s: %v", dev, err)
+	}
+	// A server can say it took a push under another name (proc-receive's "option refname"), and
+	// git would update whatever tracks that name: here refs/remotes/origin/evil.
+	renamed := brand.RefRoot + "renamed"
+	report := `#!/bin/sh
+size() {
+	size=$(dd bs=1 count=4 2>/dev/null)
+	[ -n "$size" ] && [ "$size" != 0000 ]
+}
+data() { line=$(dd bs=1 count=$((0x$size - 4)) 2>/dev/null); }
+skip() { dd bs=1 count=$((0x$size - 4)) >/dev/null 2>&1; }
+say() { printf '%04x%s' $((${#1} + 4)) "$1"; }
+while size; do skip; done
+say "version=1"
+printf 0000
+refs=
+while size; do
+	data
+	set -- $line
+	refs="$refs $3"
+done
+for r in $refs; do say "ok $r"; say "option refname refs/heads/evil"; done
+printf 0000
+`
+	if err := os.WriteFile(filepath.Join(remote, "hooks", "proc-receive"), []byte(report), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "--git-dir="+remote, "config", "receive.procReceiveRefs", renamed).CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v: %s", err, out)
+	}
+	if err := r.Push(ctx, sha, renamed, bus.Force, ""); err != nil {
+		t.Fatalf("push %s, reported as refs/heads/evil: %v", renamed, err)
+	}
 
-	if got := git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); strings.Contains(got, "stolen") || !strings.Contains(got, "refs/heads/side "+side) {
-		t.Errorf("the clone's branches changed; now:\n%s\nwant side at %s and no stolen/*", got, side)
+	if after := notBus(); after != before {
+		t.Errorf("bus traffic changed refs outside %s; before:\n%s\nafter:\n%s", brand.RefRoot, before, after)
 	}
 	if b, err := os.ReadFile(ran); err == nil {
 		t.Errorf("bus traffic ran the clone's reference-transaction hook:\n%s", b)

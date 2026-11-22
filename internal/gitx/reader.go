@@ -230,7 +230,7 @@ func noBatchCommand(p *readerProc) bool {
 func (r *Reader) start() (*readerProc, error) {
 	// The process outlives the question that starts it, so it has a context of its own.
 	ctx, cancel := context.WithCancel(context.Background())
-	args := append([]string{"--git-dir=" + r.git.Dir}, readerArgs...)
+	args := append(r.git.dirArgs(), readerArgs...)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), r.git.Env...)
