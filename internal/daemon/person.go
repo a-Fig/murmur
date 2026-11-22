@@ -163,10 +163,10 @@ func personAsks(m *inMsg) bool {
 }
 
 // personWakesLocked says session id may be woken for a person's message, however long it has been
-// idle. Do not disturb and a wake setting of Never are a human's choices too, and hold. Caller holds
-// mu.
+// idle. A wake setting of Never is a human's choice too, and holds, as do not disturb does for any
+// message it holds, which the callers pass over (heldLocked). Caller holds mu.
 func (d *Daemon) personWakesLocked(id string, wake pageSettings) bool {
-	return !d.dndLocked(id) && !d.offMeshLocked(id) && wake.choice(d.sessionNameLocked(id)).When != web.WakeNever
+	return !d.offMeshLocked(id) && wake.choice(d.settingsNameLocked(id)).When != web.WakeNever
 }
 
 func (d *Daemon) personLogPath() string { return filepath.Join(d.dir, "person-messages.jsonl") }
@@ -202,7 +202,9 @@ func (d *Daemon) loadPersonLog() {
 	long := len(events) > 2*maxPersonLog
 	events = events[max(len(events)-maxPersonLog, 0):]
 	for _, e := range events {
-		d.keepMessageLocked(e)
+		if !d.msgKeys[msgKey(e)] { // a line written twice is one message
+			d.keepMessageLocked(e)
+		}
 	}
 	d.recoverUnreadLocked(events)
 	if long {
@@ -211,15 +213,22 @@ func (d *Daemon) loadPersonLog() {
 }
 
 // recoverUnreadLocked gives the person's inbox what the log holds past the last save. The sync that
-// read those messages will read them again, but finds them known by ID and adds nothing, so without
-// this they would stay on the page and never count as unread.
+// read those messages will read them again, but finds them known (msgKey) and adds nothing, so
+// without this they would stay on the page and never count as unread.
 func (d *Daemon) recoverUnreadLocked(events []bus.Event) {
 	if len(events) == 0 {
 		return
 	}
 	from := 0
 	if d.st.PersonLogged != "" {
-		at := slices.IndexFunc(events, func(e bus.Event) bool { return e.ID == d.st.PersonLogged })
+		// The last with that ID: an ID can be in the log twice (#603), and an earlier one would
+		// make unread again everything logged since.
+		at := -1
+		for i := len(events) - 1; i >= 0 && at < 0; i-- {
+			if events[i].ID == d.st.PersonLogged {
+				at = i
+			}
+		}
 		if at < 0 {
 			at = len(events) - 1 // cut out of the log, so nothing says which came later
 		}
@@ -333,7 +342,7 @@ func (d *Daemon) accountLocked() web.Account {
 	}
 	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
-		a.Unread = append(a.Unread, m.Event.ID)
+		a.Unread = append(a.Unread, d.pageIDOfLocked(m.Event)) // as the page knows the message
 	}
 	return a
 }
@@ -421,9 +430,12 @@ func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, e
 
 // Send sends text as this device's person. It returns once the message is on the remote, as an
 // agent's send does.
-func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error) {
+func (s pageSource) Send(ctx context.Context, to, text string, files []web.Upload) (web.Sent, error) {
 	d := s.d
 	d.pageCalled(ctx)
+	if d.hidden.Load() {
+		return web.Sent{}, errors.New("this device is invisible: go online in Settings to send")
+	}
 	d.awaitFirstSync(ctx) // as send does for a session: the names it resolves, and its push
 	d.mu.Lock()
 	named, takenBy := d.st.Person != "", d.nameTakenByLocked()
@@ -435,8 +447,25 @@ func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error)
 		// Their messages would carry a name that reaches someone else.
 		return web.Sent{}, fmt.Errorf("the person on %s has your name; choose another before you send", takenBy)
 	}
+	uploads := make([]sendFile, len(files))
+	for i, f := range files {
+		uploads[i] = sendFile{f.Name, f.Data}
+	}
+	if strings.TrimSpace(text) == "" && len(files) > 0 {
+		// Files alone: a message needs a subject, and their names say what it is. The names they
+		// are sent under: two pasted screenshots are both image.png until then.
+		named := make([]bus.File, len(files))
+		for i, f := range files {
+			named[i].Name = f.Name
+		}
+		names := make([]string, len(files))
+		for i, f := range bus.CleanFiles(named) {
+			names[i] = f.Name
+		}
+		text = strings.Join(names, ", ")
+	}
 	subject, body := web.SplitText(text)
-	r := d.send(ctx, d.personAddr(), proto.Request{To: to, Subject: subject, Body: body})
+	r := d.sendWith(ctx, d.personAddr(), proto.Request{To: to, Subject: subject, Body: body}, uploads)
 	if r.Error != "" {
 		return web.Sent{}, errors.New(r.Error)
 	}
@@ -447,6 +476,12 @@ func (s pageSource) Send(ctx context.Context, to, text string) (web.Sent, error)
 	return sent, nil
 }
 
+// File returns one file of a message the page lists, fetched first if it isn't here.
+func (s pageSource) File(ctx context.Context, id string, index int) (string, []byte, error) {
+	s.d.pageCalled(ctx)
+	return s.d.fileOf(ctx, id, index)
+}
+
 // MarkRead takes the messages with these IDs out of the person's unread.
 func (s pageSource) MarkRead(ctx context.Context, ids []string) error {
 	d := s.d
@@ -454,12 +489,14 @@ func (s pageSource) MarkRead(ctx context.Context, ids []string) error {
 	defer d.mu.Unlock()
 	d.pageSeenLocked(ctx, time.Now())
 	box := d.st.Inbox[bus.PersonSession]
-	kept := slices.DeleteFunc(slices.Clone(box), func(m *inMsg) bool { return slices.Contains(ids, m.Event.ID) })
+	// By the IDs the page knows them by, which is what it sends.
+	named := func(m *inMsg) bool { return slices.Contains(ids, d.pageIDOfLocked(m.Event)) }
+	kept := slices.DeleteFunc(slices.Clone(box), named)
 	if len(kept) == len(box) {
 		return nil
 	}
 	for _, m := range box {
-		if slices.Contains(ids, m.Event.ID) {
+		if named(m) {
 			d.markLocked(bus.PersonSession, m.Event, bus.MarkRead)
 		}
 	}

@@ -10,10 +10,11 @@ since it wasn't installed). The details, and where each came from, are in the co
 
 | Agent | Where join writes | How a session is told apart | Inside T3 |
 |---|---|---|---|
-| OpenCode | `~/.config/opencode/opencode.jsonc` if there, else `opencode.json`, in the shape the installed version loads: for 2.x, `mcp.servers.murmur` with `"codemode": false` and a `murmur_*` allow rule last in `permissions`; for 1.x, or a version join can't learn, `mcp.murmur` with `"murmur_*": "allow"` last in `permission`, which 2.x loads too. OpenCode 1.x refuses a whole config that has `permissions` (#388), so a rerun moves Murmur's entries to the shape it now writes | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]` | The session ID is T3's native ID for the thread |
-| Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables | One process per session, with `MUSE_SESSION_ID` | The same ID |
+| OpenCode | `~/.config/opencode/opencode.jsonc` if there, else `opencode.json`, in the shape the installed version loads: for 2.x, `mcp.servers.murmur` with `"codemode": false` and a `murmur_*` allow rule last in `permissions`; for 1.x, or a version join can't learn, `mcp.murmur` with `"murmur_*": "allow"` last in `permission`, which 2.x loads too. OpenCode 1.x refuses a whole config that has `permissions` (#388), so a rerun moves Murmur's entries to the shape it now writes | One server process serves every session in a directory; each call names its session in `_meta["ai.opencode/sessionID"]`. OpenCode 1 names none, and its sessions in a directory are one, by an ID Murmur's plugin gives the server | The session ID is T3's native ID for the thread |
+| Muse Code | `mcpServers.murmur` in `~/.config/muse/settings.json`, `"mode": "optional"`, `env` forwarding `T3CODE_CLI_PATH` and, on Windows, the home variables; the hook under `hooks` there (below) | One process per session, with `MUSE_SESSION_ID` | The same ID |
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
+| Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older
@@ -23,15 +24,22 @@ since it wasn't installed). The details, and where each came from, are in the co
 - **Identity.** Claude Code's variables count only for Claude Code: Pi and OpenCode pass their
   environment on to their servers, so one started from a Claude Code session carries that session's
   `CLAUDE_CODE_SESSION_ID`. An agent's own session ID becomes the Murmur ID by hash, since Muse's
-  and OpenCode's IDs begin with the time and two of them often share six characters. A session of
+  and OpenCode's IDs begin with the time and two of them often share six characters. Claude Code's
+  is hashed too, since 2026-11-16 (#51): its ID used to be the first six characters of Claude
+  Code's, which put 24 bits of that in every address on the bus. A conversation from before then,
+  resumed, comes back at a new address with its name, and the old one forwards to it. The registry
+  keeps the name at the old address, so once that conversation stops, other devices label its
+  later messages by the new address; T3 threads avoid this by taking the registry's address back
+  (`threadIDLocked`), which here would mean keeping the old ID. A session of
   the shared OpenCode server is registered at its first call and dropped after 30 minutes without
   one.
 - **Delivery.** Inside T3, `t3 thread send` needed nothing new: an OpenCode and a Muse thread each
   took a message as a turn and answered it with `send`, nobody typing (2026-11-01). Outside T3, Muse
   and Grok have no way in that Murmur uses (Muse's session messaging isn't on Windows, and no way to
-  start a turn in Grok was found), so a message waits in the inbox. Pi has notices and turns since
-  2026-11-09 (#205), and OpenCode 2 turns since 2026-11-11 (#135) and notices since 2026-11-12
-  (#431): see [handoff](handoff.md).
+  start a turn in Grok was found), so a message to an idle session waits in the inbox; a busy one
+  is told by the hook (Grok's since #225, Muse's since #461). Pi has notices and turns since
+  2026-11-09 (#205), OpenCode 2 turns since 2026-11-11 (#135) and notices since 2026-11-12 (#431),
+  and OpenCode 1 both since 2026-11-15 (#446): see [handoff](handoff.md) and below.
 - **OpenCode 2's plugin** (2026-11-12, #431, #455). OpenCode 2 has no hooks of Claude Code's kind,
   so join writes `plugins/murmur.js` into its config directory, which OpenCode loads with no entry
   in its config. The plugin runs `mur hook --agent opencode` after each tool call and as a turn
@@ -53,8 +61,58 @@ since it wasn't installed). The details, and where each came from, are in the co
     of `who`. Not tried: a thread T3 started, and whether T3's sidebar shows a child session as a
     thread of its own (Tyler's rule, #452, keeps such a one on the mesh; the plugin would take it
     off).
-  - *Not covered.* `opencode run` exits when its turn ends, so what the hook hands over there is
-    marked read and never acted on. OpenCode 1 gets no plugin.
+- **OpenCode 1's plugin** (2026-11-15, #446, #205). OpenCode 1 loads the same `plugins/` folder, but
+  a plugin of another shape (`server(input)` where OpenCode 2 has `setup(ctx)`), and each version
+  refuses the other's or, with both in one file, 1.19.5 runs both. So join writes the one `opencode
+  --version` names, at the same path, and none where it can't learn the version. The refresh as
+  Murmur's server starts asks the OpenCode that started the server for its version and rewrites
+  the file for it, so after an upgrade from 1 to 2 the file is the one that loads. With both
+  installed, sharing one config folder, each server start rewrites the file for its own version,
+  and it suits the one started last: OpenCode 2 loads the new file at once, so a running OpenCode 2
+  loses its plugin when an OpenCode 1 starts (before OpenCode 1 had a plugin, an OpenCode 2 there
+  had none at all), and OpenCode 1 loads it at its next start. Where it can't learn the version,
+  the file keeps its own (its line `// For OpenCode 1.` says which). The refresh only rewrites a
+  plugin join wrote and never adds one where there is none, since adding one is join's to do:
+  after a join that couldn't learn the version (`opencode --version` took over 10 s, as under
+  heavy load), rerunning `mur join` adds it.
+  - *Who the session is.* OpenCode 1 names no session in a call to an MCP server, so its one server
+    process per directory was always one session to Murmur. The plugin's `config` hook, which
+    OpenCode runs before it starts any MCP server, gives Murmur's server an ID for that session
+    (`MURMUR_OPENCODE_SESSION`), and the plugin's hook requests carry it, so the daemon finds the
+    session as it finds OpenCode 2's, and needs nothing new. What the hook gives goes to the
+    OpenCode session at work, or the last one that was.
+  - *The moments.* `tool.execute.after` is PostToolUse, a `session.status` of busy is
+    UserPromptSubmit, and `session.idle` is Stop, interrupted where a `session.error` came first
+    (Escape, a failure). Notices and what is unread at a turn's end go in with
+    `client.session.promptAsync` as synthetic text, which the model reads and the terminal UI
+    doesn't show: a prompt that comes while a turn runs is answered before that turn ends, and one
+    in an idle session starts a turn. Each goes in with the agent and model of the session's last
+    prompt, or OpenCode would take its default agent.
+  - *A turn when idle.* The plugin opens a socket that takes Claude Code's messaging-socket lines,
+    as Pi's extension does, and gives its address and token to the MCP server beside the ID, so the
+    daemon hands an idle session its message as it does Pi's. The plugin puts it in as a prompt the
+    terminal UI shows.
+  - *Children.* A session the `task` tool started has a `parentID`. It runs no hook and gets no
+    turn, so it never shows as a session of its own (read in the source, not tried). Its Murmur
+    calls still go through its parent's server, as its parent's: it sends as the parent and reads
+    the parent's inbox, as before the plugin. `tool.execute.before` has the call's session, so the
+    plugin could refuse them there (not tried).
+  - *Under T3* the plugin does nothing (`T3CODE_CLI_PATH` in OpenCode's environment): no ID, socket
+    or hook, so an OpenCode 1 thread is as it was before, and T3 hands it a message as a turn when
+    its turn ends. Nobody has tried the plugin in T3, where its turn at an idle session's Stop would
+    be one T3 didn't start.
+  - *Tried* on OpenCode 1.19.5 (2026-11-15), `opencode serve` in a scratch clone joined with a local
+    remote, a free model, and turns started with `opencode run --attach`. In the session's first
+    turn a message sent during a `sleep` came in whole through the socket, since the daemon hadn't
+    yet seen a turn of it end, and the model answered it with `send`. Idle, the next message started
+    a turn with nobody typing. In a later turn a message sent during a `sleep` came as the notice
+    after that call, and the model read it with `inbox` and answered. Not tried: the terminal UI.
+  - *Not covered.* Two sessions at work at once in one OpenCode 1 process (`opencode serve` with
+    two clients) share one session's messages, and a turn goes to the one at work last. A server
+    killed by a signal leaves the socket's file in the temporary directory. Not tried on Windows,
+    where the socket is a named pipe opened by OpenCode's runtime, Bun.
+- **`opencode run` without `--attach`**, in either version, exits when its turn ends, so what the
+  hook hands over at the turn's end is marked read and never acted on.
 - **Titles and approval.** Outside T3 no title is read for these agents. OpenCode and Grok have a
   rule for tool approval, which join writes; Muse and Pi have none, so in T3 outside full-access
   mode they ask before each call.
@@ -132,6 +190,15 @@ grok`. Both take Claude Code's payload and answers.
   the hook's. A process with several (T3's Codex threads) can't be told apart, so the hook speaks
   for none of them until each calls a Murmur tool. The ID the MCP server learns overrides one taken
   from a hook (Sol's review, 2026-11-09: a wrong one could otherwise take another thread's notices).
+- **What the hook reads of a tool call** (2026-11-15, #510). After a call, Claude Code's and
+  Codex's hooks are given its input and output as `tool_input` and `tool_response`, a shell command
+  as `Bash` in both (codex-rs rust-v0.169.0); Grok's as `toolName` and `toolInput`, its shell as
+  `run_terminal_command`, with `tool_response` beside its own `toolResult` (its hooks docs, read
+  2026-11-15). Codex's output is the command's own, and it has none for a call still running when
+  it yields. The hook reads them only to find an issue the call filed or closed ([page](page.md)).
+  Murmur's Pi extension passes them under Claude Code's names for a `bash`, `powershell` or MCP
+  call, the output shaped as an MCP tool's result (Pi's content blocks and `isError`, so a failed
+  close isn't credited), and nothing for a call over 512 KB, as the hook reads at most 1 MiB (#864). OpenCode's plugin passes neither.
 - **Hook not running.** A session of an agent the hook runs in that called a Murmur tool over a
   minute ago, with no hook of it since the daemon started, is marked in `who`, on the page and in
   `send`'s answer, and asked to have its user run `mur join` again. It is judged from the daemon's
@@ -140,3 +207,84 @@ grok`. Both take Claude Code's payload and answers.
 - **In every repo.** Both hooks are per user. Where Murmur isn't joined the hook finds no daemon and
   prints nothing, which cost 70–100 ms a tool call on the laptop (2026-11-08), plus the shell the
   agent starts it in.
+
+## Muse's hook
+
+Added 2026-11-16 (#461). Muse takes Claude Code's hooks, payload and answers, so `mur hook muse` is
+the Claude Code hook with Muse's identity. Seen on Muse 1.4.14 on Windows, in a scratch config and
+then in a joined sandbox, with `muse exec`: a message sent while the session slept in a shell
+command came as the notice after that call, and at the turn's end `Stop` blocked with the message
+whole and the turn went on. A Muse thread in T3 (`muse serve`) works too (Tyler, 2026-11-21). Not
+tried: Muse on macOS or Linux.
+
+- **Where.** `hooks` in the same `settings.json` as the server, on `UserPromptSubmit`, `PostToolUse`
+  (matcher `*`) and `Stop`, Claude Code's event names, not the camelCase of Muse's protocol. Each
+  of those answers reaches the model: `additionalContext` on a prompt or after a tool call, and
+  `{"decision": "block", "reason": ...}` at `Stop`, whose next `Stop` comes with
+  `stop_hook_active`. A user's own hooks there stay, and uninstall takes out only the groups that
+  run `mur hook muse`.
+- **The command line.** On Windows Muse runs a hook through cmd, and a token in double quotes broke
+  it, a quoted path and a quoted argument alike. So the path is bare, or its 8.3 short form where it
+  has a space; a path neither works for is a join problem, not a hook that never runs.
+- **Which session.** The payload's `session_id` is the session's `MUSE_SESSION_ID`, which its MCP
+  server registered with, so the daemon finds the session by it, as Grok's. Muse also runs side
+  sessions in a turn (a reminder model calling `submit_reminder_decision`), whose hooks carry their
+  own `session_id` while `MUSE_SESSION_ID` is still the session's; some come after the turn's
+  `Stop`. The hook asks nothing for them, as the notice would land in the side session and a call
+  after `Stop` would mark the session at work again. A subagent shares its parent's
+  `MUSE_SESSION_ID` ([delegates](delegates.md)) and so is skipped the same way, if its hooks carry
+  an ID of its own (not tried).
+- **Its environment.** A hook gets COMSPEC, HOME, PATH, PATHEXT, SYSTEMROOT, TEMP, TMP, WINDIR and
+  Muse's own variables, no APPDATA. The hook looks for its session's record by APPDATA, so on
+  Windows it takes the folders Windows records for any of APPDATA, LOCALAPPDATA and USERPROFILE that
+  are unset. A user who moved APPDATA for Muse's MCP server alone isn't followed, and the hook then
+  goes by its working directory's clone.
+- **In T3.** A Muse thread is held by T3's database alone until its hook first runs (#699); from
+  then on it is a hooked session, as Claude Code's, and what came during the run is held for the
+  turn's end. A Muse session that called Murmur's tools with no hook since is marked "hook not
+  running", which a join fixes.
+
+## Antigravity
+
+Added 2026-11-15 (#650), at Tyler's request. Tested in T3 Code on Antigravity 1.5.13 on
+2026-11-20. `PreInvocation` delivered notices, `Stop` continued the turn, and an already
+registered MCP server picked up its tools from `notifications/tools/list_changed`. Reports from
+1.5.13 also cover hook payloads (#888, #892, #894).
+
+- **Homes.** T3 runs each Antigravity instance with a home of its own,
+  `userdata/providers/antigravity/<sha256 of the instance ID>`, as its `GEMINI_HOME`. T3 says this
+  isolates credentials, hooks and MCP servers, and nothing in its settings moves it. Join writes
+  per-instance MCP and hook configuration once T3 has made the home. Standalone Antigravity gets
+  its own registration. T3 links each instance's skills to `~/.gemini/config/skills`. Antigravity
+  under T3 doesn't read a project's `.agents/mcp_config.json` (tried, 2026-11-15).
+- **Which session.** T3 passes `T3CODE_THREAD_ID` to Antigravity (seen 2026-11-20, #886; earlier
+  T3 did not, pingdotgg/t3code#34024) and keeps `ANTIGRAVITY_CONVERSATION_ID`, which Antigravity
+  sets in its shell commands, as the thread's provider session. Antigravity's MCP server takes its
+  thread and identity from `T3CODE_THREAD_ID` when `!agentAbove()`, including headless `t3 serve`,
+  as Claude Code does. Antigravity gives `ANTIGRAVITY_CONVERSATION_ID` to shell commands and hooks,
+  not to MCP servers. The hook finds a session moved by `mur join -C` by T3's thread ID when
+  available, or by the sole Antigravity server record of its client process (#888). The daemon pairs
+  the hook's `conversationId` with the server among the hook's ancestors (`hookNative`) and, under
+  older T3 without `T3CODE_THREAD_ID`, resolves the T3 thread via `t3db.ThreadOf` as a fallback.
+- **Tool approval.** Join adds `mcp(murmur/*)` to `permissions.allow` in
+  `antigravity-acp/settings.json` in a T3 instance's home or `antigravity-cli/settings.json` in a
+  standalone CLI's home (Antigravity 1.5.13). A settings file join can't edit leaves a note with the rule and path.
+- **Its programs** (#709, 2026-11-16; #889, 2026-11-20). T3 downloads the release itself, into
+  `~/.t3/tools/antigravity-acp/<platform>/versions/<sha256>/`. Release 1.4.5 ran `agy_acp_server`
+  (`.exe` on Windows, `.par` elsewhere) over `localharness_external`, which ran shell commands
+  (seen on Windows as powershell under `localharness_external.exe` under `agy_acp_server.exe` under
+  T3). Release 1.5.13 runs directly as `agy` (`T3 Code (Beta).exe -> agy.exe -> powershell.exe`).
+  `agy`, `agy_acp_server`, and `localharness_external` are all in `agentPrograms` for `agentAbove`,
+  so an agent run from an Antigravity thread's shell does not steal the enclosing T3 thread's
+  `T3CODE_THREAD_ID`.
+- **The hook.** The `murmur` entry in `config/hooks.json` names the event on the command line
+  for older versions, as in `mur hook --event Stop antigravity`.
+  - `PreInvocation` returns notices as a system message (`injectSteps`) before each model call.
+    On invocation 0, `lastUserInput` is the prompt #611 matches.
+  - `Stop` can continue a turn after `NO_TOOL_CALL` when background work is done. Older payloads
+    can omit `fullyIdle`.
+  - `PreToolUse` and `PostToolUse` bracket `run_command` calls for commit credit. The snapshots
+    use the command's `Cwd` when supplied.
+
+  Every answer is a JSON object. Hooks run with `cmd /c` on Windows, so a path with a space is
+  double-quoted.

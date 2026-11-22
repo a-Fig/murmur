@@ -9,85 +9,103 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 )
 
-// LookupPR finds the open pull request a branch heads: nil, nil if there is none.
-type LookupPR func(ctx context.Context, branch string) (*PR, error)
+// LookupPRs lists the repository's open pull requests, by the branch each heads.
+type LookupPRs func(ctx context.Context) (map[string]PR, error)
 
-// GH looks pull requests up with the gh CLI, run in dir so it finds the repository from the
-// clone's remotes and uses the user's own GitHub login. A branch lookupable refuses is not looked
-// up: it has no PR as far as the page is concerned.
-func GH(dir string) LookupPR {
-	return func(ctx context.Context, branch string) (*PR, error) {
-		if !lookupable(branch) {
-			return nil, nil
+// GH lists pull requests with the gh CLI, run in dir so it finds the repository from the clone's
+// remotes and uses the user's own GitHub login.
+//
+// It asks for every open pull request at once, not for each session's branch (#43). Branch names
+// come from the bus, so anyone with push access chooses how many there are: asked one by one, a
+// presence listing thousands would use up the viewer's GitHub quota, and an honest team's thirty
+// branches cost thirty runs of gh a minute. A listing costs the same however many sessions there
+// are, and no branch name goes on gh's command line, where cmd.exe would read one as commands if
+// gh is a batch file. The costs: with more than prLimit pull requests open, the oldest show no
+// state on the page, and a branch new to the bus waits for the next listing, up to prTTL, where it
+// was looked up at once.
+func GH(dir string) LookupPRs {
+	return func(ctx context.Context) (map[string]PR, error) {
+		var prs []struct {
+			Number            int    `json:"number"`
+			IsDraft           bool   `json:"isDraft"`
+			URL               string `json:"url"`
+			HeadRefName       string `json:"headRefName"`
+			IsCrossRepository bool   `json:"isCrossRepository"`
 		}
-		// --head=<branch>, in one argument, so no branch name can pass for a flag.
-		cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--head="+branch, "--state", "open",
-			"--json", "number,isDraft,url")
-		cmd.Dir = dir
-		// The daemon runs detached, with nobody to answer a prompt or read an update notice.
-		cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1")
-		cmd.WaitDelay = 2 * time.Second
-		hideWindow(cmd)
-		out, err := cmd.Output()
-		if err != nil {
+		if err := ghJSON(ctx, dir, &prs, "pr", "list", "--state", "open", "--limit", fmt.Sprint(prLimit),
+			"--json", "number,isDraft,url,headRefName,isCrossRepository"); err != nil {
 			return nil, err
 		}
-		var prs []struct {
-			Number  int    `json:"number"`
-			IsDraft bool   `json:"isDraft"`
-			URL     string `json:"url"`
+		// A fork's pull requests are listed too: a teammate may push their branches to a fork, and
+		// then theirs is the session's (most of this repository's open ones were, 2026-11-15). But a
+		// fork's branch can share a name with one here, main above all, so of two pull requests with
+		// one head, this repository's is the branch's, and else the newer: gh lists the newest first.
+		out, fork := map[string]PR{}, map[string]bool{}
+		for _, p := range prs {
+			if p.Number <= 0 || p.HeadRefName == "" {
+				continue
+			}
+			if _, ok := out[p.HeadRefName]; ok && (p.IsCrossRepository || !fork[p.HeadRefName]) {
+				continue
+			}
+			out[p.HeadRefName] = PR{Number: p.Number, Draft: p.IsDraft, URL: p.URL}
+			fork[p.HeadRefName] = p.IsCrossRepository
 		}
-		if err := json.Unmarshal(out, &prs); err != nil {
-			return nil, fmt.Errorf("gh pr list: %w", err)
-		}
-		if len(prs) == 0 {
-			return nil, nil
-		}
-		return &PR{Number: prs[0].Number, Draft: prs[0].IsDraft, URL: prs[0].URL}, nil
+		return out, nil
 	}
 }
 
+// ghJSON runs gh in dir with args and reads the JSON it prints into v.
+func ghJSON(ctx context.Context, dir string, v any, args ...string) error {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	// The daemon runs detached, with nobody to answer a prompt or read an update notice.
+	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1")
+	cmd.WaitDelay = 2 * time.Second
+	hideWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(out, v); err != nil {
+		return fmt.Errorf("gh %s list: %w", args[0], err)
+	}
+	return nil
+}
+
 const (
-	prTTL      = time.Minute      // how long a lookup's answer is shown before it is redone
-	prForget   = 10 * time.Minute // a branch no session has shown for this long is dropped
-	prTimeout  = 15 * time.Second // one lookup, however slow GitHub is
-	prParallel = 4                // lookups at once, so ten new branches don't start ten gh's
-	maxBranch  = 255              // longer than git allows; such a branch isn't looked up
+	prTTL     = time.Minute      // how long a listing is shown before it is redone
+	prTimeout = 15 * time.Second // one listing, however slow GitHub is
+	prLimit   = 300              // open pull requests asked for, the newest: three requests of gh's
 )
 
 // prCache answers PR state from memory and refreshes it in the background, so a page poll never
-// waits on GitHub. A failed lookup counts as no PR until the next one.
+// waits on GitHub. A failed listing leaves what was known before, as ghCache does: one listing
+// answers for every branch now, so counting a failure as no PRs would blank them all at once.
 //
-// A lookup runs gh in the clone, so one still running when the page's server stops would outlive
-// it there: close cancels the lookups in flight, waits for them, and starts no more.
+// A listing runs gh in the clone, so one still running when the page's server stops would outlive
+// it there: close cancels the one in flight, waits for it, and starts no more.
 type prCache struct {
-	lookup LookupPR
-	sem    chan struct{}
+	lookup LookupPRs
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu      sync.Mutex
-	entries map[string]*prEntry
-	closed  bool
-}
-
-type prEntry struct {
-	pr       *PR
-	fetched  time.Time // zero until the first lookup ends
-	asked    time.Time // when a page last showed the branch
+	mu       sync.Mutex
+	prs      map[string]PR // by the branch each heads
+	fetched  time.Time     // zero until the first listing ends
 	inflight bool
+	closed   bool
 }
 
-func newPRCache(lookup LookupPR) *prCache {
+func newPRCache(lookup LookupPRs) *prCache {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &prCache{lookup: lookup, sem: make(chan struct{}, prParallel), ctx: ctx, cancel: cancel, entries: map[string]*prEntry{}}
+	return &prCache{lookup: lookup, ctx: ctx, cancel: cancel}
 }
 
-// close cancels the lookups in flight and returns once they have ended. Later gets start none.
+// close cancels the listing in flight and returns once it has ended. Later gets start none.
 func (c *prCache) close() {
 	c.mu.Lock()
 	c.closed = true
@@ -96,88 +114,46 @@ func (c *prCache) close() {
 	c.wg.Wait()
 }
 
-// get returns what is known of each branch's PR, leaving out branches with none or not yet
-// looked up, and starts a lookup for each branch whose answer is missing or old.
+// get returns what is known of each branch's PR, leaving out branches with none, and starts a
+// listing if the last is old. With no branch to show a PR for, it asks GitHub nothing.
 func (c *prCache) get(branches []string) map[string]PR {
-	now := time.Now()
 	out := map[string]PR{}
+	wanted := false
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, b := range branches {
-		if !lookupable(b) {
+		if b == "" {
 			continue
 		}
-		e := c.entries[b]
-		if e == nil {
-			e = &prEntry{}
-			c.entries[b] = e
-		}
-		e.asked = now
-		if e.pr != nil {
-			out[b] = *e.pr
-		}
-		if !c.closed && !e.inflight && now.Sub(e.fetched) >= prTTL {
-			e.inflight = true
-			c.wg.Add(1) // under mu, which close takes before it waits, so never after the wait began
-			go c.refresh(b)
+		wanted = true
+		if pr, ok := c.prs[b]; ok {
+			out[b] = pr
 		}
 	}
-	for b, e := range c.entries {
-		if !e.inflight && now.Sub(e.asked) > prForget {
-			delete(c.entries, b)
-		}
+	if wanted && !c.closed && !c.inflight && time.Since(c.fetched) >= prTTL {
+		c.inflight = true
+		c.wg.Add(1) // under mu, which close takes before it waits, so never after the wait began
+		go c.refresh()
 	}
 	return out
 }
 
-func (c *prCache) refresh(branch string) {
+func (c *prCache) refresh() {
 	defer c.wg.Done()
-	select {
-	case c.sem <- struct{}{}:
-		defer func() { <-c.sem }()
-	case <-c.ctx.Done():
-	}
 	ctx, cancel := context.WithTimeout(c.ctx, prTimeout)
 	defer cancel()
-	var pr *PR
-	var err error
-	if ctx.Err() == nil { // closed while it waited for a turn: no lookup
-		pr, err = c.lookup(ctx, branch)
-	}
-	if err != nil {
-		pr = nil // gh missing, logged out, offline: show no PR state rather than an error
-	}
-	if pr != nil && !strings.HasPrefix(pr.URL, "https://") {
-		pr.URL = ""
+	listed, err := c.lookup(ctx)
+	prs := make(map[string]PR, len(listed))
+	for b, pr := range listed {
+		if !strings.HasPrefix(pr.URL, "https://") {
+			pr.URL = ""
+		}
+		prs[b] = pr
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e := c.entries[branch]
-	if e == nil {
-		e = &prEntry{asked: time.Now()}
-		c.entries[branch] = e
+	if err == nil { // gh missing, logged out, offline: what was known stays
+		c.prs = prs
 	}
-	e.pr, e.fetched, e.inflight = pr, time.Now(), false
-}
-
-// lookupable says whether a branch name may go on gh's command line. The name comes from the bus,
-// so anyone with push access chooses it. On Windows a gh that is a .cmd or .bat file (a shim, a
-// wrapper) runs under cmd.exe, which reads & | < > ^ % ! and quotes in its arguments as commands
-// and variables, and Go's quoting doesn't stop it: a branch named x&calc would run calc. So only
-// the characters branch names are usually made of are let through, which none of those are; a
-// branch named otherwise shows no PR.
-func lookupable(branch string) bool {
-	if branch == "" || len(branch) > maxBranch || strings.HasPrefix(branch, "-") {
-		return false
-	}
-	for _, r := range branch {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case strings.ContainsRune("-_./+@#", r):
-		case r > unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r)):
-		default:
-			return false
-		}
-	}
-	return true
+	c.fetched, c.inflight = time.Now(), false
 }

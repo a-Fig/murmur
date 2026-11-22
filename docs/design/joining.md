@@ -39,12 +39,14 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 | Consent | `.git/murmur/joined.json` (0600) | clone, so every worktree of it |
 | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp` | user |
 | Permission for its tools | `mcp__murmur` in `permissions.allow` of Claude Code's `settings.json` | user |
-| The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME"]` and `default_tools_approval_mode = "approve"` | user |
-| The MCP server, for OpenCode, Muse Code, Pi and Grok | see [other agents](clients.md) | user |
-| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi; Muse Code and Grok document no skills folder (2026-11-08) | user |
+| The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME", "T3CODE_HOME"]` and `default_tools_approval_mode = "approve"` | user |
+| The MCP server, for OpenCode, Muse Code, Pi, Grok and Antigravity | see [other agents](clients.md) | user |
+| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi, and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
 | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` | `settings.json` in each Claude Code home ([Claude Code's hook is per user](clients.md#claude-codes-hook-is-per-user)) | user |
 | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved | `hooks.json` in each Codex home, its trust in `config.toml` there ([Codex's and Grok's hook](clients.md#codexs-and-groks-hook)) | user |
 | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
+| The hook for Muse Code, on `UserPromptSubmit`, `PostToolUse` and `Stop` | `hooks` in each Muse home's `settings.json` ([Muse's hook](clients.md#muses-hook)) | user |
+| The hook for Antigravity, on `PreInvocation`, `Stop`, and before and after `run_command` | a `murmur` entry in `config/hooks.json` in each Antigravity home ([other agents](clients.md#antigravity)) | user |
 | The daemon | started, if none is running | clone |
 
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
@@ -72,6 +74,17 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 - **What it prints**: what it did, what went wrong, and "Tell your user", chosen from which agent
   ran it (see [reloading MCP servers](#reloading-mcp-servers)), so the agent can say exactly what to
   do next.
+- **It never runs silent past an agent's timeout** (#829, 2026-11-16). An agent runs `mur join`
+  under a timeout of its own, often piped through `tail`, and one that kills it sees nothing: in
+  #813 that looked like a broken install. Its steps each had a bound (a minute for each `claude mcp
+  add`, 15 seconds for the daemon, 30 for the public-repo report), but they add up past 2 minutes
+  with a few Claude Code homes. So the whole join has one deadline, 90 seconds. When it passes, join
+  stops at the next step and reports one problem naming the step it was on; a rerun does only what
+  is missing. The public-repo report is the exception: it is best effort, a daemon retries it, so
+  the deadline cutting it short fails nothing. `claude mcp add` is waited for a second past its
+  kill, since an npm install's `claude.cmd` leaves node holding its output on Windows. A step that
+  runs past 5 seconds says "mur join: still <step>" on standard error. Moving the caller's session
+  in afterwards (up to 10 seconds) is outside the deadline.
 
 ## `mur uninstall`
 
@@ -174,12 +187,23 @@ after `mur join`, since the agent that ran it started before the server was regi
 | Claude Code | Ignored | Honored | A restarted process |
 | T3 Code, Claude | Ignored | Honored | Press Stop, then send any message: T3 restarts the Claude process |
 | T3 Code, Codex | Ignored (2026-10-30: a new thread loads it from `config.toml`; an older one still lacks it on its next turn) | Ignored | A new thread |
+| Pi 0.99.0, terminal (2026-11-17, #864) | Ignored: the extension that registers it loads as a session starts | Honored: the tools came within seconds of a join and went within seconds of a leave | `/reload`, or a new session |
+| T3 Code, Pi | Ignored | Honored, by the same Pi | A new thread: Pi's RPC mode, which T3 runs, has no `/reload` |
+| Antigravity 1.5.13 (T3 Code, 2026-11-20, #890) | Ignored | Honored within seconds | A new thread in T3 Code, or restart `agy` in a terminal |
+
+Join tells a Pi session apart by `PI_CODING_AGENT=true`, which Pi sets for every process it starts.
+A Claude Code or Codex that Pi started inherits it, so their own variables win; a Pi that Codex
+started has the same variables, and gets Codex's advice. Pi's advice is `/reload` (in T3, a new
+thread) whether or not this join wrote the extension: join can't tell whether this session loaded
+it, and one that started before any join wrote it, even another session's, never gets the tools
+without that.
 
 Because `list_changed` is honored where it matters, the server is registered once per user and
 starts in every session as a passive server: after the first join, a Claude Code session in any repo
 gets the tools the moment that repo is joined, with no restart. A session that began before the
 registration needs the restart in the table, and `join` says which for the agent that ran it
-(`CLAUDECODE` and `T3CODE_CLI_PATH` in its environment): in T3, Stop and a message; in a terminal
+(`CLAUDECODE`, and `T3CODE_CLI_PATH` or, from T3's headless server, which sets no
+`T3CODE_CLI_PATH`, `T3CODE_THREAD_ID`, in its environment; #790): in T3, Stop and a message; in a terminal
 Claude Code, exit and `claude --continue`; in Codex, a new thread. Not verified: that `claude
 --continue` loads the server, that Codex honors `default_tools_approval_mode = "approve"` in a live
 thread, and which variables Codex sets for its commands (with none, `join`'s advice covers every

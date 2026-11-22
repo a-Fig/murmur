@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -92,7 +93,7 @@ func Add(dir string, c Clone) error {
 	c.GitDir = filepath.Clean(c.GitDir)
 	if c.Name == "" {
 		var old Clone
-		if b, err := os.ReadFile(file(dir, c.GitDir)); err == nil && json.Unmarshal(b, &old) == nil {
+		if b, err := read(file(dir, c.GitDir), false); err == nil && json.Unmarshal(b, &old) == nil {
 			if old.GitDir == c.GitDir {
 				c.Name = old.Name
 			}
@@ -114,7 +115,7 @@ func Add(dir string, c Clone) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(f.Name(), file(dir, c.GitDir))
+		err = again(true, func() error { return os.Rename(f.Name(), file(dir, c.GitDir)) })
 	}
 	if err != nil {
 		os.Remove(f.Name())
@@ -122,9 +123,37 @@ func Add(dir string, c Clone) error {
 	return err
 }
 
+// again runs f until it succeeds or has failed 20 times, 10 ms apart. On Windows a file another
+// process is reading can't be replaced, and one being replaced can't be read, each for a moment, and
+// a daemon writes its clone's file as it starts while another clone's page may be listing them
+// (#479). internal/here waits the same way for its own renames. Windows can also say a file is
+// missing while another is renamed onto it (Go's cmd/go/internal/robustio), so f finding no file is
+// tried again only where the file is known to be there (there): a file just written or just listed.
+// Elsewhere no file is an answer (no name recorded yet, a clone already off the record), and isn't
+// waited for.
+func again(there bool, f func() error) error {
+	for try := 1; ; try++ {
+		err := f()
+		if err == nil || !there && errors.Is(err, os.ErrNotExist) || try == 20 {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// read is os.ReadFile, tried again for a moment (again).
+func read(path string, there bool) ([]byte, error) {
+	var b []byte
+	err := again(there, func() (err error) {
+		b, err = os.ReadFile(path)
+		return err
+	})
+	return b, err
+}
+
 // Remove takes the clone off the record. A clone that isn't on it is no error.
 func Remove(dir, gitDir string) error {
-	err := os.Remove(file(dir, gitDir))
+	err := again(false, func() error { return os.Remove(file(dir, gitDir)) })
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -136,8 +165,8 @@ func Remove(dir, gitDir string) error {
 // clone whose folder is gone, or that has left, is passed over, not taken off. Between seeing it gone
 // and removing its file, the folder could come back and `mur join` write the file again, and the
 // removal would lose that join (Sol's review, 2026-11-09). `mur leave` takes a clone off; a deleted
-// clone's file, a few dozen bytes, stays. A file that can't be read is passed over too: on Windows a
-// read fails while the file is being replaced.
+// clone's file, a few dozen bytes, stays. A file that can't be read is passed over too, once a read
+// has been tried for a moment (see again), even if it seems not to be there.
 func List(dir string, joined func(gitDir string) bool) ([]Clone, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -152,8 +181,7 @@ func List(dir string, joined func(gitDir string) bool) ([]Clone, error) {
 		if !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		p := filepath.Join(dir, name)
-		b, err := os.ReadFile(p)
+		b, err := read(filepath.Join(dir, name), true) // just listed (see again)
 		if err != nil {
 			continue
 		}

@@ -53,8 +53,8 @@ type keyFile struct {
 // or, should state.json be gone too, if the clone's copy of its own presence is sealed (sealed, as
 // git reads it from that copy). A device that never had keys, a daemon from before encryption,
 // keeps its ID.
-func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (string, ed25519.PrivateKey, *ecdh.PrivateKey, error) {
-	device, err := loadDevice(dir)
+func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (device string, sign ed25519.PrivateKey, box *ecdh.PrivateKey, err error) {
+	device, err = loadDevice(dir)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -71,6 +71,11 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 		return "", nil, nil, err
 	}
 	if hadKeys(filepath.Join(dir, "state.json"), device) || sealed != nil && sealed(device) {
+		// The names go before the ID does: a start that fails after the new ID and keys are written
+		// would leave the next one nothing to tell it the ID changed, and it would keep the names.
+		if err := dropOldNames(filepath.Join(dir, "state.json")); err != nil {
+			return "", nil, nil, err
+		}
 		if err := os.Remove(filepath.Join(dir, "device")); err != nil {
 			return "", nil, nil, err
 		}
@@ -82,7 +87,7 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 			lg.Printf("the keys of %s are gone; this clone is device %s from now on", old, device)
 		}
 	}
-	sign, box := bus.NewSignKey(), bus.NewBoxKey()
+	sign, box = bus.NewSignKey(), bus.NewBoxKey()
 	out, err := json.Marshal(keyFile{Sign: hex.EncodeToString(sign.Seed()), Box: hex.EncodeToString(box.Bytes())})
 	if err != nil {
 		return "", nil, nil, err
@@ -91,6 +96,117 @@ func loadIdentity(dir string, lg *log.Logger, sealed func(device string) bool) (
 		return "", nil, nil, err
 	}
 	return device, sign, box, nil
+}
+
+// dropOldNames takes out of the state file at path the session names this clone holds, before
+// loadIdentity gives it a new device ID. The registry has each of them on the old device, or set
+// aside for it, and a new device can't take them over: a move between devices is something the
+// registry never allows. Kept, they were what a reconnecting session took under the new ID, and
+// names the old one had set aside went to new sessions, while every other device still had them on
+// the old one: a message to one, once its session stopped, went to the old address, where nobody
+// would read it (#617). So the new ID starts with new names, as on any other new device, and the
+// old ones stay taken (Used).
+//
+// What a session kept by its name is the session's, not the name's: its tags, with the groups it
+// is in and do not disturb, its mutes, and who has been explained to it. So which name each key
+// had goes to namesLeft, for the names that have any of those, are muted by another session
+// here, or have a wake or busy choice of their own on the page (#836), and the name the key gets next takes them (adoptLeftLocked, #827). Without that a session
+// in a group, on do not disturb, came back out of the group and was given turns again.
+//
+// The starts and stops not yet written (unwritten) go too: they are from the old device's
+// addresses, and written to the new device's log every reader would drop them, their sender not
+// being the log's device. Everything else in the file is kept as it was.
+func dropOldNames(path string) error {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var st map[string]json.RawMessage
+	if json.Unmarshal(b, &st) != nil {
+		return nil // loadState says what is wrong with it
+	}
+	n := len(st)
+	kept := map[string]bool{} // the names that have something to hand on
+	for _, k := range []string{"tags", "mutes", "explained"} {
+		var by map[string]json.RawMessage
+		if json.Unmarshal(st[k], &by) == nil {
+			for name := range by {
+				kept[name] = true
+			}
+		}
+	}
+	// And the names muted: a session another one here muted is still muted under its new name.
+	var mutes map[string]map[string]json.RawMessage
+	if json.Unmarshal(st["mutes"], &mutes) == nil {
+		for _, m := range mutes {
+			for name := range m {
+				kept[name] = true
+			}
+		}
+	}
+	// And the names the page has a wake or busy choice for (settings.json, #836).
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(path), "settings.json")); err == nil {
+		var set struct {
+			SessionWake map[string]json.RawMessage `json:"sessionWake"`
+			SessionBusy map[string]json.RawMessage `json:"sessionBusy"`
+		}
+		if json.Unmarshal(b, &set) == nil {
+			for _, by := range []map[string]json.RawMessage{set.SessionWake, set.SessionBusy} {
+				for name := range by {
+					kept[name] = true
+				}
+			}
+		}
+	}
+	// A choice still to be moved to a name (settingsMoves) is that name's.
+	var moves [][2]string
+	if json.Unmarshal(st["settingsMoves"], &moves) == nil {
+		for _, m := range moves {
+			if kept[m[0]] {
+				kept[m[1]] = true
+			}
+		}
+	}
+	// An earlier loss's are kept for the keys that haven't come back since, and for one whose
+	// name since has nothing: its key was given a name with no session there to take them.
+	var earlier, keys map[string]string
+	_ = json.Unmarshal(st["namesLeft"], &earlier)
+	_ = json.Unmarshal(st["nameKeys"], &keys)
+	left := map[string]string{}
+	for _, names := range []map[string]string{earlier, keys} {
+		for key, name := range names {
+			if key != "" && kept[name] {
+				left[key] = name
+			}
+		}
+	}
+	was := string(st["namesLeft"])
+	for _, k := range []string{"nameKeys", "namePool", "nameBinds", "nameHolders", "sessionNames", "namesSeen", "unwritten", "namesLeft"} {
+		delete(st, k)
+	}
+	if len(left) > 0 {
+		b, err := json.Marshal(left)
+		if err != nil {
+			return err
+		}
+		st["namesLeft"] = b
+	}
+	if len(st) == n && string(st["namesLeft"]) == was {
+		return nil
+	}
+	// Written as the daemon writes it, and with the time it had: loadState takes that for when the
+	// last daemon last saved, which dates the stops of the sessions a killed one left (Opus's review).
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if err := writeJSON(path, st); err != nil {
+		return err
+	}
+	return os.Chtimes(path, fi.ModTime(), fi.ModTime())
 }
 
 func parseKeys(b []byte) (ed25519.PrivateKey, *ecdh.PrivateKey, bool) {
@@ -243,12 +359,16 @@ func short(sha string) string {
 	return sha
 }
 
+// noKeyError is a message refused because its recipient's device has no key this one can encrypt
+// to. It is about that recipient alone, so a send to a list goes on past it (#541).
+type noKeyError struct{ error }
+
 // errOldDevice says a device can't read what this one writes.
 func errOldDevice(dev string) error {
-	return fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
+	return noKeyError{fmt.Errorf("%s runs a version of Murmur from before the bus was encrypted, so it couldn't read this. "+
 		"It can once it runs Murmur 0.3 or later. Versions after 0.2.3 check for a newer release on their channel every hour, "+
 		"unless updates are turned off there; 0.2.3 and older don't, so that teammate runs Murmur's installer again "+
-		"(https://murmur.afig.dev)", dev)
+		"(https://murmur.afig.dev)", dev)}
 }
 
 // encryptEventLocked returns e as this device writes it: encrypted for the current team key
@@ -264,7 +384,7 @@ func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 			if p := d.peers[dev]; p != nil {
 				return bus.Event{}, errOldDevice(dev)
 			}
-			return bus.Event{}, fmt.Errorf("%s isn't a device this one has seen, so there is no key to encrypt to", dev)
+			return bus.Event{}, noKeyError{fmt.Errorf("%s isn't a device this one has seen, so there is no key to encrypt to", dev)}
 		}
 	}
 	if d.epochLocked() == nil {

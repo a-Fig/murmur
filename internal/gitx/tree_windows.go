@@ -1,0 +1,162 @@
+package gitx
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+// A tree is a job object: git is put in it before it runs, and every process it starts is in it
+// too, so ending the job ends them all. Killing git alone, as exec does, leaves its children.
+type tree struct {
+	job windows.Handle
+	git *os.Process // ended on its own where there is no job
+}
+
+// useJob is false in a test of what RunTree does where no job can be made.
+var useJob = true
+
+// noJob logs, once, that no job could be made, which leaves a stopped fetch's children running.
+var noJob sync.Once
+
+// basicAccounting is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, which x/sys doesn't have.
+type basicAccounting struct {
+	TotalUserTime, TotalKernelTime, ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses     uint32
+}
+
+// startTree starts git suspended, so it can start nothing before it is in the job, puts it in a
+// new job, and lets it run. A job that can't be made, or git put in it (a job this process is in
+// may forbid one inside it), is gone without: end then ends git alone, as Run does, and its
+// children are left as Run leaves them. Refusing to run would leave no files fetch at all there.
+func startTree(cmd *exec.Cmd) (*tree, error) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
+	job, jerr := windows.Handle(0), error(syscall.EINVAL)
+	if useJob {
+		job, jerr = windows.CreateJobObject(nil, nil)
+	}
+	if jerr == nil {
+		// Closing the job's last handle ends what is in it: should this process die, its fetch dies.
+		info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+		info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+		if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+			windows.CloseHandle(job)
+			job, jerr = 0, err
+		}
+	}
+	if err := cmd.Start(); err != nil {
+		if job != 0 {
+			windows.CloseHandle(job)
+		}
+		return nil, err
+	}
+	t := &tree{git: cmd.Process}
+	pid := uint32(cmd.Process.Pid)
+	if job != 0 {
+		p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, pid)
+		if err == nil {
+			if err = windows.AssignProcessToJobObject(job, p); err == nil {
+				t.job = job
+			}
+			windows.CloseHandle(p)
+		}
+		if t.job == 0 {
+			windows.CloseHandle(job)
+			jerr = err
+		}
+	}
+	if t.job == 0 && useJob {
+		noJob.Do(func() {
+			log.Printf("git's processes can't be put in a job (%v): a stopped files fetch ends git alone, and what it started runs on", jerr)
+		})
+	}
+	if err := resume(pid); err != nil {
+		cmd.Process.Kill()
+		t.end()
+		return nil, err
+	}
+	return t, nil
+}
+
+// resume lets a process started suspended run: its one thread, which exec doesn't keep a handle
+// to, is found among the system's.
+func resume(pid uint32) error {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(snap)
+	e := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	resumed := false
+	for err = windows.Thread32First(snap, &e); err == nil; err = windows.Thread32Next(snap, &e) {
+		if e.OwnerProcessID != pid {
+			continue
+		}
+		th, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, e.ThreadID)
+		if err != nil {
+			return err
+		}
+		_, err = windows.ResumeThread(th)
+		windows.CloseHandle(th)
+		if err != nil {
+			return err
+		}
+		resumed = true
+	}
+	if !resumed {
+		return syscall.ESRCH
+	}
+	return nil
+}
+
+// end ends every process in the job and waits until none is left, for at most treeGone; with no
+// job, it ends git, whose Wait RunTree is in.
+func (t *tree) end() {
+	if t.job == 0 {
+		t.git.Kill()
+		return
+	}
+	defer windows.CloseHandle(t.job)
+	windows.TerminateJobObject(t.job, 1)
+	deadline := time.Now().Add(treeGone)
+	for time.Now().Before(deadline) {
+		var a basicAccounting
+		if windows.QueryInformationJobObject(t.job, windows.JobObjectBasicAccountingInformation,
+			uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil) != nil || a.ActiveProcesses == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// outputFile is a file for a command's output that Windows deletes once its last handle is closed,
+// by this process or a child that inherited it. Its name is random, so no other process opens it.
+func outputFile() (*os.File, error) {
+	b := make([]byte, 8)
+	rand.Read(b)
+	path := filepath.Join(os.TempDir(), "mur-git-"+hex.EncodeToString(b))
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_TEMPORARY|windows.FILE_FLAG_DELETE_ON_CLOSE, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
+}

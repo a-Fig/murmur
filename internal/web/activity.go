@@ -2,11 +2,8 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +36,12 @@ type Activity struct {
 	// Commits is how many commits the session made in one tool call, and Subject the last one's.
 	Commits int    `json:"commits,omitempty"`
 	Subject string `json:"subject,omitempty"`
+	// Issue is the number of a GitHub issue that the session filed, or closed, as What says
+	// (GHOpened or GHClosed), and Repo its repository's owner/name, lowercased: the page names the
+	// session on GitHub's event for it, where the event's address is in that repository (#510).
+	Repo  string `json:"repo,omitempty"`
+	Issue int    `json:"issue,omitempty"`
+	What  string `json:"what,omitempty"`
 }
 
 // Activity.Kind values.
@@ -48,6 +51,7 @@ const (
 	ActStatus  = "status"
 	ActTags    = "tags"
 	ActCommits = "commits"
+	ActIssue   = "issue"
 )
 
 // GitHubEvent is one thing that happened to a pull request or an issue: it was opened, merged or
@@ -61,7 +65,8 @@ type GitHubEvent struct {
 	Title  string    `json:"title"`
 	URL    string    `json:"url,omitempty"`
 	// Author is the GitHub login that opened it. Agents on one machine share their user's login,
-	// so the page names the session whose branch Branch is, where it knows one.
+	// so the page names the session whose branch Branch is, or for an issue the one whose hook saw
+	// it file or close it (ActIssue), where it knows one.
 	Author string `json:"author,omitempty"`
 	Branch string `json:"branch,omitempty"` // a pull request's head
 }
@@ -83,36 +88,22 @@ const (
 	ghTimeout = 20 * time.Second // one listing: two runs of gh
 	ghLimit   = 30               // pull requests, and issues, asked for: the most recently updated
 	maxTitle  = 200
+	maxBranch = 255 // longer than git allows
 )
 
 // GHEvents lists them with the gh CLI, run in dir, as GH does: the thirty pull requests and the
 // thirty issues updated most recently, in any state, each made into its events. Nothing of the
 // page's goes on gh's command line.
 func GHEvents(dir string) LookupGitHub {
-	run := func(ctx context.Context, v any, args ...string) error {
-		cmd := exec.CommandContext(ctx, "gh", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1")
-		cmd.WaitDelay = 2 * time.Second
-		hideWindow(cmd)
-		out, err := cmd.Output()
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(out, v); err != nil {
-			return fmt.Errorf("gh %s list: %w", args[0], err)
-		}
-		return nil
-	}
 	return func(ctx context.Context) ([]GitHubEvent, error) {
 		limit := fmt.Sprint(ghLimit)
 		var prs, issues []ghItem
-		if err := run(ctx, &prs, "pr", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
+		if err := ghJSON(ctx, dir, &prs, "pr", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
 			"--json", "number,title,url,author,headRefName,createdAt,mergedAt,closedAt"); err != nil {
 			return nil, err
 		}
 		// A repository with issues turned off fails here, and still has its pull requests.
-		_ = run(ctx, &issues, "issue", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
+		_ = ghJSON(ctx, dir, &issues, "issue", "list", "--state", "all", "--limit", limit, "--search", "sort:updated-desc",
 			"--json", "number,title,url,author,createdAt,closedAt")
 		return append(ghEvents(GHPullRequest, prs), ghEvents(GHIssue, issues)...), nil
 	}

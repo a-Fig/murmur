@@ -123,7 +123,12 @@ type Event struct {
 	Agent  string `json:"agent,omitempty"`  // session.started
 	Branch string `json:"branch,omitempty"` // session.started
 
-	To      string `json:"to,omitempty"` // message: device/session, device, "*", or a group's tag
+	To string `json:"to,omitempty"` // message: device/session, device, "*", or a group's tag
+	// ToName is the session name a message was sent to, when it was sent to one (#45). To is the
+	// address the registry has the name at, and a session there may have held other names since, so
+	// the receiving daemon goes by this name where it knows who holds it. A daemon from before it
+	// ignores it and goes by To.
+	ToName  string `json:"toName,omitempty"`
 	Subject string `json:"subject,omitempty"`
 	Body    string `json:"body,omitempty"`
 	// Person is a person's name on a message they sent, so that a daemon that never saw their
@@ -134,6 +139,12 @@ type Event struct {
 	Receipts bool `json:"receipts,omitempty"`
 	// Marks is a receipt's marks.
 	Marks []Mark `json:"marks,omitempty"`
+	// Files is the files a message carries (#570). A daemon from before files ignores them and gives
+	// its sessions the text alone.
+	Files []File `json:"files,omitempty"`
+	// FilesAt names the ref the message's files are on (FilesRef). It is random and inside the
+	// encrypted event, so the ref itself says nothing of the message or its sender.
+	FilesAt string `json:"filesAt,omitempty"`
 
 	// tags: the tags the human added and removed. To is the session. group.add: Add is the groups
 	// an agent added the session to.
@@ -225,7 +236,14 @@ func (e *Event) Clean() {
 	if e.Type != Message {
 		e.Receipts = false
 	}
+	if e.Type != Message || !names.Valid(e.ToName) {
+		e.ToName = ""
+	}
 	e.Marks = cleanMarks(e.Type, e.Marks)
+	e.Files = cleanFiles(e.Type, e.Files)
+	if len(e.Files) == 0 || !validFilesAt(e.FilesAt) {
+		e.FilesAt = "" // with files, they read as files that can't be had
+	}
 }
 
 // cleanMarks holds a receipt's marks to what Murmur writes: the first MaxMarks, each with a message's
@@ -275,12 +293,16 @@ func (p *Presence) Clean() {
 			} else if !names.Valid(s.Name) {
 				s.Name = ""
 			}
+			if s.Name != "" || !names.Valid(s.Was) {
+				s.Was = ""
+			}
 			s.Agent = OneLine(s.Agent, 40)
 			s.Branch = OneLine(s.Branch, 100)
 			s.Doing = OneLine(s.Doing, 120)
 			s.Committed = cleanBranches(s.Committed)
 			s.Tags = tags.CleanRead(s.Tags)
 			s.Muted = cleanMuted(s.Muted)
+			s.Dropped = cleanDropped(s.Dropped)
 			if s.ID == PersonSession {
 				s.Tags = tags.Person() // by the address, whatever the presence says (#267)
 			}
@@ -297,6 +319,18 @@ func cleanMuted(in []string) []string {
 	for _, n := range in {
 		if names.Valid(n) && !slices.Contains(out, n) && len(out) < MaxMuted {
 			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// cleanDropped holds a session's dropped messages to what Murmur writes: event IDs, none repeated,
+// at most MaxDropped.
+func cleanDropped(in []string) []string {
+	var out []string
+	for _, id := range in {
+		if validID(id) && !slices.Contains(out, id) && len(out) < MaxDropped {
+			out = append(out, id)
 		}
 	}
 	return out
@@ -329,7 +363,8 @@ func ValidName(s string) bool {
 
 // ValidDevice accepts device IDs: valid names that every filesystem can hold as a ref (none of
 // Windows' reserved device names), other than Murmur's own, under which a message would pass for
-// the tool's own words. IDs Murmur makes always pass: a hostname slug and 4 hex digits.
+// the tool's own words. IDs Murmur makes always pass: device- and 8 hex digits, or, for a clone
+// made before #330, a hostname slug and 4.
 func ValidDevice(s string) bool {
 	if !ValidName(s) || s == brand.Name {
 		return false
@@ -411,12 +446,23 @@ type Presence struct {
 	// not in Sessions, and a daemon that reads this refuses to send them a message; one from
 	// before the field sees them only as gone, and the writer drops what it sends them.
 	Offline []string `json:"offline,omitempty"`
+	// DND says the device's person put it on do not disturb (#681): its sessions carry the
+	// do-not-disturb tag while it lasts, and this says why.
+	DND bool `json:"dnd,omitempty"`
 	// Groups says the device's daemon gives its sessions what is sent to a group they are in, and
 	// takes an agent's add to one (#184). A sender is told of a member whose device doesn't.
 	Groups bool `json:"groups,omitempty"`
 	// Receipts says the device's daemon writes marks for the messages that ask for them (#26). A
 	// sender shows a recipient on a device without it as sending no receipts, not as unread.
 	Receipts bool `json:"receipts,omitempty"`
+	// Files says the device's daemon fetches the files a message carries and gives its sessions
+	// their paths (#570). A sender is told of a recipient whose device doesn't.
+	Files bool `json:"files,omitempty"`
+	// FilesOff says the device's person turned Receive files off for its agents (#765): they take a
+	// message's text and not its files, and a sender is told so. PersonFilesOff says the same of the
+	// person themselves, on the page.
+	FilesOff       bool `json:"filesOff,omitempty"`
+	PersonFilesOff bool `json:"personFilesOff,omitempty"`
 	// Epoch is the newest team key the device had read from the team ref when it wrote this, and
 	// Holds the team keys it held then, by TeamID (#156). A teammate grants the team keys by them.
 	// Both are inside the box, so they are absent from an encrypted presence until it is opened.
@@ -425,7 +471,7 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
-	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups and Receipts, encrypted for the team's devices; those fields
+	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups, Receipts and Files, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`
 	// Names is, beside a Box, each session's name with the session's ID, readable: a device that
@@ -455,14 +501,43 @@ type SessionInfo struct {
 	// HookOff says Murmur's hook doesn't run for the session (proto.SessionView.HookOff, #225). A
 	// daemon from before it ignores it.
 	HookOff bool `json:"hookOff,omitempty"`
+	// TurnRoute says the session's daemon has a way to hand over a message as a turn without a
+	// hook. A daemon from before #888 leaves this unset, so peers make no promise of a turn.
+	TurnRoute bool `json:"turnRoute,omitempty"`
 	// Muted is the names of the sessions this one has muted (#27), at most MaxMuted: it gets
 	// nothing they send. A daemon from before mutes ignores it, and still delivers to this
 	// session's device, which is the one that drops the message.
 	Muted []string `json:"muted,omitempty"`
+	// Was is the name the session went by last, while it has none (Name is empty): a new one is
+	// pending, as after Claude Code's /clear, or the session is dropped in its grace while a live
+	// replacement carries the name (#875). Every device then shows it by the name its own device
+	// does (#602). A daemon from before it ignores it.
+	Was string `json:"was,omitempty"`
+	// Dropped is the IDs of the last messages, at most MaxDropped, that this session's device
+	// dropped on arrival because this session had muted their sender (#466). The sender's daemon
+	// finds its own among them and tells the sender, who would otherwise believe it arrived. A
+	// daemon from before it ignores them.
+	Dropped []string `json:"dropped,omitempty"`
+	// NoWake says a message from another agent wouldn't go into the session as a turn now, by its
+	// device's wake setting (#545): NoWakeOff or NoWakeIdle, "" if it would. The message waits for
+	// the session's next turn or its inbox, and the sender is told. A daemon from before it ignores
+	// it, and its own sessions' say nothing.
+	NoWake string `json:"noWake,omitempty"`
 }
+
+// SessionInfo.NoWake values.
+const (
+	// NoWakeOff: the page's wake setting for the session is never.
+	NoWakeOff = "off"
+	// NoWakeIdle: the session has been idle longer than its wake setting's minutes.
+	NoWakeIdle = "idle"
+)
 
 // MaxMuted caps SessionInfo.Muted.
 const MaxMuted = 50
+
+// MaxDropped caps SessionInfo.Dropped.
+const MaxDropped = 20
 
 // MaxCommitted caps SessionInfo.Committed.
 const MaxCommitted = 5

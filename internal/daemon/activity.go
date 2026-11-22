@@ -5,10 +5,13 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/attrib"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -18,7 +21,9 @@ import (
 // this one's own included, so it is known only from when this daemon started reading, and at
 // most one change per presence write. Commits are known with their count only for this device's
 // sessions, which the hook brackets (commits.go); another device's presence says which branches a
-// session committed to, so a branch new to that list is shown without a count.
+// session committed to, so a branch new to that list is shown without a count. A GitHub issue a
+// session filed or closed is known only on its own device, from the hook (#510): nothing carries it
+// to another.
 //
 // All of it is kept in memory, the newest maxActs, and is gone with the daemon: it is a feed of
 // what happened lately, and the bus and git hold what must last. The starts and stops are on the
@@ -170,11 +175,45 @@ func (d *Daemon) recordCommitsLocked(id string, commits []attrib.Commit, at time
 	}
 }
 
+// recordIssuesLocked keeps the GitHub issues a tool call of sessions filed or closed, as the hook
+// read them from the call (#510), for the page to name the session on GitHub's event for each: the
+// issue's repository and number and which it was, and nothing else of the call. Issues of any
+// repository on GitHub are kept, since the page lists the issues of the one gh picks in the clone,
+// which needn't be the remote's (a clone's upstream comes first), and it matches by repository.
+// They are credited as commits are, a delegate's to its parent. Caller holds mu.
+func (d *Daemon) recordIssuesLocked(sessions []*session, issues []proto.Issue) {
+	if len(sessions) == 0 {
+		return
+	}
+	now := time.Now()
+	for i, is := range issues {
+		if i == maxIssues {
+			break
+		}
+		repo := strings.TrimPrefix(publicrepo.Address("https://github.com/"+is.Repo), "github.com/")
+		if is.Number <= 0 || repo == "" {
+			continue
+		}
+		what := web.GHOpened
+		if is.Closed {
+			what = web.GHClosed
+		}
+		for _, id := range d.creditedLocked(sessions) {
+			// One ID per session and issue, so a hook that reports the same call twice shows it once.
+			d.recordActLocked(web.Activity{ID: "issue-" + what + "-" + repo + "#" + strconv.Itoa(is.Number) + "-" + id, Kind: web.ActIssue,
+				At: now, Addr: bus.Addr(d.device, id), Repo: repo, Issue: is.Number, What: what})
+		}
+	}
+}
+
+// maxIssues bounds the issues one hook request reports.
+const maxIssues = 10
+
 // labelerLocked gives the name to show for an address: the session's or the person's, as known
-// now, else the name the registry last had for it, else the address. Caller holds mu, for as
-// long as it uses what this returns.
+// now, else the one a session with none in presence is shown by (lastNameLocked), else the
+// address. Caller holds mu, for as long as it uses what this returns.
 func (d *Daemon) labelerLocked() func(addr string) string {
-	var byAddr map[string]string // the registry's names, for a session no longer in presence
+	var byAddr map[string]string // the names of sessions no longer in presence
 	return func(addr string) string {
 		if name, _, _ := d.sessionInfoLocked(addr); name != "" {
 			return name

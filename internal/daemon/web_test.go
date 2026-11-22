@@ -81,14 +81,27 @@ func (p *page) status(path, token string) (int, error) { return p.statusOf(path,
 // hiddenStatus is status for a page in a tab nobody can see, which says so with each call.
 func (p *page) hiddenStatus(path, token string) (int, error) { return p.statusOf(path, token, true) }
 
+// minimizedAppStatus is status for the desktop app's page in a minimized window.
+func (p *page) minimizedAppStatus(path, token string) (int, error) {
+	return p.statusWith(path, token, map[string]string{"X-Page-Hidden": "1", "X-Page-App": "1"})
+}
+
 func (p *page) statusOf(path, token string, hidden bool) (int, error) {
+	h := map[string]string{}
+	if hidden {
+		h["X-Page-Hidden"] = "1"
+	}
+	return p.statusWith(path, token, h)
+}
+
+func (p *page) statusWith(path, token string, headers map[string]string) (int, error) {
 	req, err := http.NewRequest("GET", p.base+path, nil)
 	if err != nil {
 		p.t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	if hidden {
-		req.Header.Set("X-Page-Hidden", "1")
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -574,9 +587,9 @@ func TestPageMessageCursorAcrossTheRingWrapping(t *testing.T) {
 // refuses them.
 func TestPageSettingsPersist(t *testing.T) {
 	t.Parallel()
-	d := newDevice(t, newRemote(t))
+	d := newDeviceWith(t, newRemote(t), func(d *device) { d.filesOff = true }) // a new user's defaults
 	pg := d.page()
-	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 3}
+	def := web.Settings{Wake: web.Wake{When: web.WakeWithin}, Busy: web.BusySubject, DefaultMinutes: 5}
 	if got := pg.settings(); !reflect.DeepEqual(got, def) {
 		t.Fatalf("defaults: %+v, want %+v", got, def)
 	}
@@ -586,7 +599,7 @@ func TestPageSettingsPersist(t *testing.T) {
 		SessionWake:    map[string]web.Wake{"quiet-otter": {When: web.WakeNever}, "brave-heron": {When: web.WakeAlways}},
 		Busy:           web.BusyWhole,
 		SessionBusy:    map[string]string{"quiet-otter": web.BusySubject},
-		DefaultMinutes: 3,
+		DefaultMinutes: 5,
 	}
 	body, _ := json.Marshal(want)
 	if code, out := pg.call("PUT", "/api/settings", pg.token, string(body)); code != http.StatusOK {
@@ -664,7 +677,7 @@ func TestPageSettingsPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.start()
-	old := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject, DefaultMinutes: 3}
+	old := web.Settings{Wake: web.Wake{When: web.WakeAlways}, Busy: web.BusySubject, DefaultMinutes: 5}
 	if got := d.page().settings(); !reflect.DeepEqual(got, old) {
 		t.Fatalf("with a file from before the busy setting: %+v, want %+v", got, old)
 	}
@@ -695,6 +708,7 @@ func (d *device) exited() bool {
 // would; one that has stopped lets it go, and one whose calls don't carry the token never held it.
 // Nor does a page in a tab nobody can see: it goes on polling for as long as the browser runs, and
 // a tab forgotten in the background would keep the daemon, and its polling of GitHub, up for good.
+// The desktop app's page does, minimized too (#23).
 func TestOpenPageKeepsDaemonUp(t *testing.T) {
 	// Not parallel: its calls must come more often than the page counts as open, and the other
 	// daemons must exit inside its window; other tests' load would stretch both.
@@ -706,7 +720,13 @@ func TestOpenPageKeepsDaemonUp(t *testing.T) {
 	stranger := newDeviceWith(t, remote, timed)
 	forgotten := newDeviceWith(t, remote, timed)
 	sg, fg := stranger.page(), forgotten.page()
+	// The app calls as soon as it can, and again once the last daemon is up: starting one takes
+	// longer than the idle time on a loaded machine.
+	app := newDeviceWith(t, remote, timed)
+	ag := app.page()
+	ag.minimizedAppStatus("/api/state", ag.token)
 	watched := newDeviceWith(t, remote, timed)
+	ag.minimizedAppStatus("/api/state", ag.token)
 	pg := watched.page()
 
 	// Calls for longer than the idle time. Without a page open, the daemon would be gone by now.
@@ -722,6 +742,9 @@ func TestOpenPageKeepsDaemonUp(t *testing.T) {
 		if code, err := fg.hiddenStatus("/api/state", fg.token); err == nil && code != http.StatusOK {
 			t.Fatalf("a hidden page's call: %d", code)
 		}
+		if code, err := ag.minimizedAppStatus("/api/state", ag.token); err != nil || code != http.StatusOK {
+			t.Fatalf("the minimized app's call: %d, %v; its daemon should stay up", code, err)
+		}
 		if watched.exited() {
 			t.Fatalf("the daemon exited %s after the page's last call, with the page open", time.Since(last))
 		}
@@ -731,6 +754,9 @@ func TestOpenPageKeepsDaemonUp(t *testing.T) {
 	}
 	if !forgotten.exited() {
 		t.Errorf("a hidden page's calls kept a daemon up")
+	}
+	if app.exited() {
+		t.Errorf("the minimized app's calls didn't keep its daemon up")
 	}
 
 	// The calls stop. The page counts as open for a while more, and the idle time runs from then.

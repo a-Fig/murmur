@@ -19,6 +19,14 @@ import (
 type fakeThreads struct {
 	mu sync.Mutex
 	st map[string]t3db.State
+	n  int // reads so far
+}
+
+// reads is how many reads have been made so far.
+func (f *fakeThreads) reads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.n
 }
 
 func (f *fakeThreads) set(thread string, st t3db.State) {
@@ -30,6 +38,7 @@ func (f *fakeThreads) set(thread string, st t3db.State) {
 func (f *fakeThreads) read(_ context.Context, _, _, thread string) (t3db.State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.n++
 	st, ok := f.st[thread]
 	if !ok {
 		return t3db.State{}, t3db.ErrNotFound
@@ -54,7 +63,7 @@ func newT3Device(t *testing.T, remote string, threads *fakeThreads) *device {
 	return d
 }
 
-// Under the default, within 3 minutes, a thread idle longer is not woken: the message waits as a
+// Under the default, within 5 minutes, a thread idle longer is not woken: the message waits as a
 // notice. Once the thread is at work again, it goes in as the next turn.
 func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 	t.Parallel()
@@ -70,13 +79,16 @@ func TestWithinLeavesALongIdleThreadAlone(t *testing.T) {
 	eventually(t, "the message to reach b", func() bool { return logHas(b, "not now") })
 	holds(t, "no handoff to a thread idle 10 minutes", time.Second, func() bool { return len(calls()) == 0 })
 
+	// bob has no hook, so its message waits for the run to end (#699), and then goes: bob was at
+	// work just now.
 	threads.set("thread-bob", t3db.State{Busy: true})
-	eventually(t, "handoff once the thread is at work", func() bool { return len(calls()) == 1 })
+	holds(t, "no handoff while the run goes", time.Second, func() bool { return len(calls()) == 0 })
+	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
+	eventually(t, "handoff once the thread has been at work", func() bool { return len(calls()) == 1 })
 	if !strings.Contains(calls()[0].Stdin, "not now") {
 		t.Errorf("the turn handed over: %q", calls()[0].Stdin)
 	}
 
-	threads.set("thread-bob", t3db.State{LastRun: time.Now()})
 	a.send("aaaaaa", bob, "just now", "")
 	eventually(t, "handoff to a thread idle a moment", func() bool { return len(calls()) == 2 })
 }

@@ -29,6 +29,7 @@ func threadsDaemon(t *testing.T) *Daemon {
 	d.threadRead = map[threadKey]time.Time{}
 	d.threadWarned = map[threadKey]bool{}
 	d.peers = map[string]*peer{}
+	d.handedTo, d.handing = map[threadKey][]handed{}, map[handing]bool{}
 	d.kick, d.pushKick = make(chan struct{}, 1), make(chan struct{}, 1)
 	return d
 }
@@ -54,8 +55,8 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 		wake  pageSettings
 		want  bool
 	}{
-		{"idle a minute, within the default 3", &t3db.State{LastRun: ago(time.Minute)}, 0, wakeWithin(0), true},
-		{"idle 5 minutes, past the default 3", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, wakeWithin(0), false},
+		{"idle 4 minutes, within the default 5", &t3db.State{LastRun: ago(4 * time.Minute)}, 0, wakeWithin(0), true},
+		{"idle 6 minutes, past the default 5", &t3db.State{LastRun: ago(6 * time.Minute)}, 0, wakeWithin(0), false},
 		{"idle 5 minutes, within 10", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, wakeWithin(10), true},
 		{"busy, however long since the last run", &t3db.State{Busy: true, LastRun: ago(time.Hour)}, 0, wakeWithin(0), true},
 		// The session's own times say nothing once T3 has spoken: its MCP server may have started
@@ -65,7 +66,7 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 		{"not read yet, and the session long idle", nil, time.Hour, wakeWithin(0), false},
 		{"always, idle an hour", &t3db.State{LastRun: ago(time.Hour)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, true},
 		{"never, idle a minute", &t3db.State{LastRun: ago(time.Minute)}, 0, pageSettings{Wake: web.Wake{When: web.WakeNever}}, false},
-		{"an unset choice is within", &t3db.State{LastRun: ago(5 * time.Minute)}, 0, pageSettings{}, false},
+		{"an unset choice is within", &t3db.State{LastRun: ago(6 * time.Minute)}, 0, pageSettings{}, false},
 		{"settled, under always", &t3db.State{Settled: true, LastRun: ago(time.Second)}, 0, pageSettings{Wake: web.Wake{When: web.WakeAlways}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,8 +77,8 @@ func TestWithinGoesByT3sRunsWhereKnown(t *testing.T) {
 			}
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			if got := d.wakesLocked("aaaaaa", tc.wake); got != tc.want {
-				t.Errorf("wakesLocked = %v, want %v", got, tc.want)
+			if got := d.mayWakeLocked("aaaaaa", tc.wake); got != tc.want {
+				t.Errorf("mayWakeLocked = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -93,12 +94,12 @@ func TestWithinTakesTheSessionsOwnSetting(t *testing.T) {
 	wake.SessionWake = map[string]web.Wake{"name-aaaaaa": {When: web.WakeWithin, Minutes: 30}}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.wakesLocked("aaaaaa", wake) {
+	if !d.mayWakeLocked("aaaaaa", wake) {
 		t.Errorf("idle 20 minutes, with its own 30: not woken")
 	}
 	wake.SessionWake = nil
-	if d.wakesLocked("aaaaaa", wake) {
-		t.Errorf("idle 20 minutes, with the device's 3: woken")
+	if d.mayWakeLocked("aaaaaa", wake) {
+		t.Errorf("idle 20 minutes, with the device's 5: woken")
 	}
 }
 
@@ -113,7 +114,7 @@ func TestATurnHandedOverCountsAsWork(t *testing.T) {
 	defer d.mu.Unlock()
 	d.pushedAt["aaaaaa"] = time.Now()
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{LastRun: time.Now().Add(-10 * time.Minute)}
-	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if !d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("just handed a message: not woken")
 	}
 }
@@ -127,10 +128,10 @@ func TestWithinForAStoppedThreadNotReadYet(t *testing.T) {
 	d.threadRead = map[threadKey]time.Time{}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if !d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("stopped a minute ago: not woken")
 	}
-	if d.wakesLocked("bbbbbb", wakeWithin(0)) {
+	if d.mayWakeLocked("bbbbbb", wakeWithin(0)) {
 		t.Errorf("stopped 10 minutes ago: woken")
 	}
 	if !d.holdsRouteLocked(wakeWithin(0)) {
@@ -183,7 +184,7 @@ func TestSettledThreadsGoOffline(t *testing.T) {
 				t.Errorf("%s: who lists the settled session", when)
 			}
 		}
-		if d.wakesLocked("aaaaaa", pageSettings{Wake: web.Wake{When: web.WakeAlways}}) {
+		if d.mayWakeLocked("aaaaaa", pageSettings{Wake: web.Wake{When: web.WakeAlways}}) {
 			t.Errorf("%s: a settled thread may be woken", when)
 		}
 		// A message for everyone reaches the others, not the settled one.
@@ -290,7 +291,7 @@ func TestActivityLetsHeldMessagesGo(t *testing.T) {
 	}
 	d.sessions["aaaaaa"].lastActive = time.Now().Add(-time.Hour)
 	d.st.Inbox["aaaaaa"] = []*inMsg{{Event: bus.Event{ID: "m"}, Arrived: time.Now()}}
-	if d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Fatalf("idle an hour: woken")
 	}
 	d.touchLocked(d.sessions["aaaaaa"], time.Now())
@@ -299,7 +300,7 @@ func TestActivityLetsHeldMessagesGo(t *testing.T) {
 	default:
 		t.Errorf("not kicked")
 	}
-	if !d.wakesLocked("aaaaaa", wakeWithin(0)) {
+	if !d.mayWakeLocked("aaaaaa", wakeWithin(0)) {
 		t.Errorf("at work again: not woken")
 	}
 }
@@ -313,7 +314,7 @@ func TestHandoffChecksAgain(t *testing.T) {
 	d.threads[threadKey{"", "thread-aaaaaa"}] = t3db.State{Settled: true}
 	m := &inMsg{Event: bus.Event{ID: "m"}, Arrived: time.Now(), Pushing: true}
 	d.st.Inbox = map[string][]*inMsg{"aaaaaa": {m}}
-	j := &pushJob{id: "aaaaaa", addr: "dev/aaaaaa", msg: m, via: viaT3,
+	j := &pushJob{id: "aaaaaa", addr: "dev/aaaaaa", msgs: []*inMsg{m}, via: viaT3,
 		route: proto.Route{T3CLI: "/no/such/t3", T3Thread: "thread-aaaaaa"}}
 	err := d.sendTurn(context.Background(), j)
 	if !errors.Is(err, errNotNow) {
@@ -322,6 +323,67 @@ func TestHandoffChecksAgain(t *testing.T) {
 	d.finishPush(j, err)
 	if m.Pushing || m.PushFailed || m.Attempted || len(d.st.Inbox["aaaaaa"]) != 1 {
 		t.Errorf("the message after: %+v, inbox %d", m, len(d.st.Inbox["aaaaaa"]))
+	}
+}
+
+// Two sessions of one T3 thread with a copy of the same message (#99): while one copy is on its
+// way in, the other waits, and the hook leaves it alone though its session is at work. Once the
+// handoff is over, the record of it is gone whatever the outcome: a copy handed over takes the
+// other out (#470's record, for #70), and one that failed or was refused lets the other go in.
+func TestASecondCopyWaitsForTheHandoff(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{{"handed over", nil}, {"failed", errors.New("t3 failed")}, {"not now", errNotNow}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := threadsDaemon(t)
+			d.handing, d.handedTo = map[handing]bool{}, map[threadKey][]handed{}
+			d.introduced, d.pushWarned, d.pushing = map[string]map[string]bool{}, map[string]bool{}, map[string]bool{}
+			for _, id := range []string{"aaaaaa", "bbbbbb"} {
+				inT3(d, id, 0)
+				d.sessions[id].route.T3Thread = "thread-one"
+			}
+			ev := bus.Event{V: bus.Version, ID: "ev1", Type: bus.Message, From: "peer/cccccc", To: "*", Body: "b", At: time.Now()}
+			mb := &inMsg{Event: ev, Arrived: time.Now()}
+			d.st.Inbox = map[string][]*inMsg{"aaaaaa": {{Event: ev, Arrived: time.Now()}}, "bbbbbb": {mb}}
+			wake := wakeWithin(0)
+
+			d.mu.Lock()
+			ja := d.nextPushLocked("aaaaaa", wake)
+			jb := d.nextPushLocked("bbbbbb", wake)
+			// bbbbbb's turn starts, and its hook runs, before aaaaaa's handoff returns (#611).
+			k, b := threadKey{"", "thread-one"}, d.sessions["bbbbbb"]
+			b.hooked, b.busyAt, d.threads[k] = true, time.Now(), t3db.State{Busy: true}
+			queued := d.queuedForPushLocked("bbbbbb", mb, wake)
+			b.hooked, b.busyAt = false, time.Time{}
+			delete(d.threads, k)
+			d.mu.Unlock()
+			if ja == nil || jb != nil {
+				t.Fatalf("jobs taken: aaaaaa %v, bbbbbb %v; want only aaaaaa's", ja != nil, jb != nil)
+			}
+			if !queued {
+				t.Errorf("the hook may tell bbbbbb of the copy on its way in through aaaaaa")
+			}
+
+			d.finishPush(ja, tc.err)
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if len(d.handing) != 0 {
+				t.Errorf("still on its way in after the handoff: %v", d.handing)
+			}
+			next, _, _ := d.candidateLocked("bbbbbb", wake)
+			if tc.err == nil {
+				if len(d.st.Inbox["bbbbbb"]) != 0 || next != nil {
+					t.Errorf("bbbbbb's copy kept after aaaaaa's was handed over")
+				}
+				return
+			}
+			if next != mb || mb.PushFailed {
+				t.Errorf("bbbbbb's copy not offered after aaaaaa's %v: offered %v, failed %v", tc.err, next != nil, mb.PushFailed)
+			}
+		})
 	}
 }
 
@@ -434,7 +496,7 @@ func TestDelegateLeftoversAreCleared(t *testing.T) {
 	d.mu.Unlock()
 
 	// The handoff ends refused, at the handoff: the message goes.
-	j := &pushJob{id: "child1", msg: onItsWay}
+	j := &pushJob{id: "child1", msgs: []*inMsg{onItsWay}}
 	d.finishPush(j, errNotNow)
 	if len(d.st.Inbox["child1"]) != 0 {
 		t.Errorf("after the refused handoff: %d messages", len(d.st.Inbox["child1"]))
@@ -465,7 +527,7 @@ func TestRefusedHandoffLetsTheNewOwnerGo(t *testing.T) {
 	if got, _, _ := d.candidateLocked("newnew", always); got != nil {
 		t.Fatal("a message on its way was picked again")
 	}
-	d.finishPush(&pushJob{id: "oldold", addr: "dev/oldold", msg: m, via: viaT3}, errNotNow)
+	d.finishPush(&pushJob{id: "oldold", addr: "dev/oldold", msgs: []*inMsg{m}, via: viaT3}, errNotNow)
 	if m.Pushing || m.PushFailed {
 		t.Errorf("the message after the refusal: pushing=%v failed=%v", m.Pushing, m.PushFailed)
 	}

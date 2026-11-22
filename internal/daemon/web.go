@@ -3,6 +3,8 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +32,7 @@ import (
 // call and no network, and no lock is held while one is made.
 
 // defaultWakeMinutes is what a wake setting of 0 minutes stands for.
-const defaultWakeMinutes = 3
+const defaultWakeMinutes = 5
 
 // listenPage opens the page's port. It is never the sessions' port: those carry the daemon's
 // protocol, and the page speaks HTTP to a browser. Only 127.0.0.1 will do, not just any loopback
@@ -125,9 +127,14 @@ func (d *Daemon) keepable(ln net.Listener) (net.Listener, *os.File) {
 	return ln, nil
 }
 
+// newPage makes the page's server, which asks GitHub about pull requests and issues by running gh
+// in the clone. This package's tests put one that asks nothing in its place (#43): a test's
+// daemon would run the real gh, as whoever runs the tests, in a clone with no GitHub remote.
+var newPage = web.New
+
 // servePage serves the page on ln until ctx is done.
 func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
-	page := web.New(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
+	page := newPage(pageSource{d}, d.pageTok, repoDir(d.opt.GitDir))
 	if d.opt.Repos != nil {
 		page.WithRepos(d.opt.Repos)
 	}
@@ -209,7 +216,11 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 		self.Person = &web.Person{Name: d.st.Person, Addr: d.personAddr(), LastActive: d.lastPage, Tags: tags.Person()}
 	}
 	live := d.liveNamesLocked()
+	hidden := d.hidden.Load()
 	for _, ss := range d.sortedSessionsLocked() {
+		if hidden {
+			break // invisible: this device's agents are off Murmur, and the page doesn't show them
+		}
 		if !ss.dropped.IsZero() && live[ss.name] {
 			continue // its name went to the session that took over, which stands for the conversation
 		}
@@ -224,11 +235,14 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	}
 	colors := d.colorsLocked()
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
-	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked()}
+	self.DND = d.dnd.Load()
+	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
+		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
+		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load()}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),
-			LastSeen: p.lastChange, Color: colors[id].Color, Picked: colors[id].Picked}
+			LastSeen: p.lastChange, Color: colors[id].Color, Picked: colors[id].Picked, DND: p.pres.DND}
 		for _, ps := range p.pres.Sessions {
 			if ps.ID == proto.CLISession {
 				continue // V1 daemons list their CLI
@@ -270,18 +284,66 @@ func nameOr(name, addr string) string {
 	return addr
 }
 
-// pageMsg is a message the page can show: the event as the bus carried it, and its number. Names
-// are put in when the page asks, so a name that lands later still shows on older messages.
+// pageMsg is a message the page can show: the event as the bus carried it, its number, and the ID
+// the page knows it by. Names are put in when the page asks, so a name that lands later still
+// shows on older messages.
 type pageMsg struct {
 	seq uint64
 	e   bus.Event
+	id  string
+}
+
+// msgKey says which message e is, for the page's list: its ID, who sent it and when. The ID
+// alone used to (#603). An honest ID is 64 random bits and never repeats, but a device can
+// write any ID it likes, and a second message with an ID the list held was dropped without a
+// word: a device could hide its own later message from every page, and after a restart, when
+// the list is read back in the order of the senders' clocks, put a message of its own in the
+// place of someone else's by copying the ID onto one with an earlier time. The same event read
+// twice, live and from history, has the same sender and time, and is still kept once.
+func msgKey(e bus.Event) string {
+	return e.ID + "\x00" + e.From + "\x00" + strconv.FormatInt(e.At.UnixNano(), 36)
+}
+
+// idKeep is how many dropped messages' IDs stay spoken for. The page keeps 2,000 messages of its
+// own, four times what the daemon does, and must not be given another message under an ID it
+// still holds.
+const idKeep = 4000
+
+// pageIDLocked is the ID the page is to know e by, and notes it. The page keeps its messages by
+// ID, and passes over one it has, so an ID means one message for as long as a page may hold it:
+// the first message this daemon kept with an ID owns it plain, through a merge that sorts the
+// list again and for idKeep dropped messages after it has gone from the list itself. Any other
+// message with that ID gets it with a mark of which message it is, the same mark each time, so
+// the page shows both. The mark is 64 bits of a hash of what the sender chose, long enough that
+// none can be made to match another's. A daemon that restarts starts again: its page loads
+// again too, unless an update handed it over. Caller holds mu.
+func (d *Daemon) pageIDLocked(e bus.Event) string {
+	if d.idOwner == nil {
+		d.idOwner = map[string]string{}
+	}
+	if _, owned := d.idOwner[e.ID]; !owned {
+		d.idOwner[e.ID] = msgKey(e)
+	}
+	return d.pageIDOfLocked(e)
+}
+
+// pageIDOfLocked is the ID the page knows e by, or would: its own if it owns it or nothing
+// does, else the marked one. Receipts go by the event's ID alone, so the page shows them on the
+// message that has it plain. Caller holds mu.
+func (d *Daemon) pageIDOfLocked(e bus.Event) string {
+	key := msgKey(e)
+	if owner, owned := d.idOwner[e.ID]; !owned || owner == key {
+		return e.ID
+	}
+	sum := sha256.Sum256([]byte(key))
+	return e.ID + "~" + hex.EncodeToString(sum[:8])
 }
 
 // recordMessageLocked keeps a message for the page. Every message this daemon reads goes in,
 // whoever it is for: every record is encrypted for the whole team, which could read them all
 // before encryption too. One to or from this device's person goes on disk too. Caller holds mu.
 func (d *Daemon) recordMessageLocked(e bus.Event) {
-	if d.msgIDs[e.ID] {
+	if d.msgKeys[msgKey(e)] {
 		return
 	}
 	d.keepMessageLocked(e)
@@ -303,7 +365,18 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 		if i < 0 {
 			return
 		}
-		delete(d.msgIDs, d.msgs[i].e.ID)
+		delete(d.msgIDs, d.msgs[i].id)
+		delete(d.msgKeys, msgKey(d.msgs[i].e))
+		if gone := d.msgs[i]; gone.id == gone.e.ID {
+			// Its ID stays its own for a while yet: a page still has it (pageIDLocked).
+			d.idGone = append(d.idGone, gone.id)
+			for len(d.idGone) > idKeep {
+				if old := d.idGone[0]; !d.msgIDs[old] {
+					delete(d.idOwner, old)
+				}
+				d.idGone = d.idGone[1:]
+			}
+		}
 		d.msgs = slices.Delete(d.msgs, i, i+1)
 		if mine {
 			d.ownMsgs--
@@ -316,8 +389,12 @@ func (d *Daemon) keepMessageLocked(e bus.Event) {
 		drop(false)
 	}
 	d.msgSeq++
-	d.msgs = append(d.msgs, pageMsg{d.msgSeq, e})
-	d.msgIDs[e.ID] = true
+	id := d.pageIDLocked(e)
+	d.msgs = append(d.msgs, pageMsg{d.msgSeq, e, id})
+	if d.msgKeys == nil {
+		d.msgKeys = map[string]bool{}
+	}
+	d.msgIDs[id], d.msgKeys[msgKey(e)] = true, true
 }
 
 // A cursor is this run of the daemon and the number of the last message returned. Numbers only go
@@ -364,8 +441,14 @@ func (s pageSource) Messages(ctx context.Context, cursor string) ([]web.Message,
 	label := d.labelerLocked()
 	out := make([]web.Message, 0, len(d.msgs)-first)
 	for _, m := range d.msgs[first:] {
-		msg := web.Message{ID: m.e.ID, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
+		msg := web.Message{ID: m.id, From: label(m.e.From), Subject: m.e.Subject, Body: m.e.Body, At: m.e.At,
 			FromAddr: m.e.From, ToAddr: m.e.To, FromPerson: bus.IsPerson(m.e.From), ToPerson: bus.IsPerson(m.e.To)}
+		for _, f := range m.e.Files {
+			if d.refuses(&d.pageRecv, m.e) {
+				break // Receive files is off (#765)
+			}
+			msg.Files = append(msg.Files, web.File{Name: f.Name, Size: f.Size})
+		}
 		if msg.FromPerson {
 			// The name the message carries, or the one their device gives, if it is theirs.
 			name, _ := d.personSenderLocked(m.e)
@@ -392,6 +475,16 @@ type pageSettings struct {
 	SessionWake map[string]web.Wake `json:"sessionWake,omitempty"`
 	Busy        string              `json:"busy"`
 	SessionBusy map[string]string   `json:"sessionBusy,omitempty"`
+	Mode        string              `json:"mode,omitempty"`
+	// SendFiles, ReceiveFiles and the agents' overrides are web.Settings's (#765): off unless
+	// saved on.
+	SendFiles        bool `json:"sendFiles,omitempty"`
+	ReceiveFiles     bool `json:"receiveFiles,omitempty"`
+	AgentsSendOff    bool `json:"agentsSendOff,omitempty"`
+	AgentsReceiveOff bool `json:"agentsReceiveOff,omitempty"`
+	// Away is when the device last left online for another mode, kept so that going back
+	// releases what arrived since (mode.go), across restarts too.
+	Away time.Time `json:"away,omitzero"`
 }
 
 // defaultSettings are what stands with no settings.json, and what one from before a setting
@@ -409,7 +502,9 @@ func (p pageSettings) clone() pageSettings {
 
 func (p pageSettings) view() web.Settings {
 	return web.Settings{Wake: p.Wake, SessionWake: maps.Clone(p.SessionWake), Busy: p.Busy,
-		SessionBusy: maps.Clone(p.SessionBusy), DefaultMinutes: defaultWakeMinutes}
+		SessionBusy: maps.Clone(p.SessionBusy), Mode: p.Mode, SendFiles: p.SendFiles, ReceiveFiles: p.ReceiveFiles,
+		AgentsSendOff: p.AgentsSendOff, AgentsReceiveOff: p.AgentsReceiveOff,
+		DefaultMinutes: defaultWakeMinutes}
 }
 
 func (d *Daemon) settingsPath() string { return filepath.Join(d.dir, "settings.json") }
@@ -433,12 +528,29 @@ func (d *Daemon) loadSettings() {
 		return
 	}
 	d.settings = read
+	d.hidden.Store(read.Mode == web.ModeInvisible)
+	d.dnd.Store(read.Mode == web.ModeDND)
+	d.applyFiles(read)
+}
+
+// applyFiles sets the file switches the daemon reads from p (#765, Tyler, 2026-11-16): sending,
+// and receiving, is the person's when its main switch is on, and their agents' too unless kept
+// from them. It says whether either side's receiving changed.
+func (d *Daemon) applyFiles(p pageSettings) (agents, page bool) {
+	d.agentsSendOff.Store(p.AgentsSendOff)
+	d.agentsReceiveOff.Store(p.AgentsReceiveOff)
+	d.pageSend.Store(p.SendFiles)
+	d.agentSend.Store(p.SendFiles && !p.AgentsSendOff)
+	return d.agentRecv.set(p.ReceiveFiles && !p.AgentsReceiveOff), d.pageRecv.set(p.ReceiveFiles)
 }
 
 func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
 	s.d.pageCalled(ctx)
 	s.d.setMu.Lock()
 	defer s.d.setMu.Unlock()
+	if s.d.settingsMove.Load() {
+		s.d.moveSettings() // so the page reads each session's choice under the name it has now
+	}
 	return s.d.settings.view(), nil
 }
 
@@ -451,7 +563,11 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 		return web.Settings{}, err
 	}
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
-		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy)}
+		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode,
+		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles, AgentsSendOff: set.AgentsSendOff, AgentsReceiveOff: set.AgentsReceiveOff}
+	if next.Mode == web.ModeOnline {
+		next.Mode = ""
+	}
 	if len(next.SessionWake) == 0 {
 		next.SessionWake = nil
 	}
@@ -460,10 +576,52 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	}
 	d.setMu.Lock()
 	defer d.setMu.Unlock()
+	if d.settingsMove.Load() {
+		d.moveSettings()
+	}
+	d.movedSettings(&next) // a page that read before a session's name changed (#836)
+	// The file switches this save doesn't name stay as they are.
+	for _, sw := range []struct {
+		name      string
+		next, cur *bool
+	}{
+		{"sendFiles", &next.SendFiles, &d.settings.SendFiles},
+		{"receiveFiles", &next.ReceiveFiles, &d.settings.ReceiveFiles},
+		{"agentsSendOff", &next.AgentsSendOff, &d.settings.AgentsSendOff},
+		{"agentsReceiveOff", &next.AgentsReceiveOff, &d.settings.AgentsReceiveOff},
+	} {
+		if !slices.Contains(set.FilesSet, sw.name) {
+			*sw.next = *sw.cur
+		}
+	}
+	was := d.settings.Mode
+	switch {
+	case next.Mode == "":
+	case was == "":
+		next.Away = time.Now()
+	default:
+		next.Away = d.settings.Away // from one mode to the other: still away since then
+	}
 	if err := writeJSON(d.settingsPath(), next); err != nil {
 		return web.Settings{}, fmt.Errorf("saving settings: %w", err)
 	}
+	away := d.settings.Away
 	d.settings = next
+	agents, page := d.applyFiles(next)
+	if page && next.ReceiveFiles {
+		d.mu.Lock()
+		clear(d.fileMiss) // a fetch the switch's going off ended isn't one to wait out
+		d.mu.Unlock()
+	}
+	if agents || page {
+		d.kickPresence() // teammates' senders, who and lookup say whether this device takes files
+	}
+	if agents {
+		d.kickFiles() // what waits for its files goes now, without them, if receiving went off
+	}
+	if next.Mode != was {
+		d.setMode(was, next.Mode, away)
+	}
 	d.kickPush() // a session that was set to never may be woken now, for what it has waiting
 	return next.view(), nil
 }
@@ -478,6 +636,9 @@ func (d *Daemon) pageCalled(ctx context.Context) {
 // see the page: a tab left in the background goes on polling for as long as the browser runs.
 // Caller holds mu.
 func (d *Daemon) pageSeenLocked(ctx context.Context, now time.Time) {
+	if web.InApp(ctx) {
+		d.lastApp = now
+	}
 	if web.Watched(ctx) {
 		if !d.pageOpenLocked(now) {
 			d.kickPoll() // a page opens: its view should not be 30 s behind

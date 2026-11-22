@@ -103,8 +103,18 @@ func (d *Daemon) touchHookLocked(req proto.Request) []*session {
 		if !req.Subagent {
 			if s.busyAt.IsZero() || d.continuationLapsedLocked(s) {
 				s.turnStart = now
+				// A turn T3 started before the hook saw it began then: what came since came
+				// during it, and is held for its end however long it waited (#607).
+				if at := s.unseenStart(); s.busyAt.IsZero() && !at.IsZero() {
+					s.turnStart = at
+				}
+				// So did a run T3 had going while the session was taken for one with no hook
+				// (#699), whose messages waited in the inbox meanwhile.
+				if at := s.runSeenAt; !s.hooked && !at.IsZero() && at.Before(s.turnStart) {
+					s.turnStart = at
+				}
 			}
-			s.hooked, s.busyAt = true, now
+			s.hooked, s.busyAt, s.runSeenAt = true, now, time.Time{}
 			if req.Op != proto.OpTurnEnd {
 				// The turn went on: a Stop's continuation is no longer in doubt, and Claude Code
 				// counts its continuations afresh after a tool call (and in a new turn).

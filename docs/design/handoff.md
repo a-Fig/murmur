@@ -5,9 +5,13 @@ over.
 
 ## T3 Code
 
-- **Finding the thread** (#56). T3 gives an MCP server or a hook no thread ID, so the MCP server
-  looks the provider's own session up in T3's database: `statev2.sqlite` in T3's data directory
-  (`T3CODE_HOME`, the directory the CLI's `bin` is in, or `~/.t3`), table
+- **Finding the thread** (#56, #886). Claude Code's and Antigravity's MCP servers take the thread
+  from `T3CODE_THREAD_ID` ([session names](session-names.md#one-address-per-t3-thread)). Every
+  other server, and one that doesn't get the variable (such as Antigravity under older T3, where
+  the daemon resolves the hook's `conversationId`), looks the provider's own session up in T3's
+  database:
+  `statev2.sqlite` in T3's data directory (`T3CODE_HOME`, the directory the CLI's `bin` is in, or
+  `~/.t3`), table
   `orchestration_v2_projection_provider_threads`, where `payload_json.nativeThreadRef.nativeId` is
   the Claude Code session ID or the Codex thread ID, beside `thread_id` (seen on T3 0.1.x,
   2026-10-29). The ID comes from the hook or `CLAUDE_CODE_SESSION_ID` for Claude Code, and from a
@@ -28,17 +32,30 @@ over.
   old one had unread, in the order it arrived. A message for everyone that comes in the second
   between the new session registering and finding its thread is handed over by the old session, and
   not again by the new one (#70, 2026-11-11): the daemon remembers, by event ID, what it handed each
-  thread in the last 30 minutes (up to 200 a thread, in memory only). Not covered: a new session
-  that registers before the daemon has seen the old one's connection close, when the thread may see
-  a message for everyone twice (#99). Handing the route over when the drop is seen was tried
-  (2026-10-30) and dropped: in three review rounds each version could strand a message to the old
-  session's name, where a repeat is all that happens now.
+  thread in the last 30 minutes (up to 200 a thread, in memory only). A new session that registers
+  before the daemon has seen the old one's connection close leaves the old one its route, as it was
+  still running, so both copies can be taken for a handoff at once (#99). The daemon also knows what
+  is on its way into each thread, and the second copy waits, with the hook leaving it alone: once
+  the first has been handed over it is taken out, and if that handoff failed it goes in
+  (2026-11-15). Handing the route over when the
+  drop is seen was tried (2026-10-30) and dropped: in three review rounds each version could strand
+  a message to the old session's name. A daemon restart forgets what was handed, and a repeat in
+  that window is what there was before.
 - **Codex under T3** gets its thread from `_meta.threadId`, which every Murmur tool takes, but its
   MCP servers start with a bare environment, so Codex's config must forward `T3CODE_CLI_PATH`
   (`env_vars`; worked with Codex 0.164.0 under T3 0.1.2, 2026-10-29), which `mur join` writes with
   `CODEX_HOME` (#88). Codex silently leaves out a name its own environment lacks
   (`create_env_for_mcp_server` in `codex-rs/rmcp-client`, read 2026-11-09). Without it the server
-  doesn't know it is in T3, and the session gets notices only.
+  doesn't know it is in T3, and the session gets notices only. T3's headless server (`t3 serve`,
+  0.1.9, with Codex 0.169.0, seen 2026-11-16) sets no `T3CODE_CLI_PATH`, and gives
+  `T3CODE_THREAD_ID` only to the commands Codex runs, not to Codex itself. So join forwards
+  `T3CODE_HOME` too. With that set, no command line and no agent above, the server takes Codex's
+  parent if it is `t3`, and nothing else: npm's `codex` runs the native one under `node`, so the
+  guesses Claude Code's case makes would take a `codex` tmux started in a thread's shell for the
+  thread (#802). Not found, so notices only, as before: a `t3` installed from npm, which runs
+  Codex under `node`, and a `t3 serve` that is pid 1 (a container with no init), as `proc.Exe`
+  doesn't read pid 1. A table an older join wrote gets the
+  name at the next `mur join`.
 - **A thread that is idle** (#87). T3 stops an idle thread's provider process, and Murmur's MCP
   server with it, after about 30 minutes (seen 2026-10-30), so the session of an idle thread is the
   normal case, and the thread most worth waking. Its route is kept in `state.json` (`T3Routes`) for
@@ -48,7 +65,12 @@ over.
   counts only if the wake setting would let a message through. With no session live and no page open
   the daemon polls every 30 s, about 2,900 `ls-remote` calls in a day of waiting, so a sleeping
   thread wakes up to 30 s later than a working one would; it still pushes presence every 2 minutes,
-  about 720 pushes a day. `mur join --leave` and `mur stop` end it at once.
+  about 720 pushes a day. `mur join --leave` and `mur stop` end it at once. A sender is told such a thread is idle and the message wakes it, or that
+  the wake setting won't let it (#669); it used to be told the session had stopped, which read as gone.
+  If the command line takes the conversation over at that session's address, the stored route is
+  cleared: messages for a stopped command-line session wait in its inbox rather than waking the old
+  T3 thread, avoiding waking a thread whose conversation may have changed (#873). T3 registering
+  again restores the route.
 
 ## Claude Code outside T3: the messaging socket
 
@@ -116,11 +138,13 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   a busy session, which gets the notice and its turn's end instead.
 - *OpenCode 2:* `opencode api session.prompt --param sessionID=<session>` with `{"text": ...,
   "delivery": "queue"}`, which asks the background server every OpenCode 2 client on the machine
-  shares. `"queue"` waits behind a running turn, where the default, `"steer"`, goes into it. Seen on
-  OpenCode 2.2.0 the same day, with the terminal UI showing the message and the answer.
-  `session.synthetic` starts a turn too, but the terminal UI then shows the answer and not what was
-  asked, so it isn't used. Since 2026-11-12 OpenCode's plugin runs the hook (#431), so a busy
-  session gets the notice, as Codex does.
+  shares, with the `XDG_STATE_HOME` the session's server found it registered under (#486): the
+  command looks for the server there, and the daemon's own may be another session's. `"queue"`
+  waits behind a running turn, where the default, `"steer"`, goes into it. Seen on OpenCode 2.2.0
+  the same day, with the terminal UI showing the message and the answer. `session.synthetic`
+  starts a turn too, but the terminal UI then shows the answer and not what was asked, so it isn't
+  used. Since 2026-11-12 OpenCode's plugin runs the hook (#431), so a busy session gets the notice,
+  as Codex does.
 - *Which program.* The one that started the session's MCP server, if that is a `codex` or an
   `opencode`. Neither command takes the text on standard input, so it goes on the command line, and
   the name on `PATH` won't do: on Windows it is npm's `.cmd` shim, which can't carry a newline. On
@@ -131,7 +155,8 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   wake setting limits that, as for an idle T3 thread.
 - *OpenCode's shared server only*, the one registered in `service.json` in OpenCode's state
   directory: `opencode api` would start the shared server to ask about a private server's session.
-  OpenCode 1 has no `api` command. Both are left to the inbox.
+  A private server's session is left to the inbox. OpenCode 1 has no `api` command; its plugin
+  opens a socket instead, as Pi's extension does ([clients](clients.md), "OpenCode 1's plugin").
 - *A failure* is handled as `t3 thread send`'s is. A Codex session has no way in until it has called
   a Murmur tool, which is how its server learns the thread.
 - *On the command line* the text is visible, for the second or so the command runs, to the machine's
@@ -144,7 +169,12 @@ hook runs). Each has a command that does what `t3 thread send` does, so the daem
   tool drives through `codex app-server`. Not tried. Codex's own subagents are taken off the mesh
   ([delegates](delegates.md)).
 - *Not covered* (#446): Muse and Grok outside T3, neither installed where this was built. A T3 Codex
-  session whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3. OpenCode's one MCP
+  session whose config doesn't forward `T3CODE_CLI_PATH` reads as one outside T3. T3's headless
+  server (`t3 serve`, 0.1.9) sets no `T3CODE_CLI_PATH` at all: a Claude Code or Antigravity thread
+  there is known by `T3CODE_THREAD_ID` and reached through the `t3` that runs it (its parent, else
+  the one on PATH). With none found Claude Code gets no messaging socket, which starts no turn
+  under T3; a client whose parent is some other program (tmux, an editor) only inherited the
+  variable and keeps its own route (#780, #886). OpenCode's one MCP
   process per directory has the environment of whoever started the shared server, so a T3 thread on
   a server a terminal started reads as outside T3, and the other way round (not tried). Codex's
   desktop app wasn't looked at, and only Windows was tried with the real programs.

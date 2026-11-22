@@ -2,6 +2,7 @@ package tags
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -336,6 +337,36 @@ func TestAnOldHumanTagTakesNoPlace(t *testing.T) {
 	}
 }
 
+// A group a session set under the prefix before devices held it takes no place either (#705): it
+// isn't shown, can't be removed by hand, and goes with the session's next change.
+func TestAnOldDeviceGroupTakesNoPlace(t *testing.T) {
+	st := State{Self: []string{"group:device-lab"}}
+	for i := range MaxPerSession - 1 {
+		st.Self = append(st.Self, "t"+string(rune('a'+i)))
+	}
+	if err := st.SetSelf([]string{"twelfth"}, nil); err != nil {
+		t.Fatalf("the twelfth tag: %v", err)
+	}
+	if slices.Contains(st.Self, "group:device-lab") || len(st.Self) != MaxPerSession {
+		t.Errorf("Self: %v", st.Self)
+	}
+	st = State{Human: map[string]Mark{"group:device-lab": {On: true}}, Cleared: map[string]time.Time{"group:device-lab": time.Now()}}
+	if err := st.SetHuman(nil, []string{"reviewing"}, nil, "ada", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Human["group:device-lab"]; ok {
+		t.Errorf("a person's old mark is kept: %v", st.Human)
+	}
+	if _, ok := st.Cleared["group:device-lab"]; ok {
+		t.Errorf("an old clearing is kept: %v", st.Cleared)
+	}
+	for _, tag := range Effective([]string{"group:device-lab", "reviewing"}, nil, nil) {
+		if strings.HasPrefix(tag.Name, DevicePrefix) {
+			t.Errorf("Effective keeps %s", tag.Name)
+		}
+	}
+}
+
 // A change that fails leaves the state it was copied from as it was, old human tag and all.
 func TestAFailedChangeLeavesTheKeptStateAlone(t *testing.T) {
 	kept := State{Self: []string{"human", "reviewing"}, Human: map[string]Mark{Human: {On: true}}}
@@ -376,7 +407,7 @@ func TestIsGroup(t *testing.T) {
 
 func TestOnlyGroupsAreGiven(t *testing.T) {
 	st := &State{Self: []string{"reviewing"}}
-	if err := st.Given([]string{"Group:UI", "group:bus"}); err != nil {
+	if _, _, err := st.Given([]string{"Group:UI", "group:bus"}); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"group:bus", "group:ui", "reviewing"}; !slices.Equal(st.Self, want) {
@@ -388,17 +419,25 @@ func TestOnlyGroupsAreGiven(t *testing.T) {
 	}
 	for _, bad := range [][]string{{DoNotDisturb}, {"model:opus-5.5"}, {"group:ui", "reviewing"}, {"group:"}, {Human}} {
 		before := slices.Clone(st.Self)
-		if err := st.Given(bad); err == nil {
+		if _, _, err := st.Given(bad); err == nil {
 			t.Errorf("Given(%q) was allowed", bad)
 		}
 		if !slices.Equal(st.Self, before) {
 			t.Errorf("a refused Given(%q) changed Self to %q", bad, st.Self)
 		}
 	}
-	// A human's mark stands over what another agent gives.
+	// A human's mark stands over what another agent gives: a group a human took the session out
+	// of is left out, and takes no place under MaxPerSession (#543).
 	st = &State{Human: map[string]Mark{"group:ui": {On: false, At: time.Now()}}}
-	if err := st.Given([]string{"group:ui"}); err != nil {
+	given, out, err := st.Given([]string{"group:ui", "group:bus"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Equal(given, []string{"group:bus"}) || !slices.Equal(out, []string{"group:ui"}) {
+		t.Errorf("given %q, out %q; want group:bus given and group:ui out", given, out)
+	}
+	if !slices.Equal(st.Self, []string{"group:bus"}) {
+		t.Errorf("Self is %q; want only group:bus, as a human took the session out of group:ui", st.Self)
 	}
 	if got := Effective(st.Self, nil, st.Human); Has(got, "group:ui") {
 		t.Errorf("the session has %v; want group:ui kept off, as a human took it off", got)
@@ -449,5 +488,79 @@ func TestASessionLeavesAGroupAHumanPutItIn(t *testing.T) {
 	}
 	if !Has(Effective(nil, nil, st.Human), "group:ui") {
 		t.Error("a human's add after the session left didn't put it back")
+	}
+}
+
+// A device's group (#463) is Murmur's to give: nobody sets or removes it, a presence can't claim
+// one, and a reader adds the one for the device a session is on.
+func TestADevicesGroupIsGivenOnlyByWhereTheSessionRuns(t *testing.T) {
+	if _, err := Clean([]string{"group:device-laptop-1a2b"}); err == nil {
+		t.Error("Clean took a device's group")
+	}
+	if _, err := Groups([]string{"group:device-laptop-1a2b"}); err == nil {
+		t.Error("Groups took a device's group, to add to")
+	}
+	read := CleanRead([]Tag{{Name: "reviewing"}, {Name: "group:device-other-9f9f", Src: SrcDerived}})
+	if !slices.Equal(Names(read), []string{"reviewing"}) {
+		t.Errorf("a presence's claim was read: %v", read)
+	}
+	got := WithDevice(read, "laptop-1a2b")
+	if !slices.Equal(Names(got), []string{"reviewing", "group:device-laptop-1a2b"}) || got[1].Src != SrcDerived {
+		t.Errorf("WithDevice gave %+v", got)
+	}
+	if again := WithDevice(got, "laptop-1a2b"); len(again) != 2 {
+		t.Errorf("a second WithDevice gave %+v", again)
+	}
+	if got := DevicesOfGroup(" Group:Device-Laptop-1A2B "); !slices.Equal(got, []string{"device-laptop-1a2b", "laptop-1a2b"}) {
+		t.Errorf("DevicesOfGroup: %q", got)
+	}
+	if got := DevicesOfGroup("group:ui"); got != nil {
+		t.Errorf("group:ui read as a device's group: %q", got)
+	}
+	// An ID made since #330 starts with device- already.
+	if g := DeviceGroup("device-3f2a9c1e"); g != "group:device-3f2a9c1e" || !slices.Contains(DevicesOfGroup(g), "device-3f2a9c1e") {
+		t.Errorf("DeviceGroup(device-3f2a9c1e) = %q", g)
+	}
+}
+
+// A device ID can be 40 long, so its group's tag can pass MaxLen, and who still searches by it
+// (Sol's review of #628).
+func TestALongDevicesGroupIsSearchable(t *testing.T) {
+	long := DeviceGroup("abcdefghijklmnopqrstuvwx-1234")
+	if len(long) <= MaxLen {
+		t.Fatalf("%s is no longer than %d", long, MaxLen)
+	}
+	ts := WithDevice([]Tag{{Name: "reviewing"}}, "abcdefghijklmnopqrstuvwx-1234")
+	for _, terms := range [][]string{{long}, {long[:len(long)-2] + "*"}, {"group:device-*"}} {
+		f, err := ParseFilter(terms)
+		if err != nil {
+			t.Fatalf("%q: %v", terms, err)
+		}
+		if !f.Match(ts) {
+			t.Errorf("%q doesn't match %v", terms, Names(ts))
+		}
+	}
+	f, err := ParseFilter([]string{"-" + long})
+	if err != nil || f.Match(ts) {
+		t.Errorf("-%s: %v, matches %v", long, err, f.Match(ts))
+	}
+}
+
+// A group a team made under the prefix devices now hold (group:device-lab) is refused with why,
+// and the name to use instead: the same group without device- (#705).
+func TestOwnGroupHint(t *testing.T) {
+	for name, want := range map[string]string{
+		"group:device-lab":        " If it was a group your team made, names that start with group:device- are devices' now: use group:lab.",
+		"GROUP:Device-Lab":        " If it was a group your team made, names that start with group:device- are devices' now: use group:lab.",
+		"group:device-device-lab": "", // what it would suggest is a device's group too
+		"group:device-":           "",
+		"group:lab":               "",
+	} {
+		if got := OwnGroupHint(name); got != want {
+			t.Errorf("OwnGroupHint(%q) = %q, want %q", name, got, want)
+		}
+	}
+	if _, err := Clean([]string{"group:device-lab"}); err == nil || !strings.Contains(err.Error(), "use group:lab") {
+		t.Errorf("Clean of a group under the device prefix: %v", err)
 	}
 }

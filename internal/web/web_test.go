@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +31,7 @@ type fakeSource struct {
 	unmuted   [][2]string
 	tagged    []string // each SetTags: addr +added -removed
 	watched   []bool   // what Watched said of each State call
+	inApp     []bool   // what InApp said of each State call
 	restarts  int
 	sends     []string // each Send: to: text
 	read      []string // the IDs given to MarkRead
@@ -38,6 +41,7 @@ func (f *fakeSource) State(ctx context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.watched = append(f.watched, Watched(ctx))
+	f.inApp = append(f.inApp, InApp(ctx))
 	return f.state, nil
 }
 
@@ -124,10 +128,29 @@ func (f *fakeSource) SetNick(ctx context.Context, nick string) (Account, error) 
 	return f.state.Account, nil
 }
 
-func (f *fakeSource) Send(ctx context.Context, to, text string) (Sent, error) {
+// noFile makes an error ErrNoFile without adding to what it says.
+type noFile struct{}
+
+func (noFile) Error() string        { return "" }
+func (noFile) Is(target error) bool { return target == ErrNoFile }
+
+func (f *fakeSource) File(ctx context.Context, id string, index int) (string, []byte, error) {
+	if id == "later" {
+		return "", nil, errors.New("that file couldn't be fetched just now")
+	}
+	if id != "abc123" || index != 1 {
+		return "", nil, fmt.Errorf("that file isn't here%w", noFile{})
+	}
+	return "shot one.png", []byte("<script>alert(1)</script>"), nil
+}
+
+func (f *fakeSource) Send(ctx context.Context, to, text string, files []Upload) (Sent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sends = append(f.sends, to+": "+text)
+	for _, u := range files {
+		f.sends = append(f.sends, fmt.Sprintf("file %s: %s", u.Name, u.Data))
+	}
 	if strings.Contains(text, "secret") {
 		return Sent{}, errors.New("not sent: it looks like a secret")
 	}
@@ -168,7 +191,7 @@ type harness struct {
 	port string
 }
 
-func start(t *testing.T, src Source, lookup LookupPR) *harness {
+func start(t *testing.T, src Source, lookup LookupPRs) *harness {
 	t.Helper()
 	srv := httptest.NewServer(NewWithPRs(src, testToken, lookup))
 	t.Cleanup(srv.Close)
@@ -220,7 +243,7 @@ func decode[T any](t *testing.T, resp *http.Response) T {
 	return v
 }
 
-func noPRs(context.Context, string) (*PR, error) { return nil, nil }
+func noPRs(context.Context) (map[string]PR, error) { return nil, nil }
 
 func noCORS(t *testing.T, resp *http.Response) {
 	t.Helper()
@@ -462,36 +485,58 @@ func pollPRs(t *testing.T, h *harness, cond func(map[string]PR) bool) map[string
 	}
 }
 
+// One listing answers for every branch, however many sessions there are, and later polls are
+// answered from it: the page costs GitHub the same whatever the bus says (#43).
 func TestPRLookup(t *testing.T) {
-	var mu sync.Mutex
-	var asked []string
-	lookup := func(ctx context.Context, branch string) (*PR, error) {
-		mu.Lock()
-		asked = append(asked, branch)
-		mu.Unlock()
-		return &PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"}, nil
+	var asked atomic.Int32
+	lookup := func(ctx context.Context) (map[string]PR, error) {
+		asked.Add(1)
+		return map[string]PR{
+			"web-page":  {Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"},
+			"elsewhere": {Number: 37, URL: "https://github.com/a-Fig/murmur/pull/37"}, // no session is on it
+		}, nil
 	}
-	h := start(t, newFake(), lookup)
+	src := newFake()
+	for i := range 500 {
+		src.state.Devices[0].Sessions = append(src.state.Devices[0].Sessions, Session{Name: fmt.Sprint("s", i), Branch: fmt.Sprint("branch-", i)})
+	}
+	h := start(t, src, lookup)
 	prs := pollPRs(t, h, func(p map[string]PR) bool { return len(p) > 0 })
 	if want := (PR{Number: 36, Draft: true, URL: "https://github.com/a-Fig/murmur/pull/36"}); prs["web-page"] != want || len(prs) != 1 {
 		t.Errorf("prs = %+v", prs)
 	}
-	// The cached answer serves later polls without asking again, and a branch that could pass
-	// for a flag is never asked about.
 	for range 5 {
 		h.ok("GET", "/api/state", "")
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if !reflect.DeepEqual(asked, []string{"web-page"}) {
-		t.Errorf("looked up %v, want [web-page] once", asked)
+	if n := asked.Load(); n != 1 {
+		t.Errorf("GitHub was asked %d times for 502 sessions over several polls, want once", n)
+	}
+}
+
+// With no session on a branch there is no PR to show, and GitHub is asked nothing.
+func TestPRLookupNoBranches(t *testing.T) {
+	var asked atomic.Int32
+	src := newFake()
+	for i := range src.state.Devices[0].Sessions {
+		src.state.Devices[0].Sessions[i].Branch = ""
+	}
+	h := start(t, src, func(ctx context.Context) (map[string]PR, error) {
+		asked.Add(1)
+		return nil, nil
+	})
+	for range 3 {
+		h.ok("GET", "/api/state", "")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := asked.Load(); n != 0 {
+		t.Errorf("GitHub was asked %d times with no branch to show", n)
 	}
 }
 
 func TestPRLookupFailureTolerated(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
-	failing := func(ctx context.Context, branch string) (*PR, error) {
+	failing := func(ctx context.Context) (map[string]PR, error) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
@@ -525,9 +570,9 @@ func TestPRLookupFailureTolerated(t *testing.T) {
 // With no gh on PATH, the real lookup fails, and the page still gets its state.
 func TestGHMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	pr, err := GH(t.TempDir())(context.Background(), "web-page")
-	if err == nil || pr != nil {
-		t.Fatalf("GH with no gh on PATH = %v, %v; want an error", pr, err)
+	prs, err := GH(t.TempDir())(context.Background())
+	if err == nil || prs != nil {
+		t.Fatalf("GH with no gh on PATH = %v, %v; want an error", prs, err)
 	}
 	h := start(t, newFake(), GH(t.TempDir()))
 	st := decode[stateResponse](t, h.ok("GET", "/api/state", ""))
@@ -541,8 +586,8 @@ func TestGHMissing(t *testing.T) {
 }
 
 func TestPRURLMustBeHTTPS(t *testing.T) {
-	lookup := func(ctx context.Context, branch string) (*PR, error) {
-		return &PR{Number: 1, URL: "javascript:alert(1)"}, nil
+	lookup := func(ctx context.Context) (map[string]PR, error) {
+		return map[string]PR{"web-page": {Number: 1, URL: "javascript:alert(1)"}}, nil
 	}
 	h := start(t, newFake(), lookup)
 	prs := pollPRs(t, h, func(p map[string]PR) bool { return len(p) > 0 })
@@ -572,6 +617,30 @@ func TestHiddenPageIsNotWatched(t *testing.T) {
 	defer src.mu.Unlock()
 	if !reflect.DeepEqual(src.watched, []bool{true, false}) {
 		t.Errorf("watched = %v, want [true false]: a visible page's call, then a hidden one's", src.watched)
+	}
+}
+
+// The desktop app's page says so, hidden or not, and isn't watched while hidden (#23).
+func TestAppPageSaysSo(t *testing.T) {
+	src := newFake()
+	h := start(t, src, noPRs)
+	for _, hidden := range []bool{false, true} {
+		req, _ := http.NewRequest("GET", h.srv.URL+"/api/state", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		req.Header.Set("X-Page-App", "1")
+		if hidden {
+			req.Header.Set("X-Page-Hidden", "1")
+		}
+		resp, err := h.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if !reflect.DeepEqual(src.inApp, []bool{true, true}) || !reflect.DeepEqual(src.watched, []bool{true, false}) {
+		t.Errorf("inApp = %v, watched = %v; want [true true] and [true false]", src.inApp, src.watched)
 	}
 }
 

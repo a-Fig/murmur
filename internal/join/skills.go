@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -22,13 +23,38 @@ func skillsDir(a agent, h agentHome) string {
 		if h.Dir != "" {
 			return filepath.Join(h.Dir, "skills")
 		}
+	case "antigravity":
+		// T3 links each instance's config/skills to the user's, ~/.gemini/config/skills, but only
+		// where it finds no folder there: one join made would cut the instance off from the user's
+		// own skills, so the skills go in the user's only.
+		if h.Dir != "" && !h.T3Own {
+			return filepath.Join(h.Dir, "config", "skills")
+		}
+	}
+	return ""
+}
+
+// joinSkillsDir checks that the agent is installed before writing its skills. Antigravity can
+// run in T3 before ~/.gemini exists. Any installed Antigravity home is enough to write the
+// shared skills there, which T3 links into its instances (#741). Gemini CLI also uses ~/.gemini.
+func (e Env) joinSkillsDir(a agent, h agentHome, homes []agentHome) string {
+	dir := skillsDir(a, h)
+	if dir == "" {
+		return ""
+	}
+	if a.driver == "antigravity" {
+		if slices.ContainsFunc(homes, e.hasAntigravity) {
+			return dir
+		}
+	} else if isDir(h.Dir) {
+		return dir
 	}
 	return ""
 }
 
 // installSkills writes Murmur's skills into dir, an agent's skills folder, and updates ones an
 // older mur wrote. A SKILL.md of the same name without skills.Marker is a user's own, and is left
-// alone with a note. Only called for an agent that is installed, whose home exists.
+// alone with a note. Only called for an agent that is installed.
 func installSkills(dir, label string) (did, notes []string, err error) {
 	var wrote []string
 	verb := "installed"

@@ -2,8 +2,9 @@
 
 Murmur lets coding agents on different teammates' machines, in the same repo, discover and
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
-binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, and every pull
-request runs it on macOS, Windows and Linux in CI (`docs/testing.md`).
+binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, on Linux, macOS and
+Windows in CI; most pull requests leave `internal/daemon` on macOS and Windows to main's run
+(`docs/testing.md`).
 `docs/VISION.md` is the direction and its reasons; read it before proposing architecture. How each
 part works is in `docs/design/`, one file per topic. Tyler's rule (2026-11-14, #578): a PR adds to
 VISION only when it changes a direction; how a feature works goes in its design file or in code
@@ -16,6 +17,10 @@ The logo files, palette and type, and the renders a palette change means redoing
 Docs and comments inform rather than direct: what is true, why, what it cost. Directions are
 Tyler's rules, marked as his. Facts that can go stale carry a date. Each fact lives in one place:
 this file loads into every session, so it stays short and points into `docs/` for detail.
+
+Tyler's rule (2026-11-16): prose people read (the site, the README, the `mur ui` page, terminal
+output) is written with the writing-for-humans skill:
+https://github.com/a-Fig/figs-skills/blob/main/writing-for-humans-101/SKILL.md
 
 ## Words that mean two things
 
@@ -41,7 +46,10 @@ Every issue carries at least a kind label.
 
 - `bug` / `Feature` / `Task` / `question`: the kind, spelled exactly so. `question` is an open
   design question.
-- `priority: now` / `soon` / `future`: open issues only, one of them.
+- `priority:` has two scales, and an open issue carries one label, from either: whoever files it
+  picks the scale that says more about it (Tyler, 2026-11-16, #751).
+  - `priority: now` / `soon` / `future` / `maybe never`: when it should be done.
+  - `priority: low` / `med` / `high` / `xhigh`: how much it matters.
 - `PR needed` / `non-PR needed`: where the work lives. `non-PR needed` means some of it is done by
   hand: a decision, an account, a test in the world.
 - `from: <Model>`: see Workflow.
@@ -62,8 +70,9 @@ Tyler's rules:
   issue covers gets one filed first.
 - PR bodies follow `.github/pull_request_template.md`. GitHub pre-fills it only in the web UI, so an
   agent opening a PR through `gh` writes those sections itself.
-- Every PR gets an Opus or Sol review before it is handed over, and merges with every CI check
-  that ran green, except as the next rule says. The PR body says which commits the review covered.
+- Every PR gets an Opus, Fable or Sol review before it is handed over, and merges with every CI
+  check that ran green, except as the next rule says. The PR body says which commits the review
+  covered.
 - **PRs can skip CI and code review in these situations:**
   - **Docs, templates and images only** (Markdown outside `internal/` and `docs/agents/` other
     than `README.md`, `.github/` templates, images): skip both. No check reads these files.

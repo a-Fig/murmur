@@ -164,7 +164,7 @@ func TestSessionsLeavesAnUnreadableRecord(t *testing.T) {
 func TestOfIsTheNearestProcessesLiveServers(t *testing.T) {
 	dir := t.TempDir()
 	me, parent := os.Getpid(), os.Getppid()
-	mine := Session{ServerPID: me, ClientPID: 100, GitDir: "/a/.git", On: true}
+	mine := Session{ServerPID: me, ClientPID: 100, GitDir: "/a/.git", On: true, T3Thread: "thread-1"}
 	sibling := Session{ServerPID: parent, ClientPID: 100, GitDir: "/b/.git"}
 	above := Session{ServerPID: me + 1<<22, ClientPID: 200, GitDir: "/c/.git"} // no such process
 	for i, s := range []Session{mine, sibling, above} {

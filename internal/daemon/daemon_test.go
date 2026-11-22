@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -84,6 +85,17 @@ type device struct {
 	poll   time.Duration
 	grace  time.Duration // SessionGrace; zero takes the daemon's default
 	keep   time.Duration // StoppedInbox; likewise
+	// fileKeep and filePrune are FileKeep and FilePrune; zero takes the daemon's defaults.
+	fileKeep, filePrune time.Duration
+	// filesOff starts the daemon with Send files and Receive files off, as a new user's is (#765);
+	// otherwise both are on.
+	filesOff bool
+	// files, if set, is the settings.json to start with instead, to set the switches one by one.
+	files string
+	// tempDir is TempDir, the temp folder a send may read files from; "" takes the system's.
+	tempDir string
+	// filesPerDay and filesHeld are FilesPerDay and FilesHeld; zero takes the daemon's defaults.
+	filesPerDay, filesHeld int64
 	// muteGrace is MuteGrace. Zero takes none (-1): a mute holds from the first moment, so a test
 	// doesn't wait half a minute to see one work.
 	muteGrace time.Duration
@@ -108,6 +120,9 @@ type device struct {
 	titleEvery time.Duration
 	// fetchLimit is FetchLimit; zero takes the daemon's default.
 	fetchLimit time.Duration
+	// ownTipWait is OwnTipWait; zero takes a minute, so that under the tests' load a send has
+	// always queued its message for this device's sessions when it answers, as the tests expect.
+	ownTipWait time.Duration
 	// firstSync is FirstSyncLimit; zero takes the daemon's default.
 	firstSync time.Duration
 	// consent and consentPoll are the daemon's options of the same names; a nil consent means the
@@ -124,8 +139,15 @@ type device struct {
 	tail *logTail
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
 	threadState func(ctx context.Context, cli, home, thread string) (t3db.State, error)
+	// threadOf, if set, stands in for T3's database provider-thread lookup (the daemon's ThreadOf).
+	threadOf func(ctx context.Context, cli, home, native string) (string, error)
 	// codexLineage, if set, stands in for Codex's state (the daemon's CodexLineage).
 	codexLineage func(ctx context.Context, dir, thread string) (title.Lineage, error)
+	// tellWait is TellWait, how long a sender that asked to be told waits (#276); zero takes the
+	// daemon's default.
+	tellWait time.Duration
+	// clones is the daemon's Clones, the record of this machine's clones; "" leaves it unset.
+	clones string
 	// noKey starts the device without waiting for it to hold the team key (awaitTeamKey), for a test
 	// about a device that doesn't, or can't, hold it.
 	noKey bool
@@ -225,18 +247,32 @@ func (d *device) start() {
 	if muteGrace == 0 {
 		muteGrace = -1
 	}
+	if !d.filesOff || d.files != "" {
+		// Send files and Receive files are off until a person turns them on (#765). The tests of
+		// files, and of everything else, run with them on, unless a test says, or set them itself.
+		settings := filepath.Join(d.gitDir, brand.StateDir, "settings.json")
+		if _, err := os.Stat(settings); os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+				d.t.Fatal(err)
+			}
+			files := cmp.Or(d.files, `{"sendFiles":true,"receiveFiles":true}`)
+			if err := os.WriteFile(settings, []byte(files), 0o600); err != nil {
+				d.t.Fatal(err)
+			}
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	d.done = done
 	go func() {
 		defer close(done)
-		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, Poll: d.poll,
-			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, FirstSyncLimit: d.firstSync,
-			SessionGrace: d.grace, StoppedInbox: d.keep, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
-			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond,
+		err := daemon.Run(ctx, daemon.Options{GitDir: d.gitDir, TempDir: d.tempDir, Poll: d.poll,
+			Heartbeat: beat, StaleAfter: d.stale, Idle: idle, QuietPoll: quietPoll, FetchLimit: d.fetchLimit, OwnTipWait: cmp.Or(d.ownTipWait, time.Minute), FirstSyncLimit: d.firstSync,
+			SessionGrace: d.grace, StoppedInbox: d.keep, FileKeep: d.fileKeep, FilePrune: d.filePrune, FilesPerDay: d.filesPerDay, FilesHeld: d.filesHeld, MuteGrace: muteGrace, NameSource: d.names, NameRetry: retry, NamePool: pool, PushRetry: pushRetry, ContinueHold: d.continueHold,
+			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
-			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState,
-			CodexLineage: d.codexLineage, Log: logger})
+			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, ThreadOf: d.threadOf,
+			CodexLineage: d.codexLineage, Clones: d.clones, Log: logger})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}

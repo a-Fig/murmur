@@ -42,9 +42,18 @@ func TestMain(m *testing.M) {
 	}
 	// The tests run in whatever session started them, which may be one in T3 with a messaging socket:
 	// a server that took those from its environment would look its thread up in the real T3 database.
-	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
+	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "T3CODE_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
 		os.Unsetenv(k)
 	}
+	for _, k := range nativeEnv {
+		os.Unsetenv(k)
+	}
+	// And under an agent, perhaps: the tests of T3's thread variable say whether one is above.
+	agentAbove = func() bool { return false }
+	// Nor started by a t3, which would make a client with T3's thread variable the thread: the tests
+	// of T3's headless server say when one is.
+	servingT3 = func() (string, bool) { return "", false }
+	codexT3 = func() string { return "" }
 	// Servers publish their records here, not in the real user's config directory.
 	dir, err := os.MkdirTemp("", "murmur-sessions-")
 	if err != nil {
@@ -69,6 +78,9 @@ type fakeDaemon struct {
 	routeError string
 	// sendReply, if set, is the daemon's answer to a send.
 	sendReply func(proto.Request) proto.Response
+	// helloReply, if set, may answer a hello in the daemon's place: an error to refuse it, or the
+	// session ID the daemon gives it. "", "" answers as the daemon usually does.
+	helloReply func(proto.Hello) (refusal, id string)
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -157,7 +169,19 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		if f.helloGate != nil {
 			<-f.helloGate
 		}
-		reply(proto.Response{OK: true, Self: "dev/" + req.Hello.ID, ClaudeSession: live, Protocol: proto.Protocol})
+		id := req.Hello.ID
+		if f.helloReply != nil {
+			refusal, given := f.helloReply(*req.Hello)
+			if refusal != "" {
+				reply(proto.Response{Error: refusal})
+				conn.Close()
+				return
+			}
+			if given != "" {
+				id = given
+			}
+		}
+		reply(proto.Response{OK: true, Self: "dev/" + id, ClaudeSession: live, Protocol: proto.Protocol})
 		return // the connection stays open until the test drops it
 	}
 	defer conn.Close()
@@ -229,7 +253,7 @@ func TestHelloNamesTheParentProcess(t *testing.T) {
 	if h.ClientPID != os.Getppid() || h.ClientPID == 0 {
 		t.Fatalf("the hello says the parent is %d, want %d", h.ClientPID, os.Getppid())
 	}
-	if h.ClaudeSession != "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff" || h.ID != "0a1b2c" || h.Cwd != "/work" {
+	if h.ClaudeSession != "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff" || h.ID != sessionID("0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff") || h.Cwd != "/work" {
 		t.Fatalf("hello: %+v", h)
 	}
 }
@@ -278,7 +302,7 @@ func TestReconnectBringsTheLiveClaudeID(t *testing.T) {
 	if h.ClaudeSession != "fffffff0-live" {
 		t.Fatalf("the second hello brought back %q, want the live ID", h.ClaudeSession)
 	}
-	if h.ID != "0a1b2c" || !h.Reconnect {
+	if h.ID != sessionID("0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff") || !h.Reconnect {
 		t.Fatalf("the session's own ID must not change: %+v", h)
 	}
 }
@@ -602,5 +626,25 @@ func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
 	}
 	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "who"}); err != nil || !res.IsError || f.requestCount() != before {
 		t.Errorf("a call with the marker gone: %v %+v, %d requests", err, res, f.requestCount()-before)
+	}
+}
+
+// A Claude Code session's ID is a hash of Claude Code's, the same each time, so a server that
+// restarts in the conversation, or a resume of it, takes its address back; and none of Claude
+// Code's ID is in it, which every address on the bus would publish (#51).
+func TestASessionIDHidesClaudeCodesID(t *testing.T) {
+	claude := "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff"
+	id := sessionID(claude)
+	if len(id) != 6 || id != sessionID(claude) {
+		t.Fatalf("sessionID gave %q, then %q", id, sessionID(claude))
+	}
+	if strings.HasPrefix(strings.ReplaceAll(claude, "-", ""), id) {
+		t.Errorf("the ID %s is the start of Claude Code's", id)
+	}
+	if other := sessionID("0a1b2c3d-1111-2222-3333-444455556666"); other == id {
+		t.Errorf("two conversations that begin alike have the ID %s", id)
+	}
+	if id := sessionID(""); len(id) != 6 {
+		t.Errorf("with no Claude Code ID, the ID %q", id)
 	}
 }

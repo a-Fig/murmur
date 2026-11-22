@@ -202,13 +202,28 @@ func (h *health) polling(rate pollRate, wait, base time.Duration) {
 
 // healthError reduces err to what the page may show (see errorLine).
 func healthError(ctx context.Context, err error, at time.Time) *web.HealthError {
-	text := err.Error()
-	var g *gitx.Error
-	if errors.As(err, &g) && strings.TrimSpace(g.Stderr) != "" {
-		text = g.Stderr // what git said, without the command line
-	}
+	text := errorText(err)
 	class := errorClass(err, text, errors.Is(ctx.Err(), context.DeadlineExceeded))
 	return &web.HealthError{Class: class, Message: errorLine(text), At: at}
+}
+
+// errorText is what git printed to stderr for err, or its underlying error when stderr is empty,
+// keeping git's command line out of error matching and display.
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	var g *gitx.Error
+	if errors.As(err, &g) {
+		if strings.TrimSpace(g.Stderr) != "" {
+			return g.Stderr
+		}
+		if g.Err != nil {
+			return g.Err.Error()
+		}
+		return ""
+	}
+	return err.Error()
 }
 
 // errorClass sorts a failure into one of web's Err* classes, by what git and the remote said. Git's

@@ -23,6 +23,8 @@ started.
   `PI_SUBAGENT_CHILD=1`, in which Murmur's extension does nothing (seen with Pi 0.99.0). Not
   covered: `@gotgenes/pi-subagents` (16.6.0) makes its subagents inside the parent's process, where
   nothing tells them apart; nobody has run one to see whether it registers.
+- **Muse Code** (2026-11-15, #458): a subagent shares its parent's `MUSE_SESSION_ID` and `mur mcp`,
+  so it stays off the mesh and speaks as its parent (seen with Muse 1.4.14 in T3).
 - **The subagents Codex spawns are delegates too** (Tyler, 2026-11-12, #454), outside T3 Code, where
   T3's database knows nothing of them. Since #447 such a thread could otherwise be handed a turn
   nobody asked for ([handoff](handoff.md)).

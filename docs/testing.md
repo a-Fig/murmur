@@ -54,10 +54,31 @@ the names of the files changed to `scripts/ci-level.sh`, which answers with one 
 | `none` | Markdown and images at the top of the repo, in `docs/` and in `.github/`, other than `README.md` and `docs/agents/` | nothing |
 | `site` | `site/`, and the above | `test-linux`, the site's tests alone |
 | `page` | `internal/web/static`, and the above | `test-linux`, whole |
-| `full` | anything else | every job |
+| `go` | `internal/`, `cmd/`, `README.md` and `docs/agents/`, and the above | every job but the daemon shards |
+| `full` | anything else; Go that differs per OS: a file named for one (`_windows.go`, `_darwin_arm64.go`, `_unix.go`, `_other.go`, ...), one with a `//go:build` line before or after the change, a change that adds or removes a `runtime.GOOS` line; `go.mod`, `go.sum`, the workflows and `scripts/` | every job |
 
 The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
-differently per OS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
+differently per OS.
+
+**A pull request runs `internal/daemon` on macOS and Windows only at `full`** (2026-11-19, #879).
+Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
+44223188463), and two of its three macOS jobs. The account gets five macOS jobs at a time, so two
+full runs at once queued, and on 2026-11-17 three runs failed with a macOS job that waited up to
+40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and macOS and
+Windows run every other package, so what a pull request alone misses is a daemon test that fails on
+one OS only, from code that isn't marked as per-OS: an edit inside a `runtime.GOOS` branch that was
+already there, say. Counting every file that mentions `runtime.GOOS` would have caught that, but
+those include the daemon's most-changed files (`sync.go`, `files.go`, `daemon_test.go`), so most
+pull requests would be `full` again. `changes` reads what a change did against the merge's first
+parent (`CI_LEVEL_BASE`), so a deleted or renamed file is read as it was. The push to `main` runs every job, and the nightly takes only a commit whose push
+run passed, so such a failure still shows before a release, on main rather than on its pull
+request. To run every job on a branch before merging it: `gh workflow run test.yml --ref <branch>`.
+
+Two other ways to cut the Windows time were measured and dropped on 2026-11-19, in runs
+44470284567 and 44470384061 on a throwaway branch: turning off Defender's real-time scanning (the
+shards start about 27,500 git processes each, and a `git config` takes 140 ms there) and raising
+`-parallel`. Neither showed a gain, since the same job's time varied from 37 to 64 minutes between
+runners. Run whole on one runner, the package took 37 minutes on Windows and 22 on macOS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
 so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `changes` runs it
 before it uses their answer. A push to `main` and a run by hand are always `full`. On a pull
 request that isn't `full`, the daemon shards show as one skipped check with its name unfilled
@@ -79,6 +100,16 @@ position in the sorted `go test -list` output is its shard number modulo 4. A te
 into some shard by itself. macOS does the same on two runners, `test-macos-daemon (N)`, since
 2026-11-12: the package was 1,154 s of `test-macos`'s 20 minutes, which made it the longest job.
 Linux runs the package whole, in about 6 minutes.
+
+**A test that hangs fails with its stack** (#727, 2026-11-16). It should end in Go's `-timeout`
+panic, which names it and prints every goroutine, not in the job's cancellation, which keeps no log:
+the shards' 50-minute `-timeout` and a retry outlasted their hour, and a hang on #723 was a job
+cancelled after 65 minutes with nothing to show which test. A hang is never retried, so a job's
+limit must fit its longest run that doesn't hang, a retry of what failed (which may hang), and
+setup; `-timeout` counts the test binary alone. The daemon shards run with 45 minutes, the retry
+with its own 10 (`RETRY_TIMEOUT`, as it runs a few tests alone), within 75: Windows shard 1's binary
+takes 1,154 s, the others 500 to 820. The other jobs' tests take 3 to 8 minutes, and run with 25
+minutes in 60, and macOS's release-built step, which shares its job, with 20.
 
 Until 2026-11-01 some jobs ran on self-hosted machines, because GitHub's runners didn't start on
 this account while the repo was private: the macOS job on a machine of Tyler's that also did other

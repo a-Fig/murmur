@@ -16,6 +16,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/publicrepo"
+	"github.com/a-Fig/murmur/internal/t3"
 )
 
 // Env is the user's machine as join sees it: where it writes, which of the agent programs are
@@ -34,6 +35,7 @@ type Env struct {
 	MuseDir     string // Muse Code's, with its settings.json
 	PiDir       string // Pi's agent directory
 	GrokHome    string // Grok's home, with its config.toml
+	GeminiHome  string // Antigravity's home, with its config/mcp_config.json
 	Home        string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
 	T3Settings  string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
 	Getenv      func(string) string
@@ -45,9 +47,14 @@ type Env struct {
 	// Version is mur's, for reporting a public repo (internal/publicrepo); "", as tests leave it,
 	// reports nothing.
 	Version string
-	// Progress is where a leave says it is still waiting for the daemon to stop, before the report;
+	// Progress is where a join or a leave says what it is still waiting for, before the report;
 	// nil, as most tests leave it, says nothing.
 	Progress io.Writer
+	// RemoveApp, for uninstall, takes out the desktop app's launcher and its folder in Murmur's
+	// folder in the config directory (cmd/mur/app.go), adding to the report, and returns what it left
+	// for the user. It runs just before that folder is removed, which its own would otherwise keep
+	// (#746). nil, as tests leave it, does nothing.
+	RemoveApp func(r *Report) (left []string)
 }
 
 // EnvFromProcess is the environment of the running process.
@@ -61,7 +68,7 @@ func EnvFromProcess() (Env, error) {
 		return Env{}, err
 	}
 	e := Env{Exe: exe, Home: home, Getenv: os.Getenv, LookPath: exec.LookPath, Run: runProgram,
-		T3Settings: t3SettingsPath(os.Getenv("T3CODE_CLI_PATH"), os.Getenv("T3CODE_HOME"))}
+		T3Settings: t3SettingsPath(servingT3(os.Getenv), os.Getenv("T3CODE_HOME"))}
 	// Claude Code puts everything under CLAUDE_CONFIG_DIR when it is set (a second account, a T3
 	// provider with its own home); else its settings are in ~/.claude and its state in ~/.claude.json.
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
@@ -81,6 +88,9 @@ func EnvFromProcess() (Env, error) {
 	e.PiDir = piDir(os.Getenv, home)
 	if e.GrokHome = os.Getenv("GROK_HOME"); e.GrokHome == "" {
 		e.GrokHome = filepath.Join(home, ".grok")
+	}
+	if e.GeminiHome = os.Getenv("GEMINI_HOME"); e.GeminiHome == "" {
+		e.GeminiHome = filepath.Join(home, ".gemini")
 	}
 	return e, nil
 }
@@ -158,6 +168,9 @@ func (r Report) String() string {
 // again, and a rerun only fills in what is missing.
 func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	var r Report
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, joinWait)
+	defer cancel()
 	p, err := Locate(ctx, dir)
 	if err != nil {
 		return r, err
@@ -167,27 +180,43 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			"here or on the default branch as this clone last fetched it. `%[2]s init` adds it and pushes it to the default branch, "+
 			"after the user agrees (%[3]s)", brand.Product, brand.Command, brand.SetupDoc)
 	}
-	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
+	// A step cut short by the deadline fails with it; the problem added at the end says so once.
+	cut := func() bool { return ctx.Err() != nil }
+	problem := func(what string, err error) {
+		if !cut() {
+			r.Problems = append(r.Problems, what+": "+err.Error())
+		}
+	}
+	steps := stepper{w: e.Progress, now: "reading which agents this machine has"}
+	defer steps.stop()
 
 	// Per user: the MCP server, registered once for every repo this user opens, in every
-	// configuration of each agent. Only the default ones' news shapes the advice: those are the
-	// agent running join's.
+	// configuration of each agent. Advice about the calling agent depends on its own home.
 	byAgent, notes := e.homes()
 	r.Notes = append(r.Notes, notes...)
-	var claudeFresh, codexFresh bool
+	var claudeFresh, codexFresh, antigravityFresh bool
 	var othersFresh []string
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
+			if cut() {
+				break
+			}
+			if h.T3Own && !isDir(h.Dir) {
+				r.Notes = append(r.Notes, h.Label+": open a thread with this instance to set it up, then run `"+brand.Command+" join` again.")
+				continue
+			}
+			steps.start("adding " + brand.Product + " to " + h.Label)
 			did, fresh, err := a.register(e, ctx, h)
 			r.Did = append(r.Did, did...)
-			if err != nil {
+			if note := approvalNote(""); errors.As(err, &note) {
+				r.Notes = append(r.Notes, h.Label+": "+err.Error())
+			} else if err != nil {
 				problem(h.Label, err)
 				claudeOK = claudeOK && a.driver != "claudeAgent"
 			}
-			// The home exists once registering found the agent installed, even where it then
-			// reported a problem (Pi's conflicting mcp.json, say): the skills don't depend on it.
-			if dir := skillsDir(a, h); dir != "" && isDir(h.Dir) {
+			// A problem registering the server doesn't prevent installing skills.
+			if dir := e.joinSkillsDir(a, h, byAgent[i]); dir != "" {
 				did, notes, err := installSkills(dir, h.Label)
 				r.Did, r.Notes = append(r.Did, did...), append(r.Notes, notes...)
 				if err != nil {
@@ -200,6 +229,12 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				claudeFresh = true
 			case j == 0 && a.driver == "codex":
 				codexFresh = true
+			case j == 0 && a.driver == "pi" && e.looksLikePi():
+				// The advice for the Pi running join covers it.
+			// The advice for the Antigravity running join covers its own home. Its other homes
+			// (~/.gemini, another instance) fall through, so their open sessions hear to restart.
+			case a.driver == "antigravity" && e.looksLikeAntigravity() && sameEntry(h.Dir, e.GeminiHome):
+				antigravityFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -209,7 +244,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// Claude Code's hook is per user now, written above; one an older join put in the clone's
 	// working trees comes out, or Claude Code would run both (#422). Not where a home couldn't be
 	// written: the older hook is then the only one its sessions have, and stays for the next join.
-	if claudeOK {
+	if claudeOK && !cut() {
+		steps.start("looking for hooks an older " + brand.Command + " put in this clone's working trees")
 		trees, hookNotes, err := removeHooks(ctx, p, e.claudeSettings())
 		r.Notes = append(r.Notes, hookNotes...)
 		for _, t := range trees {
@@ -221,6 +257,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
+	steps.stop()
+	if cut() {
+		return e.cutShort(r, parent, steps.now, false)
+	}
 	news, consentErr := p.RecordConsent()
 	if consentErr != nil {
 		problem("recording that you joined", consentErr)
@@ -240,6 +280,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// A daemon left running by an older mur answers, but can't do what this one does (hand a message
 	// over as a turn, for one): it is replaced. One from before proof (0.2) can't be asked to stop,
 	// and Replace ends it by its process (#394).
+	steps.start("starting this clone's daemon")
 	c, err := client.Connect(ctx, p.GitDir, false)
 	switch {
 	case errors.Is(err, client.ErrNoDaemon):
@@ -256,17 +297,25 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 
-	r.Tell = e.advice(claudeFresh, codexFresh, len(r.Problems) > 0)
+	steps.stop()
+	if cut() {
+		return e.cutShort(r, parent, steps.now, consentErr == nil)
+	}
+
+	r.Tell = e.advice(claudeFresh, codexFresh, antigravityFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
 		last := len(r.Tell) - 1
 		r.Tell = append(r.Tell[:last], publicrepo.Statement, r.Tell[last])
+		// Best effort, so the deadline cutting it short fails nothing: a daemon tries again.
+		steps.start("asking GitHub whether this repo is public, to report it if it is")
 		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		if res, _ := publicrepo.Once(rctx, publicrepo.Options{Version: e.Version, GitDir: p.GitDir}); res == publicrepo.Reported {
 			r.Did = append(r.Did, publicrepo.Told)
 		}
 		cancel()
+		steps.stop()
 	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
@@ -282,15 +331,74 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
+// How long a join may take in all, and how long one step runs before the join says it is still on
+// it. Agents run join under a timeout of their own, and one that kills it sees nothing of what it
+// was doing (#829): join gives up first, in time to say where. Variables, for the tests.
+var (
+	joinWait  = 90 * time.Second
+	joinQuiet = 5 * time.Second
+)
+
+// stepper keeps the step a join is on. One that runs past joinQuiet says so on w.
+type stepper struct {
+	w    io.Writer
+	now  string // the step, as in "still <now>"
+	done func()
+}
+
+func (s *stepper) start(what string) {
+	s.stop()
+	s.now = what
+	s.done = sayIfSlow(s.w, joinQuiet, brand.Command+" join: still "+what+"\n")
+}
+
+func (s *stepper) stop() {
+	if s.done != nil {
+		s.done()
+		s.done = nil
+	}
+}
+
+// cutShort ends a join the deadline, or the caller, stopped while it was on step: with a problem that
+// says where it stopped. Each run gets further, since it only does what is missing, so unlike other
+// problems the advice is to run it again before telling the user (Tyler, on #839). Once the user has
+// joined, a daemon may report the repo, so the advice says so as a finished join's does.
+func (e Env) cutShort(r Report, parent context.Context, step string, joined bool) (Report, error) {
+	if parent.Err() != nil {
+		r.Problems = append(r.Problems, "stopped while "+step)
+	} else {
+		r.Problems = append(r.Problems, fmt.Sprintf("gave up after %d seconds, while %s", int(joinWait/time.Second), step))
+	}
+	r.Tell = []string{"Joining stopped partway. Run `" + brand.Command + " join` again: it picks up where it stopped. If it stops again, tell your user what is under Problems."}
+	if joined {
+		r.Tell = append([]string{publicrepo.Statement}, r.Tell...)
+	}
+	return r, errors.New("joining didn't finish; see above")
+}
+
 // Leave undoes a join for the clone containing dir: the consent, the daemon, and the hook an older
 // join put in each working tree. The MCP server and the hooks stay with the agents, which is per
 // user, and do nothing in a repo that hasn't joined.
 func Leave(ctx context.Context, e Env, dir string) (Report, error) {
-	var r Report
 	p, err := Locate(ctx, dir)
 	if err != nil {
-		return r, err
+		// dir may be the git directory of a clone made with --separate-git-dir, which is where
+		// uninstall's refusal names such a clone (Clone.Top): no working tree is found from it,
+		// but it can be left from there (#749).
+		gitDir, gerr := client.FindGitDir(ctx, dir)
+		abs, aerr := filepath.Abs(dir)
+		if gerr != nil || aerr != nil || !sameEntry(gitDir, abs) {
+			return Report{}, err
+		}
+		p = Place{GitDir: gitDir}
 	}
+	return e.leavePlace(ctx, p)
+}
+
+// leavePlace is Leave for p. A Place with no Top, a git directory whose working tree can't be found
+// from it, is left all the same but for the hooks an older join put in its working trees.
+func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
+	var r Report
 	problem := func(what string, err error) { r.Problems = append(r.Problems, what+": "+err.Error()) }
 
 	// The consent first, so everything that checks it stops from here on, including a server that
@@ -305,13 +413,15 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 			problem("taking this clone off the record of this machine's clones", err)
 		}
 	}
-	trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
-	r.Notes = append(r.Notes, notes...)
-	for _, t := range trees {
-		r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
-	}
-	if err != nil {
-		problem("hook", err)
+	if p.Top != "" {
+		trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
+		r.Notes = append(r.Notes, notes...)
+		for _, t := range trees {
+			r.Did = append(r.Did, "Removed the hook from "+filepath.Join(t, filepath.FromSlash(hookFile)))
+		}
+		if err != nil {
+			problem("hook", err)
+		}
 	}
 	// A daemon asked to stop holds the clone's lock until it has finished its work and said goodbye,
 	// which may take client.StopWait, and so may one still starting, which sees the consent gone
@@ -341,7 +451,7 @@ func Leave(ctx context.Context, e Env, dir string) (Report, error) {
 		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
 	r.Tell = []string{
-		brand.Product + " is off for this repo. Agents already open here lose its tools within seconds in Claude Code; in Codex the tools stay listed until the session ends, and say they are off if called.",
+		brand.Product + " is off for this repo. Open Claude Code, Pi and Antigravity sessions lose its tools within seconds. In Codex, the tools stay listed until the session ends and report that they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
@@ -384,8 +494,9 @@ func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
-// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse and Pi
-// read their servers when a session starts, and Grok is believed to (its documentation).
+// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse reads
+// its servers when a session starts, as does Antigravity (1.5.13, 2026-11-20). Pi reads them then
+// and on /reload in its terminal (2026-11-17, #864). Grok documents loading them at startup.
 func othersAdvice(labels []string) string {
 	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
 	if slices.Contains(labels, "OpenCode") {
@@ -393,7 +504,7 @@ func othersAdvice(labels []string) string {
 	}
 	var restart []string
 	for _, l := range labels {
-		if l != "OpenCode" {
+		if l != "OpenCode" && l != "Pi" {
 			restart = append(restart, l)
 		}
 	}
@@ -404,7 +515,26 @@ func othersAdvice(labels []string) string {
 		}
 		s += " " + strings.Join(restart, ", ") + verb + " MCP servers only when a session starts: a session already open needs a new one (in T3 Code, a new thread)."
 	}
+	if slices.Contains(labels, "Pi") {
+		s += " In a Pi session already open, type /reload to get its tools (in T3 Code, open a new thread)."
+	}
 	return s
+}
+
+// inT3 says whether join runs in a session T3 runs: T3's app names its command line
+// (T3CODE_CLI_PATH), and its headless server gives the thread's ID alone (t3.ThreadEnv, #790).
+func (e Env) inT3() bool {
+	return e.getenv(t3CLIEnv) != "" || e.getenv(t3.ThreadEnv) != ""
+}
+
+// servingT3 is T3's command line for the session running join: T3CODE_CLI_PATH where T3's app set
+// it; in a thread of its headless server, which names none, the t3 that runs it, a few processes up
+// (join runs in the agent's shell, under the agent T3 started); else "".
+func servingT3(getenv func(string) string) string {
+	if cli := getenv(t3CLIEnv); cli != "" || getenv(t3.ThreadEnv) == "" {
+		return cli
+	}
+	return t3.Above(os.Getpid(), 8, exec.LookPath)
 }
 
 // advice is what to tell the user after a join, by what this machine and this agent need. Which
@@ -412,13 +542,13 @@ func othersAdvice(labels []string) string {
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
 // (docs/design/joining.md, "Reloading MCP servers").
-func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
+func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
 	}
 	var out []string
 	switch {
-	case e.getenv("CLAUDECODE") == "1" && e.getenv("T3CODE_CLI_PATH") != "" && claudeFresh:
+	case e.getenv("CLAUDECODE") == "1" && e.inT3() && claudeFresh:
 		out = append(out, brand.Product+" was just added to Claude Code, and this conversation started before that, so it doesn't have the tools yet. "+
 			"To load them: press Stop in T3, then send any message (T3 restarts Claude with "+brand.Product+" loaded); starting a new thread works too.")
 	case e.getenv("CLAUDECODE") == "1" && claudeFresh:
@@ -427,7 +557,18 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.getenv("CLAUDECODE") == "1":
 		out = append(out, brand.Product+" is on for this repo. Its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox) show up in this conversation "+
 			"within a few seconds. If they haven't after a minute, start a new conversation.")
-	case e.looksLikeCodex() && e.getenv("T3CODE_CLI_PATH") != "":
+	// Pi loads extensions as a session starts, and again on /reload, a command of its terminal
+	// UI that T3's Pi, in RPC mode, doesn't have; once loaded, the server's tools come and go
+	// with tools/list_changed (Pi 0.99.0, 2026-11-17, #864). Whether this session loaded the
+	// extension can't be told from here: one that started before any join wrote it, even another
+	// session's, needs /reload. So the advice is the same whether or not this join wrote it.
+	case e.looksLikePi() && e.inT3():
+		out = append(out, brand.Product+" is on for this repo. If this thread doesn't have its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox), "+
+			"open a new thread in this project: Pi in T3 Code loads them only as a thread starts.")
+	case e.looksLikePi():
+		out = append(out, brand.Product+" is on for this repo. If this session doesn't have its tools (mcp__"+brand.MCPServer+"__who, status, send, inbox), "+
+			"type /reload in Pi to load them.")
+	case e.looksLikeCodex() && e.inT3():
 		// T3's Codex provider loads the server in a thread created after it was registered, and
 		// never in an older one, which T3 doesn't refresh (docs/design/joining.md, "Reloading MCP
 		// servers").
@@ -436,6 +577,16 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 	case e.looksLikeCodex():
 		out = append(out, brand.Product+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
 			"start a new session in this repo to get them.")
+	case e.looksLikeAntigravity():
+		restart := "restart `agy` in this repo"
+		if e.inT3() {
+			restart = "open a new thread in this project"
+		}
+		if antigravityFresh {
+			out = append(out, brand.Product+" was just added to Antigravity. To load its tools, "+restart+".")
+		} else {
+			out = append(out, brand.Product+" is on for this repo. Antigravity should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
+		}
 	default:
 		out = append(out, brand.Product+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Product+" was already registered with Claude Code, "+
 			"and otherwise after a restart (press Stop and send a message in T3; `claude --continue` in a terminal). "+
@@ -445,6 +596,23 @@ func (e Env) advice(claudeFresh, codexFresh, problems bool) []string {
 		out = append(out, "Codex sessions already open won't have it; ones started from now on will.")
 	}
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
+}
+
+// Claude Code, Codex or Pi started from Antigravity inherit its shell markers and take precedence.
+// The markers are the same in reverse, so Antigravity started from one of them gets their advice.
+func (e Env) looksLikeAntigravity() bool {
+	return (e.getenv("ANTIGRAVITY_AGENT") == "1" || e.getenv("ANTIGRAVITY_CONVERSATION_ID") != "") &&
+		e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi()
+}
+
+// looksLikePi reports whether the agent running join is Pi, which sets PI_CODING_AGENT=true for
+// every process it starts (its docs/environment-variables.md, 0.99.0). A Claude Code or Codex that
+// a Pi started inherits it, so their own variables win (#870's review). The variables can't say
+// which agent started which, so a Pi run from Claude Code's or Codex's shell, the rarer case, gets
+// their advice. No variable tells a Pi under Codex from a Codex under Pi: Pi also sets AI_AGENT=pi,
+// but Codex (0.169.0) sets none, so both see AI_AGENT=pi, PI_CODING_AGENT and CODEX_THREAD_ID.
+func (e Env) looksLikePi() bool {
+	return e.getenv("PI_CODING_AGENT") == "true" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex()
 }
 
 // looksLikeCodex reports whether the agent running join is Codex. The variables are the ones Codex

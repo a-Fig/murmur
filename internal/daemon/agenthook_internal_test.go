@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"io"
 	"log"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // Codex's and Grok's hooks (#225): finding the session a hook speaks for, and telling when a
@@ -62,6 +64,24 @@ func TestAnAgentHookFindsItsSessionByTheRoutesID(t *testing.T) {
 	got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "grok", ClaudeSession: "grok-session"})
 	if len(got) != 1 || got[0] != s || !s.hookSeen || !s.hooked {
 		t.Fatalf("by Native: %v, hookSeen %v, hooked %v", ids(got), s.hookSeen, s.hooked)
+	}
+}
+
+// Muse's hook (#461) gives the session's MUSE_SESSION_ID, by which its MCP server registered, and
+// finds the session by it. A side session Muse runs in the turn, whose hook comes from the same
+// process with an ID of its own, is not the session's, nor does the session take its ID.
+func TestAMuseHookFindsItsSessionByItsID(t *testing.T) {
+	d := agentHookDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s := d.newSessionLocked(&proto.Hello{ID: "mmmmmm", ClientPID: 700}, "muse in T3", "", "mmmmmm")
+	s.clientPID, s.route.Native = 700, "01a1e597-b944"
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "muse", ClaudeSession: "01a1e597-c358", Ancestors: []int{800, 700}}); len(got) != 0 || s.hookNative != "" || s.hooked {
+		t.Fatalf("a side session's hook took %v, hookNative %q, hooked %v", ids(got), s.hookNative, s.hooked)
+	}
+	got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "muse", ClaudeSession: "01a1e597-b944", Ancestors: []int{800, 700}})
+	if len(got) != 1 || got[0] != s || !s.hooked {
+		t.Fatalf("by its ID: %v, hooked %v", ids(got), s.hooked)
 	}
 }
 
@@ -126,6 +146,8 @@ func TestHookOff(t *testing.T) {
 		{"grok", long, false, true},
 		{"pi", long, false, true},
 		{"pi in T3", long, false, true},
+		{"muse", long, false, true},
+		{"muse in T3", long, false, true},
 		{"codex", long, true, false},
 		{"codex", time.Now(), false, false},  // in its grace
 		{"codex", time.Time{}, false, false}, // no tool call: maybe nothing to tell
@@ -148,6 +170,56 @@ func TestHookOff(t *testing.T) {
 			t.Errorf("%s/%s: %v, want %v", c.dev, c.sess, got, c.want)
 		}
 	}
+}
+
+func TestSendHookOffNoteUsesTurnRoute(t *testing.T) {
+	d, _, _ := rateRig(t, Options{}, false)
+	now := time.Now()
+	from := bus.Addr(d.device, "bbbbbb")
+	check := func(who string, turnRoute bool) {
+		t.Helper()
+		out := d.send(context.Background(), from, proto.Request{To: who, Subject: "a question"})
+		want := who + "'s hook isn't running, so it sees this when it next reads its inbox."
+		if turnRoute {
+			want = who + "'s hook isn't running, so it won't be told while it works: it gets this as its next turn."
+		}
+		if !out.OK || out.Note != want {
+			t.Fatalf("send to %s: note %q, error %q, want %q", who, out.Note, out.Error, want)
+		}
+		t.Log(view.Sent(out))
+	}
+	d.mu.Lock()
+	target := &session{id: "aaaaaa", agent: "antigravity in T3", started: now, lastActive: now, toolCalled: now.Add(-2 * hookGrace)}
+	d.sessions[target.id] = target
+	d.mu.Unlock()
+	local := bus.Addr(d.device, target.id)
+	for _, c := range []struct {
+		agent string
+		route proto.Route
+		turn  bool
+	}{
+		{"antigravity in T3", proto.Route{T3CLI: "t3"}, false},
+		{"antigravity in T3", proto.Route{T3CLI: "t3", T3Thread: "thread-1"}, true},
+		{"claude-code", proto.Route{MsgSocket: "socket"}, false},
+		{"claude-code", proto.Route{MsgSocket: "socket", MsgToken: "token"}, true},
+		{"claude-code in T3", proto.Route{T3CLI: "t3", MsgSocket: "socket", MsgToken: "token"}, false},
+	} {
+		d.mu.Lock()
+		target.agent, target.route = c.agent, c.route
+		d.mu.Unlock()
+		check(local, c.turn)
+	}
+
+	const peerID = "peer-0001"
+	d.mu.Lock()
+	d.st.Pins[peerID] = &keyPin{Box: bus.BoxPublic(bus.NewBoxKey())}
+	d.peers[peerID] = &peer{pres: bus.Presence{Sessions: []bus.SessionInfo{
+		{ID: "aaaaaa", Agent: "antigravity in T3", HookOff: true},
+		{ID: "cccccc", Agent: "claude-code", HookOff: true, TurnRoute: true},
+	}}}
+	d.mu.Unlock()
+	check(bus.Addr(peerID, "aaaaaa"), false)
+	check(bus.Addr(peerID, "cccccc"), true)
 }
 
 func ids(ss []*session) []string {

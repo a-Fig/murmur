@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const tomlTable = "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n"
+const tomlTable = "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n"
 
 func edit(t *testing.T, text string) (string, bool) {
 	t.Helper()
@@ -48,16 +48,30 @@ func TestCodexEditIsIdempotentAndUpdatesInPlace(t *testing.T) {
 	}
 
 	stale := "[mcp_servers.murmur]\n# mine\ncommand = '/old/mur'\nstartup_timeout_sec = 30\nargs = [\"mcp\"]\ndefault_tools_approval_mode = \"prompt\"\n\n[mcp_servers.murmur.env]\nA = \"1\"\n\n[other]\nx = 1\n"
-	want := "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nstartup_timeout_sec = 30\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"prompt\"\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n\n[mcp_servers.murmur.env]\nA = \"1\"\n\n[other]\nx = 1\n"
+	want := "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nstartup_timeout_sec = 30\nargs = [\"mcp\", \"--agent\", \"codex\"]\ndefault_tools_approval_mode = \"prompt\"\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n\n[mcp_servers.murmur.env]\nA = \"1\"\n\n[other]\nx = 1\n"
 	if got, changed := edit(t, stale); !changed || got != want {
 		t.Errorf("changed=%v:\n%s\nwant:\n%s", changed, got, want)
 	}
 
 	// A table with only some of the keys gets the others, before the next table.
 	partial := "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\n\n[mcp_servers.murmur.env]\nA = \"1\"\n"
-	want = "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.murmur.env]\nA = \"1\"\n"
+	want = "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.murmur.env]\nA = \"1\"\n"
 	if got, _ := edit(t, partial); got != want {
 		t.Errorf("partial table:\n%s\nwant:\n%s", got, want)
+	}
+
+	// The keys go above a comment the user wrote for the next table, which stays with that table, and
+	// uninstall then leaves it (#755). A comment between Murmur's keys stays where it is.
+	commented := "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\"]\n\n# GitHub's\n[mcp_servers.github]\ncommand = \"gh\"\n"
+	want = "[mcp_servers.murmur]\n# mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n# GitHub's\n[mcp_servers.github]\ncommand = \"gh\"\n"
+	got, _ := edit(t, commented)
+	if got != want {
+		t.Errorf("a comment for the next table:\n%s\nwant:\n%s", got, want)
+	}
+	server := []string{"mcp_servers", "murmur"}
+	drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
+	if out, _, err := editTOMLTables(got, "config.toml", [][]string{server}, drop); err != nil || out != "# GitHub's\n[mcp_servers.github]\ncommand = \"gh\"\n" {
+		t.Errorf("uninstall after it: %v\n%s", err, out)
 	}
 }
 
@@ -74,6 +88,29 @@ func TestCodexEditKeepsCRLF(t *testing.T) {
 	got, _ := edit(t, crStale)
 	if strings.Count(got, "\n") != strings.Count(got, "\r\n") || !strings.Contains(got, "command = \"/opt/mur\"\r\n") {
 		t.Errorf("stale CRLF table: %q", got)
+	}
+
+	// Murmur's table last, with no newline at the file's end: the keys added after its last line give
+	// that line its CRLF, and the file still ends without one, never in a lone CR (#783). The same when
+	// the header is the last line.
+	tail := "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\r\ndefault_tools_approval_mode = \"approve\""
+	for in, want := range map[string]string{
+		"x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]": "x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]\r\n" + tail,
+		"x = 1\r\n\r\n[mcp_servers.murmur]": "x = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"/opt/mur\"\r\nargs = [\"mcp\", \"--agent\", \"codex\"]\r\n" + tail,
+	} {
+		got, _ := edit(t, in)
+		if got != want {
+			t.Errorf("CRLF, no final newline: %q\nwant %q", got, want)
+		}
+		if again, changed := edit(t, got); changed || again != got {
+			t.Errorf("a second edit changed it: %q", again)
+		}
+		// Uninstall gives the file back without Murmur's table, ending as it did, without a lone CR.
+		server := []string{"mcp_servers", "murmur"}
+		drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
+		if out, _, err := editTOMLTables(got, "config.toml", [][]string{server}, drop); err != nil || out != "x = 1" {
+			t.Errorf("uninstall after it: %q %v", out, err)
+		}
 	}
 }
 
@@ -115,12 +152,12 @@ func TestCodexEditReadsQuotedHeadersWithComments(t *testing.T) {
 	// The same spelling for Murmur's own table is that table, edited in place, not a second one.
 	own := "[ mcp_servers . \"murmur\" ] # mine\ncommand = '/old/mur' # keep\n\n[other]\nx = 1\n"
 	got, changed := edit(t, own)
-	want := "[ mcp_servers . \"murmur\" ] # mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n[other]\nx = 1\n"
+	want := "[ mcp_servers . \"murmur\" ] # mine\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n\n[other]\nx = 1\n"
 	if !changed || got != want {
 		t.Errorf("changed=%v:\n%s\nwant:\n%s", changed, got, want)
 	}
 	// A comment after a value that is already right isn't a difference.
-	commented := "[mcp_servers.murmur]\ncommand = \"/opt/mur\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n"
+	commented := "[mcp_servers.murmur]\ncommand = \"/opt/mur\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n"
 	if out, changed := edit(t, commented); changed {
 		t.Errorf("rewrote a value that was right:\n%s", out)
 	}
@@ -160,21 +197,23 @@ func TestCodexEditQuotesWindowsPaths(t *testing.T) {
 
 // Codex starts MCP servers with a bare environment and passes on only the variables a table names
 // in env_vars, so join names T3CODE_CLI_PATH, how a session in T3 Code is found and woken, and
-// CODEX_HOME, where the daemon reads a Codex thread's name. What the user already lists there
-// stays, and each name is added to it only if it is missing: a table an older join wrote, with
-// T3CODE_CLI_PATH only, gets CODEX_HOME on the next join.
+// CODEX_HOME, where the daemon reads a Codex thread's name, and T3CODE_HOME, how a thread of T3's
+// headless server is found (#802). What the user already lists there stays, and each name is added
+// to it only if it is missing: a table an older join wrote gets the names it lacks on the next
+// join.
 func TestCodexEditForwardsItsVariables(t *testing.T) {
 	head := "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--agent\", \"codex\"]\n"
 	tail := "default_tools_approval_mode = \"approve\"\n"
 	for name, tc := range map[string]struct{ in, want string }{
-		"none":             {head + tail, head + tail + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n"},
-		"someone else's":   {head + "env_vars = [\"HTTP_PROXY\"]\n" + tail, head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n" + tail},
-		"empty":            {head + "env_vars = []\n" + tail, head + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n" + tail},
-		"with a comment":   {head + "env_vars = [\"A\"] # mine [x]\n" + tail, head + "env_vars = [\"A\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"] # mine [x]\n" + tail},
-		"an older join's":  {head + "env_vars = [\"T3CODE_CLI_PATH\"]\n" + tail, head + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n" + tail},
-		"the home only":    {head + "env_vars = [\"A\", 'CODEX_HOME']\n" + tail, head + "env_vars = [\"A\", \"CODEX_HOME\", \"T3CODE_CLI_PATH\"]\n" + tail},
-		"already there":    {head + "env_vars = [\"A\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n" + tail, ""},
-		"in another order": {head + "env_vars = ['CODEX_HOME', 'A', 'T3CODE_CLI_PATH']\n" + tail, ""},
+		"none":             {head + tail, head + tail + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n"},
+		"someone else's":   {head + "env_vars = [\"HTTP_PROXY\"]\n" + tail, head + "env_vars = [\"HTTP_PROXY\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n" + tail},
+		"empty":            {head + "env_vars = []\n" + tail, head + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n" + tail},
+		"with a comment":   {head + "env_vars = [\"A\"] # mine [x]\n" + tail, head + "env_vars = [\"A\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"] # mine [x]\n" + tail},
+		"an older join's":  {head + "env_vars = [\"T3CODE_CLI_PATH\"]\n" + tail, head + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n" + tail},
+		"the home only":    {head + "env_vars = [\"A\", 'CODEX_HOME']\n" + tail, head + "env_vars = [\"A\", \"CODEX_HOME\", \"T3CODE_CLI_PATH\", \"T3CODE_HOME\"]\n" + tail},
+		"before T3's home": {head + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\"]\n" + tail, head + "env_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n" + tail},
+		"already there":    {head + "env_vars = [\"A\", \"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\n" + tail, ""},
+		"in another order": {head + "env_vars = ['CODEX_HOME', 'A', 'T3CODE_HOME', 'T3CODE_CLI_PATH']\n" + tail, ""},
 	} {
 		got, changed := edit(t, tc.in)
 		if tc.want == "" {
@@ -197,7 +236,7 @@ func TestCodexEditForwardsItsVariables(t *testing.T) {
 	} {
 		if out, _, err := editCodexConfig(text, "/opt/mur"); err == nil {
 			t.Errorf("%s: edited it:\n%s", name, out)
-		} else if !strings.Contains(err.Error(), `"T3CODE_CLI_PATH", "CODEX_HOME"`) {
+		} else if !strings.Contains(err.Error(), `"T3CODE_CLI_PATH", "CODEX_HOME", "T3CODE_HOME"`) {
 			t.Errorf("%s: the error doesn't say what to add by hand: %v", name, err)
 		}
 	}

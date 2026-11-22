@@ -25,6 +25,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/daemon"
+	"github.com/a-Fig/murmur/internal/desktop"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
@@ -59,6 +60,9 @@ For humans:
   mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message
                                 agents; --no-open only prints its address (starts the clone's daemon
                                 if it isn't running)
+  mur app                       open the page in a window of its own, with a count of what's unread and
+                                notifications of messages to you; in a repo that joined, that repo's page,
+                                else the one it last showed
   mur nickname [NAME|--clear]   call this clone's device NAME, such as your own name: teammates see it
                                 beside the device's ID; --clear takes it off; alone, says what the
                                 device is called
@@ -70,16 +74,21 @@ For humans:
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
-  mur hook [AGENT]              an agent's hook: Claude Code's, or codex's, grok's, or pi's and
-                                opencode's through Murmur's extension and plugin (reads the
-                                payload on stdin)
+  mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
+                                muse's, opencode's or pi's; reads the payload on stdin
+  mur hook --event EVENT antigravity
+                                Antigravity's hook, for EVENT; reads the payload on stdin
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {
-	dirs, args, err := leadingDirs(os.Args[1:])
+	argv := os.Args[1:]
+	if desktop.FromBundle() {
+		argv = []string{"app", "--from-launcher"} // started from Murmur.app, which passes nothing
+	}
+	dirs, args, err := leadingDirs(argv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usage)
 		os.Exit(2)
@@ -102,8 +111,8 @@ func main() {
 	case "hook":
 		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
 		// does nothing.
-		if agent, ok := hookAgent(args); ok {
-			hook.RunFor(agent, os.Stdin, os.Stdout)
+		if agent, event, ok := hookAgent(args); ok {
+			hook.RunForEvent(agent, event, os.Stdin, os.Stdout)
 		}
 	case "mcp":
 		err = runMCP(ctx, args)
@@ -123,6 +132,8 @@ func main() {
 		err = runUninstall(ctx, args, os.Stdout)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
+	case "app":
+		err = runApp(ctx, args, os.Stdout)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)
@@ -167,23 +178,25 @@ func leadingDirs(args []string) (dirs, rest []string, err error) {
 // named, as join writes it for Codex and Grok (`mur hook codex`, #225) or as Pi's extension runs it
 // (`mur hook --agent pi`, #205). ok is false for arguments it can't read or an agent the hook doesn't
 // know.
-func hookAgent(args []string) (agent string, ok bool) {
+func hookAgent(args []string) (agent, event string, ok bool) {
 	fs := flag.NewFlagSet(brand.Command+" hook", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	a := fs.String("agent", "", "")
+	// --event names the event for an agent whose payload doesn't: Antigravity's.
+	e := fs.String("event", "", "")
 	if fs.Parse(args) != nil {
-		return "", false
+		return "", "", false
 	}
 	switch {
 	case fs.NArg() == 1 && *a == "":
 		*a = fs.Arg(0)
 	case fs.NArg() != 0:
-		return "", false
+		return "", "", false
 	}
 	if !hook.KnownAgent(*a) {
-		return "", false
+		return "", "", false
 	}
-	return *a, true
+	return *a, *e, true
 }
 
 func flags(name string) (*flag.FlagSet, *string) {
@@ -456,7 +469,7 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	env.Version = version
-	env.Progress = os.Stderr // a line while a leave waits for the daemon; stdout is the report
+	env.Progress = os.Stderr // a line while a step is slow, or a leave waits for the daemon; stdout is the report
 	do := join.Join
 	if *leave {
 		do = join.Leave
@@ -552,6 +565,7 @@ func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	}
 	env.Version = version
 	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
+	env.RemoveApp = uninstallApp
 	report, err := join.Uninstall(ctx, env, *leave)
 	fmt.Fprint(out, report.String())
 	return err
@@ -595,7 +609,7 @@ func runStop(ctx context.Context, args []string, out io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	stopped, err := client.Stop(ctx, gitDir)
+	stopped, err := client.StopWaiting(ctx, gitDir)
 	if err != nil {
 		return err
 	}

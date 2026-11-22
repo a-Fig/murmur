@@ -129,7 +129,11 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 		r.Did = append(r.Did, "Removed the record of this machine's clones ("+record+")")
 	}
 
-	left := removeUserFolder(&r)
+	var left []string
+	if e.RemoveApp != nil && os.Getenv(clones.DirEnv) == "" && os.Getenv(brand.SessionsDirEnv) == "" {
+		left = e.RemoveApp(&r) // not where a test named its own folders, as removeUserFolder
+	}
+	left = append(left, removeUserFolder(&r)...)
 
 	if len(r.Did) == 0 && len(r.Problems) == 0 && len(left) == 0 {
 		r.Did = []string{"Nothing to remove: " + brand.Product + " wasn't set up for any agent here"}
@@ -203,10 +207,16 @@ func (e Env) leftovers() []string {
 }
 
 // leaveClone leaves clone c again, or for the first time, and reports whether that finished: a
-// leave takes the clone off the record, and one that didn't finish puts it back. A clone with no
-// working tree to leave from has only its daemon stopped. err is for a clone that can't be put back.
+// leave takes the clone off the record, and one that didn't finish puts it back. A clone whose
+// working tree can't be found from its git directory, one made with --separate-git-dir whose git
+// directory isn't .git, is left from its git directory (#749). One whose git directory has gone
+// has only its daemon stopped. err is for a clone that can't be put back.
 func (e Env) leaveClone(ctx context.Context, r *Report, record string, c clones.Clone) (ok bool, err error) {
-	if _, lerr := Locate(ctx, c.Top()); lerr != nil {
+	p, lerr := Locate(ctx, c.Top())
+	if lerr != nil && filepath.Base(c.GitDir) != ".git" && isDir(c.GitDir) {
+		p, lerr = Place{GitDir: c.GitDir}, nil
+	}
+	if lerr != nil {
 		sctx, cancel := context.WithTimeout(ctx, time.Minute)
 		stopped, err := client.Stop(sctx, c.GitDir)
 		cancel()
@@ -219,7 +229,7 @@ func (e Env) leaveClone(ctx context.Context, r *Report, record string, c clones.
 		}
 		return true, nil
 	}
-	lr, err := Leave(ctx, e, c.Top())
+	lr, err := e.leavePlace(ctx, p)
 	for _, d := range lr.Did {
 		if !strings.HasPrefix(d, "Nothing to undo") {
 			r.Did = append(r.Did, c.Label()+": "+d)
@@ -342,6 +352,9 @@ func removeUserFolder(r *Report) (left []string) {
 	}
 	if slices.Contains(names, "clones") {
 		why = append(why, "the record of the clones kept above")
+	}
+	if slices.Contains(names, "app") {
+		why = append(why, "the desktop app's files, kept above")
 	}
 	held := strings.Join(names, ", ")
 	if len(why) > 0 {
@@ -723,9 +736,11 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 	open := ""
 	var table []string
 	dropping, renamed := false, false
+	inStr := make([]bool, len(lines)) // the line starts inside a multi-line string
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		inString := open != ""
+		inStr[i] = inString
 		if open = tomlLineEnd(line, open); inString {
 			continue
 		}
@@ -772,10 +787,12 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 	if len(dropped) == 0 && !renamed {
 		return text, nil, nil
 	}
-	// A dropped table goes from its header to its last line with anything on it, and the blank line
-	// before it goes too, so the tables around it keep one blank line between them. One with nothing
-	// kept before it takes its trailing blank lines instead. The empty string after the last newline
-	// is the file's end, not a line, and stays.
+	// A dropped table goes from its header to its last line with a key or value on it, and the blank
+	// line before it goes too, so the tables around it keep one blank line between them. One with
+	// nothing kept before it takes its trailing blank lines instead. A comment after its last key is
+	// the user's, about what follows, as join writes none: it stays (#740). A line of a multi-line
+	// string is the value's, whatever it starts with. The empty string after the last newline is the
+	// file's end, not a line, and stays.
 	drop := make([]bool, len(lines))
 	for n, h := range headers {
 		if !h.drop {
@@ -787,7 +804,7 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 		}
 		last := h.at
 		for i := h.at; i < next; i++ {
-			if strings.TrimSpace(lines[i]) != "" {
+			if t := strings.TrimSpace(lines[i]); t != "" && (inStr[i] || !strings.HasPrefix(t, "#")) {
 				last = i
 			}
 		}
@@ -803,7 +820,7 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 		}
 		switch {
 		case !keptBefore:
-			for i := last + 1; i < next && i < len(lines)-1; i++ {
+			for i := last + 1; i < next && i < len(lines)-1 && strings.TrimSpace(lines[i]) == ""; i++ {
 				drop[i] = true
 			}
 			for i := 0; i < h.at; i++ {
@@ -818,6 +835,11 @@ func editTOMLTables(text, file string, targets [][]string, act func(path []strin
 		if !drop[i] {
 			kept = append(kept, l)
 		}
+	}
+	// A file that ended in a dropped table with no newline after it ends in the last kept line, whose
+	// CRLF went with what followed it: its \r alone would be a lone CR, which TOML forbids (#783).
+	if n := len(kept); n > 0 && drop[len(lines)-1] {
+		kept[n-1] = strings.TrimSuffix(kept[n-1], "\r")
 	}
 	return strings.Join(kept, "\n"), dropped, nil
 }

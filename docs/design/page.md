@@ -31,6 +31,19 @@ from it is in [a person on the page](people.md).
   from presence going stale. Messages are every one this daemon reads, whoever it is for, since
   every record is encrypted for the whole team ([encryption](encryption.md)). The daemon keeps the
   last 500 in memory.
+  - *Which message is which* (#603, 2026-11-16) goes by its ID, its sender and when it was sent.
+    By the ID alone, a device that wrote an ID again hid its own later message from every page,
+    and after a restart could put one of its own in another's place. The page still keeps
+    messages by one ID each, and passes over an ID it has. So the first message the daemon kept
+    with an ID has it plain, for as long as a page may still hold it: through a re-sort of the
+    list, and for 4,000 dropped messages after the daemon's own 500 have let it go, the page
+    keeping 2,000. Any other message with that ID is given it with a mark added, 64 bits of a
+    hash, the same each time. The unread list follows the marked ID.
+    - *What is left.* Receipts go by the bus's ID alone, so the page shows them on the message
+      that has it plain, whichever of the two they were for. And a daemon that restarts picks
+      owners afresh, by time sent where history is read back: a page handed over by an update,
+      which keeps what it had, can then show one of the two twice and the other not at all until
+      it is loaded again.
 - **Messages from before the daemon started are read back from the bus** (#138, 2026-11-12). The
   daemon exits when idle, so the page opened on conversations with their beginnings gone, and one
   away over 10 minutes left a hole in the middle. They are read back from the logs this clone has
@@ -71,6 +84,19 @@ from it is in [a person on the page](people.md).
   two minutes at most. Tags with a meaning show as that meaning: `model:` beside the agent,
   `do-not-disturb` as the red dot, `hidden` as the fold, `human` on a person. There is no grouping
   by tag: a session can carry several, so groups would repeat it.
+- **A profile card** (2026-11-15, #689, Tyler's request). Clicking a face, or a sender's name in a
+  conversation, opens a card beside it, as a chat app does: the name and address, the state, agent,
+  model and tags, the status and branch, what you have in common (the groups you have posted in that
+  it is in, and your device), for a person the sessions they have messaged, and a box that sends a
+  direct message from the card. It uses only presence and the messages the page has. A face that is
+  part of another control (the account chip, a group's pile) doesn't open it. Since 2026-11-16
+  (#778, Tyler's request) a name opens it wherever the page shows one: the sidebar, Sessions, Recent
+  (activity and messages), a group's members, "Talked with", and a name the page knows written in a
+  message (`quiet-otter`). Names in a picker, in sessions being picked to tag, and in a
+  conversation's row keep that control's action. Read receipts list names in a tooltip, which
+  holds no controls, so they don't open it. Tyler chose the banner
+  look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
+  which #656 headed with its details, hold little more than the card does.
 - **Themes** (2026-11-09), kept in the browser: Dark (T3 Code's), Dim (the page's greys before it
   followed T3 Code), Light, and since 2026-11-10 Murmur (the website's palette; `docs/brand.md`).
   Each is a set of color tokens over one design, so a theme costs only its palette.
@@ -89,6 +115,28 @@ from it is in [a person on the page](people.md).
   - *Who did it.* Agents on one machine share their user's GitHub login, so a pull request is named
     for the session on its branch, and for the login only when no session is. GitHub's list says who
     opened one, not who merged or closed it.
+  - *An issue's session* (2026-11-15, #510, Tyler's request). An issue has no branch, so the hook
+    looks at each tool call for one it filed or closed: a shell command that runs `gh issue create`
+    or `gh issue close` where a command starts, outside quotes and comments, read from what gh
+    printed, or GitHub's MCP server creating or closing one, read from the address in its result. A
+    command whose output holds more filed or closed issues than it ran creates or closes reports
+    none, as something else printed them (a `gh issue list` beside it, a grep of this code). The
+    daemon keeps the issue's repository and number and which it was as the session's activity, and
+    the page names that session on GitHub's event of the same number in the same repository, read
+    from the event's address: `quiet-otter filed issue #37`, `quiet-otter closed issue #37`, a close
+    only if it was about when GitHub's was (an issue reopened and closed again was closed last by
+    someone else). The page's listing is of the repository gh picks in the clone, which can be an
+    `upstream` remote and not the bus's, so the daemon keeps an issue of any repository on GitHub
+    and the page matches. One GitHub hasn't listed yet shows on its own, if it is in the listing's
+    repository. Matching by time and login was set aside as a guess that goes wrong with two
+    sessions at work, and a marker in the issue as something every agent would have to write. What
+    it costs: a hook decodes the call's output only for those calls, and nothing of it but the
+    issue's repository and number, and whether it was closed, leaves the hook. It is known only on
+    the session's own device, like a commit's count. Not covered, so the login stays: Pi and
+    OpenCode, whose plugins pass the hook no tool output; an issue filed another way (`gh api`, the
+    website); a loop that runs one `gh issue create` or `gh issue close` for several issues; a call
+    that fails after its create, which Claude Code ends as `PostToolUseFailure`, whose output the
+    hook doesn't read; and a Codex call still running when it yields, which has no output yet.
   - *What it doesn't have.* The newest 600 entries are kept in memory. After a restart, starts and
     stops come back from the bus with the messages and pull requests from GitHub, but a status, tag
     or commit from before is gone: only a file could keep them, which isn't built. Two status
@@ -97,11 +145,23 @@ from it is in [a person on the page](people.md).
 - **Settings** (when a session is woken, and what a busy one is given by the hook) are saved in
   `.git/murmur/settings.json`; [delivery](delivery.md) says what they do. Settings also lists every
   mute ([mutes](mutes.md)), with a button to undo those of this device's sessions.
+- **Settings is one screen per repo, grouped by topic** (2026-11-16, #775, Tyler's choice of a
+  proposal). It grew a section per feature, with rows named by scope ("Device default" twice). A
+  device is one clone, so every setting but two is the open repo's, and the page says which repo
+  and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
+  (availability, waking, what a working session is shown, and each session's own, folded until
+  opened), Files and Mutes. Below a line, "For every repo": the theme, kept in this browser, and
+  About. Every setting is a segmented control, on/off ones included (Tyler, 2026-11-17, #862).
+  The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
+  and repo are nearly the same thing here, and people come with a question, not a scope. A page
+  that changes every repo at once is #816.
 - **An open page keeps the daemon up.** The page polls every 3 s, 15 s in a hidden tab. A call with
   the token from a page someone can see counts as an open page for 2 minutes and stops the 10-minute
   idle countdown, so a daemon with nothing else to do exits about 12 minutes after its page is
   closed or hidden. A hidden page marks its calls, so a tab forgotten in the background doesn't keep
-  the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29).
+  the daemon, and its polling of GitHub, up for good (Opus review, 2026-10-29). The desktop app's
+  page also says it is the app's, which keeps the daemon running, minimized too, without counting as
+  someone looking ([desktop](desktop.md)).
 - **This device's health** (`GET /api/health`, 2026-11-10; where the page shows it is Tyler's call).
   Peers are judged stale against this daemon's last successful sync, so a device that has lost the
   remote shows every peer as it was, and nothing said so: #141's refused pushes, a 52-minute DNS

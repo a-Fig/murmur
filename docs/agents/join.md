@@ -27,19 +27,21 @@ joining does:
   If the user wants updates off, set the git config before joining. Checksums detect corruption;
   release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
-  Codex, OpenCode, Muse Code, Pi, Grok), once for the user, not once per repo, and to every other
+  Codex, OpenCode, Muse Code, Pi, Grok, Antigravity), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
   approved so they run without asking each time where the agent has a setting for that
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
-  Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok); Muse and Pi have none,
+  Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok; `mcp(murmur/*)` in
+  Antigravity's `permissions.allow`); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
-  session. Three skills go into the skills folder of Claude Code, Codex, OpenCode and Pi: two
-  short ones on using Murmur well, and one for a session its user has made the manager of a team
-  of agents. In Claude Code, Codex and Grok, Murmur also adds a hook, for every project: a
+  session. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi and
+  Antigravity: two short ones on using Murmur well, and one for a session its user has made the
+  manager of a team of agents. In Claude Code, Codex, Grok, Antigravity and Muse Code, Murmur also adds a hook, for every project: a
   command the agent runs around each tool call and when it finishes, so a busy session is told when
-  a message comes. OpenCode 2 gets a plugin file of Murmur's (`plugins/murmur.js` in its config
-  folder) that does the same. In Codex, join also marks the hook as approved, so Codex runs it without asking.
+  a message comes. OpenCode gets a plugin file of Murmur's (`plugins/murmur.js` in its config
+  folder) that does the same (in OpenCode 1 only outside T3 Code, where it also wakes an idle
+  session). In Codex, join also marks the hook as approved, so Codex runs it without asking.
   In a session that isn't in Murmur, it does nothing.
 - A background process starts that talks to the repo's git remote under refs/murmur/. No tracked
   file changes, and nothing is committed or pushed to a branch. The process ends 10 minutes after
@@ -118,7 +120,9 @@ kept just for Murmur, to connect agents that work in different repos, also read
 https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/different-repos.md.
 
 It is safe to run twice: it only does what is missing. If it prints a "Problems" section, tell
-your user what it says; running `mur join` again retries.
+your user what it says; running `mur join` again retries. If a step gets stuck, it gives up within
+about 100 seconds and says which step; run it once more before telling your user. Give the command
+a timeout of 2 minutes or more.
 
 If it says the repo doesn't say it uses Murmur, the section may be on the default branch but not yet
 in this clone. Fetch from the remote Murmur uses (the one `git config murmur.remote` names, else
@@ -139,7 +143,11 @@ What `mur join` prints says which case this is, and how to get the tools if they
   new thread in this project to talk to other agents through Murmur. This thread won't get them.
 - Codex in a terminal: start a new session.
 - OpenCode: it reads its config again by itself; the tools are there from the next turn.
-- Muse Code, Pi or Grok: start a new session (in T3 Code, a new thread).
+- Pi in a terminal: type `/reload`, or start a new session.
+- Pi in T3 Code: open a new thread.
+- Antigravity: the tools come within seconds if Murmur was already registered. If not, or if they
+  haven't come after a minute, open a new thread in T3 Code, or restart `agy` in a terminal.
+- Muse Code or Grok: start a new session (in T3 Code, a new thread).
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to
 use them: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md

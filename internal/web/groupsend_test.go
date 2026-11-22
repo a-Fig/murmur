@@ -53,6 +53,7 @@ async function run(name, sessions, failing, then) {
   const ctx = {
     ui: { token: "t", state: { devices: [{ id: "laptop", sessions }] }, outbox: [], notes: new Map(), tagMenu: null, notice: "" },
     document: { hidden: false },
+    window: {},
     stateAskedAt: 0, timer: 0, setTimeout: () => 0, clearTimeout: () => {},
     render: () => {}, poll: () => {}, deny: () => {}, announce: (t) => calls.push("announce " + t),
     devices: () => ctx.ui.state.devices,
@@ -168,7 +169,7 @@ func TestGroupSendSaysWhoWasntAdded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(src, pageFunctions(t, "AuthError", "api", "HIDDEN", "OWN_MEANING", "sortsBy", "tagWanted", "TAG_WAIT_MS", "tagsOf",
+	write(src, pageFunctions(t, "AuthError", "api", "pageHidden", "inApp", "HIDDEN", "OWN_MEANING", "sortsBy", "tagWanted", "TAG_WAIT_MS", "tagsOf",
 		"hasTag", "inGroup", "isGroupTag", "sessionByAddr", "tagQueues", "groupJoins", "groupMisses", "queueTagChange", "tagSessions", "forgetJoins",
 		"deliver", "namesOf"))
 	harness := filepath.Join(dir, "harness.js")

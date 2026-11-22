@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -19,9 +20,17 @@ import (
 // ReceiptGather and writes them as one encrypted receipt on its own log; the sender's daemon reads
 // them like any event and keeps the furthest state per recipient. A mark for a message sent from
 // this device never goes on the bus: it is applied here.
+//
+// An agent's message asks for receipts only when its sender asks to be told how far it got (#276,
+// send's tell_me). The sender is told once, by a notice from Murmur in its inbox: when every
+// recipient has got that far, or when TellWait has passed and some haven't.
 
 // maxSent is how many of the person's messages keep their recipients and marks (Sent), the newest.
-const maxSent = 200
+// maxTells is how many messages agents wait to be told of are kept beside them (trimSentLocked).
+const (
+	maxSent  = 200
+	maxTells = 2000
+)
 
 // maxMarksHeld caps the marks waiting to go on the bus; past it the oldest are dropped. A device
 // that can't push for a long while would otherwise keep every mark it ever made.
@@ -34,8 +43,8 @@ const (
 	markRetryMax = 5 * time.Minute
 )
 
-// sentRecord is one of this device's person's messages that asked for receipts: whom it was for when
-// it was sent, and how far it got with each.
+// sentRecord is one of this device's messages that asked for receipts: whom it was for when it was
+// sent, and how far it got with each.
 type sentRecord struct {
 	At time.Time `json:"at"`
 	// To is the sessions it was for, by address, as this device knew them when it was sent: the one
@@ -55,6 +64,14 @@ type sentRecord struct {
 	// would otherwise list itself as a reader. A session that joined a group after the message was
 	// sent is dropped with it.
 	Marks map[string]markRecord `json:"marks,omitempty"`
+	// Tell is, for an agent's message whose sender asked to be told how far it got (#276), the
+	// state it asked about: delivered or read. Asker is the sender's address, Subject the message's,
+	// and Told says the sender has been told, which happens once. The page shows no ticks for such
+	// a message: the page's ticks are for its person's messages.
+	Tell    string `json:"tell,omitempty"`
+	Asker   string `json:"asker,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Told    bool   `json:"told,omitempty"`
 }
 
 type markRecord struct {
@@ -143,6 +160,10 @@ func (d *Daemon) receiptLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if errors.Is(err, ErrInvisible) {
+			retry = markRetry // until the device is back, which kicks this loop
+			continue
+		}
 		d.log.Printf("writing a receipt: %v; trying again in %s", err, retry)
 		select {
 		case <-ctx.Done():
@@ -211,6 +232,7 @@ func (d *Daemon) applyMarkLocked(msg, addr, state string, at time.Time) {
 		rec.Marks = map[string]markRecord{}
 	}
 	rec.Marks[addr] = markRecord{State: state, At: at}
+	d.tellLocked(msg, rec, false)
 }
 
 // recordSentLocked keeps message e, which this device's person is sending with receipts asked for,
@@ -230,17 +252,43 @@ func (d *Daemon) recordSentLocked(e bus.Event) {
 		d.st.Sent = map[string]*sentRecord{}
 	}
 	d.st.Sent[e.ID] = rec
-	if over := len(d.st.Sent) - maxSent; over > 0 {
-		ids := make([]string, 0, len(d.st.Sent))
-		for id := range d.st.Sent {
-			ids = append(ids, id)
-		}
-		sort.Slice(ids, func(i, j int) bool { return d.st.Sent[ids[i]].At.Before(d.st.Sent[ids[j]].At) })
-		for _, id := range ids[:over] {
-			delete(d.st.Sent, id)
+	d.trimSentLocked(e.ID)
+	d.saveLocked()
+}
+
+// trimSentLocked lets go of the oldest sent records past maxSent, and of those an agent still
+// waits to be told of past maxTells. The two are counted apart (#748): sharing the 200, a busy
+// half hour of the person's messages and other agents' pushed out a record whose sender was still
+// waiting, and it never heard, not even at the timeout. One that is waited on goes when its sender
+// is told, TellWait after it was sent at the latest (tellLoop), so maxTells is only a backstop,
+// and one it lets go of is told then, early, where its message is: none goes unheard.
+// just is the record being added, which the caller may yet mark as waited on: it is kept. Caller
+// holds mu.
+func (d *Daemon) trimSentLocked(just string) {
+	var kept, waiting []string
+	for id, rec := range d.st.Sent {
+		switch {
+		case id == just:
+		case rec.Tell != "" && !rec.Told:
+			waiting = append(waiting, id)
+		default:
+			kept = append(kept, id)
 		}
 	}
-	d.saveLocked()
+	oldest := func(ids []string, room int) []string {
+		over := len(ids) - room
+		if over <= 0 {
+			return nil
+		}
+		sort.Slice(ids, func(i, j int) bool { return d.st.Sent[ids[i]].At.Before(d.st.Sent[ids[j]].At) })
+		return ids[:over]
+	}
+	for _, id := range oldest(kept, maxSent-1) {
+		delete(d.st.Sent, id)
+	}
+	for _, id := range oldest(waiting, maxTells) {
+		d.tellLocked(id, d.st.Sent[id], true) // tells its sender, and lets go of it
+	}
 }
 
 // recipientsOfLocked is whom message e is for, as this device knows the mesh now, by address, and
@@ -252,7 +300,7 @@ func (d *Daemon) recipientsOfLocked(e bus.Event) (to []string, direct bool) {
 	if strings.Contains(e.To, "/") {
 		return []string{e.To}, true
 	}
-	sender := d.nameOfLocked(e.From)
+	sender := e.From
 	want := func(dev string, s bus.SessionInfo) bool {
 		if s.ID == bus.PersonSession || s.ID == proto.CLISession || bus.Addr(dev, s.ID) == e.From {
 			return false
@@ -291,6 +339,9 @@ func (d *Daemon) receiptsLocked() map[string][]web.Receipt {
 	label := d.labelerLocked()
 	out := make(map[string][]web.Receipt, len(d.st.Sent))
 	for id, rec := range d.st.Sent {
+		if rec.Tell != "" {
+			continue // an agent's message (#276)
+		}
 		rs := make([]web.Receipt, 0, len(rec.To))
 		for _, addr := range rec.To { // only whom it was sent to (see sentRecord.Marks)
 			r := web.Receipt{Addr: addr, Name: label(addr), Person: bus.IsPerson(addr)}

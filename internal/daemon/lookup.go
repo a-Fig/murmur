@@ -33,13 +33,18 @@ func (d *Daemon) lookup(you string, req proto.Request) proto.Response {
 	}
 	limit = min(limit, maxLookupMessages)
 	d.settleEnds()
+	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	addr, err := d.lookupAddrLocked(strings.TrimSpace(req.Name))
 	if err != nil {
 		return fail(err.Error())
 	}
-	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: d.detailLocked(addr, you, limit)}
+	det := d.detailLocked(addr, you, limit)
+	if dev, sess := bus.SplitAddr(addr); det.Running && det.Reachable {
+		det.NoWake = d.peerNoWakeLocked(dev, sess, wake)
+	}
+	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: det}
 }
 
 // lookupAddrLocked turns what the caller named into the address of a session this daemon knows:
@@ -67,6 +72,9 @@ func (d *Daemon) lookupAddrLocked(target string) (string, error) {
 	case bus.ValidPerson(target):
 		if addr, ok := d.resolvePersonLocked(target); ok {
 			return addr, nil
+		}
+		if devs := d.calledLocked(target); len(devs) > 0 {
+			return "", fmt.Errorf("%s lookup takes a session's name from who, or its device/session address.", nickNoAddress(target, devs))
 		}
 		return "", fmt.Errorf("nobody is named %q. who shows the names in use.", target)
 	}
@@ -113,7 +121,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		det.Committed = d.committedLocked(sess)
 		if s := d.sessions[sess]; s != nil {
 			det.Name, det.Agent, det.Branch, det.Doing, det.Started = s.name, s.agent, s.branch, s.shownDoing(), s.started
-			det.Tags = d.tagsOfLocked(s)
+			det.Tags = tags.WithDevice(d.tagsOfLocked(s), d.device)
 			det.Muted = d.mutesOfLocked(sess)
 			det.Running, det.Reachable, det.Dropped = true, s.dropped.IsZero(), !s.dropped.IsZero()
 			det.LastActive, det.Worktree, det.ClientSession = s.lastActive, s.worktree, s.claudeSession
@@ -131,6 +139,11 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 				det.DelegateOf = d.parentNameLocked(parent)
 			}
 		}
+		send, recv := d.agentSend.Load(), d.agentRecv.on.Load()
+		if sess == bus.PersonSession {
+			send, recv = d.pageSend.Load(), d.pageRecv.on.Load()
+		}
+		det.SendsFiles, det.TakesFiles = onOff(send), onOff(recv)
 		recs := d.st.Commits[sess]
 		det.CommitCount = len(recs)
 		for _, r := range recs[max(len(recs)-lookupCommits, 0):] {
@@ -139,6 +152,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 	} else if p := d.peers[dev]; p != nil {
 		det.Host, det.Owner = p.pres.Host, p.pres.Owner
 		det.DeviceSeen, det.Stale = p.lastChange, d.staleLocked(p)
+		det.TakesFiles = d.peerFilesLocked(p, addr)
 		for _, s := range p.pres.Sessions {
 			if s.ID != sess {
 				continue
@@ -147,7 +161,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 			if sess == bus.PersonSession {
 				det.Name = d.listedPersonNameLocked(addr, s.Name) // only a name that reaches them (#350)
 			}
-			det.Committed, det.LastActive, det.Tags, det.Muted = s.Committed, peerActive(p, s), s.Tags, s.Muted
+			det.Committed, det.LastActive, det.Tags, det.Muted = s.Committed, peerActive(p, s), tags.WithDevice(s.Tags, dev), s.Muted
 			det.Running, det.Reachable = true, !det.Stale
 		}
 		det.Offline = d.offlineLocked(dev, sess)
@@ -159,14 +173,23 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		// From the address, so a person whose daemon has gone, known only by name, has it too.
 		det.Agent, det.Tags = cmp.Or(det.Agent, bus.AgentPerson), tags.Person()
 	}
-	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, limit)
+	// A group the session is in now is its conversation too, as on the page's filter (#485, #445):
+	// here by the tags delivery goes by (addressedLocked), elsewhere by its device's presence. A
+	// stopped session here keeps its tags for its name, so it counts where the page counts none.
+	inGroup := func(group string) bool { return tags.Has(det.Tags, group) }
+	if dev == d.device {
+		inGroup = func(group string) bool { return sess != bus.PersonSession && d.hasTagLocked(sess, group) }
+	}
+	det.Messages = d.messagesOfLocked(addr, det.Name, byAddr, inGroup, limit)
 	return det
 }
 
 // messagesOfLocked lists the last limit messages to or from the session at addr, oldest first. A
 // conversation that came back under a new session ID keeps its name, so the other addresses with
-// that name count as the same session, as the page's filter does. Caller holds mu.
-func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, limit int) []proto.MessageView {
+// that name count as the same session, as the page's filter does. A message to a group counts if
+// inGroup says the session is in it: by its tags now, so one it got before it left is passed over,
+// as the page does. Caller holds mu.
+func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, inGroup func(string) bool, limit int) []proto.MessageView {
 	label := func(a string) string {
 		if n, _, _ := d.sessionInfoLocked(a); n != "" {
 			return n
@@ -178,7 +201,7 @@ func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, l
 	for i := len(d.msgs) - 1; i >= 0 && len(out) < limit; i-- {
 		e := d.msgs[i].e
 		toSession := strings.Contains(e.To, "/")
-		if !is(e.From) && !(toSession && is(e.To)) {
+		if !is(e.From) && !(toSession && is(e.To)) && !(bus.IsGroup(e.To) && inGroup(e.To)) {
 			continue
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: label(e.From), To: e.To, Subject: e.Subject, At: e.At}
@@ -191,4 +214,12 @@ func (d *Daemon) messagesOfLocked(addr, name string, byAddr map[string]string, l
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+// onOff is a file switch as SessionDetail gives it.
+func onOff(on bool) string {
+	if on {
+		return proto.FilesOn
+	}
+	return proto.FilesOff
 }

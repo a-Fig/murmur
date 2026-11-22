@@ -33,9 +33,22 @@ func tagKeyOf(name, id string) string {
 	return "id:" + id
 }
 
+// keptByLocked is what session s's tags and mutes are kept by: its name, or its ID while the
+// name is pending (tagKeyOf). One back on a clone that lost its keys, whose new name is pending,
+// goes by the name its key had on the old device (NamesLeft, #827): it is on do not disturb and
+// in its groups from the start, and what it changes meanwhile is a change to those, which the
+// new name takes when it lands (adoptLeftLocked). By the key, not the ID: a session that moves
+// to another conversation before then leaves them with the one they were for. Caller holds mu.
+func (d *Daemon) keptByLocked(s *session) string {
+	if old := d.st.NamesLeft[s.key]; s.name == "" && s.key != "" && old != "" {
+		return old
+	}
+	return tagKeyOf(s.name, s.id)
+}
+
 // tagStateLocked is what is kept about the tags of session s, nil if nothing. Caller holds mu.
 func (d *Daemon) tagStateLocked(s *session) *tags.State {
-	return d.st.Tags[tagKeyOf(s.name, s.id)]
+	return d.st.Tags[d.keptByLocked(s)]
 }
 
 // adoptTagsLocked moves what a session kept by its ID while its name was pending to the name,
@@ -55,13 +68,42 @@ func (d *Daemon) adoptTagsLocked(s *session) {
 }
 
 // dndLocked says session id on this device is on do not disturb: its messages stay queued in its
-// inbox, none is handed over as a turn, and the hook tells of none (see wakesLocked and notices). A session that
+// inbox, none is handed over as a turn, and the hook tells of none (see heldLocked and notices). A session that
 // isn't registered at the moment goes by the tags kept for its name. Caller holds mu.
-func (d *Daemon) dndLocked(id string) bool { return d.hasTagLocked(id, tags.DoNotDisturb) }
+func (d *Daemon) dndLocked(id string) bool { return d.dnd.Load() || d.ownDNDLocked(id) }
+
+// heldLocked says do not disturb holds message m in session id's inbox: the session is on it
+// (dndLocked), and m isn't from this device's own person. Their message goes through as usual, as
+// a turn or a notice, through the device's mode and the session's own tag alike (#777, Tyler,
+// 2026-11-16: "I don't see when I would want DND to block my own messages"). A person on another
+// device is held as anyone is: nothing ties one person's devices together. Caller holds mu.
+func (d *Daemon) heldLocked(id string, m *inMsg) bool {
+	return d.dndLocked(id) && !d.passesDND(m)
+}
+
+// passesDND says do not disturb never holds message m, on any session of this device: it is from
+// this device's person (#777).
+func (d *Daemon) passesDND(m *inMsg) bool { return m.Event.From == d.personAddr() }
+
+// ownDNDLocked says session id is on do not disturb by its own tags and a human's marks, whatever
+// the device's mode. Taking that off is what releases its inbox (releaseLocked): one taken off
+// while the device is on do not disturb counts from then, so going back online releases it
+// (releaseSinceLocked). Caller holds mu.
+func (d *Daemon) ownDNDLocked(id string) bool {
+	st := d.st.Tags[d.tagKeyLocked(id)]
+	if st == nil {
+		return false
+	}
+	return tags.Has(tags.Effective(st.Self, d.modelTagsLocked(id), st.Human), tags.DoNotDisturb)
+}
 
 // hasTagLocked says session id on this device has tag name. A session that isn't registered at
-// the moment goes by the tags kept for its name. Caller holds mu.
+// the moment goes by the tags kept for its name. While the device is on do not disturb (mode.go)
+// every session has that tag, whatever a human marked and however many tags it has. Caller holds mu.
 func (d *Daemon) hasTagLocked(id, name string) bool {
+	if name == tags.DoNotDisturb && d.dnd.Load() {
+		return true
+	}
 	if s := d.sessions[id]; s != nil {
 		return tags.Has(d.tagsOfLocked(s), name)
 	}
@@ -74,7 +116,8 @@ func (d *Daemon) hasTagLocked(id, name string) bool {
 }
 
 // peerDNDLocked says the session at dev/sess is on do not disturb: by this device's own tags, or
-// by its device's presence. Caller holds mu.
+// by its device's presence, which says so for every session while the device is (#681). Caller
+// holds mu.
 func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 	if sess == "" || sess == proto.CLISession {
 		return false
@@ -83,7 +126,7 @@ func (d *Daemon) peerDNDLocked(dev, sess string) bool {
 		return d.dndLocked(sess)
 	}
 	p := d.peers[dev]
-	return p != nil && tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb)
+	return p != nil && (p.pres.DND || tags.Has(peerTagsLocked(p, sess), tags.DoNotDisturb))
 }
 
 // releaseLocked lets what stayed queued in the inbox of the sessions kept by key go out by whichever
@@ -112,12 +155,20 @@ func (d *Daemon) releaseLocked(key string) {
 // the thread's. Caller holds mu.
 func (d *Daemon) derivedTagsLocked(id string) []string {
 	var out []string
+	if d.dnd.Load() {
+		out = append(out, tags.DoNotDisturb) // the device is on do not disturb (mode.go)
+	}
+	return append(out, d.modelTagsLocked(id)...)
+}
+
+// modelTagsLocked is session id's model tag, where T3 records the thread's model. Caller holds mu.
+func (d *Daemon) modelTagsLocked(id string) []string {
 	if st, ok := d.threadStateLocked(id); ok {
 		if t := tags.ModelTag(st.Model); t != "" {
-			out = append(out, t)
+			return []string{t}
 		}
 	}
-	return out
+	return nil
 }
 
 // tagsOfLocked is the tags session s has. Caller holds mu.
@@ -127,7 +178,15 @@ func (d *Daemon) tagsOfLocked(s *session) []tags.Tag {
 	if st := d.tagStateLocked(s); st != nil {
 		self, human = st.Self, st.Human
 	}
-	return tags.Effective(self, d.derivedTagsLocked(s.id), human)
+	ts := tags.Effective(self, d.derivedTagsLocked(s.id), human)
+	if d.dnd.Load() && !tags.Has(ts, tags.DoNotDisturb) {
+		// A human's mark can't take the device's do not disturb off a session, nor can the tag limit
+		// (hasTagLocked), so who, lookup and the page show it as send goes by it. First, and within
+		// the limit, as a peer reads no more than that many.
+		ts = append([]tags.Tag{{Name: tags.DoNotDisturb, Src: tags.SrcDerived}}, ts...)
+		ts = ts[:min(len(ts), tags.MaxPerSession)]
+	}
+	return ts
 }
 
 // peerTagsLocked is the tags of session sess in device p's presence, nil if it isn't there.
@@ -155,7 +214,7 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 	if st == nil {
 		st = &tags.State{}
 	}
-	wasDND := tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb)
+	wasDND := d.ownDNDLocked(id)
 	next := *st
 	if err := next.SetSelf(req.Add, req.Remove); err != nil {
 		return fail(err.Error())
@@ -171,15 +230,17 @@ func (d *Daemon) setOwnTags(id string, req proto.Request) proto.Response {
 			held = append(held, fmt.Sprintf("%s (a human set it %s)", t, map[bool]string{true: "on", false: "off"}[m.On]))
 		}
 	}
-	d.putTagStateLocked(tagKeyOf(s.name, s.id), &next)
+	d.putTagStateLocked(d.keptByLocked(s), &next)
 	d.kickPresence()
-	if wasDND && !tags.Has(d.tagsOfLocked(s), tags.DoNotDisturb) {
-		d.releaseLocked(tagKeyOf(s.name, s.id))
+	if wasDND && !d.ownDNDLocked(id) {
+		d.releaseLocked(d.keptByLocked(s))
 	}
 	note := "tags set"
 	if len(held) > 0 {
 		note = "tags set, but a human's choice on the page stands over yours for " + strings.Join(held, ", ")
 	}
+	// The reply lists the tags the session can change, so not its device's group (#463), which who and
+	// lookup show.
 	return proto.Response{OK: true, Self: from, Note: note, Tags: d.tagsOfLocked(s)}
 }
 
@@ -194,22 +255,72 @@ func (d *Daemon) putTagStateLocked(key string, st *tags.State) {
 	d.saveLocked()
 }
 
-// tagKeyLocked is what session id's tags are kept by: a running session's own, else the name it
-// took last, so a change for a session that isn't registered at the moment (its daemon restarted,
-// and reads what was sent meanwhile before the session is back) waits for it. "" for a session
-// this device knows nothing of. Caller holds mu.
+// tagKeyLocked is what session id's tags and mutes are kept by: a running session's own, else the
+// name it took last, so a change for a session that isn't registered at the moment (its daemon
+// restarted, and reads what was sent meanwhile before the session is back) waits for it. "" for a
+// session this device knows nothing of. Caller holds mu.
 func (d *Daemon) tagKeyLocked(id string) string {
 	if s := d.sessions[id]; s != nil {
-		return tagKeyOf(s.name, s.id)
+		return d.keptByLocked(s)
 	}
 	if name := d.st.SessionNames[id]; name != "" {
 		return name
 	}
-	// One that stopped before its name landed keeps what it set by its ID.
-	if pending := tagKeyOf("", id); d.st.Tags[pending] != nil {
+	// One that stopped while its new name was pending, on a clone that lost its keys, still goes
+	// by the name its conversation had (keptByLocked), as explainKeyLocked has it.
+	if conv := d.conversationLocked(id); conv != "" && d.st.NamesLeft[conv] != "" {
+		return d.st.NamesLeft[conv]
+	}
+	// One whose name never landed keeps what it has by its ID: one that stopped, whose inbox is
+	// kept in case it comes back, and one that set tags or muted someone before it stopped or the
+	// daemon restarted. Its mutes count as much as its tags (#503).
+	pending := tagKeyOf("", id)
+	if _, stopped := d.st.Stopped[id]; stopped || d.st.Tags[pending] != nil || d.st.Mutes[pending] != nil {
 		return pending
 	}
 	return ""
+}
+
+// holdForLocked keeps e, a person's change to the tags of a session of this device that it knows
+// nothing of, or an agent's add of one to a group, if the daemon has just started (#524): the
+// session may be one whose name is pending and that kept nothing here, and is still reconnecting.
+// It is applied when the session is back (catchUpLocked), before the messages that waited, so a
+// group's message read with its add reaches it. Past catchUpWindow nothing is held, as no message
+// is: a session back later isn't caught up. It says whether e was kept. Caller holds mu.
+func (d *Daemon) holdForLocked(e bus.Event) bool {
+	if time.Since(d.started) > catchUpWindow {
+		return false
+	}
+	d.heldTags = append(d.heldTags, e)
+	return true
+}
+
+// applyHeldLocked applies what holdForLocked kept for session id, now that it is back. Caller
+// holds mu.
+func (d *Daemon) applyHeldLocked(id string) {
+	addr := bus.Addr(d.device, id)
+	held, kept := d.heldTags, []bus.Event(nil)
+	for _, e := range held {
+		switch {
+		case e.To != addr:
+			kept = append(kept, e)
+		case e.Type == bus.GroupAdd:
+			d.applyGroupAddLocked(e, modeCatchUp)
+		default:
+			d.applyTagsEventLocked(e)
+		}
+	}
+	d.heldTags = kept
+}
+
+// dropHeldLocked lets go of what holdForLocked kept for sessions that didn't come back within the
+// catch-up window. Caller holds mu.
+func (d *Daemon) dropHeldLocked() {
+	for _, e := range d.heldTags {
+		d.log.Printf("%s's %s for %s, read as this daemon started, wasn't applied: that session isn't known here, and didn't come back",
+			e.From, e.Type, e.To)
+	}
+	d.heldTags = nil
 }
 
 // humanTagsLocked applies a human's change to the tags of session id on this device. by is the
@@ -219,7 +330,7 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	if key == "" {
 		return fmt.Errorf("session %s isn't known here", bus.Addr(d.device, id))
 	}
-	wasDND := d.dndLocked(id)
+	wasDND := d.ownDNDLocked(id)
 	// Nothing is later than now, whatever a clock ahead or a forged commit says. So a change dated
 	// later can't hold off the next, and a click on this device's page, dated now, is the newest.
 	now := time.Now().UTC()
@@ -242,7 +353,7 @@ func (d *Daemon) humanTagsLocked(id string, add, remove []string, by string, at 
 	}
 	d.putTagStateLocked(key, next)
 	d.kickPresence()
-	if wasDND && !d.dndLocked(id) {
+	if wasDND && !d.ownDNDLocked(id) {
 		d.releaseLocked(key)
 	}
 	d.log.Printf("%s changed the tags of session %s: %s", by, bus.Addr(d.device, id), tagChange(add, remove))
@@ -271,6 +382,9 @@ func (d *Daemon) applyTagsEventLocked(e bus.Event) {
 	by := from
 	if p := d.peers[from]; p != nil && p.pres.Owner != "" {
 		by = p.pres.Owner + " on " + from
+	}
+	if d.tagKeyLocked(sess) == "" && d.holdForLocked(e) {
+		return
 	}
 	if err := d.humanTagsLocked(sess, e.Add, e.Remove, by, e.At); err != nil {
 		d.log.Printf("tags from %s for %s not applied: %v", e.From, e.To, err)

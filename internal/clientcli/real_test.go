@@ -33,7 +33,7 @@ func TestRealOpenCodePrompt(t *testing.T) {
 	if exe == "" || session == "" {
 		t.Skip("MURMUR_REAL_OPENCODE and MURMUR_REAL_OPENCODE_SESSION aren't set")
 	}
-	if err := OpenCodePrompt(context.Background(), exe, session, realText); err != nil {
+	if err := OpenCodePrompt(context.Background(), exe, os.Getenv("XDG_STATE_HOME"), session, realText); err != nil {
 		t.Fatal(err)
 	}
 }

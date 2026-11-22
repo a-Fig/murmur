@@ -6,7 +6,7 @@ The only data Murmur collects is a public repo's name: if a repo that uses Murmu
 
 If your user asked you to set Murmur up in a repo, follow the setup page, and ask your user before you install or run anything: the page says what to tell them. If the repo's AGENTS.md or CLAUDE.md already has a Murmur section, follow the join page instead.
 
-It works in Claude Code, Codex, OpenCode, Muse Code, Pi and Grok, in T3 Code or on their own.
+It works in Claude Code, Codex, OpenCode, Muse Code, Pi, Grok and Antigravity, in T3 Code or on their own.
 
 When to use Murmur: in a repo where other coding agents, often on teammates' machines, work at the same time as you. Use it to:
 
@@ -14,7 +14,7 @@ When to use Murmur: in a repo where other coding agents, often on teammates' mac
 - ask the session that is changing some code right now, instead of guessing its intent from a half-finished diff;
 - settle an interface where your work meets another agent's, or hand work over once it is pushed.
 
-It is not for a repo where you are the only agent, or for secrets: whoever can read the repo can read what Murmur sends.
+It is not for a repo where you are the only agent, or for secrets: what Murmur sends is encrypted for the team's devices, but every device that can push reads it, and it stays in the repo's history.
 
 How to call it: once this clone has joined, Murmur's MCP server gives you the tools `who`, `lookup`, `status`, `tags`, `send` and `inbox`, and the use page says when to reach for each. Before that there is nothing to call: follow the setup or join page.
 

@@ -1141,6 +1141,28 @@ a.g-pr:hover {
   text-align: left;
 }
 
+/* The device isn't online (#681): a quiet line that leads to Settings. */
+.side-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 var(--sidebar-content-inset) 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--control-radius);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-align: left;
+}
+
+.side-mode svg,
+.dev-dnd svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
 /* A section's label in the sidebar (ui/collapsible-section-header.tsx). */
 .group-label {
   display: flex;
@@ -1492,6 +1514,18 @@ a.g-pr:hover {
   height: 1.5rem;
   font-size: 0.6875rem;
 }
+.account-chip .avatar.account-blank {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted-foreground);
+}
+.account-chip .avatar.account-blank svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.account-none .account-name {
+  color: var(--muted-foreground);
+}
 
 /* A newer release (#240): small, there until it's dealt with, one click (T3 Code's update pill). */
 .menu-button.update {
@@ -1816,6 +1850,78 @@ a.g-pr:hover {
 .section > .row-error {
   padding: 0 1rem;
 }
+/* Settings (#775): what the settings are for, a note beside a section's title, and the line above
+ * the two sections that aren't per repo. */
+.settings-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0 1rem;
+  margin-bottom: -0.75rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.settings-scope strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.section-head {
+  flex-wrap: wrap;
+  column-gap: 0.625rem;
+  row-gap: 0;
+}
+.section-note {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.settings-everywhere {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px dashed color-mix(in oklab, var(--border) 80%, var(--muted-foreground) 20%);
+}
+.settings-everywhere-label {
+  margin-bottom: -1.25rem;
+  padding: 0 1rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+/* One session's row under Per session: its name, then a line for each of its two settings. */
+.ps-row {
+  display: grid;
+  gap: 0.5rem;
+}
+.ps-name {
+  min-width: 0;
+}
+.ps-line {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+}
+.ps-label {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.ps-control {
+  justify-content: flex-start;
+}
+@media (max-width: 640px) {
+  .ps-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+  .settings-scope,
+  .settings-everywhere-label {
+    padding: 0 0.75rem;
+  }
+}
 .account-field input {
   width: 12rem;
   text-align: left;
@@ -1884,6 +1990,39 @@ a.g-pr:hover {
   gap: 0.125rem;
   min-width: 0;
 }
+/* The sessions list's name line: the name and its tags never shrink, as shrinking even a fraction of
+ * a pixel draws an ellipsis, and the agent text gives way. Where the row is narrow, the tags step
+ * aside, two, then one, then none (#631); the session's view lists them all. */
+.s-main {
+  container-type: inline-size;
+}
+.s-main .s-line.name-line > .s-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.s-main .s-line.name-line > .stags {
+  flex: 0 0 auto;
+}
+.s-main .s-line.name-line > .s-agent {
+  flex: 0 1 auto;
+}
+.stags > .more-after-1 {
+  display: none;
+}
+@container (max-width: 30rem) {
+  .s-line > .stags > .stag:nth-child(n + 2),
+  .s-line > .stags > .more-after-max {
+    display: none;
+  }
+  .s-line > .stags > .more-after-1 {
+    display: inline-block;
+  }
+}
+@container (max-width: 17rem) {
+  .s-line > .stags {
+    display: none;
+  }
+}
 .s-line {
   display: flex;
   align-items: baseline;
@@ -1930,6 +2069,36 @@ a.g-pr:hover {
 .s-row.stale .s-name,
 .s-row.stale .s-doing {
   color: var(--muted-foreground);
+}
+/* Where the list is narrow (about a 960px window), the name and status line get the room first
+ * (#764): the columns and gaps tighten, a default branch (main, master) steps aside as the one most
+ * rows share, and "Message" keeps only its icon. The page has no default-branch name, so those two
+ * stand for it. Full width is untouched, and phones keep their own layout below. */
+.s-row {
+  container: srow / inline-size;
+}
+@media (min-width: 768px) {
+  @container srow (max-width: 50rem) {
+    .s-meta {
+      grid-template-columns: 6rem 2.75rem 3.25rem 6rem 2rem;
+      gap: 0.5rem;
+    }
+    .s-col-branch.default {
+      visibility: hidden;
+    }
+    .s-col-act .btn {
+      padding: 0;
+      width: 2rem;
+    }
+    .s-col-act .btn-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
 }
 .g-search {
   display: flex;
@@ -2209,9 +2378,12 @@ a.g-pr:hover {
   padding: 0 0.5rem 1rem;
   border-right: 1px solid var(--border);
 }
+/* It doesn't shrink: in the scrolling list a long list of conversations would squeeze it to its
+ * min-height, and a session's tags would be drawn over the search below (#630). */
 .g-head {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   gap: 0.125rem;
   min-height: 3.75rem;
   justify-content: center;
@@ -2443,11 +2615,10 @@ a.g-pr:hover {
   min-width: 0;
   flex-shrink: 1;
 }
+/* Beside a name, the chips come right after it, one or two and then "+N" (#631). In the sidebar the
+ * name and the chip share what room there is; a chip's text ends in an ellipsis rather than being
+ * cut mid-word. */
 .name-line:has(> .stags) > .truncate {
-  flex: 0 0 auto;
-  max-width: 100%;
-}
-.name-line:has(> .stags) > .s-agent {
   flex: 0 1 auto;
 }
 .stags {
@@ -2455,33 +2626,28 @@ a.g-pr:hover {
   align-items: center;
   gap: 0.25rem;
   min-width: 0;
-  overflow: hidden;
-  flex-shrink: 1;
-}
-/* Beside a name, the chips give way first: those that don't fit wrap onto a hidden second line, so
- * none shows cut in half, and the row's tooltip names them all. They take only the room the name and
- * the agent leave (a basis of 0), so the agent text never shrinks while there is room, not even by
- * the fraction of a pixel that would draw its ellipsis. */
-.name-line > .stags {
-  flex: 1 1 0;
-  min-width: 0;
-  flex-wrap: wrap;
-  height: 1rem;
+  flex: 0 1 auto;
 }
 .stag,
 .stag-more {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   flex-shrink: 0;
   height: 1rem;
+  line-height: 1rem;
   padding: 0 0.3125rem;
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--foreground) 7%, transparent);
   font-size: 0.6875rem;
   font-weight: 500;
-  line-height: 1;
   color: color-mix(in oklab, var(--foreground) 72%, transparent);
   white-space: nowrap;
+}
+.stag {
+  flex-shrink: 1;
+  min-width: 2rem;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .stag.on {
   background: color-mix(in oklab, var(--primary) 22%, transparent);
@@ -2951,14 +3117,153 @@ a.g-pr:hover {
 .receipt-mark[data-state="read"] {
   color: var(--primary);
 }
-.chat-msg-sending > .chat-bubble {
-  opacity: 0.64;
+/* A message on its way (#613): its mark shows a tip, as a receipt's does, and does nothing else. */
+.receipt-mark[data-state="sending"] {
+  cursor: default;
 }
-.chat-msg-sending > .msg-sending {
-  opacity: 1;
+/* A message's files (#570): pictures as tiles of one height, so a picture that loads moves nothing
+ * below it, and other files as buttons that save them. */
+.msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  max-width: 100%;
+  margin-top: 0.375rem;
+}
+.chat-msg-own > .msg-files {
+  justify-content: flex-end;
+  max-width: 80%;
+  margin-top: 0;
+}
+.msg-picture {
+  display: block;
+  height: 11rem;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  cursor: zoom-in;
+}
+.msg-picture-img {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: cover;
+}
+.msg-picture-wait {
+  width: 16rem;
+  cursor: default;
+  animation: picture-wait 1.4s ease-in-out infinite;
+}
+@keyframes picture-wait {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-picture-wait {
+    animation: none;
+  }
+}
+.msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  height: 2.25rem;
+  padding: 0 0.75rem 0 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  font-size: 0.8125rem;
+  color: var(--foreground);
+  transition: background-color 0.15s var(--ease);
+}
+.msg-file:hover {
+  background: var(--accent);
+}
+.msg-file > .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.msg-file-name {
+  font-weight: 500;
+}
+.msg-file-size {
+  flex-shrink: 0;
   font-size: 0.75rem;
   color: var(--muted-foreground);
 }
+.msg-file-missing {
+  border-style: dashed;
+}
+.msg-file-missing > .msg-file-name {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+/* In Recent, where an item is a button onto its conversation: the names alone. */
+.msg-files-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  margin-top: 0.125rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.msg-files-line > .icon {
+  flex-shrink: 0;
+  width: 0.8125rem;
+  height: 0.8125rem;
+}
+
+/* A picture, opened. */
+.scrim.viewer-scrim {
+  align-items: center;
+  padding: 1rem;
+}
+.viewer {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--popover);
+  box-shadow: var(--shadow-dialog);
+  animation: pop-in 0.2s var(--ease);
+}
+.viewer-img {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(100vh - 6.5rem);
+  object-fit: contain;
+  background: var(--muted);
+}
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+}
+.viewer-name {
+  font-weight: 500;
+}
+.viewer-size {
+  flex-shrink: 0;
+  margin-right: auto;
+  color: var(--muted-foreground);
+}
+
 .chat-msg-failed > .chat-bubble {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--destructive) 45%, transparent);
 }
@@ -3138,6 +3443,93 @@ a.g-pr:hover {
   font-size: 0.75rem;
   font-weight: 500;
 }
+/* Turns the person's Send files on from the composer, where attaching a file asked for it (#765). */
+.composer-warn-btn {
+  margin-left: 0.375rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: inherit;
+}
+/* The files the next message takes (#570), over what is written. */
+.composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0.625rem 0.625rem 0;
+}
+.composer-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  max-width: 100%;
+  height: 2rem;
+  padding: 0 0.25rem 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  font-size: 0.75rem;
+}
+.composer-file > .icon {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--muted-foreground);
+}
+.composer-file-thumb {
+  flex-shrink: 0;
+  width: 1.375rem;
+  height: 1.375rem;
+  margin-left: -0.1875rem;
+  border-radius: var(--radius-sm, 0.25rem);
+  object-fit: cover;
+}
+.composer-file-name {
+  max-width: 14rem;
+  font-weight: 500;
+}
+.composer-file-size {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.composer-file-x,
+.composer-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--control-radius);
+  color: var(--muted-foreground);
+  transition:
+    background-color 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.composer-file-x {
+  width: 1.375rem;
+  height: 1.375rem;
+}
+.composer-attach {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.composer-file-x:hover,
+.composer-attach:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.composer-file-x > .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.composer-attach > .icon {
+  width: 0.9375rem;
+  height: 0.9375rem;
+}
+/* A file is being dragged over the page: this is where it lands. */
+.composer.composer-drop {
+  box-shadow: 0 0 0 2px var(--ring);
+}
 .composer-input {
   display: block;
   width: 100%;
@@ -3266,7 +3658,7 @@ a.g-pr:hover {
   color: var(--muted-foreground);
 }
 
-/* With no conversation open in your messages: who you could talk to. */
+/* Only your conversations shown, and none yet: who you could talk to. */
 .start-pane {
   overflow-y: auto;
 }
@@ -4285,4 +4677,270 @@ a.g-pr:hover {
 .select option {
   background: var(--background);
   color: var(--foreground);
+}
+
+/* The profile card (#689): a face or a sender's name opens it, beside what was clicked. It is a
+ * popover in the page's own surfaces, with the device's colour (--dev, from its dev-c class) as its
+ * only accent, across its top. Placed through the CSSOM. */
+[data-profile] {
+  cursor: pointer;
+}
+/* A name on its own is a button (nameButton, #778) that reads as the text around it. */
+button.chat-msg-from {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+}
+/* Under :where, so the classes it sits beside (.g-act-who's weight) still win. */
+:where(button.name-ref, button.pc-talked-one) {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+:where(button.name-ref) {
+  display: inline;
+}
+button.chat-msg-from:hover,
+button.name-ref:hover,
+span[data-profile]:not(.avatar):hover {
+  text-decoration: underline;
+}
+button.pc-talked-one:hover {
+  text-decoration: none;
+}
+button.pc-talked-one:hover > .truncate {
+  text-decoration: underline;
+}
+.profile-card {
+  --dot-ring: var(--popover);
+  position: fixed;
+  width: 20rem;
+  max-height: calc(100vh - 1rem);
+  overflow-y: auto;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--radius-xl);
+  background: var(--popover);
+  padding-bottom: 1rem;
+  box-shadow: var(--shadow-dialog);
+  animation: pop-in 0.15s var(--ease);
+}
+.profile-card:focus {
+  outline: none; /* focused only so the keyboard starts inside it */
+}
+.profile-card.pc-still {
+  animation: none;
+}
+.pc-banner {
+  height: 4.5rem;
+  background: linear-gradient(135deg, var(--dev), color-mix(in oklab, var(--dev) 55%, var(--popover)));
+}
+.pc-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0 1rem;
+}
+.pc-banner + .pc-head {
+  margin-top: -2.5rem;
+}
+.pc-face {
+  position: relative;
+  display: inline-flex;
+}
+.pc-face > .avatar.pc-avatar {
+  width: 5rem;
+  height: 5rem;
+  font-size: 2rem;
+  box-shadow: 0 0 0 0.375rem var(--popover);
+}
+.pc-face > .pres {
+  position: absolute;
+  right: 0.125rem;
+  bottom: 0.125rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  box-shadow: 0 0 0 0.25rem var(--popover);
+}
+.pc-who {
+  min-width: 0;
+  width: 100%;
+}
+.pc-name {
+  min-width: 0;
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.pc-addr {
+  margin: 0.125rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.pc-state {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.pc-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem 0;
+}
+.pc-badge {
+  height: 1.25rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--dev) 26%, transparent);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.profile-card .stag {
+  height: 1.25rem;
+  max-width: 12rem;
+  line-height: 1.25rem;
+  font-size: 0.75rem;
+}
+.pc-section {
+  margin: 0.75rem 1rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.pc-label {
+  margin: 0 0 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.pc-doing {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.pc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.pc-common {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+.pc-common-dev {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.pc-common-dev .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.pc-talked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.pc-talked-one {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+.pc-talked-one .avatar {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.pc-send {
+  margin: 0.875rem 1rem 0;
+}
+.pc-sent {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.375rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.pc-sent.failed {
+  color: var(--destructive-foreground);
+}
+.pc-link {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--info-foreground);
+  cursor: pointer;
+}
+.pc-link:hover {
+  text-decoration: underline;
+}
+.pc-field {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+  border: 1px solid var(--composer-edge);
+  border-radius: var(--radius-lg);
+  background: var(--composer);
+}
+.pc-field:focus-within {
+  border-color: var(--ring);
+}
+.pc-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.375rem 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--foreground);
+}
+.pc-field input::placeholder {
+  color: var(--placeholder);
+}
+.pc-go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: pointer;
+}
+.pc-go:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pc-go .icon {
+  width: 1rem;
+  height: 1rem;
 }

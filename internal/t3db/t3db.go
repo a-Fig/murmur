@@ -1,6 +1,7 @@
 // Package t3db finds the T3 Code thread a coding agent's session belongs to, in T3's own state
-// database. T3 gives the agents it runs no thread ID: an MCP server has T3CODE_CLI_PATH in its
-// environment and nothing else to say which thread it is in. The database does. In
+// database. T3 puts the thread's ID in Claude Code's environment (T3CODE_THREAD_ID, seen in T3
+// 0.1.x on 2026-11-15), and Claude Code's MCP server takes it from there (#642), but a Codex MCP
+// server gets T3CODE_CLI_PATH and nothing else to say which thread it is in. The database does. In
 // orchestration_v2_projection_provider_threads, each thread is tied to the session its provider
 // runs it with, and payload_json.nativeThreadRef.nativeId is that session's own ID: the Claude
 // Code session ID or the Codex thread ID, next to the thread's ID (seen on T3 0.1.x, 2026-10-29).
@@ -104,7 +105,10 @@ func TitleOf(ctx context.Context, cli, home, thread string) (string, error) {
 // provider's subagent thread, with relationshipToParent "subagent", and on no thread a user started
 // (T3 0.1.x, 2026-11-07: 624 children, 287 user threads, no exceptions). Last, the model the thread
 // runs: payload modelSelection.model, the client's own ID for it (claude-opus-5-5; T3 0.1.x,
-// 2026-11-08).
+// 2026-11-08). And whether its newest run, by when it was asked for and then T3's ordinal, is
+// queued or running. A cancelled run doesn't count as the newest: it is a follow-up the user took
+// out of T3's queue, usually while the run before it was still going (159 of 228 cancelled runs
+// on 2026-11-16), and the run going then is no less a turn (#672).
 const stateQuery = `
 SELECT
   COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.settledOverride') END, ''),
@@ -114,7 +118,10 @@ SELECT
     WHERE r.thread_id = t.thread_id AND r.status IN ('queued', 'running')),
   (SELECT MAX(COALESCE(r.completed_at, r.requested_at)) FROM orchestration_v2_projection_runs r
     WHERE r.thread_id = t.thread_id),
-  COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.modelSelection.model') END, '')
+  COALESCE(CASE WHEN json_valid(t.payload_json) THEN json_extract(t.payload_json, '$.modelSelection.model') END, ''),
+  COALESCE((SELECT r.status IN ('queued', 'running') FROM orchestration_v2_projection_runs r
+    WHERE r.thread_id = t.thread_id AND r.status <> 'cancelled'
+    ORDER BY r.requested_at DESC, r.ordinal DESC LIMIT 1), 0)
 FROM orchestration_v2_projection_threads t
 WHERE t.thread_id = ?`
 
@@ -125,6 +132,9 @@ type State struct {
 	Settled bool
 	// Busy says a run of the thread is queued or running.
 	Busy bool
+	// Left says Busy only for runs older than the thread's newest, which isn't going: runs T3 left
+	// queued or running while later ones came and went, which no turn will end (#607).
+	Left bool
 	// LastRun is when the thread's latest run finished, or was asked for if it hasn't; zero if it
 	// has had none.
 	LastRun time.Time
@@ -149,15 +159,16 @@ func StateOf(ctx context.Context, cli, home, thread string) (State, error) {
 		running   int
 		lastRunAt sql.NullString
 		model     string
+		newest    bool
 	)
-	err := queryOne(ctx, cli, home, stateQuery, thread, &override, &parent, &gone, &running, &lastRunAt, &model)
+	err := queryOne(ctx, cli, home, stateQuery, thread, &override, &parent, &gone, &running, &lastRunAt, &model, &newest)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return State{}, ErrNotFound
 	case err != nil:
 		return State{}, err
 	}
-	st := State{Settled: override == "settled" || gone, Busy: running > 0, Parent: parent, Model: model}
+	st := State{Settled: override == "settled" || gone, Busy: running > 0, Left: running > 0 && !newest, Parent: parent, Model: model}
 	if lastRunAt.Valid && lastRunAt.String != "" {
 		at, err := time.Parse(time.RFC3339Nano, lastRunAt.String)
 		if err != nil {

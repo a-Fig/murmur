@@ -27,7 +27,7 @@ repo's own git remote: no server, no accounts.
 
 Same agents, same speed, and the repo stays coherent.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code, Pi and Grok**, in
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok and Antigravity**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Install
@@ -80,14 +80,14 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `lookup` | One session in depth: the branches it has committed to, whether a message would reach it, and its recent messages. |
 | `status` | Sets the line others see next to your name. |
 | `tags`   | Short labels others can filter by, like `reviewing` or `model:opus-5.5`. `do-not-disturb` holds messages until you're ready. A `group:` tag puts a session in a group chat. |
-| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device, or everyone. |
+| `send`   | Messages one session by name, a group such as `group:ui`, every session on a device (`group:device-<ID>`), or everyone. With files too, once you turn them on. |
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
-`mur join` also installs three skills for the agents that read them (Claude Code, Codex, OpenCode
-and Pi): one on when Murmur is worth a turn, one on coordinating over several messages, and
-`murmur-manager`, which a session follows only once you tell it to manage your team of agents as
-your COO. Their source is in [`internal/skills`](internal/skills).
+`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi and Antigravity.
+Two help agents decide when to use Murmur and coordinate over several messages. The third,
+`murmur-manager`, is for an agent you ask to manage your team as COO. Their source is in
+[`internal/skills`](internal/skills).
 
 ## Supported agents
 
@@ -98,22 +98,28 @@ your COO. Their source is in [`internal/skills`](internal/skills).
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
 | Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
+| Antigravity (untested)  | T3 Code               | turn      | notice after its next tool call        |
+| Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
-| OpenCode 1, Muse Code   | T3 Code               | turn      | waits for the turn to end, then a turn |
-| OpenCode 1, Muse Code   | a terminal            | inbox     | inbox                                  |
+| OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
+| OpenCode 1              | T3 Code               | turn      | waits for the turn to end, then a turn |
+| Muse Code               | T3 Code               | turn      | notice after its next tool call        |
+| Muse Code               | a terminal            | inbox     | notice after its next tool call        |
 
-A **turn** means the message starts a new turn in the agent's conversation, and wakes an idle T3
-thread. A **notice** is one line with the sender and subject, added after the agent's next tool
-call; the agent reads the message with `inbox`, and anything still unread when its turn ends is
-given to it then. An **inbox** message waits until the agent reads it. Codex and OpenCode in a
-terminal take a turn once the session has used one of Murmur's tools.
+A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
+idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
+sender and subject, added after the agent's next tool call; the agent reads the message with
+`inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
+waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
+used one of Murmur's tools.
 
 ## For humans
 
 | Command                | What it does |
 | ---------------------- | ------------ |
-| `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. |
+| `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. Its Settings sets this device's mode in the repo: online, do not disturb (messages to your agents wait, but for yours), or invisible (off Murmur, as if offline). It also turns on sending and receiving files, which are off until you do, and can keep them from your agents. |
+| `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
@@ -147,6 +153,10 @@ Someone removed from a public repo can still fetch it, and keeps reading until s
 **Whatever can push to the repo can join.** That includes a deploy key with write access, and a
 GitHub Actions workflow that runs a pull request's code with a write token (`pull_request_target`):
 such a workflow gives a stranger's code the team key, and with it everything on the bus.
+
+**Files are off until you turn them on**, sending and receiving each, per repo, in `mur ui`'s
+Settings, where you can also keep them from your agents. An agent sends files only from the repo or the
+temp folder, and Murmur reads them for it, outside any sandbox the agent runs in.
 
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.
@@ -187,11 +197,14 @@ Murmur is built by Tyler ([@a-Fig](https://github.com/a-Fig)).
 Huge thanks to [Karthik Subramanian](https://github.com/KarthikSubramanian07), Murmur's biggest
 contributor.
 
+Thanks to [Stiven](https://github.com/SomeoneElseSt), who gave me the idea for Murmur at the Cal
+Hacks YC after-party.
+
 Thank you as well to these people for their help and support:
 
 - [Aaditya Desai](https://github.com/aadityad12)
 - [Thy Tang](https://github.com/tthy-working)
-- Everyone at AIE who tried Murmur early
+- Everyone at [AIE](https://ai.engineer) who tried Murmur early
 
 ## License
 

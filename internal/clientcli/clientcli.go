@@ -10,7 +10,8 @@
 //     which is why the daemon asks for the session's MCP server to be connected first.
 //   - OpenCode 2: `opencode api session.prompt --param sessionID=<session>` with the body
 //     {"text": ..., "delivery": "queue"} asks the background server every OpenCode 2 client shares
-//     (POST /api/session/{sessionID}/prompt). "queue" waits behind a running turn; the default,
+//     (POST /api/session/{sessionID}/prompt), the one registered in the state directory the command
+//     is run with (XDG_STATE_HOME). "queue" waits behind a running turn; the default,
 //     "steer", goes into it. Seen on OpenCode 2.2.0 the same day: the turn ran, and the terminal
 //     UI open on the session showed the message and the answer. `session.synthetic` takes the
 //     same body and starts a turn too, but the terminal UI doesn't show its text, so the user
@@ -72,11 +73,13 @@ func CodexQueue(ctx context.Context, exe, home, thread, text string) error {
 	return run(ctx, "codex queue", exe, []string{"queue", "--thread", thread, "--message=" + text}, env, text)
 }
 
-// OpenCodePrompt sends text to session through the background server of the OpenCode at exe.
+// OpenCodePrompt sends text to session through the background server of the OpenCode at exe. state,
+// if not empty, is the state directory that server is registered in (XDG_STATE_HOME): another one
+// would have the command ask another server, or start one, without the session (#486).
 //
 // It returns once the server has taken the message, not when a turn has run. The error is the
 // HTTP status the command printed.
-func OpenCodePrompt(ctx context.Context, exe, session, text string) error {
+func OpenCodePrompt(ctx context.Context, exe, state, session, text string) error {
 	if exe == "" || !strings.HasPrefix(session, "ses") {
 		return errors.New("no OpenCode command or session to send to")
 	}
@@ -86,8 +89,12 @@ func OpenCodePrompt(ctx context.Context, exe, session, text string) error {
 	if err := enc.Encode(map[string]string{"text": text, "delivery": "queue"}); err != nil {
 		return err
 	}
+	var env []string
+	if state != "" {
+		env = []string{"XDG_STATE_HOME=" + state}
+	}
 	return run(ctx, "opencode api", exe,
-		[]string{"api", "session.prompt", "--param", "sessionID=" + session, "-d", strings.TrimSpace(body.String())}, nil, text)
+		[]string{"api", "session.prompt", "--param", "sessionID=" + session, "-d", strings.TrimSpace(body.String())}, env, text)
 }
 
 // run runs exe with args, and env added to this process's environment. name is what errors call

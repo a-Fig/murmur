@@ -58,6 +58,9 @@ func TestMain(m *testing.M) {
 	os.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	os.Setenv("HOME", home)
 	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	// The daemon's own OpenCode state directory, as if a session that moved it had started the
+	// daemon: a command run for another session must not look there (#486).
+	os.Setenv("XDG_STATE_HOME", filepath.Join(home, "daemon state"))
 	os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	// The hook looks for its session's MCP server among the records of this user's (#422): none
 	// here, so it finds its clone from its working directory, and never a real session's.
@@ -83,12 +86,13 @@ type t3Call struct {
 	Stdin     string   `json:"stdin"`
 	Home      string   `json:"home"`
 	CodexHome string   `json:"codexHome"`
+	State     string   `json:"state"`
 }
 
-// fakeT3 is the stand-in `t3`, run from dir: it records its arguments, standard input, T3CODE_HOME
-// and CODEX_HOME, and takes its time or fails if told to. It reads what it is told before it records
-// the call, as a process reads its environment when it starts, so a test that changes the settings
-// once it has seen the call changes only the calls after it.
+// fakeT3 is the stand-in `t3`, run from dir: it records its arguments, standard input, T3CODE_HOME,
+// CODEX_HOME and XDG_STATE_HOME, and takes its time or fails if told to. It reads what it is told
+// before it records the call, as a process reads its environment when it starts, so a test that
+// changes the settings once it has seen the call changes only the calls after it.
 func fakeT3(dir string) int {
 	var sleep time.Duration
 	if s, err := os.ReadFile(filepath.Join(dir, fakeT3Sleep)); err == nil {
@@ -97,7 +101,8 @@ func fakeT3(dir string) int {
 	_, err := os.Stat(filepath.Join(dir, fakeT3Fail))
 	fail := err == nil
 	in, _ := io.ReadAll(os.Stdin)
-	line, _ := json.Marshal(t3Call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME"), CodexHome: os.Getenv("CODEX_HOME")})
+	line, _ := json.Marshal(t3Call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME"), CodexHome: os.Getenv("CODEX_HOME"),
+		State: os.Getenv("XDG_STATE_HOME")})
 	f, err := os.OpenFile(filepath.Join(dir, fakeT3Calls), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 3

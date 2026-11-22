@@ -22,7 +22,7 @@ const (
 
 func TestMain(m *testing.M) {
 	if path := os.Getenv(fakeEnv); path != "" {
-		line, _ := json.Marshal(call{Args: os.Args[1:], Home: os.Getenv("CODEX_HOME")})
+		line, _ := json.Marshal(call{Args: os.Args[1:], Home: os.Getenv("CODEX_HOME"), State: os.Getenv("XDG_STATE_HOME")})
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			os.Exit(3)
@@ -46,8 +46,9 @@ func TestMain(m *testing.M) {
 }
 
 type call struct {
-	Args []string `json:"args"`
-	Home string   `json:"home"`
+	Args  []string `json:"args"`
+	Home  string   `json:"home"`
+	State string   `json:"state"`
 }
 
 // fake sets the stand-in up and returns its path and a reader of its calls.
@@ -61,6 +62,7 @@ func fake(t *testing.T, mode string) (exe string, calls func() []call) {
 	t.Setenv(fakeEnv, path)
 	t.Setenv(fakeModeEnv, mode)
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
 	return exe, func() []call {
 		f, err := os.Open(path)
 		if err != nil {
@@ -130,7 +132,7 @@ func TestCodexQueuePassesTheCodexHome(t *testing.T) {
 func TestOpenCodePromptGivesTheSessionAndTheText(t *testing.T) {
 	exe, calls := fake(t, "")
 	for _, text := range texts {
-		if err := OpenCodePrompt(context.Background(), exe, "ses_abc123", text); err != nil {
+		if err := OpenCodePrompt(context.Background(), exe, "", "ses_abc123", text); err != nil {
 			t.Fatalf("OpenCodePrompt(%.30q): %v", text, err)
 		}
 	}
@@ -149,6 +151,23 @@ func TestOpenCodePromptGivesTheSessionAndTheText(t *testing.T) {
 		if len(body) != 2 || body["text"] != texts[i] || body["delivery"] != "queue" {
 			t.Errorf("text %d: the body is %.200q", i, c.Args[5])
 		}
+		if c.State != "" {
+			t.Errorf("XDG_STATE_HOME is %q with no state directory given", c.State)
+		}
+	}
+}
+
+// The command looks for the shared server in the state directory it is given, whatever this
+// process's own XDG_STATE_HOME is (#486).
+func TestOpenCodePromptPassesTheStateDirectory(t *testing.T) {
+	exe, calls := fake(t, "")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "another session's state"))
+	state := filepath.Join(t.TempDir(), "opencode state")
+	if err := OpenCodePrompt(context.Background(), exe, state, "ses_abc123", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls(); len(got) != 1 || got[0].State != state {
+		t.Errorf("calls %+v, want one with XDG_STATE_HOME %q", got, state)
 	}
 }
 
@@ -160,9 +179,9 @@ func TestNothingIsRunWithoutSomewhereToSend(t *testing.T) {
 		"no codex":           CodexQueue(ctx, "", "", "thread", "x"),
 		"no thread":          CodexQueue(ctx, exe, "", "", "x"),
 		"a flag for thread":  CodexQueue(ctx, exe, "", "--resume", "x"),
-		"no opencode":        OpenCodePrompt(ctx, "", "ses_1", "x"),
-		"no session":         OpenCodePrompt(ctx, exe, "", "x"),
-		"not a session's ID": OpenCodePrompt(ctx, exe, "x --server http://elsewhere", "x"),
+		"no opencode":        OpenCodePrompt(ctx, "", "", "ses_1", "x"),
+		"no session":         OpenCodePrompt(ctx, exe, "", "", "x"),
+		"not a session's ID": OpenCodePrompt(ctx, exe, "", "x --server http://elsewhere", "x"),
 	} {
 		if err == nil {
 			t.Errorf("%s: no error", name)
@@ -177,7 +196,7 @@ func TestNothingIsRunWithoutSomewhereToSend(t *testing.T) {
 // answer on standard output; it isn't ErrNotStarted, as the client may have the message.
 func TestFailureSaysWhatTheCommandPrinted(t *testing.T) {
 	exe, _ := fake(t, "fail")
-	err := OpenCodePrompt(context.Background(), exe, "ses_abc", "the secret text")
+	err := OpenCodePrompt(context.Background(), exe, "", "ses_abc", "the secret text")
 	if err == nil || !strings.Contains(err.Error(), "HTTP 404 Not Found") {
 		t.Fatalf("err = %v, want the line the command printed", err)
 	}
@@ -209,7 +228,7 @@ func TestMissingProgramIsNotStarted(t *testing.T) {
 	if err := CodexQueue(context.Background(), missing, "", "thread-1", "x"); !errors.Is(err, ErrNotStarted) {
 		t.Errorf("err = %v, want ErrNotStarted", err)
 	}
-	if err := OpenCodePrompt(context.Background(), missing, "ses_1", "x"); !errors.Is(err, ErrNotStarted) {
+	if err := OpenCodePrompt(context.Background(), missing, "", "ses_1", "x"); !errors.Is(err, ErrNotStarted) {
 		t.Errorf("err = %v, want ErrNotStarted", err)
 	}
 }
@@ -239,7 +258,7 @@ func TestTextTooLongForWindowsIsRefused(t *testing.T) {
 	long := strings.Repeat("0123456789", 3300)
 	for name, err := range map[string]error{
 		"codex":    CodexQueue(context.Background(), exe, "", "thread-1", long),
-		"opencode": OpenCodePrompt(context.Background(), exe, "ses_1", long),
+		"opencode": OpenCodePrompt(context.Background(), exe, "", "ses_1", long),
 	} {
 		if !errors.Is(err, ErrTooLong) || errors.Is(err, ErrNotStarted) {
 			t.Errorf("%s: err = %v, want ErrTooLong", name, err)

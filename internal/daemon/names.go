@@ -81,6 +81,33 @@ func (d *Daemon) noteNameLocked(name, addr string) bool {
 	return true
 }
 
+// notePresenceNameLocked records a session name another device's presence shows, as
+// noteNameLocked does. A name this daemon has never seen may be one the registry has lost: damaged
+// while the device holding the name can't push, and read here by a daemon that never knew it. Only
+// a history read from its start shows that, and only one listed after this presence: a sync's fetch
+// brings a presence as it is then, which can be newer than the registry it listed. So the next
+// sync, which lists after this one, reads the registry again from its start (see processNames).
+// Caller holds mu.
+func (d *Daemon) notePresenceNameLocked(name, addr string) bool {
+	if _, ok := d.st.Used[name]; !ok {
+		d.st.NamesRecheck = true
+	}
+	return d.noteNameLocked(name, addr)
+}
+
+// lacksNamesLocked says whether a name in use here, a session's or a person's, is missing from
+// held. Caller holds mu.
+func (d *Daemon) lacksNamesLocked(held map[string]string) bool {
+	for _, known := range []map[string]string{d.st.Used, d.st.PersonClaims} {
+		for name := range known {
+			if _, ok := held[name]; !ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // notePersonClaimLocked records that a person's name is claimed by addr. The first claim read
 // stands: a later one, here or from a registry rewritten since, changes nothing. It reports whether
 // anything changed. Caller holds mu.
@@ -155,12 +182,15 @@ func (d *Daemon) nameOnOthersLocked(name, addr string) bool {
 // holds what this daemon read before. Nothing read is ever forgotten; but the registry then no
 // longer holds every name for daemons that join later, so the next commit this daemon writes there
 // is a new root with a snapshot of every used name (see attemptName), and one is written without
-// waiting for a session to need a name, if the registry is missing any.
+// waiting for a session to need a name, if the registry is missing any. A presence showing a name
+// never seen here has the registry read again from its start, to see whether it lost the name
+// (see notePresenceNameLocked).
 func (d *Daemon) processNames(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip, good, checked, peopleRead := d.st.NamesTip, d.st.NamesGood, d.namesChecked, d.st.NamesPeople
+	recheck := d.st.NamesRecheck
 	d.mu.Unlock()
-	if checked && tip == sha {
+	if checked && tip == sha && !recheck {
 		return
 	}
 	d.mu.Lock()
@@ -276,7 +306,7 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 			switch {
 			case !desc:
 				disturbed = true
-			case peopleRead:
+			case peopleRead && !recheck:
 				from = good
 			default:
 				// Not damaged, but read by a daemon that passed over people's claims (see
@@ -337,19 +367,14 @@ func (d *Daemon) processNames(ctx context.Context, sha string) {
 		changed = changed || !d.st.NamesPeople
 		d.st.NamesPeople = true
 	}
-	if disturbed {
+	if disturbed || recheck {
 		// Only a history read from its start shows whether the registry holds every name. A
 		// read of what was added on top of a damaged one can't, so a repair still to be made
-		// stays to be made.
-		d.st.NamesRepair = false
-		for _, known := range []map[string]string{d.st.Used, d.st.PersonClaims} {
-			for name := range known {
-				if _, ok := read[name]; !ok {
-					d.st.NamesRepair = true
-					break
-				}
-			}
-		}
+		// stays to be made. A recheck is always read from the start.
+		d.st.NamesRepair = d.lacksNamesLocked(read)
+	}
+	if recheck {
+		d.st.NamesRecheck, changed = false, true
 	}
 	repair := d.st.NamesRepair
 	changed = changed || repair != wasRepair
@@ -400,15 +425,54 @@ func (d *Daemon) resolveNameLocked(name string) (addr string, ok bool) {
 	if h := d.st.NameHolders[name]; h != "" && d.st.SessionNames[h] == name && d.receivesLocked(h) {
 		return bus.Addr(d.device, h), true
 	}
+	// A presence is whatever its device wrote, so a device can show a name that isn't its own
+	// (#604). While the device the registry has the name on is up, only its presence counts: if no
+	// session there shows the name, the session has stopped, and the registry's address keeps the
+	// message for it. Otherwise, of the presences that show the name, one still being written goes
+	// before a stale one, and the first by device ID stands, as it always did. That is for a clone
+	// that lost its keys and came back under a new device ID with its names, while the registry still
+	// has them on the old one, which is gone or going stale: since #617 a daemon starts such a clone
+	// with new names, but one from before it doesn't.
+	holder, best := d.nameDeviceLocked(name), 0
+	hp := d.peers[holder]
+	holderUp := holder != "" && (holder == d.device || hp != nil && !d.staleLocked(hp))
 	for _, dev := range sortedKeys(d.peers) {
-		for _, s := range d.peers[dev].pres.Sessions {
+		if holderUp && dev != holder {
+			continue
+		}
+		p := d.peers[dev]
+		rank := 1
+		if !d.staleLocked(p) {
+			rank += 2
+		}
+		if dev == holder {
+			rank++
+		}
+		if rank <= best {
+			continue
+		}
+		for _, s := range p.pres.Sessions {
 			if s.Name == name {
-				return bus.Addr(dev, s.ID), true
+				addr, best = bus.Addr(dev, s.ID), rank
+				break
 			}
 		}
 	}
+	if best > 0 {
+		return addr, true
+	}
 	addr = d.st.Used[name]
 	return addr, addr != ""
+}
+
+// nameDeviceLocked is the device the registry, or an earlier sighting, has a session name on, or
+// that has set it aside; "" if nobody is known to hold it. Caller holds mu.
+func (d *Daemon) nameDeviceLocked(name string) string {
+	if addr := d.st.Used[name]; addr != "" {
+		dev, _ := bus.SplitAddr(addr)
+		return dev
+	}
+	return d.st.Reserved[name]
 }
 
 // noSuchNameLocked is what to tell someone who asked for a name that resolveNameLocked finds no
@@ -424,13 +488,60 @@ func (d *Daemon) noSuchNameLocked(name string) string {
 	return fmt.Sprintf("no session is named %q. who shows the names in use.", name)
 }
 
-// namesByAddrLocked inverts the registry: the name of each session whose address it knows.
-// Caller holds mu.
+// namesByAddrLocked is lastNameLocked for every address at once: the name to show for each session
+// this daemon knows a name of, when it has none in presence. Caller holds mu.
 func (d *Daemon) namesByAddrLocked() map[string]string {
+	// Precompute the addresses currently listed without a name so the scan over Used skips
+	// nameGivenUpLocked for every other address (almost all of them).
+	var unnamed map[string]bool
+	for _, s := range d.sessions {
+		if s.name == "" {
+			if unnamed == nil {
+				unnamed = map[string]bool{}
+			}
+			unnamed[bus.Addr(d.device, s.id)] = true
+		}
+	}
+	for dev, p := range d.peers {
+		for _, s := range p.pres.Sessions {
+			if s.ID != bus.PersonSession && s.Name == "" {
+				if unnamed == nil {
+					unnamed = map[string]bool{}
+				}
+				unnamed[bus.Addr(dev, s.ID)] = true
+			}
+		}
+	}
+	givenUp := func(addr, name string) bool {
+		return unnamed[addr] && d.nameGivenUpLocked(addr, name)
+	}
+
 	byAddr := map[string]string{}
 	for name, addr := range d.st.Used {
-		if addr != "" {
+		if addr == "" || givenUp(addr, name) {
+			continue
+		}
+		if cur := byAddr[addr]; cur == "" || name < cur {
 			byAddr[addr] = name
+		}
+	}
+	for addr, pn := range d.st.PeerNames { // another device's, by its presence's latest (#602)
+		if dev, _ := bus.SplitAddr(addr); dev != d.device && pn.Name != "" {
+			if givenUp(addr, pn.Name) {
+				delete(byAddr, addr)
+			} else {
+				byAddr[addr] = pn.Name
+			}
+		}
+	}
+	for id, name := range d.st.SessionNames {
+		if name != "" {
+			addr := bus.Addr(d.device, id)
+			if givenUp(addr, name) {
+				delete(byAddr, addr)
+			} else {
+				byAddr[addr] = name
+			}
 		}
 	}
 	return byAddr
@@ -470,8 +581,18 @@ func (d *Daemon) nameLoop(ctx context.Context) {
 	}
 }
 
-// wanted is a session that needs a name, and has no pool to take one from.
-type wanted struct{ id, key string }
+// wanted is a session that needs a name, and has no pool to take one from. alias is its
+// conversation's Claude session key when key is a T3 thread's, so the name is shared even if the
+// session stops before the push lands (#874).
+type wanted struct{ id, key, agent, alias string }
+
+// pendingShare is a Claude Code conversation's (t3, claude) key pair seen by shareNameLocked while
+// both keys were unnamed and an assigner push was in flight (#874).
+type pendingShare struct{ key, alias, id string }
+
+// pendingRekey is a session's move from one unnamed key to another in rekeyLocked while an
+// assigner push was in flight (#874).
+type pendingRekey struct{ from, to string }
 
 // bound is a name a session took from the pool, which the registry doesn't have down for it yet.
 type bound struct{ name, id string }
@@ -515,17 +636,19 @@ func (d *Daemon) unclaimedPersonNamesLocked() []string {
 	return out
 }
 
-// nameForKeyLocked is the name for a session of key, id: the name the key has, else the oldest in
+// nameForKeyLocked is the name for session s of key: the name the key has, else the oldest in
 // the pool, which becomes the key's for good, at once and without the remote. The registry is told
 // which session took it later (see bound). "" if the key has none and the pool is empty: the
 // session waits for the assigner. Caller holds mu.
-func (d *Daemon) nameForKeyLocked(key, id string) string {
+func (d *Daemon) nameForKeyLocked(s *session, key string) string {
 	if name := d.st.NameKeys[key]; name != "" || len(d.st.NamePool) == 0 {
 		return name
 	}
+	id := s.id
 	name := d.st.NamePool[0]
 	d.st.NamePool = d.st.NamePool[1:]
 	d.st.NameKeys[key] = name
+	d.noteNamedInT3Locked(s.agent, key, name)
 	d.st.NameBinds[name] = id
 	// The session's address for the name from now on, as the registry will say once the binding
 	// lands: a session that moves to another conversation before then is still found by it.
@@ -543,8 +666,44 @@ func (d *Daemon) givePoolLocked() {
 		if s.name != "" {
 			continue
 		}
-		if d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id)); s.name != "" {
+		// An earlier session in this loop (for instance a CLI session in its grace) may have just
+		// named the conversation's Claude key; share it before taking a second name from the pool.
+		d.shareSessionNameLocked(s)
+		if s.dropped.IsZero() {
+			// Another live session may already hold the name s.key just received (for instance a
+			// T3 thread that did /clear while its name was pushed and its old Claude session was
+			// resumed on the command line): two live sessions never share a name (#874).
+			s.key = d.uniqueKeyLocked(s.key, s.id, s.clientPID)
+		}
+		if d.setNameLocked(s, d.nameForKeyLocked(s, s.key)); s.name != "" {
 			d.kickPresence()
+		}
+	}
+}
+
+// applyPendingKeysLocked gives a name that just landed to any key linked to it while the
+// assigner's push was in flight: Claude Code conversations' (t3, claude) pairs recorded by
+// shareNameLocked, and keys a session moved to by finding its thread in rekeyLocked (#874).
+// Shares run before rekeys so a name from the command line marks NamedFromCLI on the thread's key.
+// Caller holds mu.
+func (d *Daemon) applyPendingKeysLocked(shares []pendingShare, rekeys []pendingRekey) {
+	for {
+		progressed := false
+		for _, sh := range shares {
+			k, a := d.st.NameKeys[sh.key], d.st.NameKeys[sh.alias]
+			if (k == "") != (a == "") {
+				d.shareNameLocked(sh.key, sh.alias, sh.id)
+				progressed = true
+			}
+		}
+		for _, rk := range rekeys {
+			if name := d.st.NameKeys[rk.from]; name != "" && d.st.NameKeys[rk.to] == "" {
+				d.st.NameKeys[rk.to] = name
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
 		}
 	}
 }
@@ -556,13 +715,30 @@ func (d *Daemon) nextNames() nameWork {
 	defer d.mu.Unlock()
 	d.givePoolLocked()
 	var w nameWork
+	d.pendingShares, d.pendingRekeys = nil, nil
 	keys := map[string]bool{}
 	for _, s := range d.sortedSessionsLocked() {
-		if s.name == "" && !keys[s.key] {
-			keys[s.key] = true // sessions of one key share its name: one assignment for them all
-			w.wants = append(w.wants, wanted{id: s.id, key: s.key})
+		if s.name != "" || keys[s.key] {
+			continue
 		}
+		var alias string
+		if t3, ok := strings.CutPrefix(s.key, "t3:"); ok && !strings.Contains(t3, "/") {
+			alias = claudeAlias(s.agent, t3, s.claudeSession)
+		}
+		if alias != "" && keys[alias] {
+			// Another session of the same conversation (e.g. a CLI session in its grace) is
+			// already in this push: share that name instead of pushing a second one (#874).
+			d.pendingShares = append(d.pendingShares, pendingShare{key: s.key, alias: alias, id: s.id})
+			keys[s.key] = true
+			continue
+		}
+		keys[s.key] = true // sessions of one key share its name: one assignment for them all
+		if alias != "" {
+			keys[alias] = true
+		}
+		w.wants = append(w.wants, wanted{id: s.id, key: s.key, agent: s.agent, alias: alias})
 	}
+	d.assigning = len(w.wants) > 0
 	for _, name := range sortedKeys(d.st.NameBinds) {
 		w.binds = append(w.binds, bound{name: name, id: d.st.NameBinds[name]})
 	}
@@ -636,6 +812,16 @@ func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string
 // again, leased on whatever the tip is. It returns
 // bus.ErrRejected if the lease failed.
 func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
+	finished := false
+	if len(w.wants) > 0 {
+		defer func() {
+			if !finished {
+				d.mu.Lock()
+				d.assigning, d.pendingShares, d.pendingRekeys = false, nil, nil
+				d.mu.Unlock()
+			}
+		}()
+	}
 	// The repair flag is read with the tip it goes with: a sync between nextNames and here may have
 	// found the registry rewound, and building on the new tip without the snapshot would lose names.
 	d.mu.Lock()
@@ -699,6 +885,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			parent = "" // junk is never something to build on
 		}
 	}
+	held := map[string]string{} // every name a new root holds; none if the chain isn't one
 	if parent == "" || repair {
 		// A new root. The names set aside go in it as reservations again, first, so a daemon that
 		// joins later still knows whose they are; the rest of the used names go in the snapshot.
@@ -715,6 +902,12 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			used[name] = addr // a person's claim survives a repair, as a session's name does
 		}
 		parent, recs[0].Used = "", used
+		for name, addr := range used {
+			held[name] = addr
+		}
+		for _, r := range recs {
+			held[r.Name] = ""
+		}
 	}
 	if len(recs) == 0 {
 		return nil // nothing to record: a repair that a sync has meanwhile found unneeded
@@ -740,12 +933,25 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	defer d.advMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	finished = true
+	var pendingShares []pendingShare
+	var pendingRekeys []pendingRekey
+	if len(w.wants) > 0 {
+		pendingShares, pendingRekeys = d.pendingShares, d.pendingRekeys
+		d.assigning, d.pendingShares, d.pendingRekeys = false, nil, nil
+	}
 	d.known[brand.NamesRef] = sha
 	if d.st.NamesTip == tip {
 		// Nothing newer was read meanwhile; this chain, on a tip that was read in full, is read. A
 		// tip not yet read by a daemon that keeps people's claims isn't (see NamesPeople), unless
 		// this chain is a new root, which holds every name itself.
-		d.st.NamesTip, d.st.NamesRepair = sha, false
+		d.st.NamesTip = sha
+		// The repair is made only if every name in use now is in the root. One can be learned while
+		// the push is out, and a sync can then find the registry it read lacking it, with no newer
+		// tip to show for that: clearing the flag would lose the name.
+		if parent == "" && !d.lacksNamesLocked(held) {
+			d.st.NamesRepair = false
+		}
 		if d.st.NamesPeople || parent == "" {
 			d.st.NamesGood, d.st.NamesPeople = sha, true
 		}
@@ -767,12 +973,21 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 			continue
 		}
 		d.st.NameKeys[s.key] = name
-		for _, o := range d.sessions {
-			if o.key == s.key && o.name == "" {
-				d.setNameLocked(o, name)
-			}
+		d.noteNamedInT3Locked(s.agent, s.key, name) // its session may have gone since it asked
+		if s.alias != "" {
+			d.shareNameLocked(s.key, s.alias, s.id)
 		}
 		d.log.Printf("session %s is named %s", addr, name)
+	}
+	d.applyPendingKeysLocked(pendingShares, pendingRekeys)
+	// Give each requesting session its landed name before givePoolLocked visits sessions in ID
+	// order, so a session that rekeyed while the push was out keeps the name ahead of another
+	// session that started on its old key meanwhile (for instance after /clear in T3).
+	for i, s := range w.wants {
+		name := given[i]
+		if o := d.sessions[s.id]; o != nil && o.name == "" && d.st.NameKeys[o.key] == name {
+			d.setNameLocked(o, name)
+		}
 	}
 	for _, name := range person {
 		d.notePersonClaimLocked(name, d.personAddr())

@@ -11,14 +11,16 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
 
 - Messages travel through the repo's git remote: seconds, sometimes up to about half a minute.
 - A message usually arrives as a turn of the recipient's conversation; in T3 Code it also wakes an
-  idle thread. A Claude Code, Codex, Grok or Pi session at work gets a notice after its next tool
-  call instead, and what it hasn't read when its turn ends is given to it then.
-- Otherwise it waits in `inbox`: for Grok, Muse Code and OpenCode 1 outside T3 Code, for a
-  message that waited more than 15 minutes (the session was away), and where the user turned waking
-  off on `mur ui`. Claude Code, Codex, Grok and Pi show a one-line notice; other agents show
-  nothing. `who` marks a session whose hook isn't running: it gets no notice.
+  idle thread. A session at work (in every agent but OpenCode 1 in T3 Code) gets a notice after
+  its next tool call instead, and what it hasn't read when its turn ends is given to it then.
+- Otherwise it waits in `inbox`: for Grok, Antigravity and Muse Code outside T3 Code, for a message
+  that waited more than 15 minutes (the session was away), where the user turned waking off on
+  `mur ui`, and for a session idle longer than its wake setting allows (5 minutes by default).
+  `send` and `lookup` say when a session won't be woken. Every agent but OpenCode 1 in T3 Code
+  shows a one-line notice. `who` marks a session whose hook isn't running: it gets no notice.
 - A session tagged `do-not-disturb` gets no turn and no notice until the tag comes off or it reads
-  its inbox. Use it, and take it off after, for work that mustn't be interrupted.
+  its inbox, except for its own user's messages from that device's page. Use it, and take it off
+  after, for work that mustn't be interrupted.
 
 ## Waiting for a reply
 
@@ -44,7 +46,8 @@ later.
 
 When someone is waiting on your work, send one message once it is pushed: what is done, the branch
 or commit, and anything they must know before building on it. This is the one "done" message worth
-sending.
+sending. If you go on only once they have it, add `tell_me: "read"`: Murmur tells you once, in
+your inbox, when it is read, or after 30 minutes with where it is.
 
 ## Quiet sessions
 
@@ -54,7 +57,7 @@ judgment.
 
 ## Messaging many
 
-A device name reaches every session on that device; `*` reaches everyone. Each recipient pays a
+A device's group (`group:device-…`, on its sessions in `who`) reaches every session on that device; `*` reaches everyone. Each recipient pays a
 turn. Use `*` only for what changes everyone's work: main is broken, a shared migration landed, a
 history rewrite. Routine progress belongs in `status`.
 
@@ -78,4 +81,4 @@ your user asked, tell your user and let them decide, and tell the agent you have
 
 ## Long content
 
-A body over 32 KB is refused. Point at a file, commit or PR instead.
+A body over 32 KB is refused. Send it as a file (`files`), or point at a commit or PR instead.

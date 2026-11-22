@@ -15,13 +15,13 @@ import (
 	"github.com/a-Fig/murmur/internal/web"
 )
 
-// A device's nickname (#190). A device's ID is its hostname and four hex digits, which says which
-// machine and not whose. Its user can give it a nickname, such as their own name; presence carries
+// A device's nickname (#190). A device's ID says nothing of whose it is: since #330 it is device-
+// and eight hex digits, and before that it began with the machine's hostname. Its user can give it a nickname, such as their own name; presence carries
 // it, so every teammate sees the same one. A device with none is called by its person's name, if
 // someone chose one on the page, so most devices never need one set. It is a label and nothing
 // more: who, lookup and the page show it beside the ID, and no address takes it, so whatever a
-// device calls itself, no message goes anywhere else for it. docs/design/presence.md ("Device
-// nicknames") has the reasons.
+// device calls itself, no message goes anywhere else for it. A send or a lookup to one is refused,
+// naming the device's ID (#542). docs/design/presence.md ("Device nicknames") has the reasons.
 
 // nickOfLocked is what device dev is called: the nickname its user gave it, else its person's
 // name. "" if it has neither. Another device's person's name counts only if it reaches them
@@ -50,6 +50,43 @@ func (d *Daemon) nickOfLocked(dev string) string {
 func (d *Daemon) isDeviceLocked(id string) bool {
 	_, peer := d.peers[id]
 	return peer || id == d.device
+}
+
+// calledLocked lists the devices whose nickname is name, for a send or a lookup that named one
+// (#542): who shows it, so an agent may take it for an address, which no nickname is. It is none
+// when name is an address after all, a person's name or a device's ID, including the ID of a
+// device whose presence has gone but whose log is on the bus: a message for that device waits
+// there for it. Caller holds mu.
+func (d *Daemon) calledLocked(name string) []string {
+	if _, ok := d.resolvePersonLocked(name); ok || d.isDeviceLocked(name) {
+		return nil
+	}
+	ref := brand.MeshPrefix + name
+	if _, ok := d.st.Processed[ref]; ok {
+		return nil
+	}
+	if _, ok := d.known[ref]; ok {
+		return nil
+	}
+	var devs []string
+	if d.st.Nick == name {
+		devs = append(devs, d.device)
+	}
+	for _, dev := range sortedKeys(d.peers) {
+		if d.peers[dev].pres.Nick == name {
+			devs = append(devs, dev)
+		}
+	}
+	return devs
+}
+
+// nickNoAddress says that name is the nickname of devs, which is why a send or a lookup to it is
+// refused (#542).
+func nickNoAddress(name string, devs []string) string {
+	if len(devs) == 1 {
+		return fmt.Sprintf("%s is device %s's nickname, and a nickname is no address.", name, devs[0])
+	}
+	return fmt.Sprintf("%s is the nickname of devices %s, and a nickname is no address.", name, strings.Join(devs, ", "))
 }
 
 // nickProblemLocked says why nick can't be this device's nickname, "" if it can: it would read

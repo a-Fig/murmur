@@ -37,14 +37,78 @@ names routes by it all the same.
   restarting, the daemon restarting and a resume, and different keys never share one. The
   key-to-name map stays in the daemon's state file, so the client's ID is never published. A resume
   on another device is a new session there. Two live sessions with one key would share a name, so
-  the later is a session of its own. A key that comes back under another ID while its old session is
-  in its grace takes the name with it, so a message to it isn't left in an inbox about to stop
-  (2026-10-29).
+  the later is a session of its own. Where the two are MCP servers of one client process, it
+  stays one for as long as its inbox is kept (`later` in the state file), so each comes back to
+  its own name whichever reconnects first. Until 2026-11-16 (#38) the first back took the plain
+  key and its sibling's name, and both names changed. A second program on the same conversation
+  isn't held to this: once the first has gone it takes the conversation's name. A client that
+  doesn't say which process it is counts as one process. A server process that is started
+  again has a new ID, and so a new name, as before. A key that comes back under another ID while
+  its old session is in its grace takes the name with it, so a message to it isn't left in an
+  inbox about to stop (2026-10-29).
 - **A Codex session outside T3 follows its thread** (#36, 2026-10-30). Codex's MCP server learns the
   thread ID at its first tool call (`_meta.threadId`), and the key is then `codex:<threadId>`. Codex
   keeps that ID across resume and compaction and gives a new one on `/new`, `/clear` and a fork,
   which is the life a name should have. So a Codex CLI session whose MCP server restarts has a new
   name until its first tool call, and then takes the thread's name back, as a T3 thread does.
+- **A Codex thread that moves between programs keeps its name** (#568, 2026-11-16). Codex keeps the
+  thread ID when another program resumes a thread, as the app does one begun in the command line
+  (read in openai/codex at 5cb38e7; the app is closed source and wasn't run), and each program
+  starts an MCP server of its own for it. Once the first program's server has stopped, the thread's
+  key is free and the name comes back at the first tool call, as above. While it runs, which can be
+  after its terminal closed ([handoff](handoff.md)), there were two live sessions of one key, and
+  the later kept the name it registered with, so the conversation showed a new name for having
+  moved. Now the session whose tool call showed the thread last takes the key and the name, with
+  what the other had unread, and the other gets a new name and keeps it (`ThreadLeft` in the state
+  file, so a daemon restart doesn't hand the name back to whichever registers second). Only a
+  server's first registration or its first word of the thread does this, not one coming back from
+  its grace. Only between client processes: two MCP servers of one Codex process on one thread are
+  still two sessions, the later with a name of its own. And only outside T3.
+  - *The registry still has the name at the first session's address*, where another device sends
+    once no presence shows the name. So what arrives for that session after it has stopped counts
+    as the thread's: it is forwarded to the name's holder, or kept for the next session that takes
+    the name.
+  - *Cost.* A person who goes back to the first program and carries on there talks to a session
+    with the new name. Its server said the thread once and says nothing more; a Codex hook does
+    report the thread with its process, and nothing acts on that yet. The first session's status
+    stays with it, so `who` shows none under the thread's name until the agent sets one. If the
+    app forks a thread instead of resuming it, the thread ID is new, and so is the name, as for
+    any fork.
+  - *Not covered.* Until its first Murmur tool call the second program's session shows the name it
+    registered with, as a restarted server's does. Whether a turn can be started in the app's
+    session wasn't tried: the command-line route is taken only by a server whose parent program is
+    named `codex`.
+- **A Claude Code conversation that moves between the command line and T3 keeps its name** (#643,
+  2026-11-16). T3 imports a command-line conversation and resumes its Claude session, and `claude
+  --resume` goes on with one T3 had, so the Claude session ID stays the same. The name key didn't:
+  it is the T3 thread's in T3 and the Claude session's outside it, and each had a name of its own.
+  Now a Claude Code session in a T3 thread gives its two keys one name: where one has a name and
+  the other none, the other takes it (`shareNameLocked`). With the other program's session still
+  open, the rule above applies, with the conversation known by its Claude session ID instead of
+  the key: the session that registered last takes the name. A session in T3 keeps its ID across
+  its server's restarts (#642), so its `ThreadLeft` record goes at its next first registration,
+  and the thread can take its name back then. The later of two MCP servers of one process, a
+  session of its own with its own name (#38), gives nothing up. A thread whose name came from the
+  command line keeps its own address (`NamedFromCLI`): the registry has that name at the command
+  line's session, which goes on using it, so #642's taking of the name's address would have them
+  ask for one ID. A T3 session that registers before it knows its thread has an ID made from its
+  Claude session, as the command line's is, so the name's address alone can't say which of the two
+  the name was given to. A name given first to such a T3 session is recorded (`NamedInT3`), and
+  only such a name lets the thread take that address; any other counts as the command line's
+  (Sol's reviews). Nothing in T3 itself was run: its import and resume were read in its code for
+  #643.
+  - *Cost.* After `/clear` in T3 the thread's name stays the old conversation's too, but the
+    thread's Claude session is the new one, so the rule above no longer matches the two. Whichever
+    of them registers while the other runs gets a name of its own: the old conversation resumed on
+    the command line while the thread runs, or the thread back while the old conversation is open
+    there. It keeps that name after the other stops, until the daemon works out its key again: its
+    server registers again, a hook moves it to another Claude session, or it finds its thread. A
+    command-line session whose MCP server restarts after its grace, as `/mcp` can make it, takes
+    the name back from a T3 session that is open on the same conversation.
+  - *Cost.* A daemon from before #643 recorded nothing in `NamedInT3`. A T3 session from then that
+    registered before it knew its thread, and finds it only after the upgrade, gets the thread an
+    address of its own, made from the thread, instead of the one its name is at. Its name doesn't
+    change.
 - **Never reused, whatever happens to the registry.** A daemon keeps every name it has seen, in the
   registry's history or in any presence, and the set never shrinks, so a registry that is deleted,
   overwritten or force-pushed frees nothing. When the tip isn't readable, or its history no longer
@@ -59,17 +123,58 @@ names routes by it all the same.
     that brings in another root is damage to repair, and a presence listing more than 200 sessions
     (`bus.MaxSessions`) is unreadable. Push access can still mark names used, more slowly. Once
     1,000 random picks have all been in use, a daemon walks the lists for a free name.
+  - *A name only a presence shows* (#40, 2026-11-15). The registry can lose a name while the device
+    that holds it can't push, and a daemon that never read the name then learns it only from that
+    device's presence; nothing in the history it reads looks damaged. So a presence showing a name
+    the daemon has never seen has the next sync read the registry from its start, and write the
+    snapshot if the name isn't there. Not at once: a sync's fetch brings a presence as it is then,
+    which can be newer than the registry it listed, and the next sync lists after it. A push clears
+    a repair only if it is a new root holding every name in use when it lands, since a sync can find
+    a name lost while the push is out. An attempt on 2026-10-29 decided at once and cleared the flag
+    on any push, and Codex found both races in it.
+  - *Trust.* This lets a presence cause a rewrite of the registry, but gives no one more than push
+    access already does. Whatever a presence names is used for good on every daemon that reads it,
+    and goes into any snapshot written since; a seal shows a presence is its device's, not that
+    the device is real, as anyone who can push can seal one for a new device
+    ([encryption](encryption.md)). Nor need the presence be fresh: a stale one's names were in use
+    all the same. The cost, a new root that every daemon reads from its start, is one push access can
+    cause as often by damaging the registry itself.
 - **Without the remote**, a session that finds no name set aside works as `device/session`, shown as
   pending, and the daemon keeps trying, at once when the remote is back.
 - **Sending to a name.** A name is looked up in this device's sessions, then in this device's record
   of its last holder (below), then in other devices' presence, then in the registry, so a message to
   a session that has stopped is kept for it like any other. A device ID shaped like a name is read
   as a device if no session has that name.
+  - *When a presence shows a name that isn't its device's* (#604, 2026-11-15). A presence is
+    whatever its device wrote. While the device the registry has the name on is up, only its
+    presence counts, and if no session there shows the name the message goes to the registry's
+    address, where it is kept. It was the first presence by device ID, so a device that listed
+    someone's name was sent their messages when its ID sorted first, or when their session had
+    stopped. With the registry's device gone or stale, a presence still being written goes before
+    a stale one: a clone that loses its keys file comes back under a new device ID with its names
+    ([encryption](encryption.md), #617), and the registry still has them on the old one. Until the
+    old one goes stale, a send to such a name still goes to it.
+    `who`, `lookup` and the page still show the name on each device that claims it, and a message
+    from such a session shows the name as its sender: taking the name off a presence the registry
+    disagrees with would hide that clone's names for good.
 - **A name a session has left.** A session that followed Claude Code to another conversation (#9)
   isn't called its old name any more, but the registry still has that name down for its Murmur ID. A
   send to the old name reaches the session, and says it is called something else now. An error
   saying the conversation ended would drop messages to a session that is alive and could read them
   (2026-10-29).
+- **A session that has left presence is shown by one name** (#502, 2026-11-15), the same in the
+  inbox, activity, `lookup` and the mute checks, so the name an agent replies to or mutes is the one
+  it was shown. Before, an address that had held several names was shown by whichever a map gave
+  last, which could change from one call to the next. One of this device's goes by the name it took
+  last, which the device records. Another device's goes by the name its presence last showed it by
+  (#602, 2026-11-16): a session waiting on a new name lists the one it went by last (`was`), so
+  every device shows it by the name its own device does, and the device keeps that name a month
+  after it was last seen (`peerNames`). One never seen in presence goes by the first by spelling
+  of the names the registry gave its address: the registry keeps no order of them, and a record's
+  time is its writer's clock. That can be an older name; a send to it reaches the same session, as
+  above. A session still listed without a name whose name has moved to another session on the same
+  device — as after a Codex or Claude Code handoff with no name set aside — is shown by its address
+  instead, not by the name the other session holds (#875, 2026-11-20).
 - **A name held by another session** (#37, #46). A `/resume` back to an earlier conversation can put
   its name on a session whose Murmur ID isn't the one the registry has. A daemon records in its
   state file the last session to hold each name and the last name each of its sessions held. A
@@ -77,9 +182,23 @@ names routes by it all the same.
   last had, if that one is registered or stopped within `StoppedInbox` and the name is still the
   last it took: one hop. A session that takes a name also takes the kept inboxes of stopped sessions
   whose last name it was. So a conversation comes back as whichever session takes its name next, and
-  a message to the name waits for any of them (2026-10-29). The name sent to isn't on message
-  events, so the receiving daemon can't tell which name was used; putting it there is a bus format
-  change, Tyler's to decide (2026-10-29).
+  a message to the name waits for any of them (2026-10-29). One ID can hold several names over
+  time, after a `/clear`, so a message sent by name also carries the name, as `toName` (#45,
+  2026-11-16). The receiving daemon then forwards it by that name, not by the last name the address
+  had, even while the session at the address runs, and a message that waits in a kept inbox goes
+  to the next session to take the name it carries. A daemon from before that ignores the field and
+  goes by the address, as it did. It stays at the address when no other session has taken the name
+  since. The sending device's mute, offline and do-not-disturb checks still look at the address's
+  session. A session that comes back under its own ID still takes its whole inbox, messages for a
+  name it left among them (#847).
+- **A long-gone session's name is forgotten after 30 days** (#747, 2026-11-16). The daemon keeps the
+  name each of its sessions took last, to label a stopped session and to pass a message for an old
+  address on to the name's holder. T3 makes a new session for a thread each time its MCP server
+  restarts, so that record only grew, and the whole of `state.json` is written at every save. An
+  entry now goes 30 days after its session last took the name, unless the session runs, its inbox
+  is kept, it holds the name, or it is the session the registry has the name down for. The cost:
+  after that the session's old messages show its address on the page and in `lookup`, and a
+  message sent to that address is dropped, as one to any session that is gone.
 - **V1 daemons** don't read the registry, and their presence has no names. Their sessions show
   without one and are reached at `device/session`.
 
@@ -93,7 +212,7 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
 | Client | The ID | Kept across | New on | Where Murmur can read it |
 |---|---|---|---|---|
 | Claude Code | session ID | compaction, every kind of resume, a killed process resumed | `/clear`, `--fork-session`, `/branch`, switching with `/resume` | A hook's `session_id` on stdin, always current |
-| T3 Code | thread ID | everything, for good | a fork, which is a new thread | Nowhere, as shipped; Murmur reads T3's database ([handoff](handoff.md)) |
+| T3 Code | thread ID | everything, for good | a fork, which is a new thread | `T3CODE_THREAD_ID`, for Claude Code; else T3's database ([handoff](handoff.md)) |
 | Codex | `threadId` | compaction, every kind of resume | `/new`, `/clear`, a fork | `_meta.threadId` on every MCP `tools/call`, and a hook's `session_id` |
 
 - **Claude Code's MCP servers can't be trusted with the ID.** `CLAUDE_CODE_SESSION_ID` is set once
@@ -123,13 +242,57 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
     conversation the session left (inferred, not seen; #231), so a subagent's hooks never move a
     session.
 - **Under T3 the session is the thread**, not the provider's session under it. The Claude session ID
-  under one thread changes when the user switches Claude accounts, and has gone A → B → A. T3 gives
-  MCP servers and hooks no way to learn the thread ID, and Tyler decided on 2026-10-28 not to change
-  T3's source, so Murmur looks the provider's session up in T3's database (#56;
-  [handoff](handoff.md)).
+  under one thread changes when the user switches Claude accounts, and has gone A → B → A. Its name
+  and its address both follow the thread ([below](#one-address-per-t3-thread)).
 - **Codex's MCP servers get a bare environment**, about 20 Windows core variables and no `CODEX_*`
   or `T3CODE_CLI_PATH` unless the Codex config forwards them, as `join` does, so the server learns
   its thread at its first tool call. Hooks under Codex inherit the `CLAUDE_CODE_SESSION_ID` of any
   Claude Code session that started Codex, so that variable doesn't prove a hook runs under Claude
   Code.
 - **Two live processes can hold one ID.** Claude Code lets a session be resumed twice at once.
+
+## One address per T3 thread
+
+#642, Tyler's choice (2026-11-15). T3 keeps one provider session per thread for each provider
+instance (a Claude account or config home), each with its own Claude session ID, and goes back to
+an instance's own on a switch back. Until #642 the session's ID was made from the Claude session
+ID, so a switch registered a new session at a new address. The name followed the thread, but once
+the old session stopped, other devices showed its messages under a bare address, as another
+conversation: the registry has a name at the first address that took it, and only the owning device
+knew the rest.
+
+- **The ID comes from the thread.** T3 sets `T3CODE_THREAD_ID` for the Claude Code process it runs
+  (read in T3 0.1.x's server, 2026-11-15), and Claude Code's MCP servers inherit it. Inside T3
+  (`T3CODE_CLI_PATH` set too) such a server's ID is a hash of the thread, and its hello carries the
+  thread, so it never looks in T3's database. A switch is then a takeover of the same session, in
+  its grace or after it stopped, with its inbox, name and address. T3 sets the variable for ACP
+  agents too, but Muse passes on only what `join` lists, and Pi and Grok weren't tried; they and
+  Codex, whose servers get a bare environment, find their thread as before.
+- **Not the thread's own.** Every process under a thread inherits the variable, so a `claude` run
+  from the thread's shell, perhaps in another clone, would pass for the thread. The server ignores
+  the variable when an agent's program (`claude`, `codex` and the like) runs above its client,
+  looking up through shells and the programs that run commands for them (`node`, `python`, `go`);
+  T3 runs the thread's client itself. Not seen: an agent that runs as `node` (an npm install), or
+  a `claude` started through any other program. On the thread's own daemon the hello is refused
+  anyway while the thread's session is live, as any ID in use is, and after three refusals, about
+  7 s, the server registers as before #642: an ID from its Claude session, its thread looked up in
+  T3's database.
+- **Threads named before #642** have their name in the registry at the address of the session that
+  first had it, made from a Claude session ID. A hello that says it was made from the thread
+  (`ByThread`, protocol 22) is registered at that address when it is this device's, still goes by
+  that name, and is not held by another session (such as the command line resuming the same
+  conversation, #873), and the server goes by the ID its reply names. When another session holds
+  that address, the thread keeps its own thread-derived address so the conversation can move
+  without colliding on one ID. A hello without `ByThread`, from a server started before an update,
+  is never moved.
+- **Hooks** still find a session by `CLAUDE_PID`, then by Claude session ID, never by thread. A hook
+  of the new instance's process finds the session once its server has registered; one of the old
+  process, if any runs after that, finds nothing and changes nothing.
+- **Published.** The address is 24 bits of a SHA-256 of the thread ID, which stays on the device, in
+  place of 24 bits of the Claude session ID (#51). A keyed hash, as #51 proposes, would replace both
+  the same way.
+- **Not covered.** If T3 started the new instance's process before letting the old one go, the new
+  server would give up the thread's address after 7 s, for good, and the thread would split as
+  before #642. In the switch seen for #636 the old one had gone about 40 s before. A conversation
+  moved between the Claude Code CLI and T3 keeps its name since #643, but not its address: the
+  thread's is made from the thread, the command line's from the Claude session.

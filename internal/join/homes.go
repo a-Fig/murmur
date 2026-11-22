@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -21,6 +22,10 @@ type agentHome struct {
 	// Named says a variable names Dir (CODEX_HOME) rather than Dir being the agent's default, which
 	// Codex spells differently in its hooks' trust keys (codexKeyPath).
 	Named bool
+	// T3Own says T3 made Dir for one instance and manages what is in it (Antigravity's).
+	T3Own bool
+	// SkillsOnly is the shared Antigravity skills home when the standalone home is elsewhere.
+	SkillsOnly bool
 }
 
 // agent is one of the coding agents join registers the server with.
@@ -54,7 +59,7 @@ var agents = []agent{
 	{driver: "muse", label: "Muse Code", t3Var: "XDG_CONFIG_HOME", sub: "muse",
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerMuseAt(h) },
 		removal:    museRemoval,
-		unregister: Env.unregisterMuseAt},
+		unregister: Env.unregisterMuse},
 	{driver: "pi", label: "Pi", t3Var: "PI_CODING_AGENT_DIR",
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerPiAt(h) },
 		removal:    piRemoval,
@@ -63,6 +68,10 @@ var agents = []agent{
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerGrokAt(h) },
 		removal:    grokRemoval,
 		unregister: Env.unregisterGrokAt},
+	{driver: "antigravity", label: "Antigravity",
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerAntigravityAt(h) },
+		removal:    antigravityRemoval,
+		unregister: Env.unregisterAntigravityAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -82,6 +91,8 @@ func (e Env) defaultHome(a agent) agentHome {
 		h.Dir = e.PiDir
 	case "grok":
 		h.Dir = e.GrokHome
+	case "antigravity":
+		h.Dir = e.GeminiHome
 	}
 	return h
 }
@@ -89,6 +100,11 @@ func (e Env) defaultHome(a agent) agentHome {
 // t3Home is the configuration a T3 instance of agent a runs in.
 func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 	h := agentHome{Label: a.label + " (" + in.Name + " in T3 Code)", Bin: in.binary()}
+	if a.driver == "antigravity" {
+		// A home of T3's own for each instance, which nothing in its settings moves.
+		h.Dir, h.T3Own = antigravityHomeOf(e.T3Settings, in.ID), true
+		return h, h.Dir != ""
+	}
 	dir := in.homeOf(a.t3Var, e.Home)
 	switch {
 	case dir != "" && a.sub != "":
@@ -142,8 +158,9 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 	}
 	instances, err := readT3Instances(e.T3Settings)
 	if err != nil {
-		notes = append(notes, "T3 Code's settings ("+e.T3Settings+") couldn't be read, so only each agent's default configuration was registered in: "+err.Error())
+		notes = append(notes, "Couldn't read T3 Code's settings ("+e.T3Settings+"). Some provider instances may be missing. "+err.Error())
 	}
+	managedGemini := false
 	for _, in := range instances {
 		i := agentIndex(in.Driver)
 		if i < 0 {
@@ -154,19 +171,32 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		if !ok {
 			continue
 		}
+		sameHome := samePath
+		if h.T3Own {
+			sameHome = sameEntry
+		}
+		if h.T3Own && sameHome(h.Dir, e.GeminiHome) {
+			managedGemini = true
+		}
 		if !in.On && !off {
-			// Said only of a configuration that nothing else registers in: one that is the agent's
-			// default gets the server whatever T3 does with it.
-			if !samePath(h.Dir, byAgent[i][0].Dir) || !samePath(h.JSON, byAgent[i][0].JSON) {
-				notes = append(notes, a.label+" as T3 Code's \""+in.Name+"\" is turned off in T3, so its configuration ("+h.Dir+") was left alone; `"+brand.Command+" join` again after turning it on registers it")
+			// Said only of a configuration that nothing else registers in: one that is the caller's
+			// active home (e.g. a per-project T3 override) still gets registered, with T3Own kept.
+			if sameHome(h.Dir, byAgent[i][0].Dir) && samePath(h.JSON, byAgent[i][0].JSON) {
+				if h.T3Own {
+					byAgent[i][0] = h
+				}
+				continue
 			}
+			notes = append(notes, a.label+" as T3 Code's \""+in.Name+"\" is turned off in T3, so its configuration ("+h.Dir+") was left alone; `"+brand.Command+" join` again after turning it on registers it")
 			continue
 		}
 		dup := false
 		for j, o := range byAgent[i] {
-			if samePath(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
+			if sameHome(o.Dir, h.Dir) && samePath(o.JSON, h.JSON) {
 				dup = dup || sameCodexKey(a, o, h)
-				if o.Bin == "" {
+				if h.T3Own {
+					byAgent[i][j] = h
+				} else if o.Bin == "" {
 					byAgent[i][j].Bin = h.Bin // the default home, with the command T3 runs it by
 				}
 			}
@@ -175,6 +205,23 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 			byAgent[i] = append(byAgent[i], h)
 		}
 	}
+	i := agentIndex("antigravity")
+	homes := byAgent[i]
+	if !managedGemini && isT3AntigravityHome(e.GeminiHome) {
+		managedGemini = true
+		homes[0].T3Own = true
+		homes[0].Label += " (T3 Code)"
+	}
+	if e.Home != "" {
+		shared := filepath.Join(e.Home, ".gemini")
+		alreadyListed := slices.ContainsFunc(homes, func(h agentHome) bool { return sameEntry(h.Dir, shared) })
+		usesShared := managedGemini || slices.ContainsFunc(homes, func(h agentHome) bool { return h.T3Own && (off || isDir(h.Dir)) })
+		if usesShared && !alreadyListed && !isT3AntigravityHome(shared) {
+			// When GEMINI_HOME is T3's, use ~/.gemini for standalone registration too.
+			homes = append([]agentHome{{Dir: shared, Label: agents[i].label, SkillsOnly: !managedGemini}}, homes...)
+		}
+	}
+	byAgent[i] = homes
 	return byAgent, notes
 }
 

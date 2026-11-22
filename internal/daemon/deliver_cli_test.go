@@ -62,14 +62,16 @@ func TestMessageForACodexSessionGoesThroughItsQueue(t *testing.T) {
 }
 
 // A message for an OpenCode session outside T3 runs `opencode api session.prompt` for its session,
-// with a body that holds the turn and asks for it to wait behind a running one.
+// in the state directory its shared server is registered in, with a body that holds the turn and
+// asks for it to wait behind a running one.
 func TestMessageForAnOpenCodeSessionGoesThroughItsServer(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
 	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
 	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{OpenCodeCLI: exe, Native: "ses_bob123"})
+	state := filepath.Join(t.TempDir(), "opencode state")
+	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{OpenCodeCLI: exe, Native: "ses_bob123", OpenCodeState: state})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	a.send("aaaaaa", bob, "auth middleware?", "Are you \"changing\" it?\nSay so.")
@@ -78,6 +80,9 @@ func TestMessageForAnOpenCodeSessionGoesThroughItsServer(t *testing.T) {
 	c := calls()[0]
 	if len(c.Args) != 6 || strings.Join(c.Args[:5], " ") != "api session.prompt --param sessionID=ses_bob123 -d" {
 		t.Fatalf("opencode was run as %q", c.Args)
+	}
+	if c.State != state {
+		t.Errorf("XDG_STATE_HOME was %q, want the session's, %q", c.State, state)
 	}
 	var sent struct{ Text, Delivery string }
 	if err := json.Unmarshal([]byte(c.Args[5]), &sent); err != nil {

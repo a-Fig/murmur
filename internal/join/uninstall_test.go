@@ -21,7 +21,7 @@ func uninstallSandbox(t *testing.T) (*sandbox, string) {
 	t.Helper()
 	sb := newSandbox(t, true)
 	withAgents(sb)
-	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "PI_CODING_AGENT_DIR"} {
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "GEMINI_HOME", "PI_CODING_AGENT_DIR"} {
 		t.Setenv(k, filepath.Join(sb.root, "home"))
 	}
 	record := filepath.Join(sb.root, "clones")
@@ -35,7 +35,7 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	sb, _ := uninstallSandbox(t)
 	withOpenCode(t, sb, "opencode v2.2.0")
 	ctx := context.Background()
-	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome} {
+	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, filepath.Join(sb.GeminiHome, "antigravity")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -103,6 +103,11 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	if strings.Contains(grok, brand.MCPServer) || !strings.Contains(grok, `allow = ["Bash(ls)"]`) {
 		t.Errorf("Grok's config.toml:\n%s", grok)
 	}
+	for _, f := range []string{"mcp_config.json", "hooks.json"} {
+		if agy := read(t, filepath.Join(sb.GeminiHome, "config", f)); strings.Contains(agy, brand.MCPServer) {
+			t.Errorf("Antigravity's %s:\n%s", f, agy)
+		}
+	}
 	if muse := read(t, filepath.Join(sb.MuseDir, "settings.json")); strings.Contains(muse, brand.MCPServer) || !strings.Contains(muse, `"other"`) {
 		t.Errorf("Muse's settings.json:\n%s", muse)
 	}
@@ -126,6 +131,54 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	r, err = Uninstall(ctx, sb.Env, false)
 	if err != nil || len(r.Did) != 1 || !strings.HasPrefix(r.Did[0], "Nothing to remove") || read(t, cfg) != before {
 		t.Errorf("second: %v\n%s", err, r)
+	}
+}
+
+func TestUnregisterAntigravityRemovesToolApprovalFromBothSettings(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "gemini"), Label: "Antigravity", T3Own: true}
+	cli := filepath.Join(h.Dir, "antigravity-cli", "settings.json")
+	acp := filepath.Join(h.Dir, "antigravity-acp", "settings.json")
+	write(t, cli, `{"permissions":{"allow":["mcp(murmur/*)", "mcp(murmur/*)"]}, "model":"mine"}`)
+	write(t, acp, `{"permissions":{"allow":["mcp(other/*)", "mcp(murmur/*)"], "deny":["mcp(blocked/*)"]}}`)
+	if got := antigravityRemoval(sb.Env, h); !strings.Contains(got, cli) || !strings.Contains(got, acp) || strings.Count(got, `"mcp(murmur/*)"`) != 2 {
+		t.Errorf("manual removal: %q", got)
+	}
+	if did, _, err := sb.unregisterAntigravityAt(t.Context(), []agentHome{h}); err != nil || len(did) != 2 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if got := read(t, cli); strings.Contains(got, `"permissions"`) || !strings.Contains(got, `"model":"mine"`) {
+		t.Errorf("CLI settings: %s", got)
+	}
+	if got := read(t, acp); strings.Contains(got, "murmur/") || !strings.Contains(got, `"allow":["mcp(other/*)"]`) || !strings.Contains(got, `"deny":["mcp(blocked/*)"]`) {
+		t.Errorf("ACP settings: %s", got)
+	}
+	if got := antigravityRemoval(sb.Env, h); got != "" {
+		t.Errorf("manual removal after uninstall: %q", got)
+	}
+	const empty = `{"permissions":{"allow":[]}}`
+	write(t, cli, empty)
+	if did, _, err := sb.unregisterAntigravityAt(t.Context(), []agentHome{h}); err != nil || len(did) != 0 || read(t, cli) != empty {
+		t.Errorf("second unregister: did=%q err=%v", did, err)
+	}
+}
+
+func TestUnregisterAntigravityContinuesAfterMalformedFiles(t *testing.T) {
+	h := agentHome{Dir: t.TempDir(), Label: "Antigravity", T3Own: true}
+	cli := filepath.Join(h.Dir, "antigravity-cli", "settings.json")
+	acp := filepath.Join(h.Dir, "antigravity-acp", "settings.json")
+	mcp := filepath.Join(h.Dir, "config", "mcp_config.json")
+	hook := filepath.Join(h.Dir, "config", "hooks.json")
+	write(t, cli, `{`)
+	write(t, mcp, `{`)
+	write(t, acp, `{"permissions":{"allow":["mcp(murmur/*)"]}}`)
+	write(t, hook, `{"murmur":{}, "other":{}}`)
+	did, _, err := (Env{}).unregisterAntigravityAt(t.Context(), []agentHome{h})
+	if err == nil || !strings.Contains(err.Error(), cli) || !strings.Contains(err.Error(), mcp) || len(did) != 2 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if read(t, cli) != `{` || read(t, mcp) != `{` || strings.Contains(read(t, acp), `"permissions"`) || strings.Contains(read(t, hook), `"murmur"`) {
+		t.Error("unregister didn't clean up the valid files independently")
 	}
 }
 
@@ -184,6 +237,66 @@ func TestUninstallLeavesJoinedClonesOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// A clone whose git directory isn't .git, as --separate-git-dir makes, has no working tree that can
+// be found from it: uninstall --leave leaves it from its git directory, where it refused before,
+// and told the user to leave in a folder where that failed the same way (#749).
+func TestUninstallLeavesACloneWithASeparateGitDir(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store.git")
+	git(t, dir, "init", "-q", "--initial-branch=main", "--separate-git-dir="+store, "wt")
+	p := Place{GitDir: store}
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	c := clones.Clone{GitDir: store, Name: "separate"}
+	if c.Top() != store {
+		t.Fatalf("Top is %s: the test wants the git directory, which has no working tree", c.Top())
+	}
+	if err := clones.Add(record, c); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Uninstall(context.Background(), sb.Env, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if p.Joined() {
+		t.Error("the clone is still joined")
+	}
+	if s := r.String(); !strings.Contains(s, "separate: Removed the record that you joined") {
+		t.Errorf("report:\n%s", s)
+	}
+}
+
+// What uninstall's refusal says to do for such a clone works: `mur join --leave` in its git
+// directory, which it names (#749).
+func TestLeaveInASeparateGitDir(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store.git")
+	git(t, dir, "init", "-q", "--initial-branch=main", "--separate-git-dir="+store, "wt")
+	p := Place{GitDir: store}
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: store}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Uninstall(context.Background(), sb.Env, false); err == nil || !strings.Contains(err.Error(), store) {
+		t.Fatalf("the refusal doesn't name the git directory: %v", err)
+	}
+	if r, err := Leave(context.Background(), sb.Env, store); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if p.Joined() {
+		t.Error("the clone is still joined")
+	}
+	// Elsewhere, outside any clone, a leave still says there is none.
+	if _, err := Leave(context.Background(), sb.Env, t.TempDir()); err == nil {
+		t.Error("left a folder that is no clone")
+	}
+}
+
 func TestEditTOMLTables(t *testing.T) {
 	server := []string{"mcp_servers", "murmur"}
 	drop := func(p []string) ([]string, bool) { return nil, hasPrefix(p, server) }
@@ -196,6 +309,14 @@ func TestEditTOMLTables(t *testing.T) {
 		{"crlf", "a = 1\r\n\r\n[mcp_servers.murmur]\r\ncommand = \"mur\"\r\n\r\n[x]\r\n", "a = 1\r\n\r\n[x]\r\n"},
 		{"in a string", "a = \"\"\"\n[mcp_servers.murmur]\n\"\"\"\n", "a = \"\"\"\n[mcp_servers.murmur]\n\"\"\"\n"},
 		{"none", "a = 1\n", "a = 1\n"},
+		// A comment after Murmur's table is the user's, about the next (#740).
+		{"comment after", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n\n# GitHub's, token from GITHUB_PAT\n[mcp_servers.github]\n", "a = 1\n\n# GitHub's, token from GITHUB_PAT\n[mcp_servers.github]\n"},
+		{"comment after, first", "[mcp_servers.murmur]\ncommand = \"mur\"\n\n# GitHub's\n[x]\n", "# GitHub's\n[x]\n"},
+		{"comment after, last", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\n# the end\n", "a = 1\n# the end\n"},
+		{"comment inside", "a = 1\n\n[mcp_servers.murmur]\n# ours\ncommand = \"mur\"\n\n[x]\n", "a = 1\n\n[x]\n"},
+		// A multi-line string's lines are its value's, though they start with '#' (Opus's review).
+		{"string of hashes", "a = 1\n\n[mcp_servers.murmur]\ncommand = \"mur\"\nnote = \"\"\"\n# x\n# y\"\"\"\n\n[x]\n", "a = 1\n\n[x]\n"},
+		{"string of hashes, last", "a = 1\n\n[mcp_servers.murmur]\nnote = '''\n#x'''\n", "a = 1\n"},
 	} {
 		got, _, err := editTOMLTables(c.in, "config.toml", [][]string{server}, drop)
 		if err != nil || got != c.want {

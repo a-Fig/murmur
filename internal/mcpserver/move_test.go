@@ -72,6 +72,48 @@ func TestASessionStartedOutsideMovesIntoTheRepo(t *testing.T) {
 	}
 }
 
+func TestAntigravityPublishesT3ThreadBeforeAndAfterMove(t *testing.T) {
+	t.Setenv(threadEnv, "thread-1")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+	hdir := t.TempDir()
+	top, gitDir := joinedRepo(t, &fakeDaemon{})
+	openWith(t, Options{Agent: "antigravity", Dir: t.TempDir(), Poll: 25 * time.Millisecond, HereDir: hdir})
+	var rec here.Session
+	waitFor(t, "the passive server's record", func() (ok bool) { rec, ok = mine(t, hdir); return })
+	if rec.On || rec.T3Thread != "thread-1" || rec.Native != "" {
+		t.Fatalf("passive record: %+v", rec)
+	}
+	if err := here.Ask(hdir, rec, top, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the moved server's record", func() bool {
+		rec, _ = mine(t, hdir)
+		return rec.On && rec.GitDir == gitDir
+	})
+	if rec.T3Thread != "thread-1" || rec.Native != "" {
+		t.Errorf("moved record: %+v", rec)
+	}
+}
+
+func TestHerePublishesKnownT3ThreadWithoutInheritingParentThread(t *testing.T) {
+	t.Setenv(threadEnv, "parent-thread")
+	old := agentAbove
+	agentAbove = func() bool { return true }
+	t.Cleanup(func() { agentAbove = old })
+	s := &server{opt: Options{Agent: "antigravity", HereDir: t.TempDir()}}
+	s.initHere()
+	s.publish()
+	if r, ok := mine(t, s.hereDir); !ok || r.T3Thread != "" {
+		t.Fatalf("record for nested client: %+v", r)
+	}
+	s.link = &link{}
+	s.link.hello.T3Thread = "known-thread"
+	s.publish()
+	if r, ok := mine(t, s.hereDir); !ok || r.T3Thread != "known-thread" {
+		t.Errorf("record once thread is known: %+v", r)
+	}
+}
+
 // A session is in one repo at a time: moving to another takes it out of the first, and its calls go
 // to the new repo's daemon.
 func TestAMoveLeavesTheRepoItWasIn(t *testing.T) {

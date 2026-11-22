@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -11,86 +13,67 @@ import (
 	"time"
 )
 
-// fakeGH puts a gh first on PATH that notes each run in its own folder and answers that there is
-// no PR. On Windows it is a .cmd file, as a shim or wrapper can be, so it runs under cmd.exe.
-func fakeGH(t *testing.T) (calls func() int) {
+// fakeGH puts a gh first on PATH that notes each run's arguments in its own folder and prints
+// answer. On Windows it is a .cmd file, as a shim or wrapper can be, so it runs under cmd.exe.
+func fakeGH(t *testing.T, answer string) (calls func() []string) {
 	t.Helper()
 	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "answer.json"), []byte(answer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name, script := "gh", "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls.txt\"\ncat \"$(dirname \"$0\")/answer.json\"\n"
 	if runtime.GOOS == "windows" {
-		script := "@echo off\r\necho called>>\"%~dp0calls.txt\"\r\necho []\r\n"
-		if err := os.WriteFile(filepath.Join(bin, "gh.cmd"), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		script := "#!/bin/sh\necho called >> \"$(dirname \"$0\")/calls.txt\"\necho '[]'\n"
-		if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		name, script = "gh.cmd", "@echo off\r\necho %*>>\"%~dp0calls.txt\"\r\ntype \"%~dp0answer.json\"\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return func() int {
+	return func() []string {
 		b, _ := os.ReadFile(filepath.Join(bin, "calls.txt"))
-		return strings.Count(string(b), "called")
+		return strings.Fields(string(b))
 	}
 }
 
-// A branch name comes from the bus, so whoever can push chooses it. One made to be read as
-// commands by cmd.exe, which runs a gh that is a batch file, never reaches gh's command line.
-func TestGHHostileBranch(t *testing.T) {
-	calls := fakeGH(t)
-	dir := t.TempDir() // where gh runs, and where a command smuggled in would write its file
-	lookup := GH(dir)
-	for _, branch := range []string{
-		`x&echo,PWNED>pwned`,           // a legal git branch name: & , and > are all allowed
-		`x"&echo,PWNED>pwned-quoted&"`, // breaking out of the quotes
-		`x|echo,PWNED>pwned-pipe`,
-		`feat/%USERNAME%`, // cmd.exe expands variables
-		`feat/!PATH!`,
-		`a^b`, `a<b`, `(a)`, `a;b`, `a,b`, `a=b`, `a'b`, "a`b", `a$b`,
-	} {
-		if pr, err := lookup(context.Background(), branch); pr != nil || err != nil {
-			t.Errorf("%q: %v, %v", branch, pr, err)
-		}
+// GH asks once for every open pull request and sorts them by head branch. gh lists the newest
+// first; of two with one head, this repository's is the branch's, and else the newer.
+func TestGHListing(t *testing.T) {
+	calls := fakeGH(t, `[
+		{"number": 9, "isDraft": true,  "url": "https://github.com/o/r/pull/9", "headRefName": "feature/page-22", "isCrossRepository": false},
+		{"number": 8, "isDraft": false, "url": "https://github.com/o/r/pull/8", "headRefName": "main", "isCrossRepository": true},
+		{"number": 7, "isDraft": false, "url": "https://github.com/o/r/pull/7", "headRefName": "main", "isCrossRepository": true},
+		{"number": 6, "isDraft": false, "url": "https://github.com/o/r/pull/6", "headRefName": "shared", "isCrossRepository": true},
+		{"number": 5, "isDraft": false, "url": "https://github.com/o/r/pull/5", "headRefName": "shared", "isCrossRepository": false},
+		{"number": 4, "isDraft": false, "url": "https://github.com/o/r/pull/4", "headRefName": "shared", "isCrossRepository": false},
+		{"number": 0, "isDraft": false, "url": "", "headRefName": "nothing", "isCrossRepository": false},
+		{"number": 3, "isDraft": false, "url": "https://github.com/o/r/pull/3", "headRefName": "", "isCrossRepository": false}
+	]`)
+	prs, err := GH(t.TempDir())(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := calls(); n != 0 {
-		t.Errorf("gh ran %d times for branches that should never reach it", n)
+	want := map[string]PR{
+		"feature/page-22": {Number: 9, Draft: true, URL: "https://github.com/o/r/pull/9"},
+		"main":            {Number: 8, URL: "https://github.com/o/r/pull/8"},
+		"shared":          {Number: 5, URL: "https://github.com/o/r/pull/5"},
 	}
-	if left, _ := filepath.Glob(filepath.Join(dir, "pwned*")); len(left) != 0 {
-		t.Errorf("a branch name ran a command, which wrote %v", left)
+	if !reflect.DeepEqual(prs, want) {
+		t.Errorf("prs = %+v, want %+v", prs, want)
 	}
-
-	// The fake gh does run for an ordinary branch, so the counts above mean something.
-	if _, err := lookup(context.Background(), "feature/page-22"); err != nil {
-		t.Fatalf("an ordinary branch: %v", err)
-	}
-	if n := calls(); n != 1 {
-		t.Errorf("gh ran %d times for an ordinary branch, want 1", n)
+	// Nothing from the bus is on gh's command line: a gh that is a batch file runs under cmd.exe,
+	// which would read a branch named x&calc as a command.
+	if got, want := strings.Join(calls(), " "), "pr list --state open --limit 300 --json number,isDraft,url,headRefName,isCrossRepository"; got != want {
+		t.Errorf("gh ran with %q, want %q", got, want)
 	}
 }
 
-func TestLookupable(t *testing.T) {
-	for _, b := range []string{"main", "web-page", "feature/page-22", "tyler/fix_names.v2", "v1.2+build",
-		"user@fix#22", "fonctionnalité/été", "功能"} {
-		if !lookupable(b) {
-			t.Errorf("%q refused", b)
-		}
-	}
-	for _, b := range []string{"", "-x", "--head", "a b", "a\tb", "a\nb", "x&calc", `a"b`, "a|b", "a<b",
-		"a>b", "a^b", "a%b", "a!b", "a(b", "a)b", "a;b", "a,b", "a=b", "a'b", "a`b", "a$b", "a\\b",
-		"a‮b", strings.Repeat("a", maxBranch+1)} {
-		if lookupable(b) {
-			t.Errorf("%q accepted", b)
-		}
-	}
-}
-
-// Closing the page's server ends the lookups it started (each runs gh in the clone) before it
+// Closing the page's server ends the listing it started (it runs gh in the clone) before it
 // returns, and a request after that starts none: nothing the page started outlives the daemon.
 func TestCloseEndsLookups(t *testing.T) {
-	started := make(chan string, 4)
+	started := make(chan struct{}, 4)
 	var ended atomic.Int32
-	s := NewWithPRs(newFake(), testToken, func(ctx context.Context, branch string) (*PR, error) {
-		started <- branch
+	s := NewWithPRs(newFake(), testToken, func(ctx context.Context) (map[string]PR, error) {
+		started <- struct{}{}
 		<-ctx.Done() // a gh that hangs until it is stopped
 		ended.Add(1)
 		return nil, ctx.Err()
@@ -99,17 +82,57 @@ func TestCloseEndsLookups(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(10 * time.Second):
-		t.Fatal("no lookup started")
+		t.Fatal("no listing started")
 	}
 	s.Close()
 	if ended.Load() != 1 {
-		t.Errorf("Close returned with %d of 1 lookups ended", ended.Load())
+		t.Errorf("Close returned with %d of 1 listings ended", ended.Load())
 	}
 	s.prs.get([]string{"feat-2"})
 	time.Sleep(100 * time.Millisecond)
 	select {
-	case b := <-started:
-		t.Errorf("a lookup for %s started after Close", b)
+	case <-started:
+		t.Error("a listing started after Close")
 	default:
+	}
+}
+
+// A listing that fails leaves the PRs known before. One listing answers for every branch, so
+// counting a failure as no PRs would take every branch's off the page at once.
+func TestFailedListingKeepsWhatWasKnown(t *testing.T) {
+	var fail atomic.Bool
+	c := newPRCache(func(ctx context.Context) (map[string]PR, error) {
+		if fail.Load() {
+			return nil, errors.New("gh: offline")
+		}
+		return map[string]PR{"feat": {Number: 1, URL: "https://github.com/o/r/pull/1"}}, nil
+	})
+	defer c.close()
+	list := func() { // one listing, from its start to its end
+		t.Helper()
+		c.mu.Lock()
+		c.fetched = time.Time{} // as if the last were old
+		c.mu.Unlock()
+		c.get([]string{"feat"})
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			c.mu.Lock()
+			done := !c.inflight && !c.fetched.IsZero()
+			c.mu.Unlock()
+			if done {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the listing never ended")
+			}
+		}
+	}
+	list()
+	if got := c.get([]string{"feat"}); got["feat"].Number != 1 {
+		t.Fatalf("after a listing: %+v", got)
+	}
+	fail.Store(true)
+	list()
+	if got := c.get([]string{"feat"}); got["feat"].Number != 1 {
+		t.Errorf("after a failed listing: %+v, want what was known", got)
 	}
 }

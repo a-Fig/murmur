@@ -30,9 +30,10 @@ own session.
   re-clones keeps resolving to the old device until they choose the name again. `who` and the page
   list another device's person under their name only if that name reaches them (#350).
 - **A person's direct message wakes a session past the "Within" window**, because they are waiting
-  for an answer. It doesn't wake past Never or do not disturb, which a person also chose, and a
-  broadcast from a person wakes nothing extra: one sentence shouldn't wake every idle session on the
-  mesh. The turn says who it is from, that they see only what the agent sends, and how to answer.
+  for an answer. It doesn't wake past Never, which a person also chose, nor past do not disturb,
+  unless the person is the session's own device's, whose messages do not disturb never holds (#777).
+  A broadcast from a person wakes nothing extra: one sentence shouldn't wake every idle session on
+  the mesh. The turn says who it is from, that they see only what the agent sends, and how to answer.
 - **That explanation comes once** (#345, Tyler, 2026-11-09): only the first message a session is
   given whole from a person carries it, by any route. Later ones end with the line an agent's
   message does, since a long line on every message is noise. What each session has been told is kept
@@ -43,8 +44,10 @@ own session.
   the person's inbox, which holds direct messages only: counting broadcasts would keep the badge lit
   in a busy repo. Their inbox also takes what was sent while the daemon was down, since a person's
   daemon exits soon after their page closes and an agent may answer hours later.
-- **On the page**, "Your messages" holds the person's own conversations, each with a composer;
-  others' conversations are read-only. A message shows at once as sending, and one that fails stays
+- **On the page**, Conversations lists every conversation, and a toggle there leaves only the
+  person's own (since 2026-11-15, #637, which retired the separate "Your messages" view); theirs
+  have a composer, and others' are read-only. Conversations carries the unread count, and the
+  sidebar's foot is where a person without an account gets one or picks a new name (#268). A message shows at once as sending, and one that fails stays
   on screen with its text. Enter sends, except on a phone. The first Enter in the Everyone chat only
   arms it, and says how many sessions it reaches. The line above the composer says working, do not
   disturb, offline or waiting; "working" is a guess from the session's last activity, since nothing

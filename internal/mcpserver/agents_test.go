@@ -132,6 +132,57 @@ func TestASharedServerRegistersEachSessionThatCalls(t *testing.T) {
 	}
 }
 
+// OpenCode 1 names no session in a call, so its server's sessions are one, by the ID Murmur's
+// plugin put in the server's environment, with the plugin's socket as its way in (#446). A call
+// that names its session, as OpenCode 2's do, is that session's, and the socket isn't its.
+func TestOpenCode1IsTheSessionThePluginNamed(t *testing.T) {
+	fastSeek(t)
+	t.Setenv("MURMUR_OPENCODE_SESSION", "9f3c0a7d21b4e865")
+	t.Setenv("MURMUR_OPENCODE_MESSAGING_SOCKET", "/tmp/murmur-opencode-9f3c0a7d21b4e865.sock")
+	t.Setenv("MURMUR_OPENCODE_MESSAGING_TOKEN", "oc-tok")
+	f := &fakeDaemon{}
+	p := repo(t, true, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &server{opt: Options{Agent: "opencode"}, cwd: "/work", place: p, c: &client.Client{GitDir: p.GitDir},
+		links: map[string]*sessionLink{}, lctx: ctx}
+	for range 2 {
+		if _, err := s.callFrom(ctx, openCodeCall(""), proto.Request{Op: proto.OpWho}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.mu.Lock()
+	hellos := append([]proto.Hello(nil), f.hellos...)
+	f.mu.Unlock()
+	if len(hellos) != 1 {
+		t.Fatalf("%d hellos, want 1: %+v", len(hellos), hellos)
+	}
+	h := hellos[0]
+	if h.Native != "9f3c0a7d21b4e865" || h.ID != nativeID(h.Native) || h.Agent != "opencode" ||
+		h.MsgSocket != "/tmp/murmur-opencode-9f3c0a7d21b4e865.sock" || h.MsgToken != "oc-tok" {
+		t.Errorf("hello: %+v", h)
+	}
+
+	if h := helloFor("opencode", "/work"); h.MsgSocket == "" || h.Native != "9f3c0a7d21b4e865" {
+		t.Errorf("OpenCode 1's hello: %+v", h)
+	}
+	for _, v := range []string{"MURMUR_OPENCODE_SESSION", "MURMUR_OPENCODE_MESSAGING_SOCKET", "MURMUR_OPENCODE_MESSAGING_TOKEN"} {
+		t.Setenv(v, "")
+	}
+	if _, err := s.callFrom(ctx, openCodeCall("ses_aaa"), proto.Request{Op: proto.OpWho}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	last := f.hellos[len(f.hellos)-1]
+	f.mu.Unlock()
+	if last.Native != "ses_aaa" || last.MsgSocket != "" || last.MsgToken != "" {
+		t.Errorf("OpenCode 2's hello: %+v", last)
+	}
+}
+
 // Off, a shared server registers nobody.
 func TestASharedServerOffRegistersNobody(t *testing.T) {
 	s := &server{opt: Options{Agent: "opencode"}}

@@ -40,9 +40,13 @@ func TestInstallSkills(t *testing.T) {
 func TestSkillsDirOnlyForAgentsThatReadThem(t *testing.T) {
 	for _, a := range agents {
 		got := skillsDir(a, agentHome{Dir: "/x"})
-		want := map[string]bool{"claudeAgent": true, "codex": true, "opencode": true, "pi": true}[a.driver]
+		want := map[string]bool{"claudeAgent": true, "codex": true, "opencode": true, "pi": true, "antigravity": true}[a.driver]
 		if (got != "") != want {
 			t.Errorf("%s: %q", a.driver, got)
 		}
+	}
+	// T3 links its Antigravity homes' skills folder to the user's, and only where none is there.
+	if got := skillsDir(agents[agentIndex("antigravity")], agentHome{Dir: "/x", T3Own: true}); got != "" {
+		t.Errorf("a T3 Antigravity home: %q", got)
 	}
 }

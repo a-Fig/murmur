@@ -500,6 +500,48 @@ func TestNamesInPresenceAreUsed(t *testing.T) {
 	eventually(t, "the peer's name in who", func() bool { return a.nameOf("peer-0001/x") == taken })
 }
 
+// A presence is whatever its device wrote, so one can give its session a name that is another
+// device's. A send to the name still reaches the session the registry gave it to, wherever the
+// other device's ID sorts (#604).
+func TestSendByNameFollowsTheRegistry(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote, time.Minute) // the forged presences stay live
+	alice, _ := a.session("aaaaaa", "claude-alice")
+	b.session("bbbbbb", "claude-bob")
+	an := a.named(alice)
+	b.nameIs(alice, an)
+
+	// A name is looked for in the devices' presences in the order of their IDs, so one forger's
+	// sorts before any device's and one after.
+	forgers := []string{"00-forger-0001", "zz-forger-0001"}
+	at := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, dev := range forgers {
+		pushMessage(t, remote, "refs/murmur/presence/"+dev, dev+": 1 sessions\n\n"+
+			`{"v":1,"device":"`+dev+`","host":"forger","at":"`+at+`","sessions":[`+
+			`{"id":"x","name":"`+an+`","agent":"test","started":"`+at+`"}]}`+"\n")
+	}
+	eventually(t, "b to read the forgers' presences", func() bool {
+		for _, dev := range forgers {
+			if name, _, _ := b.whoShows(dev + "/x"); name != an {
+				return false
+			}
+		}
+		return true
+	})
+
+	r := b.do(proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: an, Subject: "for alice"})
+	if r.Error != "" || len(r.Messages) != 1 || r.Messages[0].To != alice {
+		t.Fatalf("a send to %s: %+v", an, r)
+	}
+	if got := inboxOf(a, "aaaaaa"); len(got) != 1 || got[0] != "for alice" {
+		t.Fatalf("alice's inbox: %q", got)
+	}
+	if r := b.do(proto.Request{Op: proto.OpLookup, Name: an}); r.Lookup == nil || r.Lookup.Addr != alice {
+		t.Errorf("lookup of %s: %+v", an, r.Lookup)
+	}
+}
+
 // Without a reachable remote a session works, addressed as device/session, with its name pending;
 // the name is taken in the background when the remote is back.
 func TestNameIsPendingUntilItLands(t *testing.T) {
@@ -668,7 +710,7 @@ func TestV1PeerWithoutNamesStillWorks(t *testing.T) {
 	// refused rather than sent where it can't be read.
 	for _, to := range []string{"old-0001/x", "old-0001"} {
 		r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: to, Subject: "hello old"})
-		if !strings.Contains(r.Error, "before the bus was encrypted") {
+		if !strings.Contains(r.Error, "before the bus was encrypted") || r.Refused != proto.RefusedRecipient {
 			t.Fatalf("send to %s: %+v", to, r)
 		}
 	}

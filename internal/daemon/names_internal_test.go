@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -169,7 +171,7 @@ func TestNameFromThePoolIsTheSessionsAddressAtOnce(t *testing.T) {
 	d.st.NamePool = []string{"quiet-otter"}
 	s := &session{id: "bbbbbb", key: "claude:one"}
 	d.sessions[s.id] = s
-	d.setNameLocked(s, d.nameForKeyLocked(s.key, s.id))
+	d.setNameLocked(s, d.nameForKeyLocked(s, s.key))
 	if s.name != "quiet-otter" {
 		t.Fatalf("the session took %q from the pool", s.name)
 	}
@@ -282,5 +284,184 @@ func TestKnownNameWithNoDeviceGainsItsReservation(t *testing.T) {
 		if got := d.st.Used[name]; got != "" {
 			t.Errorf("whole history %v: %s is taken as %s's", whole, name, got)
 		}
+	}
+}
+
+// shownName is the name one place shows for a sender.
+type shownName struct{ where, name string }
+
+// shownNames is the name each place shows for the sender of e, a session that isn't in presence:
+// the inbox, activity, lookup's detail and its list of messages, and the name a mute check goes by.
+// The order is fixed, so a failing test reports the same place every run.
+func shownNames(d *Daemon, e bus.Event) []shownName {
+	d.msgs = []pageMsg{{seq: 1, e: e}}
+	det := d.detailLocked(e.From, "", 10)
+	return []shownName{
+		{"inbox", d.messageViewsLocked([]*inMsg{{Event: e}}, false)[0].FromName},
+		{"activity", d.labelerLocked()(e.From)},
+		{"lookup", det.Name},
+		{"lookup's messages", det.Messages[0].FromName},
+		{"nameOfLocked", d.nameOfLocked(e.From)},
+	}
+}
+
+// An address that has held many names, as after Claude Code's /clear, and has left presence is
+// shown by one of them, the same every time and in every place: the first by spelling, as
+// nameOfLocked gives it. A map's order chose it before (#502).
+func TestADepartedSenderIsShownByOneNameEverywhere(t *testing.T) {
+	from := bus.Addr("there-0002", "aaaaaa")
+	used := map[string]string{"other-name": bus.Addr("there-0002", "cccccc")}
+	for _, n := range []string{"brave-heron", "calm-zebra", "dusty-crane", "eager-lynx", "fond-otter",
+		"glad-raven", "hazy-moose", "icy-finch", "jolly-newt", "keen-quail", "lucky-shrew", "mild-stoat"} {
+		used[n] = from
+	}
+	d := &Daemon{device: "here-0001", st: state{Used: used}}
+	e := bus.Event{ID: "m1", From: from, To: "*", Subject: "hi"}
+	for i := 0; i < 50; i++ {
+		for _, got := range shownNames(d, e) {
+			if got.name != "brave-heron" {
+				t.Fatalf("try %d: %s shows the sender as %q; want brave-heron, the first by spelling, every time", i, got.where, got.name)
+			}
+		}
+	}
+}
+
+// One of this device's sessions that has stopped is shown by the name it took last, which this
+// device knows, wherever that falls in spelling among the names its address has held (#502).
+func TestADepartedLocalSessionIsShownByTheNameItTookLast(t *testing.T) {
+	const me = "here-0001"
+	from := bus.Addr(me, "aaaaaa")
+	used := map[string]string{}
+	for _, n := range []string{"brave-heron", "calm-zebra", "dusty-crane", "eager-lynx", "fond-otter"} {
+		used[n] = from
+	}
+	d := &Daemon{device: me, st: state{Used: used, SessionNames: map[string]string{"aaaaaa": "dusty-crane"},
+		Stopped: map[string]time.Time{"aaaaaa": time.Now()}}}
+	e := bus.Event{ID: "m1", From: from, To: me, Subject: "hi"}
+	for i := 0; i < 50; i++ {
+		for _, got := range shownNames(d, e) {
+			if got.name != "dusty-crane" {
+				t.Fatalf("try %d: %s shows the sender as %q; want dusty-crane, the name it took last", i, got.where, got.name)
+			}
+		}
+	}
+}
+
+// The name shown for a departed sender is one a mute holds against: here a session of this device
+// that took the name of a conversation it resumed, which the registry has down for another session
+// ID (#502).
+func TestAMuteOfADepartedLocalSendersShownNameHolds(t *testing.T) {
+	const me, muter = "here-0001", "quiet-otter"
+	from := bus.Addr(me, "aaaaaa")
+	d := &Daemon{device: me, opt: Options{MuteGrace: -1},
+		sessions: map[string]*session{"bbbbbb": {id: "bbbbbb", name: muter}},
+		st: state{Used: map[string]string{"brave-heron": bus.Addr(me, "zzzzzz")},
+			SessionNames: map[string]string{"aaaaaa": "brave-heron", "zzzzzz": "brave-heron"},
+			Mutes:        map[string]map[string]time.Time{muter: {"brave-heron": time.Now()}}}}
+	e := bus.Event{From: from, To: me}
+	if got := d.nameOfLocked(from); got != "brave-heron" {
+		t.Errorf("the sender is shown as %q; want brave-heron", got)
+	}
+	if !d.mutedHereLocked("bbbbbb", e) {
+		t.Error("a mute of the name the sender is shown by let its message through")
+	}
+}
+
+// A T3 session that finds its thread while a push that also refills the pool is in flight takes the
+// pushed name on both keys and leaves every reserved pool name untouched (#874).
+func TestRekeyDuringPushRefillingPoolTakesNoSecondName(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	d.opt.NamePool = 3
+	d.mu.Lock()
+	s := &session{id: "xxxxxx", agent: "claude-code in T3", claudeSession: "conv-pool", key: "claude:conv-pool", clientPID: 800}
+	d.sessions[s.id] = s
+	d.mu.Unlock()
+
+	w := d.nextNames()
+	if len(w.wants) != 1 || w.reserve != 3 {
+		t.Fatalf("nextNames: wants=%+v reserve=%d; want 1 want and 3 reserve", w.wants, w.reserve)
+	}
+	d.mu.Lock()
+	d.setRouteLocked(s, proto.Route{T3Thread: "thread-pool", T3CLI: "/opt/t3/bin/t3"})
+	d.mu.Unlock()
+
+	if err := d.pushNames(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s.name == "" {
+		t.Fatal("session has no name after push landed")
+	}
+	if got := d.st.NameKeys["claude:conv-pool"]; got != s.name {
+		t.Errorf("claude key has %q, session has %q", got, s.name)
+	}
+	if got := d.st.NameKeys["t3:thread-pool"]; got != s.name {
+		t.Errorf("t3 key has %q, session has %q", got, s.name)
+	}
+	if d.st.NamedFromCLI["t3:thread-pool"] {
+		t.Error("T3's own name was marked NamedFromCLI")
+	}
+	if len(d.st.NamePool) != 3 {
+		t.Errorf("pool has %d names after landing, want 3 (a second name was taken from the pool)", len(d.st.NamePool))
+	}
+}
+
+// A T3 session that already knew its thread when nextNames picked it, and stops before the push
+// lands, still shares its landed name with its Claude session key (#874).
+func TestStoppedT3SessionSharesLandedNameWithClaudeKey(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	d.mu.Lock()
+	s := &session{id: "tttttt", agent: "claude-code in T3", claudeSession: "conv-gone",
+		key: "t3:thread-gone", route: proto.Route{T3Thread: "thread-gone"}, clientPID: 800}
+	d.sessions[s.id] = s
+	d.mu.Unlock()
+
+	w := d.nextNames()
+	d.mu.Lock()
+	delete(d.sessions, s.id)
+	d.mu.Unlock()
+
+	if err := d.pushNames(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t3Name := d.st.NameKeys["t3:thread-gone"]
+	cliName := d.st.NameKeys["claude:conv-gone"]
+	if t3Name == "" || cliName != t3Name {
+		t.Errorf("t3 key has %q, claude key has %q; want both equal and non-empty", t3Name, cliName)
+	}
+}
+
+// When givePoolLocked names a CLI session in its grace before a live T3 session on the same
+// conversation, T3 shares that name rather than taking a second one from the pool (#874).
+func TestGivePoolSharesNameBetweenDroppedCLIAndT3(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.st.NamePool = []string{"bold-lark", "keen-swift"}
+	cli := &session{id: "aaaaaa", agent: "claude-code", claudeSession: "conv-pool-share",
+		key: "claude:conv-pool-share", clientPID: 700, dropped: time.Now(), started: time.Now().Add(-time.Minute)}
+	// started orders the two: givePoolLocked goes by sortedSessionsLocked, and this case is the CLI
+	// session reaching the pool first. With no start times their order was the map's.
+	t3 := &session{id: "tttttt", agent: "claude-code in T3", claudeSession: "conv-pool-share",
+		key: "t3:thread-pool-share", route: proto.Route{T3Thread: "thread-pool-share"}, clientPID: 800,
+		started: time.Now()}
+	d.sessions[cli.id] = cli
+	d.sessions[t3.id] = t3
+
+	d.givePoolLocked()
+	if cli.name != "bold-lark" || t3.name != "bold-lark" {
+		t.Errorf("cli=%q t3=%q; want both bold-lark", cli.name, t3.name)
+	}
+	if !d.st.NamedFromCLI["t3:thread-pool-share"] {
+		t.Error("name given to CLI session was not marked NamedFromCLI on the T3 thread")
+	}
+	if len(d.st.NamePool) != 1 {
+		t.Errorf("pool has %d names left, want 1", len(d.st.NamePool))
 	}
 }

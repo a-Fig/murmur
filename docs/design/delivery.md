@@ -20,7 +20,8 @@ meets them:
 - *Queued:* the recipient's daemon has put it in the session's inbox.
 - *Handed over:* the daemon has passed it to the session's client (`t3 thread send`, the messaging
   socket, or the client's command line), and it is out of the daemon's inbox. Still queued, in the
-  client now.
+  client now. It is read once the turn starts, where the hook's prompt shows it (#611,
+  [receipts](receipts.md)).
 - *Delivered:* for an agent, the hook's notice (sender and subject) is in its context. For a person,
   it is in their inbox on the page, counted as unread.
 - *Read:* for an agent, the body is in its context. For a person, they opened the conversation (a
@@ -48,11 +49,11 @@ has the session at work (below).
 
 | Where the session runs | Handed over by | Starts a turn in an idle session |
 |---|---|---|
-| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi and Grok, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
+| T3 Code: Claude Code, Codex, OpenCode or Muse (and Pi, Grok and Antigravity, not tried) | `t3 thread send <thread> -`, the text on standard input. T3 starts the thread's turn if it is idle and queues the message as its next turn if busy, interrupting nothing | Yes (seen 2026-10-29: Claude Haiku to Claude Haiku, and Claude Haiku to Codex gpt-6.1-sol, in two real T3 threads, nobody typing) |
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message written to the socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle session hasn't been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model) |
 | Codex or OpenCode 2 outside T3 | the client's own command line | Yes (2026-11-11) |
-| Muse or Grok outside T3, or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
+| Muse, Grok or Antigravity outside T3 (Antigravity not tried), or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
 
 What the agent reads:
 
@@ -68,7 +69,19 @@ The first and last lines are Murmur's. The first says a teammate's agent is spea
 so the agent treats the message as information rather than its user's typing; the last says how to
 answer and that answering is optional. The sender's text between them is passed on as written,
 neither quoted nor wrapped: teammates' agents are trusted in Murmur's model, and a message that
-reads as a request is meant to be acted on. A body past the limit is cut, as in `inbox`.
+reads as a request is meant to be acted on. One exception (#297, Tyler, 2026-11-15): a subject or
+body line that reads as one Murmur starts a message with — a turn's first line ("Message from" or
+"Message sent in", then "via Murmur" and, past any marks, a colon, a comma or the line's end), a
+notice's (`[Murmur] …`) or an inbox envelope (`[Murmur message from …`, `[Murmur, 1m ago]`) — is quoted with `> `, as `inbox` quotes every line, so a
+message can't forge a second one from someone else inside its own turn. It is judged in lower case,
+with spacing runs as one space and leading blanks, invisible characters and Markdown marks off, as
+an agent reads past each (Fable's three reviews of #710, 2026-11-16). Not covered: look-alike letters from
+other scripts (Cyrillic М); a header that goes on with a dash or a bracket ("via Murmur — push
+now"), as any list of what may follow leaks; a pasted diff's `+` line, left so the patch still
+applies (its `-` and context lines are quoted); and the reply line, which a forger can repeat but
+which starts nothing.
+Everything else stays as written.
+A body past the limit is cut, as in `inbox`.
 
 - **Who it is from, as the receiver knows it.** The first line is written when the message is
   queued, from what the receiving daemon then knows of the sender. A sync reads the registry and
@@ -108,6 +121,40 @@ the turn took, so nothing waits for good.
   last call was dropped in review (Sol, 2026-11-08): a hook from a tool call the interrupt cut short
   would have left the session busy for good. Outside T3 nothing ends an interrupted turn until the
   next prompt and its `Stop`, so a message waits for the user to come back.
+- **A turn in T3 starts before the hook sees it** (#607). T3 marks a run queued or running when it
+  takes a prompt, and Claude Code fires `UserPromptSubmit` only when it starts the turn. Until
+  2026-11-15 the session looked idle in between, and a message was handed to T3, which queued it
+  behind the run as a turn of its own: what Tyler saw. T3's database on his laptop showed about 20
+  such handoffs from 2026-11-11 to 11-15, all to Claude threads. In all but two the run had been
+  going 2 s to 14 min and Claude's turn started 1 s to 3 min after the handoff; four of the runs
+  were a message the daemon had just handed over itself. So a session whose hook has no turn going
+  is at work when a read of T3's database that began after its turn ended finds a run going, and,
+  until a read that began after it, when the daemon has just handed a message to its thread (at
+  most a minute, so a read that keeps failing doesn't hold its messages for good). A prompt that
+  is the handed turn, seen while the send was still running, holds nothing after (#677,
+  2026-11-16): a T3 slow to answer let the turn end first, and the next message waited out the
+  minute for a turn already over. Nothing else counts: a tool call or a Stop then may be of an
+  earlier turn T3's database had ended, with this one queued behind it. The daemon reads
+  the thread again just before each handoff, as the reads every 5 s would let a prompt T3 took
+  since the last one through. The same read catches a turn a user's own `Stop` hook kept going
+  after Murmur's saw `Stop`, up to 5 s late.
+  - A read from before the turn's end, or less than a second after it, doesn't count: it may have
+    seen the run `Stop` ended, which T3 closed within 0.4 s of the turn's end in 99% of 1,212
+    Claude runs (2026-11-11 to 11-15).
+  - The run is dated from when T3 took the prompt, as its database says. What came after counts as
+    come during the turn, and is held for its end however long it waited: Claude's turn once began
+    27 minutes after T3 took the prompt (2026-11-13).
+  - A read that finds no run, after the run was seen or a message handed over, ends it as `Stop`
+    would: the run was cancelled, failed, or was the one `Stop` ended.
+  - A run no hook has shown going for 15 minutes no longer counts, and messages go to T3 as before:
+    T3 can leave a run queued for good (one from 2026-11-03 was still queued on 11-15), and no hook
+    would ever tell the session of them.
+  - A run counts only while the thread's newest run is queued or running. One T3 left queued
+    behind later runs would otherwise start the 15 minutes again at every turn's end. The same
+    holds wherever T3's database says a session is at work: a session that reconnected after a
+    restart, a turn the hook saw start, and how long a session has been idle (#655). A cancelled
+    run isn't the newest: it is a follow-up the user took out of T3's queue, mostly while the run
+    before it was still going, and that run is still a turn (#672).
 - **Subject or whole message** (#204), the page's busy setting, per device or session (Tyler,
   2026-11-08). "Subject", the default, leaves the agent's focus to the agent, at the cost that it
   may pass over a line it needed; "Whole message" puts each message in front of it mid-task at full
@@ -118,9 +165,24 @@ the turn took, so nothing waits for good.
   from before the turn is held only if it is still within them.
 - **Why not hand it to T3 as well:** T3 can't take back a queued message, so the agent could read it
   with `inbox` mid-turn and then get it again as a turn.
-- **Where the hook doesn't run** (OpenCode 1 and Muse in T3, as of 2026-11-12), nothing says the
-  session is at work, so a message goes to T3 as before; without the handoff the session would hear
-  nothing at all. Codex and Grok have the hook since #225, Pi since #205, and OpenCode 2 since #431.
+- **Where the hook doesn't run** (OpenCode 1 in T3, as of 2026-11-16, and a Muse session whose user
+  hasn't run join since #461; Codex and Grok have it since #225, Pi since #205, OpenCode 2 since
+  #431, OpenCode 1 outside T3 since #446, its plugin doing nothing in T3, and Muse since #461),
+  T3's database alone says the session is at work (#699): while it
+  shows the thread's run going, and from a handoff until a read that began after it, at most a
+  minute. The session's messages wait in the inbox meanwhile, where `inbox` finds them mid-turn, and
+  when a read finds the run over, everything it has waiting goes in as one turn, each message as its
+  own turn would read, up to 256 KB. A session's first hook ends this: from then on it is held as
+  any hooked session is, and what waited during the run is held for the turn's end. Until then each message went to `t3 thread send` at once, and T3
+  queued it as a turn of its own: on 2026-11-15 four messages to a busy Muse thread were four queued
+  turns, and the agent could find none of them with `inbox`, as they had left it. Nothing tells such
+  a session of a message mid-turn, so what came during the run goes in at its end whatever its age,
+  as T3's queue gave it before; what waited from before the run goes only while young enough. A
+  thread whose database has never been read holds nothing, and its messages go to T3 as before. No
+  15-minute cap, unlike a run no hook has shown going: no hook will come either way, and a message
+  T3 queued behind a run that never ends waits as long as one in the inbox, where `inbox` and the
+  page still have it. The one turn is for these sessions only: a hooked session that becomes idle
+  gets the rest of what waits by its hook, at its turn's end.
 - **Subagents.** A subagent's tool call carries its parent's `session_id`, with `agent_id` set
   (Claude Code 2.1.312, 2026-10-29). The hook tells it nothing, as the notice would land in the
   subagent's context and not the session's (inferred, not seen; #188), and doesn't mark the session
@@ -153,7 +215,7 @@ the turn took, so nothing waits for good.
   isn't sprung on the agent as a turn; it stays a notice. The 15 minutes count from when the daemon
   queues it, so one read after a long outage (#30, 2026-10-30) is young and wakes its thread.
 - **The wake setting** (#22, #25), for the device or for one session, decides the rest. "Never"
-  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 3, hands
+  keeps the notice. "Always" hands over at once. "Within N minutes", the default with N = 5, hands
   over only to a session that is busy or was last at work within N minutes; one idle longer gets the
   notice, and the message is handed over after all if the session gets to work again while it is
   young. The reason for the limit: a session idle that briefly still has its prompt cache, and a
@@ -162,6 +224,26 @@ the turn took, so nothing waits for good.
   work" comes from T3's database (`orchestration_v2_projection_runs`, read every 5 s); for any
   other, from its start, its last request or tool call, a turn just handed over and, stopped, when
   it stopped. A daemon that starts hands over what its inboxes kept that is still young enough.
+- **The sender is told** (#545, 2026-11-15). On 2026-11-13 three messages to a T3 session idle for
+  13 minutes started no turn, as its device's wake setting said, while `send` said "Sent" and
+  `lookup` "reachable", so the sender took them for read. Each session's presence now carries
+  what its device would do with an agent's message now (`noWake`: `off` for never, `idle` for idle
+  past the setting's minutes), and `send` and `lookup` say "won't be woken", and why, on every
+  device. A message to a group, a device or everyone names the sessions it won't wake, three at
+  most and the rest counted. A person sending to one session is told only of `off`, as their
+  message wakes it however long it has been idle; their message to many doesn't (`personAsks`), so
+  there they are told of `idle` too.
+  - `idle` changes with time, so the daemon looks every 5 s (`TitleEvery`, with the threads) and
+    writes presence when a session's answer changes, rather than leaving it to the 2-minute
+    heartbeat: about two pushes more each time a session stays idle past its limit, one as it
+    crosses it and one as it gets to work again.
+  - A session with no way in at all (Muse or Grok outside T3) is judged as any other: under the
+    default nothing is said for its first 3 idle minutes, and `idle` after, with that reason, though
+    it would not be woken at any time. `who`'s agent column shows it. Not counted: do not disturb,
+    which says so itself, and a session of this device that has stopped, which `send` already calls
+    stopped.
+  - No protocol bump. An older daemon ignores the field and writes none, so a sender is told
+    nothing of its sessions, as before.
 - **No loop guard.** Nothing in Murmur limits how often two agents answer each other (Tyler's
   decision, 2026-10-29). A message to a busy session never steers its running turn: it is queued as
   the next turn, or announced and given at the turn's end. The AGENTS.md wording asks for

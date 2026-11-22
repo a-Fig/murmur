@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/view"
 	"github.com/a-Fig/murmur/internal/web"
@@ -50,14 +51,14 @@ func TestADevicesNicknameIsSeenBesideItsID(t *testing.T) {
 		t.Errorf("its own who calls it %q", got)
 	}
 	eventually(t, "a to see b's nickname", func() bool { return a.nickOf(b.self()) == "tyler" })
-	if got := view.Who(a.do(proto.Request{Op: proto.OpWho})); !strings.Contains(got, "\ntyler  "+b.self()+" (") {
+	if got := view.Who(a.do(proto.Request{Op: proto.OpWho})); !strings.Contains(got, "\n"+b.self()+", called tyler (") {
 		t.Errorf("who doesn't show the nickname beside the ID:\n%s", got)
 	}
 	l := a.do(proto.Request{Op: proto.OpLookup, Name: bob})
 	if l.Error != "" || l.Lookup.Nick != "tyler" {
 		t.Fatalf("lookup: %+v", l)
 	}
-	if got := view.Lookup(l); !strings.Contains(got, "  device tyler  "+b.self()+" (") {
+	if got := view.Lookup(l); !strings.Contains(got, "  device "+b.self()+", called tyler (") {
 		t.Errorf("lookup doesn't show the nickname:\n%s", got)
 	}
 
@@ -81,6 +82,49 @@ func TestADevicesNicknameIsSeenBesideItsID(t *testing.T) {
 	}
 }
 
+// who shows a nickname after the device's ID, where it can't be read as a session's name, and a
+// send or a lookup to one is refused with the device's ID (#542): with the nickname first, an
+// agent sent to it, and the message went to a device called that, which there wasn't.
+func TestANicknameIsNoAddress(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	bob, _ := b.session("bbbbbb", "")
+	b.setNick("tyler")
+	eventually(t, "a to see b's nickname", func() bool { _, ok := a.whoEntry(bob); return ok && a.nickOf(b.self()) == "tyler" })
+
+	who := view.Who(a.do(proto.Request{Op: proto.OpWho}))
+	if !strings.Contains(who, "\n"+b.self()+", called tyler (") || strings.Contains(who, "\ntyler ") {
+		t.Errorf("who doesn't show the nickname after the ID:\n%s", who)
+	}
+	r := a.do(proto.Request{Op: proto.OpSend, To: "tyler", Subject: "by nickname"})
+	if want := "not sent: tyler is device " + b.self() + "'s nickname, and a nickname is no address. Send to a session's name from who, or to " + b.self() + " for every session on the device."; r.Error != want {
+		t.Errorf("a send to the nickname: %+v\nwant the error %q", r, want)
+	}
+	if r.Refused != proto.RefusedRecipient {
+		// About this recipient alone, so a list sends on to the rest (#653).
+		t.Errorf("the nickname's refusal is marked %q, want %q", r.Refused, proto.RefusedRecipient)
+	}
+	if r := b.do(proto.Request{Op: proto.OpSend, To: "tyler", Subject: "by my own nickname"}); !strings.Contains(r.Error, "tyler is device "+b.self()+"'s nickname") {
+		t.Errorf("a send to its own device's nickname: %+v", r)
+	}
+	if l := a.do(proto.Request{Op: proto.OpLookup, Name: "tyler"}); !strings.Contains(l.Error, "tyler is device "+b.self()+"'s nickname") {
+		t.Errorf("a lookup of the nickname: %+v", l)
+	}
+	// What it was given for still works: the device's ID reaches every session on it.
+	if r := a.do(proto.Request{Op: proto.OpSend, To: b.self(), Subject: "by ID"}); r.Error != "" || r.Messages[0].To != b.self() {
+		t.Errorf("a send to the device's ID: %+v", r)
+	}
+
+	// Two devices with one nickname: the refusal names both.
+	a.setNick("tyler")
+	eventually(t, "b to see a's nickname", func() bool { return b.nickOf(a.self()) == "tyler" })
+	r = b.do(proto.Request{Op: proto.OpSend, To: "tyler", Subject: "by a shared nickname"})
+	if !strings.Contains(r.Error, "tyler is the nickname of devices ") || !strings.Contains(r.Error, a.self()) || !strings.Contains(r.Error, b.self()) {
+		t.Errorf("a send to a nickname two devices have: %+v", r)
+	}
+}
+
 // A device with no nickname is called by its person's name, which nobody else's device can take.
 func TestADeviceIsCalledByItsPersonsName(t *testing.T) {
 	t.Parallel()
@@ -97,6 +141,10 @@ func TestADeviceIsCalledByItsPersonsName(t *testing.T) {
 	})
 	if r := b.do(proto.Request{Op: proto.OpNick, Nick: "ada-lovelace"}); !strings.Contains(r.Error, "the name of the person on "+a.self()) {
 		t.Errorf("taking another device's person's name: %+v", r)
+	}
+	// The name stays the person's address, and isn't refused as a nickname (#542).
+	if r := b.do(proto.Request{Op: proto.OpSend, To: "ada-lovelace", Subject: "to the person"}); r.Error != "" || r.Messages[0].To != bus.Addr(a.self(), bus.PersonSession) {
+		t.Errorf("a send to the person's name: %+v", r)
 	}
 	// A nickname of its own stands before the person's name.
 	a.setNick("ada-desktop")

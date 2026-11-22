@@ -87,6 +87,7 @@ const ui = {
   tagInput: null, // the row key of the session whose tag field is open
   tagFilter: null, // a tag: the session lists show only the sessions with it
   tagMenu: null, // { addrs, x, top or bottom, q, err }: the tag menu, open on those sessions
+  profile: null, // { name, x, top, from, draft, sent }: the profile card, open on that name (#689)
   selecting: false, // All sessions picks sessions, to tag them together
   selected: new Set(), // their addresses
   madeTags: new Set(), // tags made here, offered in the menu even once no session has them
@@ -101,9 +102,12 @@ const ui = {
   outbox: [], // what the person sent that isn't among the messages yet, or that failed
   notes: new Map(), // a conversation's key → what the daemon said of the last message sent in it
   readLocal: new Set(), // messages marked read that the state doesn't know of yet
+  readHeld: false, // a mark that failed is waiting a poll's time before it is asked for again (#652)
   reading: null, // the conversation someone was last seen looking at, null if nobody is looking
   newMark: null, // the open conversation's first unread message: { key, id }
   armed: null, // the group chat whose next send goes: its key
+  fileNote: null, // why a file wasn't attached: { key, text, turnOn }, key the conversation's; turnOn, what to do once sending is turned on
+  viewer: null, // the picture that is open: { file, name, size, from }, from the key of what opened it
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
   drawer: false, // on a phone, whether the sidebar's drawer is open
 };
@@ -158,18 +162,40 @@ async function takeKey() {
   } catch {}
 }
 
+// Whether nobody is looking at the page. A browser says so when its tab is in the background or
+// its window minimized. The desktop app's window under another window stays visible to the page
+// (#638), so the window itself says whether it is in front (appSaysFront), and while it isn't, the
+// page counts as hidden: an app left open behind the editor doesn't keep the person active.
+function pageHidden() {
+  return document.hidden || ui.appFront === false;
+}
+
+// The desktop app's window saying whether it is in front, each time that changes. Back in front, the
+// page polls at once, as a tab shown again does, so the person is active again without a wait.
+function appSaysFront(front) {
+  const back = front && ui.appFront === false;
+  ui.appFront = !!front;
+  if (back && ui.token && ui.conn !== "denied") poll();
+}
+
+// init.raw asks for the response itself, for what isn't JSON (a file). A body that isn't text is a
+// form, which the browser gives its own content type.
 async function api(path, init = {}) {
   const token = ui.token;
   const headers = { Authorization: "Bearer " + token };
-  if (init.body) headers["Content-Type"] = "application/json";
-  // A tab nobody can see still polls, but mustn't keep the daemon running for good.
-  if (document.hidden) headers["X-Page-Hidden"] = "1";
+  if (typeof init.body === "string") headers["Content-Type"] = "application/json";
+  // A tab nobody can see still polls, but mustn't keep the daemon running for good. The desktop
+  // app's window is someone waiting for messages, minimized or not: it keeps the daemon running,
+  // though hidden it doesn't count as someone looking.
+  if (pageHidden()) headers["X-Page-Hidden"] = "1";
+  if (inApp()) headers["X-Page-App"] = "1";
   const res = await fetch(path, { ...init, headers, cache: "no-store" });
   if (res.status === 401) throw new AuthError(token);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || res.status + " " + res.statusText);
+    throw Object.assign(new Error(body.error || res.status + " " + res.statusText), { status: res.status });
   }
+  if (init.raw) return res;
   return res.status === 204 ? null : res.json();
 }
 
@@ -449,7 +475,7 @@ function render() {
       gone = ui.tagMenu.from;
       ui.tagMenu = null;
     }
-    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu);
+    const modal = !!(ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer);
     kids = [
       h(
         "div",
@@ -469,6 +495,8 @@ function render() {
       ui.picker && pickerDialog(),
       ui.tagMenu && tagMenu(),
       ui.repoMenu && repoMenu(),
+      ui.profile && profileCard(),
+      ui.viewer && viewerDialog(),
     ].filter(Boolean);
   } finally {
     held.el = null;
@@ -501,9 +529,11 @@ function render() {
   if (sideNow) sideNow.scrollTop = side;
   restoreChatScroll(chat);
   fitComposers();
+  placeProfile();
   placeLive();
   announceShown();
-  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME;
+  document.title = (unreadCount() ? "(" + unreadCount() + ") " : "") + NAME; // tellApp says the same
+  tellApp();
   refreshTip();
   queueMicrotask(markOpenRead);
 }
@@ -535,8 +565,8 @@ function navRow(key, iconName, label, current, onclick, end) {
 }
 
 // The sidebar is the sessions themselves, under their devices, as T3 Code's are threads under their
-// projects: your messages, every session, every conversation and the newest messages at the top,
-// Settings at the foot. It folds to a strip of faces, and remembers that. On a phone it is a drawer.
+// projects: every session, every conversation and the newest messages at the top, you and Settings
+// at the foot. It folds to a strip of faces, and remembers that. On a phone it is a drawer.
 const MINI_KEY = NAME + ":sidebar-mini";
 let mini = false;
 try {
@@ -585,8 +615,15 @@ function miniSidebar() {
     if (view === "messages") ui.conversation = null;
     go(view);
   };
-  const top = (view, iconName, title, current) =>
-    h("button", { class: "mini-btn" + (current ? " current" : ""), title, "aria-label": title, "data-key": "mini-" + view, onclick: pick(view) }, icon(iconName));
+  // Conversations carries the dot for what is unread.
+  const n = unreadCount();
+  const top = (view, iconName, title, current, unread) =>
+    h(
+      "button",
+      { class: "mini-btn" + (current ? " current" : ""), title, "aria-label": unread ? title + ", " + unread + " unread" : title, "data-key": "mini-" + view, onclick: pick(view) },
+      icon(iconName),
+      unread > 0 && h("span", { class: "mini-unread" }),
+    );
   return h(
     "aside",
     { class: "sidebar mini", "data-app-sidebar": true, "aria-label": NAME },
@@ -595,9 +632,8 @@ function miniSidebar() {
     h(
       "div",
       { class: "mini-scroll" },
-      miniYou(),
       top("sessions", "users", "Sessions", ui.view === "sessions"),
-      top("messages", "message", "Conversations", ui.view === "messages" && !ui.filter),
+      top("messages", "message", "Conversations", ui.view === "messages" && !ui.filter, n),
       top("recent", "clock", "Recent", ui.view === "recent"),
       ui.tagFilter &&
         h(
@@ -641,16 +677,6 @@ function miniSidebar() {
   );
 }
 
-function miniYou() {
-  const n = unreadCount();
-  return h(
-    "button",
-    { class: "mini-btn" + (isMyFilter() ? " current" : ""), title: "Your messages", "aria-label": n ? "Your messages, " + n + " unread" : "Your messages", "data-key": "mini-you", onclick: openYours },
-    icon("user"),
-    n > 0 && h("span", { class: "mini-unread" }),
-  );
-}
-
 // Whether the page can reach its daemon. Nothing shows while it can.
 function connBadge(small) {
   if (ui.conn !== "down" || ui.restarting) return null;
@@ -665,6 +691,7 @@ function sidebar() {
   const devs = devices();
   const allCount = allConversations().length;
   const live = devs.reduce((n, d) => n + liveSessions(d).length, 0);
+  const unread = unreadCount();
   return h(
     "aside",
     { class: "sidebar", "data-app-sidebar": true, "aria-label": NAME, id: "sidebar" },
@@ -684,12 +711,20 @@ function sidebar() {
       h(
         "nav",
         { class: "sidebar-group g-top", "aria-label": "Views" },
-        yourRow(),
         navRow("top-sessions", "users", "Sessions", ui.view === "sessions", () => ((ui.filter = null), go("sessions")), h("span", { class: "menu-count" }, live)),
-        navRow("all", "message", "Conversations", ui.view === "messages" && !ui.filter, () => ((ui.filter = null), (ui.conversation = null), go("messages")), h("span", { class: "menu-count" }, allCount)),
+        // What is unread stands in for the count while there is any.
+        navRow(
+          "all",
+          "message",
+          "Conversations",
+          ui.view === "messages" && !ui.filter,
+          () => ((ui.filter = null), (ui.conversation = null), go("messages")),
+          unread > 0 ? h("span", { class: "unread-badge", "aria-label": unread + " unread" }, unread) : h("span", { class: "menu-count" }, allCount),
+        ),
         navRow("top-recent", "clock", "Recent", ui.view === "recent", () => ((ui.filter = null), go("recent"))),
       ),
       ui.notice && h("button", { class: "side-notice", title: "Dismiss", "data-key": "notice", "data-announce": "", onclick: () => ((ui.notice = ""), render()) }, ui.notice),
+      modeNote(),
       peopleGroup(),
       tagsGroup(),
       devs.map((d) => deviceGroup(d)),
@@ -728,6 +763,7 @@ function deviceGroup(d) {
         h("span", { class: "dev-name truncate" }, deviceLabel(d)),
         h("span", { class: "dev-host truncate" }, host(d.id)),
       ),
+      d.dnd && h("span", { class: "dev-you dev-dnd", title: "Do not disturb: messages to its agents wait" }, icon("bellOff")),
       d.self ? h("span", { class: "dev-you" }, "you") : !d.reachable && h("span", { class: "dev-you" }, "offline"),
       h("span", { class: "menu-count" }, live.length),
     ),
@@ -762,44 +798,32 @@ function deviceGroup(d) {
   );
 }
 
-// The foot says who you are here, once you are someone, and carries the update notice.
+// The foot says who you are here and carries the update notice. With no account yet, it is where
+// you get one; with a name someone else claimed first (#268), where you choose another.
 function sidebarFoot() {
   const a = me();
   const update = updateItem();
+  const chip = a
+    ? a.taken
+      ? h(
+          "button",
+          { class: "account-chip", title: "Someone else chose your name first. Choose a new one to send again.", "data-key": "account-chip", onclick: () => askForName(null) },
+          avatar(a.name, false),
+          h("span", { class: "account-name truncate" }, a.name),
+          h("span", { class: "name-taken" }, "New name"),
+        )
+      : h("button", { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") }, avatar(a.name, false), h("span", { class: "account-name truncate" }, a.name))
+    : h("button", { class: "account-chip account-none", title: "Agents see your name, and send to it.", "data-key": "account-chip", onclick: () => askForName(null) }, h("span", { class: "avatar account-blank", "aria-hidden": "true" }, icon("user")), h("span", { class: "account-name truncate" }, "Choose your name"));
   return h(
     "div",
     { class: "sidebar-foot" },
     update,
-    a
-      ? h(
-          "div",
-          { class: "foot-account" },
-          h(
-            "button",
-            { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") },
-            avatar(a.name),
-            h("span", { class: "account-name truncate" }, a.name),
-          ),
-          h("button", { class: "icon-btn", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
-        )
-      : navRow("nav-settings", "settings", "Settings", ui.view === "settings", () => go("settings")),
-  );
-}
-
-// Your messages, at the top of the sidebar, with what is unread. With no account yet, it is where
-// you get one; with a name someone else claimed first (#268), where you choose another.
-function yourRow() {
-  const n = unreadCount();
-  const taken = !!me()?.taken;
-  return navRow(
-    "top-you",
-    "user",
-    "Your messages",
-    isMyFilter(),
-    openYours,
-    taken
-      ? h("span", { class: "name-taken", title: "Someone else chose your name first. Choose a new one to send again." }, "New name")
-      : n > 0 && h("span", { class: "unread-badge", "aria-label": n + " unread" }, n),
+    h(
+      "div",
+      { class: "foot-account" },
+      chip,
+      h("button", { class: "icon-btn", title: "Settings", "aria-label": "Settings", "aria-current": ui.view === "settings" ? "page" : null, "data-key": "nav-settings", onclick: () => go("settings") }, icon("settings")),
+    ),
   );
 }
 
@@ -830,7 +854,7 @@ function peopleGroup() {
             h(
               "span",
               { class: "side-session-text" },
-              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, p.name), humanTag()),
+              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": p.name }, p.name), humanTag()),
               h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
             ),
           ),
@@ -933,7 +957,7 @@ function versionSection() {
     description = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
   } else if (v.ready) {
     description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
-    control = h("button", { class: "btn btn-outline btn-xs", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+    control = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
   } else if (v.latest && v.auto) {
     description = v.latest + " is out, and installing on its own.";
   } else if (v.latest) {
@@ -954,7 +978,7 @@ function versionSection() {
       ),
     );
   }
-  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Version")), h("div", { class: "group" }, row));
+  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row));
 }
 
 // Four states, as a colored dot on the face:
@@ -1110,7 +1134,7 @@ function quietFold(d) {
               },
               presence(s.name, d),
               h("span", { class: "settled-name truncate" }, s.name),
-              tagChips(s, 2, true),
+              tagChips(s, 1),
               h("span", { class: "settled-when" }, isHidden(s) ? "hidden" : t ? ago(t).replace(" ago", "") : ""),
             ),
             s.addr && tagButton(s),
@@ -1123,7 +1147,7 @@ function quietFold(d) {
 
 // A face with its presence dot inside it, so it still fits the two-face pair of a DM.
 function dotted(name) {
-  const a = avatar(name);
+  const a = avatar(name, false);
   const p = findPerson(name);
   const f = findSession(name);
   const st = p ? (personOnline(p) ? "on" : "off") : f ? sessionState(f.device, f.session) : "off";
@@ -1315,7 +1339,7 @@ function sideSessionBody(d, s) {
     h(
       "span",
       { class: "side-session-text" },
-      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate" }, s.name), tagChips(s, 2, true)),
+      h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": s.name }, s.name), tagChips(s, 1)),
       h("span", { class: "side-session-doing truncate" }, s.doing || s.agent || ""),
     ),
     pr && prBadge(pr, false),
@@ -1573,13 +1597,13 @@ function sessionCard(d, s) {
         h(
           "span",
           { class: "s-line name-line" },
-          h("span", { class: "s-name truncate" }, s.name),
-          h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+          h("span", { class: "s-name truncate", "data-profile": s.name }, s.name),
+          tagChips(s, 2),
           // The hook never reported after a tool call, so the session isn't told of messages while it
           // works (#225). It sits in the name line: the meta columns are a fixed grid, and an extra
           // cell there shifted chats, state and Message one column over (#546).
           s.hookOff && h("span", { class: "badge badge-warning", title: "Isn't told of messages while it works" }, "hook not running"),
-          tagChips(s, 3, true),
+          h("span", { class: "s-agent truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
         ),
         h("span", { class: "s-doing truncate" + (s.doing ? "" : " none") }, s.doing || "No status set"),
       ),
@@ -1587,7 +1611,7 @@ function sessionCard(d, s) {
     h(
       "span",
       { class: "s-meta" },
-      h("span", { class: "s-col-branch" }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
+      h("span", { class: "s-col-branch" + (s.branch === "main" || s.branch === "master" ? " default" : "") }, s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch))),
       h("span", { class: "s-col-pr" }, pr && prBadge(pr, true, "pr-row-" + s.name)),
       h("span", { class: "s-chats" }, plural(convs, "chat")),
       h("span", { class: "s-col-state" }, h("span", { class: "g-state g-state-" + sessionState(d, s) }, stateWord(d, s))),
@@ -1612,6 +1636,15 @@ function emptyState(iconName, title, line) {
 // together show the last, and its commits to one branch are counted.
 const RECENT_MAX = 300;
 const RECENT_RUN = 30 * 60 * 1000; // how far apart two of a kind may be and still be one line
+// How long before GitHub's time for an issue's close a session's close of it may be and still be the
+// one GitHub lists: the hook tells of it after gh returns, so later, but clocks differ a little.
+const ISSUE_NEAR = 10 * 60 * 1000;
+
+// ghRepo is the owner/name, lowercased, of a pull request's or an issue's address on GitHub, or "".
+function ghRepo(url) {
+  const m = /^https:\/\/(?:www\.)?github\.com\/([\w.-]+\/[\w.-]+)\/(?:issues|pull)\/\d+(?:[/?#]|$)/i.exec(url || "");
+  return m ? m[1].toLowerCase() : "";
+}
 
 // The session a pull request is from: the one on its branch, or that committed to it.
 function sessionOnBranch(branch) {
@@ -1638,11 +1671,32 @@ function recentEntries() {
     const to = m.toKind === "session" ? [toName(m)] : m.toKind === "group" ? members.get(m.to) || [] : [];
     out.push({ t: m.sortAt, group: "messages", m, who: [fromName(m), ...to] });
   }
+  // An issue a session of this device filed or closed, as its hook saw (#510), names the session on
+  // GitHub's event for it: the same number in the repository of the event's address, which needn't
+  // be the remote's (gh lists a clone's upstream first), and for a close, one about when GitHub's
+  // was, since an issue reopened and closed again was closed last by someone else. One GitHub hasn't
+  // listed (yet) shows on its own, if it is in the repository GitHub's listing is of: one, as one
+  // run of gh lists one, so an event without an address is in it too.
+  const listedRepo = ui.github.map((g) => ghRepo(g.url)).find(Boolean) || "";
+  const repoOf = (g) => ghRepo(g.url) || listedRepo;
+  const listed = new Map();
+  for (const g of ui.github) if (g.kind === "issue" && repoOf(g)) listed.set(repoOf(g) + " " + g.what + " " + g.number, g);
+  const issues = new Map();
   // A session's status changes, and its commits to a branch, that follow each other closely are one entry.
   const runs = new Map();
   const acts = [...ui.acts].sort((a, b) => a.t - b.t);
   for (const a of acts) {
     const who = nameOf(a.addr, a.who);
+    if (a.kind === "issue") {
+      const repo = (a.repo || "").toLowerCase();
+      const key = repo + " " + a.what + " " + a.issue;
+      const g = listed.get(key);
+      if (g && (a.what !== "closed" || a.t >= when(g.at) - ISSUE_NEAR)) {
+        issues.set(key, who);
+        continue;
+      }
+      if (!repo || repo !== listedRepo) continue;
+    }
     const key = a.kind === "status" ? "status " + who : a.kind === "commits" ? "commits " + who + " " + (a.branch || "") : "";
     const run = key && runs.get(key);
     if (run && a.t - run.t <= RECENT_RUN) {
@@ -1658,7 +1712,17 @@ function recentEntries() {
   }
   for (const g of ui.github) {
     const t = when(g.at);
-    if (t) out.push({ t: Math.min(t, Date.now()), group: "activity", g, who: [sessionOnBranch(g.branch)] });
+    if (!t) continue;
+    const e = { t: Math.min(t, Date.now()), group: "activity", g, who: [sessionOnBranch(g.branch)] };
+    if (g.kind === "issue") {
+      // Who closed it, where a session here did; else who filed it. Both count for the filter.
+      const repo = repoOf(g);
+      const filer = (repo && issues.get(repo + " opened " + g.number)) || "";
+      const closer = (repo && g.what === "closed" && issues.get(repo + " closed " + g.number)) || "";
+      e.who = closer ? [closer, filer] : [filer];
+      e.closer = !!closer;
+    }
+    out.push(e);
   }
   return out;
 }
@@ -1758,7 +1822,7 @@ function activityLine(iconName, tone, t, key, ...what) {
 }
 
 function actWho(name) {
-  return h("span", { class: "g-act-who" }, name);
+  return name ? nameButton(name, "g-act-who") : h("span", { class: "g-act-who" }, name);
 }
 
 function actBranch(branch) {
@@ -1791,6 +1855,8 @@ function activityItem(e) {
         a.branch ? [e.commits ? " on " : " to ", actBranch(a.branch)] : null,
         a.subject && h("span", { class: "g-act-more" }, e.commits > 1 ? ", the last: " : ": ", a.subject),
       );
+    case "issue":
+      return a.what === "closed" ? activityLine("issueClosed", "done", e.t, a.id, who, " closed issue #" + a.issue) : activityLine("issue", "open", e.t, a.id, who, " filed issue #" + a.issue);
   }
   return activityLine("activity", "", e.t, a.id, who, " ", a.kind);
 }
@@ -1803,6 +1869,7 @@ function githubItem(e) {
   const who = e.who[0] ? actWho(e.who[0]) : g.author ? h("span", { class: "g-act-login" }, g.author) : "Someone";
   const title = h("span", { class: "g-act-more" }, ": ", g.title);
   if (g.what === "opened") return activityLine(pr ? "pr" : "issue", "open", e.t, g.id, who, pr ? " opened pull request " : " filed issue ", num, title);
+  if (e.closer) return activityLine("issueClosed", "done", e.t, g.id, who, " closed issue ", num, title);
   // GitHub's list says who opened it, not who merged or closed it.
   // GitHub's colors: a merged pull request and a closed issue are done, a closed pull request is not.
   const merged = g.what === "merged";
@@ -1813,7 +1880,7 @@ function githubItem(e) {
 function recentItem(m, at) {
   const from = fromName(m);
   const c = conversationOf(m);
-  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), toName(m)];
+  const to = m.toKind === "all" ? [icon("broadcast"), "Everyone"] : m.toKind === "group" ? [icon("tag"), m.to] : m.toKind === "device" ? [icon("laptop"), host(m.to)] : [avatar(toName(m)), h("span", { "data-profile": toName(m) }, toName(m))];
   const open = () => {
     ui.filter = null;
     ui.conversation = c.key;
@@ -1822,7 +1889,7 @@ function recentItem(m, at) {
   };
   return h(
     "article",
-    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" ? open() : null) },
+    { class: "chat-msg chat-msg-face chat-msg-first g-item", "data-id": m.id, tabindex: 0, role: "button", "aria-label": "Open the conversation", onclick: open, onkeydown: (e) => (e.key === "Enter" && e.target === e.currentTarget ? open() : null) },
     avatar(from),
     h(
       "div",
@@ -1830,30 +1897,32 @@ function recentItem(m, at) {
       h(
         "div",
         { class: "chat-msg-head" },
-        h("span", { class: "chat-msg-from truncate" }, from),
+        h("span", { class: "chat-msg-from truncate", "data-profile": from }, from),
         m.fromPerson && humanTag(),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
       ),
-      messageText(m),
+      !filesOnly(m) && messageText(m),
+      m.files?.length > 0 && h("div", { class: "msg-files-line" }, icon("paperclip"), h("span", { class: "truncate" }, m.files.map((f) => f.name).join(", "))),
     ),
   );
 }
 
 // A Recent item is a button onto its conversation. Its name is what it shows, in the order it shows
-// it (WCAG 2.5.3), Space works as well as Enter, and a link in its text is left to the conversation
-// it opens, since a button can't hold another control.
+// it (WCAG 2.5.3), Space works as well as Enter, and a link or a name in its text is left to the
+// conversation it opens from the keyboard, since a button can't hold another control. A click on a
+// name still opens its card.
 function openable(el, m, at) {
   const to = m.toKind === "all" ? "Everyone" : m.toKind === "group" ? m.to : m.toKind === "device" ? host(m.to) : toName(m);
   el.setAttribute("aria-label", fromName(m) + " to " + to + ", " + clockTime(at) + ": " + (m.subject || ""));
   const space = (e) => {
-    if (e.key !== " ") return;
+    if (e.key !== " " || e.target !== e.currentTarget) return;
     e.preventDefault();
     e.currentTarget.click();
   };
   el.addEventListener("keydown", space);
   el.listeners.push(["keydown", space]);
-  for (const a of el.querySelectorAll("a")) a.tabIndex = -1;
+  for (const a of el.querySelectorAll("a, button")) a.tabIndex = -1;
   return el;
 }
 
@@ -1914,7 +1983,7 @@ function membersButton(c) {
           render();
         },
       },
-      h("span", { class: "g-pile" }, pile.map((r) => avatar(r.name))),
+      h("span", { class: "g-pile" }, pile.map((r) => avatar(r.name, false))),
       h("span", null, plural(rows.length, "member")),
       icon("chevronDown", "g-members-chev"),
     ),
@@ -1954,7 +2023,7 @@ function membersPanel(c, rows) {
             },
           },
           r.d ? presence(r.name, r.d) : avatar(r.name),
-          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate" }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
+          h("span", { class: "g-mp-text" }, h("span", { class: "name-line" }, h("span", { class: "g-mp-name truncate", "data-profile": r.name }, r.name), r.person && humanTag()), h("span", { class: "g-mp-doing truncate" }, r.person ? "Person" : r.s ? r.s.doing || r.s.agent || "" : "Not running")),
           r.posted > 0 && h("span", { class: "g-mp-posted" }, r.posted === 1 ? "1 post" : r.posted + " posts"),
         ),
       ),
@@ -1986,7 +2055,6 @@ function showTopbar() {
 
 function viewTitle() {
   if (ui.view !== "messages") return TITLES[ui.view];
-  if (isMyFilter()) return "Your messages";
   return ui.filter ? nameOf(ui.filter, ui.filter) : TITLES.messages;
 }
 
@@ -2080,6 +2148,21 @@ function tagsLine(s) {
           "+ Tag",
         ),
     ui.rowErrors[key] && h("span", { class: "row-error", "data-announce": "" }, ui.rowErrors[key]),
+  );
+}
+
+// Under a session's name in its view: its device, its state, when it started, and the branches it
+// has committed to besides the one it is on (#631).
+function profileLine(d, s) {
+  const started = when(s.started);
+  const others = (s.committed || []).filter((b) => b && b !== s.branch);
+  return h(
+    "p",
+    { class: "g-head-meta" },
+    h("span", { class: "truncate", title: "Device " + d.id }, d.self ? "This device" : d.nick || d.owner || host(d.id)),
+    h("span", null, stateWord(d, s)),
+    started && agoEl("span", null, started, "Started "),
+    others.length > 0 && h("span", { class: "truncate", title: "Also committed to " + others.join(", ") }, "Also on " + others.join(", ")),
   );
 }
 
@@ -2195,21 +2278,22 @@ function tagCounts() {
   return counts;
 }
 
-// A session's tags as small chips, the one the lists are filtered by first; past max, a count of
-// the rest. In a sidebar row they share a line with the branch, and those that don't fit drop off
-// whole, so the line's tooltip names them all.
-function tagChips(s, max = Infinity, line = false) {
+// A session's tags as small chips, the one the lists are filtered by first; past max, "+N", whose
+// tip names the rest (#631). Each chip is whole: in the sessions list the row's width decides
+// whether two show, one or none (style.css), so each count is drawn and the width picks one.
+function tagChips(s, max = Infinity) {
   const { names, waiting } = tagsOf(s);
   if (!names.length) return null;
   if (ui.tagFilter && names.includes(ui.tagFilter)) names.sort((a, b) => (b === ui.tagFilter) - (a === ui.tagFilter));
-  const shown = names.slice(0, max);
+  const more = (from, cls) => names.length > from && h("span", { class: "stag-more " + cls, title: names.slice(from).join(", ") }, "+" + (names.length - from));
   return h(
     "span",
-    { class: "stags", title: line ? names.join(", ") : null },
-    shown.map((n) =>
+    { class: "stags" },
+    names.slice(0, max).map((n) =>
       h("span", { class: "stag" + (n === ui.tagFilter ? " on" : "") + (waiting.has(n) ? " waiting" : ""), title: waiting.has(n) ? n + ": waiting for its device" : n }, n),
     ),
-    names.length > shown.length && h("span", { class: "stag-more", title: names.slice(max).join(", ") }, "+" + (names.length - shown.length)),
+    max >= 2 && more(1, "more-after-1"),
+    more(max, "more-after-max"),
   );
 }
 
@@ -2429,6 +2513,235 @@ function tagMenu() {
       },
     },
     menu,
+  );
+}
+
+// The profile card (#689, Tyler's request): a click on a face or a sender's name opens a card next
+// to it, as a chat app shows when someone's name is clicked. It says who the session or person is,
+// how it is now, what you have in common, and has a box that sends a direct message without
+// leaving the card. Everything on it comes from presence and the messages the page already has.
+// The device's colour runs across its top, as a banner.
+const CARD_WIDTH = 320;
+
+// A face inside a control (a sidebar row, a session's row) opens the card rather than the control:
+// the listener runs in the capture phase, ahead of the control's own.
+document.addEventListener(
+  "click",
+  (e) => {
+    const t = e.target.closest?.("[data-profile]");
+    // Not where a face is the whole control (the collapsed sidebar's), nor under another dialog (the
+    // pickers, whose rows pick), nor while sessions are being picked to tag.
+    if (!t || !root.contains(t) || t.closest(".mini-face") || ui.setup || ui.picker || ui.tagMenu || ui.repoMenu) return;
+    if (ui.selecting && ui.view === "sessions") return;
+    e.preventDefault();
+    e.stopPropagation();
+    openProfile(t.dataset.profile, t);
+  },
+  true,
+);
+
+// The card opens beside what was clicked: to its right where there is room, else to its left. Its
+// height is known only once it is drawn, so placeProfile keeps it on the screen after each render.
+// A face clicked inside the card opens that name's card in the same place.
+function openProfile(name, anchor) {
+  const was = ui.profile;
+  const inCard = was && anchor.closest(".profile-card");
+  let x, top;
+  if (inCard) {
+    ({ x, top } = was);
+  } else {
+    // From a list (the sidebar, the conversations), beside the list rather than over its rows.
+    const r = anchor.getBoundingClientRect();
+    const right = anchor.closest(".sidebar, .chat-list")?.getBoundingClientRect().right ?? r.right;
+    x = right + 8 + CARD_WIDTH <= window.innerWidth - 8 ? right + 8 : Math.max(8, r.left - 8 - CARD_WIDTH);
+    top = r.top - 8;
+  }
+  // Closing gives the focus back to what opened it: the element, or its counterpart by key once a
+  // render has replaced it.
+  const opener = anchor.closest("button, a, [tabindex]") || anchor;
+  const from = inCard ? was.from : opener.closest("[data-key]")?.dataset.key || null;
+  const fromEl = inCard ? was.fromEl : opener;
+  ui.membersOpen = false; // the card takes the click the members panel would have closed on
+  ui.profile = { name, x, top, from, fromEl, draft: "", sent: null, shown: false };
+  render();
+  focusProfile();
+}
+
+function focusProfile() {
+  const card = root.querySelector(".profile-card");
+  (card?.querySelector('[data-key="pc-msg"]') || card)?.focus({ preventScroll: true }); // your own has no box
+}
+
+function closeProfile() {
+  const { from, fromEl } = ui.profile || {};
+  ui.profile = null;
+  render();
+  const back = fromEl?.isConnected ? fromEl : from ? root.querySelector(`[data-key="${CSS.escape(from)}"]`) : null;
+  back?.focus({ preventScroll: true });
+}
+
+function placeProfile() {
+  const card = ui.profile && root.querySelector(".profile-card");
+  if (!card) return;
+  if (ui.profile.shown) card.classList.add("pc-still"); // it pops in once, not on every render
+  ui.profile.shown = true;
+  card.style.left = Math.max(8, Math.min(ui.profile.x, window.innerWidth - card.offsetWidth - 8)) + "px";
+  card.style.top = Math.max(8, Math.min(ui.profile.top, window.innerHeight - card.offsetHeight - 8)) + "px";
+}
+
+// The groups you are in with a session: those it has the tag of that you have posted in. A person
+// is in a group only by posting in it, as the page's members list has it.
+function sharedGroups(s) {
+  if (!me() || !s) return [];
+  const mine = new Set();
+  for (const m of ui.messages) if (m.toKind === "group" && fromName(m) === myName()) mine.add(m.to);
+  return tagsOf(s).names.filter((n) => isGroupTag(n) && mine.has(n));
+}
+
+// The sessions a person has had direct messages with, newest first.
+function talkedWith(name) {
+  const out = [];
+  for (let i = ui.messages.length - 1; i >= 0 && out.length < 8; i--) {
+    const m = ui.messages[i];
+    if (m.toKind !== "session") continue;
+    const from = fromName(m);
+    const to = toName(m);
+    const other = from === name ? to : to === name ? from : null;
+    if (other && !isPerson(other) && !out.includes(other)) out.push(other);
+  }
+  return out;
+}
+
+// The card's box sends as the composer does, into the direct conversation with the name, which
+// lists it. One with no account yet chooses a name first, and the card comes back to send it.
+function sendFromCard() {
+  const p = ui.profile;
+  const text = p.draft.trim();
+  if (!text) return;
+  if (!me()) {
+    ui.profile = null;
+    return askForName(() => {
+      ui.profile = { ...p, draft: text, sent: null };
+      sendFromCard();
+      focusProfile();
+    });
+  }
+  const pair = [...new Set([myName(), p.name])].sort();
+  const key = dmKey(myName(), p.name);
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key, conversation: { key, kind: "dm", title: pair.join(" & "), pair }, to: p.name, text, status: "sending" };
+  ui.outbox.push(item);
+  p.draft = "";
+  p.sent = item;
+  // The field keeps its node while it has the focus, so it is emptied here, as the composer's is.
+  const field = root.querySelector('[data-key="pc-msg"]');
+  if (field) field.value = "";
+  deliver(item);
+}
+
+function profileCard() {
+  const p = ui.profile;
+  const name = p.name;
+  const f = findSession(name);
+  const person = findPerson(name);
+  const s = f?.session || null;
+  const d = f?.device || person?.device || deviceOfName(name);
+  const own = name === myName();
+  const human = !!person || own || isPerson(name);
+  const st = human ? (own || (person && personOnline(person)) ? "on" : "off") : s ? sessionState(d, s) : "settled";
+  const last = !s && !human ? settledSessions().find((r) => r.name === name)?.last : null;
+  const word = s ? stateWord(d, s) : human ? PERSON_TIPS[st] : last ? "Stopped " + ago(last) : "Not running";
+  // A person's device is named for them, so theirs goes by its machine.
+  const where = d ? (d.self ? "This device" : human ? host(d.id) : d.nick || d.owner || host(d.id)) : null;
+  const addr = s?.addr || null;
+  const tags = s ? tagsOf(s).names.filter((n) => !n.startsWith("model:")) : [];
+  const badges = [s?.agent, s && modelOf(s)].filter(Boolean);
+  const common = [...sharedGroups(s).map((g) => h("span", { class: "stag" }, g)), s && d?.self && h("span", { class: "pc-common-dev" }, icon("laptop"), "On your device")].filter(Boolean);
+  const talked = human ? talkedWith(name) : [];
+  const sent = p.sent;
+  const section = (label, ...kids) => h("div", { class: "pc-section" }, h("p", { class: "pc-label" }, label), ...kids);
+  const face = avatar(name, false);
+  face.classList.add("pc-avatar");
+  const card = h(
+    "div",
+    { class: "profile-card " + deviceColor(d), role: "dialog", "aria-modal": "true", "aria-label": name, tabindex: -1, "data-key": "pc-card" },
+    h("div", { class: "pc-banner", "aria-hidden": "true" }),
+    h(
+      "div",
+      { class: "pc-head" },
+      h("span", { class: "pc-face" }, face, h("span", { class: "pres pres-" + st, title: s ? STATE_TIPS[st] : PERSON_TIPS[st] || "" })),
+      h(
+        "div",
+        { class: "pc-who" },
+        h("h2", { class: "pc-name name-line" }, h("span", { class: "truncate" }, name), human && humanTag()),
+        addr && h("p", { class: "pc-addr truncate", title: addr }, addr),
+        h("p", { class: "pc-state truncate" }, word, where && " · " + where),
+      ),
+    ),
+    (badges.length > 0 || tags.length > 0) && h("div", { class: "pc-badges" }, badges.map((b) => h("span", { class: "pc-badge" }, b)), tags.map((n) => h("span", { class: "stag", title: n }, n))),
+    s &&
+      (s.doing || s.branch) &&
+      section(
+        "Status",
+        s.doing && h("p", { class: "pc-doing" }, s.doing),
+        h(
+          "div",
+          { class: "pc-meta" },
+          s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
+          prFor(s) && prBadge(prFor(s), true, "pc-pr"),
+        ),
+      ),
+    common.length > 0 && section("In common", h("div", { class: "pc-common" }, common)),
+    talked.length > 0 && section("Talked with", h("div", { class: "pc-talked" }, talked.map((n) => h("button", { type: "button", class: "pc-talked-one", title: n, "data-profile": n, "aria-haspopup": "dialog", "data-key": "pc-talked-" + n }, avatar(n, false), h("span", { class: "truncate" }, n))))),
+    !own &&
+      h(
+        "div",
+        { class: "pc-send" },
+        sent &&
+          h(
+            "p",
+            { class: "pc-sent" + (sent.status === "failed" ? " failed" : "") },
+            h("span", { class: "truncate", "data-announce": sent.status === "failed" ? "" : null }, sent.status === "failed" ? "Not sent: " + sent.error : sent.status === "sent" ? "Sent" : "Sending…"),
+            h("button", { class: "pc-link", "data-key": "pc-open-dm", onclick: () => ((ui.profile = null), startChat(name)) }, "Open conversation"),
+          ),
+        h(
+          "label",
+          { class: "pc-field" },
+          h("input", {
+            type: "text",
+            value: p.draft,
+            placeholder: "Message " + name,
+            "aria-label": "Message " + name,
+            autocomplete: "off",
+            "data-key": "pc-msg",
+            oninput: (e) => {
+              p.draft = e.target.value;
+              e.target.closest(".pc-field").querySelector(".pc-go").disabled = !p.draft.trim();
+            },
+            onkeydown: (e) => {
+              if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+              e.preventDefault();
+              sendFromCard();
+            },
+          }),
+          h("button", { class: "pc-go", "aria-label": "Send", disabled: !p.draft.trim(), "data-key": "pc-go", onclick: sendFromCard }, icon("arrowUp")),
+        ),
+      ),
+  );
+  return h(
+    "div",
+    {
+      class: "menu-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeProfile();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeProfile();
+        }
+      },
+    },
+    card,
   );
 }
 
@@ -2679,7 +2992,6 @@ function forgetJoins() {
 function visibleMessages() {
   const f = ui.filter;
   if (!f) return ui.messages;
-  if (isMyFilter()) return myMessages();
   const name = nameOf(f, f);
   const slash = f.indexOf("/");
   const found = findSession(name);
@@ -2696,8 +3008,9 @@ function visibleMessages() {
   );
 }
 
-// Your messages: direct ones, and the group chats you have posted in, whole, with the one you just
-// opened, so a group that already has a history shows it before you write in it.
+// The person's messages: direct ones, and the group chats they have posted in, whole, with the one you just
+// opened, so a group that already has a history shows it before you write in it. The conversations
+// they make are the ones the "only yours" toggle leaves.
 function myMessages() {
   const mine = myName();
   const groups = new Set(ui.draftGroup ? [groupConversation(ui.draftGroup).key] : []);
@@ -2742,10 +3055,10 @@ function conversations() {
   }
   // A conversation just begun has no messages yet, and is at the top while it is open.
   const fresh = draftConversation();
-  if (fresh && (!ui.filter || isMyFilter()) && !byKey.has(fresh.key)) byKey.set(fresh.key, fresh);
+  if (fresh && !ui.filter && !byKey.has(fresh.key)) byKey.set(fresh.key, fresh);
   // So is one whose only message hasn't gone: nothing else lists it, and a message that failed has
   // to stay reachable, with its text and its Try again, after the person looks at something else.
-  if (!ui.filter || isMyFilter()) {
+  if (!ui.filter) {
     for (const item of ui.outbox) if (!byKey.has(item.key)) byKey.set(item.key, { ...item.conversation, messages: [] });
   }
   // A group with members is listed before anyone writes to it, so a person can be the first; it
@@ -2778,9 +3091,41 @@ function draftConversation() {
 // A face is filled with the color of the device it is on (#560), so a stack of faces says whose
 // machines they are. A session's shows a ghost; a person's, their initial (#579, Tyler). The
 // classes are in style.css: the page's content policy doesn't allow an inline style.
-function avatar(name) {
+// A face opens its name's profile card when clicked (#689), unless card is false: where the face
+// is part of a control that does something else (the account chip, a group's pile of faces).
+function avatar(name, card = true) {
   const color = "avatar dev-fill " + deviceColor(deviceOfName(name));
-  return isPerson(name) ? personFace(name, color) : ghostFace(name, color);
+  const face = isPerson(name) ? personFace(name, color) : ghostFace(name, color);
+  if (card && name) face.dataset.profile = name;
+  return face;
+}
+
+// A name the page shows opens the same card as its face (#778, Tyler): where the name stands on its
+// own, as this button; inside a control, as a span with data-profile, which the capture listener
+// above takes ahead of the control. Names in controls that pick (the pickers, sessions being picked
+// to tag) and in a conversation's row keep the control's action.
+function nameButton(name, cls, text = name) {
+  return h("button", { type: "button", class: "name-ref " + cls, "data-profile": name, "aria-haspopup": "dialog" }, text);
+}
+
+// A name the page knows, written in a message, as a session's two words or in backticks.
+function knownName(t) {
+  return !!(findSession(t) || findPerson(t) || t === myName());
+}
+
+// Plain text from a message, with each name the page knows (quiet-otter) made a nameButton.
+function withNames(t, out) {
+  // Not part of a path, an address or a longer word: what comes before is checked by hand, since a
+  // lookbehind is a parse error in Safari before 16.4, and that would stop the whole page.
+  const re = /[a-z0-9]+(?:-[a-z0-9]+)+(?![\w/\\-]|[.:]\w)/g;
+  let last = 0;
+  for (let m; (m = re.exec(t)); ) {
+    if ((m.index > 0 && /[\w./:\\-]/.test(t[m.index - 1])) || !knownName(m[0])) continue;
+    if (m.index > last) out.push(t.slice(last, m.index));
+    out.push(nameButton(m[0], "rich-name"));
+    last = re.lastIndex;
+  }
+  if (last < t.length) out.push(t.slice(last));
 }
 
 function personFace(name, cls) {
@@ -2866,7 +3211,7 @@ function groupIcon(c) {
   return h(
     "span",
     { class: "g-grid g-grid-" + Math.min(rows.length, 4), "aria-hidden": "true" },
-    shown.map((r) => avatar(r.name)),
+    shown.map((r) => avatar(r.name, false)),
     rows.length > 4 && h("span", { class: "avatar g-more" }, "+" + (rows.length - 3)),
   );
 }
@@ -2879,15 +3224,38 @@ function conversationIcon(c) {
 
 let chatMoved = false; // the open conversation has just changed key, and is still the one being read
 
+// The toggle in the list leaves only the conversations you are in: your DMs, the group chats you
+// have written in, and one you have just begun or have a message waiting in. It needs an account,
+// and narrows all conversations, not a picked session's, which are about that session.
+// The open conversation stays, as one opened from Recent has to; turning the toggle on closes one
+// that isn't yours (mineToggle), so the pane never shows what the list has left out.
+function yourKeys() {
+  return new Set([...myMessages().map((m) => conversationOf(m).key), ...ui.outbox.map((item) => item.key)]);
+}
+
+function onlyYours(list) {
+  if (!me() || !onlyMine || ui.filter) return list;
+  const keys = yourKeys();
+  return list.filter((c) => keys.has(c.key) || c.key === ui.conversation || (!c.messages.length && !c.quiet));
+}
+
+function mineToggle() {
+  if (!onlyMine && ui.conversation && !yourKeys().has(ui.conversation) && !draftConversation()) ui.conversation = null;
+  setOnlyMine(!onlyMine);
+}
+
 function conversationsPage() {
-  const list = conversations();
+  const every = conversations();
+  let list = onlyYours(every);
   // On a wide page a conversation is always open, and stays open while others get newer. On a
   // narrow one the list and a conversation take turns, so the list is where it starts.
   // A name landing changes a conversation's key, so one that has gone is looked for by a message
   // it held before settling for the newest.
+  // It is looked for among every conversation, as one left open outside the toggle stays open.
   if (ui.conversation && !list.some((c) => c.key === ui.conversation)) {
-    ui.conversation = list.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
+    ui.conversation = every.find((c) => c.messages.some((m) => m.id === ui.conversationAnchor))?.key || null;
     chatMoved = ui.conversation != null;
+    list = onlyYours(every);
   }
   if (!ui.conversation && list.length && !NARROW.matches) ui.conversation = list[0].key;
   const open = list.find((c) => c.key === ui.conversation);
@@ -2896,14 +3264,16 @@ function conversationsPage() {
   return h(
     "div",
     { class: "page chat-page" },
-    // A picked session keeps its header, and so its tags, before it has any messages.
-    list.length === 0 && !ui.filter
+    // A picked session keeps its header, and so its tags, before it has any messages. With an
+    // account, the list stays, with who you could talk to beside it.
+    every.length === 0 && !ui.filter && !me()
       ? emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
           conversationList(list),
-          open ? conversationPane(open) : isMyFilter() && !NARROW.matches && startPane(),
+          // None yet, or none of yours: who you could talk to.
+          open ? conversationPane(open) : !ui.filter && !NARROW.matches && startPane(),
         ),
   );
 }
@@ -2923,17 +3293,10 @@ function conversationList(list) {
   const q = (ui.cq || "").toLowerCase();
   const hit = (c) => !q || (otherIn(c) || c.title).toLowerCase().includes(q) || c.messages.some((m) => (m.subject + " " + (m.body || "")).toLowerCase().includes(q));
   // One list, newest first, so a busy group chat is never below every quiet DM. The switch
-  // narrows it to direct messages or group chats.
-  // The toggle under it leaves only the conversations you are in: your DMs, the group chats you
-  // have written in, and one you have just begun. It needs an account, and Your messages is that
-  // list already, so it isn't there.
+  // narrows it to direct messages or group chats, and the toggle under it to yours (onlyYours).
   const kind = ui.convKind || "all";
   const wanted = (c) => kind === "all" || (kind === "dm") === (c.kind === "dm");
-  const canMine = !!me() && !isMyFilter();
-  if (canMine && onlyMine) {
-    const keys = new Set(myMessages().map((m) => conversationOf(m).key));
-    list = list.filter((c) => keys.has(c.key) || (!c.messages.length && !c.quiet));
-  }
+  const canMine = !!me() && !ui.filter;
   const old = (c) => c.kind === "dm" && c.pair.some((n) => isSettled(n));
   const rows = list.filter((c) => wanted(c) && hit(c) && (q || name || !old(c)));
   const older = q || name || kind === "group" ? [] : list.filter((c) => old(c));
@@ -2944,14 +3307,7 @@ function conversationList(list) {
     h(
       "div",
       { class: "g-head" },
-      isMyFilter()
-        ? h(
-            "div",
-            { class: "g-head-row" },
-            h("div", { class: "g-head-text" }, h("h2", null, "Your messages"), list.some((c) => c.messages.length) && h("p", { class: "g-head-doing" }, plural(list.filter((c) => c.messages.length).length, "conversation"))),
-            h("div", { class: "g-head-actions" }, newGroupButton(), newMessageButton()),
-          )
-        : name
+      name
         ? [
             h(
               "div",
@@ -2969,6 +3325,8 @@ function conversationList(list) {
                 f.session.branch && h("span", { class: "g-branch", title: "Branch " + f.session.branch }, icon("branch"), h("span", { class: "truncate" }, f.session.branch)),
                 prFor(f.session) && prBadge(prFor(f.session), true, "pr-head-" + f.session.name),
               ),
+            // Its profile (#631): where it runs, how it is now, and since when.
+            f && profileLine(f.device, f.session),
             f && tagsLine(f.session),
             !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
@@ -3027,7 +3385,7 @@ function conversationList(list) {
           role: "switch",
           "aria-checked": onlyMine ? "true" : "false",
           "data-key": "only-mine",
-          onclick: () => setOnlyMine(!onlyMine),
+          onclick: mineToggle,
         },
         h("span", { class: "tm-box" + (onlyMine ? " on" : "") }, onlyMine && icon("check")),
         h("span", { class: "truncate" }, "Only conversations you're in"),
@@ -3050,7 +3408,7 @@ function conversationList(list) {
       ),
     ui.showOlder && older.map(conversationRow),
     !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
-    kind === "group" && !q && !(name && !isMyFilter()) && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
+    kind === "group" && !q && !name && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
   );
 }
 
@@ -3219,12 +3577,331 @@ function messageText(m) {
   return [m.subject && h("div", { class: "chat-msg-subject" }, m.subject), m.body && h("div", { class: "chat-msg-body rich" }, rich(m.body))];
 }
 
+// Files with a message (#570, docs/design/files.md).
+
+// What the daemon takes with one message (internal/bus/files.go).
+const MAX_FILES = 8;
+const MAX_FILE = 10 << 20;
+const MAX_FILES_TOTAL = 20 << 20;
+// What the page shows as a picture, by the end of its name. Not SVG, which is a document.
+const PICTURES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+const FETCHED_KEEP = 96 << 20; // how many bytes of what was fetched the page holds on to
+const FETCH_AGAIN = 30000; // how long before a picture that couldn't be fetched is asked for again
+// How many files are asked for at once. A browser gives a page six connections, and each of these
+// can wait on a fetch from the remote while the polls and a send need theirs.
+const FETCH_AT_ONCE = 2;
+let fetchSlots = FETCH_AT_ONCE;
+const fetchWaits = [];
+
+async function inFetchSlot(run) {
+  if (fetchSlots) fetchSlots--;
+  else await new Promise((go) => fetchWaits.push(go));
+  try {
+    return await run();
+  } finally {
+    const next = fetchWaits.shift();
+    if (next) next();
+    else fetchSlots++;
+  }
+}
+
+// A message's files as the page has them, by "id:place": { state, url, size, why, at, done }, where
+// state is "loading", "here", "gone" (it can't be had: a 404) or "failed" (not just now).
+// A picture's entry keeps the elements that show it, so the renders polling causes don't load it
+// again. A file the person attached is an entry too, from the moment it is attached.
+const fetched = new Map();
+const attached = new Map(); // a conversation's key → the files its next message takes
+
+function pictureType(name) {
+  return PICTURES[name.slice(name.lastIndexOf(".") + 1).toLowerCase()];
+}
+
+function fileSize(n) {
+  if (n < 1024) return plural(n, "byte");
+  if (n < 1 << 20) return Math.round(n / 1024) + " KB";
+  return (n / (1 << 20)).toFixed(1) + " MB";
+}
+
+// Asks the daemon for one file of a message, once. A file that isn't on this machine is fetched
+// from the remote first, which takes a moment. again asks once more for one that wasn't had.
+function fetchFile(id, i, name, again) {
+  const key = id + ":" + i;
+  let f = fetched.get(key);
+  const retry = f && (f.state === "failed" || f.state === "gone") && (again || (f.state === "failed" && Date.now() - f.at > FETCH_AGAIN));
+  if (f && !retry) return f;
+  f = { state: "loading" };
+  fetched.set(key, f);
+  f.done = inFetchSlot(async () => (await api("/api/file?id=" + encodeURIComponent(id) + "&i=" + i, { raw: true })).blob())
+    .then((blob) => {
+      if (f.dropped) return; // Receive files went off while it came
+      // The daemon sends every file as bytes to save; a picture is shown as the kind its name says.
+      const type = pictureType(name);
+      f.url = URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
+      f.size = blob.size;
+      f.state = "here";
+      trimFetched(f);
+    })
+    .catch((e) => {
+      if (e instanceof AuthError) {
+        fetched.delete(key);
+        return deny(e.token);
+      }
+      f.state = e.status === 404 ? "gone" : "failed";
+      f.why = e.message; // it starts with the file's name, which stays as it is
+      f.at = Date.now();
+    })
+    .then(render);
+  return f;
+}
+
+// Lets go of the oldest of what was fetched, past FETCHED_KEEP, except what the page is showing.
+function trimFetched(keep) {
+  let total = 0;
+  for (const f of fetched.values()) total += f.size || 0;
+  for (const [key, f] of fetched) {
+    if (total <= FETCHED_KEEP) break;
+    if (f === keep || f.state !== "here" || f.el?.isConnected || ui.viewer?.file === f) continue;
+    URL.revokeObjectURL(f.url);
+    fetched.delete(key);
+    total -= f.size;
+  }
+}
+
+function saveFile(name, url) {
+  const a = h("a", { href: url, download: name, hidden: true });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+// A message of files alone, sent from a page, has their names for its text: the daemon gave it
+// them, since a message needs a subject. The files say as much.
+function filesOnly(m) {
+  return !!m.files?.length && m.fromPerson && personText(m) === m.files.map((f) => f.name).join(", ");
+}
+
+// The file switches as the daemon has them, changed here or on another page. Receive files off
+// drops what this page fetched from other devices, and their files aren't shown (#765).
+function followFileSwitches(state) {
+  const set = ui.settings;
+  if (!set) return;
+  if (settingsSaving || stateAskedAt < settingsAt) {
+    // A save of this page's is on its way, or this state was asked for before one was answered:
+    // the page's are newer.
+    for (const k of FILE_SWITCHES) state[k] = !!set[k];
+    return;
+  }
+  for (const k of FILE_SWITCHES) if (!!set[k] !== !!state[k]) ui.settings = { ...ui.settings, [k]: !!state[k] };
+  const was = receiving;
+  receiving = !!state.receiveFiles;
+  // Messages the page has came without their files while it was off: ask again for theirs.
+  if (receiving && was === false) refetchFiles(tokenEra);
+  if (receiving) return;
+  for (const [key, f] of fetched) {
+    if (!f.remote) continue;
+    fetched.delete(key);
+    f.dropped = true; // one still on its way is let go of when it comes
+    if (f.url) URL.revokeObjectURL(f.url);
+    if (ui.viewer?.file === f) ui.viewer = null;
+  }
+}
+
+let receiving = null; // the person's Receive files, as the page last followed it
+
+// The four file switches (#765): the agents' Send files and Receive files, and the person's own on
+// this page (Tyler, 2026-11-16).
+const FILE_SWITCHES = ["sendFiles", "receiveFiles", "agentsSendOff", "agentsReceiveOff"];
+
+// refetchFiles gives the messages the page has the files the daemon now shows for them.
+async function refetchFiles(era) {
+  const byId = new Map(ui.messages.map((m) => [m.id, m]));
+  let cursor = "";
+  try {
+    for (let pages = 0; pages < 20; pages++) {
+      const r = await api("/api/messages?cursor=" + encodeURIComponent(cursor));
+      if (era !== tokenEra) return;
+      for (const m of r.messages || []) if (m.files?.length && byId.has(m.id)) byId.get(m.id).files = m.files;
+      if (!r.messages?.length || !r.cursor || r.cursor === cursor) break;
+      cursor = r.cursor;
+    }
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+  }
+  render();
+}
+
+// fromElsewhere says message m came from another device, whose files Receive files governs.
+function fromElsewhere(m) {
+  return !!m.fromAddr && !!ui.state?.device && !m.fromAddr.startsWith(ui.state.device + "/");
+}
+
+// Under a message's text: its pictures, shown, and its other files, each a button that saves it.
+function messageFiles(m) {
+  if (!m.files?.length) return null;
+  if (fromElsewhere(m) && !ui.settings?.receiveFiles) return null;
+  const remote = fromElsewhere(m);
+  return fileList(m.id, m.files, (i, load, again) => {
+    const f = load ? fetchFile(m.id, i, m.files[i].name, again) : fetched.get(m.id + ":" + i);
+    if (f) f.remote = remote;
+    return f;
+  });
+}
+
+// fileAt gives the entry of the file in a place: as it is, or, with load, fetched if it wasn't.
+function fileList(id, files, fileAt) {
+  return h(
+    "div",
+    { class: "msg-files" },
+    files.map((f, i) => {
+      const key = "file-" + id + "-" + i;
+      const picture = !!pictureType(f.name);
+      const got = fileAt(i, picture); // a picture is fetched to be shown, anything else when it is asked for
+      const state = got?.state;
+      if (picture && state === "here") {
+        got.el ||= h("img", { class: "msg-picture-img", src: got.url, alt: "" });
+        return h("button", { class: "msg-picture", title: f.name, "aria-label": "Open " + f.name, "data-key": key, onclick: () => openViewer(got, f, key) }, got.el);
+      }
+      if (picture && state === "loading") return h("div", { class: "msg-picture msg-picture-wait", role: "img", "aria-label": f.name + ", loading" });
+      const missing = state === "gone" || state === "failed";
+      const open = () => {
+        if (fileAt(i)?.state === "loading") return;
+        const file = fileAt(i, true, true);
+        render();
+        file.done.then(() => file.state === "here" && !file.dropped && !picture && saveFile(f.name, file.url));
+      };
+      return h(
+        "button",
+        { class: "msg-file" + (missing ? " msg-file-missing" : ""), title: missing ? got.why : "Save " + f.name, "aria-busy": state === "loading" ? "true" : null, "data-key": key, onclick: open },
+        icon(state === "here" ? "download" : "file"),
+        h("span", { class: "msg-file-name truncate" }, f.name),
+        h("span", { class: "msg-file-size" }, state === "loading" ? "Fetching…" : state === "gone" ? "Not here" : state === "failed" ? "Couldn't load" : fileSize(f.size)),
+      );
+    }),
+  );
+}
+
+// A picture, opened: as large as the window lets it be.
+function openViewer(file, f, from) {
+  ui.viewer = { file, name: f.name, size: f.size, from };
+  render();
+  root.querySelector('[data-key="viewer-close"]')?.focus();
+}
+
+function closeViewer() {
+  const from = ui.viewer?.from;
+  if (ui.viewer) ui.viewer.file.big = null;
+  ui.viewer = null;
+  render();
+  refocus(from);
+}
+
+function viewerDialog() {
+  const v = ui.viewer;
+  v.file.big ||= h("img", { class: "viewer-img", src: v.file.url, alt: v.name });
+  return h(
+    "div",
+    {
+      class: "scrim viewer-scrim",
+      onclick: (e) => {
+        if (e.target === e.currentTarget) closeViewer();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeViewer();
+        }
+      },
+    },
+    h(
+      "div",
+      { class: "viewer", role: "dialog", "aria-modal": "true", "aria-label": v.name },
+      v.file.big,
+      h(
+        "div",
+        { class: "viewer-bar" },
+        h("span", { class: "viewer-name truncate" }, v.name),
+        h("span", { class: "viewer-size" }, fileSize(v.size)),
+        h("button", { class: "btn btn-ghost btn-sm", "data-key": "viewer-save", onclick: () => saveFile(v.name, v.file.url) }, icon("download"), "Save"),
+        h("button", { class: "btn btn-outline btn-sm", "data-key": "viewer-close", onclick: closeViewer }, "Close"),
+      ),
+    ),
+  );
+}
+
+// Adds files to a conversation's next message, held to what a message takes: the daemon would
+// refuse the rest only once they had been uploaded.
+// The person's Send files is on, in this repo (#765): off, a file attached, dropped or pasted asks
+// them to turn it on there, and goes on once they do (Tyler, 2026-11-16).
+function sendsFiles() {
+  return !!ui.settings?.sendFiles;
+}
+
+function askToSend(key, files) {
+  ui.fileNote = { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
+  render();
+}
+
+// Turns the person's Send files on, then does what asked for it: opens the picker, in the same
+// click, or attaches what was dropped or pasted.
+function turnOnSending(key) {
+  const then = ui.fileNote?.turnOn;
+  ui.fileNote = null;
+  saveSettings({ ...ui.settings, sendFiles: true }, false, "sendFiles");
+  if (then === "pick") pickFiles(key);
+  else if (then) attach(key, then);
+  else render();
+}
+
+function attach(key, files) {
+  if (!sendsFiles()) return askToSend(key, files);
+  const list = attached.get(key) || [];
+  let note = "";
+  for (const file of files) {
+    const total = list.reduce((n, a) => n + a.size, 0);
+    if (list.length >= MAX_FILES) note = "A message takes " + MAX_FILES + " files at most.";
+    else if (!file.size) note = file.name + " is empty.";
+    else if (file.size > MAX_FILE) note = file.name + " is " + fileSize(file.size) + ". A file can be " + (MAX_FILE >> 20) + " MB at most.";
+    else if (total + file.size > MAX_FILES_TOTAL) note = "A message's files can come to " + (MAX_FILES_TOTAL >> 20) + " MB at most.";
+    else {
+      // Shown or saved as a fetched file is: a picture by its name, anything else as bytes,
+      // whatever kind the browser took it for.
+      const blob = new Blob([file], { type: pictureType(file.name) || "application/octet-stream" });
+      list.push({ state: "here", file, name: file.name, size: file.size, url: URL.createObjectURL(blob), done: Promise.resolve() });
+    }
+  }
+  if (list.length) attached.set(key, list);
+  ui.fileNote = note ? { key, text: note } : null;
+  render();
+  if (!NARROW.matches) composers.get(key)?.focus({ preventScroll: true });
+}
+
+function detach(key, a) {
+  const list = (attached.get(key) || []).filter((x) => x !== a);
+  URL.revokeObjectURL(a.url);
+  if (list.length) attached.set(key, list);
+  else attached.delete(key);
+  ui.fileNote = null;
+  render();
+  composers.get(key)?.focus({ preventScroll: true });
+}
+
+function pickFiles(key) {
+  const input = h("input", { type: "file", multiple: true });
+  input.addEventListener("change", () => attach(key, [...input.files]));
+  input.click();
+}
+
+// A message the person wrote that isn't among the messages yet. It looks written at once, as a
+// chat app's does (#613): a clock while its push to the remote is on its way, which took 2.4 to
+// 4.7 s from a Windows laptop on 2026-11-15, then the tick for sent. The daemon finishes the push
+// if the page closes meanwhile.
 function pendingMessage(item, head) {
   const failed = item.status === "failed";
   return h(
     "article",
-    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : " chat-msg-sending"), "data-cid": item.cid },
-    h("div", { class: "chat-bubble rich" }, rich(item.text)),
+    { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : "") + (failed ? " chat-msg-failed" : ""), "data-cid": item.cid },
+    item.text && h("div", { class: "chat-bubble rich" }, rich(item.text)),
+    item.files?.length > 0 && fileList("out-" + item.cid, item.files, (i) => item.files[i]),
     failed
       ? h(
           "div",
@@ -3233,7 +3910,29 @@ function pendingMessage(item, head) {
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "retry-" + item.cid, onclick: () => deliver(item) }, icon("retry"), "Try again"),
           h("button", { class: "btn btn-ghost btn-xs", "data-key": "edit-" + item.cid, onclick: () => editFailed(item) }, icon("pencil"), "Edit"),
         )
-      : item.status === "sending" && h("div", { class: "chat-msg-meta msg-sending" }, "Sending…"),
+      : h("div", { class: "chat-msg-meta" }, sendingMark(item)),
+  );
+}
+
+// The mark under a message on its way: a clock until it is on the remote, then one tick, as
+// receiptMark shows it once the message is listed. Its tip promises the message goes out only
+// once the daemon has it (item.posted): a new group's message waits here first for its members'
+// tags (deliver). A button, as receiptMark's is, so the keyboard and a tap reach the tip.
+function sendingMark(item) {
+  const sent = item.status === "sent";
+  const tip = sent ? "Sent" : item.posted ? "Sending: it goes out even if you close this page" : "Sending";
+  return h(
+    "button",
+    {
+      class: "receipt-mark",
+      "data-state": sent ? "sent" : "sending",
+      "data-key": "sending-" + item.cid,
+      "data-tip": tip,
+      "data-tip-labelled": "1",
+      "aria-label": tip,
+      onclick: (e) => showTipNow(e.currentTarget, e.pointerType === "mouse" ? "hover" : "tap"),
+    },
+    icon(sent ? "check" : "clock"),
   );
 }
 
@@ -3287,7 +3986,8 @@ function chatMessage(m, from, at, head) {
     return h(
       "article",
       { class: "chat-msg chat-msg-own" + (head ? " chat-msg-first" : ""), "data-id": m.id },
-      h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      !filesOnly(m) && h("div", { class: "chat-bubble rich" }, rich(personText(m))),
+      messageFiles(m),
       h("div", { class: "chat-msg-meta" }, time, copyButton(copy), receiptMark(m)),
     );
   }
@@ -3301,8 +4001,9 @@ function chatMessage(m, from, at, head) {
     h(
       "div",
       { class: "chat-msg-main" },
-      head && h("div", { class: "chat-msg-head" }, h("span", { class: "chat-msg-from truncate" }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
-      messageText(m),
+      head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog", "data-key": "from-" + m.id }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
+      !filesOnly(m) && messageText(m),
+      messageFiles(m),
     ),
     h("div", { class: "msg-tools" }, copyButton(copy)),
   );
@@ -3424,13 +4125,18 @@ function inline(t) {
   const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https:\/\/[^\s)<>]+[^\s)<>.,;:!?'"])/g;
   let last = 0;
   for (let m; (m = re.exec(t)); ) {
-    if (m.index > last) out.push(t.slice(last, m.index));
-    if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
-    else if (m[2]) out.push(h("strong", null, m[2].slice(2, -2)));
+    if (m.index > last) withNames(t.slice(last, m.index), out);
+    if (m[1] && knownName(m[1].slice(1, -1))) out.push(nameButton(m[1].slice(1, -1), "rich-name", h("code", null, m[1].slice(1, -1))));
+    else if (m[1]) out.push(h("code", null, m[1].slice(1, -1)));
+    else if (m[2]) {
+      const bold = [];
+      withNames(m[2].slice(2, -2), bold);
+      out.push(h("strong", null, bold));
+    }
     else out.push(h("a", { href: m[3], target: "_blank", rel: "noopener noreferrer" }, m[3]));
     last = re.lastIndex;
   }
-  if (last < t.length) out.push(t.slice(last));
+  if (last < t.length) withNames(t.slice(last), out);
   return out;
 }
 
@@ -3471,10 +4177,6 @@ function myName() {
 
 function isPerson(name) {
   return personNames.has(name) || (!!name && name === myName());
-}
-
-function isMyFilter() {
-  return !!ui.filter && !!me() && ui.filter === me().addr && ui.view === "messages";
 }
 
 function people() {
@@ -3529,23 +4231,29 @@ function markOpenRead() {
     .map((m) => m.id);
   if (!ids.length) return;
   if (arriving) ui.newMark = { key: ui.conversation, id: ids[0] };
+  if (ui.readHeld) {
+    // A mark failed a moment ago: the held timer asks again. "New" still shows where they came to.
+    if (arriving) render();
+    return;
+  }
   for (const id of ids) ui.readLocal.add(id);
   api("/api/read", { method: "POST", body: JSON.stringify({ ids }) }).catch((e) => {
-    if (e instanceof AuthError) deny(e.token);
-    else for (const id of ids) ui.readLocal.delete(id);
+    if (e instanceof AuthError) return deny(e.token);
+    for (const id of ids) ui.readLocal.delete(id);
+    // Unread again, and no poll shows it: a state that hasn't changed rebuilds nothing. The render
+    // asks for it at once, so it is held a poll's time first: a daemon that is down or failing
+    // would otherwise be asked, and the page redrawn, without pause (#652). One timer at a time,
+    // so two failures close together don't end each other's wait early.
+    if (!ui.readHeld) {
+      ui.readHeld = true;
+      setTimeout(() => {
+        ui.readHeld = false;
+        markOpenRead();
+      }, POLL_MS);
+    }
+    render();
   });
   render();
-}
-
-function openYours() {
-  if (!ui.state) return;
-  if (!me()) return askForName(openYours);
-  ui.filter = me().addr;
-  ui.conversation = null;
-  ui.draftTo = null;
-  ui.draftGroup = null;
-  go("messages");
-  setView("messages");
 }
 
 // Start a group chat with these sessions and open it, ready to write in (#517, #518). A group is a
@@ -3557,7 +4265,7 @@ function startGroup(sessions, tag) {
   if (!me()) return askForName(() => startGroup(sessions, tag));
   tag = tag || groupOf(sessions) || newGroupTag(sessions.map((s) => s.name));
   ui.picker = null;
-  ui.filter = me().addr;
+  ui.filter = null;
   ui.draftTo = null;
   ui.draftGroup = tag;
   ui.conversation = groupConversation(tag).key;
@@ -3593,9 +4301,15 @@ function newGroupTag(names) {
 function startChat(name) {
   if (!ui.state) return;
   if (!me()) return askForName(() => startChat(name));
-  if (name === myName()) return openYours();
   ui.picker = null;
-  ui.filter = me().addr;
+  ui.filter = null;
+  // Yourself, from a group's members: there is no chat with yourself, so Conversations.
+  if (name === myName()) {
+    ui.conversation = null;
+    ui.draftTo = null;
+    ui.draftGroup = null;
+    return go("messages");
+  }
   ui.draftTo = name;
   ui.draftGroup = null;
   ui.conversation = dmKey(myName(), name);
@@ -3954,7 +4668,7 @@ function groupFoot(g, back, make) {
   );
 }
 
-// With no conversation open in your messages: who you could talk to.
+// With only your conversations shown and none of them yet: who you could talk to.
 function startPane() {
   const all = reachable();
   const rows = all.slice(0, 8);
@@ -3999,6 +4713,17 @@ function composerFor(key, send, onchange) {
     fit(el);
     onchange();
   };
+  // A pasted file is attached: a screenshot, most often. What also comes as text, plain and rich
+  // both, is pasted as text: a spreadsheet's cells come as a picture too. One of the two isn't
+  // enough to go by: a file copied in a file manager brings its name as plain text, and a picture
+  // copied in a browser brings an <img> as rich text.
+  el.onpaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    const types = e.clipboardData?.types || [];
+    if (!files.length || (types.includes("text/html") && types.includes("text/plain"))) return;
+    e.preventDefault();
+    attach(key, files);
+  };
   el.onkeydown = (e) => {
     // On a phone Enter is a new line, and the button sends.
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !NARROW.matches) {
@@ -4041,8 +4766,57 @@ function targetOf(c) {
   return { to: other, label: other, count: 1 };
 }
 
+// The device's mode in this repo (#681): online, dnd (do not disturb) or invisible.
+function deviceMode() {
+  return ui.state?.mode || "online";
+}
+
+// What each mode does: under the Settings row for the one that is on, and as each button's hint.
+const MODE_HELP = {
+  online: "Your agents here get messages as usual.",
+  dnd: "Teammates still see this device and its agents, but only your messages reach them: everyone else's wait until you're back online, and senders are told why.",
+  invisible: "Takes this device off " + NAME + " here, as if it were offline. Teammates stop seeing it, your agents here can't see or send anything, and you can't send. Messages wait until you're back online.",
+};
+
+// A quiet line in the sidebar while the device isn't online, which leads to Settings.
+function modeNote() {
+  const mode = deviceMode();
+  if (mode === "online") return null;
+  return h(
+    "button",
+    { class: "side-mode", title: "Open Settings", "data-key": "mode-note", onclick: () => go("settings") },
+    icon(mode === "invisible" ? "eyeOff" : "bellOff"),
+    h("span", null, mode === "invisible" ? "Invisible: your agents here are off " + NAME : "Do not disturb: others' messages to your agents here wait"),
+  );
+}
+
+// setMode saves the mode, from the daemon's settings if the page hasn't loaded them.
+async function setMode(mode) {
+  try {
+    const base = ui.settings || (await api("/api/settings"));
+    if (ui.state) ui.state.mode = mode; // shown at once; the poll after the save has the daemon's
+    saveSettings({ ...base, mode }, true);
+    queueSettings(async () => poll());
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.notice = e.message;
+    render();
+  }
+}
+
 // Under a conversation: somewhere to write, or, under one between two others, a way to either.
 function paneFoot(c) {
+  if (deviceMode() === "invisible")
+    return h(
+      "div",
+      { class: "pane-foot" },
+      h(
+        "div",
+        { class: "pane-foot-card" },
+        h("span", { class: "pane-foot-note" }, "You're invisible, so nothing is sent from here."),
+        h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-online", onclick: () => setMode("online") }, icon("eye"), "Go online"),
+      ),
+    );
   const target = targetOf(c);
   if (target) return composer(c, target);
   if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
@@ -4077,11 +4851,12 @@ function composer(c, target) {
       if (hint?.lastChild) hint.lastChild.textContent = " to send";
     }
     const btn = root.querySelector(".composer-send");
-    if (btn) btn.disabled = !el.value.trim();
+    if (btn) btn.disabled = !el.value.trim() && !attached.has(key);
   });
   el.placeholder = "Message " + target.label;
   el.setAttribute("aria-label", "Message " + target.label);
   const armed = ui.armed === key;
+  const files = attached.get(key) || [];
   const who =
     c.kind === "dm"
       ? [statusDot(target.to), h("span", { class: "truncate" }, target.to)]
@@ -4093,13 +4868,36 @@ function composer(c, target) {
       "div",
       { class: "composer" + (armed ? " composer-armed" : "") },
       armed && h("p", { class: "composer-warn", "data-announce": "" }, "This reaches " + plural(target.count, "session") + ". Send again to go ahead."),
+      ui.fileNote?.key === key &&
+        h(
+          "p",
+          { class: "composer-warn", "data-announce": "" },
+          ui.fileNote.text,
+          ui.fileNote.turnOn && h("button", { class: "composer-warn-btn", "data-key": "files-on-" + key, onclick: () => turnOnSending(key) }, "Turn on"),
+        ),
+      files.length > 0 &&
+        h(
+          "div",
+          { class: "composer-files" },
+          files.map((a, i) =>
+            h(
+              "span",
+              { class: "composer-file" },
+              pictureType(a.name) ? (a.thumb ||= h("img", { class: "composer-file-thumb", src: a.url, alt: "" })) : icon("file"),
+              h("span", { class: "composer-file-name truncate" }, a.name),
+              h("span", { class: "composer-file-size" }, fileSize(a.size)),
+              h("button", { class: "composer-file-x", title: "Remove", "aria-label": "Remove " + a.name, "data-key": "detach-" + key + "-" + i, onclick: () => detach(key, a) }, icon("x")),
+            ),
+          ),
+        ),
       el,
       h(
         "div",
         { class: "composer-bar" },
+        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => (sendsFiles() ? pickFiles(key) : askToSend(key)) }, icon("paperclip")),
         h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: () => openPicker() }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
-        h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim(), "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
+        h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() && !files.length, "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),
       ),
     ),
   );
@@ -4107,7 +4905,8 @@ function composer(c, target) {
 
 function sendFrom(c, target, el, big) {
   const text = el.value.trim();
-  if (!text) return;
+  const files = attached.get(c.key) || [];
+  if (!text && !files.length) return;
   if (big && ui.armed !== c.key) {
     ui.armed = c.key;
     render();
@@ -4115,9 +4914,11 @@ function sendFrom(c, target, el, big) {
   }
   ui.armed = null;
   const { messages, ...conversation } = c; // not the messages: this can outlive them
-  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, status: "sending" };
+  const item = { cid: Date.now() + "-" + Math.random().toString(36).slice(2, 8), key: c.key, conversation, to: target.to, text, files, status: "sending" };
   ui.outbox.push(item);
   ui.notes.delete(c.key);
+  attached.delete(c.key);
+  ui.fileNote = null;
   el.value = "";
   toEnd = true;
   deliver(item);
@@ -4127,6 +4928,7 @@ function sendFrom(c, target, el, big) {
 async function deliver(item) {
   item.status = "sending";
   item.error = "";
+  item.posted = false;
   render();
   try {
     // A group just started here reaches its members only once they have its tag: the tag changes
@@ -4146,8 +4948,29 @@ async function deliver(item) {
         throw new Error("not sent: couldn't add " + namesOf(missed) + " to " + item.to + ": " + missed[0].msg);
       }
     }
-    const sent = await api("/api/send", { method: "POST", body: JSON.stringify({ to: item.to, text: item.text }) });
+    // keepalive: a page closed just as it sends still hands the message to the daemon, which then
+    // finishes it whatever the page does (#613). A browser refuses keepalive past 64 KiB in flight,
+    // and a UTF-16 unit is at most 3 bytes of UTF-8.
+    item.posted = true;
+    render();
+    let body = JSON.stringify({ to: item.to, text: item.text });
+    let keepalive = body.length * 3 < 60000;
+    if (item.files?.length) {
+      // With files it goes as a form, a part for each. Too large for keepalive: closing the page
+      // before the upload ends loses the message.
+      body = new FormData();
+      body.append("to", item.to);
+      body.append("text", item.text);
+      for (const a of item.files) body.append("file", a.file, a.name);
+      keepalive = false;
+    }
+    const sent = await api("/api/send", { method: "POST", body, keepalive });
     item.id = sent.id;
+    // The message's files are these, in this order: the page has them without asking the daemon.
+    if (item.files?.length) {
+      item.files.forEach((a, i) => fetched.set(sent.id + ":" + i, a));
+      trimFetched(); // held to FETCHED_KEEP as fetched files are: a page that only sends would keep them all
+    }
     if (missed.length) ui.notes.set(item.key, { id: sent.id, text: "Couldn't add " + namesOf(missed) + " to " + item.to + ", so they didn't get this: " + missed[0].msg, warn: true });
     else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
@@ -4172,7 +4995,8 @@ function editFailed(item) {
   // It may have been all that listed its conversation, which the text is going back into.
   ui.restored = item.conversation;
   const el = composers.get(item.key);
-  if (el) el.value = el.value ? item.text + "\n" + el.value : item.text;
+  if (el) el.value = el.value && item.text ? item.text + "\n" + el.value : item.text || el.value;
+  if (item.files?.length) attached.set(item.key, [...item.files, ...(attached.get(item.key) || [])]);
   render();
   focusComposer();
 }
@@ -4202,7 +5026,8 @@ function waitLine(c) {
   if (!f) return h("p", { class: "wait-line wait-warn" }, target.to + " isn't running, so it may never read this.");
   const st = sessionState(f.device, f.session);
   if (st === "off") return h("p", { class: "wait-line wait-warn" }, target.to + "'s device is offline. It gets this when it's back.");
-  if (st === "dnd") return h("p", { class: "wait-line wait-warn" }, target.to + " is on do not disturb. Your message waits in its inbox.");
+  // Do not disturb doesn't hold your messages to your own agents (#777).
+  if (st === "dnd" && !f.device.self) return h("p", { class: "wait-line wait-warn" }, target.to + " is on do not disturb. Your message waits in its inbox.");
   if (!waiting) return null;
   const active = when(f.session.lastActive);
   const sentAt = mineLast ? when(last.at) || 0 : Date.now();
@@ -4216,9 +5041,17 @@ function waitLine(c) {
 
 const WAKE_CHOICES = [
   ["always", "Always"],
-  ["within", "Within"],
+  ["within", "If idle under"],
   ["never", "Never"],
 ];
+
+// Each wake choice's hover hint, in Settings and under Per session.
+const WAKE_TIPS = {
+  default: "Use the device-wide Wake an idle session choice for this session",
+  always: "Start a new turn for it no matter how long it has been idle",
+  within: "Start a new turn only if it has been idle under the minutes beside it",
+  never: "Never start a turn for it; messages wait in its inbox until it next runs",
+};
 
 // Minutes being typed are saved once the typing pauses. A choice made meanwhile, such as Never,
 // cancels them: they belong to the Within it replaced.
@@ -4230,7 +5063,7 @@ function cancelMinutes(key) {
 }
 
 function wakeControl(key, wake, onChange, withDefault) {
-  const def = ui.settings.defaultMinutes || 3;
+  const def = ui.settings.defaultMinutes || 5;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
   const current = wake ? wake.when : "default";
   const seg = h(
@@ -4241,6 +5074,7 @@ function wakeControl(key, wake, onChange, withDefault) {
         "button",
         {
           "aria-pressed": current === v ? "true" : "false",
+          "data-tip": WAKE_TIPS[v],
           "data-key": key + "-" + v,
           onclick: () => {
             if (v === current) return;
@@ -4262,6 +5096,7 @@ function wakeControl(key, wake, onChange, withDefault) {
     inputmode: "numeric",
     placeholder: String(def),
     "aria-label": "Minutes idle",
+    title: "Minutes it may be idle and still be woken, from 1 to 1440; blank means " + def + " minutes",
     "data-key": key + "-minutes",
     value: wake.minutes ? String(wake.minutes) : null,
     oninput: (e) => {
@@ -4285,9 +5120,16 @@ function wakeControl(key, wake, onChange, withDefault) {
 }
 
 const BUSY_CHOICES = [
-  ["subject", "Subject"],
+  ["subject", "Subject only"],
   ["whole", "Whole message"],
 ];
+
+// Each busy choice's hover hint, in Settings and under Per session.
+const BUSY_TIPS = {
+  default: "Use the device-wide While a session is working choice for this session",
+  subject: "While it is mid-turn, show it only the arriving message's subject",
+  whole: "While it is mid-turn, show it the arriving message's whole text",
+};
 
 function busyControl(key, busy, onChange, withDefault) {
   const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
@@ -4300,6 +5142,7 @@ function busyControl(key, busy, onChange, withDefault) {
         "button",
         {
           "aria-pressed": current === v ? "true" : "false",
+          "data-tip": BUSY_TIPS[v],
           "data-key": key + "-" + v,
           onclick: () => {
             if (v !== current) onChange(v === "default" ? null : v);
@@ -4318,6 +5161,8 @@ function busyControl(key, busy, onChange, withDefault) {
 let settingsQueue = Promise.resolve();
 let settingsSeq = 0; // the newest save asked for
 let confirmed = null; // the settings as the daemon last gave them
+let settingsSaving = 0; // saves asked for and not yet answered
+let settingsAt = 0; // when the last one was answered
 
 function queueSettings(job) {
   const token = ui.token;
@@ -4326,10 +5171,19 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next) {
+function saveSettings(next, modeChange = false, filesChange = "") {
+  // Each save carries the whole settings: the mode and the file switches come from the daemon's
+  // state unless this save changes them, so a page whose settings were loaded before they changed
+  // elsewhere can't undo it.
+  if (!modeChange && ui.state) next = { ...next, mode: deviceMode() };
+  if (ui.state) for (const k of FILE_SWITCHES) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
+  // The daemon takes only the switch this save changes, and keeps the others as it has them.
+  next = { ...next, filesSet: filesChange ? [filesChange] : [] };
+  if (filesChange && ui.state) ui.state[filesChange] = !!next[filesChange]; // as setMode does
   const seq = ++settingsSeq;
   ui.settings = next;
   render();
+  settingsSaving++;
   queueSettings(async () => {
     try {
       const saved = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
@@ -4347,6 +5201,11 @@ function saveSettings(next) {
     }
     render();
   });
+  settingsQueue = settingsQueue.finally(() => {
+    settingsSaving--;
+    settingsAt = Date.now();
+  });
+  if (filesChange) queueSettings(async () => poll()); // the poll after the save has the daemon's
 }
 
 function settingsRow(key, title, description, control, extraClass = "") {
@@ -4370,11 +5229,11 @@ function accountSection() {
   return h(
     "section",
     { class: "section" },
-    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Your account")),
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "You"), h("p", { class: "section-note" }, "How teammates see you and this device.")),
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Agents see it, and send to it.", [
+      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Teammates and their agents see it, and send to it.", [
         h(
           "span",
           { class: "field account-field" },
@@ -4385,6 +5244,7 @@ function accountSection() {
             autocomplete: "nickname",
             spellcheck: "false",
             "aria-label": "Your name",
+            title: "The name teammates and their agents see for you and address messages to",
             "aria-invalid": ui.rowErrors.account ? "true" : null,
             "data-key": "account-name",
             oninput: (e) => {
@@ -4398,7 +5258,7 @@ function accountSection() {
             },
           }),
         ),
-        h("button", { class: "btn btn-outline btn-xs", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
+        h("button", { class: "btn btn-outline btn-xs", title: "Save this name so teammates and their agents can see and address you by it", "data-key": "account-save", onclick: (e) => saveAccount(e.currentTarget.parentElement.querySelector("input").value.trim()) }, a ? "Save" : "Choose"),
       ]),
       nickRow(),
       colorRow(),
@@ -4434,12 +5294,12 @@ function colorRow() {
   };
   return settingsRow(
     "color",
-    "Colour",
-    acct?.colorLost && !pick ? acct.colorLost + " has yours now, so you're on Auto." : "Your agents' faces.",
+    "Device colour",
+    acct?.colorLost && !pick ? acct.colorLost + " has yours now, so you're on Auto." : "Fills your sessions' faces on everyone's page.",
     h(
       "div",
       { class: "swatches" },
-      swatch(0, { class: "swatch-auto" }, "Auto"),
+      swatch(0, { class: "swatch-auto", "data-tip": "Let Murmur assign this device a colour no other device has picked" }, "Auto"),
       COLORS.map((name, i) => {
         const who = taken.get(i);
         return swatch(i + 1, { class: "swatch dev-c" + i, "aria-label": who ? name + ", " + who + "'s" : name, title: who ? who + "'s" : name });
@@ -4472,7 +5332,7 @@ function nickRow() {
   const id = ui.state?.device || "";
   const value = ui.nickDraft ?? nick;
   const without = acct?.name ? "Without one, they see your name, " + acct.name + "." : "";
-  return settingsRow("nick", "Device nickname", ["What teammates call this device, shown beside its ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without].filter(Boolean).join(" "), [
+  return settingsRow("nick", "Device nickname", ["Shown to teammates beside this device's ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without].filter(Boolean).join(" "), [
     h(
       "span",
       { class: "field account-field" },
@@ -4485,6 +5345,7 @@ function nickRow() {
         autocapitalize: "none",
         spellcheck: "false",
         "aria-label": "Device nickname",
+        title: "Optional label teammates see beside this device's ID; nothing is addressed to it",
         "aria-invalid": ui.rowErrors.nick ? "true" : null,
         "data-key": "nick-name",
         oninput: (e) => {
@@ -4498,8 +5359,8 @@ function nickRow() {
         },
       }),
     ),
-    h("button", { class: "btn btn-outline btn-xs", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
-    nick && h("button", { class: "btn btn-ghost btn-xs", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
+    h("button", { class: "btn btn-outline btn-xs", title: "Save this nickname beside this device's ID for teammates", "data-key": "nick-save", onclick: (e) => saveNick(e.currentTarget.parentElement.querySelector("input").value.trim()) }, "Save"),
+    nick && h("button", { class: "btn btn-ghost btn-xs", title: "Clear the nickname; teammates see your name beside this device instead", "data-key": "nick-clear", onclick: () => saveNick("") }, "Clear"),
   ]);
 }
 
@@ -4565,36 +5426,64 @@ async function saveAccount(name) {
   render();
 }
 
-// Each session's own setting, folded under the device default so a device with many sessions
-// doesn't fill the page. The fold says how many sessions there are and how many set their own.
-function perSessionFold(key, rows, set) {
+// Each session's own settings, both of them on one row, folded under the defaults so a device with
+// many sessions doesn't fill the page. It is folded until opened (Tyler, 2026-11-16); the fold
+// says how many sessions there are and how many set their own.
+function perSessionFold(rows, set) {
   ui.settingsOpen = ui.settingsOpen || new Set();
   if (!rows.length) return [];
-  const open = ui.settingsOpen.has(key);
+  const open = ui.settingsOpen.has("sessions");
   const head = h(
     "button",
     {
       class: "row row-fold",
       "aria-expanded": open ? "true" : "false",
-      "data-key": "fold-" + key,
+      title: open ? "Hide the wake and while-working choices set per session" : "Show the wake and while-working choices set per session on this device",
+      "data-key": "fold-sessions",
       onclick: () => {
-        open ? ui.settingsOpen.delete(key) : ui.settingsOpen.add(key);
+        open ? ui.settingsOpen.delete("sessions") : ui.settingsOpen.add("sessions");
         render();
       },
     },
     icon("chevronRight", "row-fold-chev"),
-    h("span", { class: "row-title" }, "Each session"),
+    h("span", { class: "row-title" }, "Per session"),
     h("span", { class: "row-fold-meta" }, plural(rows.length, "session") + (set ? " · " + set + " set" : "")),
   );
   if (open) for (const r of rows) r.classList.add("row-sub");
   return [head, ...(open ? rows : [])];
 }
 
+// One session's row under Per session: its wake-up and what it is shown while working, each
+// Default until it is set.
+function sessionSettingsRow(s, wake, busy, saveWake, saveBusy) {
+  const line = (label, ...control) => h("div", { class: "ps-line" }, h("span", { class: "ps-label" }, label), h("div", { class: "row-control ps-control", role: "group", "aria-label": label + ", " + s.name }, control));
+  return h(
+    "div",
+    { class: "row" },
+    h(
+      "div",
+      { class: "ps-row" },
+      h("div", { class: "row-title ps-name" }, h("span", { class: "truncate", "data-profile": s.name }, s.name), s.agent && h("span", { class: "badge badge-secondary" }, s.agent)),
+      line("Wake", wakeControl("wake-" + s.name, wake, (w) => saveWake(s.name, w), true)),
+      line("While working", busyControl("busy-" + s.name, busy, (b) => saveBusy(s.name, b), true)),
+    ),
+    ui.rowErrors["wake-" + s.name] && h("p", { class: "row-error", "data-announce": "" }, ui.rowErrors["wake-" + s.name]),
+  );
+}
+
+// Each theme's hover hint: what it looks like, and that it stays in this browser.
+const THEME_TIPS = {
+  dark: "Black page like T3 Code's dark theme; saved only in this browser",
+  dim: "Soft dark-grey page, lighter than Dark; saved only in this browser",
+  light: "White page with dark text; saved only in this browser",
+  murmur: "Cream page with ink text and blue accents, like the Murmur website; saved only in this browser",
+};
+
 function themeSection() {
   return h(
     "section",
     { class: "section" },
-    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance")),
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance"), h("p", { class: "section-note" }, "In this browser.")),
     h(
       "div",
       { class: "group" },
@@ -4613,6 +5502,7 @@ function themeSection() {
                 role: "radio",
                 "aria-checked": theme === id ? "true" : "false",
                 tabindex: theme === id ? 0 : -1,
+                "data-tip": THEME_TIPS[id],
                 "data-key": "theme-" + id,
                 onclick: () => setTheme(id),
                 onkeydown: (e) => {
@@ -4634,135 +5524,196 @@ function themeSection() {
   );
 }
 
+// Settings (#775, Tyler, 2026-11-16) is one screen for the repo that is open, grouped by what each
+// setting is about: you, messages to your sessions, files, mutes. Every one of those is this
+// repo's, since a device is one clone; the theme and the version are the only ones that aren't, so
+// they come last, under their own heading. A page for every repo at once is #816.
+function settingsSection(key, title, note, ...rows) {
+  return h(
+    "section",
+    { class: "section", "data-key": "set-" + key },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title), note && h("p", { class: "section-note" }, note)),
+    h("div", { class: "group" }, ...rows),
+  );
+}
+
+// Every setting is a segmented control, on/off ones too: one kind of control across Settings
+// (Tyler, 2026-11-17, #862). hints says what Off and On each do, on hover.
+function onOffControl(key, on, save, hints) {
+  return h(
+    "div",
+    { class: "segmented", role: "group" },
+    [[false, "Off"], [true, "On"]].map(([v, label], i) =>
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null, themeSection()];
+  const sections = [ui.state ? accountSection() : null];
   if (ui.settings) {
     const set = ui.settings;
-    const local = (ui.state?.devices || []).find((d) => d.self)?.sessions || [];
-    const overrides = set.sessionWake || {};
-    const wakeOwn = local.filter((s) => overrides[s.name]).length;
-    const rows = [
-      settingsRow(
-        "wake",
-        "Device default",
-        "Whether a message from another session may wake an idle session. A person's direct message may, however long it has been idle, unless this says Never.",
-        wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
-      ),
-      ...perSessionFold("wake", [...local]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((s) =>
-          settingsRow(
-            "wake-" + s.name,
-            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
-            null,
-            wakeControl(
-              "wake-" + s.name,
-              overrides[s.name] || null,
-              (w) => {
-                // From the settings as they are now: a pause in typing minutes can end after
-                // another choice was made.
-                const next = { ...(ui.settings.sessionWake || {}) };
-                if (w) next[s.name] = w;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionWake: next });
-              },
-              true,
-            ),
-          ),
-        ), wakeOwn),
-    ];
-    const busyOverrides = set.sessionBusy || {};
-    const busyOwn = local.filter((s) => busyOverrides[s.name]).length;
-    const busyRows = [
-      settingsRow(
-        "busy",
-        "Device default",
-        "What a busy session sees when a message arrives.",
-        busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false),
-      ),
-      ...perSessionFold("busy", [...local]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((s) =>
-          settingsRow(
-            "busy-" + s.name,
-            [s.name, s.agent && h("span", { class: "badge badge-secondary" }, s.agent)],
-            null,
-            busyControl(
-              "busy-" + s.name,
-              busyOverrides[s.name] || null,
-              (b) => {
-                const next = { ...(ui.settings.sessionBusy || {}) };
-                if (b) next[s.name] = b;
-                else delete next[s.name];
-                saveSettings({ ...ui.settings, sessionBusy: next });
-              },
-              true,
-            ),
-          ),
-        ), busyOwn),
-    ];
+    // A session is shown by its address until its name lands, and the daemon keeps these settings
+    // by name: one saved under the address would never apply, so the session isn't offered (#43).
+    const local = ((ui.state?.devices || []).find((d) => d.self)?.sessions || []).filter((s) => !s.name.includes("/")).sort((a, b) => a.name.localeCompare(b.name));
+    const wakeOver = set.sessionWake || {};
+    const busyOver = set.sessionBusy || {};
+    const saveWake = (name, w) => {
+      // From the settings as they are now: a pause in typing minutes can end after another choice
+      // was made.
+      const next = { ...(ui.settings.sessionWake || {}) };
+      if (w) next[name] = w;
+      else delete next[name];
+      saveSettings({ ...ui.settings, sessionWake: next });
+    };
+    const saveBusy = (name, b) => {
+      const next = { ...(ui.settings.sessionBusy || {}) };
+      if (b) next[name] = b;
+      else delete next[name];
+      saveSettings({ ...ui.settings, sessionBusy: next });
+    };
+    const own = local.filter((s) => wakeOver[s.name] || busyOver[s.name]).length;
     sections.push(
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Wake-ups")),
-        h("div", { class: "group" }, rows),
-      ),
-      h(
-        "section",
-        { class: "section" },
-        h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Busy sessions")),
-        h("div", { class: "group" }, busyRows),
-        ui.settingsError && h("p", { class: "row-error section-head", "data-announce": "" }, ui.settingsError),
+      settingsSection(
+        "messages",
+        "Messages to your sessions",
+        null,
+        settingsRow(
+          "mode",
+          "Availability",
+          MODE_HELP[deviceMode()],
+          h(
+            "div",
+            { class: "segmented", role: "group" },
+            [["online", "Online"], ["dnd", "Do not disturb"], ["invisible", "Invisible"]].map(([v, label]) =>
+              h("button", { "aria-pressed": deviceMode() === v ? "true" : "false", "data-tip": MODE_HELP[v], "data-key": "mode-" + v, onclick: () => deviceMode() !== v && setMode(v) }, label),
+            ),
+          ),
+        ),
+        settingsRow(
+          "wake",
+          "Wake an idle session",
+          "When another session's message may start an idle session's turn. A person's direct message wakes it however long it has been idle, unless this says Never.",
+          wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
+        ),
+        settingsRow("busy", "While a session is working", "What it is shown when a message arrives mid-turn.", busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false)),
+        perSessionFold(
+          local.map((s) => sessionSettingsRow(s, wakeOver[s.name] || null, busyOver[s.name] || null, saveWake, saveBusy)),
+          own,
+        ),
       ),
     );
+    // Files are off both ways until the person turns them on, per repo (#765, Tyler, 2026-11-16).
+    // Each way, a main setting for the person and their agents, and once it is on, one that keeps it
+    // from the agents (Tyler, 2026-11-16).
+    const fileRows = (key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp, hints, agentsHints) => {
+      const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => saveSettings({ ...ui.settings, [prop]: v }, false, prop), hints))];
+      if (on) {
+        const sub = settingsRow(
+          "agents-" + key,
+          "Agents too",
+          agentsOff ? agentsOffText : agentsOnText,
+          onOffControl("agents-" + key, !agentsOff, (v) => saveSettings({ ...ui.settings, [agentsProp]: !v }, false, agentsProp), agentsHints),
+        );
+        sub.classList.add("row-sub");
+        rows.push(sub);
+      }
+      return rows;
+    };
+    sections.push(
+      settingsSection(
+        "files",
+        "Files",
+        null,
+        fileRows(
+          "send-files",
+          "Send files",
+          !!set.sendFiles,
+          "You can attach files to what you write here: screenshots, logs, diffs.",
+          "No files go out from this device. Attaching one asks you to turn this on.",
+          "sendFiles",
+          !!set.agentsSendOff,
+          "Your agents here can send files too, only from this repo or the temp folder.",
+          "Only you send files. An agent's message with files isn't sent, and it is told you can turn this on.",
+          "agentsSendOff",
+          ["Send no files from this device; attaching one asks you to turn this on first", "Let you, and your agents if Agents too is on, attach files to messages from this device"],
+          ["Agents on this device may not send files; a file message from one is not sent and it is told you can turn this on", "Agents on this device may send files, only from this repo or the temp folder"],
+        ),
+        fileRows(
+          "receive-files",
+          "Receive files",
+          !!set.receiveFiles,
+          "Files other devices send are downloaded into this repo's .git folder and shown here.",
+          "Messages arrive without their files, which aren't downloaded. Senders are told.",
+          "receiveFiles",
+          !!set.agentsReceiveOff,
+          "Your agents here get the files sent to them too.",
+          "Only you get files. Your agents get messages without them, and senders are told.",
+          "agentsReceiveOff",
+          ["Do not download files sent here; messages arrive without them and senders are told", "Download files sent here into this repo's .git folder and show them on this page"],
+          ["Only you receive files here; agents get the message without its files and senders are told", "Agents on this device receive files sent to them as well as their messages"],
+        ),
+      ),
+    );
+    if (ui.settingsError) sections.push(h("p", { class: "row-error section-head", "data-announce": "" }, ui.settingsError));
   }
 
   const mutes = ui.state?.mutes || [];
   sections.push(
-    h(
-      "section",
-      { class: "section" },
-      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Mutes")),
-      h(
-        "div",
-        { class: "group" },
-        mutes.length === 0
-          ? h("div", { class: "row-empty" }, "None")
-          : mutes.map((m) => {
-              const key = "mute-" + m.by + "-" + m.muted;
-              const at = when(m.at);
-              return settingsRow(
-                key,
+    settingsSection(
+      "mutes",
+      "Mutes",
+      "A muted session's messages don't reach the session that muted it.",
+      mutes.length === 0
+        ? h("div", { class: "row-empty" }, "None")
+        : mutes.map((m) => {
+            const key = "mute-" + m.by + "-" + m.muted;
+            const at = when(m.at);
+            return settingsRow(
+              key,
+              h(
+                "span",
+                { class: "mute-line" },
+                icon("bellOff"),
+                h("span", { class: "truncate" }, m.by),
+                h("span", { class: "verb" }, "muted"),
+                h("span", { class: "truncate" }, m.muted),
+              ),
+              at && agoEl("span", "", at),
+              m.canUnmute &&
                 h(
-                  "span",
-                  { class: "mute-line" },
-                  icon("bellOff"),
-                  h("span", { class: "truncate" }, m.by),
-                  h("span", { class: "verb" }, "muted"),
-                  h("span", { class: "truncate" }, m.muted),
+                  "button",
+                  {
+                    class: "btn btn-outline btn-xs",
+                    title: "Unmute: " + m.by + " starts receiving " + m.muted + "'s messages again",
+                    "data-key": key,
+                    disabled: ui.muting.has(key),
+                    onclick: () => unmute(m, key),
+                  },
+                  "Unmute",
                 ),
-                at && agoEl("span", "", at),
-                m.canUnmute &&
-                  h(
-                    "button",
-                    {
-                      class: "btn btn-outline btn-xs",
-                      "data-key": key,
-                      disabled: ui.muting.has(key),
-                      onclick: () => unmute(m, key),
-                    },
-                    "Unmute",
-                  ),
-                "keep-inline",
-              );
-            }),
-      ),
+              "keep-inline",
+            );
+          }),
     ),
   );
 
-  sections.push(versionSection());
-  return h("div", { class: "page" }, sections);
+  sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
+  return h("div", { class: "page" }, settingsScope(), sections);
+}
+
+// Which repo, and which device, the settings above the line are for: in mur app the repo picker
+// switches between repos, each with settings of its own.
+function settingsScope() {
+  if (!ui.state) return null;
+  const self = (ui.state.devices || []).find((d) => d.self);
+  return h(
+    "p",
+    { class: "settings-scope" },
+    "For ",
+    h("strong", null, ui.state.repo || NAME),
+    self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
+  );
 }
 
 async function unmute(m, key) {
@@ -4914,7 +5865,23 @@ let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
 
 function hasUnsent() {
-  return ui.outbox.length > 0 || [...composers.values()].some((el) => el.value.trim());
+  return ui.outbox.length > 0 || attached.size > 0 || [...composers.values()].some((el) => el.value.trim());
+}
+
+// The state as far as the page shows it, for poll's signature. This device's lastSeen and its
+// person's lastActive move on every poll, so with them in the signature the page rebuilt on every
+// poll, with nothing on it changed (#618). Neither kind of time is shown as a time, on any device:
+// a lastSeen only for a device that is unreachable, and of a person's lastActive only whether they
+// are here now. So a reachable device's lastSeen is left out, and every person's lastActive is
+// reduced to here or not.
+function shownState(state) {
+  if (!state) return state;
+  const devices = (state.devices || []).map((d) => ({
+    ...d,
+    lastSeen: d.reachable ? null : d.lastSeen,
+    person: d.person && { ...d.person, lastActive: personOnline({ ...d.person, device: d }) },
+  }));
+  return { ...state, devices };
 }
 
 async function poll() {
@@ -4961,6 +5928,7 @@ async function poll() {
     }
     ui.state = state;
     stateAskedAt = asked;
+    followFileSwitches(state);
     forgetJoins();
     // Someone else claimed this name first (#268): ask for another, once per page, unless something
     // is already being asked.
@@ -4973,6 +5941,7 @@ async function poll() {
     ui.outbox = ui.outbox.filter((item) => !(item.id && ui.ids.has(item.id)));
     ui.conn = "ok";
     announceArrivals(arrived);
+    tellApp(appNotes(arrived));
     if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     if (era !== tokenEra) return;
@@ -4983,7 +5952,9 @@ async function poll() {
   inflight = false;
   // Rebuild only when something changed, and leave alone a minutes field being typed in, text being
   // selected, and a pane being scrolled: a rebuild would drop the selection or stop the scroll.
-  const sig = JSON.stringify([ui.state, ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000)]);
+  // A tag chip waits for a state asked for after its change was answered (tagsOf), which can be
+  // one that differs in nothing from the state before it: while any waits, each new state counts.
+  const sig = JSON.stringify([shownState(ui.state), ui.cursor, ui.actCursor, ui.github, ui.conn, ui.restarting > 0, restartStuck(), ui.outbox.length, Math.floor(Date.now() / 15000), tagWanted.size ? stateAskedAt : 0]);
   // A composer keeps its own element, so what is being typed there survives a rebuild, unless an
   // input method is partway through a character. On a phone it wouldn't: refocusing it isn't a tap,
   // so the keyboard would drop. There the thread catches up when the composer loses focus.
@@ -5014,6 +5985,35 @@ function announceArrivals(list) {
   if (!say.length) return;
   const m = say[say.length - 1];
   announce(say.length === 1 ? "New message from " + fromName(m) + ": " + m.subject : say.length + " new messages, the newest from " + fromName(m) + ": " + m.subject);
+}
+
+// The desktop app (`mur app`, #23) is this page in a window of its own, which gives it murmurApp.
+// The window is told the unread count, for its title and icon, and the messages to the person as
+// they arrive, which it shows as notifications when it isn't in front. A browser has no murmurApp.
+function inApp() {
+  return typeof window.murmurApp === "function";
+}
+
+let toldApp = "";
+function tellApp(notes = []) {
+  if (!inApp()) return;
+  const unread = unreadCount();
+  const title = (unread ? "(" + unread + ") " : "") + NAME;
+  // The window's frame follows the theme's color scheme.
+  const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+  const said = [location.host, title, dark].join(" ");
+  if (said === toldApp && !notes.length) return;
+  toldApp = said;
+  const seen = !document.hidden && document.hasFocus();
+  window.murmurApp({ host: location.host, title, unread, notes, seen, dark }).catch(() => {});
+}
+
+function appNotes(list) {
+  if (!inApp()) return [];
+  const unread = new Set(ui.state?.account?.unread || []);
+  const mine = list.filter((m) => unread.has(m.id) && fromName(m) !== myName());
+  if (mine.length > 3) return [{ title: NAME, body: mine.length + " new messages" }];
+  return mine.map((m) => ({ title: fromName(m), body: m.subject || "" }));
 }
 
 // A fresh link pasted into a tab already showing the page changes only the fragment, so the
@@ -5052,14 +6052,49 @@ async function start() {
   poll();
 }
 
+// A file dropped anywhere on the page goes with the open conversation's next message. Left to the
+// browser, a dropped file opens in place of the page.
+let dropTimer = 0;
+function dragsFiles(e) {
+  return [...(e.dataTransfer?.types || [])].includes("Files");
+}
+function dropsHere() {
+  return ui.setup || ui.picker || ui.tagMenu || ui.repoMenu || ui.profile || ui.viewer ? null : root.querySelector(".composer");
+}
+document.addEventListener("dragover", (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  const box = dropsHere();
+  e.dataTransfer.dropEffect = box ? "copy" : "none";
+  if (!box) return;
+  // No event says a drag has left the window for good: the mark goes when dragover stops coming.
+  box.classList.add("composer-drop");
+  clearTimeout(dropTimer);
+  dropTimer = setTimeout(() => root.querySelector(".composer-drop")?.classList.remove("composer-drop"), 200);
+});
+document.addEventListener("drop", (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  const key = dropsHere()?.querySelector(".composer-input")?.dataset.composer;
+  // A folder comes as a file that can't be read.
+  const files = [...e.dataTransfer.items].filter((it) => it.kind === "file" && !it.webkitGetAsEntry?.()?.isDirectory).map((it) => it.getAsFile());
+  if (key && files.length) attach(key, files.filter(Boolean));
+});
+
 // Escape closes the tag menu wherever the focus is, even on the page's body.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
+  if (e.key === "Escape" && ui.viewer && !e.defaultPrevented) {
+    e.preventDefault(); // a click on the picture leaves the focus on the page's body
+    closeViewer();
+  } else if (e.key === "Escape" && ui.tagMenu && !e.defaultPrevented) {
     e.preventDefault(); // this Escape was the menu's; the phone's drawer under it stays open
     closeTagMenu();
   } else if (e.key === "Escape" && ui.repoMenu && !e.defaultPrevented) {
     e.preventDefault(); // the drawer under it stays open, as under the tag menu
     closeRepoMenu();
+  } else if (e.key === "Escape" && ui.profile && !e.defaultPrevented) {
+    e.preventDefault(); // as for the menus
+    closeProfile();
   }
 });
 window.addEventListener("hashchange", () => {
@@ -5072,6 +6107,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("focus", () => {
   if (ui.token && ui.conn !== "denied") markOpenRead();
 });
+window.murmurFront = appSaysFront; // what the desktop app's window calls
 window.addEventListener("blur", markOpenRead); // nobody is looking now, so what comes next is new
 document.addEventListener("scroll", () => (scrolledAt = Date.now()), { capture: true, passive: true });
 NARROW.addEventListener("change", () => {
@@ -5079,13 +6115,13 @@ NARROW.addEventListener("change", () => {
   render();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu) setDrawer(false);
+  if (e.key === "Escape" && !e.defaultPrevented && ui.drawer && !ui.setup && !ui.picker && !ui.tagMenu && !ui.profile) setDrawer(false);
 });
 // Tooltips, drawn by the page rather than the browser: a browser's title waits about a second and
 // can't be styled. The page's tip is only for what a person can't already read: a button that is
 // only an icon, a state dot, a time (its tip has the full date), and "+N" more tags. Rows, messages,
 // labelled buttons and badges keep the browser's title, which waits long enough not to get in the
-// way. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
+// way. The exception is a choice in a segmented control, whose tip says what it does before it is picked. While the page's tip shows, the title moves to data-tip-title so the browser's own doesn't
 // show too, and it comes back after, so assistive tech still reads it.
 //
 // The tip shows 150 ms after the pointer settles. Once one is showing, the next shows at once, so

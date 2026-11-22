@@ -23,6 +23,9 @@ const (
 	// TeamRef holds the team keys (bus.TeamRecord), one shared ref pushed with a lease, as the
 	// registry is.
 	TeamRef = RefRoot + "team"
+	// FilesPrefix + a random name holds the files one message carries (#570): one commit, which a
+	// device fetches only when the message is for it. The name is inside the message's event.
+	FilesPrefix = RefRoot + "files/"
 
 	// StateDir is the daemon's directory inside the git common dir.
 	StateDir = Name
@@ -33,6 +36,10 @@ const (
 	Command = "mur"
 	// MCPServer is the MCP server's name; Claude Code shows its tools as mcp__<name>__<tool>.
 	MCPServer = Name
+	// AppID names the desktop app to the system (#616): its bundle identifier on macOS, its
+	// AppUserModelID on Windows, its .desktop file and icon on Linux. It is reverse DNS of the
+	// site's domain (ReportURL's).
+	AppID = "dev.afig." + Name
 
 	// JoinDoc and UseDoc are the pages the marker in a repo's AGENTS.md and CLAUDE.md sends an
 	// agent to, as raw text: how to join (docs/agents/join.md) and how to use the tools

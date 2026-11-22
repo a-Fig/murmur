@@ -99,17 +99,22 @@ key replaced it.
 - **Key loss.** A deleted clone comes back as a new device and is granted like any. If only the keys
   file is gone and `state.json` (or, failing that, the local copy of its presence ref) shows the
   device had keys, the daemon takes a new device ID, because teammates would refuse a new key under
-  the old one; the old ID goes stale and its names stay taken.
+  the old one; the old ID goes stale and its names stay taken, and the new ID's sessions get new
+  names: the registry never moves a name between devices (#617). A session that comes back with
+  its session key takes its tags, mutes and explained list to its new name ([tags](tags.md), #827). The
+  person's name stays with the old device, and the page asks them for another: nothing shows the
+  new device is the same person's (#834).
 - **The name registry stays in the clear, and unsealed.** It holds random names, device IDs and
   random session IDs, and a device must read it before it can name a session, which may be before it
   holds the team key. For the same reason an encrypted presence carries its sessions' names and IDs
   beside the box, which exposes nothing the registry doesn't.
-- **What anyone who can read a public repo still sees:** device IDs, which begin with a slug of the
-  hostname; when each device writes, how many records and how large; the team key IDs each record is
-  encrypted for; which devices each team key was granted to, and when; each device's public keys;
-  the name registry; and `refs/murmur/reported`. Not messages, subjects, who sent what to whom,
-  statuses, branches, tags, hosts, owners, agents, or rosters.
+- **What anyone who can read a public repo still sees:** device IDs (since #330 a new one says
+  nothing of the machine, but one made before begins with a slug of its hostname); when each device
+  writes, how many records and how large; the team key IDs each record is encrypted for; which
+  devices each team key was granted to, and when; each device's public keys; the name registry;
+  `refs/murmur/reported`; and that some message carried files, with about how large they were
+  together ([files](files.md)). Not messages, subjects, who sent what to whom, statuses, branches,
+  tags, hosts, owners, agents, rosters, or a file's name, size or contents.
 - **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
   `owner` or an event's kind (since #550 it estimates messages and sessions instead; [counting
-  use](counting.md)); whether new clones should get a device ID without the hostname (#330); and
-  when a rotation should happen without anyone running `mur rotate`.
+  use](counting.md)); and when a rotation should happen without anyone running `mur rotate`.

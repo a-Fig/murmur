@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -153,6 +154,7 @@ func TestAnotherAgentsHookFindsItsSessionsClone(t *testing.T) {
 		{"a sibling's record", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: there, On: true}}, false},
 		{"the record of the Claude Code that started the agent", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code", ClaudeSession: "thread-1", GitDir: there, On: true}}, false},
 		{"that agent's record, in no repository", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "claude-code"}}, false},
+		{"the record of the Antigravity that started Codex", []here.Session{{ServerPID: os.Getpid(), ClientPID: agent, Agent: "antigravity", GitDir: there}}, false},
 		{"the session's record beside a sibling's", []here.Session{
 			{ServerPID: os.Getpid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-1", GitDir: there, On: true},
 			{ServerPID: os.Getppid(), ClientPID: agent, Agent: "codex in T3", Native: "thread-2", GitDir: filepath.Join(works, ".git"), On: true}}, true},
@@ -657,7 +659,7 @@ func TestHookForAnUnknownAgentDoesNothing(t *testing.T) {
 	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
 	payload, _ := json.Marshal(map[string]string{"session_id": "x", "hook_event_name": "PostToolUse", "cwd": repo})
 	var out bytes.Buffer
-	hook.RunFor("muse", bytes.NewReader(payload), &out)
+	hook.RunFor("cursor", bytes.NewReader(payload), &out)
 	if out.Len() != 0 || len(requests()) != 0 {
 		t.Errorf("printed %q, asked %+v", out.String(), requests())
 	}
@@ -714,5 +716,40 @@ func TestGroksStopAtTheSessionsClose(t *testing.T) {
 	}
 	if len(ends) != 1 || ends[0].Continues || ends[0].ClaudeSession != "grok-1" {
 		t.Errorf("turn ends: %+v", ends)
+	}
+}
+
+// An issue a tool call filed goes to the daemon with the notices request after the call (#510),
+// from Claude Code's payload and from Grok's, which spells the tool's name and input its own way.
+// What the call printed goes no further than the issue's repository and number.
+func TestTheHookTellsTheDaemonOfAnIssueFiled(t *testing.T) {
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
+	claude, _ := json.Marshal(map[string]any{"session_id": "claude-x", "hook_event_name": "PostToolUse", "cwd": repo,
+		"tool_name": "Bash", "tool_use_id": "toolu_1", "tool_input": map[string]any{"command": "gh issue create -t x -b y"},
+		"tool_response": map[string]any{"stdout": "https://github.com/a-Fig/murmur/issues/37\n", "stderr": "secret-ish"}})
+	hook.Run(bytes.NewReader(claude), &bytes.Buffer{})
+	grok, _ := json.Marshal(map[string]any{"sessionId": "grok-1", "hook_event_name": "PostToolUse", "cwd": repo,
+		"toolName": "run_terminal_command", "toolInput": map[string]any{"command": "gh issue close 12"},
+		"toolResult": map[string]any{"type": "Bash"}, "tool_response": map[string]any{"type": "Bash", "output_for_prompt": "✓ Closed issue a-Fig/murmur#12 (x)"}})
+	hook.RunFor(hook.Grok, bytes.NewReader(grok), &bytes.Buffer{})
+	// A prompt has no tool call, whatever its payload says.
+	prompt, _ := json.Marshal(map[string]any{"session_id": "claude-x", "hook_event_name": "UserPromptSubmit", "cwd": repo,
+		"tool_name": "Bash", "tool_input": map[string]any{"command": "gh issue create"},
+		"tool_response": map[string]any{"stdout": "https://github.com/a-Fig/murmur/issues/99\n"}})
+	hook.Run(bytes.NewReader(prompt), &bytes.Buffer{})
+	got := map[string][]proto.Issue{}
+	for _, r := range ops(requests(), proto.OpNotices) {
+		got[r.ClaudeSession+" "+r.Agent] = append(got[r.ClaudeSession+" "+r.Agent], r.Issues...)
+		if b, _ := json.Marshal(r); strings.Contains(string(b), "secret-ish") {
+			t.Errorf("the request carries the call's output: %s", b)
+		}
+	}
+	want := map[string][]proto.Issue{
+		"claude-x ":   {{Repo: "a-Fig/murmur", Number: 37}},
+		"grok-1 grok": {{Repo: "a-Fig/murmur", Number: 12, Closed: true}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the notices requests reported %+v, want %+v", got, want)
 	}
 }

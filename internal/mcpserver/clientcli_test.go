@@ -26,11 +26,19 @@ func abs(t *testing.T, name string) string {
 	return filepath.Join(t.TempDir(), name)
 }
 
-// openCodeState makes an OpenCode state directory whose shared server is registered as content.
-func openCodeState(t *testing.T, content string) {
+// openCodeState makes an OpenCode state directory whose shared server is registered as content,
+// and returns it.
+func openCodeState(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
+	registerOpenCode(t, dir, content)
+	return dir
+}
+
+// registerOpenCode registers OpenCode's shared server as content in the state directory dir.
+func registerOpenCode(t *testing.T, dir, content string) {
+	t.Helper()
 	if content == "" {
 		return
 	}
@@ -94,9 +102,9 @@ func TestOpenCodeRouteNeedsTheSharedServer(t *testing.T) {
 	opencode := abs(t, "opencode")
 	startedBy(t, 4242, opencode)
 
-	openCodeState(t, `{"id":"x","version":"2.2.0","url":"http://127.0.0.1:28894","pid":4242,"password":"p"}`)
-	if r := routeFromEnv("opencode"); r != (proto.Route{OpenCodeCLI: opencode}) {
-		t.Errorf("route %+v, want only the OpenCode program", r)
+	state := openCodeState(t, `{"id":"x","version":"2.2.0","url":"http://127.0.0.1:28894","pid":4242,"password":"p"}`)
+	if r := routeFromEnv("opencode"); r != (proto.Route{OpenCodeCLI: opencode, OpenCodeState: state}) {
+		t.Errorf("route %+v, want only the OpenCode program and its state directory", r)
 	}
 	t.Setenv("T3CODE_CLI_PATH", "/home/u/.t3/bin/t3")
 	if r := routeFromEnv("opencode"); r.OpenCodeCLI != "" {
@@ -111,8 +119,8 @@ func TestOpenCodeRouteNeedsTheSharedServer(t *testing.T) {
 		"a registration without a process":                  `{"url":"http://127.0.0.1:1"}`,
 	} {
 		openCodeState(t, content)
-		if r := routeFromEnv("opencode"); r.OpenCodeCLI != "" {
-			t.Errorf("%s: the route names %q", name, r.OpenCodeCLI)
+		if r := routeFromEnv("opencode"); r.OpenCodeCLI != "" || r.OpenCodeState != "" {
+			t.Errorf("%s: the route names %q in %q", name, r.OpenCodeCLI, r.OpenCodeState)
 		}
 	}
 
@@ -120,5 +128,40 @@ func TestOpenCodeRouteNeedsTheSharedServer(t *testing.T) {
 	startedBy(t, 4242, abs(t, "node"))
 	if r := routeFromEnv("opencode"); r.OpenCodeCLI != "" {
 		t.Errorf("started by node, the route names %q", r.OpenCodeCLI)
+	}
+}
+
+// Without XDG_STATE_HOME the route names OpenCode's default state directory in full: the daemon's
+// own XDG_STATE_HOME may be another session's, and the command would look there (#486).
+func TestOpenCodeRouteNamesTheDefaultStateDirectory(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	opencode := abs(t, "opencode.exe")
+	startedBy(t, 4242, opencode)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	state := filepath.Join(home, ".local", "state")
+	registerOpenCode(t, state, `{"pid":4242}`)
+	t.Setenv("XDG_STATE_HOME", "")
+	if r := routeFromEnv("opencode"); r != (proto.Route{OpenCodeCLI: opencode, OpenCodeState: state}) {
+		t.Errorf("route %+v, want the OpenCode program and %q", r, state)
+	}
+}
+
+// The refresh of OpenCode's plugin asks the OpenCode that started the server which version it is
+// (#446): that program, under either name OpenCode installs, and nothing for another parent.
+func TestOpenCodeClientIsTheOpenCodeThatStartedTheServer(t *testing.T) {
+	for exe, want := range map[string]bool{
+		abs(t, "opencode"):     true,
+		abs(t, "opencode2"):    true,
+		abs(t, "OpenCode.exe"): true,
+		abs(t, "node"):         false,
+		abs(t, "opencode-ai"):  false,
+		"opencode":             false,
+	} {
+		startedBy(t, 4242, exe)
+		if got := openCodeClient(); (got == exe) != want || (!want && got != "") {
+			t.Errorf("started by %s: %q", exe, got)
+		}
 	}
 }

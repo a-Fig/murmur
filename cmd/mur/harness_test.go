@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/join/jointest"
 	"github.com/a-Fig/murmur/internal/testgit"
@@ -109,14 +110,15 @@ func cloneOf(t *testing.T, root string) (remote, clone string) {
 	return remote, clone
 }
 
-// stopDaemon stops the clone's daemon and waits until it has let go of the clone's files.
+// stopDaemon stops the clone's daemon and waits until nothing holds the clone's lock, which the
+// daemon lets go of as it exits, not until daemon.json has gone. A daemon removes daemon.json as it begins
+// to stop and keeps the lock while it drains and says goodbye. One that began to stop by itself, as
+// a clone's does once its user has left, isn't found by `mur stop`, which then doesn't wait; on a
+// slow Windows runner it outlasted the TempDir cleanup's retries (#663).
 func stopDaemon(clone string) {
-	runStop(context.Background(), []string{"-C", clone}, &bytes.Buffer{})
-	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		if _, err := os.Stat(filepath.Join(clone, ".git", "murmur", "daemon.json")); err != nil {
-			return
-		}
-	}
+	ctx := context.Background()
+	runStop(ctx, []string{"-C", clone}, &bytes.Buffer{})
+	client.WaitGone(ctx, filepath.Join(clone, ".git"), client.StopWait)
 }
 
 // box is a user's machine: its own home, Claude Code and Codex directories, a stand-in claude on
@@ -159,12 +161,13 @@ func newBox(t *testing.T) *box {
 // machine this is and which agent is running the command.
 func (b *box) env() []string {
 	drop := map[string]bool{"HOME": true, "USERPROFILE": true, "CLAUDE_CONFIG_DIR": true, "CODEX_HOME": true, "PATH": true,
-		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "CODEX_THREAD_ID": true,
+		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "T3CODE_THREAD_ID": true, "CODEX_THREAD_ID": true,
 		"CODEX_SANDBOX": true, "CODEX_CI": true, "XDG_CONFIG_HOME": true, jointest.LogEnv: true,
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
-		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true,
+		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true, "GEMINI_HOME": true,
 		// Which session ran the command, and where sessions are found (internal/here).
-		"CLAUDE_PID": true, brand.SessionsDirEnv: true, clones.DirEnv: true}
+		"CLAUDE_PID": true, "ANTIGRAVITY_AGENT": true, "ANTIGRAVITY_CONVERSATION_ID": true,
+		brand.SessionsDirEnv: true, clones.DirEnv: true}
 	var env []string
 	for _, kv := range os.Environ() {
 		if k, _, _ := strings.Cut(kv, "="); !drop[strings.ToUpper(k)] && !drop[k] {

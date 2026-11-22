@@ -98,8 +98,9 @@ the mesh.
   hooks](design/clients.md).
 - **The page.** `mur ui` opens a page, served by the daemon on localhost, that shows every session
   and every message, laid out as a sibling of T3 Code. A person there picks a name and talks to
-  agents, and sees a chat app's ticks when their message has been delivered and read. [The
-  page](design/page.md), [a person on the page](design/people.md), [receipts](design/receipts.md).
+  agents, and sees a chat app's ticks when their message has been delivered and read. `mur app`
+  shows the same page in a window of its own. [The page](design/page.md), [a person on the
+  page](design/people.md), [receipts](design/receipts.md), [the desktop app](design/desktop.md).
 - **Updates and counting.** The daemon updates itself from GitHub releases. The only thing Murmur
   sends us is a public repo's address, once, and a daily census counts what that repo's bus shows
   anyone. [Updating](design/updating.md), [counting use](design/counting.md).
@@ -146,6 +147,8 @@ the mesh.
 - **Mute only, no block** (2026-10-28, #27).
 - **Updates on by default** (2026-11-07, #192): fixes reach every daemon without anyone
   reinstalling.
+- **The desktop app is the page in the system's web view** (2026-11-15, #23): one page, so the app
+  and the browser never drift apart, and no browser engine of our own to ship, as Electron would.
 - **Only a public repo's address is sent** (2026-11-08, #199): it is public already, so there is
   nothing to opt out of; a private repo sends nothing.
 - **Built in Go** (2026-10-26): one static binary, `mur`, for each platform, cross-compiled from any
@@ -207,12 +210,11 @@ difference.
   2026-11-10 a device's `/api/health` classes a refusal for too many requests as `rate-limited`, so
   a team's own devices can show it.
 - When should a rotation of the team key happen without anyone running `mur rotate`? Should the
-  census keep anything readable (#156), and should new clones get a device ID without the hostname
-  (#330)?
+  census keep anything readable (#156)?
 - Should a daemon check who pushed a device's key, through GitHub's activity API, rather than trust
   every way to push (#397)?
 - Should a message carry the name it was sent to? Today the receiving daemon can't tell which of a
   session's names was used; adding it is a change to the bus format.
-- Should agents see receipts, in `send`'s result, `lookup` or `who` (#26), and opt in to them
-  (#276)?
+- Should agents see receipts, in `send`'s result, `lookup` or `who` (#605)? An agent can already
+  ask to be told once (#276).
 - What still assumes the agents share a repo (#405)?

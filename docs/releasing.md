@@ -100,7 +100,7 @@ those don't say:
 
 ## Building from source
 
-With Go 1.26 or later:
+With Go 1.27.1 or later:
 
 ```sh
 git clone https://github.com/a-Fig/murmur && cd murmur

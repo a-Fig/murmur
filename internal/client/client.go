@@ -116,6 +116,14 @@ func (c *Client) PageKeyURL(ctx context.Context) (string, error) {
 	return "http://" + info.Web + "/#key=" + resp.PageKey, nil
 }
 
+// PageHost is the host and port daemon.json says the clone's page is served at, without asking
+// the daemon, so it may be a daemon's that has gone; "" if the file names none. The desktop app
+// uses it to tell which clone's page its window is showing.
+func PageHost(gitDir string) string {
+	info, _ := (&Client{GitDir: gitDir}).load()
+	return info.Web
+}
+
 // Running reports whether a daemon answers for gitDir, without starting one or sending it the
 // token: what answers at its port is asked only to prove itself.
 func Running(ctx context.Context, gitDir string) bool {
@@ -563,8 +571,23 @@ func StartDaemon(exe, gitDir string, page *os.File, flags ...string) error {
 
 // Stop asks the clone's daemon to exit and waits for it to go. It reports whether there was one.
 // A daemon from before proof can't be asked, and is ended by its process (see endOlder).
-func Stop(ctx context.Context, gitDir string) (bool, error) {
+func Stop(ctx context.Context, gitDir string) (bool, error) { return stop(ctx, gitDir, 0) }
+
+// StopWaiting is Stop for `mur stop`, which waits, up to startWait, for a daemon that holds the
+// clone's lock but can't be asked yet, and then stops it (#668). A daemon still starting holds the
+// lock before it writes daemon.json; without the wait, `mur stop` said no daemon was running, and
+// the daemon went on to run. One already stopping has no daemon.json either, and is waited out.
+// Leave doesn't wait here: a starting daemon sees the consent gone and stops by itself, and leave
+// waits for the lock on its own.
+func StopWaiting(ctx context.Context, gitDir string) (bool, error) {
+	return stop(ctx, gitDir, startWait)
+}
+
+func stop(ctx context.Context, gitDir string, wait time.Duration) (bool, error) {
 	c, err := Connect(ctx, gitDir, false)
+	if errors.Is(err, ErrNoDaemon) && wait > 0 {
+		c, err = awaitReachable(ctx, gitDir, wait)
+	}
 	if errors.Is(err, ErrNoDaemon) {
 		return false, nil
 	}
@@ -586,6 +609,37 @@ func Stop(ctx context.Context, gitDir string) (bool, error) {
 	// more requests.
 	WaitGone(ctx, gitDir, 10*time.Second)
 	return true, nil
+}
+
+// startWait is how long StopWaiting waits for a daemon that holds the clone's lock to become
+// reachable, or to let go: a start reads the bus before it writes daemon.json, and a stop can take
+// proto.ShutdownMax. A variable, for the test.
+var startWait = proto.ShutdownMax + 5*time.Second
+
+// awaitReachable connects to the clone's daemon once the one holding the clone's lock can be
+// reached. It is ErrNoDaemon once no daemon holds the lock and none answers.
+func awaitReachable(ctx context.Context, gitDir string, d time.Duration) (*Client, error) {
+	for end := time.Now().Add(d); ; time.Sleep(100 * time.Millisecond) {
+		l, lerr := proc.LockShared(filepath.Join(StateDir(gitDir), "daemon.lock"))
+		switch {
+		case lerr == nil:
+			l.Close()
+		case errors.Is(lerr, fs.ErrNotExist):
+			return nil, ErrNoDaemon // no state directory: no daemon has ever run here
+		case !errors.Is(lerr, proc.ErrLocked):
+			return nil, lerr
+		}
+		c, err := Connect(ctx, gitDir, false)
+		if err == nil || !errors.Is(err, ErrNoDaemon) || lerr == nil {
+			return c, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if time.Now().After(end) {
+			return nil, fmt.Errorf("a daemon holds this clone's lock but hasn't answered in %v: it may be starting or stopping, so run this again in a minute: %w", d, ErrStillRunning)
+		}
+	}
 }
 
 // ErrStillRunning is what WaitGone returns when a daemon still holds the clone's lock at the deadline.
