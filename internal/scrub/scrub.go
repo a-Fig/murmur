@@ -105,17 +105,9 @@ var (
 // Check returns an error naming the kind of secret if any text looks like one.
 func Check(texts ...string) error {
 	for _, t := range texts {
-		for _, p := range patterns {
-			if p.secret == nil {
-				if p.re.MatchString(t) {
-					return blocked(p.name)
-				}
-				continue
-			}
-			for _, m := range p.re.FindAllStringSubmatch(t, -1) {
-				if p.secret(m) {
-					return blocked(p.name)
-				}
+		for _, d := range decoded(t) {
+			if name := format(d); name != "" {
+				return blocked(name)
 			}
 		}
 		for _, m := range assignment.FindAllStringSubmatchIndex(t, -1) {
@@ -125,6 +117,50 @@ func Check(texts ...string) error {
 		}
 	}
 	return nil
+}
+
+// format names the first of patterns that finds a secret in t, or is "".
+func format(t string) string {
+	for _, p := range patterns {
+		if p.secret == nil {
+			if p.re.MatchString(t) {
+				return p.name
+			}
+			continue
+		}
+		for _, m := range p.re.FindAllStringSubmatch(t, -1) {
+			if p.secret(m) {
+				return p.name
+			}
+		}
+	}
+	return ""
+}
+
+// maxDecodes is how many times decoded decodes a text: a JSON string of JSON escapes its escapes
+// again, as an agent's tool call that carries a serialized config does.
+const maxDecodes = 3
+
+// decoded is t, followed by t with JSON's backslash escapes decoded (jsonUnescape), again for each
+// level of JSON within JSON, up to maxDecodes. The formats are looked for in each (#981): a key
+// in a JSON string can be written with escapes in it (a webhook URL's slashes as \/, a letter as
+// \u0067), or with an escape just before it (\n), which the patterns, reading the text as written,
+// missed. The whole text is decoded, not each quoted string in it: in prose, logs or escaped JSON
+// the quotes don't pair reliably, and decoding changes only what follows a backslash. A
+// credential assignment's value is decoded already, as quotedValue reads it.
+func decoded(t string) []string {
+	out := []string{t}
+	for range maxDecodes {
+		if !strings.Contains(t, `\`) {
+			break
+		}
+		d := jsonUnescape(t)
+		if d == t {
+			break
+		}
+		out, t = append(out, d), d
+	}
+	return out
 }
 
 func blocked(what string) error {
