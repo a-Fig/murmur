@@ -460,6 +460,9 @@ func TestIndex(t *testing.T) {
 	if !strings.Contains(string(b), "<title>"+brand.Product+"</title>") {
 		t.Errorf("index doesn't carry the brand name:\n%s", b)
 	}
+	if !strings.Contains(string(b), `data-theme="dim"`) {
+		t.Errorf("index doesn't start in Dim:\n%s", b)
+	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
 		t.Errorf("CSP = %q", csp)
 	}
