@@ -260,3 +260,134 @@ func TestFetchOffersOnlyBusCommits(t *testing.T) {
 		t.Errorf("fetching a log's next commit offered %v, not the clone's copy of the log, %s", other, first)
 	}
 }
+
+// Bus traffic leaves the user's branches and hooks alone (#950). The clone here has the remote's
+// fetch refspecs map bus refs onto branches, and a reference-transaction hook, which git runs on
+// every ref it writes. Without --refmap= a fetch would move those branches, and a push would move
+// or delete them as it set what it took for their remote-tracking copies; and every fetch, push and
+// update-ref would run the hook.
+func TestBusLeavesBranchesAndHooksAlone(t *testing.T) {
+	root := t.TempDir()
+	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
+	ran := filepath.Join(root, "hook-ran")
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", clone, "-c", "user.name=u", "-c", "user.email=u@example.invalid"}, args...)...)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, stderr.String())
+		}
+		return strings.TrimSpace(string(out))
+	}
+	for _, args := range [][]string{{"init", "-q", "--bare", remote}, {"init", "-q", clone}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+	}
+	git("commit", "-q", "--allow-empty", "-m", "work")
+	git("branch", "side")
+	git("remote", "add", "origin", remote)
+	git("config", "--add", "remote.origin.fetch", "+"+brand.RefRoot+"mesh/dev:refs/heads/side")
+	git("config", "--add", "remote.origin.fetch", "+"+brand.RefRoot+"*:refs/heads/stolen/*")
+	// Every ref outside the bus, compared at the end: branches, remote-tracking refs, tags.
+	notBus := func() string {
+		t.Helper()
+		var keep []string
+		for _, line := range strings.Split(git("for-each-ref", "--format=%(refname) %(objectname)"), "\n") {
+			if !strings.HasPrefix(line, brand.RefRoot) {
+				keep = append(keep, line)
+			}
+		}
+		return strings.Join(keep, "\n")
+	}
+	before := notBus()
+	hooks := filepath.Join(clone, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/bin/sh\necho \"$1\" >> '" + filepath.ToSlash(ran) + "'\n"
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The hook runs as set up, so its silence below is Murmur's doing.
+	git("update-ref", "refs/heads/probe", "HEAD")
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("the hook didn't run for git itself: %v", err)
+	}
+	git("update-ref", "-d", "refs/heads/probe")
+	if err := os.Remove(ran); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	r := &bus.Repo{Git: gitx.Git{Dir: filepath.Join(clone, ".git")}, Remote: "origin", Name: "test", Email: "test@example.invalid"}
+	sha, err := r.NewCommit(ctx, "", "a message")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, other := brand.RefRoot+"mesh/dev", brand.RefRoot+"mesh/other"
+	for _, ref := range []string{dev, other} {
+		if err := r.Push(ctx, sha, ref, bus.Force, ""); err != nil {
+			t.Fatalf("push %s: %v", ref, err)
+		}
+	}
+	if err := r.Fetch(ctx, []string{dev, other}); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if err := r.UpdateLocal(ctx, other, sha); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteLocal(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Push(ctx, "", dev, bus.Force, ""); err != nil {
+		t.Fatalf("push deleting %s: %v", dev, err)
+	}
+	if err := r.Push(ctx, sha, dev, bus.Lease, ""); err != nil {
+		t.Fatalf("leased push %s: %v", dev, err)
+	}
+	// A server can say it took a push under another name (proc-receive's "option refname"), and
+	// git would update whatever tracks that name: here refs/remotes/origin/evil.
+	renamed := brand.RefRoot + "renamed"
+	report := `#!/bin/sh
+size() {
+	size=$(dd bs=1 count=4 2>/dev/null)
+	[ -n "$size" ] && [ "$size" != 0000 ]
+}
+data() { line=$(dd bs=1 count=$((0x$size - 4)) 2>/dev/null); }
+skip() { dd bs=1 count=$((0x$size - 4)) >/dev/null 2>&1; }
+say() { printf '%04x%s' $((${#1} + 4)) "$1"; }
+while size; do skip; done
+say "version=1"
+printf 0000
+refs=
+while size; do
+	data
+	set -- $line
+	refs="$refs $3"
+done
+for r in $refs; do say "ok $r"; say "option refname refs/heads/evil"; done
+printf 0000
+`
+	if err := os.MkdirAll(filepath.Join(remote, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remote, "hooks", "proc-receive"), []byte(report), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "--git-dir="+remote, "config", "receive.procReceiveRefs", renamed).CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v: %s", err, out)
+	}
+	if err := r.Push(ctx, sha, renamed, bus.Force, ""); err != nil {
+		t.Fatalf("push %s, reported as refs/heads/evil: %v", renamed, err)
+	}
+
+	if after := notBus(); after != before {
+		t.Errorf("bus traffic changed refs outside %s; before:\n%s\nafter:\n%s", brand.RefRoot, before, after)
+	}
+	if b, err := os.ReadFile(ran); err == nil {
+		t.Errorf("bus traffic ran the clone's reference-transaction hook:\n%s", b)
+	}
+}

@@ -181,12 +181,16 @@ func (r *Repo) RemoteRef(ctx context.Context, ref string) (string, error) {
 // whole history, since the server isn't told the clone has it; on a large repo #15's slow fetch
 // takes it. A clone with no bus refs yet offers nothing, which git warns of on stderr, where it
 // leads the error of a fetch that fails.
+//
+// It writes only the refs it names (--refmap=). Otherwise git also writes wherever the remote's
+// own fetch refspecs map each ref it brings, and a refspec can map a bus ref onto a branch, which
+// a fetch would then move under whoever has it checked out (#950).
 func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
 	args := []string{"-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--quiet",
-		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
+		"--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=",
 		"--negotiation-tip=" + brand.RefRoot + "*", r.Remote}
 	for _, ref := range refs {
 		args = append(args, "+"+ref+":"+ref)
@@ -199,7 +203,10 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) error {
 // the remote ref must have ("" meaning it must not exist), checked atomically by the server.
 //
 // Pushes skip the repo's hooks: a pre-push hook that runs the test suite on every message would
-// make the bus unusable, and these commits never reach a branch.
+// make the bus unusable, and these commits never reach a branch. Nor does a push of a bus ref
+// write a local ref (#950). After a push git sets, or deletes, the local ref that the remote's
+// fetch refspecs map the pushed ref to, and a refspec can map a bus ref onto a branch. So each
+// such push adds two refspecs of its own (noTracking).
 //
 // A push the server refuses as busy (see busyReasons) is sent again as it was, after a second or
 // so, up to pushTries times in all. Sending the same commit again can't write anything twice: if an
@@ -241,8 +248,8 @@ func busyWait(try int) time.Duration {
 
 // pushOnce is one try of Push. busy says the server refused it as busy, so it may be sent again.
 func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, expect string) (busy bool, err error) {
-	args := []string{"push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
-		"--recurse-submodules=no", r.Remote}
+	args := append(r.noTracking(ref), "push", "--porcelain", "--no-verify", "--no-follow-tags", "--no-signed",
+		"--recurse-submodules=no", r.Remote)
 	switch mode {
 	case Force:
 		args = append(args, "--force")
@@ -291,6 +298,23 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	}
 	reason = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(reason), "("), ")")
 	return busyReasons[reason], fmt.Errorf("push to %s %w: %s", ref, ErrRefused, refused)
+}
+
+// noTracking are the options that keep a push of a bus ref from writing a local ref (#950). git
+// asks the remote's fetch refspecs which local ref tracks each ref the server says it updated, and
+// a negative refspec makes the answer none. git checks a negative refspec against what the other
+// refspecs map that ref to, not against the ref itself: git 2.31 to 2.53 do, and a pattern refspec
+// such as refs/murmur/*:refs/heads/x/* then got past one alone (seen 2026-11-21). The identity
+// refspec beside it maps every ref to itself, so the negative one rules each out first; a git that
+// checked the ref itself would rule it out too. Both cover all of refs/, not just the bus refs: a
+// server with a proc-receive hook can report the push under another name, such as a branch's
+// (Opus review). Other pushes, `mur init`'s to a branch, keep git's update of the tracking ref.
+func (r *Repo) noTracking(ref string) []string {
+	if !strings.HasPrefix(ref, brand.RefRoot) {
+		return nil
+	}
+	key := "remote." + r.Remote + ".fetch="
+	return []string{"-c", key + "refs/*:refs/*", "-c", key + "^refs/*"}
 }
 
 // LocalRefs returns the local copies of bus refs.
