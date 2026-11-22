@@ -325,7 +325,8 @@ what the tools of those names do (`internal/mcpserver/commands.go`, rendered by 
   `mur send NAME "<paragraph>"` to the old `TO SUBJECT [BODY]` anyway, so the paragraph was the
   subject and was cut at 120 characters (#1021). `--subject` gives one of the agent's own. Three
   words after `send` still mean SUBJECT BODY, the form v0.5.1 documents, with a note on stderr
-  giving the new one: no call that worked before sends anything different. The send tool's
+  giving the new one. A call that worked before sends what it did, except one whose subject or
+  body was a literal `-`, `--` or `--subject`, which now mean what they say here. The send tool's
   subject-only call goes through `subjectFor` too, so a subject a model writes (#1023) would change
   that function alone.
 - **Not covered.** Files and `tell_me` in `mur send`; a harness outside T3, which has no thread ID

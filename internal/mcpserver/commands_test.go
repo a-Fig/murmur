@@ -113,12 +113,16 @@ func TestCommandRequests(t *testing.T) {
 		{"send", []string{"a", "-"}, "from stdin\nand more\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "from stdin", Body: "and more"}, false},
 		{"send", []string{"a", "-"}, " \n", proto.Request{}, true},
 		{"send", []string{"a", ""}, "", proto.Request{}, true},
+		{"send", []string{"a", "​"}, "", proto.Request{}, true},
 		{"send", []string{"a", "too", "many", "words"}, "", proto.Request{}, true},
 		// --subject gives the subject, wherever it is, and the text is then the whole body.
 		{"send", []string{"a", "--subject", "s", "one\ntwo"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "one\ntwo"}, false},
 		{"send", []string{"--subject=s", "a", "-"}, "piped\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "piped\n"}, false},
 		{"send", []string{"a", "-subject", "s"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "s"}, false},
 		{"send", []string{"a", "text", "--subject"}, "", proto.Request{}, true},
+		{"send", []string{"a", "--subject=", "text"}, "", proto.Request{}, true},
+		{"send", []string{"a", "--subject", " ", "text"}, "", proto.Request{}, true},
+		{"send", []string{"a", "--subject", "-"}, "not read", proto.Request{Op: proto.OpSend, To: "a", Subject: "-"}, false},
 		{"send", []string{"a", "--subject", "s", "b", "c"}, "", proto.Request{}, true},
 		{"send", []string{"a", "--", "--subject"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: "--subject"}, false},
 		// The old form, TO SUBJECT BODY, still means what it did.

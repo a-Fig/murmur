@@ -98,7 +98,8 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 //
 // The old form, with three words after send, is the one v0.5.1 documents and agents and scripts
 // already run, and the new form has two, so three still mean SUBJECT BODY, as they did. A note on
-// stderr gives the new form; nothing changes what a call that worked before sends.
+// stderr gives the new form. Only a call whose text was a literal -, -- or --subject sends
+// something different now.
 func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Request, error) {
 	var words []string
 	subject, given := "", false
@@ -125,6 +126,11 @@ func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Reques
 			continue
 		}
 		words = append(words, a)
+	}
+	if given && oneLine(subject) == "" {
+		// The daemon's refusal would say the message needs a subject, which reads as wrong when one
+		// was given.
+		return proto.Request{}, errors.New("--subject is empty: give a subject, or leave --subject out and the text's opening words are the subject")
 	}
 	switch {
 	case given && (len(words) == 1 || len(words) == 2):
