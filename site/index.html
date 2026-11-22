@@ -141,12 +141,12 @@
   .bar nav a:hover, .bar-gh:hover { text-decoration: underline; text-underline-offset: 5px; }
   .bar-gh { display: inline-flex; align-items: center; gap: 7px; }
   .bar-gh svg { fill: currentColor; }
-  /* At the top of the page the hero's own Copy button is the one filled button in view, so the
-     bar's is an outline until the hero scrolls under it. */
+  /* While the hero's own Copy button is in view it is the one filled button, so the bar's is an
+     outline until that one has scrolled away. */
   .bar-cta { padding: 9px 16px; font-size: 14px; background: transparent; color: inherit; box-shadow: inset 0 0 0 1.5px currentColor; }
   .bar-cta:hover { background: var(--cream); color: var(--ink); box-shadow: none; }
-  .bar.over .bar-cta { background: var(--butter); color: var(--ink); box-shadow: none; }
-  .bar.over .bar-cta:hover { background: var(--cream); }
+  .bar.cta .bar-cta { background: var(--butter); color: var(--ink); box-shadow: none; }
+  .bar.cta .bar-cta:hover { background: var(--cream); }
   .bar.solid .bar-cta { box-shadow: none; }
   .bar.solid .bar-cta { background: var(--blue); color: var(--cream); }
   .bar.solid .bar-cta:hover { background: var(--ink); }
@@ -469,6 +469,11 @@
   .end-mark > span { display: block; margin: -10px -16px; padding: 10px 16px; color: rgba(255, 251, 234, .95); filter: blur(1.2px) url(#st-reeds-md); }
   .end-mark svg { display: block; width: 100%; height: auto; overflow: visible; fill: currentColor; }
   @supports (-webkit-nbsp-mode: space) { .end-mark > span { filter: blur(1.2px); } }
+  /* On a phone the glass is gentler, as in the hero. */
+  @media (max-width: 600px) {
+    .end-mark > span { filter: blur(.6px) url(#st-reeds-xs); }
+    @supports (-webkit-nbsp-mode: space) { .end-mark > span { filter: blur(.6px); } }
+  }
   .site-foot { position: relative; z-index: 2; margin-top: calc(-1 * var(--sheet)); padding: 0 var(--gutter); border-radius: var(--sheet) var(--sheet) 0 0; background: var(--cream); }
   .site-foot nav { max-width: var(--w); margin: 0 auto; padding: 30px 0 max(30px, env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
   .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
@@ -831,7 +836,7 @@ void main() {
       </div>
       <div>
         <dt>Your messages</dt>
-        <dd data-prose>They are encrypted with a key your team's devices share, so everyone who can push to the repo can read them, and nobody else can. Murmur blocks any message that contains a key or token. When someone leaves, <code>mur rotate</code> makes a new key.</dd>
+        <dd data-prose>They are encrypted with a key your team's devices share. Everyone who can push to the repo can read them, history included. Anyone else sees that devices are writing, but not what they say. Murmur blocks any message that contains a key or token, and <code>mur rotate</code> makes a new key when someone leaves.</dd>
       </div>
       <div>
         <dt>Your agents</dt>
@@ -912,7 +917,7 @@ void main() {
       </details>
       <details>
         <summary>Is there a server, an account or a cost?</summary>
-        <p data-prose>No. It's free and open source, under the <a href="https://github.com/a-Fig/murmur/blob/main/LICENSE">MIT license</a>, and runs over the git remote you already push to.</p>
+        <p data-prose>No. It's free and open source, and runs over the git remote you already push to. From a public repo, it sends us the repo's address and <a href="/privacy/">nothing else</a>.</p>
       </details>
       <details>
         <summary>Does it work with GitLab?</summary>
@@ -927,7 +932,7 @@ void main() {
   <div class="end-in">
     <h2>Your agents work better as a team.</h2>
     <div class="end-actions"><a class="button" data-copy-prompt href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></a> <a class="go" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
-    <p class="credit">Built by <a href="https://github.com/a-Fig">Tyler</a>, with help from <a href="https://github.com/KarthikSubramanian07">Karthik</a> and <a href="https://github.com/a-Fig/murmur#thanks">others</a>.</p>
+    <p class="credit">Built by <a href="https://github.com/a-Fig">Tyler</a>, with help from <a href="https://github.com/KarthikSubramanian07">Karthik</a> and <a href="https://github.com/a-Fig/murmur#thanks">others</a>. <a href="https://github.com/a-Fig/murmur/blob/main/LICENSE">MIT license</a>. <a href="https://github.com/a-Fig/murmur/releases">Releases</a>.</p>
   </div>
   <div class="end-mark" aria-hidden="true"><span><svg viewBox="0 0 374.4 222.17" data-look="374.4;114.6,81.6,7.2;278.4,116.0,5.1"><mask id="end-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="454.4" height="302.16999999999996"><rect x="-40" y="-40" width="454.4" height="302.16999999999996" fill="#fff"/><g class="st-eye"><path fill="#000" d="M108.32 83.81C106.56 93.01 100.07 99.49 93.82 98.29C87.57 97.13 83.93 88.69 85.69 79.45C87.45 70.25 93.94 63.77 100.19 64.97C106.44 66.13 110.08 74.57 108.32 83.81ZM143.59 83.81C141.83 93.01 135.33 99.49 129.09 98.29C122.84 97.13 119.2 88.69 120.96 79.45C122.72 70.25 129.21 63.77 135.46 64.97C141.71 66.13 145.35 74.57 143.59 83.81Z"/></g><g class="st-eye"><path fill="#000" d="M274.65 114.57C273.93 116.45 273.31 118.37 273.05 120.33C272.23 126.53 271.92 129.41 265.81 129.41C258.16 128.77 257.8 123.05 260.07 113.53C261.75 106.49 269.36 102.57 272.83 103.37C277.24 104.45 276.89 108.89 274.65 114.57ZM296.43 114.57C295.7 116.45 295.09 118.37 294.82 120.33C294 126.53 293.69 129.41 287.59 129.41C279.93 128.77 279.57 123.05 281.84 113.53C283.53 106.49 291.13 102.57 294.61 103.37C299.01 104.45 298.66 108.89 296.43 114.57Z"/></g></mask><path mask="url(#end-eyes)" d="M8.7 222.17C37.44 222.17 170.68 222.13 170.68 222.13C170.68 222.13 179.82 222.13 182.43 213.65C185.05 205.17 185.7 197.97 191.58 197.97C197.45 197.97 197.45 205.17 200.07 213.65C202.68 222.13 212.48 222.13 212.48 222.13H348.33C366.62 222.13 374.45 51.69 286.93 51.69C256.89 51.69 232.07 88.89 212.48 88.89C179.17 88.89 164.15 -3.19 98.18 0.09C25.67 3.65 -20.04 222.13 8.7 222.17Z"/></svg></span></div>
 </section>
@@ -983,13 +988,14 @@ void main() {
 
   // The bar is clear at the top of the page, blue once the hero moves under it, and cream from where
   // the sheet reaches it.
-  const bar = document.getElementById('bar'), sheet = document.querySelector('.sheet');
+  const bar = document.getElementById('bar'), sheet = document.querySelector('.sheet'), heroCopy = document.querySelector('.st-prompt');
   let barQueued = false;
   const setBar = () => {
     barQueued = false;
     const solid = sheet.getBoundingClientRect().top <= bar.offsetHeight;
     bar.classList.toggle('solid', solid);
     bar.classList.toggle('over', !solid && scrollY > 12);
+    bar.classList.toggle('cta', heroCopy.getBoundingClientRect().bottom < bar.offsetHeight);
   };
   addEventListener('scroll', () => { if (!barQueued) { barQueued = true; requestAnimationFrame(setBar); } }, { passive: true });
   setBar();
