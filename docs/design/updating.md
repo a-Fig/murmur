@@ -10,10 +10,14 @@ updater need one manual install to get it.
   `SHA256SUMS`, checks the hash, and stages the file beside the running binary's resolved target.
   The downloads never leave https (2026-11-09), since whoever could serve the binary over plain http
   could serve its checksum too. Hosts aren't limited, because GitHub has moved its asset host before
-  and a daemon refusing the next one could never update past it. Unix renames the new file over the
-  old; Windows renames the running exe to a backup, installs, and restores the backup if that fails.
-  A lock beside the executable serializes clones sharing an install, and a manual reinstall during
-  the download is left alone. An install the daemon can't write (a package manager's) is logged once
+  and a daemon refusing the next one could never update past it. The new file is renamed over the
+  old in one step, so a kill at any moment leaves a whole binary there, old or new (#944). Windows
+  allows that rename over a running exe only while the exe has a second name, so the updater first
+  hard-links it to a backup (`mur.exe.old-.mur-update-*`), which goes once nothing runs it; where
+  links fail (FAT), it doesn't update. Before #944 it renamed the running exe aside first, and a kill
+  between the two renames left no `mur.exe`. The next daemon start removes staged files a kill left
+  behind. A lock beside the executable serializes clones sharing an install, and a manual reinstall
+  during the download is left alone. An install the daemon can't write (a package manager's) is logged once
   and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another

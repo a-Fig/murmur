@@ -119,9 +119,7 @@ func Run(ctx context.Context, o Options, restart func()) {
 			return
 		}
 	}
-	if o.OS == "windows" {
-		cleanup(o.Executable)
-	}
+	cleanup(o.Executable)
 	report := func(s Status) {
 		if o.Report != nil {
 			o.Report(s)
@@ -150,6 +148,10 @@ func Run(ctx context.Context, o Options, restart func()) {
 			report(Status{Latest: latest, Failed: err != nil})
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
+				return
+			}
+			if errors.Is(err, errNoLink) {
+				o.Log.Printf("self-update disabled until restart: %v", err)
 				return
 			}
 		}
@@ -274,7 +276,7 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
-	if err = replace(o.Executable, data, o.OS, os.Rename); err != nil {
+	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
@@ -356,9 +358,28 @@ func verify(data, sums []byte, name string) error {
 	return errors.New("release checksum entry missing")
 }
 
-// replace stages beside the destination, closes and syncs before renaming. The Windows
-// backup is unique: a still-running old MCP server may hold an earlier backup open.
-func replace(path string, data []byte, goos string, rename func(string, string) error) error {
+// files are the calls replace makes to rename and link, so tests can fail them or stop between them.
+type files struct {
+	rename, link func(oldname, newname string) error
+}
+
+var osFiles = files{os.Rename, os.Link}
+
+// errNoLink says the running binary couldn't be given a second name, which Windows needs before
+// it lets a new binary take its place.
+var errNoLink = errors.New("can't hard-link the running binary, so it can't be replaced safely")
+
+// replace stages beside the destination, closes and syncs, then renames the staged file over it.
+// That one rename is the whole swap, so a kill at any moment leaves the path naming a whole binary,
+// the old release or the new one (#944); cleanup takes what a kill leaves beside it.
+//
+// Windows refuses that rename while the path is a running program's only name, but not while the
+// program has a second one (tested on Windows 11, 2026-11-21). So replace first links the running
+// binary to a backup name, unique because a still-running old MCP server may hold an earlier backup
+// open. The backup goes once nothing runs it. Renaming the running binary aside instead, as the
+// updater did before, left no binary at the path for a moment, and a kill in that moment left none
+// at all. Where links fail (FAT), replace refuses rather than open that gap again.
+func replace(path string, data []byte, goos string, fs files) error {
 	st, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -382,28 +403,40 @@ func replace(path string, data []byte, goos string, rename func(string, string) 
 		return err
 	}
 	if goos != "windows" {
-		return rename(tmp, path)
+		return fs.rename(tmp, path)
 	}
 	old := path + ".old-" + filepath.Base(tmp)
-	if err = rename(path, old); err != nil {
-		return err
+	if err = fs.link(path, old); err != nil {
+		return fmt.Errorf("%w: %w", errNoLink, err)
 	}
-	if err = rename(tmp, path); err != nil {
-		if rollback := rename(old, path); rollback != nil {
-			return fmt.Errorf("install failed: %v; restoring %s failed: %w", err, old, rollback)
-		}
-		return err
-	}
-	os.Remove(old) // fails harmlessly while the old exe is running
-	return nil
+	err = fs.rename(tmp, path)
+	os.Remove(old) // fails harmlessly while the old exe is running; cleanup takes it later
+	return err
 }
 
+// cleanup removes what an update left beside the binary at path: a staged file a kill left behind,
+// and backups no process runs any more. It takes the update lock first, so as not to take another
+// updater's staged file, and does nothing if another holds it.
 func cleanup(path string) {
-	entries, _ := os.ReadDir(filepath.Dir(path))
+	dir := filepath.Dir(path)
+	entries, _ := os.ReadDir(dir)
+	var stale []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), filepath.Base(path)+".old-.mur-update-") {
-			os.Remove(filepath.Join(filepath.Dir(path), e.Name()))
+		n := e.Name()
+		if !e.IsDir() && (strings.HasPrefix(n, ".mur-update-") || strings.HasPrefix(n, filepath.Base(path)+".old-.mur-update-")) {
+			stale = append(stale, filepath.Join(dir, n))
 		}
+	}
+	if len(stale) == 0 {
+		return
+	}
+	lock, err := proc.Lock(path + ".update.lock")
+	if err != nil {
+		return
+	}
+	defer lock.Close()
+	for _, p := range stale {
+		os.Remove(p)
 	}
 }
 

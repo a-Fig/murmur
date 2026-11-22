@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 func TestVersions(t *testing.T) {
@@ -67,6 +69,10 @@ func TestChecksums(t *testing.T) {
 		}
 	}
 }
+
+// TestReplace fails each call replace makes in turn: Windows links the running binary to a backup
+// and renames the new one over it, Unix only renames. A failure leaves the old binary, and nothing
+// beside it.
 func TestReplace(t *testing.T) {
 	for _, goos := range []string{"linux", "windows"} {
 		for _, failAt := range []int{0, 1, 2} {
@@ -77,18 +83,24 @@ func TestReplace(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "mur")
 				os.WriteFile(path, []byte("old"), 0755)
 				calls := 0
-				err := replace(path, []byte("new"), goos, func(a, b string) error {
-					calls++
-					if calls == failAt {
-						return errors.New("injected rename failure")
+				call := func(op func(string, string) error) func(string, string) error {
+					return func(a, b string) error {
+						calls++
+						if calls == failAt {
+							return errors.New("injected failure")
+						}
+						return op(a, b)
 					}
-					return os.Rename(a, b)
-				})
+				}
+				err := replace(path, []byte("new"), goos, files{call(os.Rename), call(os.Link)})
 				want := "new"
 				if failAt > 0 {
 					want = "old"
 					if err == nil {
 						t.Fatal("no failure")
+					}
+					if noLink := errors.Is(err, errNoLink); noLink != (goos == "windows" && failAt == 1) {
+						t.Fatalf("errNoLink is %v: %v", noLink, err)
 					}
 				} else if err != nil {
 					t.Fatal(err)
@@ -105,6 +117,7 @@ func TestReplace(t *testing.T) {
 		}
 	}
 }
+
 func repo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -361,12 +374,25 @@ func TestReleases(t *testing.T) {
 }
 func TestCleanup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mur.exe")
-	for _, p := range []string{path, path + ".old-.mur-update-123", path + ".old-unrelated"} {
+	dir := filepath.Dir(path)
+	for _, p := range []string{path, path + ".old-.mur-update-123", path + ".old-unrelated", filepath.Join(dir, ".mur-update-456")} {
 		os.WriteFile(p, nil, 0600)
 	}
-	cleanup(path)
-	if _, err := os.Stat(path + ".old-.mur-update-123"); !os.IsNotExist(err) {
+	// Another updater's staged file is not stale.
+	lock, err := proc.Lock(path + ".update.lock")
+	if err != nil {
 		t.Fatal(err)
+	}
+	cleanup(path)
+	if _, err := os.Stat(filepath.Join(dir, ".mur-update-456")); err != nil {
+		t.Fatal("removed while another updater held the lock:", err)
+	}
+	lock.Close()
+	cleanup(path)
+	for _, p := range []string{path + ".old-.mur-update-123", filepath.Join(dir, ".mur-update-456")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatal(p, err)
+		}
 	}
 	if _, err := os.Stat(path + ".old-unrelated"); err != nil {
 		t.Fatal(err)
