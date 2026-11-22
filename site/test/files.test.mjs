@@ -122,7 +122,7 @@ test('every page ends with the same links, and each one leads somewhere', () => 
     // After <main>, so it is the page's contentinfo landmark.
     assert.ok(html.indexOf('<footer class="site-foot">') > html.lastIndexOf('</main>'), `${file}'s footer is inside <main>`);
     const hrefs = [...foot.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
-    assert.deepEqual(hrefs, ['/about/', '/privacy/', '/contact/', 'https://github.com/a-Fig/murmur'], file);
+    assert.deepEqual(hrefs, ['/about/', '/daemon/', '/more/', '/privacy/', '/contact/', 'https://github.com/a-Fig/murmur'], file);
     for (const href of hrefs.filter(h => h.startsWith('/'))) assert.ok(existsSync(source(SITE + href)), `${href} has no page`);
   }
 });
