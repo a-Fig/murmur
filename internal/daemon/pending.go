@@ -35,6 +35,11 @@ import (
 // the backoff that is about six pushes again.
 const pendingGiveUp = 3 * time.Minute
 
+// pendingLook bounds asking the remote which pending sends it has, as they are given up. With the
+// push before it, at most pushTimeout, writeMu is held 80 s at the longest, under the 90 s a send
+// waiting on it has (serve.go).
+const pendingLook = 20 * time.Second
+
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It is called with writeMu held, and nothing else.
 type settleFunc func(landed, absent bool, err error)
@@ -85,7 +90,7 @@ func (d *Daemon) pendingLoop() {
 			d.writeMu.Lock()
 			d.pendRun = false
 			if len(d.pendSends) > 0 {
-				d.giveUpPending(context.Background(), errDaemonStopped, false)
+				d.giveUpPending(errDaemonStopped, false)
 			}
 			d.writeMu.Unlock()
 			return
@@ -109,8 +114,9 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go).
-	ctx, cancel := context.WithTimeout(d.bgCtx, pushTimeout)
+	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). A give-up
+	// may take pendingLook more.
+	ctx, cancel := context.WithTimeout(d.bgCtx, d.opt.PendingPush)
 	defer cancel()
 	if d.dropSwitchedOff(ctx); len(d.pendSends) == 0 {
 		return
@@ -144,7 +150,7 @@ func (d *Daemon) retryPending() {
 		}
 	}
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
-		d.giveUpPending(ctx, err, true)
+		d.giveUpPending(err, true)
 	}
 }
 
@@ -169,11 +175,15 @@ func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) {
 // giveUpPending gives up the pending sends, after err. With look, the remote is asked first, and
 // those it has are taken as landed, and the next write builds on its tip; without, or if it can't
 // be asked, on the tip the first was built on. Caller holds writeMu.
-func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
+//
+// The asking has its own time, pendingLook, and not what is left of the push's before it: a push
+// that timed out has none left, and the remote was then never asked, so a send that an earlier push
+// had landed was called not sent, and went twice if its sender sent it again (#951).
+func (d *Daemon) giveUpPending(err error, look bool) {
 	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
 	ref := d.meshRef()
 	if look {
-		lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		lctx, cancel := context.WithTimeout(d.bgCtx, pendingLook)
 		defer cancel()
 		// A tip that isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
 		// of #818): that is as if the remote couldn't be asked.
