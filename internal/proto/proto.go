@@ -388,6 +388,11 @@ type Response struct {
 	// a hook may have corrected since the MCP server started. The server sends it in any later
 	// hello, in place of its environment's.
 	ClaudeSession string `json:"claudeSession,omitempty"`
+	// ThreadUnread says, in the reply to a hello or an OpRoute that names a T3 thread, that the
+	// daemon couldn't read the thread's state, so it doesn't know whether another thread started it
+	// (#980). A T3 Codex session's MCP server makes no change until a reply says otherwise. A daemon
+	// from before it never says so, and the server goes on as before.
+	ThreadUnread bool `json:"threadUnread,omitempty"`
 
 	Devices []Device `json:"devices,omitempty"`
 

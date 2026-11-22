@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,5 +142,82 @@ func TestACodexThreadFoundDuringTheHelloIsToldBeforeTheSend(t *testing.T) {
 	}
 	if routed, sent := sentAfterRoute(f, "thread-kid"); !sent || !routed {
 		t.Errorf("the send reached the daemon (%v) before it was told the thread (%v)", sent, routed)
+	}
+}
+
+// sendsReached counts the sends that reached the daemon.
+func sendsReached(f *fakeDaemon) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, r := range f.requests {
+		if r.Op == proto.OpSend {
+			n++
+		}
+	}
+	return n
+}
+
+// T3's database fails as the thread is looked up (#980): a send changes nothing and says to try
+// again, rather than going out before the daemon knows whether the session is a delegate. Once the
+// database answers, the next send looks the thread up, tells the daemon, and goes out after it.
+func TestACodexSendWaitsForAFailedLookup(t *testing.T) {
+	f := &fakeDaemon{}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}, misses: 1 << 30}
+	s := codexInT3(t, f, fd, 0)
+	if _, err := s.callFrom(context.Background(), codexCallIn("who", "codex-kid"), proto.Request{Op: proto.OpWho}); err != nil {
+		t.Fatalf("who, with the thread not found: %v", err)
+	}
+	_, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"})
+	if !errors.Is(err, errUnclassified) {
+		t.Errorf("the send while T3's database fails: %v, want errUnclassified", err)
+	}
+	r, _, _ := result(nil, proto.Response{}, err)
+	t.Logf("what the agent reads: %s", r.Content[0].(*mcp.TextContent).Text)
+	if n := sendsReached(f); n != 0 {
+		t.Fatalf("%d sends reached the daemon before it was told the thread", n)
+	}
+	fd.mu.Lock()
+	fd.misses = 0
+	fd.mu.Unlock()
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the send once the database answers: %v", err)
+	}
+	if routed, sent := sentAfterRoute(f, "thread-kid"); !sent || !routed {
+		t.Errorf("the send reached the daemon (%v) before it was told the thread (%v)", sent, routed)
+	}
+}
+
+// The daemon takes the route but can't read the thread's lineage (#980): the send changes nothing
+// and says to try again. Once the daemon can read it, the next send tells it the route again, and
+// goes out after a reply that says the thread was read.
+func TestACodexSendWaitsForTheDaemonToReadTheThread(t *testing.T) {
+	var mu sync.Mutex
+	unread := true
+	f := &fakeDaemon{threadUnread: func(proto.Route) bool { mu.Lock(); defer mu.Unlock(); return unread }}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
+	s := codexInT3(t, f, fd, 0)
+	_, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"})
+	if !errors.Is(err, errUnclassified) {
+		t.Errorf("the send while the daemon can't read the thread: %v, want errUnclassified", err)
+	}
+	if n := sendsReached(f); n != 0 {
+		t.Fatalf("%d sends reached the daemon while it couldn't read the thread", n)
+	}
+	if _, err := s.callFrom(context.Background(), codexCallIn("lookup", "codex-kid"), proto.Request{Op: proto.OpLookup, Name: "boss"}); err != nil {
+		t.Errorf("lookup, with the thread unread: %v", err)
+	}
+	mu.Lock()
+	unread = false
+	mu.Unlock()
+	told := len(f.routesTold())
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the send once the daemon reads the thread: %v", err)
+	}
+	if n := len(f.routesTold()); n <= told {
+		t.Error("the route wasn't told again before the send")
+	}
+	if n := sendsReached(f); n != 1 {
+		t.Errorf("%d sends reached the daemon, want 1", n)
 	}
 }

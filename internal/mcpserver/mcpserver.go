@@ -780,7 +780,9 @@ func (s *server) callFrom(ctx context.Context, mreq *mcp.CallToolRequest, req pr
 	if !sharedAgent(s.opt.Agent) {
 		s.noteMeta(ctx, mreq)
 		if changes(req.Op) {
-			s.awaitThread(ctx)
+			if err := s.classifyFirst(ctx); err != nil {
+				return proto.Response{}, err
+			}
 		}
 		return s.call(ctx, req)
 	}
@@ -851,27 +853,37 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 }
 
 // changes says whether a call of op changes anything, which a delegate's may not: who and lookup
-// only read, and go on without waiting for the session's thread (see awaitThread).
+// only read, and go on without waiting for the session's thread (see classifyFirst).
 func changes(op string) bool { return op != proto.OpWho && op != proto.OpLookup }
 
-// awaitThread holds a call that changes something until the server has looked for the T3 thread of
-// the Codex thread a tool call named, and told the daemon what it found (#966). The daemon reads the
-// thread's lineage as it hears it, so a delegate's first send is refused rather than sent. Only the
-// calls that come while that first look is going wait, and it is bounded: the lookup by its timeout
-// and the route by sendRoute's. The wait ends with the link too, since a server shutting down may
-// never start the look.
-func (s *server) awaitThread(ctx context.Context) {
+// errUnclassified is what a T3 Codex session's call that changes something returns while the daemon
+// doesn't know whether another thread started the session (#980). It is safe to try again.
+var errUnclassified = errors.New(brand.Product + " can't read this session's T3 thread yet, so it doesn't know whether " +
+	"another thread started this one. Nothing was sent or changed; try again in a few seconds")
+
+// classifyFirst holds a call that changes something, in a Codex session in T3, until the daemon has
+// read the T3 thread of the Codex thread a tool call named (#966): the daemon reads the thread's
+// lineage as it hears the route, so a delegate's first send is refused rather than sent. Only the
+// calls that come while the first look is going wait, and that is bounded, the lookup by its
+// timeout and the route by sendRoute's; the wait ends with the link too, since a server shutting
+// down may never start the look.
+//
+// The call goes on only once a reply from the daemon has said it read that thread (#980). If the
+// lookup failed, or the daemon couldn't read the thread, the call looks again and tells the daemon
+// again itself, and if that fails too it changes nothing and returns errUnclassified. A T3 database
+// that can't be read stops such a session's sends until it can: a delegate's going out is worse.
+func (s *server) classifyFirst(ctx context.Context) error {
 	s.mu.Lock()
 	l := s.link
 	s.mu.Unlock()
 	if l == nil {
-		return
+		return nil
 	}
 	l.mu.Lock()
 	looked := l.looked
 	l.mu.Unlock()
 	if looked == nil {
-		return
+		return nil // not a Codex session in T3, or no call has named its thread
 	}
 	var gone <-chan struct{}
 	if l.ctx != nil {
@@ -880,8 +892,25 @@ func (s *server) awaitThread(ctx context.Context) {
 	select {
 	case <-looked:
 	case <-ctx.Done():
+		return ctx.Err()
 	case <-gone:
+		return errPassive
 	}
+	// Whether the daemon read the thread is in the reply to the hello or a route: a session not
+	// registered yet has had neither. A registration that doesn't come is the call's to report.
+	if _, err := l.wait(ctx, 15*time.Second); err != nil {
+		return nil
+	}
+	if l.classified() {
+		return nil
+	}
+	if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
+		l.tellRoute(ctx)
+	}
+	if l.classified() {
+		return nil
+	}
+	return errUnclassified
 }
 
 // codexCall is what a Codex tool call's _meta says of its session: the thread (`threadId`), and,
@@ -1303,8 +1332,11 @@ type link struct {
 	nativeClosed bool
 	// looked is closed once the server, inside T3, has looked for the thread of the native ID it was
 	// last given and told the daemon what it found; nil until a tool call gives one (see
-	// awaitThread).
+	// classifyFirst).
 	looked chan struct{}
+	// readThread is the T3 thread the daemon's last reply to a hello or a route said it had read; ""
+	// if none has (see classifyFirst).
+	readThread string
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
@@ -1386,6 +1418,22 @@ func (l *link) findInT3() {
 	find := threadOf
 	l.find = func(ctx context.Context, native string) (string, error) {
 		return find(ctx, cli, home, native)
+	}
+}
+
+// classified says whether the daemon has said it read the T3 thread the session is in now.
+func (l *link) classified() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.hello.T3Thread != "" && l.readThread == l.hello.T3Thread
+}
+
+// noteReadLocked takes what a reply to a hello or a route carrying route said of its T3 thread.
+// Caller holds mu.
+func (l *link) noteReadLocked(route proto.Route, resp proto.Response) {
+	l.readThread = route.T3Thread
+	if resp.ThreadUnread {
+		l.readThread = ""
 	}
 }
 
@@ -1490,6 +1538,9 @@ func (l *link) sendRoute(ctx context.Context, id string, route proto.Route) {
 		err = errors.New(resp.Error)
 	}
 	if err == nil {
+		l.mu.Lock()
+		l.noteReadLocked(route, resp)
+		l.mu.Unlock()
 		return
 	}
 	// The daemon didn't take it: most likely one left running by an older mur that has no such request.
@@ -1571,7 +1622,7 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 		return
 	}
 	// The call that brought the ID goes on now, and so does any later one that only reads; one that
-	// changes something waits for this (awaitThread). A session that isn't registered yet gets the
+	// changes something waits for this (classifyFirst). A session that isn't registered yet gets the
 	// thread into its hello instead, which the daemon reads the same way.
 	l.spawn(func() {
 		defer close(looked)
@@ -1708,6 +1759,7 @@ func (l *link) run(ctx context.Context) {
 		}
 		backoff, inUse = time.Second, 0
 		l.mu.Lock()
+		l.noteReadLocked(h.Route, resp)
 		l.hello.Reconnect = true // any later hello is a reconnection
 		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
 			// The daemon may give the thread the address its name has had since before #642

@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -262,5 +263,70 @@ func TestDelegateIsOneFromItsLateRoute(t *testing.T) {
 	}
 	if b.listsSession(kid) {
 		t.Error("who lists the delegate")
+	}
+}
+
+// T3's database fails as the daemon reads the thread a route or a hello names (#980): it still takes
+// the route, and its reply says the thread is unread, which keeps the session's server from making
+// any change. Once a read works, the reply to the next route says nothing of the kind, and the
+// delegate's send is refused.
+func TestAnUnreadThreadIsSaidSo(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	threads := &fakeThreads{st: map[string]t3db.State{
+		"thread-boss":  {LastRun: time.Now()},
+		"thread-kid":   {Parent: "thread-boss", LastRun: time.Now()},
+		"thread-kid2":  {Parent: "thread-boss", LastRun: time.Now()},
+		"thread-other": {LastRun: time.Now()},
+	}}
+	var mu sync.Mutex
+	failing := map[string]bool{"thread-kid": true, "thread-kid2": true}
+	read := func(ctx context.Context, cli, home, thread string) (t3db.State, error) {
+		mu.Lock()
+		down := failing[thread]
+		mu.Unlock()
+		if down {
+			return t3db.State{}, errors.New("database is locked")
+		}
+		return threads.read(ctx, cli, home, thread)
+	}
+	b := newDeviceWith(t, remote, func(d *device) { d.titleEvery = time.Hour; d.threadState = read })
+	boss, _ := b.sessionRoute("bbbbbb", "claude-boss", proto.Route{T3CLI: exe, T3Thread: "thread-boss"})
+	bossName := b.named(boss)
+
+	b.sessionRoute("k6k6k6", "", proto.Route{T3CLI: exe})
+	kidRoute := proto.Route{T3CLI: exe, T3Thread: "thread-kid", Native: "codex-kid"}
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "k6k6k6", Route: &kidRoute}); !r.OK || !r.ThreadUnread {
+		t.Errorf("the route whose thread can't be read: ok %v, threadUnread %v, error %q", r.OK, r.ThreadUnread, r.Error)
+	}
+	mu.Lock()
+	failing["thread-kid"] = false
+	mu.Unlock()
+	if r := b.do(proto.Request{Op: proto.OpRoute, Session: "k6k6k6", Route: &kidRoute}); !r.OK || r.ThreadUnread {
+		t.Errorf("the route once the thread can be read: ok %v, threadUnread %v, error %q", r.OK, r.ThreadUnread, r.Error)
+	}
+	if resp := b.trySend("k6k6k6", bossName, "from the delegate"); resp.OK || !strings.Contains(resp.Error, "delegate") {
+		t.Errorf("the delegate's send: ok %v, error %q", resp.OK, resp.Error)
+	}
+
+	// A hello that names the thread, as a server's reconnecting does.
+	conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "k7k7k7", Agent: "codex",
+		Route: proto.Route{T3CLI: exe, T3Thread: "thread-kid2", Native: "codex-kid2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if !resp.ThreadUnread {
+		t.Error("the hello whose thread can't be read doesn't say so")
+	}
+	conn, resp, err = b.c.Hello(context.Background(), proto.Hello{ID: "o8o8o8", Agent: "codex",
+		Route: proto.Route{T3CLI: exe, T3Thread: "thread-other", Native: "codex-other"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if resp.ThreadUnread {
+		t.Error("a hello whose thread was read says it is unread")
 	}
 }

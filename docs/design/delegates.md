@@ -23,9 +23,15 @@ started.
   same way, and a call that changes something (anything but `who` and `lookup`) waits until the
   server has looked the thread up and told the daemon, so a Codex delegate's first `send` is refused
   too (#966). Only the calls that come during that first lookup wait, and only as long as it and
-  the route take (milliseconds as a rule; the lookup gives up after 3 s). Until that first call a
-  Codex delegate is listed, as any delegate is when the read fails or T3 hasn't written its thread's
-  row yet; once its thread is read, the name it took meanwhile is seen by nobody.
+  the route take (milliseconds as a rule; the lookup gives up after 3 s). Such a call goes on only
+  once the daemon's reply to the hello or the route has said it read the thread
+  (`Response.ThreadUnread`, #980). If the lookup or the daemon's read failed, the call tries both
+  again, and if they fail again it changes nothing and tells the agent to try again in a few
+  seconds. The cost: a T3 database Murmur can't read stops a T3 Codex session's sends until it can.
+  Until that first call a Codex delegate is listed, as any delegate is when the read fails or T3
+  hasn't written its thread's row yet; once its thread is read, the name it took meanwhile is seen
+  by nobody. A Claude Code session in T3 has its thread from its environment, and still goes on
+  when the read fails (#945).
   A Claude Code subagent inside one session never registers at all.
 - **Pi** (2026-11-11, #457) has no subagents of its own; packages add them. `pi-subagents` (0.31.0)
   runs each as a child `pi` that loads the user's extensions, Murmur's among them, and sets

@@ -450,6 +450,17 @@ func (d *Daemon) noteHelloThreadLocked(t helloThread, id string) {
 	}
 }
 
+// threadUnreadLocked says route names a T3 thread whose state hasn't been read: neither the read
+// as it registered or was routed nor a refresh has managed it, so whether another thread started it
+// isn't known (#980). Caller holds mu.
+func (d *Daemon) threadUnreadLocked(route proto.Route) bool {
+	if route.T3CLI == "" || route.T3Thread == "" {
+		return false
+	}
+	_, known := d.threads[threadKey{route.T3Home, route.T3Thread}]
+	return !known
+}
+
 // threadStateLocked is what T3's database last said about the thread session id is in, and false
 // if the session isn't in T3 or nothing has been read yet. Caller holds mu.
 func (d *Daemon) threadStateLocked(id string) (t3db.State, bool) {
