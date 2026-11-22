@@ -722,6 +722,25 @@
   .st-gh:hover { text-decoration-color: var(--cream); }
   .st-gh:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
   @media (max-width: 600px) { .st .st-actions { margin-top: 26px; gap: 12px 20px; } }
+  /* What an engineer checks before letting it near a repo (2026-11-22), in one thin row at the
+     hero's foot, across the glass under a hairline, just above where the cream sheet laps over.
+     Each claim is led by a line icon drawn like the copy button's: 24-unit box, round caps. */
+  .st-trim { padding-bottom: var(--sheet); }
+  .st .st-trust { position: relative; z-index: 2; align-self: stretch; margin: 0 -24px; padding: 20px 24px 22px; list-style: none;
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 10px clamp(28px, 3.4vw, 52px);
+    border-top: 1px solid color-mix(in srgb, var(--cream) 18%, transparent); }
+  .st .st-trust li { display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap;
+    color: var(--cream); text-shadow: 0 1px 12px rgba(14, 27, 69, .45); }
+  .st .st-trust svg { flex: none; opacity: .9; }
+  /* On a phone the hero's mark peeks up from the foot, so the row sits above it, in the space the
+     copy used to keep for it, with no hairline, one claim to a line: wrapped, the five broke
+     unevenly. */
+  @media (max-width: 600px) {
+    .st-trim { padding-bottom: 0; }
+    .st-trim .st-copy { padding-bottom: 0; }
+    .st .st-trust { margin: 30px 0 0; padding: 0 0 calc(var(--mw) * .42 + var(--sheet)); border-top: 0; flex-direction: column; align-items: center; gap: 10px; }
+    .st .st-trust li { font-size: 13.5px; gap: 7px; }
+  }
 </style>
 </head>
 <body>
@@ -750,6 +769,13 @@
     <div class="st-actions"><a class="button st-prompt" href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></a><a class="st-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
     <p class="st-hint">Paste it to your coding agent, in your repo. It asks before it installs anything.</p>
   </div>
+  <ul class="st-trust">
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Encrypted end-to-end</li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>Side refs only · zero CI noise</li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 3 8.2 7 10 4-1.8 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg>Blocks leaked secrets</li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg>No server, no accounts</li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>Open source, MIT</li>
+  </ul>
 <script>
 (() => {
   // Light behind the glass, drawn by one small WebGL canvas. Each pixel samples the light at
