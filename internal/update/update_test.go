@@ -389,10 +389,14 @@ func TestReleases(t *testing.T) {
 	}
 }
 func TestCleanup(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mur.exe")
+	path := filepath.Join(t.TempDir(), "mur")
 	dir := filepath.Dir(path)
-	staged, other := filepath.Join(dir, ".mur-update-mur.exe-456"), filepath.Join(dir, ".mur-update-mur-nightly.exe-789")
-	for _, p := range []string{path, path + ".old-.mur-update-mur.exe-123", path + ".old-unrelated", staged, other} {
+	// mur-nightly is another binary, which its own lock covers, though its staged names start with
+	// mur's prefix.
+	staged := filepath.Join(dir, ".mur-update-mur-456")
+	others := []string{path + ".old-unrelated", filepath.Join(dir, ".mur-update-mur-nightly-789"),
+		path + ".old-.mur-update-mur-nightly-789"}
+	for _, p := range append([]string{path, path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged}, others...) {
 		os.WriteFile(p, nil, 0600)
 	}
 	// Another updater's staged file is not stale.
@@ -406,13 +410,12 @@ func TestCleanup(t *testing.T) {
 	}
 	lock.Close()
 	cleanup(path)
-	for _, p := range []string{path + ".old-.mur-update-mur.exe-123", staged} {
+	for _, p := range []string{path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatal(p, err)
 		}
 	}
-	// Another binary's, which its own lock covers.
-	for _, p := range []string{path + ".old-unrelated", other} {
+	for _, p := range others {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatal(err)
 		}

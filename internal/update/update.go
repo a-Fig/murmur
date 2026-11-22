@@ -433,7 +433,9 @@ func cleanup(path string) {
 	var stale []string
 	for _, e := range entries {
 		n := e.Name()
-		if !e.IsDir() && (strings.HasPrefix(n, stagedPrefix(path)) || strings.HasPrefix(n, filepath.Base(path)+".old-.mur-update-")) {
+		backup, isBackup := strings.CutPrefix(n, filepath.Base(path)+".old-")
+		// Backups from before #944 have no binary name in them.
+		if !e.IsDir() && (staged(n, path) || isBackup && (staged(backup, path) || numbered(backup, ".mur-update-"))) {
 			stale = append(stale, filepath.Join(dir, n))
 		}
 	}
@@ -454,6 +456,15 @@ func cleanup(path string) {
 // Windows backup is the binary's name, ".old-" and that file's name, which client.installedExecutable
 // maps back to the binary.
 func stagedPrefix(path string) string { return ".mur-update-" + filepath.Base(path) + "-" }
+
+// staged says name is a file an update of the binary at path staged. The number os.CreateTemp
+// puts after the prefix keeps mur's apart from mur-nightly's, whose prefix starts the same.
+func staged(name, path string) bool { return numbered(name, stagedPrefix(path)) }
+
+func numbered(name, prefix string) bool {
+	n, ok := strings.CutPrefix(name, prefix)
+	return ok && n != "" && strings.Trim(n, "0123456789") == ""
+}
 
 // File.Stat captures Windows file IDs now; os.Stat can defer loading the ID
 // until SameFile, by which time the path may already name the replacement.
