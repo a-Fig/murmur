@@ -595,7 +595,28 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []
 	if codexFresh && !e.looksLikeCodex() {
 		out = append(out, "Codex sessions already open won't have it; ones started from now on will.")
 	}
+	out = append(out, e.agentPageLine())
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
+}
+
+// agentPageLine names the page about Murmur in the agent running join (#934): what a message is
+// like there and what to do when it isn't working. Where join can't tell the agent, it names the
+// list of them, as advice does.
+func (e Env) agentPageLine() string {
+	var name, page string
+	switch {
+	case e.getenv("CLAUDECODE") == "1":
+		name, page = "Claude Code", "claude-code"
+	case e.looksLikePi():
+		name, page = "Pi", "pi"
+	case e.looksLikeCodex():
+		name, page = "Codex", "codex"
+	case e.looksLikeAntigravity():
+		name, page = "Antigravity", "antigravity"
+	default:
+		return "How " + brand.Product + " works in each agent: " + brand.Site + "/#supported"
+	}
+	return "How " + brand.Product + " works in " + name + ": " + brand.AgentPage(page)
 }
 
 // Claude Code, Codex or Pi started from Antigravity inherit its shell markers and take precedence.

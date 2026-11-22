@@ -50,6 +50,13 @@ const (
 	UseDoc   = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/use.md"
 	SetupDoc = "https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md"
 
+	// Site is Murmur's website. Each agent Murmur works in has a page there, AgentPage, for people,
+	// and the same address plus .md for an agent (site/agents/, docs/agents/harnesses/, #934).
+	// setup.md and join.md send an agent to its page, and that sends it to StepsDoc
+	// (docs/agents/steps.md), the steps every agent shares.
+	Site     = "https://murmur.afig.dev"
+	StepsDoc = Site + "/steps"
+
 	// InstallSh and InstallPs1 are the one-line installs join.md tells an agent to run. The docs
 	// spell them out, so a test holds them to these.
 	InstallSh  = "https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh"
@@ -69,3 +76,7 @@ const (
 	// (a handle on Windows) of the page's listening socket it inherited (#255).
 	PageListenerEnv = "MURMUR_PAGE_LISTENER"
 )
+
+// AgentPage is the address of the page about Murmur in one agent, by its name there, such as
+// "claude-code".
+func AgentPage(name string) string { return Site + "/agents/" + name }

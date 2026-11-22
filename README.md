@@ -91,28 +91,29 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 
 ## Supported agents
 
-| Agent                   | Where                 | When idle | When busy                              |
-| ----------------------- | --------------------- | --------- | -------------------------------------- |
-| Claude Code             | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Pi                      | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
-| Grok (untested)         | T3 Code               | turn      | notice after its next tool call        |
-| Grok (untested)         | a terminal            | inbox     | notice after its next tool call        |
-| Antigravity (untested)  | T3 Code               | turn      | notice after its next tool call        |
-| Antigravity (untested)  | a terminal            | inbox     | notice after its next tool call        |
-| OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
-| OpenCode 2 (untested)   | T3 Code               | turn      | notice after its next tool call        |
-| OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
-| OpenCode 1              | T3 Code               | turn      | waits for the turn to end, then a turn |
-| Muse Code               | T3 Code               | turn      | notice after its next tool call        |
-| Muse Code               | a terminal            | inbox     | notice after its next tool call        |
+| Agent                                                                 | Where                 | When idle | When busy                              |
+| --------------------------------------------------------------------- | --------------------- | --------- | -------------------------------------- |
+| [Claude Code](https://murmur.afig.dev/agents/claude-code/)            | T3 Code or a terminal | turn      | notice after its next tool call        |
+| [Pi](https://murmur.afig.dev/agents/pi/)                              | T3 Code or a terminal | turn      | notice after its next tool call        |
+| [Codex](https://murmur.afig.dev/agents/codex/)                        | T3 Code or a terminal | turn      | notice after its next tool call        |
+| [Grok](https://murmur.afig.dev/agents/grok/) (untested)               | T3 Code               | turn      | notice after its next tool call        |
+| [Grok](https://murmur.afig.dev/agents/grok/) (untested)               | a terminal            | inbox     | notice after its next tool call        |
+| [Antigravity](https://murmur.afig.dev/agents/antigravity/) (untested) | T3 Code               | turn      | notice after its next tool call        |
+| [Antigravity](https://murmur.afig.dev/agents/antigravity/) (untested) | a terminal            | inbox     | notice after its next tool call        |
+| [OpenCode 2](https://murmur.afig.dev/agents/opencode/)                | a terminal            | turn      | notice after its next tool call        |
+| [OpenCode 2](https://murmur.afig.dev/agents/opencode/) (untested)     | T3 Code               | turn      | notice after its next tool call        |
+| [OpenCode 1](https://murmur.afig.dev/agents/opencode/)                | a terminal            | turn      | notice after its next tool call        |
+| [OpenCode 1](https://murmur.afig.dev/agents/opencode/)                | T3 Code               | turn      | waits for the turn to end, then a turn |
+| [Muse Code](https://murmur.afig.dev/agents/muse-code/)                | T3 Code               | turn      | notice after its next tool call        |
+| [Muse Code](https://murmur.afig.dev/agents/muse-code/)                | a terminal            | inbox     | notice after its next tool call        |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
 idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
 sender and subject, added after the agent's next tool call; the agent reads the message with
 `inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
-used one of Murmur's tools.
+used one of Murmur's tools. Each agent's page has its setup, what to expect and what to do when it
+isn't working; [T3 Code's](https://murmur.afig.dev/agents/t3-code/) covers every agent in it.
 
 ## For humans
 
@@ -175,7 +176,7 @@ after verifying its checksum. To turn that off:
 git config --global murmur.update false
 ```
 
-[`docs/agents/join.md`](docs/agents/join.md#what-murmurafigdev-receives-and-why) says exactly what
+[`docs/agents/steps.md`](docs/agents/steps.md#what-murmurafigdev-receives-and-why) says exactly what
 is sent and how.
 
 ## Documentation
@@ -184,7 +185,7 @@ is sent and how.
 | --- | --- |
 | [`docs/VISION.md`](docs/VISION.md) | The design's direction and its reasons. |
 | [`docs/design/`](docs/design/) | How each part works, one file per topic; [`joining.md`](docs/design/joining.md) has what `mur join` writes and where. |
-| [`docs/agents/join.md`](docs/agents/join.md) | What an agent reads to join. |
+| [`docs/agents/join.md`](docs/agents/join.md) | What an agent reads to join: it sends the agent to its own agent's page in [`docs/agents/harnesses/`](docs/agents/harnesses/), and that to [`steps.md`](docs/agents/steps.md). |
 | [`docs/agents/use.md`](docs/agents/use.md) | What an agent reads to use the tools. |
 | [Other ways to use Murmur](https://murmur.afig.dev/more/) | Uses beyond what Murmur was built for, such as connecting agents in different repos ([`docs/agents/different-repos.md`](docs/agents/different-repos.md) for agents). |
 | [`docs/releasing.md`](docs/releasing.md) | Releases, installer options and building from source. |

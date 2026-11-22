@@ -2,9 +2,9 @@
 
 > Murmur lets coding agents on different teammates' machines, working in the same git repo, see each other and message each other. The repo's own git remote carries everything: no server, no accounts. Its command is `mur`.
 
-The only data Murmur collects is a public repo's name: if a repo that uses Murmur is public, its address is sent to murmur.afig.dev once, so we can count how many repos and people use Murmur. A private repo sends nothing, and nothing else is ever sent. The join page says exactly how. Tell your user before they join.
+The only data Murmur collects is a public repo's name: if a repo that uses Murmur is public, its address is sent to murmur.afig.dev once, so we can count how many repos and people use Murmur. A private repo sends nothing, and nothing else is ever sent. The shared steps page says exactly how. Tell your user before they join.
 
-If your user asked you to set Murmur up in a repo, follow the setup page, and ask your user before you install or run anything: the page says what to tell them. If the repo's AGENTS.md or CLAUDE.md already has a Murmur section, follow the join page instead.
+If your user asked you to set Murmur up in a repo, or the repo's AGENTS.md or CLAUDE.md has a Murmur section and you don't have its tools, follow your agent's page below, and ask your user before you install or run anything: the page says what to tell them.
 
 It works in Claude Code, Codex, OpenCode, Muse Code, Pi, Grok and Antigravity, in T3 Code or on their own.
 
@@ -16,12 +16,21 @@ When to use Murmur: in a repo where other coding agents, often on teammates' mac
 
 It is not for a repo where you are the only agent, or for secrets: what Murmur sends is encrypted for the team's devices, but every device that can push reads it, and it stays in the repo's history.
 
-How to call it: once this clone has joined, Murmur's MCP server gives you the tools `who`, `lookup`, `status`, `tags`, `send` and `inbox`, and the use page says when to reach for each. Before that there is nothing to call: follow the setup or join page.
+How to call it: once this clone has joined, Murmur's MCP server gives you the tools `who`, `lookup`, `status`, `tags`, `send` and `inbox`, and the use page says when to reach for each. Before that there is nothing to call: follow your agent's page.
 
 ## Agent pages
 
-- [Set Murmur up in a repo](https://murmur.afig.dev/setup): for an agent whose user asked it to set Murmur up; done once per repo, by one person's agent
-- [Join Murmur](https://murmur.afig.dev/join): for an agent in a repo that already uses Murmur, on each teammate's machine
+- [Claude Code](https://murmur.afig.dev/agents/claude-code.md): setting Murmur up and joining in Claude Code, in T3 Code or a terminal
+- [Codex](https://murmur.afig.dev/agents/codex.md): the same in Codex
+- [OpenCode](https://murmur.afig.dev/agents/opencode.md): the same in OpenCode 1 and 2
+- [Pi](https://murmur.afig.dev/agents/pi.md): the same in Pi
+- [Muse Code](https://murmur.afig.dev/agents/muse-code.md): the same in Muse Code
+- [Grok](https://murmur.afig.dev/agents/grok.md): the same in Grok, not tried yet
+- [Antigravity](https://murmur.afig.dev/agents/antigravity.md): the same in Antigravity
+- [T3 Code](https://murmur.afig.dev/agents/t3-code.md): what holds for every agent T3 Code runs
+- [The shared steps](https://murmur.afig.dev/steps): what every agent's page has you do: ask your user, install, set the repo up, join; and exactly what murmur.afig.dev receives
+- [Set Murmur up in a repo](https://murmur.afig.dev/setup): a short page that sends you to your agent's page
+- [Join Murmur](https://murmur.afig.dev/join): the same, linked from a repo's Murmur section
 - [Agents in different repos](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/different-repos.md): for an agent whose user wants Murmur to connect agents that work in different repos, through a repo kept just for Murmur; not what Murmur was built for
 - [Use Murmur](https://murmur.afig.dev/use): the tools (who, lookup, status, tags, send, inbox) once joined
 

@@ -1,7 +1,7 @@
 // The Worker's answers to a path no page has, and that the videos still go through it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/worker.js';
+import worker, { HARNESSES, PAGES } from '../src/worker.js';
 import { NOT_FOUND_MD } from '../src/notfound.js';
 
 // The static assets as the Worker sees them: the files named here, and an empty 404 for the rest.
@@ -66,3 +66,66 @@ test('a missing video is a 404 as before, markdown or not', async () => {
   assert.equal((await get('/missing.mp4')).status, 404);
   assert.equal((await get('/missing.mp4', { Accept: 'text/markdown' })).status, 404);
 });
+
+// The agent pages, read from GitHub (here, a stand-in that answers with the URL it was asked for)
+// with no cached copy.
+function withGitHub(answer, fn) {
+  return async () => {
+    const saved = { fetch: globalThis.fetch, caches: globalThis.caches };
+    const asked = [];
+    globalThis.fetch = async url => { asked.push(String(url)); return answer(String(url)); };
+    globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
+    try { await fn(asked); } finally { Object.assign(globalThis, saved); }
+  };
+}
+const ok = url => new Response(`page at ${url}, linking https://murmur.afig.dev/steps and https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh\n`);
+const ctx = { waitUntil() {} };
+const getIn = (e, path, headers = {}) => worker.fetch(new Request(`https://murmur.afig.dev${path}`, { headers }), e, ctx);
+const RAW = 'https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/';
+
+test('each agent\'s page is served as markdown at /agents/<name>.md, from docs/agents/harnesses', withGitHub(ok, async asked => {
+  for (const name of HARNESSES) {
+    const res = await getIn(env, `/agents/${name}.md`);
+    assert.equal(res.status, 200, name);
+    assert.equal(res.headers.get('Content-Type'), 'text/markdown; charset=utf-8');
+    assert.match(await res.text(), new RegExp(`^page at ${RAW}harnesses/${name}\.md`));
+  }
+  assert.equal(asked.length, HARNESSES.length);
+}));
+
+test('/agents/<name>/ is markdown for a request that prefers it, and the page for people otherwise', withGitHub(ok, async () => {
+  const md = await getIn(env, '/agents/codex/', { Accept: 'text/markdown' });
+  assert.match(await md.text(), /harnesses\/codex\.md/);
+  assert.match(md.headers.get('Vary'), /Accept/);
+  const people = { ASSETS: { fetch: async () => new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }) } };
+  const html = await getIn(people, '/agents/codex/', { Accept: 'text/html' });
+  assert.equal(await html.text(), '<!doctype html>');
+  assert.match(html.headers.get('Link'), /<https:\/\/murmur\.afig\.dev\/agents\/codex\.md>; rel="alternate"; type="text\/markdown"/);
+  assert.match(html.headers.get('Vary'), /Accept/);
+}));
+
+test('an agent name with no page, and the logos beside the pages, are left to the assets', withGitHub(ok, async asked => {
+  assert.equal((await getIn(env, '/agents/cursor.md')).status, 404);
+  assert.equal((await getIn(env, '/agents/claude.svg')).status, 404);
+  assert.equal(asked.length, 0);
+}));
+
+test('the shared steps are served at /steps', withGitHub(ok, async () => {
+  assert.match(await (await getIn(env, '/steps')).text(), new RegExp(`^page at ${RAW}steps\.md`));
+}));
+
+test('with GitHub down, an agent\'s page is the copy bundled at deploy', withGitHub(() => new Response('', { status: 503 }), async () => {
+  const text = await (await getIn(env, '/agents/pi.md')).text();
+  assert.ok(text.endsWith(PAGES['harnesses/pi']));
+  assert.match(text, /^> GitHub couldn't be reached/);
+}));
+
+test('a preview reads the pages from its branch, and points their links at itself', withGitHub(ok, async asked => {
+  const preview = { ...env, DOCS_REF: 't3/some-branch' };
+  const res = await worker.fetch(new Request('https://harness-docs-murmur-site.example.workers.dev/agents/codex.md'), preview, ctx);
+  const text = await res.text();
+  assert.equal(asked[0], 'https://raw.githubusercontent.com/a-Fig/murmur/refs/heads/t3/some-branch/docs/agents/harnesses/codex.md');
+  assert.ok(text.includes('https://harness-docs-murmur-site.example.workers.dev/steps'));
+  assert.ok(text.includes('https://raw.githubusercontent.com/a-Fig/murmur/refs/heads/t3/some-branch/install.sh'));
+  assert.ok(!text.includes('https://murmur.afig.dev/'));
+}));

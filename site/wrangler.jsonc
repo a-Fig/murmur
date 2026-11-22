@@ -5,16 +5,17 @@
   "name": "murmur-site",
   "compatibility_date": "2026-11-01",
   "main": "src/worker.js",
-  // The Worker answers these before the assets do: `/` to serve markdown to an agent that asks for
-  // it, the agent pages (no asset has their paths), the videos (src/worker.js says why), and the
-  // public repos' reports and the page that counts them (src/usage.js).
+  // The Worker answers these before the assets do: `/` and each agent's page under /agents/ to
+  // serve markdown to an agent that asks for it, the agent pages (no asset has their paths), the
+  // videos (src/worker.js says why), and the public repos' reports and the page that counts them
+  // (src/usage.js).
   "assets": {
     "directory": ".",
     "binding": "ASSETS",
     "run_worker_first": ["/", "/*.mp4", "/setup", "/setup.md", "/join", "/join.md", "/use", "/use.md",
-      "/v1/*", "/stats", "/stats/*"]
+      "/steps", "/steps.md", "/agents/*", "/v1/*", "/stats", "/stats/*"]
   },
-  // src/worker.js imports docs/agents/*.md as text, its copy for when GitHub can't be reached, and
+  // src/worker.js imports docs/agents/**/*.md as text, its copy for when GitHub can't be reached, and
   // src/usage.js imports the stats page.
   "rules": [{ "type": "Text", "globs": ["**/*.md", "src/*.html"], "fallthrough": true }],
   // The public repos that use Murmur (#199), the census's counts of them (#259), and the daily

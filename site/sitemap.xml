@@ -28,6 +28,38 @@
     <lastmod>2026-11-10</lastmod>
   </url>
   <url>
+    <loc>https://murmur.afig.dev/agents/t3-code/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/claude-code/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/codex/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/opencode/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/pi/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/muse-code/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/grok/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://murmur.afig.dev/agents/antigravity/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
     <loc>https://murmur.afig.dev/setup</loc>
   </url>
   <url>
