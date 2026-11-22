@@ -479,11 +479,13 @@ func initWorkTree(ctx context.Context, dir string, out io.Writer) error {
 func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("join")
 	leave := fs.Bool("leave", false, "undo joining in this clone: forget the consent, remove the hook, stop the daemon")
+	outside := fs.Bool("outside-home", false, "write agent settings outside a home in the temporary folder, which join otherwise leaves alone as a test's")
 	fs.Parse(args)
 	env, err := join.EnvFromProcess()
 	if err != nil {
 		return err
 	}
+	env.OutsideHome = *outside
 	env.Version = version
 	env.Progress = os.Stderr // a line while a step is slow, or a leave waits for the daemon; stdout is the report
 	do := join.Join
@@ -571,14 +573,16 @@ func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
 func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet(brand.Command+" uninstall", flag.ExitOnError)
 	leave := fs.Bool("leave", false, "leave every repo on this machine that is still joined, first")
+	outside := fs.Bool("outside-home", false, "change agent settings outside a home in the temporary folder, which uninstall otherwise leaves alone as a test's")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
-		return errors.New("uninstall takes no arguments, only --leave")
+		return errors.New("uninstall takes no arguments, only --leave and --outside-home")
 	}
 	env, err := join.EnvFromProcess()
 	if err != nil {
 		return err
 	}
+	env.OutsideHome = *outside
 	env.Version = version
 	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
 	env.RemoveApp = uninstallApp

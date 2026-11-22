@@ -60,6 +60,11 @@ func fakeClaude(args []string) error {
 			return err
 		}
 	}
+	// Every test's Claude Code home is in the temporary folder; one outside it is the real user's,
+	// reached through a variable the test didn't clear (#995).
+	if rel, err := filepath.Rel(os.TempDir(), dir); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("the stand-in claude won't write in %s, which is outside the temporary folder", dir)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
