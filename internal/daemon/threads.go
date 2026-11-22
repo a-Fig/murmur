@@ -402,8 +402,7 @@ type helloThread struct {
 	ok  bool
 }
 
-// readHelloThread reads, outside every lock, the state of the T3 thread route names, if nothing has
-// been read of it yet. A refresh reads a thread only after a session is in it, so without this a
+// readHelloThread reads, outside every lock, the state of the T3 thread route names. A refresh reads a thread only after a session is in it, so without this a
 // delegate registering would be on the mesh until the next one: its first send would go out, and
 // who would list it. That is how the hook's fallback holds a route (findHookThreads, #886), done here
 // in the hello. A failed read is left to the refresh, which logs it.
@@ -411,13 +410,9 @@ func (d *Daemon) readHelloThread(ctx context.Context, route proto.Route) helloTh
 	if route.T3CLI == "" || route.T3Thread == "" {
 		return helloThread{}
 	}
+	// Read though the thread is known now: the hello may wait seconds for the first sync, and a
+	// refresh in that time may forget a thread no session is in any more.
 	k := threadKey{route.T3Home, route.T3Thread}
-	d.mu.Lock()
-	_, known := d.threads[k]
-	d.mu.Unlock()
-	if known {
-		return helloThread{}
-	}
 	threadState := d.opt.ThreadState
 	if threadState == nil {
 		threadState = t3db.StateOf

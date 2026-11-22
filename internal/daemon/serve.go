@@ -216,7 +216,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		defer close(read)
 		branch, worktree = branchOf(ctx, h.Cwd), worktreeOf(ctx, h.Cwd)
 	}()
-	// So is the state of the T3 thread the hello names, if nothing has been read of it: a
+	// So is the state of the T3 thread the hello names: a
 	// delegate is one from its first send, not from the next refresh of the threads (#945).
 	var thread helloThread
 	classified := make(chan struct{})
