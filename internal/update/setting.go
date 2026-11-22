@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/a-Fig/murmur/internal/gitx"
 )
@@ -21,7 +22,7 @@ const (
 	updateKey  = "murmur.update"
 	channelKey = "murmur.channel"
 	// skipKey holds a prerelease a person went back to stable from (#1045): the updater installs
-	// nothing that isn't newer than it, on either channel, and takes the key off once it has.
+	// no prerelease that isn't newer than it, and takes the key off once a newer version is in.
 	skipKey  = "murmur.updateSkip"
 	noUpdate = "MURMUR_NO_UPDATE"
 )
@@ -55,11 +56,9 @@ func ValidChoice(c string) bool {
 type configValue struct{ scope, value string }
 
 // configValues is every value of key in the order git reads them, so the last one is the one
-// that applies. A key that isn't set, or one git can't read as the type asked for, has none: Off
-// has always taken an unreadable murmur.update for updates on.
-func configValues(ctx context.Context, gitDir, key string, typ ...string) []configValue {
-	args := append([]string{"config", "--show-scope"}, typ...)
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", append(args, "--get-all", key)...)
+// that applies; none if it isn't set.
+func configValues(ctx context.Context, gitDir, key string) []configValue {
+	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--show-scope", "--get-all", key)
 	if err != nil {
 		return nil
 	}
@@ -68,6 +67,25 @@ func configValues(ctx context.Context, gitDir, key string, typ ...string) []conf
 		scope, value, ok := strings.Cut(strings.TrimRight(line, "\r\n"), "\t")
 		if ok {
 			vals = append(vals, configValue{scope, strings.TrimSpace(value)})
+		}
+	}
+	return vals
+}
+
+// updateValues is murmur.update's values as git reads a bool: "true", "false", or "" for one it
+// can't read. Off has always taken an unreadable last value for updates on. Each is read on its
+// own, as --type=bool would fail the lot over one bad value in any scope.
+func updateValues(ctx context.Context, gitDir string) []configValue {
+	vals := configValues(ctx, gitDir, updateKey)
+	for i := range vals {
+		v := strings.ToLower(vals[i].value)
+		switch {
+		case v == "false" || v == "no" || v == "off" || v == "0":
+			vals[i].value = "false"
+		case v == "" || v == "true" || v == "yes" || v == "on" || digits(v):
+			vals[i].value = "true"
+		default:
+			vals[i].value = ""
 		}
 	}
 	return vals
@@ -102,7 +120,7 @@ func choiceOf(update, channel string) string {
 // running version. The updater reads the same keys on each check (Off, Prerelease, skipped), so
 // what this says is what it does.
 func Read(ctx context.Context, getenv func(string) string, gitDir, running string) Setting {
-	upd := configValues(ctx, gitDir, updateKey, "--type=bool")
+	upd := updateValues(ctx, gitDir)
 	ch := configValues(ctx, gitDir, channelKey)
 	s := Setting{
 		Choice:    choiceOf(last(upd, "global").value, last(ch, "global").value),
@@ -119,16 +137,12 @@ func Read(ctx context.Context, getenv func(string) string, gitDir, running strin
 		case s.Skip == "":
 		case same(running, s.Skip):
 			s.Hold = "Going back to the latest stable release."
-		default:
+		case s.Effective == ChoiceNightly:
 			on := "stable"
 			if prerelease(running) {
 				on = strings.TrimPrefix(running, "v")
 			}
-			next := "stable release"
-			if s.Effective == ChoiceNightly {
-				next = "nightly"
-			}
-			s.Hold = "On " + on + " until the next " + next + " after " + s.Skip + "."
+			s.Hold = "On " + on + " until the next nightly after " + s.Skip + "."
 		}
 	}
 	if s.Effective == s.Choice {
@@ -159,6 +173,9 @@ func where(scope string) string {
 	return "git config"
 }
 
+// settingMu keeps this process's changes from interleaving: each is two git commands.
+var settingMu sync.Mutex
+
 // Set makes choice this machine's, in the global git config, and returns the setting as it now
 // reads. It writes murmur.update and murmur.channel and no other key. Off keeps no channel, so a
 // later On is stable. Leaving prereleases doesn't go back to an older stable release: the updater
@@ -167,6 +184,8 @@ func Set(ctx context.Context, getenv func(string) string, gitDir, running, choic
 	if !ValidChoice(choice) {
 		return Setting{}, fmt.Errorf("updates are off, on or nightly, not %q", choice)
 	}
+	settingMu.Lock()
+	defer settingMu.Unlock()
 	g := gitx.Git{Dir: gitDir}
 	unset := func(key string) error { return unsetGlobal(ctx, gitDir, key) }
 	var err error
@@ -206,9 +225,12 @@ func unsetGlobal(ctx context.Context, gitDir, key string) error {
 
 // Back goes back to stable from the prerelease running (#1045, Tyler, 2026-11-22): the updater's
 // next check installs the latest stable release, older or not, through the same verified download
-// and restart as any update, and from then on installs nothing that isn't newer than the
-// prerelease, on either channel. It writes murmur.updateSkip, in the global git config.
+// and restart as any update. From then on it installs no prerelease that isn't newer than the one
+// gone back from; stable releases still come, so the machine never stays below the latest one. It
+// writes murmur.updateSkip, in the global git config.
 func Back(ctx context.Context, getenv func(string) string, gitDir, running string) (Setting, error) {
+	settingMu.Lock()
+	defer settingMu.Unlock()
 	s := Read(ctx, getenv, gitDir, running)
 	if !s.CanGoBack {
 		switch {
@@ -235,10 +257,15 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 // "" once a newer one runs, or if the key holds no version.
 func skipped(ctx context.Context, gitDir, running string) string {
 	v := last(configValues(ctx, gitDir, skipKey), "").value
-	if _, _, ok := version(v); !ok || newer(running, v) {
+	if !validVersion(v) || newer(running, v) {
 		return ""
 	}
 	return strings.TrimPrefix(v, "v")
+}
+
+func validVersion(v string) bool {
+	_, _, ok := version(v)
+	return ok
 }
 
 // prerelease says v is a release's version with a prerelease part: an -rc.N or a -nightly, not

@@ -65,7 +65,7 @@ func After(a, b string) bool { return newer(a, b) }
 
 // Off says updates are off in the clone at gitDir: MURMUR_NO_UPDATE, or murmur.update false.
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
-	return envOff(getenv) || last(configValues(ctx, gitDir, updateKey, "--type=bool"), "").value == "false"
+	return envOff(getenv) || last(updateValues(ctx, gitDir), "").value == "false"
 }
 
 // Prerelease says whether git config chooses the prerelease channel (`murmur.channel prerelease`),
@@ -238,13 +238,15 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 		return true, latest, nil
 	}
 	// Going back to stable from a prerelease (Back) takes the latest stable release, older or not.
-	// After that, nothing installs that isn't newer than the prerelease, on either channel.
+	// After that, no prerelease installs that isn't newer than the one gone back from, on either
+	// channel. Stable releases still do, so the machine never stays below the latest of them.
 	skip := skipped(ctx, o.GitDir, o.Version)
-	if skip == "" {
-		clearSkip(ctx, o)
-	}
+	clearSkip(ctx, o, o.Version)
 	back := skip != "" && same(skip, o.Version)
 	rel, err := pick(ctx, o, !back && Prerelease(ctx, o.GitDir))
+	if err == nil && rel != nil && skip != "" && prerelease(rel.Tag) && !newer(rel.Tag, skip) {
+		rel, err = pick(ctx, o, false) // held: the latest stable release, if it is newer
+	}
 	if err != nil {
 		return false, latest, err
 	}
@@ -253,15 +255,8 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
-	switch {
-	case back:
-		if same(rel.Tag, o.Version) {
-			return false, latest, nil
-		}
-	case !newer(rel.Tag, o.Version):
+	if !back && !newer(rel.Tag, o.Version) {
 		return false, latest, nil
-	case skip != "" && !newer(rel.Tag, skip):
-		return false, "", nil // held back: nothing to show, nothing to install
 	}
 	name := assetName(o.OS, o.Arch)
 	if name == "" {
@@ -300,17 +295,18 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
-	if !back {
-		clearSkip(ctx, o) // a release newer than the one gone back from is in place
-	}
+	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
 }
 
-// clearSkip takes murmur.updateSkip off once it holds nothing back, so a later prerelease that
-// misbehaves starts from no hold. It is the global key Back writes; a repo's own is left alone.
-func clearSkip(ctx context.Context, o Options) {
-	if last(configValues(ctx, o.GitDir, skipKey), "global").value == "" {
+// clearSkip takes murmur.updateSkip off once version, the one running or just installed, has
+// passed it, so a later prerelease that misbehaves starts from no hold. It reads the key again
+// each time: a person may have gone back from another prerelease since the check began. It is the
+// global key Back writes; a repo's own is left alone.
+func clearSkip(ctx context.Context, o Options, version string) {
+	v := last(configValues(ctx, o.GitDir, skipKey), "global").value
+	if v == "" || validVersion(v) && !newer(version, v) {
 		return
 	}
 	if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
@@ -548,7 +544,7 @@ func Checked(gitDir string) time.Time {
 }
 
 // Newer returns the latest release the clone's daemon last saw, if it is newer than version and
-// not held back by a return to stable (Back), else "".
+// not a prerelease held back by a return to stable (Back), else "".
 func Newer(gitDir, version string) string {
 	var l latest
 	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
@@ -559,7 +555,7 @@ func Newer(gitDir, version string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if skip := skipped(ctx, gitDir, version); skip == "" || newer(l.Latest, skip) {
+	if skip := skipped(ctx, gitDir, version); skip == "" || !prerelease(l.Latest) || newer(l.Latest, skip) {
 		return l.Latest
 	}
 	return ""

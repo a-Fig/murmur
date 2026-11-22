@@ -57,6 +57,10 @@ func TestReadSetting(t *testing.T) {
 		{name: "nothing set", choice: "on", applies: "on"},
 		{name: "off", global: [][2]string{{"murmur.update", "false"}}, choice: "off", applies: "off"},
 		{name: "off as git spells a bool", global: [][2]string{{"murmur.update", "no"}}, choice: "off", applies: "off"},
+		{name: "a value git can't read as a bool, last", global: [][2]string{{"murmur.update", "false"}}, local: [][2]string{{"murmur.update", "maybe"}}, choice: "off", applies: "on",
+			why: "On here: this repo's git config sets murmur.update."},
+		{name: "a value git can't read as a bool, first", global: [][2]string{{"murmur.update", "maybe"}}, local: [][2]string{{"murmur.update", "false"}}, choice: "on", applies: "off",
+			why: "Off here: this repo's git config sets murmur.update."},
 		{name: "nightly", global: [][2]string{{"murmur.channel", "prerelease"}}, choice: "nightly", applies: "nightly"},
 		{name: "off beats a channel", global: [][2]string{{"murmur.update", "false"}, {"murmur.channel", "prerelease"}}, choice: "off", applies: "off"},
 		{name: "the repo turns it off", local: [][2]string{{"murmur.update", "false"}}, choice: "on", applies: "off",
@@ -156,8 +160,8 @@ func TestSetSettingOverriddenByAnInclude(t *testing.T) {
 	}
 }
 
-// Going back to stable is offered only from a prerelease, with updates on, and holds updates until
-// a newer release than that prerelease, which the page and `mur updates` say.
+// Going back to stable is offered only from a prerelease, with updates on, and holds prereleases
+// until one newer than that one, which the page and `mur updates` say on the nightly channel.
 func TestBack(t *testing.T) {
 	path := global(t)
 	gitDir := repo(t)
@@ -197,8 +201,8 @@ func TestBack(t *testing.T) {
 	if _, err := Set(ctx, noEnv, gitDir, "1.2.4", ChoiceOn); err != nil {
 		t.Fatal(err)
 	}
-	if s := Read(ctx, noEnv, gitDir, "1.2.4"); s.Hold != "On stable until the next stable release after "+nightly+"." || s.Skip != nightly {
-		t.Errorf("on stable: %+v", s)
+	if s := Read(ctx, noEnv, gitDir, "1.2.4"); s.Hold != "" || s.Skip != nightly {
+		t.Errorf("on stable, where stable releases come as ever: %+v", s)
 	}
 	if s := Read(ctx, noEnv, gitDir, "1.2.5"); s.Hold != "" || s.Skip != "" {
 		t.Errorf("a newer release still held: %+v", s)
@@ -296,8 +300,8 @@ func TestUpdaterObeysEachChoice(t *testing.T) {
 }
 
 // Going back to stable installs the latest stable release in place of the prerelease, older as it
-// is, and never one older than that. Then each channel holds until a release newer than the
-// prerelease, and the hold is taken off once one is in place.
+// is, and never one older than that. Then no prerelease installs until one newer than the bad one,
+// while stable releases still do, and the hold is taken off once a newer version is in place.
 func TestBackAndHold(t *testing.T) {
 	path := global(t)
 	gitDir := repo(t)
@@ -330,13 +334,19 @@ func TestBackAndHold(t *testing.T) {
 	if got := installed(t, releases(t, "v1.2.4", list), gitDir, bad); got != "1.2.4" {
 		t.Fatalf("another daemon on %s installed %q", bad, got)
 	}
-	// Held on stable: a stable release newer than the one running but not than the nightly waits.
+	// Held on nightly, a stable release newer than the one running still installs, though it isn't
+	// newer than the nightly: the machine never stays below the latest stable release.
+	gitConfig(t, "--file", path, "murmur.updateSkip", "1.3.0-rc.1")
+	withRC := append([]rel{{"v1.3.0-rc.1", true}}, list...)
+	if got := installed(t, releases(t, "v1.2.6", withRC), gitDir, "1.2.4"); got != "1.2.6" || held() != "1.3.0-rc.1" {
+		t.Fatalf("held on nightly with a newer stable: installed %q, hold %q", got, held())
+	}
+	// On stable, the same.
 	if _, err := Set(ctx, noEnv, gitDir, "1.2.4", ChoiceOn); err != nil {
 		t.Fatal(err)
 	}
-	gitConfig(t, "--file", path, "murmur.updateSkip", "1.3.0-rc.1")
-	if got := installed(t, releases(t, "v1.2.6", nil), gitDir, "1.2.4"); got != "" {
-		t.Fatalf("held on stable, installed %q", got)
+	if got := installed(t, releases(t, "v1.2.6", nil), gitDir, "1.2.4"); got != "1.2.6" || held() != "1.3.0-rc.1" {
+		t.Fatalf("on stable: installed %q, hold %q", got, held())
 	}
 	// The next stable after it installs, and takes the hold off.
 	if got := installed(t, releases(t, "v1.3.0", nil), gitDir, "1.2.4"); got != "1.3.0" || held() != "" {

@@ -30,8 +30,10 @@ async function updatesCall(path, init, prev) {
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     // 404: a page with no setting to change, as in tests.
-    if (e.status === 404) ui.updates = { unavailable: true };
-    else if (seq === updatesSeq) {
+    if (seq !== updatesSeq) {
+      // a newer request's answer is the one shown
+    } else if (e.status === 404) ui.updates = { unavailable: true };
+    else {
       ui.rowErrors.updates = e.message;
       if (prev) ui.updates = prev;
     }
@@ -82,7 +84,8 @@ function updatesRow() {
       "div",
       { class: "segmented", role: "group" },
       CHOICES.map(([v, label, tip]) =>
-        h("button", { "aria-pressed": u.choice === v ? "true" : "false", "data-tip": tip, "data-key": "updates-" + v, onclick: () => u.choice !== v && setUpdates(v) }, label),
+        // One change at a time: each is two git commands, which another's would interleave with.
+        h("button", { "aria-pressed": u.choice === v ? "true" : "false", "data-tip": tip, "data-key": "updates-" + v, disabled: ui.updatesBusy, onclick: () => u.choice !== v && setUpdates(v) }, label),
       ),
     ),
   );

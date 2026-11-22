@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/update"
@@ -41,11 +43,21 @@ func (w *releaseWatch) page() web.Version {
 	if strings.HasSuffix(w.running, "-dev") {
 		return v // a build from source is updated from source
 	}
+	// Newer runs git, so not under the lock, which the updater's reports wait on.
+	w.mu.Lock()
+	due := time.Since(w.readAt) >= w.interval
+	if due {
+		w.readAt = time.Now()
+	}
+	w.mu.Unlock()
+	if due {
+		recorded := update.Newer(w.gitDir, w.running)
+		w.mu.Lock()
+		w.recorded = recorded
+		w.mu.Unlock()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if now := time.Now(); now.Sub(w.readAt) >= w.interval {
-		w.recorded, w.readAt = update.Newer(w.gitDir, w.running), now
-	}
 	latest := w.last.Latest
 	// Once a release is installed, that is the one a restart starts, whatever came out since.
 	if !w.last.Installed && w.recorded != "" && (latest == "" || update.After(w.recorded, latest)) {
@@ -64,41 +76,67 @@ func (w *releaseWatch) page() web.Version {
 	return v
 }
 
+// installed says a release is installed and waits for the restart onto it.
+func (w *releaseWatch) installed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.last.Installed
+}
+
 // updateSetting is the page's Updates (#1045): the machine's setting in the global git config. A
 // change asks the updater for a check soon, so a choice of On, or going back to stable, takes
 // effect in seconds rather than at the hourly check, and the page's banner follows a choice of Off.
 type updateSetting struct {
 	running, gitDir string
 	check           chan struct{}
+	releases        *releaseWatch
+	// stopped says this daemon's updater has returned (a binary it can't replace, a build from
+	// source), so nothing it is asked for happens until the daemon restarts.
+	stopped atomic.Bool
 }
 
-func (u updateSetting) nudge() {
+func (u *updateSetting) nudge() {
 	select {
 	case u.check <- struct{}{}:
 	default: // one is already asked for
 	}
 }
 
-func webSetting(s update.Setting) web.UpdateSetting {
-	return web.UpdateSetting{Choice: s.Choice, Effective: s.Effective, Why: s.Why, Hold: s.Hold, CanGoBack: s.CanGoBack}
+// waiting says why going back to stable can't happen now: an update is installed and waits for
+// the restart, which would start it whatever the hold says, or the updater has stopped.
+func (u *updateSetting) waiting() error {
+	switch {
+	case u.releases.installed():
+		return errors.New("an update is installed; restart onto it first")
+	case u.stopped.Load():
+		return errors.New("this daemon's updater has stopped; restart the daemon first")
+	}
+	return nil
 }
 
-func (u updateSetting) UpdateSetting(ctx context.Context) (web.UpdateSetting, error) {
-	return webSetting(update.Read(ctx, os.Getenv, u.gitDir, u.running)), nil
+func (u *updateSetting) web(s update.Setting) web.UpdateSetting {
+	return web.UpdateSetting{Choice: s.Choice, Effective: s.Effective, Why: s.Why, Hold: s.Hold, CanGoBack: s.CanGoBack && u.waiting() == nil}
 }
 
-func (u updateSetting) SetUpdates(ctx context.Context, choice string) (web.UpdateSetting, error) {
+func (u *updateSetting) UpdateSetting(ctx context.Context) (web.UpdateSetting, error) {
+	return u.web(update.Read(ctx, os.Getenv, u.gitDir, u.running)), nil
+}
+
+func (u *updateSetting) SetUpdates(ctx context.Context, choice string) (web.UpdateSetting, error) {
 	s, err := update.Set(ctx, os.Getenv, u.gitDir, u.running, choice)
 	if err == nil {
 		u.nudge()
 	}
-	return webSetting(s), err
+	return u.web(s), err
 }
 
-func (u updateSetting) BackToStable(ctx context.Context) (web.UpdateSetting, error) {
+func (u *updateSetting) BackToStable(ctx context.Context) (web.UpdateSetting, error) {
+	if err := u.waiting(); err != nil {
+		return u.web(update.Read(ctx, os.Getenv, u.gitDir, u.running)), err
+	}
 	s, err := update.Back(ctx, os.Getenv, u.gitDir, u.running)
 	if err == nil {
 		u.nudge()
 	}
-	return webSetting(s), err
+	return u.web(s), err
 }

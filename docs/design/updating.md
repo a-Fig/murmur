@@ -59,16 +59,20 @@ updater need one manual install to get it.
     under it, what applies here and why ("Off here: this repo's git config sets murmur.update"),
     so a choice that isn't in effect never shows as if it were. The endpoint (`/api/updates`) takes
     the page's token, as every call does, and only the three choices.
+  - *Shared binaries.* A binary shared across clones shares their update settings too, so to keep
+    every clone from updating it, use the global setting without local overrides.
   - *From nightly to On* doesn't go back to an older stable release: the updater installs only a
     version newer than the one running, so a nightly stays until a stable release passes it.
 - **Going back to stable** (#1045, Tyler, 2026-11-22), for a prerelease that misbehaves. "Go back to
   stable" in Settings, or `mur updates back`, is offered only while a prerelease runs and updates
   are on here. It writes the prerelease's version to the global `murmur.updateSkip`, and the next
   check installs GitHub's latest stable release in its place, older or not, through the same
-  verified download, rename and restart; never an older one than that. From then on nothing installs
-  that isn't newer than the prerelease, on either channel: the next nightly after it, or the next
-  stable after it, and the page says which ("On stable until the next nightly after X"). The key is
-  taken off once a newer version is in place, or found running.
+  verified download, rename and restart; never an older one than that. From then on no prerelease
+  installs that isn't newer than the one gone back from, and the page says so ("On stable until the
+  next nightly after X"). Stable releases still install as they come out, on either channel, so the
+  machine never stays below the latest stable one (Opus review: a hold on every release would have
+  kept back a stable fix). The key is taken off once a newer version is in place, or found running.
+  It isn't offered while an update waits for its restart, which would start that update instead.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.
