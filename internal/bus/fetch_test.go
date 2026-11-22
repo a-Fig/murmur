@@ -113,6 +113,17 @@ func TestFetchLeavesItsRefsToTidy(t *testing.T) {
 		t.Errorf("a fetch that failed left %s, tidied", own)
 	}
 
+	// A fetch that works leaves its own ref to Tidy too: its caller doesn't wait for a delete.
+	if _, err := f.r.Fetch(ctx, []string{ref}); err != nil {
+		t.Fatal(err)
+	}
+	if f.left() == "" {
+		t.Error("a fetch removed its own ref itself")
+	}
+	if err := f.r.Tidy(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+
 	// Another git holds packed-refs: the bus ref is set, and the fetch's own ref waits for a Tidy
 	// that can delete it.
 	unlock = f.lock("packed-refs")

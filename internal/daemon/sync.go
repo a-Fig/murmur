@@ -1622,7 +1622,8 @@ func (d *Daemon) fetchOne(ctx context.Context, ref string) error {
 // syncs: a delete can wait for packed-refs, which no sync should (#978). A bus with nothing to
 // fetch has them removed too, such as those a daemon stopped mid-fetch left (#982). Every one there
 // is looked for on the first try and an hour apart, as well as the refs of fetches this daemon
-// made; a try that fails is made again after twice the wait, up to an hour.
+// made; a try that fails is made again after twice the wait, up to an hour. It starts before the
+// first sync, so that a daemon stopped during it still removes what that sync's fetches left.
 func (d *Daemon) tidyLoop(ctx context.Context) {
 	wait, swept, logged := d.opt.TidyEvery, time.Time{}, false
 	for {
@@ -1636,12 +1637,15 @@ func (d *Daemon) tidyLoop(ctx context.Context) {
 		case <-time.After(wait):
 		}
 		all := swept.IsZero() || time.Since(swept) > time.Hour
-		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Not cut short when the daemon stops: on Windows a git stopped is killed, and one killed
+		// while it holds packed-refs.lock leaves it, failing the user's own git (Opus review).
+		// git waits a second for that lock at most, so a Tidy is quick.
+		tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		err := d.repo.Tidy(tctx, all)
 		cancel()
 		if err != nil {
 			if !logged && ctx.Err() == nil {
-				d.log.Printf("removing the refs fetches leave: %v; trying again later", err)
+				d.log.Printf("removing the refs fetches leave: %v%s; trying again later", err, packedRefsLocked(d.opt.GitDir))
 				logged = true
 			}
 			wait = min(wait*2, time.Hour)
@@ -1652,6 +1656,17 @@ func (d *Daemon) tidyLoop(ctx context.Context) {
 		}
 		wait, logged = d.opt.TidyEvery, false
 	}
+}
+
+// packedRefsLocked says, for a log line, that packed-refs is locked and since when, as a delete of a
+// ref waits for that lock, and a git killed while it held it leaves it for good; or "".
+func packedRefsLocked(gitDir string) string {
+	fi, err := os.Stat(filepath.Join(gitDir, "packed-refs.lock"))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf(" (%s has been there for %s; a git that was killed can leave it, and git then fails to delete refs until it is removed)",
+		filepath.Join(gitDir, "packed-refs.lock"), time.Since(fi.ModTime()).Round(time.Second))
 }
 
 // overOwnLog says whether the remote's tip of this device's log is something to replace rather

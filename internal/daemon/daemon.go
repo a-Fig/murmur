@@ -1227,6 +1227,11 @@ func Run(ctx context.Context, opt Options) error {
 		d.historyLoop(ctx)
 	}()
 	d.kickHistory()
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		d.tidyLoop(ctx)
+	}()
 
 	// Sync once before sessions register (they wait for it), so whatever this sync finds was sent
 	// before any of them registered: it is the backlog, and nothing a new session should get. A stop
@@ -1281,11 +1286,6 @@ func Run(ctx context.Context, opt Options) error {
 		go func() {
 			defer d.bg.Done()
 			d.pushLoop(ctx)
-		}()
-		d.bg.Add(1)
-		go func() {
-			defer d.bg.Done()
-			d.tidyLoop(ctx)
 		}()
 		d.bg.Add(1)
 		go func() {
