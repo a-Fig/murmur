@@ -352,16 +352,18 @@ func TestAnOldPresenceThatLandsBehindTheUpgradeIsUnknown(t *testing.T) {
 	r := newGiveUpRig(t)
 	ref := brand.PresencePrefix + giveUpPeer
 	r.pushPresenceOf(fromBeforeFiles())
+	old := r.remoteSHA()
 	r.git(r.work, "fetch", "-q", r.remote, "+"+ref+":"+ref) // as the fetch outside the syncs left it
 	r.pushPresenceOf(farPresence(true))
 	newer := r.remoteSHA()
 	r.d.mu.Lock()
-	r.d.unfetched[ref] = fetchFail{sha: newer, slow: true, landed: true}
+	// What it brought, as endSlowFetch records it: the sync goes by that (#979).
+	r.d.unfetched[ref] = fetchFail{sha: newer, slow: true, landed: true, got: old}
 	r.d.mu.Unlock()
 	r.sync()
 	r.d.mu.Lock()
 	p := r.d.peers[giveUpPeer]
-	readOld := p != nil && p.sha != "" && p.sha != newer
+	readOld := p != nil && p.sha == old
 	r.d.mu.Unlock()
 	if !readOld {
 		t.Fatalf("the sync didn't read the presence that landed (peer %+v), so this tested nothing", p)
