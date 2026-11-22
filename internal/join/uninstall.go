@@ -201,7 +201,7 @@ func (e Env) leftovers() []string {
 	}
 	return append(out,
 		"In each clone that joined, the daemon's folder (.git/"+brand.StateDir+") and the bus's local refs (refs/"+brand.Name+"/), which nothing reads any more. "+
-			"`git for-each-ref --format='delete %(refname)' refs/"+brand.Name+"/ | git update-ref --stdin` removes the refs.",
+			"`git for-each-ref --format='delete %(refname)' refs/"+brand.Name+"/ | git update-ref --no-deref --stdin` removes the refs.",
 		"The "+brand.Product+" section in a repo's AGENTS.md and CLAUDE.md, which is the team's: it stays, and asks an agent there whether to join again.",
 		"Agent sessions already open keep "+brand.Product+"'s server running until they end, and it does nothing; new ones don't start it.")
 }
