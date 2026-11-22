@@ -874,11 +874,11 @@ func mutates(op string) bool {
 //
 // If the lookup failed, or the daemon couldn't read the thread (#980), the session looks again and
 // tells the daemon again, once, which gives a thread whose row T3 wrote late its classification;
-// every call that comes meanwhile waits for that one retry. Whatever it finds, the calls then go
-// on: they fail open, as a Claude Code session in T3 does (#945). A delegate's message going out is
-// awkward, not harmful (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop
-// T3's sessions from sending. Later calls don't look again; the seek goes on doing that in the
-// background.
+// every call that comes meanwhile waits for that one retry. A reconnect, after the daemon
+// restarted, gives one more (#1000). Whatever it finds, the calls then go on: they fail open, as a
+// Claude Code session in T3 does (#945). A delegate's message going out is awkward, not harmful
+// (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop T3's sessions from
+// sending. Later calls don't look again; the seek goes on doing that in the background.
 func (l *link) classifyFirst(ctx context.Context) error {
 	l.mu.Lock()
 	looked, native := l.looked, l.native
@@ -1488,7 +1488,7 @@ type link struct {
 	readThread string
 	// retry is closed once the session has looked for the thread of native again, and told the
 	// daemon, after the first look failed to get it classified; nil until a call starts that (see
-	// classifyFirst).
+	// classifyFirst), and again for a new native ID or a new connection to the daemon.
 	retry chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
@@ -1970,6 +1970,9 @@ func (l *link) run(ctx context.Context) {
 		close(done)
 		l.mu.Lock()
 		l.readThread = "" // what that daemon read; the next one says again in its reply to the hello
+		// The retry was that daemon's too: if the next one's reply to the hello says it couldn't
+		// read the thread, the first changing call after it looks again (#1000).
+		l.retry = nil
 		l.setLocked(false, errors.New("the daemon went away; reconnecting"))
 		l.mu.Unlock()
 	}

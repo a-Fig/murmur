@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -308,5 +309,51 @@ func TestParallelCodexSendsWaitForTheOneRetry(t *testing.T) {
 	}
 	if n := len(fd.askedAbout()); n != 2 {
 		t.Errorf("T3's database was asked %d times, want 2: the first look and one retry", n)
+	}
+}
+
+// The one retry is used up, and then the daemon restarts, and its reply to the reconnect's hello
+// says it couldn't read the thread, as a brief failure of T3's database makes it (#1000): the first
+// send after the reconnect tells the new daemon the route again, which reads it now, rather than
+// going out unclassified.
+func TestACodexSendAfterAReconnectGetsItsOwnRetry(t *testing.T) {
+	slowSeek(t)
+	var unread atomic.Bool
+	unread.Store(true)
+	f := &fakeDaemon{threadUnread: func(proto.Route) bool { return unread.Load() }}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
+	s := codexInT3(t, f, fd, 0)
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the first send: %v", err)
+	}
+	if n := len(f.routesTold()); n != 2 {
+		t.Fatalf("the daemon was told the route %d times before the first send, want 2", n)
+	}
+
+	f.dropConnections()
+	waitFor(t, "the reconnect's hello", func() bool { return f.helloCount() == 2 })
+	if _, err := s.link.wait(context.Background(), 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	unread.Store(false) // T3's database is back
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "again"}); err != nil {
+		t.Fatalf("the send after the reconnect: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	routes, sends := 0, 0
+	for _, r := range f.requests {
+		switch {
+		case r.Op == proto.OpRoute && r.Route != nil && r.Route.T3Thread == "thread-kid":
+			routes++
+		case r.Op == proto.OpSend:
+			sends++
+		}
+		if sends == 2 {
+			break
+		}
+	}
+	if routes != 3 {
+		t.Errorf("the daemon was told the route %d times before the send after the reconnect, want 3", routes)
 	}
 }
