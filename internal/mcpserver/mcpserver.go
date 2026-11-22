@@ -1171,7 +1171,7 @@ func oneLine(s string) string { return bus.OneLine(s, 120) }
 // A body is blank as the daemon judges one, after the invisible characters it drops; and a split
 // whose first line was only such characters keeps the whole text as one cut subject, as before.
 func subjectAndBody(subject, body string) (string, string) {
-	if strings.TrimSpace(bus.Text(body, bus.MaxBody)) != "" || oneLine(subject) == strings.TrimSpace(subject) {
+	if strings.TrimSpace(bus.Text(body, len(body))) != "" || oneLine(subject) == strings.TrimSpace(subject) {
 		return oneLine(subject), body
 	}
 	first, rest := web.SplitText(subject)

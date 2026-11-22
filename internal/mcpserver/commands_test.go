@@ -169,6 +169,11 @@ func TestSubjectAndBodyEdges(t *testing.T) {
 	if s, b := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > 120 {
 		t.Errorf("invisible body: %q, %q", s, b)
 	}
+	// A body past the daemon's cap whose text starts late is still a body: judged whole, not cut.
+	late := strings.Repeat("\n", 40<<10) + "important"
+	if _, b := subjectAndBody(long, late); b != late {
+		t.Errorf("a long body that starts with blank lines was replaced")
+	}
 }
 
 func TestAgentsInChain(t *testing.T) {
