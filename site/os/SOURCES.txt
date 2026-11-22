@@ -1,0 +1,5 @@
+The operating system marks beside "Works with", each its owner's mark, shown to say Murmur runs on it.
+
+apple.svg    Simple Icons 13.21.0 (CC0), icons/apple.svg, filled in the page's ink
+linux.svg    Simple Icons 13.21.0 (CC0), icons/linux.svg (Tux), filled in the page's ink
+windows.svg  drawn here: the four squares of the Windows 11 logo, in its blue
