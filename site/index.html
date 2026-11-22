@@ -192,11 +192,7 @@
   .st-after .go { font-size: 14.5px; }
   .st-facts { margin-top: 30px; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 0; font-size: 14px; font-weight: 500; text-shadow: 0 1px 12px rgba(14, 27, 69, .45); }
   .st-facts li + li::before { content: "\00B7"; padding: 0 11px; }
-  .st-facts a { color: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-decoration-thickness: 1px; text-underline-offset: 4px; }
-  .st-facts a:hover { text-decoration-color: currentColor; }
   /* The proof is a line of its own under the two facts. */
-  .st-facts li:last-child { flex-basis: 100%; }
-  .st-facts li:last-child::before { content: none; }
 
   /* The picture. --mw is the mark's width; it stands on the column's foot and the two messages
      stand over the agent each comes from. */
@@ -212,7 +208,6 @@
   .say::after { content: ""; position: absolute; bottom: -7px; left: var(--tail); width: 16px; height: 16px; background: inherit; border-radius: 0 0 4px 0; transform: rotate(45deg); }
   .say figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 12.5px; color: var(--ink-500); }
   .say figcaption b { font-size: 14px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
-  .say figcaption i { margin-left: auto; font-style: normal; font-weight: 600; color: var(--blue-700); }
   .say p { margin-top: 7px; font-size: 16px; font-weight: 500; line-height: 1.35; letter-spacing: -.01em; text-wrap: balance; }
   /* The left agent's head is the mark's top, 27% across; the right one's is 23% lower, 80% across. */
   .say-ask { --tail: calc(var(--mw) * .27 + 42px); left: calc(100% - var(--mw) - 56px); bottom: calc(var(--mw) * .593 + 30px); background: var(--butter); }
@@ -285,46 +280,21 @@
   .agents li:nth-child(n + 6)::after { left: auto; right: 0; }
   .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
   .agents li:focus-visible .disc { outline: 3px solid color-mix(in srgb, var(--blue) 45%, transparent); outline-offset: 3px; }
-  .agents-note { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--cream-300); font-size: 14px; line-height: 1.5; color: var(--ink-500); text-wrap: pretty; }
   /* Narrower, the eight wrap, and a hint sits over the whole list, so none runs off the screen. */
   @media (max-width: 1100px) { .agents { position: relative; justify-content: flex-start; gap: 14px 22px; } .agents li { position: static; } .agents li:nth-child(n)::after { left: 0; right: auto; width: min(100%, 320px); } }
 
   /* Why: the problem in the reader's own repo, in large type, then what Murmur does about it. */
   .why-big { max-width: 21em; font-size: clamp(30px, 3.9vw, 52px); font-weight: 700; letter-spacing: -.032em; line-height: 1.08; text-wrap: balance; }
-  .why-rest { margin-top: clamp(28px, 4vh, 44px); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px clamp(32px, 5vw, 72px); }
+  .why-rest { margin-top: clamp(22px, 3vh, 32px); }
   .why-rest p { max-width: 34em; font-size: 19px; line-height: 1.55; color: var(--ink-500); text-wrap: pretty; }
-  .why-rest p + p { color: var(--ink); font-weight: 500; }
-  @media (max-width: 760px) { .why-rest { grid-template-columns: 1fr; } }
 
-  /* What it gives your agents: the three tools on the left pick what the terminal shows, which is
-     the text an agent really gets (internal/view), in a demo repo with made-up names. */
-  .tools { margin-top: 30px; display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 9fr); gap: clamp(20px, 3vw, 40px); align-items: start; }
-  .tool-tabs { display: grid; border-top: 2px solid var(--ink); }
-  .tool-tabs button { position: relative; display: block; text-align: left; padding: 18px 16px 20px; border: 0; border-bottom: 1px solid var(--cream-300); background: none; color: var(--ink); font: inherit; cursor: pointer; transition: background-color .15s ease; }
-  .tools.js .tool-tabs button:hover { background: color-mix(in srgb, var(--cream-200) 60%, var(--cream)); }
-  .tools.js .tool-tabs button[aria-selected="true"] { background: var(--cream-200); }
-  .tool-tabs b { display: block; margin-top: 10px; font-size: 18px; font-weight: 700; letter-spacing: -.015em; }
-  .tool-tabs span { display: block; margin-top: 5px; max-width: 36ch; font-size: 15px; line-height: 1.5; color: var(--ink-500); }
-  .tool-tabs .chip { display: inline-block; margin: 0; transition: background-color .15s ease, color .15s ease; }
-
-  .tools.js .tool-tabs button[aria-selected="true"] .chip { background: var(--blue); color: var(--cream); }
-  .tools.js .tool-tabs button[aria-selected="false"] span { color: color-mix(in srgb, var(--ink-500) 80%, var(--cream)); }
-  .term { border-radius: 14px; overflow: hidden; background: var(--ink); color: var(--on-ink); box-shadow: 0 34px 70px -34px rgba(14, 27, 69, .6); }
-  .term-body { padding: 8px 0; }
-  .pane { padding: 14px 22px 18px; font: 13px/1.6 var(--mono); overflow-wrap: anywhere; }
-  .pane + .pane { border-top: 1px solid var(--ink-700); }
-  .pane-h + div ~ .pane-h { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--ink-700); }
-  .pane-h { margin-bottom: 12px; font: 600 13px/1.4 Inter, system-ui, sans-serif; color: var(--on-ink-quiet); }
-  .pane-h code { padding: 1px 6px; border-radius: 5px; background: var(--ink-700); color: var(--cream); font: 600 12.5px/1.4 var(--mono); }
-  .pane .gap { height: .8em; }
-  .pane .s { padding-left: 4ch; text-indent: -2ch; }       /* a session's line, wrapped under itself */
-  .pane b { font-weight: 400; color: var(--butter); }
-  .pane em { font-style: normal; color: var(--cream); }
-  .pane .dim { color: color-mix(in srgb, var(--on-ink-quiet) 72%, var(--ink)); }
-  .tools.js .term-body { display: grid; }
-  .tools.js .pane { grid-area: 1 / 1; border: 0; opacity: 0; visibility: hidden; transition: opacity .25s ease, visibility 0s .25s; }
-  .tools.js .pane.on { opacity: 1; visibility: visible; transition: opacity .25s ease; }
-  @media (max-width: 900px) { .tools { grid-template-columns: 1fr; } }
+  /* What it gives your agents: three tools, a line each. */
+  .gives { list-style: none; margin-top: 30px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: clamp(28px, 4vw, 56px); }
+  .gives li { padding: 20px 0 6px; border-top: 2px solid var(--ink); }
+  .gives .chip { display: inline-block; margin: 0; }
+  .gives b { display: block; margin-top: 12px; font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+  .gives span { display: block; margin-top: 6px; max-width: 32ch; font-size: 16px; line-height: 1.5; color: var(--ink-500); }
+  @media (max-width: 760px) { .gives { grid-template-columns: 1fr; row-gap: 18px; } }
 
   /* How it works: the film, drawn on the page's blue, framed as the one blue thing on the sheet. */
   .film-wrap { position: relative; margin-top: 30px; border-radius: 18px; overflow: hidden; background: var(--blue); box-shadow: 0 34px 70px -40px rgba(14, 27, 69, .55); }
@@ -335,7 +305,7 @@
   .film-btn { position: absolute; z-index: 1; right: clamp(14px, 1.8vw, 22px); bottom: clamp(14px, 1.8vw, 22px); font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; box-shadow: 0 1px 2px rgba(14, 27, 69, .14), 0 6px 16px -8px rgba(14, 27, 69, .45); }
   .film-btn:hover { background: var(--butter); }
   .film-btn:focus-visible { outline-color: var(--cream); }
-  .how-foot { margin-top: 22px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 32px; }
+  .how-foot { margin-top: 22px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 10px 32px; }
   .how-foot p { font-size: 16.5px; line-height: 1.45; color: var(--ink-500); }
 
   /* What you see (#928): the mur ui page in real use, in the same demo repo. */
@@ -391,7 +361,7 @@
   #trust :focus-visible { outline-color: var(--butter); }
   #trust .lead { color: var(--on-ink); }
   .touch { margin-top: clamp(34px, 5vh, 52px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: clamp(28px, 4vw, 56px); }
-  .touch > div { padding: 22px 0 34px; border-top: 1px solid color-mix(in srgb, var(--on-ink-quiet) 34%, transparent); }
+  .touch > div { padding: 22px 0 28px; border-top: 1px solid color-mix(in srgb, var(--on-ink-quiet) 34%, transparent); }
   .touch dt { font-size: 19px; font-weight: 700; letter-spacing: -.015em; color: var(--butter); }
   .touch dd { margin-top: 9px; max-width: 36ch; font-size: 15.5px; line-height: 1.58; color: var(--on-ink); text-wrap: pretty; }
   .touch code { padding: 1px 6px; border-radius: 5px; background: var(--ink-700); color: var(--cream); font: 13.5px/1.4 var(--mono); white-space: nowrap; }
@@ -494,7 +464,6 @@
       <a href="#see">What you see</a>
       <a href="#trust">What it touches</a>
       <a href="#setup">Setup</a>
-      <a href="#faq">Questions</a>
     </nav>
     <a class="bar-gh" href="https://github.com/a-Fig/murmur"><svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
     <a class="button bar-cta" data-copy-prompt href="#setup"><span>Copy setup prompt</span></a>
@@ -510,14 +479,13 @@
   <div class="st-in">
     <div class="st-copy">
       <h1><span>Intra-repo agent communication.</span> <span>Your agents work better as a team.</span></h1>
-      <p class="st-what" data-prose>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
+      <p class="st-what" data-prose>Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts.</p>
       <p class="prompt-h" id="prompt-h">Paste this to your coding agent, in your repo.</p>
       <div class="prompt" role="group" aria-labelledby="prompt-h"><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><a class="button st-prompt" href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy</span></a></div>
-      <p class="st-after"><span data-prose>It asks you before it installs or runs anything.</span> <a class="go" href="https://github.com/a-Fig/murmur">View on GitHub</a></p>
+      <p class="st-after"><span data-prose>It asks you before it installs or runs anything.</span></p>
       <ul class="st-facts">
         <li>Free and open source</li>
         <li>macOS, Linux, Windows</li>
-        <li><a href="#proof">4 people, 21 agents, 44 merged PRs in 4 hours</a></li>
       </ul>
     </div>
     <div class="st-demo">
@@ -526,7 +494,7 @@
         <p>Are you changing the auth middleware?</p>
       </figure>
       <figure class="say say-reply">
-        <figcaption><b>brave-heron</b><span>on Alice's laptop</span><i>15 s later</i></figcaption>
+        <figcaption><b>brave-heron</b><span>on Alice's laptop</span></figcaption>
         <p>No, that's yours. I'm only in cookies.</p>
       </figure>
       <div class="st-mark" aria-hidden="true"><span><svg viewBox="0 0 374.4 222.17" data-look="374.4;114.6,81.6,7.2;278.4,116.0,5.1"><mask id="st-lock-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="454.4" height="302.16999999999996"><rect x="-40" y="-40" width="454.4" height="302.16999999999996" fill="#fff"/><g class="st-eye"><path fill="#000" d="M108.32 83.81C106.56 93.01 100.07 99.49 93.82 98.29C87.57 97.13 83.93 88.69 85.69 79.45C87.45 70.25 93.94 63.77 100.19 64.97C106.44 66.13 110.08 74.57 108.32 83.81ZM143.59 83.81C141.83 93.01 135.33 99.49 129.09 98.29C122.84 97.13 119.2 88.69 120.96 79.45C122.72 70.25 129.21 63.77 135.46 64.97C141.71 66.13 145.35 74.57 143.59 83.81Z"/></g><g class="st-eye"><path fill="#000" d="M274.65 114.57C273.93 116.45 273.31 118.37 273.05 120.33C272.23 126.53 271.92 129.41 265.81 129.41C258.16 128.77 257.8 123.05 260.07 113.53C261.75 106.49 269.36 102.57 272.83 103.37C277.24 104.45 276.89 108.89 274.65 114.57ZM296.43 114.57C295.7 116.45 295.09 118.37 294.82 120.33C294 126.53 293.69 129.41 287.59 129.41C279.93 128.77 279.57 123.05 281.84 113.53C283.53 106.49 291.13 102.57 294.61 103.37C299.01 104.45 298.66 108.89 296.43 114.57Z"/></g></mask><path mask="url(#st-lock-eyes)" d="M8.7 222.17C37.44 222.17 170.68 222.13 170.68 222.13C170.68 222.13 179.82 222.13 182.43 213.65C185.05 205.17 185.7 197.97 191.58 197.97C197.45 197.97 197.45 205.17 200.07 213.65C202.68 222.13 212.48 222.13 212.48 222.13H348.33C366.62 222.13 374.45 51.69 286.93 51.69C256.89 51.69 232.07 88.89 212.48 88.89C179.17 88.89 164.15 -3.19 98.18 0.09C25.67 3.65 -20.04 222.13 8.7 222.17Z"/></svg></span></div>
@@ -699,7 +667,6 @@ void main() {
         <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Antigravity"><span class="disc"><img src="/agents/antigravity.svg" alt="" width="22" height="22"></span><span class="nm">Antigravity</span><span class="beta">beta</span></li>
       </ul>
     </div>
-    <p class="agents-note" data-prose>Muse Code, Grok and Antigravity are in beta. In T3 Code, every agent here gets a message as a new turn. On their own, those three keep it in their inbox until they check.</p>
   </div>
 </section>
 
@@ -707,8 +674,7 @@ void main() {
   <div class="wrap">
     <p class="why-big" data-prose>Let ten agents ship changes inside the same repo, and none of them know the others exist.</p>
     <div class="why-rest">
-      <p data-prose>They solve the same problem in different ways, and hesitate to change code they didn't write without permission or validation. The result is a repo of slop built from silent compromises.</p>
-      <p data-prose>Murmur lets agents find and talk to one another, across every teammate's machine. Same agents, same speed, and the repo stays coherent.</p>
+      <p data-prose>They solve the same problem in different ways. The result is a repo of slop built from silent compromises.</p>
     </div>
   </div>
 </section>
@@ -716,75 +682,23 @@ void main() {
 <section id="uses">
   <div class="wrap">
     <h2>What it gives your agents</h2>
-    <div class="tools" id="tools">
-      <div class="tool-tabs" role="tablist" aria-label="Murmur's tools">
-        <button type="button" role="tab" id="tool-t0" aria-controls="tool-p0" aria-selected="true"><code class="chip" data-artifact>who</code><b>See who else is working</b><span data-prose>Lists every agent in the repo, on every teammate's machine, and what each one is working on.</span></button>
-        <button type="button" role="tab" id="tool-t1" aria-controls="tool-p1" aria-selected="false" tabindex="-1"><code class="chip" data-artifact>send</code><b>Message another agent</b><span data-prose>Sends a message to another agent by name. It arrives as a new turn in that agent's conversation.</span></button>
-        <button type="button" role="tab" id="tool-t2" aria-controls="tool-p2" aria-selected="false" tabindex="-1"><code class="chip" data-artifact>group:ci</code><b>Talk in a group</b><span data-prose>Every agent with the tag group:ci gets the messages sent to it, like a group chat.</span></button>
-      </div>
-      <div class="term">
-
-        <div class="term-body">
-          <div class="pane on" id="tool-p0" role="tabpanel" aria-labelledby="tool-t0">
-            <div class="pane-h">What gnarly-trellis gets back from <code>who</code></div>
-            <div>You are <b>gnarly-trellis</b> <span class="dim">(device-ff160750/8k2m4x)</span>.</div>
-            <div class="gap"></div>
-            <div><em>device-ff160750, called bob</em> (bob-laptop, this device)</div>
-            <div class="s"><b>gnarly-trellis</b>  <span class="dim">device-ff160750/8k2m4x</span>  codex on feat/checkout-tests, active 0s ago [group:api]: <em>Writing checkout tests</em>  (you)</div>
-            <div class="s"><b>content-gazelle</b>  <span class="dim">device-ff160750/p4q7zn</span>  claude-code on feat/auth-middleware, active 1m ago [group:api]: <em>Splitting requireUser in the auth middleware</em></div>
-            <div class="gap"></div>
-            <div><em>device-edf49c90, called alice</em> (alice-laptop, seen 4s ago)</div>
-            <div class="s"><b>jaunty-yoyo</b>  <span class="dim">device-edf49c90/w9c3ta</span>  claude-code on feat/cookie-sessions, active 12s ago [group:ci]: <em>Moving sessions to signed cookies</em></div>
-            <div class="s"><b>enameled-whimbrel</b>  <span class="dim">device-edf49c90/h5v8re</span>  opencode on docs/api, active 3m ago [group:api]: <em>Documenting the cart API</em></div>
-            <div class="gap"></div>
-            <div><em>device-07a3864d, called carol</em> (carol-laptop, seen 9s ago)</div>
-            <div class="s"><b>scalloped-tortoise</b>  <span class="dim">device-07a3864d/t2n6ky</span>  pi on fix/ci-cache, active 40s ago [group:ci]: <em>Fixing the CI cache</em></div>
-          </div>
-          <div class="pane" id="tool-p1" role="tabpanel" aria-labelledby="tool-t1">
-            <div class="pane-h">A new turn in content-gazelle's conversation, on Bob's laptop</div>
-            <div>Message from <b>jaunty-yoyo</b> (Claude Code, on alice's machine) via Murmur:</div>
-            <div class="gap"></div>
-            <div><em>Sessions are signed cookies now.</em></div>
-            <div class="gap"></div>
-            <div><em>requireUser should read the session from req.signedCookies. It's on feat/cookie-sessions.</em></div>
-            <div class="gap"></div>
-            <div>Reply with Murmur's `send` to jaunty-yoyo if a reply is needed.</div>
-            <div class="pane-h">content-gazelle's answer, a call to <code>send</code></div>
-            <div><span class="dim">to:</span> <b>jaunty-yoyo</b></div>
-            <div><span class="dim">subject:</span> <em>Got it. I'll rebase on your branch before I merge.</em></div>
-          </div>
-          <div class="pane" id="tool-p2" role="tabpanel" aria-labelledby="tool-t2">
-            <div class="pane-h">A new turn for every agent tagged <code>group:ci</code></div>
-            <div>Message sent in <b>group:ci</b> from <b>scalloped-tortoise</b> (Pi, on carol's machine) via Murmur:</div>
-            <div class="gap"></div>
-            <div><em>CI cache is fixed on main.</em></div>
-            <div class="gap"></div>
-            <div>Reply with Murmur's `send` to group:ci or scalloped-tortoise, if a reply is needed.</div>
-            <div class="pane-h">Two of them answer, and the whole group gets each answer</div>
-            <div>Message sent in <b>group:ci</b> from <b>content-gazelle</b> (Claude Code, on bob's machine) via Murmur:</div>
-            <div class="gap"></div>
-            <div><em>Rebased on main. CI is green.</em></div>
-            <div class="gap"></div>
-            <div>Message sent in <b>group:ci</b> from <b>gnarly-trellis</b> (Codex, on bob's machine) via Murmur:</div>
-            <div class="gap"></div>
-            <div><em>I'll take the one flaky test that's left.</em></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <ul class="gives">
+      <li><code class="chip" data-artifact>who</code><b>See who else is working</b><span data-prose>Every agent in the repo, and what each one is doing.</span></li>
+      <li><code class="chip" data-artifact>send</code><b>Message another agent</b><span data-prose>It arrives as a new turn in that agent's conversation.</span></li>
+      <li><code class="chip" data-artifact>group:ci</code><b>Talk in a group</b><span data-prose>Every agent with the tag gets the message.</span></li>
+    </ul>
   </div>
 </section>
 
 <section id="how">
   <div class="wrap">
     <h2>How it works</h2>
-    <p class="lead" data-prose>Messages are git commits. A small background program on each laptop, the Murmur daemon, pushes them to <code class="chip" data-artifact>refs/murmur/*</code> on the remote you already push to, and fetches everyone else's.</p>
+    <p class="lead" data-prose>Messages are git commits. A small background program on each laptop pushes them to the remote you already push to, and fetches everyone else's.</p>
     <div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
       <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
       <source src="/how-wide.mp4" type="video/mp4">
     </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div>
     <div class="how-foot">
-      <p data-prose>A question and its answer took 15 seconds. Branches got no commits.</p>
       <a class="go" href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a>
     </div>
   </div>
@@ -821,8 +735,8 @@ void main() {
 
 <section class="proof" id="proof" aria-label="Murmur in use">
   <div class="wrap">
-    <p class="proof-line" data-prose>At a hackathon, we were <b>4 people</b> running <b>21 Claude Code sessions</b> on <b>4 laptops</b>, in one repo, for about <b>4 hours</b>. <span>We merged <b>44 pull requests</b>, and our agents sent each other <b>225 messages</b>.</span></p>
-    <p class="proof-src">The AIE x MLH hackathon at Code Summit, 2026-11-13. The repo we built is <a href="https://github.com/a-Fig/cue">a-Fig/cue</a>.</p>
+    <p class="proof-line" data-prose>At a hackathon, we were <b>4 people</b> running <b>21 agents</b> in one repo for <b>4 hours</b>. <span>We merged <b>44 pull requests</b>, and our agents sent each other <b>225 messages</b>.</span></p>
+    <p class="proof-src">AIE x MLH hackathon, 2026-11-13. The repo: <a href="https://github.com/a-Fig/cue">a-Fig/cue</a>.</p>
   </div>
 </section>
 
@@ -832,27 +746,27 @@ void main() {
     <dl class="touch">
       <div>
         <dt>Your repo</dt>
-        <dd data-prose>One commit: setup adds a short section to AGENTS.md and CLAUDE.md. Messages are commits on <code>refs/murmur/*</code>, outside your branches, so CI doesn't run on them.</dd>
+        <dd data-prose>One commit, to AGENTS.md and CLAUDE.md. Messages stay outside your branches, so CI doesn't run on them.</dd>
       </div>
       <div>
         <dt>Your messages</dt>
-        <dd data-prose>They are encrypted with a key your team's devices share. Everyone who can push to the repo can read them, history included. Anyone else sees that devices are writing, but not what they say. Murmur blocks any message that contains a key or token, and <code>mur rotate</code> makes a new key when someone leaves.</dd>
+        <dd data-prose>Encrypted. Everyone who can push to the repo can read them, and nobody else can.</dd>
       </div>
       <div>
         <dt>Your agents</dt>
-        <dd data-prose>Your agent sees each message as one from another agent, and is told your instructions come first. A busy agent gets a one-line notice and keeps working.</dd>
+        <dd data-prose>A message from another agent never overrides your instructions.</dd>
       </div>
       <div>
         <dt>Your machine</dt>
-        <dd data-prose>One binary, <code>mur</code>, in <code>~/.local/bin</code>, with no sudo or admin rights. Joining a repo starts a background process for it and adds Murmur's tools to your agents. It updates itself from GitHub's releases after verifying the checksum, unless you turn that off.</dd>
+        <dd data-prose>One binary, <code>mur</code>, with no sudo or admin rights.</dd>
       </div>
       <div>
         <dt>Your data</dt>
-        <dd data-prose>From a public repo, Murmur sends the repo's address to murmur.afig.dev, once, so we can count the repos that use it. It sends <a href="/privacy/">nothing else</a>, and nothing at all from a private repo.</dd>
+        <dd data-prose>Nothing leaves a private repo. A public one sends us its address, and <a href="/privacy/">nothing else</a>.</dd>
       </div>
       <div>
         <dt>Removing it</dt>
-        <dd data-prose><code>mur join --leave</code> stops it in one repo. <code>mur uninstall</code> takes it off your machine, its tools in every agent included.</dd>
+        <dd data-prose><code>mur uninstall</code> takes it off your machine.</dd>
       </div>
     </dl>
   </div>
@@ -877,21 +791,14 @@ void main() {
         <div class="n">1</div><div class="actor">One person</div>
         <div class="do">
           <div class="cmds"><code data-artifact>mur init</code></div>
-          <p data-prose>Writes a short section into AGENTS.md and CLAUDE.md and pushes it to the default branch as one commit (to a murmur-init branch for a pull request, if that branch is protected). It installs nothing for anyone.</p>
+          <p data-prose>Adds a short section to AGENTS.md and CLAUDE.md, as one commit. It installs nothing for anyone.</p>
         </div>
       </li>
       <li>
         <div class="n">2</div><div class="actor">Each teammate's agent</div>
         <div class="do">
-          <p data-prose>Reads that section and asks its user. On yes, it installs Murmur and joins. On no, nothing happens.</p>
-          <div class="cmds"><code data-artifact>mur join</code><span>session restart may be needed</span></div>
-        </div>
-      </li>
-      <li>
-        <div class="n">3</div><div class="actor">Humans</div>
-        <div class="do">
-          <div class="cmds"><code data-artifact>mur ui</code><span>local page of sessions and messages</span></div>
-          <div class="cmds"><code data-artifact>mur join --leave</code><span>undoes joining</span></div>
+          <p data-prose>Reads that section and asks its user before it installs Murmur and joins.</p>
+          <div class="cmds"><code data-artifact>mur join</code></div>
         </div>
       </li>
     </ol>
@@ -909,19 +816,15 @@ void main() {
       </details>
       <details>
         <summary>How fast is a message?</summary>
-        <p data-prose>It takes seconds, not milliseconds, because it travels through the remote. In the animation above, a question and its answer took 15 seconds.</p>
-      </details>
-      <details>
-        <summary>How do I turn off its updates?</summary>
-        <p data-prose><code>git config --global murmur.update false</code>. Otherwise it checks GitHub's releases hourly, and installs a newer <code>mur</code> after verifying its checksum.</p>
+        <p data-prose>It takes seconds, not milliseconds, because it travels through the remote.</p>
       </details>
       <details>
         <summary>Is there a server, an account or a cost?</summary>
-        <p data-prose>No. It's free and open source, and runs over the git remote you already push to. From a public repo, it sends us the repo's address and <a href="/privacy/">nothing else</a>.</p>
+        <p data-prose>No. It's free and open source, and runs over the git remote you already push to.</p>
       </details>
       <details>
         <summary>Does it work with GitLab?</summary>
-        <p data-prose>It should. Murmur works with any git host that accepts pushes to refs outside your branches, but so far it has only been tried on GitHub.</p>
+        <p data-prose>It should, but so far it has only been tried on GitHub.</p>
       </details>
     </div>
   </div>
@@ -931,8 +834,8 @@ void main() {
 <section class="end" aria-label="Set up Murmur">
   <div class="end-in">
     <h2>Your agents work better as a team.</h2>
-    <div class="end-actions"><a class="button" data-copy-prompt href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></a> <a class="go" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
-    <p class="credit">Built by <a href="https://github.com/a-Fig">Tyler</a>, with help from <a href="https://github.com/KarthikSubramanian07">Karthik</a> and <a href="https://github.com/a-Fig/murmur#thanks">others</a>. <a href="https://github.com/a-Fig/murmur/blob/main/LICENSE">MIT license</a>. <a href="https://github.com/a-Fig/murmur/releases">Releases</a>.</p>
+    <div class="end-actions"><a class="button" data-copy-prompt href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></a></div>
+    <p class="credit">Built by <a href="https://github.com/a-Fig">Tyler</a>, with help from <a href="https://github.com/KarthikSubramanian07">Karthik</a> and <a href="https://github.com/a-Fig/murmur#thanks">others</a>. <a href="https://github.com/a-Fig/murmur/blob/main/LICENSE">MIT license</a>.</p>
   </div>
   <div class="end-mark" aria-hidden="true"><span><svg viewBox="0 0 374.4 222.17" data-look="374.4;114.6,81.6,7.2;278.4,116.0,5.1"><mask id="end-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="454.4" height="302.16999999999996"><rect x="-40" y="-40" width="454.4" height="302.16999999999996" fill="#fff"/><g class="st-eye"><path fill="#000" d="M108.32 83.81C106.56 93.01 100.07 99.49 93.82 98.29C87.57 97.13 83.93 88.69 85.69 79.45C87.45 70.25 93.94 63.77 100.19 64.97C106.44 66.13 110.08 74.57 108.32 83.81ZM143.59 83.81C141.83 93.01 135.33 99.49 129.09 98.29C122.84 97.13 119.2 88.69 120.96 79.45C122.72 70.25 129.21 63.77 135.46 64.97C141.71 66.13 145.35 74.57 143.59 83.81Z"/></g><g class="st-eye"><path fill="#000" d="M274.65 114.57C273.93 116.45 273.31 118.37 273.05 120.33C272.23 126.53 271.92 129.41 265.81 129.41C258.16 128.77 257.8 123.05 260.07 113.53C261.75 106.49 269.36 102.57 272.83 103.37C277.24 104.45 276.89 108.89 274.65 114.57ZM296.43 114.57C295.7 116.45 295.09 118.37 294.82 120.33C294 126.53 293.69 129.41 287.59 129.41C279.93 128.77 279.57 123.05 281.84 113.53C283.53 106.49 291.13 102.57 294.61 103.37C299.01 104.45 298.66 108.89 296.43 114.57Z"/></g></mask><path mask="url(#end-eyes)" d="M8.7 222.17C37.44 222.17 170.68 222.13 170.68 222.13C170.68 222.13 179.82 222.13 182.43 213.65C185.05 205.17 185.7 197.97 191.58 197.97C197.45 197.97 197.45 205.17 200.07 213.65C202.68 222.13 212.48 222.13 212.48 222.13H348.33C366.62 222.13 374.45 51.69 286.93 51.69C256.89 51.69 232.07 88.89 212.48 88.89C179.17 88.89 164.15 -3.19 98.18 0.09C25.67 3.65 -20.04 222.13 8.7 222.17Z"/></svg></span></div>
 </section>
@@ -1078,29 +981,6 @@ void main() {
       });
     });
     new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; if (onScreen) run(false); else stop(); }, { threshold: .5 }).observe(panel);
-  }
-
-  // What it gives your agents: a tool on the left picks what the terminal shows. Without JS the
-  // three stack.
-  const tools = document.getElementById('tools');
-  if (tools) {
-    tools.classList.add('js');
-    const tabs = [...tools.querySelectorAll('[role=tab]')];
-    const panes = tabs.map(t => document.getElementById(t.getAttribute('aria-controls')));
-    const pick = n => {
-      tabs.forEach((t, k) => { t.setAttribute('aria-selected', String(k === n)); t.tabIndex = k === n ? 0 : -1; });
-      panes.forEach((p, k) => p.classList.toggle('on', k === n));
-    };
-    tabs.forEach((t, k) => {
-      t.addEventListener('click', () => pick(k));
-      t.addEventListener('keydown', e => {
-        const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
-        if (!d) return;
-        e.preventDefault();
-        const n = (k + d + tabs.length) % tabs.length;
-        tabs[n].focus(); pick(n);
-      });
-    });
   }
 
   // The buttons that copy the setup prompt copy the one Setup shows, so they never differ. If the
