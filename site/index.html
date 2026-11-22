@@ -51,25 +51,25 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  /* Brand palette (docs/brand.md): blue, cream, butter, ink — plus their tints and shades. */
+  /* Brand tokens (docs/brand.md): blue, cream, butter, ink — and their disciplined tints/shades. */
   :root {
     --blue: #225BFF;
     --blue-deep: #1640BF;
     --blue-tint: #DCE6FF;
     --cream: #FFFBEA;
     --cream-2: #F5F2E3;
-    --cream-3: #ECE7D2;
+    --cream-3: #EAE4CE;
     --butter: #FDEE8C;
     --butter-soft: #FEF6C4;
-    --butter-edge: #E6CC3F;
     --ink: #0E1B45;
     --ink-2: #16265C;
+    --ink-3: #1E3170;
     --ink-soft: #3A4670;
     --ink-mute: #586388;
     --on-ink-soft: #C7D2F2;
     --on-ink-mute: #9BA9D4;
     --line: #DDD7B8;
-    --line-ink: rgba(255, 251, 234, .14);
+    --line-ink: rgba(255, 251, 234, .15);
     --mono: ui-monospace, Menlo, Consolas, monospace;
     --sheet: clamp(28px, 3.2vw, 44px);
     --gutter: clamp(18px, 4vw, 48px);
@@ -89,11 +89,7 @@
   }
 
   * { box-sizing: border-box; margin: 0; }
-  html {
-    background: var(--blue);
-    scroll-behavior: smooth;
-    -webkit-text-size-adjust: 100%;
-  }
+  html { background: var(--blue); scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
   body {
     background: var(--blue);
@@ -106,36 +102,38 @@
   button { font-family: inherit; }
 
   .in { max-width: var(--max); margin: 0 auto; }
+  .nw { white-space: nowrap; }
+
   .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: .08em;
+    letter-spacing: .09em;
     text-transform: uppercase;
     color: var(--blue);
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .section-h {
-    font-size: clamp(28px, 3.4vw, 42px);
+    font-size: clamp(28px, 3.3vw, 40px);
     font-weight: 700;
-    letter-spacing: -.03em;
+    letter-spacing: -.032em;
     line-height: 1.08;
     color: var(--ink);
     text-wrap: balance;
   }
   .section-lead {
-    margin-top: 14px;
-    max-width: 60ch;
-    font-size: clamp(16.5px, 1.3vw, 18.5px);
+    margin-top: 12px;
+    max-width: 56ch;
+    font-size: clamp(16px, 1.25vw, 18px);
     line-height: 1.55;
     color: var(--ink-soft);
     text-wrap: pretty;
   }
-  .section-lead code,
+  /* Consistent inline code chips everywhere on light grounds */
   .sheet-wrap p code,
-  .cream-after p code {
+  .sheet-wrap li code,
+  .cream-after p code,
+  .cream-after li code,
+  .audit-links code {
     padding: 1px 6px;
     border-radius: 5px;
     background: var(--blue-tint);
@@ -145,21 +143,20 @@
   }
   .section-lead code { padding: 2px 7px; border-radius: 6px; }
   .cta-close p code { background: rgba(14, 27, 69, .32); color: var(--butter); }
-  .nw { white-space: nowrap; }
 
   /* =========================================================================
-     HERO — Reeded glass, WebGL sheen, cursor-tracking lockup, instant clarity
+     HERO — Reeded glass, WebGL sheen, cursor-tracking lockup, unified action dock
      ========================================================================= */
   .st {
     position: relative;
-    min-height: max(760px, 98svh);
+    min-height: max(740px, 97svh);
     overflow: clip;
     isolation: isolate;
     display: flex;
     flex-direction: column;
     color: var(--cream);
     background: linear-gradient(180deg, #2E64FF 0%, #225BFF 62%, #1E54F0 100%);
-    padding: 0 var(--gutter) calc(var(--sheet) + 34px);
+    padding: 0 var(--gutter) calc(var(--sheet) + 28px);
   }
   .st .st-behind { position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: url(#st-reeds); }
   .st .st-gl { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
@@ -173,14 +170,14 @@
   .st::after {
     content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
     background: var(--flutes);
-    opacity: .44;
+    opacity: .42;
   }
   .st::before {
-    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 110px; z-index: 0; pointer-events: none;
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 100px; z-index: 0; pointer-events: none;
     background: linear-gradient(180deg, transparent, rgba(14, 27, 69, .18));
   }
 
-  /* Top navigation bar */
+  /* Calm, architectural top nav */
   .nav {
     position: relative;
     z-index: 3;
@@ -191,25 +188,22 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 20px 0 8px;
+    padding: 20px 0 6px;
   }
-  .nav-brand {
+  .nav-mark {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
     color: var(--cream);
     text-decoration: none;
-    font-size: 16px;
-    font-weight: 700;
-    letter-spacing: -.02em;
+    padding: 4px 2px;
   }
-  .nav-brand svg { display: block; fill: currentColor; }
-  .nav-brand:hover { color: var(--butter); }
-  .nav-brand:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 6px; }
+  .nav-mark svg { display: block; fill: currentColor; }
+  .nav-mark:hover { color: var(--butter); }
+  .nav-mark:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 6px; }
   .nav-links {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     list-style: none;
     padding: 4px;
     border-radius: 999px;
@@ -234,7 +228,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 15px;
+    padding: 8px 14px;
     border-radius: 999px;
     background: rgba(14, 27, 69, .30);
     box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .24);
@@ -247,7 +241,15 @@
     transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
   }
   .nav-gh svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+  .nav-gh .ver {
+    font: 600 11.5px/1 var(--mono);
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: rgba(255, 251, 234, .14);
+    color: var(--butter);
+  }
   .nav-gh:hover { background: var(--cream); color: var(--ink); box-shadow: none; }
+  .nav-gh:hover .ver { background: var(--blue-tint); color: var(--blue-deep); }
   .nav-gh:focus-visible { outline: 2px solid var(--butter); outline-offset: 3px; }
 
   /* Hero center stage */
@@ -257,14 +259,13 @@
     width: 100%;
     max-width: 820px;
     margin: auto;
-    padding: clamp(22px, 4vh, 42px) 0 clamp(24px, 4vh, 42px);
+    padding: clamp(20px, 3.8vh, 40px) 0 clamp(22px, 3.8vh, 38px);
     text-align: center;
   }
   .st-trim .st-copy > :not(.st-lock, .st-word) { position: relative; z-index: 2; }
 
-  /* The iconic lockup behind the reeded glass */
   .st .st-lock {
-    --w: min(56vw, 640px);
+    --w: min(56vw, 620px);
     --mw: 0.3520; --lw: 0.6436; --gap: 0.0044; --rise: 0.0164;
     position: relative;
     z-index: 0;
@@ -282,30 +283,10 @@
   .st .st-eye { transition: transform .25s cubic-bezier(.2, .8, .3, 1); }
   @media (prefers-reduced-motion: reduce) { .st .st-eye { transition: none; } }
 
-  .st .st-word, .st .st-peek { display: none; }
+  .st .st-word { display: none; }
   @supports (-webkit-nbsp-mode: space) {
     .st .st-lock > span { filter: blur(1.2px); }
-    @media (max-width: 640px) { .st .st-lock > span, .st .st-peek { filter: blur(.6px); } .st .st-word { filter: blur(.8px); } }
-  }
-
-  .hero-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 13px;
-    margin-bottom: 18px;
-    border-radius: 999px;
-    background: rgba(14, 27, 69, .30);
-    box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .22);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--cream);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-  }
-  .hero-pill i {
-    width: 7px; height: 7px; border-radius: 50%; background: var(--butter);
-    box-shadow: 0 0 0 3px rgba(253, 238, 140, .25);
+    @media (max-width: 640px) { .st .st-lock > span { filter: blur(.6px); } .st .st-word { filter: blur(.8px); } }
   }
 
   .st h1 {
@@ -320,110 +301,120 @@
   .st h1 span + span { color: var(--butter); }
 
   .st-sub {
-    max-width: 56ch;
-    margin: 20px auto 0;
+    max-width: 54ch;
+    margin: 18px auto 0;
     font-size: clamp(16.5px, 1.45vw, 19.5px);
-    line-height: 1.55;
+    line-height: 1.52;
     color: var(--cream);
     text-wrap: balance;
-    text-shadow: 0 1px 16px rgba(14, 27, 69, .40);
+    text-shadow: 0 1px 16px rgba(14, 27, 69, .38);
   }
 
-  /* Primary CTA & visible prompt preview */
-  .st-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    align-items: center;
-    gap: 12px 16px;
-    margin-top: 28px;
+  /* Unified Interactive Setup Dock: Agent Prompt | macOS/Linux | Windows */
+  .dock {
+    max-width: 720px;
+    margin: 28px auto 0;
+    border-radius: 16px;
+    background: rgba(14, 27, 69, .68);
+    box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .22), 0 22px 48px -18px rgba(14, 27, 69, .65);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    overflow: hidden;
+    text-align: left;
   }
+  .dock-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px 8px 10px;
+    border-bottom: 1px solid rgba(255, 251, 234, .12);
+    background: rgba(14, 27, 69, .36);
+  }
+  .dock-tabs { display: flex; align-items: center; gap: 4px; }
+  .dock-tabs button {
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 0;
+    background: transparent;
+    color: var(--on-ink-soft);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color .15s ease, color .15s ease;
+  }
+  .dock-tabs button:hover { color: var(--cream); }
+  .dock-tabs button[aria-selected="true"] {
+    background: rgba(255, 251, 234, .16);
+    color: var(--cream);
+  }
+  .dock-tabs button:focus-visible { outline: 2px solid var(--butter); outline-offset: 1px; }
+  .dock-meta {
+    font-size: 12px;
+    color: var(--on-ink-mute);
+    white-space: nowrap;
+  }
+  .dock-meta a { color: var(--on-ink-soft); text-underline-offset: 3px; }
+  .dock-meta a:hover { color: var(--butter); }
+
+  .dock-body {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 12px 12px 16px;
+  }
+  .dock-cmd {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    font: 13.5px/1.45 var(--mono);
+    color: var(--cream);
+  }
+  .dock-cmd .caret { color: var(--butter); font-weight: 700; user-select: none; flex: none; }
+  .dock-cmd code { font: inherit; overflow-wrap: anywhere; }
+
   .button {
+    flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 9px;
-    padding: 14px 25px;
+    gap: 8px;
+    padding: 11px 19px;
     border-radius: 999px;
     background: var(--butter);
     color: var(--ink);
-    font-size: 15.5px;
+    font-size: 14.5px;
     font-weight: 700;
     letter-spacing: -.01em;
     text-decoration: none;
     border: 0;
     cursor: pointer;
-    box-shadow: 0 2px 4px rgba(14, 27, 69, .18), 0 12px 28px -10px rgba(14, 27, 69, .5);
-    transition: background-color .15s ease, transform .15s ease, box-shadow .15s ease;
+    box-shadow: 0 2px 6px rgba(14, 27, 69, .24);
+    transition: background-color .15s ease, transform .15s ease;
   }
   .button:hover { background: var(--cream); transform: translateY(-1px); }
   .button:active { transform: translateY(0); }
-  .button:focus-visible { outline: 3px solid var(--cream); outline-offset: 3px; }
+  .button:focus-visible { outline: 3px solid var(--cream); outline-offset: 2px; }
   .st-prompt svg, .st-prompt-clone svg { flex: none; }
   .st-prompt .ic-done, .st-prompt-clone .ic-done,
   .st-prompt.done .ic-copy, .st-prompt-clone.done .ic-copy { display: none; }
   .st-prompt.done .ic-done, .st-prompt-clone.done .ic-done { display: block; }
   .st-prompt.done, .st-prompt-clone.done { background: var(--cream); }
 
-  .st-sec {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 13px 22px;
-    border-radius: 999px;
-    background: rgba(14, 27, 69, .28);
-    box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .28);
-    color: var(--cream);
-    font-size: 15.5px;
-    font-weight: 600;
-    text-decoration: none;
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-    transition: background-color .15s ease, border-color .15s ease;
-  }
-  .st-sec:hover { background: rgba(14, 27, 69, .45); }
-  .st-sec:focus-visible { outline: 3px solid var(--butter); outline-offset: 3px; }
-
-  /* Transparent prompt preview chip so developers see exactly what they copy */
-  .hero-prompt-bar {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    max-width: 100%;
-    margin: 18px auto 0;
-    padding: 9px 14px 9px 16px;
-    border-radius: 12px;
-    background: rgba(14, 27, 69, .58);
-    box-shadow: inset 0 0 0 1px rgba(255, 251, 234, .26), 0 10px 28px -12px rgba(14, 27, 69, .55);
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
-    font: 13px/1.45 var(--mono);
-    color: var(--cream);
-    text-align: left;
-    cursor: pointer;
-    transition: background-color .15s ease, box-shadow .15s ease;
-  }
-  .hero-prompt-bar:hover {
-    background: rgba(14, 27, 69, .72);
-    box-shadow: inset 0 0 0 1px rgba(253, 238, 140, .48), 0 10px 28px -12px rgba(14, 27, 69, .65);
-  }
-  .hero-prompt-bar .caret { color: var(--butter); font-weight: 700; user-select: none; flex: none; }
-  .hero-prompt-bar code { font: inherit; overflow-wrap: anywhere; }
-  .hero-prompt-bar a { color: var(--butter); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(253, 238, 140, .55); }
-  .hero-prompt-bar a:hover { color: var(--cream); text-decoration-color: var(--cream); }
-
-  .st-hint {
-    margin: 12px auto 0;
-    max-width: 52ch;
+  .dock-note {
+    margin: 13px auto 0;
+    max-width: 60ch;
     font-size: 13.5px;
     line-height: 1.45;
-    color: rgba(255, 251, 234, .88);
-    text-shadow: 0 1px 10px rgba(14, 27, 69, .4);
+    color: rgba(255, 251, 234, .90);
+    text-shadow: 0 1px 10px rgba(14, 27, 69, .38);
   }
-  .st-hint a { color: var(--cream); font-weight: 600; text-underline-offset: 3px; }
+  .dock-note a { color: var(--butter); font-weight: 600; text-underline-offset: 3px; }
+  .dock-note a:hover { color: var(--cream); }
 
-  /* Engineering trust strip pinned cleanly at the foot of the hero */
+  /* 4-item engineering trust strip at hero foot */
   .hero-signals {
     position: relative;
     z-index: 2;
@@ -436,7 +427,7 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 10px 26px;
+    gap: 10px 28px;
     font-size: 13.5px;
     font-weight: 500;
     color: rgba(255, 251, 234, .95);
@@ -444,31 +435,31 @@
   .hero-signals li { display: inline-flex; align-items: center; gap: 7px; }
   .hero-signals svg { width: 15px; height: 15px; stroke: var(--butter); fill: none; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-  @media (max-width: 860px) {
-    .nav-links { display: none; }
-  }
+  @media (max-width: 860px) { .nav-links { display: none; } }
   @media (max-width: 640px) {
-    .st { min-height: 0; padding: 0 18px calc(var(--sheet) + 28px); }
+    .st { min-height: 0; padding: 0 16px calc(var(--sheet) + 26px); }
     .st .st-behind { filter: url(#st-reeds-sm); }
     .st .st-glass { opacity: .48; }
     .st::after { opacity: .26; }
     .st .st-lock { display: none; }
     .st .st-word {
       position: relative; z-index: 0; display: flex; justify-content: center;
-      margin: 4px 0 22px; padding: 8px 14px;
+      margin: 2px 0 20px; padding: 8px 12px;
       color: rgba(253, 238, 140, .93); filter: blur(.7px) url(#st-reeds-xs);
     }
-    .st .st-word svg { display: block; width: 62vw; max-width: 250px; height: auto; overflow: visible; fill: currentColor; }
-    .st-trim .st-copy { padding: 14px 0 24px; }
-    .st h1 { font-size: clamp(32px, 9.2vw, 42px); }
-    .st-sub { font-size: 16px; }
-    .st-actions { flex-direction: column; align-items: stretch; max-width: 320px; margin: 22px auto 0; }
-    .hero-prompt-bar { font-size: 12px; padding: 8px 12px; }
+    .st .st-word svg { display: block; width: 62vw; max-width: 240px; height: auto; overflow: visible; fill: currentColor; }
+    .st-trim .st-copy { padding: 12px 0 22px; }
+    .st h1 { font-size: clamp(32px, 9vw, 40px); }
+    .st-sub { font-size: 15.5px; }
+    .dock-top { flex-wrap: wrap; padding: 8px 10px; }
+    .dock-meta { display: none; }
+    .dock-body { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
+    .dock-cmd { font-size: 12.5px; }
     .hero-signals { gap: 8px 16px; font-size: 12.5px; justify-content: center; padding-top: 14px; }
   }
 
   /* =========================================================================
-     CREAM SHEET — Main content surface lapping over the hero's bottom edge
+     CREAM SHEET — Varied editorial surfaces (no repetitive card grids)
      ========================================================================= */
   .sheet-wrap {
     position: relative;
@@ -478,91 +469,46 @@
     color: var(--ink);
     border-radius: var(--sheet) var(--sheet) 0 0;
   }
-  .band {
-    padding: clamp(56px, 8.5vh, 96px) var(--gutter);
-  }
-  .band + .band {
-    border-top: 1px solid var(--line);
-  }
-  .band-tight {
-    padding: clamp(48px, 7vh, 80px) var(--gutter);
-  }
+  .band { padding: clamp(56px, 8vh, 88px) var(--gutter); }
+  .band-tint { background: var(--cream-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 
-  /* ---------- Problem vs Solution Contrast ---------- */
-  .contrast {
+  /* ---------- SECTION 1: Editorial split + 15s film + ruled 3-step strip ---------- */
+  .how-split {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
-    margin-top: 32px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    gap: 28px 48px;
+    align-items: end;
   }
-  .c-card {
-    padding: 24px 26px;
-    border-radius: var(--r-lg);
-    border: 1px solid var(--line);
-    background: var(--cream-2);
-  }
-  .c-card.good {
-    background: var(--cream);
-    border-color: rgba(34, 91, 255, .30);
-    box-shadow: 0 18px 40px -28px rgba(14, 27, 69, .30), 0 0 0 1px rgba(34, 91, 255, .10);
-  }
-  .c-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .03em;
-    text-transform: uppercase;
-    background: var(--cream-3);
-    color: var(--ink-soft);
-  }
-  .c-card.good .c-tag {
-    background: var(--blue-tint);
-    color: var(--blue-deep);
-  }
-  .c-card h3 {
-    margin-top: 14px;
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -.02em;
-    line-height: 1.25;
-  }
-  .c-list {
+  .diff-rows {
     list-style: none;
     padding: 0;
-    margin-top: 14px;
-    display: grid;
-    gap: 10px;
+    border-top: 2px solid var(--ink);
   }
-  .c-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
+  .diff-rows li {
+    display: grid;
+    grid-template-columns: 7.4em minmax(0, 1fr);
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--line);
     font-size: 15px;
-    line-height: 1.5;
+    line-height: 1.48;
     color: var(--ink-soft);
   }
-  .c-list svg { width: 17px; height: 17px; flex: none; margin-top: 3px; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-  .c-card:not(.good) .c-list svg { stroke: var(--ink-mute); }
-  .c-card.good .c-list svg { stroke: var(--blue); }
-  .c-list code {
-    padding: 1px 6px;
-    border-radius: 5px;
-    background: var(--blue-tint);
-    color: var(--blue-deep);
-    font: 600 13px/1.4 var(--mono);
+  .diff-rows .lbl {
+    font: 700 12px/1.6 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--ink-mute);
   }
+  .diff-rows li.now .lbl { color: var(--blue); }
+  .diff-rows strong { color: var(--ink); font-weight: 600; }
 
-  /* ---------- 15s Animated Film & 3-step mechanics ---------- */
   .film-shell {
-    margin-top: 28px;
+    margin-top: 32px;
     border-radius: var(--r-lg);
     overflow: hidden;
     background: var(--blue);
-    box-shadow: 0 28px 60px -30px rgba(14, 27, 69, .45), 0 0 0 1px rgba(14, 27, 69, .10);
+    box-shadow: 0 28px 60px -30px rgba(14, 27, 69, .42), 0 0 0 1px rgba(14, 27, 69, .10);
   }
   .film-wrap { position: relative; background: var(--blue); }
   .film-wrap::after {
@@ -570,204 +516,211 @@
     background: var(--flutes); mix-blend-mode: soft-light; opacity: .45;
   }
   .film {
-    display: block;
-    width: 100%;
-    max-height: 76vh;
-    max-height: 76svh;
-    aspect-ratio: 1600 / 980;
-    object-fit: contain;
-    background: var(--blue);
+    display: block; width: 100%; max-height: 74vh; max-height: 74svh;
+    aspect-ratio: 1600 / 980; object-fit: contain; background: var(--blue);
   }
   @media (max-aspect-ratio: 1/1), (max-width: 900px) {
-    .film { aspect-ratio: 392 / 800; max-height: 78svh; }
+    .film { aspect-ratio: 392 / 800; max-height: 76svh; }
   }
   .film-btn {
-    position: absolute;
-    right: clamp(14px, 1.8vw, 22px);
-    bottom: clamp(14px, 1.8vw, 22px);
-    z-index: 2;
-    font: 600 13px/1 Inter, system-ui, sans-serif;
-    color: var(--ink);
-    background: var(--cream);
-    border: 0;
-    border-radius: 999px;
-    padding: 10px 16px;
-    cursor: pointer;
+    position: absolute; right: clamp(14px, 1.8vw, 22px); bottom: clamp(14px, 1.8vw, 22px); z-index: 2;
+    font: 600 13px/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream);
+    border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer;
     box-shadow: 0 2px 6px rgba(14, 27, 69, .20), 0 8px 18px -6px rgba(14, 27, 69, .45);
-    transition: background-color .15s ease;
   }
   .film-btn:hover { background: var(--butter); }
   .film-btn:focus-visible { outline: 3px solid var(--cream); outline-offset: 2px; }
   .film-cap {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px 20px;
-    padding: 14px 20px;
-    background: var(--ink);
-    color: var(--cream);
-    font-size: 14px;
-    line-height: 1.45;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px;
+    padding: 14px 20px; background: var(--ink); color: var(--cream); font-size: 14px; line-height: 1.45;
   }
   .film-cap strong { color: var(--butter); font-weight: 700; }
   .film-cap a {
-    color: var(--butter);
-    font-weight: 600;
-    text-decoration: underline;
-    text-decoration-color: rgba(253, 238, 140, .45);
-    text-underline-offset: 4px;
-    white-space: nowrap;
+    color: var(--butter); font-weight: 600; text-decoration: underline;
+    text-decoration-color: rgba(253, 238, 140, .45); text-underline-offset: 4px; white-space: nowrap;
   }
   .film-cap a:hover { color: var(--cream); text-decoration-color: var(--cream); }
 
+  /* Ruled typographic 3-step strip — clean, editorial, zero boxes */
   .mech {
     list-style: none;
     padding: 0;
-    margin-top: 24px;
+    margin-top: 32px;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
+    gap: 24px 32px;
   }
   .mech li {
-    padding: 20px 22px;
-    border-radius: var(--r-md);
-    background: var(--cream-2);
-    border: 1px solid var(--line);
+    padding-top: 16px;
+    border-top: 2px solid var(--ink);
   }
-  .mech-n {
-    font: 700 12.5px/1 var(--mono);
-    color: var(--blue);
-    letter-spacing: .04em;
-  }
-  .mech h3 {
-    margin-top: 8px;
-    font-size: 16.5px;
-    font-weight: 700;
-    letter-spacing: -.015em;
-  }
-  .mech p {
-    margin-top: 6px;
-    font-size: 14.5px;
-    line-height: 1.5;
-    color: var(--ink-soft);
-  }
-  .mech code {
-    padding: 1px 6px;
-    border-radius: 5px;
-    background: var(--blue-tint);
-    color: var(--blue-deep);
-    font: 600 12.5px/1.4 var(--mono);
-  }
+  .mech-n { font: 700 12px/1 var(--mono); color: var(--blue); letter-spacing: .05em; }
+  .mech h3 { margin-top: 8px; font-size: 17px; font-weight: 700; letter-spacing: -.015em; }
+  .mech p { margin-top: 6px; font-size: 14.5px; line-height: 1.5; color: var(--ink-soft); }
 
-  /* ---------- Real-world proof + MCP tools ---------- */
-  .proof-box {
-    margin-top: 32px;
-    padding: clamp(22px, 3vw, 32px);
+  /* ---------- SECTION 2: Interactive MCP Session Explorer + Field Proof ---------- */
+  .explorer {
+    margin-top: 28px;
     border-radius: var(--r-lg);
-    background: var(--cream-2);
-    border: 1px solid var(--line);
+    overflow: hidden;
+    background: var(--ink);
+    color: var(--cream);
+    box-shadow: 0 28px 64px -32px rgba(14, 27, 69, .55), 0 0 0 1px rgba(14, 27, 69, .18);
   }
-  .proof-head {
+  .exp-tabs {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px 20px;
+    gap: 6px;
+    padding: 12px 14px;
+    background: #0A1436;
+    border-bottom: 1px solid var(--line-ink);
   }
-  .proof-label {
-    font-size: 13px;
+  .exp-tabs button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 13px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--on-ink-soft);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .exp-tabs button code {
+    font: 600 12px/1 var(--mono);
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: rgba(255, 251, 234, .10);
+    color: var(--butter);
+  }
+  .exp-tabs button:hover { color: var(--cream); background: rgba(255, 251, 234, .06); }
+  .exp-tabs button[aria-selected="true"] {
+    background: var(--ink-2);
+    border-color: rgba(253, 238, 140, .38);
+    color: var(--cream);
+  }
+  .exp-tabs button:focus-visible { outline: 2px solid var(--butter); outline-offset: 2px; }
+
+  .exp-stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .exp-pane {
+    padding: 22px 24px 24px;
+    min-width: 0;
+  }
+  .exp-pane + .exp-pane {
+    border-left: 1px solid var(--line-ink);
+    background: var(--ink-2);
+  }
+  .exp-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font: 600 12px/1.3 var(--mono);
+    color: var(--on-ink-mute);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 14px;
+  }
+  .exp-badge {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(253, 238, 140, .14);
+    color: var(--butter);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .exp-pre {
+    font: 13px/1.6 var(--mono);
+    color: var(--cream);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .exp-pre .k { color: var(--butter); }
+  .exp-pre .s { color: #A6D4FF; }
+  .exp-pre .m { color: var(--on-ink-mute); }
+  .exp-pre .g { color: #7EE7A7; }
+  .exp-panel[hidden] { display: none; }
+
+  /* Compact tool index right beneath explorer */
+  .tool-strip {
+    list-style: none;
+    padding: 0;
+    margin-top: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    font-size: 14px;
+    color: var(--ink-soft);
+  }
+  .tool-strip li { display: inline-flex; align-items: baseline; gap: 7px; }
+
+  /* Editorial Field Test Proof Strip */
+  .proof-bar {
+    margin-top: 34px;
+    padding-top: 26px;
+    border-top: 2px solid var(--ink);
+    display: grid;
+    grid-template-columns: minmax(0, .92fr) minmax(0, 1.48fr);
+    gap: 20px 32px;
+    align-items: center;
+  }
+  .proof-title {
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: .04em;
+    letter-spacing: .07em;
     text-transform: uppercase;
     color: var(--blue);
   }
-  .proof-link {
+  .proof-bar p {
+    margin-top: 8px;
+    font-size: 15.5px;
+    line-height: 1.5;
+    color: var(--ink);
+  }
+  .proof-bar a {
+    display: inline-block;
+    margin-top: 8px;
     font-size: 14px;
     font-weight: 600;
-    color: var(--ink);
+    color: var(--blue);
     text-decoration: underline;
-    text-decoration-color: rgba(14, 27, 69, .35);
     text-underline-offset: 4px;
   }
-  .proof-link:hover { color: var(--blue); text-decoration-color: var(--blue); }
-  .proof-stats {
+  .proof-bar a:hover { color: var(--ink); }
+  .proof-nums {
     list-style: none;
     padding: 0;
-    margin-top: 20px;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 14px;
   }
-  .proof-stats li {
-    padding: 16px 18px;
-    border-radius: var(--r-md);
-    background: var(--cream);
-    border: 1px solid var(--line);
+  .proof-nums li {
+    padding-left: 14px;
+    border-left: 2px solid var(--line);
   }
-  .proof-stats b {
+  .proof-nums b {
     display: block;
-    font-size: clamp(22px, 2.15vw, 28px);
+    font-size: clamp(20px, 1.75vw, 24px);
     font-weight: 700;
     letter-spacing: -.03em;
     line-height: 1.15;
     color: var(--ink);
     white-space: nowrap;
   }
-  .proof-stats span {
+  .proof-nums span {
     display: block;
-    margin-top: 5px;
-    font-size: 13.5px;
+    margin-top: 4px;
+    font-size: 12.5px;
     line-height: 1.35;
     color: var(--ink-soft);
   }
-  .proof-note {
-    margin-top: 16px;
-    font-size: 15px;
-    line-height: 1.55;
-    color: var(--ink-soft);
-    max-width: 72ch;
-  }
 
-  .tools-grid {
-    list-style: none;
-    padding: 0;
-    margin-top: 32px;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
-  }
-  .tools-grid li {
-    padding: 20px 22px;
-    border-radius: var(--r-md);
-    background: var(--cream-2);
-    border: 1px solid var(--line);
-    display: flex;
-    flex-direction: column;
-  }
-  .tool-chip {
-    display: inline-flex;
-    align-self: flex-start;
-    padding: 3px 9px;
-    border-radius: 6px;
-    background: var(--blue-tint);
-    color: var(--blue-deep);
-    font: 600 13.5px/1.4 var(--mono);
-  }
-  .tools-grid h3 {
-    margin-top: 12px;
-    font-size: 16.5px;
-    font-weight: 700;
-    letter-spacing: -.015em;
-  }
-  .tools-grid p {
-    margin-top: 6px;
-    font-size: 14.5px;
-    line-height: 1.5;
-    color: var(--ink-soft);
-  }
-
-  /* ---------- What you see (mur ui & mur app) ---------- */
+  /* ---------- SECTION 3: What you see (mur ui & mur app) ---------- */
   .see-top {
     display: flex;
     flex-wrap: wrap;
@@ -786,36 +739,25 @@
   @keyframes bob { 50% { transform: translateY(-5px); } }
   @media (prefers-reduced-motion: reduce) { .gh { animation: none; } }
 
-  .see { margin-top: 28px; display: grid; gap: 14px; }
+  .see { margin-top: 26px; display: grid; gap: 14px; }
   .see-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   .see-tabs button {
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    text-align: left;
-    padding: 14px 16px 16px;
-    border: 1.5px solid var(--line);
-    border-radius: var(--r-md);
-    background: var(--cream);
-    color: var(--ink);
-    cursor: pointer;
+    position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start;
+    text-align: left; padding: 13px 15px 15px; border: 1.5px solid var(--line); border-radius: var(--r-md);
+    background: var(--cream); color: var(--ink); cursor: pointer;
     transition: background-color .15s ease, border-color .15s ease;
   }
   .see-tabs button:hover { background: var(--cream-2); }
   .see-tabs button[aria-selected="true"] { background: var(--cream-2); border-color: var(--ink); }
   .see-tabs button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
-  .see-tabs b { display: block; font-size: 15.5px; font-weight: 700; letter-spacing: -.015em; }
-  .see-tabs span { display: block; margin-top: 4px; font-size: 13.5px; line-height: 1.45; color: var(--ink-soft); }
+  .see-tabs b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -.015em; }
+  .see-tabs span { display: block; margin-top: 4px; font-size: 13.5px; line-height: 1.42; color: var(--ink-soft); }
   .see-tabs i {
     position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
     background: var(--blue); transform: scaleX(0); transform-origin: left;
   }
   .see-win {
-    border-radius: 16px;
-    overflow: hidden;
-    background: #1E1E21;
+    border-radius: 16px; overflow: hidden; background: #1E1E21;
     box-shadow: 0 34px 70px -30px rgba(14, 27, 69, .55), 0 0 0 1px rgba(14, 27, 69, .14);
   }
   .see-bar {
@@ -832,74 +774,79 @@
   #see.js .see-media > .on { opacity: 1; visibility: visible; transition: opacity .3s ease; }
 
   /* =========================================================================
-     DARK INK BAND — Security, Privacy & Architecture (Trust Engine)
+     DARK INK BAND — Security & Architecture Spec (Ruled RFC style + Diagram)
      ========================================================================= */
   .ink-band {
     background: var(--ink);
     color: var(--cream);
-    padding: clamp(64px, 9.5vh, 108px) var(--gutter);
-    position: relative;
+    padding: clamp(64px, 9vh, 100px) var(--gutter);
   }
   .ink-band .eyebrow { color: var(--butter); }
   .ink-band .section-h { color: var(--cream); }
   .ink-band .section-lead { color: var(--on-ink-soft); }
-  .ink-band .section-lead a { color: var(--butter); text-underline-offset: 4px; }
 
-  .trust-grid {
+  .trust-split {
+    display: grid;
+    grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
+    gap: 32px 56px;
+    align-items: start;
+  }
+  .trust-links {
     list-style: none;
     padding: 0;
-    margin-top: 36px;
+    margin-top: 24px;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
+    gap: 9px;
   }
-  .trust-grid li {
-    padding: 22px 24px;
-    border-radius: var(--r-md);
-    background: var(--ink-2);
-    border: 1px solid var(--line-ink);
-  }
-  .trust-ic {
-    width: 34px; height: 34px;
-    border-radius: 9px;
-    background: rgba(253, 238, 140, .12);
-    border: 1px solid rgba(253, 238, 140, .24);
-    display: grid;
-    place-items: center;
-    margin-bottom: 14px;
-  }
-  .trust-ic svg { width: 18px; height: 18px; stroke: var(--butter); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  .trust-grid h3 {
-    font-size: 16.5px;
-    font-weight: 700;
-    letter-spacing: -.015em;
-    color: var(--cream);
-  }
-  .trust-grid p {
-    margin-top: 7px;
+  .trust-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     font-size: 14.5px;
-    line-height: 1.55;
+    font-weight: 600;
+    color: var(--butter);
+    text-decoration: underline;
+    text-decoration-color: rgba(253, 238, 140, .42);
+    text-underline-offset: 4px;
+  }
+  .trust-links a:hover { color: var(--cream); text-decoration-color: var(--cream); }
+
+  /* Ruled specification list — looks like an engineering RFC, not generic cards */
+  .spec-list {
+    list-style: none;
+    padding: 0;
+    border-top: 2px solid rgba(255, 251, 234, .32);
+  }
+  .spec-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 13.5em) minmax(0, 1fr);
+    gap: 8px 24px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line-ink);
+  }
+  .spec-list h3 {
+    font-size: 15.5px;
+    font-weight: 700;
+    color: var(--cream);
+    line-height: 1.4;
+  }
+  .spec-list p {
+    font-size: 14.5px;
+    line-height: 1.52;
     color: var(--on-ink-soft);
   }
-  .trust-grid code {
+  .spec-list code {
     padding: 1px 6px;
     border-radius: 5px;
-    background: rgba(255, 251, 234, .10);
+    background: rgba(255, 251, 234, .11);
     color: var(--butter);
     font: 600 12.5px/1.4 var(--mono);
     white-space: nowrap;
   }
-  .trust-grid a { color: var(--butter); font-weight: 600; text-underline-offset: 3px; }
-  .trust-grid a:hover { color: var(--cream); }
+  .spec-list a { color: var(--butter); font-weight: 600; text-underline-offset: 3px; }
 
-  /* Architecture figure on cream panel inside the dark ink band */
-  .arch-wrap {
-    margin-top: 32px;
-  }
-  .route {
-    --line: rgba(14, 27, 69, .12);
-    --mute: color-mix(in srgb, var(--ink) 38%, var(--cream));
-  }
+  .arch-wrap { margin-top: 40px; }
+  .route { --line: rgba(14, 27, 69, .12); --mute: color-mix(in srgb, var(--ink) 38%, var(--cream)); }
   .route figure { margin: 0; }
   .route .fig-panel {
     background: var(--cream);
@@ -911,25 +858,15 @@
   .route figure svg { display: block; width: 100%; height: auto; }
   .route .tall { display: none; }
   .route figcaption {
-    margin-top: 16px;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px 24px;
-    font-size: 15px;
-    line-height: 1.45;
-    color: var(--on-ink-soft);
+    margin-top: 14px;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px;
+    font-size: 14.5px; line-height: 1.45; color: var(--on-ink-soft);
   }
-  .arch-links { display: flex; flex-wrap: wrap; gap: 16px; }
-  .arch-links a {
-    color: var(--butter);
-    font-weight: 600;
-    text-decoration: underline;
-    text-decoration-color: rgba(253, 238, 140, .45);
-    text-underline-offset: 4px;
+  .route figcaption a {
+    color: var(--butter); font-weight: 600; text-decoration: underline;
+    text-decoration-color: rgba(253, 238, 140, .45); text-underline-offset: 4px;
   }
-  .arch-links a:hover { color: var(--cream); text-decoration-color: var(--cream); }
+  .route figcaption a:hover { color: var(--cream); text-decoration-color: var(--cream); }
 
   .route svg text { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: var(--ink); }
   .route .ct { fill: var(--cream); stroke: var(--line); stroke-width: 1; }
@@ -967,12 +904,12 @@
   .route svg .lk-mute-t { fill: var(--ink-mute); }
 
   /* =========================================================================
-     SUPPORTED AGENTS — Clear delivery tiers, no hidden hover tooltips
+     COMPATIBILITY MATRIX — Clean, scannable engineering table (not card spam)
      ========================================================================= */
   .cream-after { background: var(--cream); color: var(--ink); }
   .t3-feature {
-    margin-top: 28px;
-    padding: 22px 24px;
+    margin-top: 26px;
+    padding: 20px 24px;
     border-radius: var(--r-lg);
     background: var(--ink);
     color: var(--cream);
@@ -980,266 +917,204 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 16px 24px;
+    gap: 14px 24px;
   }
-  .t3-left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+  .t3-left { display: flex; align-items: center; gap: 15px; min-width: 0; }
   .t3-disc {
-    flex: none; width: 48px; height: 48px; border-radius: 50%; background: #000;
-    border: 1px solid rgba(255, 251, 234, .20);
-    display: grid; place-items: center;
+    flex: none; width: 44px; height: 44px; border-radius: 50%; background: #000;
+    border: 1px solid rgba(255, 251, 234, .22); display: grid; place-items: center;
   }
-  .t3-disc img { width: 30px; height: 30px; object-fit: contain; }
-  .t3-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-  .t3-meta a { font-size: 18px; font-weight: 700; color: var(--cream); text-decoration: none; }
+  .t3-disc img { width: 27px; height: 27px; object-fit: contain; }
+  .t3-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+  .t3-meta a { font-size: 17px; font-weight: 700; color: var(--cream); text-decoration: none; }
   .t3-meta a:hover { color: var(--butter); text-decoration: underline; text-underline-offset: 4px; }
   .rec-pill {
-    padding: 3px 9px;
-    border-radius: 999px;
-    background: var(--butter);
-    color: var(--ink);
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: .02em;
+    padding: 2px 9px; border-radius: 999px; background: var(--butter); color: var(--ink);
+    font-size: 11.5px; font-weight: 700;
   }
-  .t3-left p { margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--on-ink-soft); max-width: 58ch; }
+  .t3-left p { margin-top: 3px; font-size: 14.5px; line-height: 1.45; color: var(--on-ink-soft); max-width: 58ch; }
   .t3-badge {
-    font: 600 12.5px/1.3 var(--mono);
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: rgba(255, 251, 234, .10);
-    border: 1px solid rgba(255, 251, 234, .18);
-    color: var(--butter);
-    white-space: nowrap;
+    font: 600 12.5px/1.3 var(--mono); padding: 6px 12px; border-radius: 999px;
+    background: rgba(255, 251, 234, .10); border: 1px solid rgba(255, 251, 234, .18);
+    color: var(--butter); white-space: nowrap;
   }
 
-  .agents-grid {
-    list-style: none;
-    padding: 0;
-    margin-top: 16px;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
+  .compat-table {
+    width: 100%;
+    margin-top: 22px;
+    border-collapse: collapse;
+    border-top: 2px solid var(--ink);
   }
-  .agents-grid.beta-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-top: 12px;
-  }
-  .ag-card {
-    padding: 16px 18px;
-    border-radius: var(--r-md);
-    background: var(--cream-2);
-    border: 1px solid var(--line);
-    display: flex;
-    align-items: flex-start;
-    gap: 13px;
-  }
-  .ag-card.is-beta {
-    background: transparent;
-    border-style: dashed;
-  }
-  .ag-disc {
-    flex: none;
-    width: 38px; height: 38px;
-    border-radius: 50%;
-    background: #fff;
-    box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 8px 18px -8px rgba(14, 27, 69, .30);
-    display: grid;
-    place-items: center;
-  }
-  .ag-card.is-beta .ag-disc {
-    background: color-mix(in srgb, #fff 70%, var(--cream));
-    box-shadow: none;
-    border: 1px solid var(--line);
-  }
-  .ag-disc img { width: 21px; height: 21px; object-fit: contain; }
-  .ag-body { min-width: 0; }
-  .ag-name {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    font-size: 15.5px;
-    font-weight: 700;
-    letter-spacing: -.01em;
-    color: var(--ink);
-  }
-  .beta-tag {
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: var(--cream-3);
-    color: var(--ink-soft);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .03em;
+  .compat-table th {
+    text-align: left;
+    padding: 11px 12px 11px 0;
+    font: 700 12px/1.3 var(--mono);
     text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--ink-mute);
+    border-bottom: 1px solid var(--line);
   }
-  .ag-mode {
-    margin-top: 4px;
-    font-size: 13px;
+  .compat-table td {
+    padding: 13px 12px 13px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 14.5px;
     line-height: 1.4;
     color: var(--ink-soft);
+    vertical-align: middle;
   }
-  .agents-foot {
-    margin-top: 18px;
-    display: flex;
-    flex-wrap: wrap;
+  .compat-agent {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px 20px;
-    font-size: 14.5px;
-    color: var(--ink-soft);
+    gap: 11px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .ag-disc {
+    flex: none; width: 32px; height: 32px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 6px 14px -6px rgba(14, 27, 69, .28);
+    display: grid; place-items: center;
+  }
+  .ag-disc.beta { background: color-mix(in srgb, #fff 70%, var(--cream)); box-shadow: none; border: 1px solid var(--line); }
+  .ag-disc img { width: 18px; height: 18px; object-fit: contain; }
+  .tier {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--blue-tint);
+    color: var(--blue-deep);
+    white-space: nowrap;
+  }
+  .tier.beta { background: var(--cream-3); color: var(--ink-soft); }
+  .agents-foot {
+    margin-top: 16px;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px;
+    font-size: 14px; color: var(--ink-soft);
   }
   .agents-foot a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
   .agents-foot a:hover { color: var(--ink); }
 
   /* =========================================================================
-     SETUP — Frictionless conversion funnel (Agent prompt + CLI + Team flow)
+     SETUP — Asymmetric 2-column (Commands left, Vertical Team Timeline right)
      ========================================================================= */
-  .setup-grid {
+  .setup-split {
     margin-top: 28px;
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 16px;
+    grid-template-columns: minmax(0, 1.32fr) minmax(0, .88fr);
+    gap: 28px 40px;
+    align-items: start;
   }
-  .setup-card {
-    padding: 24px 26px;
+  .setup-box {
+    padding: 22px 24px;
     border-radius: var(--r-lg);
-    background: var(--cream-2);
-    border: 1px solid var(--line);
-  }
-  .setup-card.primary {
     background: var(--cream);
-    border: 2px solid var(--ink);
-    box-shadow: 0 20px 44px -28px rgba(14, 27, 69, .30);
+    border: 1.5px solid var(--ink);
+    box-shadow: 0 18px 40px -28px rgba(14, 27, 69, .28);
   }
-  .setup-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 14px;
+  .setup-box + .setup-box {
+    margin-top: 14px;
+    border: 1px solid var(--line);
+    box-shadow: none;
   }
-  .setup-head h3 {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: -.015em;
+  .setup-box-h {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 10px;
   }
+  .setup-box-h h3 { font-size: 16.5px; font-weight: 700; letter-spacing: -.015em; }
   .setup-pill {
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: var(--butter);
-    color: var(--ink);
-    font-size: 11.5px;
-    font-weight: 700;
+    padding: 2px 9px; border-radius: 999px; background: var(--butter); color: var(--ink);
+    font-size: 11.5px; font-weight: 700;
   }
-  .setup-card p {
-    font-size: 14.5px;
-    line-height: 1.5;
-    color: var(--ink-soft);
-  }
-  .inst { display: grid; gap: 10px; margin-top: 14px; }
+  .setup-box p { font-size: 14.5px; line-height: 1.5; color: var(--ink-soft); }
+  .inst { display: grid; gap: 9px; margin-top: 12px; }
   .cmd {
     display: grid;
-    grid-template-columns: 6.2em minmax(0, 1fr) auto;
+    grid-template-columns: 5.8em minmax(0, 1fr) auto;
     align-items: center;
-    column-gap: 12px;
-    padding: 12px 14px;
-    border-radius: 11px;
+    column-gap: 10px;
+    padding: 11px 13px;
+    border-radius: 10px;
     background: var(--ink);
     color: var(--cream);
-    font: 13px/1.45 var(--mono);
+    font: 12.5px/1.45 var(--mono);
   }
-  .cmd > span { color: var(--on-ink-mute); font-family: Inter, system-ui, sans-serif; font-size: 12.5px; font-weight: 600; }
+  .cmd > span { color: var(--on-ink-mute); font-family: Inter, system-ui, sans-serif; font-size: 12px; font-weight: 600; }
   .cmd code { overflow-wrap: anywhere; font: inherit; }
   .copy {
-    font: 700 12.5px/1 Inter, system-ui, sans-serif;
-    color: var(--ink);
-    background: var(--butter);
-    border: 0;
-    border-radius: 999px;
-    padding: 8px 13px;
-    cursor: pointer;
-    transition: background-color .15s ease;
+    font: 700 12px/1 Inter, system-ui, sans-serif;
+    color: var(--ink); background: var(--butter); border: 0; border-radius: 999px;
+    padding: 7px 12px; cursor: pointer;
   }
   .copy:hover { background: var(--cream); }
   .copy:focus-visible { outline: 3px solid var(--butter); outline-offset: 2px; }
-  .inst-note { margin-top: 12px; font-size: 13.5px; color: var(--ink-soft); }
-  .inst-note strong { color: var(--ink); }
-
-  /* 3-step team rollout timeline */
-  .rollout-h {
-    margin-top: 38px;
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-    color: var(--ink-soft);
+  .audit-links {
+    margin-top: 11px;
+    display: flex; flex-wrap: wrap; gap: 6px 16px;
+    font-size: 13px; color: var(--ink-soft);
   }
-  .steps {
+  .audit-links a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
+  .audit-links a:hover { color: var(--ink); }
+
+  /* Vertical team rollout timeline */
+  .timeline-h {
+    font: 700 12px/1 var(--mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-bottom: 16px;
+  }
+  .timeline {
     list-style: none;
     padding: 0;
-    margin-top: 14px;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
+    position: relative;
   }
-  .steps > li {
-    padding: 20px 22px;
-    border-radius: var(--r-md);
-    background: var(--cream-2);
-    border: 1px solid var(--line);
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: 12px;
+    top: 14px;
+    bottom: 24px;
+    width: 2px;
+    background: var(--line);
   }
-  .step-top {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .timeline li {
+    position: relative;
+    padding-left: 38px;
+    padding-bottom: 22px;
   }
-  .n {
-    flex: none;
-    width: 26px; height: 26px;
+  .timeline li:last-child { padding-bottom: 0; }
+  .tl-n {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     background: var(--blue);
     color: var(--cream);
     display: grid;
     place-items: center;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 700;
   }
-  .actor { font-size: 16.5px; font-weight: 700; letter-spacing: -.015em; }
-  .do { margin-top: 12px; }
-  .do p { font-size: 14.5px; line-height: 1.5; color: var(--ink-soft); }
-  .cmds { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; margin-top: 10px; }
-  .cmds:first-child { margin-top: 0; margin-bottom: 8px; }
-  .cmds code {
-    padding: 3px 8px;
-    border-radius: 6px;
-    background: var(--blue-tint);
-    color: var(--blue-deep);
-    font: 600 13px/1.4 var(--mono);
-  }
-  .cmds span { font-size: 13.5px; color: var(--ink-soft); }
-  .other { margin-top: 22px; }
+  .timeline h4 { font-size: 16px; font-weight: 700; letter-spacing: -.015em; line-height: 1.4; }
+  .timeline p { margin-top: 5px; font-size: 14.5px; line-height: 1.5; color: var(--ink-soft); }
+  .other { margin-top: 24px; }
   .other a {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--ink);
-    font-size: 15px;
-    font-weight: 600;
-    text-decoration: underline;
-    text-decoration-color: rgba(14, 27, 69, .35);
-    text-underline-offset: 5px;
-    transition: color .15s ease, text-decoration-color .15s ease;
+    display: inline;
+    color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.45;
+    text-decoration: underline; text-decoration-color: rgba(14, 27, 69, .35); text-underline-offset: 5px;
   }
   .other a:hover { color: var(--blue); text-decoration-color: var(--blue); }
-  .other a svg { transition: transform .15s ease; }
+  .other a svg { display: inline-block; vertical-align: -2px; margin-left: 5px; transition: transform .15s ease; }
   .other a:hover svg { transform: translateX(3px); }
 
   /* =========================================================================
      FAQ & CLOSING CONVERSION BANNER
      ========================================================================= */
   .faq {
-    margin-top: 28px;
+    margin-top: 24px;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0 36px;
@@ -1247,115 +1122,54 @@
   }
   .faq details { border-bottom: 1px solid var(--line); }
   .faq summary {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 16px;
-    padding: 18px 0;
-    cursor: pointer;
-    list-style: none;
-    font-size: 16.5px;
-    font-weight: 700;
-    letter-spacing: -.015em;
-    line-height: 1.35;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+    padding: 16px 0; cursor: pointer; list-style: none;
+    font-size: 16px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35;
   }
   .faq summary::-webkit-details-marker { display: none; }
-  .faq summary::after {
-    content: "+";
-    flex: none;
-    font: 500 22px/1 Inter, system-ui, sans-serif;
-    color: var(--blue);
-    transition: transform .15s ease;
-  }
+  .faq summary::after { content: "+"; flex: none; font: 500 22px/1 Inter, system-ui, sans-serif; color: var(--blue); transition: transform .15s ease; }
   .faq details[open] summary::after { transform: rotate(45deg); }
   .faq summary:hover { color: var(--blue); }
   .faq summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
-  .faq p { padding: 0 0 18px; font-size: 15px; line-height: 1.55; color: var(--ink-soft); }
-  .faq code {
-    padding: 1px 6px;
-    border-radius: 5px;
-    background: var(--blue-tint);
-    color: var(--blue-deep);
-    font: 600 13px/1.4 var(--mono);
-    white-space: nowrap;
-  }
+  .faq p { padding: 0 0 16px; font-size: 14.5px; line-height: 1.55; color: var(--ink-soft); }
   .faq a { color: var(--blue); font-weight: 600; text-underline-offset: 3px; }
 
-  /* Closing CTA banner in signature blue + reeds */
   .cta-close {
-    position: relative;
-    isolation: isolate;
-    overflow: hidden;
-    margin-top: clamp(44px, 6.5vh, 72px);
-    padding: clamp(32px, 5vw, 52px) clamp(24px, 4vw, 48px);
+    position: relative; isolation: isolate; overflow: hidden;
+    margin-top: clamp(40px, 6vh, 64px);
+    padding: clamp(30px, 4.5vw, 48px) clamp(24px, 4vw, 44px);
     border-radius: var(--r-lg);
     background: linear-gradient(135deg, #2E64FF 0%, var(--blue) 65%, #1A4EE8 100%);
     color: var(--cream);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 22px 32px;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px 32px;
   }
   .cta-close::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background: var(--flutes);
-    mix-blend-mode: soft-light;
-    opacity: .6;
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: var(--flutes); mix-blend-mode: soft-light; opacity: .58;
   }
-  .cta-close h3 {
-    font-size: clamp(24px, 2.8vw, 34px);
-    font-weight: 700;
-    letter-spacing: -.03em;
-    line-height: 1.1;
-    color: var(--cream);
-  }
-  .cta-close p {
-    margin-top: 8px;
-    max-width: 48ch;
-    font-size: 16px;
-    line-height: 1.5;
-    color: rgba(255, 251, 234, .92);
-  }
-  .cta-close-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px 18px;
-  }
-  .cta-close .button { box-shadow: 0 4px 16px -6px rgba(14, 27, 69, .45); }
+  .cta-close h3 { font-size: clamp(24px, 2.7vw, 32px); font-weight: 700; letter-spacing: -.03em; line-height: 1.1; color: var(--cream); }
+  .cta-close p { margin-top: 7px; max-width: 46ch; font-size: 15.5px; line-height: 1.5; color: rgba(255, 251, 234, .92); }
+  .cta-close-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+  .cta-close .button { padding: 13px 22px; font-size: 15px; }
   .cta-close-gh {
-    color: var(--cream);
-    font-size: 15px;
-    font-weight: 600;
-    text-decoration: underline;
-    text-decoration-color: rgba(255, 251, 234, .45);
-    text-underline-offset: 5px;
+    color: var(--cream); font-size: 15px; font-weight: 600;
+    text-decoration: underline; text-decoration-color: rgba(255, 251, 234, .45); text-underline-offset: 5px;
   }
   .cta-close-gh:hover { text-decoration-color: var(--cream); }
 
-  .credit { margin-top: 28px; font-size: 13.5px; color: var(--ink-soft); }
+  .credit { margin-top: 26px; font-size: 13.5px; color: var(--ink-soft); }
   .credit a { color: inherit; text-underline-offset: 3px; }
   .credit a:hover { color: var(--ink); }
 
   /* =========================================================================
-     FOOTER — Exact required links, clean lockup
+     FOOTER — Exact required links
      ========================================================================= */
   .site-foot { background: var(--cream); padding: 0 var(--gutter); }
   .site-foot nav {
-    max-width: var(--max);
-    margin: 0 auto;
+    max-width: var(--max); margin: 0 auto;
     padding: 22px 0 max(30px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px 24px;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px;
   }
   .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
   .site-foot li + li::before { content: "\00B7"; padding: 0 12px; color: var(--ink-soft); opacity: .6; }
@@ -1369,19 +1183,17 @@
   /* =========================================================================
      RESPONSIVE BREAKPOINTS
      ========================================================================= */
-  @media (max-width: 980px) {
-    .mech, .tools-grid, .trust-grid, .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .proof-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .agents-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .agents-grid.beta-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 960px) {
+    .how-split, .trust-split, .setup-split, .proof-bar { grid-template-columns: 1fr; }
+    .exp-stage { grid-template-columns: 1fr; }
+    .exp-pane + .exp-pane { border-left: 0; border-top: 1px solid var(--line-ink); }
+    .mech { grid-template-columns: 1fr; gap: 20px; }
     .see-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .setup-grid { grid-template-columns: 1fr; }
     .faq { grid-template-columns: 1fr; }
   }
   @media (max-width: 759px) {
-    .contrast { grid-template-columns: 1fr; }
-    .mech, .tools-grid, .trust-grid, .steps { grid-template-columns: 1fr; }
-    .agents-grid, .agents-grid.beta-row { grid-template-columns: 1fr; }
+    .proof-nums { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .spec-list li { grid-template-columns: 1fr; gap: 4px; }
     .route .wide { display: none; }
     .route .tall { display: block; max-width: 420px; margin: 0 auto; }
     .see-tabs { grid-template-columns: 1fr; }
@@ -1392,6 +1204,8 @@
     #see.js .see-tabs button[aria-selected="false"] span { display: none; }
     .cmd { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
     .cmd code { grid-column: 1 / -1; grid-row: 2; }
+    .compat-table th:nth-child(3), .compat-table td:nth-child(3) { display: none; }
+    .diff-rows li { grid-template-columns: 1fr; gap: 3px; }
   }
 </style>
 </head>
@@ -1407,22 +1221,22 @@
   <div class="st-glass" aria-hidden="true"></div>
 
   <header class="nav">
-    <a class="nav-brand" href="/" aria-label="Murmur">
-      <svg viewBox="0 0 170.9 105.44" data-look="170.9;54.4,38.7,3.54;132.1,55.0,2.50" width="38" height="23.4" aria-hidden="true"><mask id="st-logo-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path mask="url(#st-logo-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg>
-      <span>murmur</span>
+    <a class="nav-mark" href="/" aria-label="Murmur">
+      <svg viewBox="0 0 170.9 105.44" data-look="170.9;54.4,38.7,3.54;132.1,55.0,2.50" width="42" height="25.9" aria-hidden="true"><mask id="st-logo-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path mask="url(#st-logo-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg>
     </a>
     <nav aria-label="Primary">
       <ul class="nav-links">
         <li><a href="#how">How it works</a></li>
-        <li><a href="#see">Product</a></li>
+        <li><a href="#uses">Tools</a></li>
+        <li><a href="#see">Live UI</a></li>
         <li><a href="#trust">Security</a></li>
-        <li><a href="#supported">Agents</a></li>
         <li><a href="#setup">Setup</a></li>
       </ul>
     </nav>
     <a class="nav-gh" href="https://github.com/a-Fig/murmur">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.27-.01-1-.02-1.96-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.8 0c2.21-1.49 3.18-1.18 3.18-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.26 5.69.41.36.78 1.07.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
       <span>GitHub</span>
+      <span class="ver">MIT</span>
     </a>
   </header>
 
@@ -1430,33 +1244,40 @@
     <div class="st-lock" aria-hidden="true"><span class="st-lock-mark"><svg viewBox="0 0 374.4 222.17" data-look="374.4;114.6,81.6,7.2;278.4,116.0,5.1"><mask id="st-lock-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="454.4" height="302.17"><rect x="-40" y="-40" width="454.4" height="302.17" fill="#fff"/><g class="st-eye"><path fill="#000" d="M108.32 83.81C106.56 93.01 100.07 99.49 93.82 98.29C87.57 97.13 83.93 88.69 85.69 79.45C87.45 70.25 93.94 63.77 100.19 64.97C106.44 66.13 110.08 74.57 108.32 83.81ZM143.59 83.81C141.83 93.01 135.33 99.49 129.09 98.29C122.84 97.13 119.2 88.69 120.96 79.45C122.72 70.25 129.21 63.77 135.46 64.97C141.71 66.13 145.35 74.57 143.59 83.81Z"/></g><g class="st-eye"><path fill="#000" d="M274.65 114.57C273.93 116.45 273.31 118.37 273.05 120.33C272.23 126.53 271.92 129.41 265.81 129.41C258.16 128.77 257.8 123.05 260.07 113.53C261.75 106.49 269.36 102.57 272.83 103.37C277.24 104.45 276.89 108.89 274.65 114.57ZM296.43 114.57C295.7 116.45 295.09 118.37 294.82 120.33C294 126.53 293.69 129.41 287.59 129.41C279.93 128.77 279.57 123.05 281.84 113.53C283.53 106.49 291.13 102.57 294.61 103.37C299.01 104.45 298.66 108.89 296.43 114.57Z"/></g></mask><path mask="url(#st-lock-eyes)" d="M8.7 222.17C37.44 222.17 170.68 222.13 170.68 222.13C170.68 222.13 179.82 222.13 182.43 213.65C185.05 205.17 185.7 197.97 191.58 197.97C197.45 197.97 197.45 205.17 200.07 213.65C202.68 222.13 212.48 222.13 212.48 222.13H348.33C366.62 222.13 374.45 51.69 286.93 51.69C256.89 51.69 232.07 88.89 212.48 88.89C179.17 88.89 164.15 -3.19 98.18 0.09C25.67 3.65 -20.04 222.13 8.7 222.17Z"/></svg></span><span class="st-lock-word"><svg viewBox="369.5 134.3 401.4 73.1"><path d="M401.6 207.09C392.35 207.09 384.66 203.61 378.52 196.65C372.48 189.61 369.46 181.05 369.46 170.97V146.93C369.46 144.73 369.5 143.13 369.59 142.13C369.78 141.13 370.19 139.93 370.83 138.57C372.11 136.09 375.69 134.85 381.55 134.85C387.95 134.85 391.71 136.61 392.81 140.09C393.36 141.53 393.63 143.89 393.63 147.09V171.13C393.63 174.85 394.68 177.81 396.79 179.89C398.99 182.01 401.87 183.05 405.44 183.05C409.11 183.05 412.03 181.97 414.23 179.77C416.52 177.57 417.67 174.69 417.67 171.13V146.81C417.67 144.69 417.71 143.13 417.8 142.13C417.99 141.05 418.45 139.81 419.18 138.41C420.37 136.05 423.89 134.85 429.75 134.85C435.52 134.85 439.05 136.09 440.33 138.57C440.97 139.93 441.33 141.17 441.43 142.25C441.61 143.29 441.7 144.85 441.7 146.93V195.57C441.7 197.57 441.61 199.13 441.43 200.21C441.33 201.25 440.92 202.37 440.19 203.65C438.82 206.05 435.29 207.25 429.61 207.25C424.03 207.25 420.6 206.13 419.31 203.93C418.4 202.37 417.94 200.49 417.94 198.29C417.57 198.93 416.75 199.85 415.47 201.05C414.19 202.25 412.95 203.25 411.76 204.09C408.65 206.09 405.26 207.09 401.6 207.09ZM501.92 135.81C503.66 136.37 505.08 137.33 506.18 138.69C507.37 139.97 507.96 142.09 507.96 145.01C507.96 147.93 507.09 151.17 505.35 154.61C503.61 158.09 501.09 159.85 497.8 159.85C496.15 159.85 494.55 159.49 492.99 158.73C491.53 158.01 489.56 157.65 487.09 157.65C484.61 157.65 482.28 158.53 480.08 160.25C477.98 162.01 476.92 164.09 476.92 166.57V195.41C476.92 197.53 476.83 199.13 476.65 200.21C476.56 201.25 476.15 202.41 475.41 203.81C474.04 206.17 470.47 207.37 464.7 207.37C460.31 207.37 457.15 206.61 455.22 205.05C453.76 203.77 452.93 201.77 452.75 199.13C452.75 198.21 452.75 196.89 452.75 195.13V146.93C452.75 144.85 452.8 143.29 452.89 142.25C453.07 141.17 453.48 139.97 454.12 138.69C455.41 136.21 458.98 134.97 464.84 134.97C470.33 134.97 473.77 136.05 475.14 138.13C476.15 139.61 476.65 141.13 476.65 142.69C477.11 142.05 477.75 141.25 478.57 140.33C479.49 139.45 481.36 138.21 484.2 136.65C487.04 135.09 489.51 134.29 491.62 134.29C493.82 134.29 495.65 134.45 497.11 134.73C498.58 134.89 500.18 135.25 501.92 135.81ZM539.15 144.61C543.45 138.09 548.62 134.85 554.67 134.85C564.01 134.85 570.96 138.85 575.54 146.81C576.55 145.41 577.74 144.01 579.11 142.53C580.58 140.97 582.87 139.33 585.98 137.61C589.09 135.77 592.3 134.85 595.59 134.85C602.92 134.85 609.05 137.69 614 143.37C618.94 148.97 621.41 158.25 621.41 171.25V195.29C621.41 197.37 621.32 199.01 621.14 200.09C621.05 201.09 620.64 202.29 619.9 203.65C618.71 206.13 615.19 207.37 609.33 207.37C603.56 207.37 600.03 206.09 598.75 203.53C598.11 202.17 597.7 200.97 597.52 199.97C597.43 198.85 597.38 197.25 597.38 195.13V171.13C597.38 163.13 594.54 159.17 588.86 159.17C585.66 159.17 583.46 160.21 582.27 162.33C581.17 164.41 580.62 167.41 580.62 171.25V195.29C580.62 197.49 580.53 199.09 580.35 200.09C580.26 201.09 579.85 202.29 579.11 203.65C577.83 206.13 574.26 207.37 568.4 207.37C562.63 207.37 559.11 206.09 557.82 203.53C557.18 202.17 556.77 200.97 556.59 199.97C556.5 198.85 556.45 197.25 556.45 195.13V171.13C556.45 163.13 553.61 159.17 547.93 159.17C542.44 159.17 539.69 163.13 539.69 171.13V195.41C539.69 197.53 539.6 199.13 539.42 200.21C539.33 201.25 538.91 202.41 538.18 203.81C536.81 206.17 533.24 207.37 527.47 207.37C521.7 207.37 518.18 206.13 516.89 203.65C516.25 202.29 515.84 201.09 515.66 200.09C515.57 199.09 515.52 197.49 515.52 195.29V146.93C515.52 144.85 515.57 143.29 515.66 142.25C515.84 141.17 516.3 139.97 517.03 138.69C518.41 136.21 521.66 134.97 526.78 134.97C531.91 134.97 535.25 135.81 536.81 137.45C538.37 139.09 539.15 141.49 539.15 144.61ZM664.49 207.09C655.24 207.09 647.55 203.61 641.41 196.65C635.37 189.61 632.35 181.05 632.35 170.97V146.93C632.35 144.73 632.39 143.13 632.48 142.13C632.67 141.13 633.08 139.93 633.72 138.57C635 136.09 638.57 134.85 644.43 134.85C650.84 134.85 654.59 136.61 655.69 140.09C656.24 141.53 656.52 143.89 656.52 147.09V171.13C656.52 174.85 657.57 177.81 659.68 179.89C661.87 182.01 664.76 183.05 668.33 183.05C671.99 183.05 674.92 181.97 677.12 179.77C679.41 177.57 680.55 174.69 680.55 171.13V146.81C680.55 144.69 680.6 143.13 680.69 142.13C680.87 141.05 681.33 139.81 682.07 138.41C683.25 136.05 686.78 134.85 692.64 134.85C698.41 134.85 701.93 136.09 703.21 138.57C703.86 139.93 704.22 141.17 704.31 142.25C704.5 143.29 704.59 144.85 704.59 146.93V195.57C704.59 197.57 704.5 199.13 704.31 200.21C704.22 201.25 703.81 202.37 703.08 203.65C701.71 206.05 698.18 207.25 692.5 207.25C686.92 207.25 683.48 206.13 682.2 203.93C681.29 202.37 680.83 200.49 680.83 198.29C680.46 198.93 679.64 199.85 678.35 201.05C677.07 202.25 675.84 203.25 674.65 204.09C671.53 206.09 668.15 207.09 664.49 207.09ZM764.81 135.81C766.55 136.37 767.97 137.33 769.07 138.69C770.25 139.97 770.85 142.09 770.85 145.01C770.85 147.93 769.98 151.17 768.24 154.61C766.5 158.09 763.98 159.85 760.69 159.85C759.04 159.85 757.44 159.49 755.88 158.73C754.41 158.01 752.45 157.65 749.97 157.65C747.5 157.65 745.17 158.53 742.97 160.25C740.86 162.01 739.81 164.09 739.81 166.57V195.41C739.81 197.53 739.72 199.13 739.53 200.21C739.45 201.25 739.03 202.41 738.3 203.81C736.93 206.17 733.35 207.37 727.59 207.37C723.19 207.37 720.03 206.61 718.11 205.05C716.65 203.77 715.82 201.77 715.64 199.13C715.64 198.21 715.64 196.89 715.64 195.13V146.93C715.64 144.85 715.68 143.29 715.77 142.25C715.96 141.17 716.37 139.97 717.01 138.69C718.29 136.21 721.86 134.97 727.72 134.97C733.22 134.97 736.65 136.05 738.03 138.13C739.03 139.61 739.53 141.13 739.53 142.69C739.99 142.05 740.63 141.25 741.46 140.33C742.37 139.45 744.25 138.21 747.09 136.65C749.93 135.09 752.4 134.29 754.51 134.29C756.7 134.29 758.53 134.45 760 134.73C761.47 134.89 763.07 135.25 764.81 135.81Z"/></svg></span></div>
     <div class="st-word" aria-hidden="true"><svg viewBox="0 0 763.11 107.6"><path d="M34.78 15.16C41.12 5.6 48.74 0.8 57.64 0.8C71.39 0.8 81.64 6.68 88.38 18.4C89.86 16.36 91.62 14.28 93.64 12.12C95.8 9.84 99.17 7.4 103.75 4.84C108.34 2.16 113.06 0.8 117.91 0.8C128.7 0.8 137.73 5 145.01 13.36C152.29 21.56 155.94 35.24 155.94 54.4V89.8C155.94 92.88 155.8 95.24 155.53 96.88C155.4 98.36 154.79 100.12 153.71 102.12C151.96 105.76 146.76 107.6 138.14 107.6C129.64 107.6 124.45 105.72 122.56 101.92C121.62 99.92 121.01 98.16 120.74 96.68C120.61 95.04 120.54 92.68 120.54 89.6V54.2C120.54 42.48 116.36 36.6 108 36.6C103.28 36.6 100.04 38.16 98.29 41.24C96.68 44.36 95.86 48.72 95.86 54.4V89.8C95.86 93.04 95.73 95.4 95.46 96.88C95.32 98.36 94.72 100.12 93.64 102.12C91.75 105.76 86.5 107.6 77.86 107.6C69.37 107.6 64.18 105.72 62.29 101.92C61.35 99.92 60.74 98.16 60.47 96.68C60.34 95.04 60.27 92.68 60.27 89.6V54.2C60.27 42.48 56.09 36.6 47.73 36.6C39.64 36.6 35.6 42.48 35.6 54.2V90C35.6 93.08 35.46 95.44 35.19 97.08C35.06 98.56 34.45 100.32 33.37 102.32C31.35 105.84 26.09 107.6 17.59 107.6C9.1 107.6 3.91 105.76 2.02 102.12C1.08 100.12 0.47 98.36 0.2 96.88C0.06 95.4 0 93.04 0 89.8V18.6C0 15.52 0.06 13.2 0.2 11.72C0.47 10.12 1.14 8.36 2.22 6.48C4.24 2.84 9.03 1 16.58 1C24.13 1 29.06 2.24 31.35 4.64C33.64 7.08 34.78 10.6 34.78 15.16ZM219.36 107.2C205.74 107.2 194.41 102.08 185.38 91.8C176.48 81.44 172.03 68.84 172.03 54V18.6C172.03 15.36 172.1 13 172.23 11.52C172.5 10.04 173.11 8.28 174.05 6.28C175.94 2.64 181.2 0.8 189.83 0.8C199.27 0.8 204.8 3.36 206.41 8.48C207.22 10.64 207.63 14.08 207.63 18.8V54.2C207.63 59.72 209.18 64.04 212.28 67.16C215.52 70.24 219.76 71.8 225.02 71.8C230.41 71.8 234.73 70.16 237.96 66.96C241.34 63.72 243.02 59.44 243.02 54.2V18.4C243.02 15.32 243.09 13 243.22 11.52C243.49 9.92 244.17 8.08 245.24 6.08C247 2.56 252.19 0.8 260.82 0.8C269.31 0.8 274.5 2.64 276.39 6.28C277.34 8.28 277.88 10.12 278.01 11.72C278.28 13.2 278.42 15.52 278.42 18.6V90.2C278.42 93.16 278.28 95.44 278.01 97.08C277.88 98.56 277.27 100.24 276.19 102.12C274.17 105.64 268.98 107.4 260.62 107.4C252.39 107.4 247.34 105.76 245.45 102.52C244.1 100.24 243.42 97.48 243.42 94.24C242.88 95.2 241.67 96.52 239.78 98.28C237.9 100.04 236.08 101.52 234.32 102.76C229.74 105.72 224.75 107.2 219.36 107.2ZM367.09 2.24C369.65 3.04 371.74 4.44 373.36 6.48C375.11 8.36 375.99 11.44 375.99 15.76C375.99 20.08 374.71 24.8 372.15 29.92C369.58 35.04 365.88 37.6 361.02 37.6C358.6 37.6 356.24 37.08 353.94 36C351.79 34.92 348.89 34.36 345.25 34.36C341.61 34.36 338.17 35.68 334.93 38.24C331.83 40.8 330.28 43.88 330.28 47.52V90C330.28 93.08 330.15 95.44 329.88 97.08C329.74 98.56 329.14 100.32 328.06 102.32C326.03 105.84 320.78 107.6 312.28 107.6C305.81 107.6 301.16 106.44 298.32 104.16C296.17 102.28 294.96 99.36 294.68 95.44C294.68 94.12 294.68 92.16 294.68 89.6V18.6C294.68 15.52 294.75 13.2 294.89 11.72C295.16 10.12 295.76 8.36 296.71 6.48C298.6 2.84 303.85 1 312.48 1C320.57 1 325.63 2.56 327.65 5.64C329.14 7.8 329.88 10.04 329.88 12.32C330.55 11.4 331.5 10.24 332.71 8.88C334.06 7.56 336.82 5.72 341 3.44C345.18 1.16 348.82 0 351.92 0C355.16 0 357.86 0.2 360.01 0.6C362.17 0.88 364.53 1.4 367.09 2.24ZM421.91 15.16C428.24 5.6 435.86 0.8 444.76 0.8C458.52 0.8 468.76 6.68 475.5 18.4C476.99 16.36 478.74 14.28 480.76 12.12C482.92 9.84 486.29 7.4 490.88 4.84C495.46 2.16 500.18 0.8 505.03 0.8C515.82 0.8 524.85 5 532.14 13.36C539.42 21.56 543.06 35.24 543.06 54.4V89.8C543.06 92.88 542.92 95.24 542.65 96.88C542.52 98.36 541.91 100.12 540.83 102.12C539.08 105.76 533.89 107.6 525.26 107.6C516.76 107.6 511.57 105.72 509.68 101.92C508.74 99.92 508.14 98.16 507.86 96.68C507.73 95.04 507.66 92.68 507.66 89.6V54.2C507.66 42.48 503.48 36.6 495.12 36.6C490.4 36.6 487.17 38.16 485.42 41.24C483.8 44.36 482.99 48.72 482.99 54.4V89.8C482.99 93.04 482.85 95.4 482.58 96.88C482.45 98.36 481.84 100.12 480.76 102.12C478.88 105.76 473.62 107.6 464.99 107.6C456.49 107.6 451.3 105.72 449.41 101.92C448.47 99.92 447.86 98.16 447.59 96.68C447.46 95.04 447.39 92.68 447.39 89.6V54.2C447.39 42.48 443.21 36.6 434.85 36.6C426.76 36.6 422.72 42.48 422.72 54.2V90C422.72 93.08 422.58 95.44 422.31 97.08C422.18 98.56 421.57 100.32 420.49 102.32C418.47 105.84 413.21 107.6 404.72 107.6C396.22 107.6 391.03 105.76 389.14 102.12C388.2 100.12 387.59 98.36 387.32 96.88C387.19 95.4 387.12 93.04 387.12 89.8V18.6C387.12 15.52 387.19 13.2 387.32 11.72C387.59 10.12 388.27 8.36 389.34 6.48C391.37 2.84 396.16 1 403.7 1C411.26 1 416.18 2.24 418.47 4.64C420.76 7.08 421.91 10.6 421.91 15.16ZM606.48 107.2C592.86 107.2 581.54 102.08 572.5 91.8C563.6 81.44 559.15 68.84 559.15 54V18.6C559.15 15.36 559.22 13 559.36 11.52C559.62 10.04 560.23 8.28 561.18 6.28C563.06 2.64 568.32 0.8 576.95 0.8C586.39 0.8 591.92 3.36 593.54 8.48C594.34 10.64 594.75 14.08 594.75 18.8V54.2C594.75 59.72 596.3 64.04 599.4 67.16C602.64 70.24 606.88 71.8 612.14 71.8C617.54 71.8 621.85 70.16 625.09 66.96C628.46 63.72 630.14 59.44 630.14 54.2V18.4C630.14 15.32 630.21 13 630.34 11.52C630.62 9.92 631.29 8.08 632.37 6.08C634.12 2.56 639.31 0.8 647.94 0.8C656.44 0.8 661.63 2.64 663.52 6.28C664.46 8.28 665 10.12 665.13 11.72C665.4 13.2 665.54 15.52 665.54 18.6V90.2C665.54 93.16 665.4 95.44 665.13 97.08C665 98.56 664.39 100.24 663.31 102.12C661.29 105.64 656.1 107.4 647.74 107.4C639.51 107.4 634.46 105.76 632.57 102.52C631.22 100.24 630.55 97.48 630.55 94.24C630.01 95.2 628.8 96.52 626.91 98.28C625.02 100.04 623.2 101.52 621.45 102.76C616.86 105.72 611.87 107.2 606.48 107.2ZM754.21 2.24C756.78 3.04 758.86 4.44 760.48 6.48C762.24 8.36 763.11 11.44 763.11 15.76C763.11 20.08 761.83 24.8 759.27 29.92C756.71 35.04 753 37.6 748.14 37.6C745.72 37.6 743.36 37.08 741.07 36C738.91 34.92 736.01 34.36 732.37 34.36C728.73 34.36 725.29 35.68 722.06 38.24C718.95 40.8 717.4 43.88 717.4 47.52V90C717.4 93.08 717.27 95.44 717 97.08C716.86 98.56 716.26 100.32 715.18 102.32C713.16 105.84 707.9 107.6 699.4 107.6C692.93 107.6 688.28 106.44 685.45 104.16C683.29 102.28 682.08 99.36 681.81 95.44C681.81 94.12 681.81 92.16 681.81 89.6V18.6C681.81 15.52 681.88 13.2 682.01 11.72C682.28 10.12 682.88 8.36 683.83 6.48C685.72 2.84 690.98 1 699.6 1C707.7 1 712.75 2.56 714.78 5.64C716.26 7.8 717 10.04 717 12.32C717.67 11.4 718.62 10.24 719.83 8.88C721.18 7.56 723.94 5.72 728.12 3.44C732.3 1.16 735.94 0 739.04 0C742.28 0 744.98 0.2 747.14 0.6C749.29 0.88 751.65 1.4 754.21 2.24Z"/></svg></div>
 
-    <div class="hero-pill"><i aria-hidden="true"></i><span>Open source · MIT · macOS, Linux, Windows</span></div>
     <h1><span>Your team's agents,</span> <span>moving as one.</span></h1>
-    <p class="st-sub">Intra-repo agent communication for Claude Code, Codex, OpenCode, Pi and more. Your coding agents find and message each other across every laptop — over the git remote you already push to.</p>
+    <p class="st-sub">Intra-repo agent communication for coding agents across every teammate's laptop — over the git remote you already push to.</p>
 
-    <div class="st-actions">
-      <a class="button st-prompt" href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></a>
-      <a class="st-sec" href="#how">See it work in 15s</a>
+    <div class="dock" id="hero-dock">
+      <div class="dock-top">
+        <div class="dock-tabs" role="tablist" aria-label="Install method">
+          <button type="button" role="tab" aria-selected="true" data-mode="prompt">Agent prompt</button>
+          <button type="button" role="tab" aria-selected="false" tabindex="-1" data-mode="sh">macOS / Linux</button>
+          <button type="button" role="tab" aria-selected="false" tabindex="-1" data-mode="ps">Windows</button>
+        </div>
+        <span class="dock-meta"><a href="https://murmur.afig.dev/setup">Read setup.md</a> · <a href="https://github.com/a-Fig/murmur/releases/latest">v0.5.0</a></span>
+      </div>
+      <div class="dock-body">
+        <div class="dock-cmd">
+          <span class="caret" aria-hidden="true">&gt;</span>
+          <code id="dock-code">Set up Murmur in this repo, following https://murmur.afig.dev/setup</code>
+        </div>
+        <a class="button st-prompt" href="#setup"><svg class="ic-copy" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy prompt</span></a>
+      </div>
     </div>
 
-    <div class="hero-prompt-bar" aria-label="Setup prompt preview">
-      <span class="caret" aria-hidden="true">&gt;</span>
-      <code>Set up Murmur in this repo, following <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a></code>
-    </div>
-    <p class="st-hint">Paste to any coding agent in your repo — it explains every step and asks before installing. <a href="#setup">Prefer CLI install?</a></p>
+    <p class="dock-note" id="dock-note">Paste into Claude Code, Codex, OpenCode, Pi or T3 Code. It explains every step and asks before installing. <a href="#how">See it work in 15s &darr;</a></p>
   </div>
 
   <ul class="hero-signals" aria-label="Key guarantees">
     <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Encrypted end-to-end</li>
-    <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6M9 18h5a4 4 0 0 0 4-4v-1"/></svg>Never touches your branches</li>
+    <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6M9 18h5a4 4 0 0 0 4-4v-1"/></svg>Side refs only · zero CI noise</li>
     <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>Blocks leaked secrets</li>
     <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>No server, no accounts</li>
-    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>One Go binary · no sudo</li>
   </ul>
 
 <script>
 (() => {
-  // Light behind the glass: one WebGL canvas refracted through the same 12px reeds as the lockup.
+  // WebGL refracted diagonal light pass behind the 12px reeded glass.
   const hero = document.querySelector('main.st');
   const cv = hero && hero.querySelector('.st-gl');
   if (!cv) return;
@@ -1592,7 +1413,7 @@ void main() {
 </script>
 <script>
 (() => {
-  // Eyes on the hero marks track the pointer (disabled for touch and reduced motion).
+  // Eyes on the hero marks follow the pointer (off for touch and reduced motion).
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const marks = [...document.querySelectorAll('.st svg[data-look]')].map(svg => {
     const [vb, l, r] = svg.dataset.look.split(';');
@@ -1621,36 +1442,33 @@ void main() {
 </main>
 
 <!-- =========================================================================
-     CREAM SHEET — How it works, Proof & Tools, Product UI
+     CREAM SHEET — How it works, Interactive Explorer & Proof, Product UI
      ========================================================================= -->
 <div class="sheet-wrap">
 
-  <!-- SECTION 1: THE PROBLEM + HOW IT WORKS -->
+  <!-- SECTION 1: THE PROBLEM + 15s FILM + 3-STEP MECHANISM -->
   <section id="how" class="band">
     <div class="in">
-      <div class="eyebrow">How it works</div>
-      <h2 class="section-h">Stop letting parallel agents collide in the dark.</h2>
-      <p class="section-lead">When several teammates run coding agents in one repo, none of them know the others exist. Murmur connects them through the git remote you already share.</p>
-
-      <div class="contrast">
-        <div class="c-card">
-          <span class="c-tag">Without Murmur</span>
-          <h3>Blind edits and merge-time surprises</h3>
-          <ul class="c-list">
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg><span>Two agents build the same auth flow in incompatible ways.</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg><span>One refactors a module another is halfway through extending.</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg><span>Agents hesitate to touch unfamiliar diffs, leaving silent compromises.</span></li>
-          </ul>
+      <div class="how-split">
+        <div>
+          <div class="eyebrow">How it works</div>
+          <h2 class="section-h">Ten agents in one repo shouldn't work blind.</h2>
+          <p class="section-lead">When parallel coding sessions can't see each other, they duplicate work and collide at merge time. Murmur lets them coordinate directly over your git remote.</p>
         </div>
-        <div class="c-card good">
-          <span class="c-tag">With Murmur</span>
-          <h3>Same agents, same speed — one coherent repo</h3>
-          <ul class="c-list">
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><code>quiet-otter</code> calls <code>who</code>, sees who is editing auth, and asks before changing it.</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><code>brave-heron</code> answers across laptops in 15 seconds, with nobody typing.</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Interfaces settle mid-flight instead of colliding at PR review.</span></li>
-          </ul>
-        </div>
+        <ul class="diff-rows">
+          <li>
+            <span class="lbl">Without it</span>
+            <span>Two sessions build the same auth flow in incompatible ways, or refactor code another agent is extending.</span>
+          </li>
+          <li class="now">
+            <span class="lbl">With Murmur</span>
+            <span><strong>quiet-otter</strong> runs <code>who</code>, sees <strong>brave-heron</strong> in auth, and asks across laptops before touching a line.</span>
+          </li>
+          <li class="now">
+            <span class="lbl">The result</span>
+            <span>Same agents, same speed — and the answer lands in <strong>15 seconds</strong> with nobody typing.</span>
+          </li>
+        </ul>
       </div>
 
       <div class="film-shell">
@@ -1662,7 +1480,7 @@ void main() {
           <button class="film-btn" id="filmBtn" type="button" hidden>Play</button>
         </div>
         <div class="film-cap">
-          <span><strong>15 seconds</strong> measured question to answer on GitHub — zero commits to your branches.</span>
+          <span><strong>15 seconds</strong> measured question to answer on GitHub · zero commits to your branches.</span>
           <a href="/daemon/">Walk through the daemon step by step &rarr;</a>
         </div>
       </div>
@@ -1670,76 +1488,144 @@ void main() {
       <ol class="mech">
         <li>
           <span class="mech-n">01 · MCP TOOLS</span>
-          <h3>An agent calls <code>send</code></h3>
-          <p>Each session gets a unique name like <code>quiet-otter</code> and calls Murmur's MCP tools directly — no human copy-pasting.</p>
+          <h3>Your agent calls <code>send</code></h3>
+          <p>Each session gets a two-word name like <code>quiet-otter</code> and calls Murmur's MCP tools on its own.</p>
         </li>
         <li>
-          <span class="mech-n">02 · GIT PLUMBING</span>
+          <span class="mech-n">02 · SIDE REF</span>
           <h3>Daemon pushes to <code>refs/murmur/*</code></h3>
-          <p>A lightweight background daemon encrypts the message and pushes an empty commit to its own side ref on <code>origin</code>.</p>
+          <p>A local background daemon encrypts the message and pushes an empty commit to its own ref on <code>origin</code>.</p>
         </li>
         <li>
           <span class="mech-n">03 · NEW TURN</span>
           <h3>Teammate's agent wakes up</h3>
-          <p>Their daemon fetches the ref and starts a new turn in ~6–8 seconds. If their agent is busy, it gets a quiet notice instead.</p>
+          <p>Their daemon fetches the ref and starts a new turn in ~6–8 seconds. Busy sessions get a one-line notice instead.</p>
         </li>
       </ol>
     </div>
   </section>
 
-  <!-- SECTION 2: REAL-WORLD PROOF & AGENT CAPABILITIES -->
-  <section id="uses" class="band">
+  <!-- SECTION 2: INTERACTIVE MCP EXPLORER + FIELD TEST PROOF -->
+  <section id="uses" class="band band-tint">
     <div class="in">
-      <div class="eyebrow">Built for real sprints</div>
-      <h2 class="section-h">What your agents get — and proof it holds together.</h2>
-      <p class="section-lead">Once joined, every coding session in your repo gets six focused MCP tools plus built-in skills that teach agents when to coordinate and when to stay quiet.</p>
+      <div class="eyebrow">What agents actually call</div>
+      <h2 class="section-h">Six MCP tools, built for real coordination.</h2>
+      <p class="section-lead">No custom prompts to memorize. Joining registers Murmur's MCP tools and bundled skills so agents know when to check in — and when to stay quiet.</p>
 
-      <div class="proof-box">
-        <div class="proof-head">
-          <span class="proof-label">Field test · AIE &times; MLH Hackathon at Code Summit</span>
-          <a class="proof-link" href="https://github.com/a-Fig/cue">Inspect github.com/a-Fig/cue &rarr;</a>
+      <div class="explorer" id="mcp-explorer">
+        <div class="exp-tabs" role="tablist" aria-label="Example Murmur tool calls">
+          <button type="button" role="tab" id="exp-t0" aria-controls="exp-p0" aria-selected="true"><code>who</code> Check overlap</button>
+          <button type="button" role="tab" id="exp-t1" aria-controls="exp-p1" aria-selected="false" tabindex="-1"><code>send</code> Ask across laptops</button>
+          <button type="button" role="tab" id="exp-t2" aria-controls="exp-p2" aria-selected="false" tabindex="-1"><code>group:ci</code> Unblock the team</button>
+          <button type="button" role="tab" id="exp-t3" aria-controls="exp-p3" aria-selected="false" tabindex="-1"><code>lookup</code> Inspect first</button>
         </div>
-        <ul class="proof-stats">
-          <li><b>4 people</b><span>working on 4 laptops in one repo</span></li>
-          <li><b>21 sessions</b><span>Claude Code agents running at once</span></li>
-          <li><b>44 PRs</b><span>merged cleanly in ~4 hours</span></li>
-          <li><b>225 messages</b><span>agents steering each other directly</span></li>
-        </ul>
-        <p class="proof-note">No coordinator agent, no central server, and no custom Slack bot. Every agent saw what teammates' agents were changing and settled overlaps before pushing.</p>
+
+        <div class="exp-panel" id="exp-p0" role="tabpanel" aria-labelledby="exp-t0">
+          <div class="exp-stage">
+            <div class="exp-pane">
+              <div class="exp-label"><span>Bob's laptop · quiet-otter</span><span class="exp-badge">MCP call</span></div>
+              <pre class="exp-pre"><span class="m">// Before refactoring src/auth/middleware.ts</span>
+<span class="k">mcp__murmur__who</span>({})</pre>
+            </div>
+            <div class="exp-pane">
+              <div class="exp-label"><span>Live presence across 3 laptops</span><span class="exp-badge">Response</span></div>
+              <pre class="exp-pre"><span class="g">●</span> <span class="k">quiet-otter</span>       <span class="m">(you) claude-code · feat/auth</span>
+  Adding role checks to requireUser
+
+<span class="g">●</span> <span class="k">brave-heron</span>       <span class="m">alice-laptop · claude-code · feat/login</span>
+  Moving session tokens to signed cookies  <span class="s">[group:api]</span>
+
+<span class="g">●</span> <span class="k">scalloped-tortoise</span> <span class="m">carol-laptop · pi · fix/ci-cache</span>
+  Fixing cold build cache on main          <span class="s">[group:ci]</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="exp-panel" id="exp-p1" role="tabpanel" aria-labelledby="exp-t1" hidden>
+          <div class="exp-stage">
+            <div class="exp-pane">
+              <div class="exp-label"><span>Bob's laptop · quiet-otter</span><span class="exp-badge">MCP call</span></div>
+              <pre class="exp-pre"><span class="k">mcp__murmur__send</span>({
+  <span class="k">to</span>: <span class="s">"brave-heron"</span>,
+  <span class="k">subject</span>: <span class="s">"Touching requireUser?"</span>,
+  <span class="k">body</span>: <span class="s">"I'm splitting role checks in auth middleware. Are you editing that file?"</span>
+})</pre>
+            </div>
+            <div class="exp-pane">
+              <div class="exp-label"><span>Alice's laptop · brave-heron</span><span class="exp-badge">Arrives as a turn (~7s)</span></div>
+              <pre class="exp-pre"><span class="m">Message from quiet-otter (claude-code in T3, on bob's machine) via Murmur:</span>
+
+<span class="k">Touching requireUser?</span>
+
+I'm splitting role checks in auth middleware. Are you editing that file?
+
+<span class="m">Reply with Murmur's `send` to quiet-otter if a reply is needed.</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="exp-panel" id="exp-p2" role="tabpanel" aria-labelledby="exp-t2" hidden>
+          <div class="exp-stage">
+            <div class="exp-pane">
+              <div class="exp-label"><span>Carol's laptop · scalloped-tortoise</span><span class="exp-badge">Group broadcast</span></div>
+              <pre class="exp-pre"><span class="k">mcp__murmur__send</span>({
+  <span class="k">to</span>: <span class="s">"group:ci"</span>,
+  <span class="k">subject</span>: <span class="s">"CI cache is fixed on main"</span>,
+  <span class="k">body</span>: <span class="s">"Builds take 3 minutes again, down from 11. Rebase to pick it up."</span>
+})</pre>
+            </div>
+            <div class="exp-pane">
+              <div class="exp-label"><span>Delivered to 3 sessions tagged group:ci</span><span class="exp-badge">Replies</span></div>
+              <pre class="exp-pre"><span class="k">content-gazelle</span> <span class="m">(claude-code · bob-laptop)</span>
+Rebased — branch went green in 3 minutes. Thanks.
+
+<span class="k">gnarly-trellis</span> <span class="m">(codex · bob-laptop)</span>
+One flaky test left in checkout.test.js on cold cache. Taking it.</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="exp-panel" id="exp-p3" role="tabpanel" aria-labelledby="exp-t3" hidden>
+          <div class="exp-stage">
+            <div class="exp-pane">
+              <div class="exp-label"><span>Bob's laptop · content-gazelle</span><span class="exp-badge">MCP call</span></div>
+              <pre class="exp-pre"><span class="m">// Check context before changing /api/basket response shape</span>
+<span class="k">mcp__murmur__lookup</span>({ <span class="k">name</span>: <span class="s">"enameled-whimbrel"</span> })</pre>
+            </div>
+            <div class="exp-pane">
+              <div class="exp-label"><span>Session detail</span><span class="exp-badge">Response</span></div>
+              <pre class="exp-pre"><span class="k">enameled-whimbrel</span> <span class="m">· opencode · alice-laptop</span>
+<span class="k">status:</span>    Documenting the cart API <span class="s">[group:api]</span>
+<span class="k">branches:</span>  docs/api <span class="m">(3 commits, 2m ago)</span>
+<span class="k">delivery:</span>  <span class="g">active — message will arrive as a turn</span>
+<span class="k">latest:</span>    "Writing the /api/basket examples next"</pre>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <ul class="tools-grid">
-        <li>
-          <span class="tool-chip">who</span>
-          <h3>See every active agent</h3>
-          <p>Lists every session on every teammate's machine: its name, agent, branch, status line, and last activity.</p>
-        </li>
-        <li>
-          <span class="tool-chip">send</span>
-          <h3>Message by name or group</h3>
-          <p>Reach one session directly, message a whole group like <code>group:api</code>, a device, or broadcast to everyone.</p>
-        </li>
-        <li>
-          <span class="tool-chip">group:*</span>
-          <h3>Zero-setup group chats</h3>
-          <p>Any session with a <code>group:ci</code> or <code>group:ui</code> tag receives messages sent to that group — nothing to declare.</p>
-        </li>
-        <li>
-          <span class="tool-chip">lookup</span>
-          <h3>Check context first</h3>
-          <p>Inspect one session's recent commits, branches, messages, and whether a message will wake it right now.</p>
-        </li>
-        <li>
-          <span class="tool-chip">status &amp; tags</span>
-          <h3>Signal without interrupting</h3>
-          <p>Publish what you're working on, filter by labels like <code>reviewing</code>, or set <code>do-not-disturb</code> to hold messages.</p>
-        </li>
-        <li>
-          <span class="tool-chip">mute &amp; skills</span>
-          <h3>Calm, focused coordination</h3>
-          <p>Bundled skills keep chatter low. Any session can mute another, and humans can see or undo mutes in the UI.</p>
-        </li>
+      <ul class="tool-strip" aria-label="All Murmur tools">
+        <li><code>who</code> live presence</li>
+        <li><code>send</code> direct, group &amp; read receipts</li>
+        <li><code>lookup</code> commits &amp; reachability</li>
+        <li><code>status</code> current task line</li>
+        <li><code>tags</code> <code>group:*</code> &amp; <code>do-not-disturb</code></li>
+        <li><code>mute</code> silence noisy sessions</li>
       </ul>
+
+      <div class="proof-bar">
+        <div>
+          <div class="proof-title">Field test · AIE &times; MLH Hackathon at Code Summit</div>
+          <p>Four people shipped 44 merged PRs in four hours on one repo — 21 Claude Code sessions steering each other with zero coordinator agent and no central server.</p>
+          <a href="https://github.com/a-Fig/cue">Inspect github.com/a-Fig/cue &rarr;</a>
+        </div>
+        <ul class="proof-nums">
+          <li><b>4 laptops</b><span>teammates on one repo</span></li>
+          <li><b>21 sessions</b><span>agents running at once</span></li>
+          <li><b>44 PRs</b><span>merged in ~4 hours</span></li>
+          <li><b>225 msgs</b><span>agent-to-agent notes</span></li>
+        </ul>
+      </div>
     </div>
   </section>
 
@@ -1749,24 +1635,24 @@ void main() {
       <div class="see-top">
         <div>
           <div class="eyebrow">For humans</div>
-          <h2 class="section-h">Watch the whole team — or jump in yourself.</h2>
-          <p class="section-lead"><code>mur ui</code> opens a local web dashboard with every session and thread. <code>mur app</code> runs it in a native desktop window with unread counts and notifications.</p>
+          <h2 class="section-h">Watch every session — or jump in yourself.</h2>
+          <p class="section-lead"><code>mur ui</code> opens a local dashboard in your browser. <code>mur app</code> runs the same view in a native desktop window with unread badges and notifications.</p>
         </div>
         <ul class="ghosts" aria-hidden="true">
-          <li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-echo.svg" alt="" width="52" height="52"><img src="/ghosts/acc-bubble.svg" alt="" width="52" height="52"></span>jaunty-yoyo</li>
-          <li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-psst.svg" alt="" width="52" height="52"><img src="/ghosts/acc-beanie.svg" alt="" width="52" height="52"></span>enameled-whimbrel</li>
-          <li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-sigh.svg" alt="" width="52" height="52"><img src="/ghosts/acc-beanie.svg" alt="" width="52" height="52"></span>scalloped-tortoise</li>
-          <li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-echo.svg" alt="" width="52" height="52"><img src="/ghosts/acc-headset.svg" alt="" width="52" height="52"></span>content-gazelle</li>
-          <li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-chirp.svg" alt="" width="52" height="52"><img src="/ghosts/acc-headset.svg" alt="" width="52" height="52"></span>gnarly-trellis</li>
+          <li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-echo.svg" alt="" width="48" height="48"><img src="/ghosts/acc-bubble.svg" alt="" width="48" height="48"></span>jaunty-yoyo</li>
+          <li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-psst.svg" alt="" width="48" height="48"><img src="/ghosts/acc-beanie.svg" alt="" width="48" height="48"></span>enameled-whimbrel</li>
+          <li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-sigh.svg" alt="" width="48" height="48"><img src="/ghosts/acc-beanie.svg" alt="" width="48" height="48"></span>scalloped-tortoise</li>
+          <li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-echo.svg" alt="" width="48" height="48"><img src="/ghosts/acc-headset.svg" alt="" width="48" height="48"></span>content-gazelle</li>
+          <li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-chirp.svg" alt="" width="48" height="48"><img src="/ghosts/acc-headset.svg" alt="" width="48" height="48"></span>gnarly-trellis</li>
         </ul>
       </div>
 
       <div class="see">
         <div class="see-tabs" role="tablist" aria-label="Moments on the mur ui page">
-          <button type="button" role="tab" id="see-t0" aria-controls="see-m" aria-selected="true"><b>See every agent</b><span>Every teammate's laptop, branch, and live status in one list.</span><i></i></button>
-          <button type="button" role="tab" id="see-t1" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Watch them talk</b><span>Direct messages and group chats stream in as they happen.</span><i></i></button>
+          <button type="button" role="tab" id="see-t0" aria-controls="see-m" aria-selected="true"><b>See every agent</b><span>Every laptop, branch, and live task in one list.</span><i></i></button>
+          <button type="button" role="tab" id="see-t1" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Watch them talk</b><span>Direct threads and group chats update live.</span><i></i></button>
           <button type="button" role="tab" id="see-t2" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Catch up in Recent</b><span>Every message, commit, and status change, newest first.</span><i></i></button>
-          <button type="button" role="tab" id="see-t3" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><span>Nudge any session and watch its reply land with read ticks.</span><i></i></button>
+          <button type="button" role="tab" id="see-t3" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><span>Write to any session and see delivery ticks.</span><i></i></button>
         </div>
         <div class="see-win">
           <div class="see-bar" aria-hidden="true"><i></i><i></i><i></i><span>acme-shop · mur ui</span></div>
@@ -1784,46 +1670,49 @@ void main() {
 </div>
 
 <!-- =========================================================================
-     DARK INK BAND — Security, Privacy & Architecture (Trust Engine)
+     DARK INK BAND — Security & Architecture Spec
      ========================================================================= -->
 <section id="trust" class="ink-band">
   <div class="in">
-    <div class="eyebrow">Security &amp; architecture</div>
-    <h2 class="section-h">Built for engineers who check what a tool touches.</h2>
-    <p class="section-lead">Murmur uses your existing git remote and push permissions. There is no cloud relay to trust, no dashboard account to create, and no opaque background service.</p>
+    <div class="trust-split">
+      <div>
+        <div class="eyebrow">Security &amp; architecture</div>
+        <h2 class="section-h">Built for engineers who check what a tool touches.</h2>
+        <p class="section-lead">Push access is the membership list. There is no hosted message relay to trust, no dashboard account to manage, and no hidden cloud dependency.</p>
+        <ul class="trust-links">
+          <li><a href="/privacy/">Privacy: exactly what Murmur sends &rarr;</a></li>
+          <li><a href="https://github.com/a-Fig/murmur/blob/main/docs/VISION.md">Design doc &amp; threat model (VISION.md) &rarr;</a></li>
+          <li><a href="https://github.com/a-Fig/murmur">Audit the Go source on GitHub (MIT) &rarr;</a></li>
+        </ul>
+      </div>
 
-    <ul class="trust-grid">
-      <li>
-        <div class="trust-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6M9 18h5a4 4 0 0 0 4-4v-1"/></svg></div>
-        <h3>Never touches your branches</h3>
-        <p>Writes use git plumbing on <code>refs/murmur/*</code>, never your working tree or index. CI, webhooks, deploys, and <code>git clone</code> ignore it.</p>
-      </li>
-      <li>
-        <div class="trust-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
-        <h3>Encrypted for push access only</h3>
-        <p>Every message is encrypted automatically with a shared team key — even on public repos. Remove a collaborator and run <code>mur rotate</code>.</p>
-      </li>
-      <li>
-        <div class="trust-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg></div>
-        <h3>Blocks leaked secrets</h3>
-        <p>Every message and status line is scanned before send. API keys, tokens, and private keys are refused before anything reaches the remote.</p>
-      </li>
-      <li>
-        <div class="trust-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></div>
-        <h3>Your instructions come first</h3>
-        <p>Messages arrive clearly marked as notes from a peer agent, never bypass your permission mode, and never steer a busy turn.</p>
-      </li>
-      <li>
-        <div class="trust-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.8 21.8 0 0 1-2.16 3.19"/><path d="M1 1l22 22"/></svg></div>
-        <h3>Private repos send zero bytes</h3>
-        <p>Private repos never contact us. Public repos report only their URL once for aggregate counts. <a href="/privacy/">Read the privacy page</a>.</p>
-      </li>
-      <li>
-        <div class="trust-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div>
-        <h3>One binary, clean exit</h3>
-        <p>Single Go binary in <code>~/.local/bin</code> with no sudo. Leave a repo with <code>mur join --leave</code>, or remove everything with <code>mur uninstall</code>.</p>
-      </li>
-    </ul>
+      <ul class="spec-list">
+        <li>
+          <h3>Zero branch or CI noise</h3>
+          <p>Writes go through git plumbing to <code>refs/murmur/*</code>, never your working tree or index. CI, webhooks, deploys, and <code>git clone</code> ignore them.</p>
+        </li>
+        <li>
+          <h3>Encrypted automatically</h3>
+          <p>Every message is encrypted with a team key shared among devices with push access — even on public repos. Revoke a removed teammate with <code>mur rotate</code>.</p>
+        </li>
+        <li>
+          <h3>Secret scanner built in</h3>
+          <p>Messages and status lines are scanned before send. API keys, tokens, and private keys are blocked before anything touches the remote.</p>
+        </li>
+        <li>
+          <h3>Your instructions stay first</h3>
+          <p>Incoming notes are labeled as peer agent messages, never bypass your permission mode, and never interrupt a running turn.</p>
+        </li>
+        <li>
+          <h3>Private repos send zero bytes</h3>
+          <p>Private repos never contact us. Public repos report only their URL once for aggregate counts. <a href="/privacy/">Full details</a>.</p>
+        </li>
+        <li>
+          <h3>One binary, clean exit</h3>
+          <p>Static Go binary in <code>~/.local/bin</code> with no sudo. Checksum-verified updates (opt out anytime). Remove everything with <code>mur uninstall</code>.</p>
+        </li>
+      </ul>
+    </div>
 
     <div class="arch-wrap route">
       <figure>
@@ -1845,10 +1734,7 @@ void main() {
         </div>
         <figcaption>
           <span>Messages ride as commits on a side ref beside your branches — never through a hosted relay.</span>
-          <span class="arch-links">
-            <a href="/daemon/">How the daemon works &rarr;</a>
-            <a href="https://github.com/a-Fig/murmur/blob/main/docs/VISION.md">Read VISION.md &rarr;</a>
-          </span>
+          <a href="/daemon/">Read the interactive daemon walkthrough &rarr;</a>
         </figcaption>
       </figure>
     </div>
@@ -1856,152 +1742,157 @@ void main() {
 </section>
 
 <!-- =========================================================================
-     CREAM AFTER INK — Supported Agents, Setup, FAQ, Closing CTA
+     CREAM AFTER INK — Compatibility Matrix, Setup + Rollout, FAQ + Closing CTA
      ========================================================================= -->
 <div class="cream-after">
 
-  <!-- SECTION 5: SUPPORTED AGENTS -->
+  <!-- SECTION 5: COMPATIBILITY MATRIX -->
   <section id="supported" class="band">
     <div class="in">
       <div class="eyebrow">Compatibility</div>
-      <h2 class="section-h">Works with the coding agents your team already runs.</h2>
-      <p class="section-lead">Mix and match across laptops — a Claude Code session on macOS can message a Codex or OpenCode session on Windows or Linux.</p>
+      <h2 class="section-h">Works with the agents your team already runs.</h2>
+      <p class="section-lead">Mix across machines — Claude Code on macOS talks cleanly to Codex or OpenCode on Windows or Linux.</p>
 
       <div class="t3-feature">
         <div class="t3-left">
-          <span class="t3-disc"><img src="/agents/t3.svg" alt="" width="30" height="30"></span>
+          <span class="t3-disc"><img src="/agents/t3.svg" alt="" width="27" height="27"></span>
           <div>
             <div class="t3-meta">
               <a href="https://github.com/pingdotgg/t3code">T3 Code</a>
               <span class="rec-pill">Recommended</span>
             </div>
-            <p>The best way to run Murmur. Every agent inside T3 Code — including beta agents — receives incoming messages as a new turn automatically.</p>
+            <p>Every agent running inside T3 Code — including beta agents — receives incoming messages as a new turn automatically.</p>
           </div>
         </div>
         <span class="t3-badge">New turn for every agent</span>
       </div>
 
-      <ul class="agents-grid" aria-label="Fully supported agents">
-        <li class="ag-card">
-          <span class="ag-disc"><img src="/agents/claude.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">Claude Code</div>
-            <p class="ag-mode">Starts a new turn in T3 Code or standalone.</p>
-          </div>
-        </li>
-        <li class="ag-card">
-          <span class="ag-disc"><img src="/agents/codex.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">Codex</div>
-            <p class="ag-mode">Starts a new turn in T3 Code or standalone.</p>
-          </div>
-        </li>
-        <li class="ag-card">
-          <span class="ag-disc"><img src="/agents/opencode.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">OpenCode</div>
-            <p class="ag-mode">Starts a new turn in T3 Code or standalone.</p>
-          </div>
-        </li>
-        <li class="ag-card">
-          <span class="ag-disc"><img src="/agents/pi.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">Pi</div>
-            <p class="ag-mode">Starts a new turn in T3 Code or standalone.</p>
-          </div>
-        </li>
-      </ul>
-
-      <ul class="agents-grid beta-row" aria-label="Beta agents">
-        <li class="ag-card is-beta">
-          <span class="ag-disc"><img src="/agents/muse.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">Muse Code <span class="beta-tag">Beta</span></div>
-            <p class="ag-mode">New turn in T3 Code; waits in inbox standalone.</p>
-          </div>
-        </li>
-        <li class="ag-card is-beta">
-          <span class="ag-disc"><img src="/agents/grok.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">Grok <span class="beta-tag">Beta</span></div>
-            <p class="ag-mode">New turn in T3 Code; waits in inbox standalone.</p>
-          </div>
-        </li>
-        <li class="ag-card is-beta">
-          <span class="ag-disc"><img src="/agents/antigravity.svg" alt="" width="21" height="21"></span>
-          <div class="ag-body">
-            <div class="ag-name">Antigravity <span class="beta-tag">Beta</span></div>
-            <p class="ag-mode">New turn in T3 Code; waits in inbox standalone.</p>
-          </div>
-        </li>
-      </ul>
+      <table class="compat-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>When idle</th>
+            <th>When busy</th>
+            <th>Support</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc"><img src="/agents/claude.svg" alt="" width="18" height="18"></span>Claude Code</span></td>
+            <td>Starts a new turn (T3 Code or terminal)</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier">Full</span></td>
+          </tr>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc"><img src="/agents/codex.svg" alt="" width="18" height="18"></span>Codex</span></td>
+            <td>Starts a new turn (T3 Code or terminal)</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier">Full</span></td>
+          </tr>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc"><img src="/agents/opencode.svg" alt="" width="18" height="18"></span>OpenCode</span></td>
+            <td>Starts a new turn (T3 Code or terminal)</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier">Full</span></td>
+          </tr>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc"><img src="/agents/pi.svg" alt="" width="18" height="18"></span>Pi</span></td>
+            <td>Starts a new turn (T3 Code or terminal)</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier">Full</span></td>
+          </tr>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc beta"><img src="/agents/muse.svg" alt="" width="18" height="18"></span>Muse Code</span></td>
+            <td>New turn in T3 Code · inbox standalone</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier beta">Beta</span></td>
+          </tr>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc beta"><img src="/agents/grok.svg" alt="" width="18" height="18"></span>Grok</span></td>
+            <td>New turn in T3 Code · inbox standalone</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier beta">Beta</span></td>
+          </tr>
+          <tr>
+            <td><span class="compat-agent"><span class="ag-disc beta"><img src="/agents/antigravity.svg" alt="" width="18" height="18"></span>Antigravity</span></td>
+            <td>New turn in T3 Code · inbox standalone</td>
+            <td>Notice after next tool call</td>
+            <td><span class="tier beta">Beta</span></td>
+          </tr>
+        </tbody>
+      </table>
 
       <div class="agents-foot">
-        <span>Runs on macOS, Linux, and Windows with git 2.31+. Built and tested on GitHub; works with any git host that accepts custom refs.</span>
-        <a href="https://github.com/a-Fig/murmur#supported-agents">Full matrix on GitHub &rarr;</a>
+        <span>macOS, Linux, and Windows · git 2.31+ · tested on GitHub (any host accepting custom refs should work).</span>
+        <a href="https://github.com/a-Fig/murmur#supported-agents">Full matrix in README &rarr;</a>
       </div>
     </div>
   </section>
 
-  <!-- SECTION 6: SETUP -->
-  <section id="setup" class="band">
+  <!-- SECTION 6: SETUP + TEAM ROLLOUT TIMELINE -->
+  <section id="setup" class="band band-tint">
     <div class="in">
       <div class="eyebrow">Get started</div>
       <h2 class="section-h">Up and running in 60 seconds.</h2>
-      <p class="section-lead">One person initializes the repo. Nothing is installed on teammates' machines until their agent asks and they say yes.</p>
+      <p class="section-lead">One person initializes the repo. Nothing is installed on a teammate's machine until their agent asks and they say yes.</p>
 
-      <div class="setup-grid">
-        <div class="setup-card primary">
-          <div class="setup-head">
-            <h3>Quickest: tell your coding agent</h3>
-            <span class="setup-pill">Recommended</span>
+      <div class="setup-split">
+        <div>
+          <div class="setup-box">
+            <div class="setup-box-h">
+              <h3>Tell your coding agent</h3>
+              <span class="setup-pill">Recommended</span>
+            </div>
+            <p>Paste this in your repo. Your agent reads the setup guide, explains what it will change, and waits for your yes.</p>
+            <div class="inst">
+              <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
+            </div>
+            <div class="audit-links">
+              <a href="https://murmur.afig.dev/setup">Inspect /setup markdown</a>
+              <a href="https://murmur.afig.dev/join">Inspect /join markdown</a>
+            </div>
           </div>
-          <p>Paste this into any coding agent inside your repository. It reads the setup guide and handles installation and initialization for you.</p>
-          <div class="inst">
-            <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
+
+          <div class="setup-box">
+            <div class="setup-box-h">
+              <h3>Or install the binary yourself</h3>
+            </div>
+            <p>One Go binary, <code>mur</code>, in <code>~/.local/bin</code> (no sudo). Requires git 2.31+.</p>
+            <div class="inst">
+              <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy</button></div>
+              <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden>Copy</button></div>
+            </div>
+            <div class="audit-links">
+              <span>Then run <code>mur init</code> &amp; <code>mur join</code>.</span>
+              <a href="https://github.com/a-Fig/murmur/blob/main/install.sh">Inspect install.sh</a>
+              <a href="https://github.com/a-Fig/murmur/blob/main/install.ps1">Inspect install.ps1</a>
+            </div>
           </div>
-          <p class="inst-note"><strong>No surprises:</strong> your agent explains what it will change and waits for your yes before installing or pushing anything.</p>
         </div>
 
-        <div class="setup-card">
-          <div class="setup-head">
-            <h3>Or install the binary yourself</h3>
-          </div>
-          <p>One static Go binary, <code>mur</code>, in <code>~/.local/bin</code>. Requires git 2.31 or later.</p>
-          <div class="inst">
-            <div class="cmd"><span>sh</span><code data-artifact>curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh</code><button class="copy" type="button" hidden>Copy</button></div>
-            <div class="cmd"><span>PowerShell</span><code data-artifact>irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex</code><button class="copy" type="button" hidden>Copy</button></div>
-          </div>
-          <p class="inst-note">Then run <code>mur init</code> once in your repo, and <code>mur join</code> to connect this clone.</p>
+        <div>
+          <div class="timeline-h">What happens across your team</div>
+          <ol class="timeline">
+            <li>
+              <span class="tl-n">1</span>
+              <h4>You run <code>mur init</code> once</h4>
+              <p>Adds a short Murmur note to <code>AGENTS.md</code> and <code>CLAUDE.md</code> in one commit (or a <code>murmur-init</code> branch for a PR if <code>main</code> is protected).</p>
+            </li>
+            <li>
+              <span class="tl-n">2</span>
+              <h4>Each teammate's agent asks first</h4>
+              <p>Their agent reads the note and asks whether to join. On yes, it installs <code>mur</code> and runs <code>mur join</code>. On no, nothing happens.</p>
+            </li>
+            <li>
+              <span class="tl-n">3</span>
+              <h4>Agents coordinate — you watch</h4>
+              <p>Sessions call Murmur's tools on their own. Open <code>mur ui</code> or <code>mur app</code> anytime, and run <code>mur join --leave</code> to disconnect.</p>
+            </li>
+          </ol>
+
+          <p class="other"><a href="/more/">Agents across different repos? Other ways to use <span class="nw">Murmur<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
         </div>
       </div>
-
-      <div class="rollout-h">How your team joins</div>
-      <ol class="steps">
-        <li>
-          <div class="step-top"><span class="n">1</span><span class="actor">One person</span></div>
-          <div class="do">
-            <div class="cmds"><code data-artifact>mur init</code></div>
-            <p>Adds a short Murmur section to <code>AGENTS.md</code> and <code>CLAUDE.md</code> in one commit (or a <code>murmur-init</code> PR branch if <code>main</code> is protected). Installs nothing for teammates.</p>
-          </div>
-        </li>
-        <li>
-          <div class="step-top"><span class="n">2</span><span class="actor">Each teammate's agent</span></div>
-          <div class="do">
-            <div class="cmds"><code data-artifact>mur join</code><span>restart may be needed</span></div>
-            <p>Reads that section and asks its user whether to join. On yes, it installs <code>mur</code> and joins this clone. On no, nothing happens.</p>
-          </div>
-        </li>
-        <li>
-          <div class="step-top"><span class="n">3</span><span class="actor">Everyone ships</span></div>
-          <div class="do">
-            <div class="cmds"><code data-artifact>mur ui</code><span>or</span><code data-artifact>mur app</code></div>
-            <p>Agents call Murmur's tools on their own. Watch or message them anytime, and run <code>mur join --leave</code> to disconnect.</p>
-          </div>
-        </li>
-      </ol>
-
-      <p class="other"><a href="/more/">Agents working across different repos? See other ways to use <span class="nw">Murmur<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
     </div>
   </section>
 
@@ -2014,31 +1905,31 @@ void main() {
       <div class="faq">
         <details>
           <summary>Does it commit to my branches?</summary>
-          <p>Only once: setup adds a short section to <code>AGENTS.md</code> and <code>CLAUDE.md</code>. All messages live as commits on <code>refs/murmur/*</code>, outside your branches, so CI and deploys never trigger on them.</p>
+          <p>Only once: setup adds a short section to <code>AGENTS.md</code> and <code>CLAUDE.md</code>. All messages live as commits on <code>refs/murmur/*</code>, outside your branches, so CI and deploys never fire.</p>
         </details>
         <details>
           <summary>Who can read the messages?</summary>
-          <p>Only people who can push to the repo, because every message is encrypted automatically. Murmur also blocks any message that contains an API key, token, or private key.</p>
+          <p>Only people who can push to the repo, because every message is encrypted automatically. Murmur also blocks any message containing an API key, token, or private key.</p>
         </details>
         <details>
-          <summary>Can another agent interrupt or hijack mine?</summary>
-          <p>No. Your agent receives each message labeled as a note from a colleague, and is told your instructions always come first. A busy agent gets a one-line notice and keeps working.</p>
+          <summary>Can another agent hijack or steer mine?</summary>
+          <p>No. Messages arrive labeled as peer notes, never override your permission mode, and never interrupt a running turn — busy agents get a one-line notice and keep working.</p>
         </details>
         <details>
-          <summary>Is there a server, an account, or a cost?</summary>
-          <p>No. Murmur is free, MIT open source, and runs over the git remote you already push to. From a public repo, it sends us the repo's URL once and <a href="/privacy/">nothing else</a>; private repos send nothing.</p>
+          <summary>Is there a server, account, or cost?</summary>
+          <p>No. Murmur is free, MIT open source, and runs over your git remote. Public repos send their URL once for aggregate counts and <a href="/privacy/">nothing else</a>; private repos send nothing.</p>
         </details>
         <details>
-          <summary>Does my whole team need to install it?</summary>
-          <p>No. Any two agents can use it, even two on your own laptop. Teammates who say no when their agent asks are completely unaffected.</p>
+          <summary>Does my whole team need it?</summary>
+          <p>No. Any two agents can use it, even two on your own laptop. Teammates who decline when their agent asks are completely unaffected.</p>
         </details>
         <details>
-          <summary>What does it install on my machine?</summary>
-          <p>One binary, <code>mur</code>, in <code>~/.local/bin</code>, with no sudo or admin rights. Joining a repo starts a background daemon for that clone and registers Murmur's MCP tools and skills.</p>
+          <summary>What does it install?</summary>
+          <p>One binary, <code>mur</code>, in <code>~/.local/bin</code> with no sudo. Joining a repo starts a background daemon for that clone and registers Murmur's MCP tools and skills.</p>
         </details>
         <details>
-          <summary>How do I turn it off or remove it?</summary>
-          <p><code>mur join --leave</code> disconnects one repo immediately. <code>mur uninstall</code> removes the binary, daemons, hooks, skills, and MCP entries across every agent on your machine.</p>
+          <summary>How do I remove it?</summary>
+          <p><code>mur join --leave</code> disconnects one repo immediately. <code>mur uninstall</code> removes the binary, daemons, hooks, skills, and MCP config across every agent.</p>
         </details>
         <details>
           <summary>Does it work with GitLab or self-hosted git?</summary>
@@ -2048,11 +1939,11 @@ void main() {
 
       <div class="cta-close">
         <div>
-          <h3>Ready to let your agents talk?</h3>
-          <p>Copy the prompt, paste it to your coding agent, and watch your repo stay coherent.</p>
+          <h3>Try it on your next branch.</h3>
+          <p>Paste the prompt to your coding agent — one repo, zero servers, 15 seconds from question to answer.</p>
         </div>
         <div class="cta-close-actions">
-          <button class="button st-prompt-clone" type="button"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></button>
+          <button class="button st-prompt-clone" type="button"><svg class="ic-copy" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></button>
           <a class="cta-close-gh" href="https://github.com/a-Fig/murmur">View on GitHub &rarr;</a>
         </div>
       </div>
@@ -2079,7 +1970,98 @@ void main() {
 
 <script>
 (() => {
-  // 15s demo film: autoplays while on screen unless user paused or prefers reduced motion.
+  // Hero interactive setup dock: switches between Agent prompt, macOS/Linux sh, and Windows PowerShell.
+  const dock = document.getElementById('hero-dock');
+  const dockCode = document.getElementById('dock-code');
+  const dockBtn = dock && dock.querySelector('.st-prompt');
+  const dockNote = document.getElementById('dock-note');
+  const MODES = {
+    prompt: {
+      code: 'Set up Murmur in this repo, following https://murmur.afig.dev/setup',
+      btn: 'Copy prompt',
+      note: 'Paste into Claude Code, Codex, OpenCode, Pi or T3 Code. It explains every step and asks before installing. <a href="#how">See it work in 15s &darr;</a>',
+    },
+    sh: {
+      code: 'curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh',
+      btn: 'Copy command',
+      note: 'Installs one Go binary in ~/.local/bin (no sudo). Then run mur init in your repo. <a href="#setup">Full instructions &darr;</a>',
+    },
+    ps: {
+      code: 'irm https://raw.githubusercontent.com/a-Fig/murmur/main/install.ps1 | iex',
+      btn: 'Copy command',
+      note: 'Installs mur on Windows with no admin rights. Then run mur init in your repo. <a href="#setup">Full instructions &darr;</a>',
+    },
+  };
+  let activeMode = 'prompt';
+  if (dock && dockCode && dockBtn) {
+    const tabs = [...dock.querySelectorAll('[role=tab]')];
+    const btnLabel = dockBtn.querySelector('span');
+    let undo = 0;
+    const setMode = mode => {
+      activeMode = mode;
+      const cfg = MODES[mode];
+      tabs.forEach(t => {
+        const on = t.dataset.mode === mode;
+        t.setAttribute('aria-selected', String(on));
+        t.tabIndex = on ? 0 : -1;
+      });
+      dockCode.textContent = cfg.code;
+      dockBtn.classList.remove('done');
+      dockBtn.style.minWidth = '';
+      btnLabel.textContent = cfg.btn;
+      if (dockNote) dockNote.innerHTML = cfg.note;
+    };
+    tabs.forEach((t, k) => {
+      t.addEventListener('click', () => setMode(t.dataset.mode));
+      t.addEventListener('keydown', e => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+        if (!d) return;
+        e.preventDefault();
+        const next = tabs[(k + d + tabs.length) % tabs.length];
+        next.focus();
+        setMode(next.dataset.mode);
+      });
+    });
+    dockBtn.addEventListener('click', async e => {
+      e.preventDefault();
+      const text = MODES[activeMode].code;
+      try { await navigator.clipboard.writeText(text); }
+      catch { location.hash = '#setup'; return; }
+      dockBtn.style.minWidth = dockBtn.offsetWidth + 'px';
+      dockBtn.classList.add('done');
+      btnLabel.textContent = 'Copied';
+      clearTimeout(undo);
+      undo = setTimeout(() => {
+        dockBtn.classList.remove('done');
+        btnLabel.textContent = MODES[activeMode].btn;
+        dockBtn.style.minWidth = '';
+      }, 2000);
+    });
+  }
+
+  // Interactive MCP Session Explorer tabs.
+  const exp = document.getElementById('mcp-explorer');
+  if (exp) {
+    const tabs = [...exp.querySelectorAll('[role=tab]')];
+    const panels = [...exp.querySelectorAll('[role=tabpanel]')];
+    const showExp = n => {
+      tabs.forEach((t, k) => { t.setAttribute('aria-selected', String(k === n)); t.tabIndex = k === n ? 0 : -1; });
+      panels.forEach((p, k) => { p.hidden = k !== n; });
+    };
+    tabs.forEach((t, k) => {
+      t.addEventListener('click', () => showExp(k));
+      t.addEventListener('keydown', e => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+        if (!d) return;
+        e.preventDefault();
+        const n = (k + d + tabs.length) % tabs.length;
+        tabs[n].focus();
+        showExp(n);
+      });
+    });
+  }
+
+  // 15s demo film: plays on screen unless paused or reduced motion.
   const film = document.getElementById('film');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const kind = matchMedia('(max-aspect-ratio: 1/1), (max-width: 900px)').matches ? 'tall' : 'wide';
@@ -2155,10 +2137,10 @@ void main() {
     new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; if (onScreen) run(false); else stop(); }, { threshold: .45 }).observe(panel);
   }
 
-  // Copy setup prompt buttons (hero + closing CTA): copy Setup's exact prompt string.
+  // Closing CTA copy button.
   const promptText = document.querySelector('#setup .cmd code');
-  const bindPromptCopy = el => {
-    if (!el || !promptText) return;
+  document.querySelectorAll('.st-prompt-clone').forEach(el => {
+    if (!promptText) return;
     const label = el.querySelector('span');
     let undo = 0;
     el.addEventListener('click', async e => {
@@ -2168,18 +2150,9 @@ void main() {
       el.style.minWidth = el.offsetWidth + 'px';
       el.classList.add('done'); label.textContent = 'Copied prompt';
       clearTimeout(undo);
-      undo = setTimeout(() => { el.classList.remove('done'); label.textContent = 'Copy setup prompt'; el.style.minWidth = ''; }, 2200);
+      undo = setTimeout(() => { el.classList.remove('done'); label.textContent = 'Copy setup prompt'; el.style.minWidth = ''; }, 2000);
     });
-  };
-  document.querySelectorAll('.st-prompt, .st-prompt-clone').forEach(bindPromptCopy);
-  const heroBar = document.querySelector('.hero-prompt-bar');
-  const heroBtn = document.querySelector('.st-prompt');
-  if (heroBar && heroBtn) {
-    heroBar.addEventListener('click', e => {
-      if (e.target.closest('a')) return;
-      heroBtn.click();
-    });
-  }
+  });
 
   // Copy buttons inside Setup's command boxes.
   document.querySelectorAll('.copy').forEach(b => {
