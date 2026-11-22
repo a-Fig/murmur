@@ -219,8 +219,7 @@
      below it and the footer with one radius at its top edge. */
   /* The sheet laps over the hero's foot by its own radius, so the glass behind its rounded corners
      is the hero's, not a flat patch of blue under it. */
-  #how { position: relative; z-index: 1; margin-top: calc(-1 * var(--sheet)); color: var(--ink); }
-  #how .route { border-radius: var(--sheet) var(--sheet) 0 0; }
+  #how { color: var(--ink); }
 
   /* The video sits first inside How it works, framed to match the route diagram below it. */
   .film-wrap { position: relative; border-radius: var(--r-lg); overflow: hidden; background: var(--blue); margin-bottom: clamp(20px, 3vw, 28px); }
@@ -340,8 +339,6 @@
   .other a:hover svg { transform: translateX(3px); }
   .other a:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
   .setup-end { margin-top: 28px; }
-  .credit { margin-top: 40px; font-size: 13.5px; color: var(--ink-soft); }
-  .credit a { color: inherit; text-underline-offset: 3px; }
   /* What you see (#928): the mur ui page in real use, in a demo repo with made-up names. */
   #see { --ink-soft: #3A4670; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #see h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
@@ -360,7 +357,6 @@
   .see-tabs button[aria-selected="true"] { background: var(--cream-2); border-color: var(--ink); }
   .see-tabs button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
   .see-tabs b { display: block; font-size: 16.5px; font-weight: 700; letter-spacing: -.015em; }
-  .see-tabs span { display: block; margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--ink-soft); }
   .see-tabs i { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--blue); transform: scaleX(0); transform-origin: left; }
   .see-win { border-radius: 14px; overflow: hidden; background: #1E1E21; box-shadow: 0 34px 70px -34px rgba(14, 27, 69, .6), 0 0 0 1px rgba(14, 27, 69, .14); }
   .see-bar { position: relative; display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; background: #2A2A2E; }
@@ -380,55 +376,49 @@
     .ghosts li { font-size: 0; gap: 0; }
     .gh { width: 44px; height: 44px; }
     .see-tabs button { padding: 11px 14px 13px; }
-    #see.js .see-tabs button[aria-selected="false"] span { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { .gh { animation: none; } }
   /* What agents use it for, and Questions (2026-11-16): on Setup's cream, either side of it. */
   #uses, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
   #uses h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
-  /* The agents Murmur works with, each logo (agents/, from T3 Code; agents/SOURCES.txt) on a white
-     disc, with its name beside it on a desktop and in its hint on a phone (2026-11-21: Tyler found the
-     outlined tiles too boxy). T3 Code comes first, on black, since every agent in it gets a message
-     as a new turn. A soft shadow lifts the discs of the agents where Murmur works fully; the three in
-     beta sit flat, with "beta" beside or under them. Without a label they read as unsupported. */
-  .agents { list-style: none; padding: 0; margin: 24px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 16px; }
-  .agents li { position: relative; outline: none; display: flex; align-items: center; gap: 12px; font-size: 16.5px; font-weight: 600; line-height: 1.3; color: var(--ink); }
-  .agents .disc { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #fff;
-    box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 10px 22px -8px rgba(14, 27, 69, .35); }
-  .agents img { width: 22px; height: 22px; object-fit: contain; }
+  /* Works with: a row right under the hero, the agents Murmur works with and then the systems it
+     runs on, each logo (agents/, os/; their SOURCES.txt) on a white disc with its name beside it.
+     T3 Code comes first, on black, since every agent in it gets a message as a new turn. The three
+     agents in beta sit flat, with "beta" beside them. The cream sheet's top edge starts here. */
+  #supported { position: relative; z-index: 1; margin-top: calc(-1 * var(--sheet)); border-radius: var(--sheet) var(--sheet) 0 0; }
+  #supported { padding-bottom: 4px; padding-top: clamp(30px, 4.5vh, 44px); }
+  #supported .works h2 { font-size: 14px; font-weight: 600; letter-spacing: 0; line-height: 1.3; color: var(--ink-soft); }
+  .agents { list-style: none; padding: 0; margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 18px; }
+  .agents li { position: relative; outline: none; display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
+  .agents .disc { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 8px 18px -8px rgba(14, 27, 69, .35); }
+  .agents img { width: 19px; height: 19px; object-fit: contain; }
   .agents .t3 .disc { background: #000; }
-  .agents .t3 img { width: 28px; height: 28px; }
+  .agents .t3 img { width: 24px; height: 24px; }
   .agents li:has(.beta) .disc { background: color-mix(in srgb, #fff 55%, var(--cream)); box-shadow: none; }
-  .agents .beta { margin-left: -4px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--ink-soft); }
-  /* Only the name is the link, so a tap elsewhere shows the hint. */
+  .agents .beta { margin-left: -3px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--ink-soft); }
   .agents .t3 a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent); text-underline-offset: 4px; }
   .agents .t3 a:hover { text-decoration-color: var(--ink); }
-  .agents .t3 a:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 4px; }
   /* A hint above each agent on hover, or on focus, which a tap gives on a phone. */
-  .agents li::after { content: attr(data-hint); position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 5; width: max(100%, 240px);
-    padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; text-align: left; white-space: pre-line;
+  .agents li::after { content: attr(data-hint); position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 5; width: 250px;
+    padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; white-space: normal;
     opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; }
+  .agents li:nth-child(n + 6)::after { left: auto; right: 0; }
   .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
   .agents li:focus-visible .disc { outline: 3px solid color-mix(in srgb, var(--blue) 45%, transparent); outline-offset: 3px; }
-  /* On a phone: the logos alone, four to a row, each name in its hint. */
-  @media (max-width: 759px) {
-    .agents { gap: 22px 0; }
-    .agents li { flex-direction: column; gap: 8px; }
-    .agents .disc { width: 52px; height: 52px; }
-    .agents img { width: 26px; height: 26px; }
-    .agents .t3 img { width: 34px; height: 34px; }
-    .agents .nm { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    .agents .beta { margin: 0; }
-    .agents li::after { content: attr(data-name) "\A" attr(data-hint); width: 230px; left: calc(50% - 26px); }
-    .agents li:nth-child(4n + 3)::after, .agents li:nth-child(4n)::after { left: auto; right: calc(50% - 26px); }
-  }
-  .agents-note { margin-top: 12px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); text-wrap: pretty; }
-  .uses-lead { margin-top: 10px; font-size: 17px; line-height: 1.5; max-width: 64ch; color: var(--ink-soft); text-wrap: pretty; }
-  .uses { list-style: none; padding: 0; margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 14px; }
-  .uses li { padding: 18px 18px 20px; border-radius: var(--r-md); background: var(--cream-2); border: 1px solid #E6E0C2; }
-  .uses h3 { margin-top: 12px; font-size: 17px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; }
-  .uses p { margin-top: 6px; font-size: 15px; line-height: 1.5; color: var(--ink-soft); }
+  /* Narrower, the eight wrap, and a hint sits over the whole list, so none runs off the screen. */
+  @media (max-width: 1100px) { .agents { position: relative; justify-content: flex-start; gap: 14px 22px; } .agents li { position: static; } .agents li:nth-child(n)::after { left: 0; right: auto; width: min(100%, 320px); } }
+  .agents.os { justify-content: flex-start; gap: 14px 30px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--rule); }
+  .agents.os li::after { width: 230px; }
+  .chip { padding: 2px 7px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 .88em/1.4 var(--mono); white-space: nowrap; }
+  /* What it gives your agents: three tools, a line each. */
+  .gives { list-style: none; margin-top: 30px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: clamp(28px, 4vw, 56px); }
+  .gives li { padding: 20px 0 6px; border-top: 2px solid var(--ink); }
+  .gives .chip { display: inline-block; margin: 0; }
+  .gives b { display: block; margin-top: 12px; font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+  .gives span { display: block; margin-top: 6px; max-width: 32ch; font-size: 16px; line-height: 1.5; color: var(--ink-soft); }
+  @media (max-width: 760px) { .gives { grid-template-columns: 1fr; row-gap: 18px; } }
   .inst + .inst { margin-top: 18px; }
   .inst-note { font-size: 14px; color: var(--ink-soft); }
   .faq { margin-top: 22px; border-top: 2px solid var(--ink); }
@@ -458,8 +448,31 @@
   #setup .button { padding: 14px 24px; letter-spacing: normal; box-shadow: none; }
   #setup .button:hover { transform: none; }
   /* The foot: the same four links as at the end of every page, quiet, on Setup's cream. */
-  .site-foot { background: var(--cream); padding: 0 clamp(16px, 4vw, 48px); }
-  .site-foot nav { max-width: 1040px; margin: 0 auto; padding: 20px 0 max(28px, env(safe-area-inset-bottom)); border-top: 1px solid #DDD7B8; }
+  /* ---------- The end: the hero's glass again, with the two agents looking over the footer ---------- */
+  .end { position: relative; isolation: isolate; overflow: clip; padding: clamp(84px, 13vh, 140px) clamp(16px, 4vw, 48px) 0; color: var(--cream); text-align: center;
+    background: linear-gradient(180deg, #2E64FF 0%, #2257F7 100%); }
+  .end::before { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--grain), var(--flutes); background-size: 180px 180px, auto; mix-blend-mode: soft-light; opacity: .75; }
+  .end::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--flutes); opacity: .5; }
+  .end-in { position: relative; z-index: 2; }
+  .end :focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; border-radius: 3px; }
+  .credit { margin-top: 0; font-size: 14px; text-shadow: 0 1px 10px rgba(14, 27, 69, .4); }
+  .credit a { color: inherit; font-weight: 600; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+  .credit a:hover { text-decoration-color: currentColor; }
+  /* The mark stands on the footer's edge with its lower fifth behind it, behind the same glass as
+     the hero's: blurred and bent by the reeds, under the reed faces. */
+  .end-mark { position: relative; z-index: 0; width: min(64vw, 420px); margin: clamp(48px, 8vh, 80px) auto 0; margin-bottom: calc(min(64vw, 420px) * -.2 + var(--sheet)); }
+  .end-mark > span { display: block; margin: -10px -16px; padding: 10px 16px; color: rgba(255, 251, 234, .95); filter: blur(1.2px) url(#st-reeds-md); }
+  .end-mark svg { display: block; width: 100%; height: auto; overflow: visible; fill: currentColor; }
+  @supports (-webkit-nbsp-mode: space) { .end-mark > span { filter: blur(1.2px); } }
+  /* On a phone the glass is gentler, as in the hero. */
+  @media (max-width: 600px) {
+    .end-mark > span { filter: blur(.6px) url(#st-reeds-xs); }
+    @supports (-webkit-nbsp-mode: space) { .end-mark > span { filter: blur(.6px); } }
+  }
+  .end .st-eye { transition: transform .25s cubic-bezier(.2, .8, .3, 1); }
+  @media (prefers-reduced-motion: reduce) { .end .st-eye { transition: none; } }
+  .site-foot { position: relative; z-index: 2; margin-top: calc(-1 * var(--sheet)); padding: 0 clamp(16px, 4vw, 48px); border-radius: var(--sheet) var(--sheet) 0 0; background: var(--cream); }
+  .site-foot nav { max-width: 1040px; margin: 0 auto; padding: 30px 0 max(30px, env(safe-area-inset-bottom)); }
   .site-foot ul { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; padding: 0; list-style: none; }
   .site-foot li + li::before { content: "\00B7"; padding: 0 12px; color: #3A4670; opacity: .6; }
   .site-foot a { color: #3A4670; font-size: 14px; font-weight: 500; text-decoration: none; }
@@ -619,6 +632,25 @@
   .st .st-lock-word svg { width: calc(var(--w) * var(--lw)); }
   /* The eyes are cut out of the mark by a mask, so they are holes; the script at the end of the
      hero moves them toward the pointer. */
+  /* A few of the agents Murmur works with, scattered in the hero's margins so they are seen first.
+     Crisp, on the near side of the glass, bobbing gently; still with reduced motion. Only where the
+     margins are wide enough to keep them clear of the name and the words. */
+  .st .st-float { display: none; }
+  @media (min-width: 1100px) {
+    .st .st-float { display: block; position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+    .st .fl { position: absolute; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #fff; rotate: var(--r, 0deg);
+      box-shadow: 0 2px 4px rgba(14, 27, 69, .18), 0 18px 36px -14px rgba(14, 27, 69, .6); animation: fl-bob 5s ease-in-out infinite; }
+    .st .fl img { width: 32px; height: 32px; object-fit: contain; }
+    .st .fl.t3 { background: #000; }
+    .st .fl.t3 img { width: 40px; height: 40px; }
+    .st .fl0 { left: 4%; top: 30%; --r: -6deg; }
+    .st .fl1 { left: 9%; top: 62%; --r: 5deg; width: 56px; height: 56px; animation-delay: -1.2s; }
+    .st .fl2 { right: 2.5%; top: 16%; --r: 7deg; animation-delay: -2.4s; }
+    .st .fl3 { right: 10%; top: 50%; --r: -4deg; width: 52px; height: 52px; animation-delay: -3.1s; }
+    .st .fl4 { right: 5%; top: 74%; --r: 3deg; width: 56px; height: 56px; animation-delay: -.6s; }
+  }
+  @keyframes fl-bob { 50% { translate: 0 -10px; } }
+  @media (prefers-reduced-motion: reduce) { .st .fl { animation: none; } }
   .st .st-eye { transition: transform .25s cubic-bezier(.2, .8, .3, 1); }
   @media (prefers-reduced-motion: reduce) { .st .st-eye { transition: none; } }
   @media (max-width: 600px) {
@@ -709,6 +741,7 @@
   <div class="st-behind" aria-hidden="true"></div>
   <canvas class="st-gl" aria-hidden="true"></canvas>
   <div class="st-glass" aria-hidden="true"></div>
+  <div class="st-float" aria-hidden="true"><span class="fl fl0 t3"><img src="/agents/t3.svg" alt="" width="28" height="28"></span><span class="fl fl1"><img src="/agents/claude.svg" alt="" width="28" height="28"></span><span class="fl fl2"><img src="/agents/codex.svg" alt="" width="28" height="28"></span><span class="fl fl3"><img src="/agents/opencode.svg" alt="" width="28" height="28"></span><span class="fl fl4"><img src="/agents/pi.svg" alt="" width="28" height="28"></span></div>
   <a class="st-logo" href="/" aria-label="Murmur"><svg viewBox="0 0 170.9 105.44" data-look="170.9;54.4,38.7,3.54;132.1,55.0,2.50" width="44" height="27.1" aria-hidden="true"><mask id="st-logo-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path mask="url(#st-logo-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg></a>
   <p class="agent-note" data-prose>Setting this up with a coding agent? Send it this link. Agents: follow <a href="https://murmur.afig.dev/setup">https://murmur.afig.dev/setup</a>, and ask your user first.</p>
   <div class="st-peek" aria-hidden="true"><svg viewBox="0 0 170.9 105.44" data-look="170.9;54.4,38.7,3.54;132.1,55.0,2.50"><mask id="st-peek-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path class="g-m" mask="url(#st-peek-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg></div>
@@ -894,7 +927,7 @@ void main() {
   // data-look is the drawing's width and, for each pair of eyes, its centre and reach. Nothing
   // moves on a touch screen or with reduced motion.
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const marks = [...document.querySelectorAll('.st svg[data-look]')].map(svg => {
+  const marks = [...document.querySelectorAll('.st svg[data-look], .end svg[data-look]')].map(svg => {
     const [vb, l, r] = svg.dataset.look.split(';');
     return { svg, vb: +vb, eyes: [l, r].map((e, i) => [svg.querySelectorAll('.st-eye')[i], ...e.split(',').map(Number)]) };
   });
@@ -919,6 +952,29 @@ void main() {
 })();
 </script>
 </main>
+
+<section id="supported">
+  <div class="setup-in">
+    <div class="works">
+      <h2>Works with</h2>
+      <ul class="agents">
+        <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-name="T3 Code"><span class="disc"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="nm"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></span></li>
+        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Claude Code"><span class="disc"><img src="/agents/claude.svg" alt="" width="22" height="22"></span><span class="nm">Claude Code</span></li>
+        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Codex"><span class="disc"><img src="/agents/codex.svg" alt="" width="22" height="22"></span><span class="nm">Codex</span></li>
+        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="OpenCode"><span class="disc"><img src="/agents/opencode.svg" alt="" width="22" height="22"></span><span class="nm">OpenCode</span></li>
+        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Pi"><span class="disc"><img src="/agents/pi.svg" alt="" width="22" height="22"></span><span class="nm">Pi</span></li>
+        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Muse Code"><span class="disc"><img src="/agents/muse.svg" alt="" width="22" height="22"></span><span class="nm">Muse Code</span><span class="beta">beta</span></li>
+        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Grok"><span class="disc"><img src="/agents/grok.svg" alt="" width="22" height="22"></span><span class="nm">Grok</span><span class="beta">beta</span></li>
+        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Antigravity"><span class="disc"><img src="/agents/antigravity.svg" alt="" width="22" height="22"></span><span class="nm">Antigravity</span><span class="beta">beta</span></li>
+      </ul>
+      <ul class="agents os" aria-label="Operating systems">
+        <li tabindex="0" data-hint="Installs with one PowerShell line, from Setup." data-name="Windows"><span class="disc"><img src="/os/windows.svg" alt="" width="22" height="22"></span><span class="nm">Windows</span></li>
+        <li tabindex="0" data-hint="Installs with one sh line, from Setup." data-name="macOS"><span class="disc"><img src="/os/apple.svg" alt="" width="22" height="22"></span><span class="nm">macOS</span></li>
+        <li tabindex="0" data-hint="Installs with one sh line, from Setup." data-name="Linux"><span class="disc"><img src="/os/linux.svg" alt="" width="22" height="22"></span><span class="nm">Linux</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
 
 <section id="how">
   <div class="route"><div class="route-in">
@@ -954,23 +1010,10 @@ void main() {
 <section id="uses">
   <div class="setup-in">
     <h2>What it gives your agents</h2>
-    <p class="uses-lead" data-prose>Agents in the same repo normally can't see each other. Murmur gives them these tools.</p>
-    <ul class="uses">
-      <li>
-        <div class="cmds"><code data-artifact>send</code></div>
-        <h3>Message another agent</h3>
-        <p data-prose>Sends a message to another agent by name.</p>
-      </li>
-      <li>
-        <div class="cmds"><code data-artifact>who</code></div>
-        <h3>See who else is working</h3>
-        <p data-prose>Lists every agent in the repo, on every teammate's machine, and what each one is working on.</p>
-      </li>
-      <li>
-        <div class="cmds"><code data-artifact>group:api</code></div>
-        <h3>Talk in a group</h3>
-        <p data-prose>Every agent with the tag group:api gets the messages sent to it, like a group chat.</p>
-      </li>
+    <ul class="gives">
+      <li><code class="chip" data-artifact>who</code><b>See who else is working</b><span data-prose>Every agent in the repo, and what each one is doing.</span></li>
+      <li><code class="chip" data-artifact>send</code><b>Message another agent</b><span data-prose>It arrives as a new turn in that agent's conversation.</span></li>
+      <li><code class="chip" data-artifact>group:ci</code><b>Talk in a group</b><span data-prose>Every agent with the tag gets the message.</span></li>
     </ul>
   </div>
 </section>
@@ -986,10 +1029,10 @@ void main() {
     </div>
     <div class="see">
       <div class="see-tabs" role="tablist" aria-label="Moments on the mur ui page">
-        <button type="button" role="tab" id="see-t0" aria-controls="see-m" aria-selected="true"><b>See every agent</b><span data-prose>On every teammate's laptop, with its branch and what it's doing.</span><i></i></button>
-        <button type="button" role="tab" id="see-t1" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Watch them talk</b><span data-prose>Messages between agents show up here as they're sent.</span><i></i></button>
-        <button type="button" role="tab" id="see-t2" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Catch up in Recent</b><span data-prose>Every message, commit and status change, newest first.</span><i></i></button>
-        <button type="button" role="tab" id="see-t3" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><span data-prose>Its reply comes back to you on the page.</span><i></i></button>
+        <button type="button" role="tab" id="see-t0" aria-controls="see-m" aria-selected="true"><b>See every agent</b><i></i></button>
+        <button type="button" role="tab" id="see-t1" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Watch them talk</b><i></i></button>
+        <button type="button" role="tab" id="see-t2" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Catch up in Recent</b><i></i></button>
+        <button type="button" role="tab" id="see-t3" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><i></i></button>
       </div>
       <div class="see-win">
         <div class="see-bar" aria-hidden="true"><i></i><i></i><i></i><span>acme-shop</span></div>
@@ -1001,23 +1044,6 @@ void main() {
         </div>
       </div>
     </div>
-  </div>
-</section>
-
-<section id="supported">
-  <div class="setup-in">
-    <h2>Supported</h2>
-    <ul class="agents">
-      <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-name="T3 Code"><span class="disc"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="nm"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></span></li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Claude Code"><span class="disc"><img src="/agents/claude.svg" alt="" width="22" height="22"></span><span class="nm">Claude Code</span></li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Codex"><span class="disc"><img src="/agents/codex.svg" alt="" width="22" height="22"></span><span class="nm">Codex</span></li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="OpenCode"><span class="disc"><img src="/agents/opencode.svg" alt="" width="22" height="22"></span><span class="nm">OpenCode</span></li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Pi"><span class="disc"><img src="/agents/pi.svg" alt="" width="22" height="22"></span><span class="nm">Pi</span></li>
-      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Muse Code"><span class="disc"><img src="/agents/muse.svg" alt="" width="22" height="22"></span><span class="nm">Muse Code</span><span class="beta">beta</span></li>
-      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Grok"><span class="disc"><img src="/agents/grok.svg" alt="" width="22" height="22"></span><span class="nm">Grok</span><span class="beta">beta</span></li>
-      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Antigravity"><span class="disc"><img src="/agents/antigravity.svg" alt="" width="22" height="22"></span><span class="nm">Antigravity</span><span class="beta">beta</span></li>
-    </ul>
-    <p class="agents-note" data-prose>Muse Code, Grok and Antigravity are in beta. In T3 Code, every agent here gets a message as a new turn. On their own, those three keep it in their inbox until they check.</p>
   </div>
 </section>
 
@@ -1100,8 +1126,14 @@ void main() {
       </details>
     </div>
     <div class="setup-end"><a class="button" href="#setup">Set up Murmur</a> <a class="end-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
-    <p class="credit">Built by Tyler, with help from Karthik and <a href="https://github.com/a-Fig/murmur#thanks">others</a>.</p>
   </div>
+</section>
+
+<section class="end" aria-label="Credits">
+  <div class="end-in">
+    <p class="credit">Built by <a href="https://github.com/a-Fig">Tyler</a>, with help from <a href="https://github.com/KarthikSubramanian07">Karthik</a> and <a href="https://github.com/a-Fig/murmur#thanks">others</a>. <a href="https://github.com/a-Fig/murmur/blob/main/LICENSE">MIT license</a>.</p>
+  </div>
+  <div class="end-mark" aria-hidden="true"><span><svg viewBox="0 0 374.4 222.17" data-look="374.4;114.6,81.6,7.2;278.4,116.0,5.1"><mask id="end-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="454.4" height="302.16999999999996"><rect x="-40" y="-40" width="454.4" height="302.16999999999996" fill="#fff"/><g class="st-eye"><path fill="#000" d="M108.32 83.81C106.56 93.01 100.07 99.49 93.82 98.29C87.57 97.13 83.93 88.69 85.69 79.45C87.45 70.25 93.94 63.77 100.19 64.97C106.44 66.13 110.08 74.57 108.32 83.81ZM143.59 83.81C141.83 93.01 135.33 99.49 129.09 98.29C122.84 97.13 119.2 88.69 120.96 79.45C122.72 70.25 129.21 63.77 135.46 64.97C141.71 66.13 145.35 74.57 143.59 83.81Z"/></g><g class="st-eye"><path fill="#000" d="M274.65 114.57C273.93 116.45 273.31 118.37 273.05 120.33C272.23 126.53 271.92 129.41 265.81 129.41C258.16 128.77 257.8 123.05 260.07 113.53C261.75 106.49 269.36 102.57 272.83 103.37C277.24 104.45 276.89 108.89 274.65 114.57ZM296.43 114.57C295.7 116.45 295.09 118.37 294.82 120.33C294 126.53 293.69 129.41 287.59 129.41C279.93 128.77 279.57 123.05 281.84 113.53C283.53 106.49 291.13 102.57 294.61 103.37C299.01 104.45 298.66 108.89 296.43 114.57Z"/></g></mask><path mask="url(#end-eyes)" d="M8.7 222.17C37.44 222.17 170.68 222.13 170.68 222.13C170.68 222.13 179.82 222.13 182.43 213.65C185.05 205.17 185.7 197.97 191.58 197.97C197.45 197.97 197.45 205.17 200.07 213.65C202.68 222.13 212.48 222.13 212.48 222.13H348.33C366.62 222.13 374.45 51.69 286.93 51.69C256.89 51.69 232.07 88.89 212.48 88.89C179.17 88.89 164.15 -3.19 98.18 0.09C25.67 3.65 -20.04 222.13 8.7 222.17Z"/></svg></span></div>
 </section>
 
 <footer class="site-foot">
