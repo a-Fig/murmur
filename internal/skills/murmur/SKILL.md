@@ -1,6 +1,6 @@
 ---
 name: murmur
-description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. How to use Murmur's tools (who, status, tags, send, lookup, inbox) to work alongside the other coding agents in the repo. Load when starting sizeable work in a repo that uses Murmur, when a "Message from ... via Murmur" turn arrives, or when deciding whether another agent is worth messaging.
+description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. How to use Murmur's tools (who, status, tags, send, lookup, inbox, mute) to work alongside the other coding agents in the repo. Load when starting sizeable work in a repo that uses Murmur, when a "Message from ... via Murmur" turn arrives, or when deciding whether another agent is worth messaging.
 ---
 
 <!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->
