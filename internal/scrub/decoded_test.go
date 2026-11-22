@@ -20,6 +20,7 @@ func TestBlocksFormatsWrittenWithJSONEscapes(t *testing.T) {
 		{`{"args": "{\"url\": \"https:\\\/\\\/hooks.slack.com\\\/services\\\/` + `T0123ABCD\\\/B0456EFGH\\\/` + `abcdEFGHijklMNOPqrst1234\"}"}`, "a Slack webhook URL"}, // JSON within JSON
 		{`{"args": "{\"password\": \"` + `hunter2Hunter2X9` + `\"}"}`, "a credential assignment"},                                                                       // a config in a tool call
 		{`{"args": "{\"API_KEY\": \"` + `abc123def456ghi789` + `\"}"}`, "a credential assignment"},
+		{"Authorization: Bearer\n" + `abc\/def123ghi456jkl789mno`, "a bearer token"}, // the line before an escaped one
 	} {
 		err := Check(c.text)
 		if err == nil {
@@ -42,6 +43,7 @@ func TestPassesTextWithBackslashes(t *testing.T) {
 		`{"msg": "Authorization: Bearer \u003ctoken\u003e"}`,
 		`{"image": "ghcr.io\/a-fig\/murmur@sha256:0123abcd"}`,
 		`a lone backslash at the end \`,
+		`C:\logs\a.txt says Bearer` + "\nplain line\n" + `\tabc123def456ghi789jkl0 x`, // lines that weren't together don't read as one
 		`{"args": "{\"API_KEY\": \"process.env.API_KEY\"}"}`,
 		`{"args": "{\"password\": \"\", \"token\": \"<your token>\"}"}`,
 		"many lines\nwithout a backslash\n" + `and one {"k": "v\/w"}` + "\nAPI_KEY = process.env.API_KEY\n",

@@ -169,19 +169,32 @@ const maxDecodes = 3
 // which the formats, reading the text as written, missed; and a credential assignment in JSON
 // within JSON has \" around its name. The lines are decoded whole, not each quoted string in them:
 // in prose, logs or escaped JSON the quotes don't pair reliably, and decoding changes only what
-// follows a backslash. A line without one is the same decoded, and is left out, so a large file
-// with few backslashes costs little more to check than before.
+// follows a backslash. A line without one is the same decoded, and is left out but for the line
+// before one that has, so a large file with few backslashes costs little more to check than before.
 func decodedLines(t string) string {
 	var b strings.Builder
 	changed := false
+	prev, next := "", 0 // the line before, and the index of the line after the last one kept
+	i := 0
 	for line := range strings.Lines(t) {
-		if !strings.Contains(line, `\`) {
-			continue
+		line = strings.TrimSuffix(line, "\n")
+		if strings.Contains(line, `\`) {
+			// The line before goes too, as what a match starts with can be there ("Bearer", a
+			// name). A gap where lines were left out is marked with a character no pattern runs
+			// over, so the lines on either side of it don't read as one.
+			if i > 0 && next < i {
+				if next < i-1 && b.Len() > 0 {
+					b.WriteString("\x00\n")
+				}
+				b.WriteString(prev + "\n")
+			}
+			d := jsonUnescape(line)
+			changed = changed || d != line
+			b.WriteString(d + "\n")
+			next = i + 1
 		}
-		d := jsonUnescape(strings.TrimSuffix(line, "\n"))
-		changed = changed || d != strings.TrimSuffix(line, "\n")
-		b.WriteString(d)
-		b.WriteByte('\n')
+		prev = line
+		i++
 	}
 	if !changed {
 		return ""
