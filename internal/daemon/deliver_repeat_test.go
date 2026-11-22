@@ -105,9 +105,11 @@ func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 }
 
 // A message is not handed over unless the mark that it was has been saved: a mark that couldn't be
-// would leave a restart nothing to find, and the turn would be sent again. It is left to the notice,
-// as after any failed handoff (#82).
-func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
+// would leave a restart nothing to find, and the turn would be sent again (#82). Nothing was sent,
+// so it isn't a failed handoff either: it is handed over once saves work again. Marked as failed, it
+// never was, and a session with no hook to tell it of the message (a command-only one, #927) heard
+// of it only from its inbox (#952).
+func TestAMessageIsHandedOverOnlyOnceItsMarkCanBeSaved(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
@@ -116,21 +118,15 @@ func TestAMessageIsNotHandedOverWhenTheMarkCannotBeSaved(t *testing.T) {
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-	// state.json is written by way of state.json.tmp: a directory there makes every save fail. A
-	// file in it keeps writeJSON's removal of a leftover tmp from taking the directory away.
-	blockSaves(t, filepath.Join(b.gitDir, brand.StateDir, "state.json"))
+	state := filepath.Join(b.gitDir, brand.StateDir, "state.json")
+	blockSaves(t, state)
 
-	a.send("aaaaaa", bob, "cannot be marked", "body")
+	a.send("aaaaaa", bob, "marked later", "body")
 	eventually(t, "the refusal", func() bool { return strings.Contains(out.String(), "can't be saved") })
-	holds(t, "no call to t3", time.Second, func() bool { return len(calls()) == 0 })
-	var notices []string
-	eventually(t, "the notice", func() bool {
-		notices = append(notices, b.hook("claude-bob", 0)...)
-		return len(notices) > 0
-	})
-	if notices[0] != "cannot be marked" {
-		t.Errorf("notices: %q", notices)
-	}
+	holds(t, "no call to t3 while saves fail", time.Second, func() bool { return len(calls()) == 0 })
+	unblockSaves(t, state) // the disk has room again
+	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
+	holds(t, "no second call", time.Second, func() bool { return len(calls()) == 1 })
 }
 
 // An attempt that never started anything is the one kind that is tried again, once: no `t3` is
@@ -209,4 +205,17 @@ func blockSaves(t *testing.T, path string) {
 		}
 	}
 	t.Fatalf("the blocker never took the tmp file's place: %v", err)
+}
+
+// unblockSaves undoes blockSaves: the directory goes from where it was put, or from path itself,
+// where a save on Windows may have carried it (see blockSaves).
+func unblockSaves(t *testing.T, path string) {
+	t.Helper()
+	for _, p := range []string{path + ".tmp", path} {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			if err := os.RemoveAll(p); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }

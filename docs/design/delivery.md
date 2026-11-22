@@ -209,7 +209,11 @@ the turn took, so nothing waits for good.
   mid-call and started again leaves the message to the notice instead of sending the turn a second
   time (#82). A crash between the save and the handoff leaves a notice, not a repeat, the safe way
   round. Looking in T3's database for the message before trying again would keep the second try, but
-  relies on tables that are T3's own and may change in any update.
+  relies on tables that are T3's own and may change in any update. A mark that can't be saved (a
+  full disk, say) means nothing is sent: the message waits, and every handoff on the device waits
+  with it, 2 s after the first such failure, doubling to a minute, until a save works (#952). Until
+  then the message is a notice only to a session at work, as for any message still to be handed
+  over; past fifteen minutes it is a notice either way.
 - **Nothing is handed over for a user who has left** ([joining](joining.md)).
 - **Fifteen minutes.** A message that waited more than 15 minutes (T3 closed, the session away)
   isn't sprung on the agent as a turn; it stays a notice. The 15 minutes count from when the daemon
