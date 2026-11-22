@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -365,8 +366,8 @@ type files struct {
 
 var osFiles = files{os.Rename, os.Link}
 
-// errNoLink says the running binary couldn't be given a second name, which Windows needs before
-// it lets a new binary take its place.
+// errNoLink says the binary's volume can't give it a second name, which Windows needs before it
+// lets a new binary take its place, so updates there would always fail.
 var errNoLink = errors.New("can't hard-link the running binary, so it can't be replaced safely")
 
 // replace stages beside the destination, closes and syncs, then renames the staged file over it.
@@ -378,13 +379,16 @@ var errNoLink = errors.New("can't hard-link the running binary, so it can't be r
 // binary to a backup name, unique because a still-running old MCP server may hold an earlier backup
 // open. The backup goes once nothing runs it. Renaming the running binary aside instead, as the
 // updater did before, left no binary at the path for a moment, and a kill in that moment left none
-// at all. Where links fail (FAT), replace refuses rather than open that gap again.
+// at all. Where the volume has no links (FAT), replace refuses rather than open that gap again.
+//
+// The staged file's name carries the binary's, so cleanup takes only what this binary's updates
+// left, under the lock they hold.
 func replace(path string, data []byte, goos string, fs files) error {
 	st, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".mur-update-*")
+	f, err := os.CreateTemp(filepath.Dir(path), stagedPrefix(path)+"*")
 	if err != nil {
 		return err
 	}
@@ -407,7 +411,13 @@ func replace(path string, data []byte, goos string, fs files) error {
 	}
 	old := path + ".old-" + filepath.Base(tmp)
 	if err = fs.link(path, old); err != nil {
-		return fmt.Errorf("%w: %w", errNoLink, err)
+		// FAT answers ERROR_INVALID_FUNCTION (1), a share that can't link ERROR_NOT_SUPPORTED. Any
+		// other failure, such as install.ps1 having just moved mur.exe aside, is worth a retry.
+		var errno syscall.Errno
+		if errors.Is(err, errors.ErrUnsupported) || runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 1 {
+			return fmt.Errorf("%w: %w", errNoLink, err)
+		}
+		return err
 	}
 	err = fs.rename(tmp, path)
 	os.Remove(old) // fails harmlessly while the old exe is running; cleanup takes it later
@@ -423,7 +433,7 @@ func cleanup(path string) {
 	var stale []string
 	for _, e := range entries {
 		n := e.Name()
-		if !e.IsDir() && (strings.HasPrefix(n, ".mur-update-") || strings.HasPrefix(n, filepath.Base(path)+".old-.mur-update-")) {
+		if !e.IsDir() && (strings.HasPrefix(n, stagedPrefix(path)) || strings.HasPrefix(n, filepath.Base(path)+".old-.mur-update-")) {
 			stale = append(stale, filepath.Join(dir, n))
 		}
 	}
@@ -439,6 +449,11 @@ func cleanup(path string) {
 		os.Remove(p)
 	}
 }
+
+// stagedPrefix starts the name of the file an update of the binary at path stages beside it. A
+// Windows backup is the binary's name, ".old-" and that file's name, which client.installedExecutable
+// maps back to the binary.
+func stagedPrefix(path string) string { return ".mur-update-" + filepath.Base(path) + "-" }
 
 // File.Stat captures Windows file IDs now; os.Stat can defer loading the ID
 // until SameFile, by which time the path may already name the replacement.

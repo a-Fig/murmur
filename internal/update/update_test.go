@@ -87,6 +87,9 @@ func TestReplace(t *testing.T) {
 					return func(a, b string) error {
 						calls++
 						if calls == failAt {
+							if goos == "windows" && failAt == 1 {
+								return &os.LinkError{Op: "link", Old: a, New: b, Err: errors.ErrUnsupported}
+							}
 							return errors.New("injected failure")
 						}
 						return op(a, b)
@@ -115,6 +118,19 @@ func TestReplace(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestLinkFailureThatMayPass: only a volume without links stops updates; a link that fails because
+// mur.exe was moved for a moment (install.ps1 takes no lock) leaves the next check to try again.
+func TestLinkFailureThatMayPass(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mur.exe")
+	os.WriteFile(path, []byte("old"), 0755)
+	err := replace(path, []byte("new"), "windows", files{os.Rename, func(a, b string) error {
+		return &os.LinkError{Op: "link", Old: a, New: b, Err: os.ErrNotExist}
+	}})
+	if err == nil || errors.Is(err, errNoLink) {
+		t.Fatalf("got %v, want a failure that isn't errNoLink", err)
 	}
 }
 
@@ -375,7 +391,8 @@ func TestReleases(t *testing.T) {
 func TestCleanup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mur.exe")
 	dir := filepath.Dir(path)
-	for _, p := range []string{path, path + ".old-.mur-update-123", path + ".old-unrelated", filepath.Join(dir, ".mur-update-456")} {
+	staged, other := filepath.Join(dir, ".mur-update-mur.exe-456"), filepath.Join(dir, ".mur-update-mur-nightly.exe-789")
+	for _, p := range []string{path, path + ".old-.mur-update-mur.exe-123", path + ".old-unrelated", staged, other} {
 		os.WriteFile(p, nil, 0600)
 	}
 	// Another updater's staged file is not stale.
@@ -384,18 +401,21 @@ func TestCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanup(path)
-	if _, err := os.Stat(filepath.Join(dir, ".mur-update-456")); err != nil {
+	if _, err := os.Stat(staged); err != nil {
 		t.Fatal("removed while another updater held the lock:", err)
 	}
 	lock.Close()
 	cleanup(path)
-	for _, p := range []string{path + ".old-.mur-update-123", filepath.Join(dir, ".mur-update-456")} {
+	for _, p := range []string{path + ".old-.mur-update-mur.exe-123", staged} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatal(p, err)
 		}
 	}
-	if _, err := os.Stat(path + ".old-unrelated"); err != nil {
-		t.Fatal(err)
+	// Another binary's, which its own lock covers.
+	for _, p := range []string{path + ".old-unrelated", other} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
