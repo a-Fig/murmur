@@ -637,7 +637,8 @@
   /* Six of the agents Murmur works with, in mirrored pairs around the words, as T3 Code's site
      does it: tilted rounded tiles that fly in once, then lean a little with the pointer, the big
      outer pair most. Below 1100px the margins can't hold them, so, as on T3 Code's phone layout,
-     they stand in one row above the name instead, and don't lean. Still with reduced motion. */
+     they stand in one row above the name instead, and don't lean. On a phone they're gone: Works
+     with is the first thing a scroll shows there. Still with reduced motion. */
   .st .fl > span { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 25%; background: #fff; border: 1px solid rgba(14, 27, 69, .08);
     box-shadow: 0 1px 2px rgba(14, 27, 69, .16), 0 16px 34px -14px rgba(14, 27, 69, .65); transform: rotate(var(--r));
     animation: fl-in 1s cubic-bezier(.2, .7, .2, 1) var(--d) both; }
@@ -654,6 +655,7 @@
     .st .fl { flex: none; width: min(56px, 11.5vw); height: min(56px, 11.5vw); }
     .st .fl:nth-child(even) { margin-top: 8px; }
   }
+  @media (max-width: 600px) { .st .st-copy > .st-float { display: none; } }
   @keyframes fl-in { from { opacity: 0; transform: translate(var(--f)) rotate(calc(var(--r) + 24deg)) scale(.6); } }
   @media (prefers-reduced-motion: reduce) { .st .fl { transition: none; translate: none; } .st .fl > span { animation: none; } }
   .st .st-eye { transition: transform .25s cubic-bezier(.2, .8, .3, 1); }
