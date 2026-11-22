@@ -20,6 +20,8 @@ import (
 type Options struct {
 	// Page is the address of the clone's page, with its token in the fragment.
 	Page string
+	// LightFrame sets the title bar before navigation. The page updates it once loaded.
+	LightFrame bool
 	// Follow is called every few seconds with the host:port the page last said it was served
 	// from, and returns the address the window should show: the same page, or that clone's page
 	// again after its daemon came back on another port. "" leaves the window as it is.

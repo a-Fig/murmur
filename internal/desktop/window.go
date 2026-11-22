@@ -68,6 +68,9 @@ func Run(ctx context.Context, opts Options) error {
 	w.SetSize(1280, 820, glaze.HintNone)
 	a.native = newNative(w)
 	defer a.native.close()
+	dark := !opts.LightFrame
+	a.native.frame(dark)
+	a.dark = &dark
 
 	if err := w.Bind("murmurApp", a.fromPage); err != nil {
 		return err

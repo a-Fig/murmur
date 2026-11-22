@@ -683,6 +683,40 @@ func TestPageSettingsPersist(t *testing.T) {
 	}
 }
 
+func TestPagePreferencesPersist(t *testing.T) {
+	t.Parallel()
+	d := newDevice(t, newRemote(t))
+	pg := d.page()
+	const path = "/api/preferences"
+	call := func(method, token, body string, want int) string {
+		t.Helper()
+		code, out := pg.call(method, path, token, body)
+		if code != want {
+			t.Fatalf("%s %s: got %d %s, want %d", method, path, code, out, want)
+		}
+		return out
+	}
+	call("GET", "", "", http.StatusUnauthorized)
+	call("PATCH", "", `{"theme":"light"}`, http.StatusUnauthorized)
+	call("PATCH", pg.token, `{"theme":"bogus"}`, http.StatusBadRequest)
+	call("PATCH", pg.token, `{"token":"anything"}`, http.StatusBadRequest)
+
+	call("POST", pg.token, `{"theme":"sky","onlyMine":true}`, http.StatusOK)
+	call("PATCH", pg.token, `{"onlyMine":false}`, http.StatusOK)
+	call("POST", pg.token, `{"theme":"dark","onlyMine":true,"tagsFolded":true}`, http.StatusOK)
+	d.restart()
+	pg = d.page()
+	var got web.Preferences
+	pg.get(path, &got)
+	if got.Theme != "sky" || got.DarkFrame() || got.OnlyMine == nil || *got.OnlyMine || got.TagsFolded == nil || !*got.TagsFolded {
+		t.Fatalf("saved preferences: %+v", got)
+	}
+	code, html := pg.call("GET", "/", "", "")
+	if code != http.StatusOK || !strings.Contains(html, `data-theme="sky"`) || strings.Contains(html, "tagsFolded") {
+		t.Fatalf("index should paint in Sky and leave filters to the API")
+	}
+}
+
 // Unmuting a mute that isn't there is refused, and says so (#27). mute_test.go has the rest.
 func TestPageUnmuteOfNoMuteIsRefused(t *testing.T) {
 	t.Parallel()

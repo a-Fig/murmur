@@ -10,7 +10,9 @@ page, from the same daemon, so the app and the browser can't drift apart. The co
 Only what a browser tab can't do:
 
 - **Its own window and icon**, in the taskbar or the Dock, with a dark title bar when the page's
-  theme is dark.
+  theme is dark. Before creating the window, `mur app` reads the daemon's
+  `.git/murmur/page-preferences.json` to choose the title bar's color scheme. The page takes
+  over when it loads. The same file holds the [page preferences](page.md) shared with the browser.
 - **The unread count**: a dot on the taskbar button and the count in the notification-area icon's
   tooltip on Windows, a badge on the Dock icon on macOS, and "(3) Murmur" in the title everywhere.
 - **A notification for each message to the person** that arrives while the window isn't in front,

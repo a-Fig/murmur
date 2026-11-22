@@ -13,8 +13,7 @@ const VIEWS = ["sessions", "messages", "recent", "settings"];
 const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
-// The theme is chosen in Settings and kept in this browser. style.css reads it from <html data-theme>.
-const THEME_KEY = NAME + ":theme";
+// The theme is chosen in Settings. style.css reads it from <html data-theme>.
 const THEMES = [
   ["dark", "Dark"],
   ["dim", "Dim"],
@@ -22,12 +21,64 @@ const THEMES = [
   ["murmur", "Murmur"],
   ["sky", "Sky"],
 ];
-let theme = "dark";
-try {
-  const t = localStorage.getItem(THEME_KEY);
-  if (THEMES.some(([id]) => id === t)) theme = t;
-} catch {}
+const initialTheme = document.documentElement.dataset.theme;
+const legacyKeys = { theme: ":theme", onlyMine: ":only-mine", tagsFolded: ":tags-folded" };
+function legacyPreferences() {
+  const prefs = {};
+  try {
+    const t = localStorage.getItem(NAME + legacyKeys.theme);
+    if (THEMES.some(([id]) => id === t)) prefs.theme = t;
+    for (const field of ["onlyMine", "tagsFolded"]) {
+      const value = localStorage.getItem(NAME + legacyKeys[field]);
+      if (value === "1" || value === "0") prefs[field] = value === "1";
+    }
+  } catch {}
+  return prefs;
+}
+let theme = (document.documentElement.hasAttribute("data-theme-saved") ? initialTheme : legacyPreferences().theme) || initialTheme;
 document.documentElement.dataset.theme = theme;
+
+async function loadPreferences(era) {
+  const legacy = legacyPreferences();
+  const fields = Object.keys(legacy);
+  const migration = fields.length ? { method: "POST", body: JSON.stringify(legacy) } : {};
+  try {
+    const saved = await api("/api/preferences", migration);
+    if (era !== tokenEra) return;
+    theme = saved.theme || initialTheme;
+    document.documentElement.dataset.theme = theme;
+    onlyMine = saved.onlyMine ?? false;
+    tagsFolded = saved.tagsFolded ?? false;
+    try {
+      for (const field of fields) localStorage.removeItem(NAME + legacyKeys[field]);
+    } catch {}
+  } catch (e) {
+    if (era !== tokenEra) return;
+    if (e instanceof AuthError) return deny(e.token);
+    onlyMine = legacy.onlyMine ?? false;
+    tagsFolded = legacy.tagsFolded ?? false;
+  }
+}
+
+let preferenceWrites = Promise.resolve();
+function savePreference(field, value) {
+  const era = tokenEra;
+  preferenceWrites = preferenceWrites.then(async () => {
+    if (era !== tokenEra) return;
+    try {
+      await api("/api/preferences", { method: "PATCH", body: JSON.stringify({ [field]: value }), keepalive: true });
+      if (era === tokenEra && ui.preferenceError) {
+        ui.preferenceError = "";
+        render();
+      }
+    } catch (e) {
+      if (era !== tokenEra) return;
+      if (e instanceof AuthError) return deny(e.token);
+      ui.preferenceError = "Couldn't save this preference.";
+      render();
+    }
+  });
+}
 
 // An easter egg (#499), after the old Discord joke about light mode: going from a dark theme to
 // Light flashes the screen white. It happens the first time in this browser and one time in twenty
@@ -54,9 +105,7 @@ function setTheme(t) {
   if (t === "light" && (theme === "dark" || theme === "dim")) flashbang();
   theme = t;
   document.documentElement.dataset.theme = t;
-  try {
-    localStorage.setItem(THEME_KEY, t);
-  } catch {}
+  savePreference("theme", t);
   render();
 }
 
@@ -77,6 +126,7 @@ const ui = {
   recentWho: "", // or only one session's, by name
   settings: null,
   settingsError: "",
+  preferenceError: "",
   rowErrors: {},
   filter: null, // a session name
   conversation: null, // the open conversation's key
@@ -146,15 +196,6 @@ async function takeKey() {
   if (!k) return;
   const view = parts.find((p) => VIEWS.includes(p)) || "messages";
   history.replaceState(null, "", location.pathname + location.search + "#" + view);
-  // The theme comes along: this browser keeps it per page, and each repo's page is a page of its own.
-  const t = parts.find((p) => p.startsWith("theme="))?.slice(6);
-  if (THEMES.some(([id]) => id === t) && t !== theme) {
-    theme = t;
-    document.documentElement.dataset.theme = t;
-    try {
-      localStorage.setItem(THEME_KEY, t);
-    } catch {}
-  }
   try {
     const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k.slice(4) }), cache: "no-store" });
     const got = res.ok ? await res.json() : null;
@@ -488,6 +529,7 @@ function render() {
           "main",
           { class: "main", tabindex: -1, "data-key": "main", inert: drawer ? true : null },
           showTopbar() ? topbar() : h("h1", { class: "sr-only" }, viewTitle()),
+          ui.preferenceError && h("p", { class: "row-error section-head", "data-announce": "" }, ui.preferenceError),
           content,
         ),
       ),
@@ -582,16 +624,10 @@ function setMini(v) {
 
 // Whether the conversation list shows only the conversations you are in, remembered like the
 // sidebar.
-const ONLY_MINE_KEY = NAME + ":only-mine";
 let onlyMine = false;
-try {
-  onlyMine = localStorage.getItem(ONLY_MINE_KEY) === "1";
-} catch {}
 function setOnlyMine(v) {
   onlyMine = v;
-  try {
-    localStorage.setItem(ONLY_MINE_KEY, v ? "1" : "0");
-  } catch {}
+  savePreference("onlyMine", v);
   render();
 }
 
@@ -2298,16 +2334,10 @@ function tagChips(s, max = Infinity) {
 }
 
 // Whether the sidebar's Tags are folded (#569), remembered like the sidebar.
-const TAGS_FOLDED_KEY = NAME + ":tags-folded";
 let tagsFolded = false;
-try {
-  tagsFolded = localStorage.getItem(TAGS_FOLDED_KEY) === "1";
-} catch {}
 function setTagsFolded(v) {
   tagsFolded = v;
-  try {
-    localStorage.setItem(TAGS_FOLDED_KEY, v ? "1" : "0");
-  } catch {}
+  savePreference("tagsFolded", v);
   render();
 }
 
@@ -2824,7 +2854,7 @@ async function openRepo(r) {
       }
       return;
     }
-    location.assign(url + "&theme=" + theme);
+    location.assign(url);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     if (ui.repoMenu !== m) return;
@@ -5471,20 +5501,20 @@ function sessionSettingsRow(s, wake, busy, saveWake, saveBusy) {
   );
 }
 
-// Each theme's hover hint: what it looks like, and that it stays in this browser.
+// Each theme's hover hint describes its palette.
 const THEME_TIPS = {
-  dark: "Black page like T3 Code's dark theme; saved only in this browser",
-  dim: "Soft dark-grey page, lighter than Dark; saved only in this browser",
-  light: "White page with dark text; saved only in this browser",
-  murmur: "Cream page with ink text and blue accents, like the Murmur website; saved only in this browser",
-  sky: "Pale blue panes with navy text, Rubik and butter message bubbles; saved only in this browser",
+  dark: "Black page like T3 Code's dark theme",
+  dim: "Soft dark-grey page, lighter than Dark",
+  light: "White page with dark text",
+  murmur: "Cream page with ink text and blue accents, like the Murmur website",
+  sky: "Pale blue panes with navy text and butter message bubbles",
 };
 
 function themeSection() {
   return h(
     "section",
     { class: "section" },
-    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance"), h("p", { class: "section-note" }, "In this browser.")),
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "Appearance"), h("p", { class: "section-note" }, "Shared by the app and browser for this repo.")),
     h(
       "div",
       { class: "group" },
@@ -5527,8 +5557,7 @@ function themeSection() {
 
 // Settings (#775, Tyler, 2026-11-16) is one screen for the repo that is open, grouped by what each
 // setting is about: you, messages to your sessions, files, mutes. Every one of those is this
-// repo's, since a device is one clone; the theme and the version are the only ones that aren't, so
-// they come last, under their own heading. A page for every repo at once is #816.
+// repo's, since a device is one clone. A page for every repo at once is #816.
 function settingsSection(key, title, note, ...rows) {
   return h(
     "section",
@@ -5699,7 +5728,7 @@ function settingsPage() {
     ),
   );
 
-  sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
+  sections.push(themeSection(), h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), versionSection()));
   return h("div", { class: "page" }, settingsScope(), sections);
 }
 
@@ -6045,6 +6074,10 @@ async function start() {
     inflight = false;
     clearTimeout(timer);
     tokenEra++;
+    const era = tokenEra;
+    ui.preferenceError = "";
+    if (token) await loadPreferences(era);
+    if (era !== tokenEra) return;
   }
   ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "messages";
   render();
