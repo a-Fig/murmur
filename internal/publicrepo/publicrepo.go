@@ -31,7 +31,7 @@ import (
 )
 
 // What `mur join` tells the user's agent about this, and what `mur init` prints after it has
-// reported a repo. join.md says the same, at more length.
+// reported a repo. The site's privacy page (site/privacy/) says the same, at more length.
 const (
 	Statement = "The only thing " + brand.Product + " ever sends us, at murmur.afig.dev, is this repo's address, and only if the repo is public: " +
 		"once for the whole repo, so we can count how many repos and people use " + brand.Product + ". " +

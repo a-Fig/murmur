@@ -48,7 +48,7 @@ updater need one manual install to get it.
   asks GitHub itself; `mur version` hears of newer releases the same way.
 - **Opting out.** `git config --global murmur.update false`; a repo's own git config overrides it,
   and it is read on each check. `MURMUR_NO_UPDATE=1` opts out a daemon started with it. Agents
-  explain updates and the opt-out before joining (`docs/agents/join.md`). `git config murmur.channel
+  explain updates and the opt-out before joining (`docs/agents/steps.md`). `git config murmur.channel
   prerelease` opts into prereleases and nightlies (#244, Tyler, 2026-11-08), so a release runs on
   our own machines before a stable tag sends it to everyone (`docs/releasing.md`). A binary shared
   across clones shares their update settings too, so to keep every clone from updating it, use the

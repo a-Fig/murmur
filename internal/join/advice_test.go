@@ -149,3 +149,29 @@ func TestServingT3(t *testing.T) {
 		t.Errorf("outside T3: %q", got)
 	}
 }
+
+// The advice ends by naming the page about Murmur in the agent that ran join, and the list of
+// pages where join can't tell which agent that is (#934).
+func TestAdviceLinksTheAgentsPage(t *testing.T) {
+	for _, c := range []struct {
+		vars map[string]string
+		want string
+	}{
+		{map[string]string{"CLAUDECODE": "1"}, "https://murmur.afig.dev/agents/#claude-code"},
+		{map[string]string{"CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "https://murmur.afig.dev/agents/#codex"},
+		{map[string]string{"PI_CODING_AGENT": "true"}, "https://murmur.afig.dev/agents/#pi"},
+		{map[string]string{"ANTIGRAVITY_AGENT": "1"}, "https://murmur.afig.dev/agents/#antigravity"},
+		{map[string]string{"OPENCODE": "1"}, "https://murmur.afig.dev/agents/#opencode"},
+		{map[string]string{"MUSE_SESSION_ID": "s1"}, "https://murmur.afig.dev/agents/#muse-code"},
+		{map[string]string{"CLAUDECODE": "1", "OPENCODE": "1"}, "https://murmur.afig.dev/agents/#claude-code"},
+		{map[string]string{}, "https://murmur.afig.dev/agents/"},
+	} {
+		got := strings.Join(envWith(c.vars).advice(false, false, false, false), "\n")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%v: advice doesn't link %s:\n%s", c.vars, c.want, got)
+		}
+	}
+	if got := strings.Join(envWith(map[string]string{"CLAUDECODE": "1"}).advice(false, false, false, true), "\n"); strings.Contains(got, "/agents/") {
+		t.Errorf("a join with problems links a page:\n%s", got)
+	}
+}
