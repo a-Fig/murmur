@@ -79,6 +79,9 @@ type fakeDaemon struct {
 	// routeDelay, if set, is how long a route takes to reach the daemon, so that a route sent
 	// without waiting for it is seen after a call that went on meanwhile.
 	routeDelay time.Duration
+	// threadUnread, if set, says whether the daemon couldn't read the T3 thread a hello or a route
+	// names (proto.Response.ThreadUnread).
+	threadUnread func(proto.Route) bool
 	// sendReply, if set, is the daemon's answer to a send.
 	sendReply func(proto.Request) proto.Response
 	// helloReply, if set, may answer a hello in the daemon's place: an error to refuse it, or the
@@ -184,7 +187,8 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 				id = given
 			}
 		}
-		reply(proto.Response{OK: true, Self: "dev/" + id, ClaudeSession: live, Protocol: proto.Protocol})
+		reply(proto.Response{OK: true, Self: "dev/" + id, ClaudeSession: live, Protocol: proto.Protocol,
+			ThreadUnread: f.threadUnread != nil && req.Hello.T3Thread != "" && f.threadUnread(req.Hello.Route)})
 		return // the connection stays open until the test drops it
 	}
 	defer conn.Close()
@@ -209,7 +213,8 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		reply(f.sendReply(req))
 		return
 	}
-	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol})
+	unread := req.Op == proto.OpRoute && req.Route != nil && req.Route.T3Thread != "" && f.threadUnread != nil && f.threadUnread(*req.Route)
+	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol, ThreadUnread: unread})
 }
 
 func (f *fakeDaemon) requestCount() int {

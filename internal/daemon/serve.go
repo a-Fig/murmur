@@ -379,6 +379,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		d.dropHandedLocked(h.ID)
 	}
 	name, live := s.name, s.claudeSession
+	unread := d.threadUnreadLocked(h.Route)
 	d.mu.Unlock()
 	if name == "" {
 		d.kickNames()
@@ -386,7 +387,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	d.kickPush() // a session back may have messages waiting that its route can now hand over
 
 	addr := bus.Addr(d.device, h.ID)
-	reply := proto.Response{OK: true, Self: addr, Name: name, NamePending: name == "", ClaudeSession: live}
+	reply := proto.Response{OK: true, Self: addr, Name: name, NamePending: name == "", ClaudeSession: live, ThreadUnread: unread}
 	if taken {
 		d.log.Printf("session %s reconnected", addr)
 		writeResp(conn, reply)
@@ -677,6 +678,8 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		// A route that names a T3 thread at last, as a Codex session's does once a tool call has
 		// given its thread ID, is read as a hello's is: a delegate is one from the call that brought
 		// the route, not from the next refresh of the threads (#966).
+		// If that read fails the route is still taken, for handing messages over, and the reply says
+		// the thread is unread, so the server makes no change until a later route is read (#980).
 		thread := d.readHelloThread(ctx, *req.Route)
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -684,7 +687,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 			d.noteHelloThreadLocked(thread, s.id) // in the same hold of mu as the route
 			d.setRouteLocked(s, *req.Route)
 		}
-		return proto.Response{OK: true, Self: from}
+		return proto.Response{OK: true, Self: from, ThreadUnread: d.threadUnreadLocked(*req.Route)}
 
 	case proto.OpNotices:
 		return d.notices(req)
