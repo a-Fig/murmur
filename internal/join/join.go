@@ -55,6 +55,9 @@ type Env struct {
 	// for the user. It runs just before that folder is removed, which its own would otherwise keep
 	// (#746). nil, as tests leave it, does nothing.
 	RemoveApp func(r *Report) (left []string)
+	// OutsideHome lets join and uninstall change configurations outside a home in the temporary
+	// folder, which they otherwise leave alone as a test's (scratch.go, #995).
+	OutsideHome bool
 }
 
 // EnvFromProcess is the environment of the running process.
@@ -201,6 +204,11 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		for j, h := range byAgent[i] {
 			if cut() {
 				break
+			}
+			if h.Dir == "" { // an agent this Env leaves out, or a home left alone (scratch.go)
+				// The older hooks in the working trees stay for a Claude Code home not written.
+				claudeOK = claudeOK && a.driver != "claudeAgent"
+				continue
 			}
 			if h.T3Own && !isDir(h.Dir) {
 				r.Notes = append(r.Notes, h.Label+": open a thread with this instance to set it up, then run `"+brand.Command+" join` again.")

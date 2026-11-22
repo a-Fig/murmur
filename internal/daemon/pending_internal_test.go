@@ -87,6 +87,78 @@ func TestAnUnsureSendIsPushedAgainUntilItLands(t *testing.T) {
 	}
 }
 
+// A pending send that an earlier push landed is settled as landed when a later push runs out of
+// time and the batch is given up: the remote is asked in time of its own, not in what the push
+// left, which is none (#951). Its sender, told it wasn't sent, would send it twice.
+func TestAGiveUpAfterAPushTimedOutStillAsksTheRemote(t *testing.T) {
+	t.Parallel()
+	const pushTime = 300 * time.Millisecond
+	d, _, _ := rateRig(t, Options{PendingRetry: 20 * time.Millisecond, PendingPush: pushTime, PendingGiveUp: 500 * time.Millisecond}, false)
+	ctx := context.Background()
+	before := d.sendFirst(t) // a tip to build on
+	type settled struct {
+		landed, absent bool
+	}
+	cut := errors.New("the connection dropped")
+	var n atomic.Int32
+	d.writeMu.Lock()
+	d.testPush = func(real func() error) error {
+		switch n.Add(1) {
+		case 1: // the first send's push lands, and says it didn't
+			if err := real(); err != nil {
+				return err
+			}
+			return cut
+		case 2: // the second send's push is lost
+			return cut
+		}
+		// Each push again hangs past its time, as git does until it is stopped.
+		time.Sleep(pushTime + 100*time.Millisecond)
+		return fmt.Errorf("%w: signal: killed", context.DeadlineExceeded)
+	}
+	d.writeMu.Unlock()
+	first, second := make(chan settled, 1), make(chan settled, 1)
+	for _, c := range []struct {
+		subject string
+		got     chan settled
+	}{{"landed", first}, {"lost", second}} {
+		err := d.appendEventIf(ctx, message(d, c.subject), nil, func(landed, absent bool, _ error) {
+			c.got <- settled{landed, absent}
+		})
+		if !errors.As(err, new(pendingError)) {
+			t.Fatalf("the send of %q ended with %v, want it pending", c.subject, err)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		got  chan settled
+		want settled
+	}{{"the send the remote has", first, settled{landed: true}}, {"the send it doesn't have", second, settled{absent: true}}} {
+		select {
+		case s := <-c.got:
+			if s != c.want {
+				t.Errorf("%s settled %+v, want %+v", c.name, s, c.want)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s was never settled", c.name)
+		}
+	}
+	// The next write builds on the send that landed, and lands.
+	d.writeMu.Lock()
+	d.testPush = nil
+	d.writeMu.Unlock()
+	if err := d.appendEvent(ctx, message(d, "the next")); err != nil {
+		t.Fatalf("the next send: %v", err)
+	}
+	tip, err := d.repo.RemoteRef(ctx, d.meshRef())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.TrimSpace(runGit(t, d.opt.GitDir, "rev-list", "--count", before+".."+tip)); count != "2" {
+		t.Errorf("the remote's log has %s commits past the first send, want 2", count)
+	}
+}
+
 // A later write that lands carries a send pending under it along.
 func TestALaterSendCarriesAPendingOne(t *testing.T) {
 	t.Parallel()

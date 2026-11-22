@@ -156,7 +156,13 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 	for i, a := range agents {
 		byAgent[i] = []agentHome{e.defaultHome(a)}
 	}
-	instances, err := readT3Instances(e.T3Settings)
+	// A scratch home's join reads T3's settings only from the temporary folder (scratch.go).
+	skipT3 := e.T3Settings != "" && e.scratchHome() != "" && !inTemp(e.T3Settings, false)
+	settings := e.T3Settings
+	if skipT3 {
+		settings = ""
+	}
+	instances, err := readT3Instances(settings)
 	if err != nil {
 		notes = append(notes, "Couldn't read T3 Code's settings ("+e.T3Settings+"). Some provider instances may be missing. "+err.Error())
 	}
@@ -222,6 +228,13 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 		}
 	}
 	byAgent[i] = homes
+	cmd := "join"
+	if off {
+		cmd = "uninstall"
+	}
+	if note := e.keepToScratch(byAgent, settings != "", skipT3, cmd); note != "" {
+		notes = append(notes, note)
+	}
 	return byAgent, notes
 }
 

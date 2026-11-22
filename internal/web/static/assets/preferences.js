@@ -51,8 +51,15 @@ async function loadPreferences(era) {
   } catch (e) {
     if (era !== tokenEra) return;
     if (e instanceof AuthError) return deny(e.token);
-    onlyMine = legacy.onlyMine ?? false;
-    tagsFolded = legacy.tagsFolded ?? false;
+    // The import failed, as when another daemon holds the theme file's lock. What this clone has
+    // saved is read all the same, so an old filter in this browser doesn't hide it (#999); the old
+    // keys stay, and the next load imports them. A daemon that didn't answer the import (no status)
+    // isn't asked again: the page would wait another two seconds for the same silence.
+    const saved = fields.length && e.status ? await api("/api/preferences", { signal: AbortSignal.timeout(2000) }).catch(() => ({})) : {};
+    if (era !== tokenEra) return;
+    if (saved.theme) document.documentElement.dataset.theme = theme = saved.theme;
+    onlyMine = saved.onlyMine ?? legacy.onlyMine ?? false;
+    tagsFolded = saved.tagsFolded ?? legacy.tagsFolded ?? false;
   }
 }
 

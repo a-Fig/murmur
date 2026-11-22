@@ -24,6 +24,16 @@ var (
 
 func TestMain(m *testing.M) {
 	jointest.RunIfFakeClaude()
+	// The variables that move an agent's configuration, and T3's, name the developer's own: a test
+	// that reached EnvFromProcess, or ran the stand-in claude with them, would write there (#995).
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		switch up := strings.ToUpper(k); {
+		case strings.HasPrefix(up, "T3CODE_"), up == "CLAUDE_CONFIG_DIR", up == "CODEX_HOME", up == "GEMINI_HOME",
+			up == "GROK_HOME", up == "PI_CODING_AGENT_DIR", up == "XDG_CONFIG_HOME":
+			os.Unsetenv(k)
+		}
+	}
 	code := m.Run()
 	if binDir != "" {
 		os.RemoveAll(binDir)

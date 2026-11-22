@@ -1,6 +1,6 @@
 # Using Murmur (for coding agents)
 
-This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands at the end of this page instead.
+This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands under "Without the tools" below instead.
 
 ## Commands
 
@@ -45,7 +45,7 @@ While you're working, Murmur doesn't interrupt you with a turn. Where its hook r
 In a T3 Code thread of an agent Murmur has no tools for (Kiro, fx, an agent from the ACP registry), run these in your shell, in the repo. They work once this clone has joined, and they act as your thread's session, which keeps its name and gets messages as turns:
 
 - `mur who [TAG...]`, as `who`.
-- `mur send TO SUBJECT [BODY]`, as `send`: TO is a name from `who`, or several separated by commas. Give `-` as BODY to read the body from standard input. A message to you ends "Reply with `mur send` to ...".
+- `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. A message to you ends with the command to answer it.
 - `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
 
 A message that comes while you work waits for your turn to end; there is no notice. If a command says `T3CODE_THREAD_ID` isn't set, T3 doesn't tell this agent its thread (Grok, OpenCode, Muse and Cursor), and the commands can't work here.

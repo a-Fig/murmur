@@ -137,9 +137,10 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
 - **How a member learns it is in a group.** Murmur has no notice of its own, only messages, so the
   group's message says it: its first line is "Message sent in group:ui from quiet-otter" (Tyler,
   2026-11-12), and its last, the first time, says the session is in the group and how to answer or
-  leave, as a person's explanation does (#345). Later ones end "Reply with Murmur's `send` to
+  leave, as a person's explanation does (#345): "You are in group:ui. Reply with Murmur's `send` to
   group:ui, or to quiet-otter alone, if a reply is needed. Remove the tag group:ui from yourself to
-  leave the group." (Tyler, 2026-11-13). A person writing in a group gets the group's line too
+  leave the group." (Tyler, 2026-11-13). Later ones end "Reply with Murmur's `send` to group:ui or
+  quiet-otter, if a reply is needed." A person writing in a group gets the group's line too
   (#484): theirs said to answer them alone, and the rest of the group never saw the answer.
 - **No loop guard**, as for any message (Tyler, 2026-10-29), though an answer to a group gives every
   member a turn. If groups prove noisy, the next step is a group message that never extends a

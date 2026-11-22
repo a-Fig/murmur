@@ -35,6 +35,18 @@ import (
 // the backoff that is about six pushes again.
 const pendingGiveUp = 3 * time.Minute
 
+// pendingLook bounds asking the remote which pending sends it has, as they are given up or dropped.
+// retryPending keeps it back from the push before it, so that writeMu is held no longer than
+// before the asking had time of its own: a push's time and pushLook, 75 s (but for a clone that
+// left or a device gone invisible, whose waiting sends are refused anyway). A send waiting on
+// writeMu has 90 s (serve.go), and its own push, cut short by a longer wait, would more often end
+// unsure, which the person's send from the page is told at once as not sent.
+const pendingLook = 20 * time.Second
+
+// pushLook is how long a push that failed may go on past its time, asking the remote where the ref
+// is (bus.Repo.Push).
+const pushLook = 15 * time.Second
+
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
 // remote, asked, doesn't have it, and err why. It is called with writeMu held, and nothing else.
 type settleFunc func(landed, absent bool, err error)
@@ -85,7 +97,7 @@ func (d *Daemon) pendingLoop() {
 			d.writeMu.Lock()
 			d.pendRun = false
 			if len(d.pendSends) > 0 {
-				d.giveUpPending(context.Background(), errDaemonStopped, false)
+				d.giveUpPending(errDaemonStopped, false)
 			}
 			d.writeMu.Unlock()
 			return
@@ -109,16 +121,35 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go).
-	ctx, cancel := context.WithTimeout(d.bgCtx, pushTimeout)
+	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). A retry
+	// that may end past the give-up time is the last: its push leaves pendingLook of that time for
+	// asking the remote, and only it gives the sends up for their age. A last retry that ends before
+	// the give-up time, as one whose push hung from 110 s to 165 s does, leaves them to the next: a
+	// retry with a whole minute's push would have ended past the time and given them up there, so
+	// the give-up can come one retry later than it did, about two minutes at the most.
+	start, limit := time.Now(), d.opt.PendingPush
+	last := time.Since(d.pendFrom)+limit+pushLook >= d.opt.PendingGiveUp
+	if left := limit - pendingLook; last && left > 0 {
+		limit = left
+	}
+	// room says the remote can still be asked within the push's time. A test's short push time
+	// keeps none back.
+	room := func() bool {
+		return d.opt.PendingPush <= pendingLook || time.Since(start)+pendingLook <= d.opt.PendingPush
+	}
+	ctx, cancel := context.WithTimeout(d.bgCtx, limit)
 	defer cancel()
-	if d.dropSwitchedOff(ctx); len(d.pendSends) == 0 {
+	if d.dropSwitchedOff(); len(d.pendSends) == 0 {
 		return
 	}
 	ref, sha := d.meshRef(), d.ownTip
 	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", d.pendingStill)
 	if errors.Is(err, errSendOff) {
-		d.dropSwitchedOff(ctx) // Send files went off as the push waited its turn
+		// Send files went off as the push waited its turn. If the wait left no time to ask the
+		// remote, the next retry drops them as it starts; nothing is pushed until then.
+		if room() {
+			d.dropSwitchedOff()
+		}
 		return
 	}
 	if err == nil {
@@ -143,8 +174,13 @@ func (d *Daemon) retryPending() {
 			}
 		}
 	}
-	if errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible) || time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
-		d.giveUpPending(ctx, err, true)
+	// A clone that left, or a device gone invisible, pushes nothing more, and its sends are given up
+	// now, however long the wait for the push's turn was: a clone that left stops within a second,
+	// and gives up then without asking the remote. A send waiting on writeMu meanwhile is refused
+	// for the same reason before git starts, so the longer hold costs it nothing.
+	gone := errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible)
+	if gone || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
+		d.giveUpPending(err, true)
 	}
 }
 
@@ -169,15 +205,23 @@ func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) {
 // giveUpPending gives up the pending sends, after err. With look, the remote is asked first, and
 // those it has are taken as landed, and the next write builds on its tip; without, or if it can't
 // be asked, on the tip the first was built on. Caller holds writeMu.
-func (d *Daemon) giveUpPending(ctx context.Context, err error, look bool) {
+//
+// The asking has its own time, pendingLook, and not what is left of the push's before it: a push
+// that timed out has none left, and the remote was then never asked, so a send that an earlier push
+// had landed was called not sent, and went twice if its sender sent it again (#951).
+func (d *Daemon) giveUpPending(err error, look bool) {
 	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
 	ref := d.meshRef()
 	if look {
-		lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		lctx, cancel := context.WithTimeout(d.bgCtx, pendingLook)
 		defer cancel()
 		// A tip that isn't a commit, junk pushed over the log, is no tip to build on (Sol's review
 		// of #818): that is as if the remote couldn't be asked.
-		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || d.fetchOne(lctx, ref) == nil && func() bool { ok, _ := d.repo.IsCommit(lctx, tip); return ok }()) {
+		//
+		// A tip this clone has already, such as a pending send's own commit, isn't fetched: over the
+		// slow link that timed the push out, the fetch could outlast pendingLook.
+		isCommit := func(tip string) bool { ok, _ := d.repo.IsCommit(lctx, tip); return ok }
+		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil && (tip == "" || isCommit(tip) || d.fetchOne(lctx, ref) == nil && isCommit(tip)) {
 			if tip == "" { // no log there at all
 				for _, p := range d.pendSends {
 					p.settle(false, true, err)
@@ -253,13 +297,14 @@ func (d *Daemon) pendingStill() bool {
 // may carry it to the remote, its files' keys with it (Sol's review of rc.2). The log's next write
 // builds on what came before it. Those the remote has already, as a push that ended unsure may
 // have landed, are settled as landed first, so none is called not sent that went (Sol's re-review).
-// Caller holds writeMu.
-func (d *Daemon) dropSwitchedOff(ctx context.Context) {
+// The remote is asked in time of its own, as in giveUpPending: the push's may have gone on waiting
+// its turn. Caller holds writeMu.
+func (d *Daemon) dropSwitchedOff() {
 	off := func(p pendingSend) bool { return p.still != nil && !p.still() }
 	if !slices.ContainsFunc(d.pendSends, off) {
 		return
 	}
-	lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	lctx, cancel := context.WithTimeout(d.bgCtx, pendingLook)
 	defer cancel()
 	ref := d.meshRef()
 	if tip, err := d.repo.RemoteRef(lctx, ref); err == nil && tip != "" && d.fetchOne(lctx, ref) == nil {

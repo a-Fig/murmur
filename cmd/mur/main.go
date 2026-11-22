@@ -75,8 +75,10 @@ For humans:
 
 For agents with no Murmur tools, in a T3 Code thread's shell:
   mur who [TAG...]              list the sessions in this repo, as the who tool does
-  mur send TO SUBJECT [BODY|-]  send a message, as the send tool does: TO is a name from who, or several
-                                separated by commas; - reads the body from standard input
+  mur send TO TEXT|-            send a message, as the send tool does: TO is a name from who, or several
+                                separated by commas, and - reads TEXT from standard input. The subject is
+                                TEXT's first line, or its opening words; --subject SUBJECT sets it, and
+                                TEXT is then the body
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
 
@@ -139,7 +141,7 @@ func main() {
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
 	case "who", "send", "inbox", "status":
-		err = mcpserver.Command(ctx, cmd, args, os.Stdin, os.Stdout)
+		err = mcpserver.Command(ctx, cmd, args, os.Stdin, os.Stdout, os.Stderr)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "app":
@@ -253,7 +255,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	}
 	fs, dir := flags("daemon")
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
-	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
+	poll := fs.Duration("poll", 0, "how often to check the remote (default 3s)")
 	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative, e.g. -1s: never)")
 	logPath := fs.String("log", "", "append output to this file, not stderr (for starters that can't pass a handle)")
 	fs.Parse(args)
@@ -477,11 +479,13 @@ func initWorkTree(ctx context.Context, dir string, out io.Writer) error {
 func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("join")
 	leave := fs.Bool("leave", false, "undo joining in this clone: forget the consent, remove the hook, stop the daemon")
+	outside := fs.Bool("outside-home", false, "write agent settings outside a home in the temporary folder, which join otherwise leaves alone as a test's")
 	fs.Parse(args)
 	env, err := join.EnvFromProcess()
 	if err != nil {
 		return err
 	}
+	env.OutsideHome = *outside
 	env.Version = version
 	env.Progress = os.Stderr // a line while a step is slow, or a leave waits for the daemon; stdout is the report
 	do := join.Join
@@ -569,14 +573,16 @@ func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
 func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet(brand.Command+" uninstall", flag.ExitOnError)
 	leave := fs.Bool("leave", false, "leave every repo on this machine that is still joined, first")
+	outside := fs.Bool("outside-home", false, "change agent settings outside a home in the temporary folder, which uninstall otherwise leaves alone as a test's")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
-		return errors.New("uninstall takes no arguments, only --leave")
+		return errors.New("uninstall takes no arguments, only --leave and --outside-home")
 	}
 	env, err := join.EnvFromProcess()
 	if err != nil {
 		return err
 	}
+	env.OutsideHome = *outside
 	env.Version = version
 	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
 	env.RemoveApp = uninstallApp
