@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -290,10 +291,11 @@ var testBeforeSet func(refs []string)
 // (Fetch, UpdateLocal). A ref that a write begun later has set already is left as it is.
 //
 // Every Fetch and every send's UpdateLocal waits here, whatever ref it sets, so neither the wait
-// nor git's may be long (#998): the wait for setMu ends with ctx, and git waits at most
-// refLockWait for a ref another git holds locked, not for as long as the clone's
-// core.filesRefLockTimeout says, which -1 makes forever. A ref that stays locked fails its write,
-// which the caller tries again as after any failure.
+// nor git's may be long (#998): the wait for setMu ends with ctx, and git waits at most 100 ms
+// (refLockWait) for a ref another git holds locked, not for as long as the clone's config says,
+// which -1 makes forever. A ref that stays locked fails its write: a Fetch's is tried again with
+// the next fetch, and an UpdateLocal's is logged, leaving the local copy as it was until the next
+// write.
 func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string) error {
 	if err := r.setMu.lock(ctx); err != nil {
 		return err
@@ -311,7 +313,7 @@ func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string
 	if len(refs) == 0 {
 		return nil
 	}
-	if _, err := r.Git.Run(ctx, set.String(), "-c", refLockWait, "update-ref", "--no-deref", "--stdin"); err != nil {
+	if _, err := r.Git.Run(ctx, set.String(), append(slices.Clone(refLockWait), "update-ref", "--no-deref", "--stdin")...); err != nil {
 		return err
 	}
 	if r.setBy == nil {
@@ -324,8 +326,9 @@ func (r *Repo) setRefs(ctx context.Context, write uint64, tips map[string]string
 }
 
 // refLockWait is how long setRefs's git waits for a ref another git holds locked: git's own default,
-// 100 ms, which a clone's config may have changed.
-const refLockWait = "core.filesRefLockTimeout=100"
+// 100 ms, which a clone's config may have changed. A clone that keeps its refs in a reftable locks
+// the whole table, under a setting of its own, which a git older than that setting ignores.
+var refLockWait = []string{"-c", "core.filesRefLockTimeout=100", "-c", "reftable.lockTimeout=100"}
 
 // ctxMutex is a mutex whose wait ends with a context. Its zero value is unlocked.
 type ctxMutex struct {
