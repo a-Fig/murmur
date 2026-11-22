@@ -89,7 +89,7 @@ func commandRequest(name string, args []string, stdin io.Reader) (proto.Request,
 		if len(args) < 2 || len(args) > 3 {
 			return proto.Request{}, fmt.Errorf("usage: %s send TO SUBJECT [BODY|-]", brand.Command)
 		}
-		req := proto.Request{Op: proto.OpSend, To: args[0], Subject: oneLine(args[1])}
+		req := proto.Request{Op: proto.OpSend, To: args[0], Subject: args[1]}
 		if len(args) == 3 {
 			req.Body = args[2]
 			if req.Body == "-" {
@@ -102,6 +102,7 @@ func commandRequest(name string, args []string, stdin io.Reader) (proto.Request,
 				req.Body = string(b)
 			}
 		}
+		req.Subject, req.Body = subjectAndBody(req.Subject, req.Body)
 		return req, nil
 	}
 	return proto.Request{}, fmt.Errorf("unknown command %q", name)
