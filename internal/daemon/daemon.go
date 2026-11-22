@@ -569,8 +569,9 @@ type Daemon struct {
 	pushing                   map[string]bool
 	pushWarned                map[string]bool
 	// unsavedWait is how long handoffs wait after one that wasn't tried because its mark couldn't
-	// be saved (errUnsaved): PushRetry after the first, doubling up to unsavedWaitMax, and back to
-	// zero once a mark is saved (#952). No handoff starts before unsavedUntil.
+	// be saved (errUnsaved): PushRetry after the first, doubling with each failed retry up to
+	// unsavedWaitMax (#952). No handoff starts before unsavedUntil. Both are zero again once a mark
+	// is saved, and the first failure after that is logged.
 	unsavedWait  time.Duration
 	unsavedUntil time.Time
 	// introduced is, for each conversation, the senders it has had a message from as a turn, so

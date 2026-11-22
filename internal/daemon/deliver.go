@@ -1123,7 +1123,7 @@ func (d *Daemon) markAttempted(msgs []*inMsg, v bool) error {
 	err := writeJSON(d.statePath(), d.st)
 	switch {
 	case err == nil:
-		d.unsavedWait = 0 // the state file takes saves again
+		d.unsavedWait, d.unsavedUntil = 0, time.Time{} // the state file takes saves again
 	case v:
 		for _, m := range msgs {
 			m.Attempted = false
@@ -1159,12 +1159,15 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 		// Nothing was sent, so the messages wait in the inbox, as for errNotNow, and are tried again
 		// later: a disk that is full now may have room then. Every handoff waits, as the state file
 		// is the device's, not the session's.
-		d.unsavedWait = min(max(2*d.unsavedWait, d.opt.PushRetry), unsavedWaitMax)
-		d.unsavedUntil = time.Now().Add(d.unsavedWait)
-		time.AfterFunc(d.unsavedWait, d.kickPush)
-		if !d.pushWarned[j.id] {
-			d.pushWarned[j.id] = true
-			d.log.Printf("session %s: %v; trying again in %s", j.addr, err, d.unsavedWait)
+		// Handoffs that were already on their way when saves began to fail end here too, and don't
+		// lengthen the wait the first of them set.
+		if now := time.Now(); !now.Before(d.unsavedUntil) {
+			if d.unsavedWait == 0 {
+				d.log.Printf("session %s: %v; handing nothing over until a save works, trying again in %s", j.addr, err, d.opt.PushRetry)
+			}
+			d.unsavedWait = min(max(2*d.unsavedWait, d.opt.PushRetry), unsavedWaitMax)
+			d.unsavedUntil = now.Add(d.unsavedWait)
+			time.AfterFunc(d.unsavedWait, d.kickPush)
 		}
 		return
 	}
