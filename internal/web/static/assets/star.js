@@ -1,15 +1,17 @@
 // The ask to star Murmur on GitHub (#974).
 
-import { h } from "./dom.js";
+import { h, when } from "./dom.js";
 import { icon } from "./icons.js";
+import { ui } from "./state.js";
 import { api } from "./api.js";
 
 export { askForStarAfter };
 
 // Modelled on T3 Code's: a small card in a corner, asked once and never again. It waits until the
-// person has seen Murmur work, a message between two agents arriving while the page is open (the
-// history the page loads with doesn't count, so it never comes on first open), and then until they
-// have left the page alone for 30 s, so it never lands mid-task.
+// person has seen Murmur work, a message between two agents arriving while the page is open, and
+// then until they have left the page alone, in front, for 30 s, so it never lands mid-task. The
+// history the page loads with doesn't count, nor history the daemon reads from the bus late (#138),
+// so it never comes on first open.
 //
 // The daemon keeps that it asked (starAsked, in the page's preferences), so the desktop app and a
 // browser on this device ask once between them. It is saved before the card shows, and the card
@@ -21,21 +23,25 @@ const IDLE_MS = 30000;
 const ACTIVITY = ["pointerdown", "keydown", "wheel", "focus"];
 let waiting = false;
 
-// askForStarAfter is given the messages each poll brought after the first.
-function askForStarAfter(arrived) {
-  if (waiting || !arrived.some((m) => !m.fromPerson && !m.toPerson)) return;
+// askForStarAfter is given the messages each poll brought after the first, and when that first came.
+// A minute is allowed for a sender's clock, as when they are read out.
+function askForStarAfter(arrived, loadedAt) {
+  const live = (m) => (when(m.at) || Infinity) >= loadedAt - 60000;
+  if (waiting || !arrived.some((m) => !m.fromPerson && !m.toPerson && live(m))) return;
   waiting = true;
   whenIdle().then(ask);
 }
 
 // whenIdle resolves once 30 s pass with the page in front and nothing pressed, scrolled or focused.
+// The desktop app's window can be behind the editor and still count as shown and focused, so the
+// app's own word on that (appFront) counts too.
 function whenIdle() {
   return new Promise((resolve) => {
     let timer = 0;
     const wait = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        if (document.hidden || !document.hasFocus()) return; // the next event starts the wait over
+        if (document.hidden || ui.appFront === false || !document.hasFocus()) return; // the next event starts the wait over
         for (const e of ACTIVITY) window.removeEventListener(e, wait, true);
         resolve();
       }, IDLE_MS);
@@ -47,8 +53,10 @@ function whenIdle() {
 
 async function ask() {
   try {
-    // Read again, not from the page's load: the app or another tab may have asked since.
-    if ((await api("/api/preferences")).starAsked) return;
+    // Read again, not from the page's load: the app or another tab may have asked since. The save
+    // goes to the daemon that answered, not one the page switched to meanwhile.
+    const token = ui.token;
+    if ((await api("/api/preferences")).starAsked || ui.token !== token) return;
     await api("/api/preferences", { method: "PATCH", body: JSON.stringify({ starAsked: true }) });
   } catch {
     return; // not saved, so not shown: it would come back on every load

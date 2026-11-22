@@ -338,7 +338,7 @@ async function poll() {
     ui.conn = "ok";
     announceArrivals(arrived);
     tellApp(appNotes(arrived));
-    askForStarAfter(arrived);
+    askForStarAfter(arrived, loadedAt);
     if (wasConn === "down") announce("Connected to the daemon again.");
   } catch (e) {
     if (era !== tokenEra) return;
