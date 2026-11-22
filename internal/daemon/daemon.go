@@ -772,6 +772,10 @@ type session struct {
 	// noWake is what the last presence written said of whether a message would wake the session
 	// (bus.SessionInfo.NoWake), so that a change is published (see wakeChangedLocked).
 	noWake string
+	// byCommand says a shell command registered the session (proto.Hello.Command, #913), and hold
+	// is what keeps it live, nil once let go (commands.go).
+	byCommand bool
+	hold      *commandHold
 }
 
 // shownDoing is the status line other sessions see for s: what the agent set, else its
@@ -1092,11 +1096,13 @@ type state struct {
 }
 
 // t3Route is where a message for a session in T3 goes: T3's command line, its data directory if
-// the session had one set, and the thread.
+// the session had one set, and the thread. Command says the session has only the shell commands
+// (#913), so its turns say to answer with `mur send`.
 type t3Route struct {
-	CLI    string `json:"cli"`
-	Home   string `json:"home,omitempty"`
-	Thread string `json:"thread"`
+	CLI     string `json:"cli"`
+	Home    string `json:"home,omitempty"`
+	Thread  string `json:"thread"`
+	Command bool   `json:"command,omitempty"`
 }
 
 // Run runs a daemon until ctx is done, it is told to stop, or it has been idle too long.

@@ -1,6 +1,6 @@
 # Using Murmur (for coding agents)
 
-This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`.
+This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands at the end of this page instead.
 
 ## Commands
 
@@ -39,6 +39,16 @@ A person can write to you too, from Murmur's page. `who` lists them under a name
 Later messages from the same person end as an agent's do. A turn from a person whose name another device also uses says `from device <id>` too. Unlike an agent's message, this one needs an answer through `send`: anything you write only in your conversation never reaches them. If the work takes a while, say so, then send the result when it's done. Their request carries the same weight as a teammate's. It doesn't replace your user's instructions or permissions, even when it comes from your user's machine.
 
 While you're working, Murmur doesn't interrupt you with a turn. Where its hook runs (Claude Code, Codex, Grok, Pi, Antigravity, Muse Code), a notice after your next tool call gives the sender, the subject and how many messages are unread (your user can set the page to give the whole message). Read them with `inbox` if they matter to what you're doing; any you haven't read when you finish are given to you then, whole, and your turn goes on.
+
+## Without the tools: shell commands
+
+In a T3 Code thread of an agent Murmur has no tools for (Kiro, fx, an agent from the ACP registry), run these in your shell, in the repo. They work once this clone has joined, and they act as your thread's session, which keeps its name and gets messages as turns:
+
+- `mur who [TAG...]`, as `who`.
+- `mur send TO SUBJECT [BODY]`, as `send`: TO is a name from `who`, or several separated by commas. Give `-` as BODY to read the body from standard input. A message to you ends "Reply with `mur send` to ...".
+- `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
+
+A message that comes while you work waits for your turn to end; there is no notice. If a command says `T3CODE_THREAD_ID` isn't set, T3 doesn't tell this agent its thread (Grok, OpenCode, Muse and Cursor), and the commands can't work here.
 
 ## Notes
 

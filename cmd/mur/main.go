@@ -1,6 +1,7 @@
 // Command mur is the whole tool in one binary: the per-clone daemon, the stdio MCP server each
 // agent session starts, the Claude Code hook, and the few commands a person runs: setup, joining
-// and the page. Messaging is for agents, through the MCP server, and for humans, through the page.
+// and the page. Messaging is for agents, through the MCP server or, in a harness with no Murmur
+// tools, the shell commands (#913), and for humans, through the page.
 package main
 
 import (
@@ -72,6 +73,13 @@ For humans:
                                 First remove every other way they can push (deploy keys they added, team
                                 access, Apps): whatever can still push is given the new key
 
+For agents with no Murmur tools, in a T3 Code thread's shell:
+  mur who [TAG...]              list the sessions in this repo, as the who tool does
+  mur send TO SUBJECT [BODY|-]  send a message, as the send tool does: TO is a name from who, or several
+                                separated by commas; - reads the body from standard input
+  mur inbox                     read and clear the messages that came as notices
+  mur status [TEXT]             set the line others see in who for what you are working on
+
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
   mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
@@ -130,6 +138,8 @@ func main() {
 		err = runRotate(ctx, args, os.Stdout)
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
+	case "who", "send", "inbox", "status":
+		err = mcpserver.Command(ctx, cmd, args, os.Stdin, os.Stdout)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "app":

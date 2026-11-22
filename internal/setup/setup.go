@@ -309,14 +309,15 @@ func gitIn(ctx context.Context, top string) (clone, own gitx.Git, err error) {
 // section is what both files get. It is short on purpose, since it sits in files every agent reads
 // whole: it says the repo uses Murmur, that an agent that hasn't joined should, and points to the
 // two pages that say how to join (which an agent does only after asking its user) and how to use
-// the tools. The pages are docs/agents/. The wording is Tyler's (2026-11-01, #124).
-var section = strings.NewReplacer("{name}", brand.Product, "{join}", brand.JoinDoc, "{use}", brand.UseDoc).
+// the tools. The pages are docs/agents/. The wording is Tyler's (2026-11-01, #124), but for the
+// bracket, for an agent Murmur has no tools for (#913).
+var section = strings.NewReplacer("{name}", brand.Product, "{join}", brand.JoinDoc, "{use}", brand.UseDoc, "{cmd}", brand.Command).
 	Replace(markStart + `
 ## {name}
 This repo uses {name}, a cross-device, intra-repo communication channel for contributing coding agents like yourself. If you have not joined {name} yet, you should.
 
 - To join {name} (ask your user first): {join}
-- To use {name}: {use}
+- To use {name} (no tools? in T3 Code, ` + "`{cmd} who` and `{cmd} send`" + ` work in your shell): {use}
 ` + markEnd + "\n")
 
 // markerFile puts the section into a file, which is created if it is missing.
