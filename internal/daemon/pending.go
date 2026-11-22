@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -27,9 +28,9 @@ import (
 // A pending send is given up after Options.PendingGiveUp, pendingGiveUp by default, and its sender
 // is told in its inbox that it wasn't sent, with why in a few plain words; until then it answered
 // as a send that landed, with nothing added (Tyler, 2026-11-16). It goes as the daemon stops, too:
-// nothing is kept across a restart. The remote is asked first then as well, for pendingStopLook, so
-// that a send it has isn't called not sent (#857); one it couldn't be asked about is on the remote
-// or not as its last push left it.
+// nothing is kept across a restart. The remote is asked first then as well, briefly
+// (pendingStopLook), so that a send it has isn't called not sent (#857); one it couldn't be asked
+// about is on the remote or not as its last push left it.
 
 // pendingGiveUp is how long after its first push ended unsure a pending send is given up, at the
 // first retry to end past it. Tyler set it
@@ -45,11 +46,19 @@ const pendingGiveUp = 3 * time.Minute
 // unsure, which the person's send from the page is told at once as not sent.
 const pendingLook = 20 * time.Second
 
-// pendingStopLook bounds the same asking as the daemon stops. The stop waits DrainTimeout, 20 s,
-// for its background work in any case, and then pushes its goodbye, so these few seconds make no
-// stop longer than one could be already; they are short so that a stop with the network down, which
-// is when sends are pending, isn't held the whole of that time for an answer that won't come.
-const pendingStopLook = 5 * time.Second
+// pendingStopLook is how long the same asking may take as the daemon stops, and pendingStopBy how
+// long after the stop began it may still start; later than that, the sends are given up unasked,
+// as they were before #857. The stop waits up to DrainTimeout, 20 s, for its background work, this
+// with it, and then releases the clone's lock: an asking begun by 10 s is over by 15 s, so that the
+// notices it leaves are saved before the lock goes, and the next daemon, which an update starts at
+// once, doesn't have its state written over. (A fetch's last local steps can run past their time,
+// in milliseconds.) The 5 s is short because sends are pending mostly when the network is down, and
+// a stop then shouldn't wait long for an answer that won't come: such a stop takes up to 5 s more
+// than it did, within the 35 s any stop may take.
+const (
+	pendingStopLook = 5 * time.Second
+	pendingStopBy   = 10 * time.Second
+)
 
 // pushLook is how long a push that failed may go on past its time, asking the remote where the ref
 // is (bus.Repo.Push).
@@ -98,6 +107,9 @@ func (d *Daemon) pendLocked(sha string, settle settleFunc, still func() bool, er
 // longer each time, to a minute, until it lands or is given up.
 func (d *Daemon) pendingLoop() {
 	defer d.bg.Done()
+	// When the stop began: this loop may learn of it late, from inside a retry that it cut off.
+	var stopped atomic.Int64
+	defer context.AfterFunc(d.bgCtx, func() { stopped.Store(time.Now().UnixNano()) })()
 	wait := d.opt.PendingRetry
 	for {
 		select {
@@ -105,7 +117,8 @@ func (d *Daemon) pendingLoop() {
 			d.writeMu.Lock()
 			d.pendRun = false
 			if len(d.pendSends) > 0 {
-				d.giveUpPending(errDaemonStopped, true)
+				at := stopped.Load()
+				d.giveUpPending(errDaemonStopped, at == 0 || time.Since(time.Unix(0, at)) <= pendingStopBy)
 			}
 			d.writeMu.Unlock()
 			return
@@ -187,6 +200,9 @@ func (d *Daemon) retryPending() {
 	// and gives up then without asking the remote. A send waiting on writeMu meanwhile is refused
 	// for the same reason before git starts, so the longer hold costs it nothing.
 	gone := errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible)
+	if d.bgCtx.Err() != nil {
+		return // the daemon is stopping: pendingLoop gives them up, which knows how long it has
+	}
 	if gone || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
 		d.giveUpPending(err, true)
 	}
@@ -214,9 +230,10 @@ func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) {
 // those it has are taken as landed, and the next write builds on its tip; without, or if it can't
 // be asked, on the tip the first was built on. Caller holds writeMu.
 //
-// The asking has its own time, pendingLook, and not what is left of the push's before it: a push
-// that timed out has none left, and the remote was then never asked, so a send that an earlier push
-// had landed was called not sent, and went twice if its sender sent it again (#951).
+// The asking has its own time, pendingLook, or pendingStopLook as the daemon stops, and not what is
+// left of the push's before it: a push that timed out has none left, and the remote was then never
+// asked, so a send that an earlier push had landed was called not sent, and went twice if its
+// sender sent it again (#951).
 func (d *Daemon) giveUpPending(err error, look bool) {
 	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
 	ref := d.meshRef()
