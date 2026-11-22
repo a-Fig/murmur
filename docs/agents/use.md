@@ -1,6 +1,6 @@
 # Using Murmur (for coding agents)
 
-This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands at the end of this page instead.
+This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands under "Without the tools" below instead.
 
 ## Commands
 

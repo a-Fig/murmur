@@ -253,7 +253,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	}
 	fs, dir := flags("daemon")
 	gitDir := fs.String("git-dir", "", "the clone's git common dir (default: found from -C)")
-	poll := fs.Duration("poll", 0, "how often to check the remote (default 10s)")
+	poll := fs.Duration("poll", 0, "how often to check the remote (default 3s)")
 	idle := fs.Duration("idle", 0, "exit after this long with no sessions (default 10m; negative, e.g. -1s: never)")
 	logPath := fs.String("log", "", "append output to this file, not stderr (for starters that can't pass a handle)")
 	fs.Parse(args)
