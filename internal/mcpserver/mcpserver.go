@@ -1470,7 +1470,7 @@ func (l *link) lookupThread(ctx context.Context, timeout time.Duration) {
 	switch {
 	case err == nil && thread != "":
 		l.hello.T3Thread, l.notInT3 = thread, false
-	case errors.Is(err, t3db.ErrNotFound) && !l.nativeAt.IsZero() && time.Since(l.nativeAt) >= notInT3After:
+	case errors.Is(err, t3db.ErrNotFound) && !l.nativeAt.IsZero() && time.Since(l.nativeAt) >= l.seek.notT3:
 		l.notInT3 = true
 	}
 }
@@ -1479,7 +1479,7 @@ func (l *link) lookupThread(ctx context.Context, timeout time.Duration) {
 // before the session is taken not to be T3's (#980). A thread T3 started may not have its row yet at
 // its first call, and a delegate's send then must wait; a codex run from a T3 thread's shell, which
 // inherits T3's variables but is no thread of T3's, waits this long on its first changes. A
-// variable, for tests.
+// variable, for tests, which a link copies when it is made (seekTimes).
 var notInT3After = 10 * time.Second
 
 // The server goes on looking for its thread for seekFor, pausing seekFirst, then twice that, up to
@@ -1494,11 +1494,12 @@ var (
 )
 
 // seekTimes is how a link looks for its thread: for how long, with what first pause, and the
-// longest pause.
-type seekTimes struct{ total, first, max time.Duration }
+// longest pause; and notT3, how long T3's database must have had no thread for a Codex one before
+// the session is taken not to be T3's (notInT3After).
+type seekTimes struct{ total, first, max, notT3 time.Duration }
 
 // currentSeek is the timings above as they are now, for a link that is being made.
-func currentSeek() seekTimes { return seekTimes{seekFor, seekFirst, seekMax} }
+func currentSeek() seekTimes { return seekTimes{seekFor, seekFirst, seekMax, notInT3After} }
 
 // startSeek looks for the T3 thread in the background, with growing pauses, until it finds it, the
 // time is up, or there is no client session ID to look for. When found it tells the daemon, which
