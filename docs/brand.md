@@ -119,14 +119,15 @@ uses Rubik.
 
 ## The mur ui page
 
-The `mur ui` page is drawn as a sibling of T3 Code, and its Dark, Dim and Light themes are T3
-Code's tokens (`internal/web/static/assets/style.css`). They take the icon only.
+The `mur ui` page opens in Dim, with a dark sidebar, a lighter list and the lightest grey behind
+the conversation. Dark and Light use T3 Code's tokens (`internal/web/static/assets/style.css`).
+These three themes use the Murmur icon.
 
 Its fourth theme, Murmur, is the brand: a cream page, ink text, blue for what is picked or
 pressed, and butter for a person's own messages. The sidebar is ink, not blue. Cream on blue is
 5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
 quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
-a step darker for cream. Dark stays the default.
+a step darker for cream.
 
 Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 design (#416).
 A pale blue sidebar and conversation list frame a cream-to-sky thread, with butter for

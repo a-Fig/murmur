@@ -22,7 +22,7 @@ const THEMES = [
   ["murmur", "Murmur"],
   ["sky", "Sky"],
 ];
-let theme = "dark";
+let theme = document.documentElement.dataset.theme;
 try {
   const t = localStorage.getItem(THEME_KEY);
   if (THEMES.some(([id]) => id === t)) theme = t;

@@ -50,8 +50,8 @@
 }
 
 /*
- * T3 Code's dark theme (index.css :root under @variant dark), the default. Dim and Light, below,
- * change only these tokens.
+ * Base tokens from T3 Code's dark theme (index.css :root under @variant dark). The page starts
+ * with Dim's overrides below.
  */
 :root {
   color-scheme: dark;
