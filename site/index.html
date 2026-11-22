@@ -1170,8 +1170,19 @@ void main() {
   // who asked for reduced motion, gets a still of the finished exchange and starts it themselves.
   const film = document.getElementById('film');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const kind = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)').matches ? 'tall' : 'wide';
-  film.poster = `/how-${kind}-${still ? 'last' : 'first'}.webp`;
+  // A <source media> is chosen once, at load, so a page opened in a narrow window and then widened
+  // kept the tall video inside the wide box. The video follows the window, as the box does.
+  const tall = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)');
+  const pick = () => {
+    const kind = tall.matches ? 'tall' : 'wide';
+    film.poster = `/how-${kind}-${still ? 'last' : 'first'}.webp`;
+    if (!film.currentSrc || film.currentSrc.endsWith(`/how-${kind}.mp4`)) return;
+    const playing = !film.paused;
+    film.src = `/how-${kind}.mp4`;
+    if (playing) film.play().catch(() => {});
+  };
+  pick();
+  tall.addEventListener('change', pick);
   // The browser's controls are for no-JS only; their dark bar would sit across the drawing.
   const btn = document.getElementById('filmBtn');
   film.controls = false;
