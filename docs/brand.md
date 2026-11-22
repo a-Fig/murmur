@@ -141,7 +141,7 @@ in all. The ghosts are named for ways of talking quietly (murmur, hush, whisper,
 ghost has the mark's quotation-mark eyes and mumble its leaning ovals, and the bubble accessory is a
 butter speech bubble with someone typing. The ghosts carry no tile of their own; their bodies are the
 brand's light tints, which read on all twelve device hues. A session's name picks its ghost and
-accessory (`ghostOf` in `app.js`), so it wears the same one everywhere. Every body shares one head
+accessory (`ghostOf` in `messages.js`), so it wears the same one everywhere. Every body shares one head
 and eye line, so each accessory fits every ghost; some, like the bubble, reach past the tile's edge,
 and the page doesn't clip them. `scripts/ghosts.py` writes them and `docs/ghosts.html`, a sheet of
 every combination; a change to the set means running it again.

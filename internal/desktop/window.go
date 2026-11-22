@@ -166,7 +166,7 @@ func (a *app) raise() {
 }
 
 // pageNote is what the page tells the window each time its title or unread count changes, and
-// when messages to the person arrive (app.js, tellApp).
+// when messages to the person arrive (sync.js, tellApp).
 type pageNote struct {
 	Host   string `json:"host"`
 	Title  string `json:"title"`

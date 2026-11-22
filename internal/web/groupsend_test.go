@@ -1,6 +1,7 @@
 package web
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,16 +9,31 @@ import (
 	"testing"
 )
 
-// pageFunctions returns the source of these top-level declarations in the page's app.js: each
+// pageSource returns the page's scripts, every module under assets, as one text. No two modules
+// declare the same top-level name, so a declaration is found in whichever one holds it.
+func pageSource(t *testing.T) string {
+	t.Helper()
+	files, err := fs.Glob(static, "static/assets/*.js")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no page scripts: %v", err)
+	}
+	var all []string
+	for _, f := range files {
+		b, err := static.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, strings.ReplaceAll(string(b), "\r\n", "\n"))
+	}
+	return strings.Join(all, "\n")
+}
+
+// pageFunctions returns the source of these top-level declarations in the page's scripts: each
 // starts a line ("function x(", "async function x(", "class x ", "const x =") and a function or
 // class ends at the first line that is only "}".
 func pageFunctions(t *testing.T, names ...string) string {
 	t.Helper()
-	b, err := static.ReadFile("static/assets/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := strings.ReplaceAll(string(b), "\r\n", "\n")
+	src := pageSource(t)
 	var out []string
 	for _, n := range names {
 		found := false
@@ -36,7 +52,7 @@ func pageFunctions(t *testing.T, names ...string) string {
 			break
 		}
 		if !found {
-			t.Fatalf("app.js has no top-level %s", n)
+			t.Fatalf("the page has no top-level %s", n)
 		}
 	}
 	return strings.Join(out, "\n")
