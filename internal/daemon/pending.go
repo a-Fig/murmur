@@ -36,9 +36,9 @@ import (
 const pendingGiveUp = 3 * time.Minute
 
 // pendingLook bounds asking the remote which pending sends it has, as they are given up or dropped.
-// With the push before it, at most pushTimeout, writeMu is held 80 s at the longest, under the 90 s
-// a send waiting on it has (serve.go). That send then has 10 s left for its own push, where it had
-// 30; one that runs out before git starts is refused as not sent, which is true of it.
+// retryPending keeps it back from the push before it, so that both fit in one push's time: a send
+// waiting on writeMu has 90 s (serve.go), and its own push, cut short by a longer wait, would more
+// often end unsure, which the person's send from the page is told at once as not sent.
 const pendingLook = 20 * time.Second
 
 // settleFunc is told once how a pending send ended: landed; or given up, with absent saying the
@@ -115,9 +115,14 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). A give-up
-	// may take pendingLook more.
-	ctx, cancel := context.WithTimeout(d.bgCtx, d.opt.PendingPush)
+	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). The push
+	// that may be the last, whose failing gives the sends up, leaves pendingLook of it for asking
+	// the remote.
+	start, limit := time.Now(), d.opt.PendingPush
+	if left := limit - pendingLook; left > 0 && time.Since(d.pendFrom)+limit >= d.opt.PendingGiveUp {
+		limit = left
+	}
+	ctx, cancel := context.WithTimeout(d.bgCtx, limit)
 	defer cancel()
 	if d.dropSwitchedOff(); len(d.pendSends) == 0 {
 		return
@@ -125,7 +130,11 @@ func (d *Daemon) retryPending() {
 	ref, sha := d.meshRef(), d.ownTip
 	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", d.pendingStill)
 	if errors.Is(err, errSendOff) {
-		d.dropSwitchedOff() // Send files went off as the push waited its turn
+		// Send files went off as the push waited its turn. If the wait left no time to ask the
+		// remote, the next retry drops them as it starts; nothing is pushed until then.
+		if time.Since(start)+pendingLook <= d.opt.PendingPush {
+			d.dropSwitchedOff()
+		}
 		return
 	}
 	if err == nil {
