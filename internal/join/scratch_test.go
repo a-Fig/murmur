@@ -16,8 +16,9 @@ func scratchSandbox(t *testing.T) *sandbox {
 	sb := newSandbox(t, false)
 	withAgents(sb)
 	tmp := filepath.Join(sb.root, "tmp")
+	mustMakeDir(t, tmp)
 	was := tempRoots
-	tempRoots = func() []string { return []string{tmp} }
+	tempRoots = func() []string { return []string{tmp, resolved(tmp)} } // macOS's /var is /private/var
 	t.Cleanup(func() { tempRoots = was })
 	sb.Home = filepath.Join(tmp, "home")
 	in := func(p string) string { return filepath.Join(sb.Home, filepath.Base(p)) }
@@ -122,7 +123,8 @@ func TestARealHomeWritesWhereItsVariablesSay(t *testing.T) {
 	if strings.Contains(strings.Join(notes, "\n"), "--outside-home") {
 		t.Errorf("notes %q", notes)
 	}
-	tempRoots = func() []string { return []string{sb.Home} } // TMPDIR=$HOME
+	mustMakeDir(t, sb.Home)
+	tempRoots = func() []string { return []string{sb.Home, resolved(sb.Home)} } // TMPDIR=$HOME
 	if got := sb.scratchHome(); got != "" {
 		t.Errorf("a home that is the temporary folder was taken for a scratch one: %s", got)
 	}
@@ -169,5 +171,25 @@ func TestAScratchHomesJoinRuns(t *testing.T) {
 	}
 	if !strings.Contains(r.String(), "(from CLAUDE_CONFIG_DIR)") {
 		t.Errorf("report:\n%s", r)
+	}
+}
+
+// A link in a scratch home to the user's own folders leads outside it: T3's settings through it
+// aren't read, and a configuration through it, one not made yet included, is left alone.
+func TestAScratchHomesLinkOutIsOutside(t *testing.T) {
+	sb := scratchSandbox(t)
+	real := filepath.Join(sb.root, "real")
+	write(t, filepath.Join(real, ".t3", "userdata", "settings.json"), t3Settings(real))
+	mustMakeDir(t, sb.Home)
+	linkOrSkip(t, filepath.Join(real, ".t3"), filepath.Join(sb.Home, ".t3"))
+	linkOrSkip(t, real, filepath.Join(sb.Home, "real"))
+	sb.T3Settings = filepath.Join(sb.Home, ".t3", "userdata", "settings.json")
+	sb.CodexHome = filepath.Join(sb.Home, "real", "codex-not-made-yet")
+	byAgent, notes := sb.homes()
+	if got := dirsOf(byAgent[agentIndex("codex")]); len(got) != 1 || got[0] != "" {
+		t.Errorf("Codex homes %q, want the one through the link left alone", got)
+	}
+	if note := strings.Join(notes, "\n"); !strings.Contains(note, "listed in "+sb.T3Settings) || strings.Contains(note, "personal claude") {
+		t.Errorf("notes:\n%s", note)
 	}
 }

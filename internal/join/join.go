@@ -206,6 +206,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				break
 			}
 			if h.Dir == "" { // an agent this Env leaves out, or a home left alone (scratch.go)
+				// The older hooks in the working trees stay for a Claude Code home not written.
+				claudeOK = claudeOK && a.driver != "claudeAgent"
 				continue
 			}
 			if h.T3Own && !isDir(h.Dir) {

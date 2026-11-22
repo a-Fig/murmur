@@ -55,20 +55,33 @@ var tempRoots = func() []string {
 	return roots
 }
 
-// resolved is path with its links resolved, "" where it can't be (a folder not made yet).
+// resolved is path with the links in the part of it that exists resolved, "" where none of it can
+// be: a folder not made yet is resolved through the nearest one above it that is.
 func resolved(path string) string {
-	p, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return ""
+	rest := ""
+	for p := filepath.Clean(path); ; {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(r, rest)
+		}
+		up := filepath.Dir(p)
+		if up == p {
+			return ""
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = up
 	}
-	return p
 }
 
-// inTemp says path is in one of the temporary folders, or, unless strict, is one.
+// inTemp says path is in one of the temporary folders, or, unless strict, is one. A home (strict)
+// counts as written or resolved, as either is how a test made it. A configuration counts by where
+// its links lead: a link in a scratch home to the user's own ~/.t3 would otherwise be followed.
 func inTemp(path string, strict bool) bool {
-	roots := tempRoots()
-	for _, p := range []string{filepath.Clean(path), resolved(path)} {
-		for _, root := range roots {
+	paths := []string{filepath.Clean(path), resolved(path)}
+	if !strict && paths[1] != "" {
+		paths = paths[1:]
+	}
+	for _, p := range paths {
+		for _, root := range tempRoots() {
 			if p != "" && within(p, root) && !(strict && samePath(p, root)) {
 				return true
 			}
@@ -116,8 +129,8 @@ func (e Env) t3Vars() []string {
 }
 
 // homeFrom is the variable that put h, one of agent a's homes, where it is: the agent's own variable
-// for its default home, T3's settings for one an instance runs in, and the home's otherwise (the
-// shared ~/.gemini).
+// for its default home; the home's for one in the home, as the shared ~/.gemini and the defaults T3
+// runs instances in are; else T3's settings, which named it.
 func (e Env) homeFrom(a agent, h agentHome, readT3 bool) string {
 	if samePath(h.Dir, e.defaultHome(a).Dir) {
 		v := a.t3Var
@@ -129,7 +142,7 @@ func (e Env) homeFrom(a agent, h agentHome, readT3 bool) string {
 		}
 		return e.homeVar()
 	}
-	if readT3 {
+	if readT3 && (e.Home == "" || !within(h.Dir, e.Home)) {
 		return "T3 Code's settings, in " + e.T3Settings
 	}
 	return e.homeVar()

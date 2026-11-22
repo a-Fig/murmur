@@ -89,7 +89,7 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
   still read the shell's `CLAUDE_CONFIG_DIR` and T3's settings, and pointed the user's own Claude
   Code and Antigravity at a test build that was later deleted. So when the home (`HOME`,
   `USERPROFILE`, or the one Go reads) is inside the temporary folder (`os.TempDir`, `/tmp`,
-  `/var/tmp`), join and uninstall leave every configuration outside that folder alone, don't read
+  `/var/tmp`), join and uninstall leave every agent configuration outside that folder alone, don't read
   T3's settings from outside it, and say which variable pointed there. Nobody's real home is in the
   temporary folder, so users never see this; `--outside-home` turns it off (a container whose
   `HOME` is under `/tmp`, say). A binary in the temporary folder isn't refused: `go run` puts one
