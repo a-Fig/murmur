@@ -1639,7 +1639,7 @@ func (d *Daemon) tidyLoop(ctx context.Context) {
 		all := swept.IsZero() || time.Since(swept) > time.Hour
 		// Not cut short when the daemon stops: on Windows a git stopped is killed, and one killed
 		// while it holds packed-refs.lock leaves it, failing the user's own git (Opus review).
-		// git waits a second for that lock at most, so a Tidy is quick.
+		// Tidy has git wait a second for that lock at most, so it is quick.
 		tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		err := d.repo.Tidy(tctx, all)
 		cancel()

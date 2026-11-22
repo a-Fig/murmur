@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -137,8 +138,19 @@ func TestFetchLeavesItsRefsToTidy(t *testing.T) {
 	if f.left() == "" {
 		t.Error("the fetch removed its own ref itself")
 	}
-	if err := f.r.Tidy(ctx, false); err == nil {
+	// However long the clone's config has git wait for the lock (-1: for ever), a Tidy waits a
+	// second or so, and the daemon's stop isn't held up.
+	if out, err := exec.Command("git", "--git-dir="+f.local, "config", "core.packedRefsTimeout", "-1").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v: %s", err, out)
+	}
+	tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	began := time.Now()
+	if err := f.r.Tidy(tctx, false); err == nil {
 		t.Log("Tidy deleted while packed-refs was locked; this git doesn't lock it to delete a loose ref")
+	}
+	cancel()
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("a Tidy while packed-refs was locked took %s", took)
 	}
 	unlock()
 	if err := f.r.Tidy(ctx, false); err != nil {

@@ -374,7 +374,9 @@ func (r *Repo) Tidy(ctx context.Context, all bool) error {
 	for _, ref := range drop {
 		fmt.Fprintf(&del, "delete %s\n", ref)
 	}
-	if _, err := r.Git.Run(ctx, del.String(), "update-ref", "--no-deref", "--stdin"); err != nil {
+	// A delete waits for packed-refs.lock as long as core.packedRefsTimeout says, which a user's
+	// config can make forever; a second is git's own default, and keeps a Tidy short.
+	if _, err := r.Git.Run(ctx, del.String(), "-c", "core.packedRefsTimeout=1000", "update-ref", "--no-deref", "--stdin"); err != nil {
 		r.fetchMu.Lock()
 		r.spent = append(r.spent, drop...)
 		r.fetchMu.Unlock()
