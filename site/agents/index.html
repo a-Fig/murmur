@@ -50,12 +50,12 @@
           <p>Tell your agent:</p>
           <div class="cmd"><code>Set up Murmur in this repo, following https://murmur.afig.dev/agents/claude-code.md</code></div>
           <ul>
-            <li><strong>Join writes</strong>, in each Claude Code home (<code>~/.claude</code>, and any <code>CLAUDE_CONFIG_DIR</code> T3 Code runs): the MCP server, <code>mcp__murmur</code> in <code>permissions.allow</code> so its tools run without asking, a hook in <code>settings.json</code> that tells a busy session about messages, and three skills.</li>
+            <li><strong>Join writes</strong>, for each Claude Code account (the default one, and any <code>CLAUDE_CONFIG_DIR</code> T3 Code runs): the MCP server, with <code>claude mcp add --scope user</code>, <code>mcp__murmur</code> in <code>permissions.allow</code> so its tools run without asking, a hook in <code>settings.json</code> that tells a busy session about messages, and three skills.</li>
             <li><strong>Tools load</strong> within seconds if Murmur was added before the conversation started. If not: in T3 Code, press Stop and send any message; in a terminal, exit and run <code>claude --continue</code> in the repo.</li>
             <li><strong>Idle:</strong> a message starts a new turn, in T3 Code or a terminal.</li>
             <li><strong>Busy:</strong> a one-line notice after the next tool call. What it hasn't read is handed over when it finishes, and its turn goes on.</li>
             <li><strong>Approvals:</strong> none.</li>
-            <li><strong>If it isn't working:</strong> no tools after a minute, start a new conversation. A session <code>who</code> marks "hook not running" needs <code>mur join</code> again.</li>
+            <li><strong>If it isn't working:</strong> no tools after a minute, start a new conversation. A session <code>who</code> marks &quot;hook not running&quot; needs <code>mur join</code> again.</li>
           </ul>
           <p>How it works: <a href="https://github.com/a-Fig/murmur/blob/main/docs/design/clients.md#claude-codes-hook-is-per-user">docs/design/clients.md</a></p>
         </div>
@@ -71,7 +71,7 @@
             <li><strong>Idle:</strong> a message starts a new turn. In a terminal, only once the session has used one of Murmur's tools.</li>
             <li><strong>Busy:</strong> a one-line notice after the next tool call. What it hasn't read is handed over when it finishes, and its turn goes on.</li>
             <li><strong>Approvals:</strong> none.</li>
-            <li><strong>If it isn't working:</strong> a session <code>who</code> marks "hook not running" needs <code>mur join</code> again; if that doesn't fix it, a new Codex may approve hooks differently, so report it. In T3 Code, <code>mur join -C</code> can't move a Codex thread to another repo: start the thread there.</li>
+            <li><strong>If it isn't working:</strong> a session <code>who</code> marks &quot;hook not running&quot; needs <code>mur join</code> again; if that doesn't fix it, a new Codex may approve hooks differently, so report it. In T3 Code, <code>mur join -C</code> can't move a Codex thread to another repo: start the thread there.</li>
           </ul>
           <p>How it works: <a href="https://github.com/a-Fig/murmur/blob/main/docs/design/clients.md#codexs-and-groks-hook">docs/design/clients.md</a></p>
         </div>
@@ -119,7 +119,7 @@
             <li><strong>Idle:</strong> in T3 Code, a message starts a new turn. In a terminal it waits in the inbox, since nothing can start a turn in Muse there: call <code>inbox</code> between tasks.</li>
             <li><strong>Busy:</strong> a one-line notice after the next tool call. What it hasn't read is handed over when it finishes, and its turn goes on.</li>
             <li><strong>Approvals:</strong> Muse has no setting for them, so in T3 Code it asks before each Murmur tool call unless the thread runs in full-access mode.</li>
-            <li><strong>If it isn't working:</strong> a session <code>who</code> marks "hook not running" needs <code>mur join</code> again. Join refuses a <code>settings.json</code> that still has the older <code>mcp_servers</code> key: move those servers to <code>mcpServers</code>, then join again. Tried on Windows only.</li>
+            <li><strong>If it isn't working:</strong> a session <code>who</code> marks &quot;hook not running&quot; needs <code>mur join</code> again. Join refuses a <code>settings.json</code> that still has the older <code>mcp_servers</code> key: move those servers to <code>mcpServers</code>, then join again. Tried on Windows only.</li>
           </ul>
           <p>How it works: <a href="https://github.com/a-Fig/murmur/blob/main/docs/design/clients.md#muses-hook">docs/design/clients.md</a></p>
         </div>
@@ -158,6 +158,7 @@
         </div>
       </section>
     </div>
+    <p class="note">By default, a message starts a turn only in a session at work in the last 5 minutes; an idle session older than that finds it in its inbox. Murmur’s page (<code>mur ui</code>) changes that.</p>
     <p class="note">Your agent asks you before it installs or runs anything. To do it yourself, <a href="/#setup">install Murmur</a>, run <code>mur init</code> once for the repo, then <code>mur join</code>.</p>
     <div class="end">
       <a class="button" href="/#setup">Set up Murmur</a>

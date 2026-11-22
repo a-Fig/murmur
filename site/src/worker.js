@@ -83,7 +83,7 @@ function withHeaders(res, extra) {
 
 // One file of an agent page: from the cache if it was fetched from GitHub in the last FRESH_SECONDS;
 // else from GitHub; else, if GitHub is unreachable or answers with an error, the last good copy this
-// data center kept; else the copy bundled at deploy, with a line above it saying so.
+// data center kept; else the copy bundled at deploy. source says which.
 async function agentFile(env, ctx, page) {
   const raw = `${rawBase(env)}docs/agents/${page}.md`;
   const ref = env?.DOCS_REF ? `${env.DOCS_REF}/` : '';
@@ -101,17 +101,13 @@ async function agentFile(env, ctx, page) {
   } catch (err) {
     console.log(`fetching ${raw}: ${err}`);
     const kept = await cache.match(keptKey);
-    const text = kept ? await kept.text() : PAGES[page];
-    return {
-      raw, source: kept ? 'kept-copy' : 'deployed-copy',
-      text: `> GitHub couldn't be reached just now, so this is ${kept ? 'the last copy fetched from it' : "the copy from this site's last deploy"}. ` +
-        `It may be out of date: the current page is ${raw}.\n\n` + text,
-    };
+    return { raw, text: kept ? await kept.text() : PAGES[page], source: kept ? 'kept-copy' : 'deployed-copy' };
   }
 }
 
 // An agent page: the files named in parts, one after another (an agent's own file, then the steps
-// every agent shares). X-Murmur-Source says where the first came from, or the worst of them.
+// every agent shares). X-Murmur-Source says where the least fresh of them came from, and a line at
+// the top says so when any of them isn't GitHub's current copy.
 async function agentPage(request, env, ctx, parts, atRoot, vary = atRoot) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response('Only GET and HEAD.\n', { status: 405, headers: { Allow: 'GET, HEAD' } });
@@ -120,6 +116,10 @@ async function agentPage(request, env, ctx, parts, atRoot, vary = atRoot) {
   let text = files.map(f => f.text.trimEnd()).join('\n\n') + '\n';
   const order = ['cache', 'github', 'kept-copy', 'deployed-copy'];
   const source = files.map(f => f.source).reduce((a, b) => order.indexOf(b) > order.indexOf(a) ? b : a);
+  if (source === 'kept-copy' || source === 'deployed-copy') {
+    text = `> GitHub couldn't be reached just now, so this is ${source === 'kept-copy' ? 'the last copy fetched from it' : "the copy from this site's last deploy"}. ` +
+      `It may be out of date: the current text is ${files.map(f => f.raw).join(' and ')}.\n\n` + text;
+  }
 
   if (atRoot) {
     text = `> This is Murmur's website, murmur.afig.dev, as markdown for a coding agent: below is its setup page, also at ${SITE}/setup. ` +

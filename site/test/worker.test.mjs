@@ -123,6 +123,7 @@ test('with GitHub down, an agent\'s page is the copies bundled at deploy', withG
   const res = await getIn(env, '/agents/pi.md');
   const text = await res.text();
   assert.match(text, /^> GitHub couldn't be reached/);
+  assert.equal(text.match(/GitHub couldn't be reached/g).length, 1, 'one note, at the top');
   assert.ok(text.includes(PAGES['harnesses/pi'].trimEnd()));
   assert.ok(text.trimEnd().endsWith(PAGES.steps.trimEnd()));
   assert.equal(res.headers.get('X-Murmur-Source'), 'deployed-copy');

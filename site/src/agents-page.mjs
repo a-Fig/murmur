@@ -13,7 +13,7 @@ export const AGENTS = [
   ['muse-code', 'muse.svg'], ['grok', 'grok.svg'], ['antigravity', 'antigravity.svg'],
 ];
 
-const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Inline markdown to HTML. Code spans are set aside first, so nothing inside them is read as bold
 // or as a link.
@@ -51,7 +51,7 @@ export function agentsPage(docs, shell) {
   const sections = AGENTS.map(([slug, logo]) => {
     const { name, html } = agentSection(docs[slug]);
     return `      <section class="fact" id="${slug}">
-        <div class="label"><img src="/agents/${logo}" alt="" width="22" height="22"><h2>${name}</h2></div>
+        <div class="label"><img src="/agents/${logo}" alt="" width="22" height="22"><h2>${escape(name)}</h2></div>
         <div class="body">
           <p>Tell your agent:</p>
           <div class="cmd"><code>Set up Murmur in this repo, following ${SITE}/agents/${slug}.md</code></div>
@@ -109,6 +109,7 @@ export function agentsPage(docs, shell) {
     <div class="facts">
 ${sections}
     </div>
+    <p class="note">By default, a message starts a turn only in a session at work in the last 5 minutes; an idle session older than that finds it in its inbox. Murmur’s page (<code>mur ui</code>) changes that.</p>
     <p class="note">Your agent asks you before it installs or runs anything. To do it yourself, <a href="/#setup">install Murmur</a>, run <code>mur init</code> once for the repo, then <code>mur join</code>.</p>
     <div class="end">
       <a class="button" href="/#setup">Set up Murmur</a>
