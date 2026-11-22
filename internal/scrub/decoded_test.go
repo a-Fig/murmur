@@ -7,7 +7,8 @@ import (
 
 // A key in a JSON string, written with JSON's escapes, is found as the formats find it written out
 // (#981): the format checks read only the text as written, so escaped slashes, a \u escape or a
-// \n just before the key let it through under a field of any name.
+// \n just before the key let it through under a field of any name. A credential assignment in JSON
+// within JSON, with \" around its name, got through the same way.
 func TestBlocksFormatsWrittenWithJSONEscapes(t *testing.T) {
 	for _, c := range []struct{ text, want string }{
 		{`{"url": "https:\/\/hooks.slack.com\/services\/` + `T0123ABCD\/B0456EFGH\/` + `abcdEFGHijklMNOPqrst1234"}`, "a Slack webhook URL"},
@@ -15,8 +16,10 @@ func TestBlocksFormatsWrittenWithJSONEscapes(t *testing.T) {
 		{`{"note": "use this:\n` + `sk-ant-` + `api03-abcdefghijklmnopqrstuvwxyz"}`, "an Anthropic API key"},
 		{`{"note": "key\t` + `ghp_` + `abcdefghijklmnopqrstuvwxyz0123456789AB"}`, "a GitHub token"},
 		{`{"v": "\u0067hp_` + `abcdefghijklmnopqrstuvwxyz0123456789AB"}`, "a GitHub token"},
-		{`{"pem": "\n-----BEGIN RSA PRIVATE KEY-----\nMIIE"}`, "a private key"},
+		{`{"pem": "\u002d\u002d\u002d\u002d\u002dBEGIN RSA PRIVATE KEY-----\nMIIE"}`, "a private key"},
 		{`{"args": "{\"url\": \"https:\\\/\\\/hooks.slack.com\\\/services\\\/` + `T0123ABCD\\\/B0456EFGH\\\/` + `abcdEFGHijklMNOPqrst1234\"}"}`, "a Slack webhook URL"}, // JSON within JSON
+		{`{"args": "{\"password\": \"` + `hunter2Hunter2X9` + `\"}"}`, "a credential assignment"},                                                                       // a config in a tool call
+		{`{"args": "{\"API_KEY\": \"` + `abc123def456ghi789` + `\"}"}`, "a credential assignment"},
 	} {
 		err := Check(c.text)
 		if err == nil {
@@ -39,6 +42,9 @@ func TestPassesTextWithBackslashes(t *testing.T) {
 		`{"msg": "Authorization: Bearer \u003ctoken\u003e"}`,
 		`{"image": "ghcr.io\/a-fig\/murmur@sha256:0123abcd"}`,
 		`a lone backslash at the end \`,
+		`{"args": "{\"API_KEY\": \"process.env.API_KEY\"}"}`,
+		`{"args": "{\"password\": \"\", \"token\": \"<your token>\"}"}`,
+		"many lines\nwithout a backslash\n" + `and one {"k": "v\/w"}` + "\nAPI_KEY = process.env.API_KEY\n",
 	} {
 		if err := Check(s); err != nil {
 			t.Errorf("blocked %q: %v", s, err)
