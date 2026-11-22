@@ -214,7 +214,8 @@ Added 2026-11-16 (#461). Muse takes Claude Code's hooks, payload and answers, so
 the Claude Code hook with Muse's identity. Seen on Muse 1.4.14 on Windows, in a scratch config and
 then in a joined sandbox, with `muse exec`: a message sent while the session slept in a shell
 command came as the notice after that call, and at the turn's end `Stop` blocked with the message
-whole and the turn went on. Not tried: a Muse thread in T3 (`muse serve`), or Muse on macOS or Linux.
+whole and the turn went on. A Muse thread in T3 (`muse serve`) works too (Tyler, 2026-11-21). Not
+tried: Muse on macOS or Linux.
 
 - **Where.** `hooks` in the same `settings.json` as the server, on `UserPromptSubmit`, `PostToolUse`
   (matcher `*`) and `Stop`, Claude Code's event names, not the camelCase of Muse's protocol. Each
