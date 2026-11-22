@@ -45,6 +45,9 @@ func (e Env) registerGrokAt(h agentHome) (did []string, fresh bool, err error) {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
 	out, allowed, err := addTOMLListItem(out, "permission", "allow", grokAllow, "config.toml")
+	if err == nil && (changed || allowed) {
+		err = checkTOMLEdit(string(b), out)
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
