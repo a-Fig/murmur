@@ -212,6 +212,8 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 	s := Read(ctx, getenv, gitDir, running)
 	if !s.CanGoBack {
 		switch {
+		case strings.HasSuffix(running, "-dev"):
+			return s, errors.New("a development build doesn't update itself")
 		case !prerelease(running):
 			return s, errors.New("this is a stable release already")
 		case s.Effective == ChoiceOff:
