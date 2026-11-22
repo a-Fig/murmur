@@ -37,7 +37,8 @@ const pendingGiveUp = 3 * time.Minute
 
 // pendingLook bounds asking the remote which pending sends it has, as they are given up or dropped.
 // retryPending keeps it back from the push before it, so that writeMu is held no longer than
-// before the asking had time of its own: a push's time and pushLook, 75 s. A send waiting on
+// before the asking had time of its own: a push's time and pushLook, 75 s (but for a clone that
+// left or a device gone invisible, whose waiting sends are refused anyway). A send waiting on
 // writeMu has 90 s (serve.go), and its own push, cut short by a longer wait, would more often end
 // unsure, which the person's send from the page is told at once as not sent.
 const pendingLook = 20 * time.Second
@@ -122,8 +123,10 @@ func (d *Daemon) pendingLoop() {
 func (d *Daemon) retryPending() {
 	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). A retry
 	// that may end past the give-up time is the last: its push leaves pendingLook of that time for
-	// asking the remote, and only it gives the sends up for their age. One that ran past the time
-	// all the same leaves them to the next, which is the last.
+	// asking the remote, and only it gives the sends up for their age. A last retry that ends before
+	// the give-up time, as one whose push hung from 110 s to 165 s does, leaves them to the next: a
+	// retry with a whole minute's push would have ended past the time and given them up there, so
+	// the give-up can come one retry later than it did, about a minute and a half at the most.
 	start, limit := time.Now(), d.opt.PendingPush
 	last := time.Since(d.pendFrom)+limit+pushLook >= d.opt.PendingGiveUp
 	if left := limit - pendingLook; last && left > 0 {
@@ -171,10 +174,12 @@ func (d *Daemon) retryPending() {
 			}
 		}
 	}
-	// A clone that left, or a device gone invisible, pushes nothing more: its sends are given up now,
-	// or by the next retry if this one's wait for its turn left no time to ask the remote.
+	// A clone that left, or a device gone invisible, pushes nothing more, and its sends are given up
+	// now, however long the wait for the push's turn was: a clone that left stops within a second,
+	// and gives up then without asking the remote. A send waiting on writeMu meanwhile is refused
+	// for the same reason before git starts, so the longer hold costs it nothing.
 	gone := errors.Is(err, ErrNoConsent) || errors.Is(err, ErrInvisible)
-	if gone && room() || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
+	if gone || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
 		d.giveUpPending(err, true)
 	}
 }
