@@ -26,9 +26,11 @@ started.
   said it read the thread (`Response.ThreadUnread`, #980). If the lookup or the daemon's read failed,
   the call tries both again, up to 3 s for the lookup and 15 s for the route, and if they fail
   again it changes nothing and tells the agent to try again in a few seconds. The cost: a T3
-  database Murmur can't read stops a T3 Codex session's changes until it can. A Codex thread T3's
-  database has no row for (a `codex` run from a T3 thread's shell, which inherits T3's variables)
-  isn't T3's, and goes on as outside T3. `who`, `lookup` and `inbox` never wait.
+  database Murmur can't read stops a T3 Codex session's changes until it can, which after a change
+  to T3's schema means until a release of Murmur reads the new one. A Codex thread T3's database
+  has had no row for since its first call 10 s ago (a `codex` run from a T3 thread's shell, which
+  inherits T3's variables) is taken not to be T3's, and isn't held; before then it is, since T3
+  may not yet have written a new thread's row. `who`, `lookup` and `inbox` never wait.
   Until that first call a Codex delegate is listed, as any delegate is when the read fails or T3
   hasn't written its thread's row yet; once its thread is read, the name it took meanwhile is seen
   by nobody. A Claude Code session in T3 has its thread from its environment, and still goes on

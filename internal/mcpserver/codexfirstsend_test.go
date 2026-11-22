@@ -261,16 +261,46 @@ func TestACodexSendAfterAnUnreadHelloChangesNothing(t *testing.T) {
 }
 
 // A codex run from a T3 thread's shell inherits T3's variables, but T3's database has no thread for
-// it: it isn't T3's, and its sends go on as a session's outside T3 do, rather than being told to
-// try again for ever.
+// it: once that has lasted notInT3After, it isn't T3's, and its sends go on rather than being told
+// to try again for ever. Before then they wait, as a delegate's must while T3 writes its row.
 func TestACodexSessionT3HasNoThreadForGoesOn(t *testing.T) {
+	after := notInT3After
+	notInT3After = 300 * time.Millisecond
+	t.Cleanup(func() { notInT3After = after })
 	f := &fakeDaemon{}
 	fd := &finder{missing: t3db.ErrNotFound}
 	s := codexInT3(t, f, fd, 0)
+	_, err := s.callFrom(context.Background(), codexCallIn("send", "codex-shell"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"})
+	if !errors.Is(err, errUnclassified) {
+		t.Errorf("the first send: %v, want errUnclassified", err)
+	}
+	time.Sleep(notInT3After)
 	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-shell"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
-		t.Fatalf("the send: %v", err)
+		t.Fatalf("the send once T3 has long had no thread for it: %v", err)
 	}
 	if n := sendsReached(f); n != 1 {
 		t.Errorf("%d sends reached the daemon, want 1", n)
+	}
+}
+
+// T3 hasn't written a delegate's row yet at its first call (#980): T3's database has no thread for
+// it, and the send waits rather than going out unclassified. Once the row is there, the next send
+// goes out after the route.
+func TestACodexSendWaitsForARowT3HasntWritten(t *testing.T) {
+	f := &fakeDaemon{}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}, misses: 2, missErr: t3db.ErrNotFound}
+	s := codexInT3(t, f, fd, 0)
+	_, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"})
+	if !errors.Is(err, errUnclassified) {
+		t.Errorf("the send before T3 has the row: %v, want errUnclassified", err)
+	}
+	if n := sendsReached(f); n != 0 {
+		t.Fatalf("%d sends reached the daemon before it was told the thread", n)
+	}
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the send once T3 has the row: %v", err)
+	}
+	if routed, sent := sentAfterRoute(f, "thread-kid"); !sent || !routed {
+		t.Errorf("the send reached the daemon (%v) before it was told the thread (%v)", sent, routed)
 	}
 }

@@ -863,7 +863,8 @@ func mutates(op string) bool {
 // errUnclassified is what a T3 Codex session's call that changes something returns while the daemon
 // doesn't know whether another thread started the session (#980). It is safe to try again.
 var errUnclassified = errors.New(brand.Product + " can't read this session's T3 thread yet, so it doesn't know whether " +
-	"another thread started this one. Nothing was sent or changed; try again in a few seconds")
+	"another thread started this one. Nothing was sent or changed; try again in a few seconds. If this goes on, T3's database " +
+	"may have changed in a way " + brand.Product + " can't read: tell your user")
 
 // classifyFirst holds a call that changes something, in a Codex session in T3, until the daemon has
 // read the T3 thread of the Codex thread a tool call named (#966): the daemon reads the thread's
@@ -874,8 +875,8 @@ var errUnclassified = errors.New(brand.Product + " can't read this session's T3 
 // in whether it read the thread.
 //
 // The call goes on only once a reply from the daemon has said it read that thread (#980), or T3's
-// database has said it has no thread for this Codex one (a codex run from a T3 thread's shell, which
-// inherits T3's variables): such a session isn't T3's, and goes on as outside it. If the lookup
+// database has had no thread for this Codex one for notInT3After (a codex run from a T3 thread's
+// shell, which inherits T3's variables): such a session isn't T3's, and isn't held. If the lookup
 // failed, or the daemon couldn't read the thread, the call looks again and tells the daemon again
 // itself, and if that fails too it changes nothing and returns errUnclassified. A T3 database that
 // can't be read stops such a session's changes until it can: a delegate's send going out is worse.
@@ -1333,9 +1334,10 @@ type link struct {
 	// readThread is the T3 thread the daemon's last reply to a hello or a route said it had read; ""
 	// if none has (see classifyFirst).
 	readThread string
-	// notInT3 says T3's database has no thread for native: the session isn't T3's (see
-	// classifyFirst).
-	notInT3 bool
+	// notInT3 says T3's database has had no thread for native for notInT3After since a call gave
+	// it, at nativeAt: the session isn't T3's (see classifyFirst).
+	notInT3  bool
+	nativeAt time.Time
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
@@ -1468,10 +1470,17 @@ func (l *link) lookupThread(ctx context.Context, timeout time.Duration) {
 	switch {
 	case err == nil && thread != "":
 		l.hello.T3Thread, l.notInT3 = thread, false
-	case errors.Is(err, t3db.ErrNotFound):
+	case errors.Is(err, t3db.ErrNotFound) && !l.nativeAt.IsZero() && time.Since(l.nativeAt) >= notInT3After:
 		l.notInT3 = true
 	}
 }
+
+// notInT3After is how long T3's database must have had no thread for a Codex thread a call named
+// before the session is taken not to be T3's (#980). A thread T3 started may not have its row yet at
+// its first call, and a delegate's send then must wait; a codex run from a T3 thread's shell, which
+// inherits T3's variables but is no thread of T3's, waits this long on its first changes. A
+// variable, for tests.
+var notInT3After = 10 * time.Second
 
 // The server goes on looking for its thread for seekFor, pausing seekFirst, then twice that, up to
 // seekMax: T3 may not have written the row for a new session when the session starts its MCP
@@ -1596,7 +1605,7 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 	var looked chan struct{}
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
-		l.notInT3 = false
+		l.notInT3, l.nativeAt = false, time.Now()
 		if l.find != nil {
 			looked = make(chan struct{})
 			l.looked = looked
@@ -1819,6 +1828,9 @@ func (l *link) run(ctx context.Context) {
 		}()
 		io.Copy(io.Discard, conn) // returns when the daemon goes away
 		close(done)
-		l.set(false, errors.New("the daemon went away; reconnecting"))
+		l.mu.Lock()
+		l.readThread = "" // what that daemon read; the next one says again in its reply to the hello
+		l.setLocked(false, errors.New("the daemon went away; reconnecting"))
+		l.mu.Unlock()
 	}
 }
