@@ -860,26 +860,20 @@ func mutates(op string) bool {
 	return op == proto.OpSend || op == proto.OpStatus || op == proto.OpTags || op == proto.OpMute
 }
 
-// errUnclassified is what a T3 Codex session's call that changes something returns while the daemon
-// doesn't know whether another thread started the session (#980). It is safe to try again.
-var errUnclassified = errors.New(brand.Product + " can't read this session's T3 thread yet, so it doesn't know whether " +
-	"another thread started this one. Nothing was sent or changed; try again in a few seconds. If this goes on, T3's database " +
-	"may have changed in a way " + brand.Product + " can't read: tell your user")
-
 // classifyFirst holds a call that changes something, in a Codex session in T3, until the daemon has
 // read the T3 thread of the Codex thread a tool call named (#966): the daemon reads the thread's
 // lineage as it hears the route, so a delegate's first send is refused rather than sent. A call that
 // comes while the first look is going waits for it, which is bounded, the lookup by its timeout and
 // the route by sendRoute's; the wait ends with the link too, since a server shutting down may never
-// start the look. The caller has waited for the registration, whose reply is one the daemon says
-// in whether it read the thread.
+// start the look. The caller has waited for the registration, whose reply is one in which the
+// daemon says whether it read the thread.
 //
-// The call goes on only once a reply from the daemon has said it read that thread (#980), or T3's
-// database has had no thread for this Codex one for notInT3After (a codex run from a T3 thread's
-// shell, which inherits T3's variables): such a session isn't T3's, and isn't held. If the lookup
-// failed, or the daemon couldn't read the thread, the call looks again and tells the daemon again
-// itself, and if that fails too it changes nothing and returns errUnclassified. A T3 database that
-// can't be read stops such a session's changes until it can: a delegate's send going out is worse.
+// If the lookup failed, or the daemon couldn't read the thread (#980), the first such call looks
+// again and tells the daemon again itself, which gives a thread whose row T3 wrote late its
+// classification before the call. Whatever that finds, the call then goes on: it fails open, as a
+// Claude Code session in T3 does (#945). A delegate's message going out is awkward, not harmful
+// (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop T3's sessions from
+// sending. Later calls don't look again; the seek goes on doing that in the background.
 func (l *link) classifyFirst(ctx context.Context) error {
 	l.mu.Lock()
 	looked := l.looked
@@ -898,16 +892,18 @@ func (l *link) classifyFirst(ctx context.Context) error {
 	case <-gone:
 		return errPassive
 	}
-	if l.classified() {
-		return nil
+	l.mu.Lock()
+	again := !l.retried && !l.classifiedLocked()
+	if again {
+		l.retried = true
 	}
-	if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
-		l.tellRoute(ctx)
+	l.mu.Unlock()
+	if again {
+		if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
+			l.tellRoute(ctx)
+		}
 	}
-	if l.classified() {
-		return nil
-	}
-	return errUnclassified
+	return nil
 }
 
 // codexCall is what a Codex tool call's _meta says of its session: the thread (`threadId`), and,
@@ -1334,10 +1330,9 @@ type link struct {
 	// readThread is the T3 thread the daemon's last reply to a hello or a route said it had read; ""
 	// if none has (see classifyFirst).
 	readThread string
-	// notInT3 says T3's database has had no thread for native for notInT3After since a call gave
-	// it, at nativeAt: the session isn't T3's (see classifyFirst).
-	notInT3  bool
-	nativeAt time.Time
+	// retried says a call has looked for the thread of native again, and told the daemon, after the
+	// first look failed to get it classified (see classifyFirst).
+	retried bool
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
@@ -1427,12 +1422,10 @@ func (l *link) findInT3() {
 	}
 }
 
-// classified says whether the daemon has said it read the T3 thread the session is in now, or T3's
-// database has said the session has none.
-func (l *link) classified() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.notInT3 || l.hello.T3Thread != "" && l.readThread == l.hello.T3Thread
+// classifiedLocked says whether the daemon has said it read the T3 thread the session is in now.
+// Caller holds mu.
+func (l *link) classifiedLocked() bool {
+	return l.hello.T3Thread != "" && l.readThread == l.hello.T3Thread
 }
 
 // noteReadLocked takes what a reply to a hello or a route carrying route said of its T3 thread.
@@ -1467,20 +1460,10 @@ func (l *link) lookupThread(ctx context.Context, timeout time.Duration) {
 	if l.clientSessionLocked() != native {
 		return // another conversation's ID came meanwhile, whose thread this isn't
 	}
-	switch {
-	case err == nil && thread != "":
-		l.hello.T3Thread, l.notInT3 = thread, false
-	case errors.Is(err, t3db.ErrNotFound) && !l.nativeAt.IsZero() && time.Since(l.nativeAt) >= l.seek.notT3:
-		l.notInT3 = true
+	if err == nil && thread != "" {
+		l.hello.T3Thread = thread
 	}
 }
-
-// notInT3After is how long T3's database must have had no thread for a Codex thread a call named
-// before the session is taken not to be T3's (#980). A thread T3 started may not have its row yet at
-// its first call, and a delegate's send then must wait; a codex run from a T3 thread's shell, which
-// inherits T3's variables but is no thread of T3's, waits this long on its first changes. A
-// variable, for tests, which a link copies when it is made (seekTimes).
-var notInT3After = 10 * time.Second
 
 // The server goes on looking for its thread for seekFor, pausing seekFirst, then twice that, up to
 // seekMax: T3 may not have written the row for a new session when the session starts its MCP
@@ -1494,12 +1477,11 @@ var (
 )
 
 // seekTimes is how a link looks for its thread: for how long, with what first pause, and the
-// longest pause; and notT3, how long T3's database must have had no thread for a Codex one before
-// the session is taken not to be T3's (notInT3After).
-type seekTimes struct{ total, first, max, notT3 time.Duration }
+// longest pause.
+type seekTimes struct{ total, first, max time.Duration }
 
 // currentSeek is the timings above as they are now, for a link that is being made.
-func currentSeek() seekTimes { return seekTimes{seekFor, seekFirst, seekMax, notInT3After} }
+func currentSeek() seekTimes { return seekTimes{seekFor, seekFirst, seekMax} }
 
 // startSeek looks for the T3 thread in the background, with growing pauses, until it finds it, the
 // time is up, or there is no client session ID to look for. When found it tells the daemon, which
@@ -1606,7 +1588,7 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 	var looked chan struct{}
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
-		l.notInT3, l.nativeAt = false, time.Now()
+		l.retried = false
 		if l.find != nil {
 			looked = make(chan struct{})
 			l.looked = looked

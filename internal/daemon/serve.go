@@ -679,7 +679,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		// given its thread ID, is read as a hello's is: a delegate is one from the call that brought
 		// the route, not from the next refresh of the threads (#966).
 		// If that read fails the route is still taken, for handing messages over, and the reply says
-		// the thread is unread, so the server makes no change until a later route is read (#980).
+		// the thread is unread, so the server tries once more before its first change (#980, #993).
 		thread := d.readHelloThread(ctx, *req.Route)
 		d.mu.Lock()
 		defer d.mu.Unlock()
