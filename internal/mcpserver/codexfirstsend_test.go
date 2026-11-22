@@ -11,6 +11,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/t3db"
 )
 
 // A Codex session in T3 learns its thread from its first tool call's _meta (#966). The daemon has
@@ -216,6 +217,58 @@ func TestACodexSendWaitsForTheDaemonToReadTheThread(t *testing.T) {
 	}
 	if n := len(f.routesTold()); n <= told {
 		t.Error("the route wasn't told again before the send")
+	}
+	if n := sendsReached(f); n != 1 {
+		t.Errorf("%d sends reached the daemon, want 1", n)
+	}
+}
+
+// The daemon's reply to the hello itself says it couldn't read the thread, as a hello found the
+// thread in flight, or a reconnecting one, may (#980): the send that waited for that registration
+// changes nothing, and nor does inbox's wait hold it.
+func TestACodexSendAfterAnUnreadHelloChangesNothing(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+	t.Setenv("T3CODE_HOME", "")
+	t.Setenv(threadEnv, "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	f := &fakeDaemon{helloGate: make(chan struct{}), threadUnread: func(proto.Route) bool { return true }}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
+	gitDir := f.serve(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	c := &client.Client{GitDir: gitDir}
+	l := &link{c: c, hello: helloFor("codex", "/work"), changed: make(chan struct{}), seek: currentSeek(), find: fd.find}
+	go l.run(ctx)
+	s := &server{c: c, link: l}
+	waitFor(t, "the hello to be sent", func() bool { return f.helloCount() > 0 })
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"})
+		done <- err
+	}()
+	waitFor(t, "the thread to be found", l.threadKnown)
+	time.Sleep(50 * time.Millisecond)
+	close(f.helloGate)
+	if err := <-done; !errors.Is(err, errUnclassified) {
+		t.Errorf("the send: %v, want errUnclassified", err)
+	}
+	if n := sendsReached(f); n != 0 {
+		t.Errorf("%d sends reached the daemon, which couldn't read the thread", n)
+	}
+	if _, err := s.callFrom(context.Background(), codexCallIn("inbox", "codex-kid"), proto.Request{Op: proto.OpInbox}); err != nil {
+		t.Errorf("inbox, with the thread unread: %v", err)
+	}
+}
+
+// A codex run from a T3 thread's shell inherits T3's variables, but T3's database has no thread for
+// it: it isn't T3's, and its sends go on as a session's outside T3 do, rather than being told to
+// try again for ever.
+func TestACodexSessionT3HasNoThreadForGoesOn(t *testing.T) {
+	f := &fakeDaemon{}
+	fd := &finder{missing: t3db.ErrNotFound}
+	s := codexInT3(t, f, fd, 0)
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-shell"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the send: %v", err)
 	}
 	if n := sendsReached(f); n != 1 {
 		t.Errorf("%d sends reached the daemon, want 1", n)

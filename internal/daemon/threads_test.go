@@ -320,12 +320,12 @@ func TestAnUnreadThreadIsSaidSo(t *testing.T) {
 	if !resp.ThreadUnread {
 		t.Error("the hello whose thread can't be read doesn't say so")
 	}
-	conn, resp, err = b.c.Hello(context.Background(), proto.Hello{ID: "o8o8o8", Agent: "codex",
+	conn2, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "o8o8o8", Agent: "codex",
 		Route: proto.Route{T3CLI: exe, T3Thread: "thread-other", Native: "codex-other"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { conn2.Close() })
 	if resp.ThreadUnread {
 		t.Error("a hello whose thread was read says it is unread")
 	}

@@ -128,6 +128,8 @@ type finder struct {
 	threads map[string]string
 	misses  int
 	asked   []string
+	// missing, if set, is the answer for a session with no thread, in place of a failure.
+	missing error
 }
 
 func (f *finder) find(_ context.Context, native string) (string, error) {
@@ -139,6 +141,9 @@ func (f *finder) find(_ context.Context, native string) (string, error) {
 	}
 	if th, ok := f.threads[native]; ok {
 		return th, nil
+	}
+	if f.missing != nil {
+		return "", f.missing
 	}
 	return "", errors.New("T3's database has no thread for this session")
 }
