@@ -258,6 +258,11 @@ func TestOneTextBodyIsRaw(t *testing.T) {
 	if s, b, err := subjectFor("\u200b\r\nfirst\rsecond"); err != nil || s != "first" || b != "second" {
 		t.Errorf("a CR line break and an invisible line: %q, %q, %v", s, b, err)
 	}
+	// A first line with a malformed byte is judged as the daemon stores it, so a turn that hides it
+	// as a cut subject has it in the body.
+	if s, b, err := subjectFor("w \xff...\nw \xff…"); err != nil || s != "w \uFFFD..." || b != "w \xff...\nw \xff…" {
+		t.Errorf("a malformed first line ending in ...: %q, %q, %v", s, b, err)
+	}
 	if got, err := commandRequest("send", []string{"a", "\xff\x78"}, strings.NewReader(""), io.Discard); err != nil || got.Subject == "" {
 		t.Errorf("mur send of malformed bytes: %+v, %v", got, err)
 	}

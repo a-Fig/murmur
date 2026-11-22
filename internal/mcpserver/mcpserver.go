@@ -1200,7 +1200,9 @@ func subjectFor(text string) (subject, body string, err error) {
 	for rest != "" && oneLine(first) == "" {
 		first, rest = cutLine(rest)
 	}
-	if subject = bus.OneLine(first, math.MaxInt); utf8.RuneCountInString(subject) <= maxSubject {
+	// Cleaned as the daemon stores it, a malformed byte as U+FFFD, so RepeatsSubject below sees
+	// the subject a turn will.
+	if subject = bus.OneLine(bus.Text(first, math.MaxInt), math.MaxInt); utf8.RuneCountInString(subject) <= maxSubject {
 		body = strings.TrimSpace(rest)
 	} else {
 		subject, _ = web.SplitText(subject) // the opening words, cut where a word ends
