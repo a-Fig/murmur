@@ -371,6 +371,9 @@ done
 for r in $refs; do say "ok $r"; say "option refname refs/heads/evil"; done
 printf 0000
 `
+	if err := os.MkdirAll(filepath.Join(remote, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(remote, "hooks", "proc-receive"), []byte(report), 0o755); err != nil {
 		t.Fatal(err)
 	}
