@@ -98,15 +98,15 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 | Codex                   | T3 Code or a terminal | turn      | notice after its next tool call        |
 | Grok (beta)             | T3 Code               | turn      | notice after its next tool call        |
 | Grok (beta)             | a terminal            | inbox     | notice after its next tool call        |
-| Antigravity (beta)       | T3 Code               | turn      | notice after its next tool call        |
-| Antigravity (beta)       | a terminal            | inbox     | notice after its next tool call        |
+| Antigravity (beta)      | T3 Code               | turn      | notice after its next tool call        |
+| Antigravity (beta)      | a terminal            | inbox     | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
-| OpenCode 2 (beta)        | T3 Code               | turn      | notice after its next tool call        |
+| OpenCode 2 (beta)       | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 1              | T3 Code               | turn      | waits for the turn to end, then a turn |
 | Muse Code               | T3 Code               | turn      | notice after its next tool call        |
 | Muse Code               | a terminal            | inbox     | notice after its next tool call        |
-| Any other (beta)         | T3 Code               | turn      | waits for the turn to end, then a turn |
+| Any other (beta)        | T3 Code               | turn      | waits for the turn to end, then a turn |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
 idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
