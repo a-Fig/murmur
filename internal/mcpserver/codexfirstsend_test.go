@@ -9,12 +9,12 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/proto"
-	"github.com/a-Fig/murmur/internal/t3db"
 )
 
-// A Codex session in T3 learns its thread from its first tool call's _meta (#966). The daemon has
-// to hear that thread, and read whether it is a delegate's, before a call that changes something
-// goes out; a call that only reads doesn't wait for it.
+// A Codex session in T3 learns its thread from its first tool call's _meta (#966). A call that
+// changes something waits while the server looks the thread up and tells the daemon, which reads
+// whether it is a delegate's, and once more if that failed; then it goes on, read or not (#993). A
+// call that only reads doesn't wait.
 
 // codexInT3 starts a link for a Codex session inside T3 against f, whose database finds each thread
 // after a pause of slow, as T3's may.
@@ -247,6 +247,10 @@ func TestACodexSendAfterAnUnreadHelloGoesOn(t *testing.T) {
 	if routed, sent := sentAfterRoute(f, "thread-kid"); !sent || !routed {
 		t.Errorf("the send reached the daemon (%v) before it was told the thread (%v)", sent, routed)
 	}
+	// One route from the hello's loop, which found the thread in flight, and one from the retry.
+	if n := len(f.routesTold()); n != 2 {
+		t.Errorf("the daemon was told the route %d times, want 2", n)
+	}
 }
 
 // A codex run from a T3 thread's shell inherits T3's variables, but T3's database has no thread for
@@ -254,7 +258,7 @@ func TestACodexSendAfterAnUnreadHelloGoesOn(t *testing.T) {
 func TestACodexSessionT3HasNoThreadForGoesOn(t *testing.T) {
 	slowSeek(t)
 	f := &fakeDaemon{}
-	fd := &finder{missing: t3db.ErrNotFound}
+	fd := &finder{}
 	s := codexInT3(t, f, fd, 0)
 	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-shell"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
 		t.Fatalf("the send: %v", err)
@@ -270,12 +274,39 @@ func TestACodexSessionT3HasNoThreadForGoesOn(t *testing.T) {
 func TestACodexSendWaitsForARowT3WroteLate(t *testing.T) {
 	slowSeek(t)
 	f := &fakeDaemon{}
-	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}, misses: 1, missErr: t3db.ErrNotFound}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}, misses: 1}
 	s := codexInT3(t, f, fd, 0)
 	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
 		t.Fatalf("the send: %v", err)
 	}
 	if routed, sent := sentAfterRoute(f, "thread-kid"); !sent || !routed {
 		t.Errorf("the send reached the daemon (%v) before it was told the thread (%v)", sent, routed)
+	}
+}
+
+// Two changing calls at once, as Codex may make, and a row T3 wrote late (#993): the second waits
+// for the first's retry rather than going on before it, so neither send goes out unclassified.
+func TestParallelCodexSendsWaitForTheOneRetry(t *testing.T) {
+	slowSeek(t)
+	f := &fakeDaemon{}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}, misses: 1}
+	s := codexInT3(t, f, fd, 200*time.Millisecond)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"})
+			errs <- err
+		}()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if routed, sent := sentAfterRoute(f, "thread-kid"); !sent || !routed {
+		t.Errorf("a send reached the daemon (%v) before it was told the thread (%v)", sent, routed)
+	}
+	if n := len(fd.askedAbout()); n != 2 {
+		t.Errorf("T3's database was asked %d times, want 2: the first look and one retry", n)
 	}
 }

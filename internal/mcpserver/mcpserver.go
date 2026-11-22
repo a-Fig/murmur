@@ -860,23 +860,24 @@ func mutates(op string) bool {
 	return op == proto.OpSend || op == proto.OpStatus || op == proto.OpTags || op == proto.OpMute
 }
 
-// classifyFirst holds a call that changes something, in a Codex session in T3, until the daemon has
-// read the T3 thread of the Codex thread a tool call named (#966): the daemon reads the thread's
-// lineage as it hears the route, so a delegate's first send is refused rather than sent. A call that
-// comes while the first look is going waits for it, which is bounded, the lookup by its timeout and
-// the route by sendRoute's; the wait ends with the link too, since a server shutting down may never
-// start the look. The caller has waited for the registration, whose reply is one in which the
-// daemon says whether it read the thread.
+// classifyFirst holds a call that changes something, in a Codex session in T3, while the server
+// looks up the T3 thread of the Codex thread a tool call named and tells the daemon (#966): the
+// daemon reads the thread's lineage as it hears the route, so a delegate's first send is refused
+// rather than sent. A call that comes while the first look is going waits for it, which is
+// bounded, the lookup by its timeout and the route by sendRoute's; the wait ends with the link
+// too, since a server shutting down may never start the look. The caller has waited for the
+// registration, whose reply is one in which the daemon says whether it read the thread.
 //
-// If the lookup failed, or the daemon couldn't read the thread (#980), the first such call looks
-// again and tells the daemon again itself, which gives a thread whose row T3 wrote late its
-// classification before the call. Whatever that finds, the call then goes on: it fails open, as a
-// Claude Code session in T3 does (#945). A delegate's message going out is awkward, not harmful
-// (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop T3's sessions from
-// sending. Later calls don't look again; the seek goes on doing that in the background.
+// If the lookup failed, or the daemon couldn't read the thread (#980), the session looks again and
+// tells the daemon again, once, which gives a thread whose row T3 wrote late its classification;
+// every call that comes meanwhile waits for that one retry. Whatever it finds, the calls then go
+// on: they fail open, as a Claude Code session in T3 does (#945). A delegate's message going out is
+// awkward, not harmful (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop
+// T3's sessions from sending. Later calls don't look again; the seek goes on doing that in the
+// background.
 func (l *link) classifyFirst(ctx context.Context) error {
 	l.mu.Lock()
-	looked := l.looked
+	looked, native := l.looked, l.native
 	l.mu.Unlock()
 	if looked == nil {
 		return nil // not a Codex session in T3, or no call has named its thread
@@ -885,25 +886,46 @@ func (l *link) classifyFirst(ctx context.Context) error {
 	if l.ctx != nil {
 		gone = l.ctx.Done()
 	}
-	select {
-	case <-looked:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-gone:
-		return errPassive
-	}
-	l.mu.Lock()
-	again := !l.retried && !l.classifiedLocked()
-	if again {
-		l.retried = true
-	}
-	l.mu.Unlock()
-	if again {
-		if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
-			l.tellRoute(ctx)
+	wait := func(c <-chan struct{}) error {
+		select {
+		case <-c:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-gone:
+			return errPassive
 		}
 	}
-	return nil
+	if err := wait(looked); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	if l.native != native || l.classifiedLocked() {
+		// Classified, or another conversation's ID came meanwhile, whose own look its calls wait
+		// for: this call goes on.
+		l.mu.Unlock()
+		return nil
+	}
+	retry, first := l.retry, l.retry == nil
+	if first {
+		retry = make(chan struct{})
+		l.retry = retry
+	}
+	l.mu.Unlock()
+	if first {
+		// In the link's context, not the call's: a call given up on mustn't use up the one retry.
+		rctx := ctx
+		if l.ctx != nil {
+			rctx = l.ctx
+		}
+		l.spawn(func() {
+			defer close(retry)
+			if l.lookupThread(rctx, 3*time.Second); l.threadKnown() {
+				l.tellRoute(rctx)
+			}
+		})
+	}
+	return wait(retry)
 }
 
 // codexCall is what a Codex tool call's _meta says of its session: the thread (`threadId`), and,
@@ -1330,9 +1352,10 @@ type link struct {
 	// readThread is the T3 thread the daemon's last reply to a hello or a route said it had read; ""
 	// if none has (see classifyFirst).
 	readThread string
-	// retried says a call has looked for the thread of native again, and told the daemon, after the
-	// first look failed to get it classified (see classifyFirst).
-	retried bool
+	// retry is closed once the session has looked for the thread of native again, and told the
+	// daemon, after the first look failed to get it classified; nil until a call starts that (see
+	// classifyFirst).
+	retry chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
@@ -1588,7 +1611,7 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 	var looked chan struct{}
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
-		l.retried = false
+		l.retry = nil
 		if l.find != nil {
 			looked = make(chan struct{})
 			l.looked = looked
