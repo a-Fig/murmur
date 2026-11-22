@@ -83,8 +83,12 @@ var assignment = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|P
 // all of which is the secret (#948). Only its first word used to be checked, so
 // "purple monkey 42 dishwasher" passed, and stayed in the bus's history. The name ends in the
 // word, as `db_password` and `SMTP_PASSWD2` do: `passwordExpired` or `password_hint` holds text
-// about a password ("Expired 30 days ago"), not one.
-var passwordName = regexp.MustCompile(`(?i)PASS(WORD|WD|PHRASE)_?[0-9]*$`)
+// about a password ("Expired 30 days ago"), not one, and so do a form's `reset_password` or
+// `forgot_password` ("Link expires in 24 hours").
+var (
+	passwordName = regexp.MustCompile(`(?i)PASS(WORD|WD|PHRASE)_?[0-9]*$`)
+	passwordForm = regexp.MustCompile(`(?i)(RESET|CHANGE|FORGOT|FORGOTTEN|ONE_?TIME)_?PASS(WORD|WD)`)
+)
 
 // publicKeyToken is .NET's name for the public identity of a signed assembly
 // (publicKeyToken="6595b64144ccf1df"), in every Windows program's manifest and in .NET config
@@ -141,7 +145,7 @@ func credential(name, rest string) bool {
 		return true
 	}
 	v, ok := quotedValue(rest)
-	return ok && strings.IndexFunc(v, unicode.IsSpace) >= 0 && passwordName.MatchString(name) && looksPassphrase(v)
+	return ok && strings.IndexFunc(v, unicode.IsSpace) >= 0 && passwordName.MatchString(name) && !passwordForm.MatchString(name) && looksPassphrase(v)
 }
 
 // quotedValue reads the quoted string rest starts with, closed on its line: in double quotes, with
@@ -169,16 +173,16 @@ func quotedValue(rest string) (string, bool) {
 // looksPassphrase says whether a password's quoted value of several words is a passphrase rather
 // than prose or a placeholder. It holds to looksSecret's rules, with spaces allowed: 12 characters
 // or more, letters mixed with digits, and none of the characters of code or a placeholder ({, <,
-// (, % or a $ that starts ${, $( or $NAME). So a passphrase of words alone passes, as
-// `PASSWORD=correcthorsebatterystaple` does. Prose under a password's own name is a form's
-// validation message ("Must be at least 12 characters"), with a word a passphrase rarely has: one
-// of proseWords.
+// (, % or a $ that starts a variable: ${, $(, $name, $1). So a passphrase of words alone passes,
+// as `PASSWORD=correcthorsebatterystaple` does. Prose under a password's own name is a form's
+// validation message ("Must be at least 12 characters") or a note in its place ("TODO set in prod
+// v2"), with a word a passphrase rarely has: one of proseWords.
 func looksPassphrase(v string) bool {
 	if len(v) < 12 || !lettersAndDigits(v) {
 		return false
 	}
 	for i, r := range v {
-		if r == '$' && i+1 < len(v) && (strings.IndexByte("{(_", v[i+1]) >= 0 || v[i+1] >= 'A' && v[i+1] <= 'Z') {
+		if r == '$' && i+1 < len(v) && variableStart.MatchString(v[i+1:]) {
 			return false
 		}
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) && !strings.ContainsRune("-_+/=.~!@#?,;:&*^$'", r) {
@@ -193,13 +197,20 @@ func looksPassphrase(v string) bool {
 	return true
 }
 
-// proseWords are words of a form's text about a password, kept to those a passphrase rarely has.
+// variableStart is what follows a $ that starts a shell or template variable.
+var variableStart = regexp.MustCompile(`^[{(A-Za-z0-9_]`)
+
+// proseWords are words of a form's text about a password, or of a note in its place, kept to
+// those a passphrase rarely has. "Characters" and "at least" are here in a few languages besides
+// English, for an agent working on a form's translations.
 var proseWords = map[string]bool{}
 
 func init() {
 	for _, w := range strings.Fields(`must least characters chars char digit digits letter letters
-		number numbers symbol symbols enter invalid incorrect required minimum maximum allowed your
-		example password passwords passphrase`) {
+		number numbers symbol symbols enter invalid incorrect required minimum maximum min max allowed
+		your example password passwords passphrase short weak strong strength todo tbd redacted see
+		set same stored vault step below ticket
+		zeichen mindestens caracteres caractères moins menos caratteri tekens`) {
 		proseWords[w] = true
 	}
 }
