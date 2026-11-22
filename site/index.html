@@ -387,35 +387,42 @@
   #uses, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
   #uses h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
-  /* The agents Murmur works with, as outlined tiles of one size with each one's logo (agents/,
-     from T3 Code; agents/SOURCES.txt). T3 Code comes first, in blue, since every agent in it gets a
-     message as a new turn. */
-  .agents { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-  .agents li { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 10px 14px; border-radius: var(--r-md); border: 1.5px solid var(--rule); font-size: 15.5px; font-weight: 600; line-height: 1.3; color: var(--ink); }
-  .agents img { width: 22px; height: 22px; object-fit: contain; flex: none; }
-  .agents .t3 { background: var(--blue); color: var(--cream); }
-  .agents .t3 img { border-radius: 5px; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55); }
-  /* Only the name is the link, so a tap elsewhere on the tile shows its hint on a phone. */
-  .agents .t3 a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); text-underline-offset: 4px; }
-  .agents .t3 a:hover { text-decoration-color: var(--cream); }
-  .agents .t3 a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
-  /* Where Murmur works best, a message starts a new turn in T3 Code and on its own: T3 Code and
-     those agents get a thicker outline. */
-  .agents .best, .agents .t3 { border: 2.5px solid var(--ink); }
-  /* The others are supported too, in beta (2026-11-21): with a faint outline and no label they read as
-     "not supported" to people Tyler showed the page to. Now a thin ink outline and a Beta label. */
-  .agents li:has(.beta) { border-color: var(--ink); }
-  .agents .beta { padding: 2px 7px 3px; border-radius: 999px; background: var(--badge-bg); color: var(--badge-ink); font-size: 11.5px; font-weight: 600; line-height: 1.3; letter-spacing: .01em; white-space: nowrap; }
-  /* On a phone the tiles are too narrow for the name and the label side by side: it sits on the corner. */
-  @media (max-width: 759px) { .agents .beta { position: absolute; top: -9px; right: 8px; box-shadow: 0 0 0 2px var(--cream); } }
-  /* A hint above each tile on hover, or on focus, which a tap gives on a phone. */
-  .agents li { position: relative; outline: none; }
-  .agents li::after { content: attr(data-hint); position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 5;
-    padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; text-align: left;
+  /* The agents Murmur works with, each logo (agents/, from T3 Code; agents/SOURCES.txt) on a white
+     disc, with its name beside it on a desktop and in its hint on a phone (2026-11-21: Tyler found the
+     outlined tiles too boxy). T3 Code comes first, on black, since every agent in it gets a message
+     as a new turn. A soft shadow lifts the discs of the agents where Murmur works fully; the three in
+     beta sit flat, with "beta" beside or under them. Without a label they read as unsupported. */
+  .agents { list-style: none; padding: 0; margin: 24px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 16px; }
+  .agents li { position: relative; outline: none; display: flex; align-items: center; gap: 12px; font-size: 16.5px; font-weight: 600; line-height: 1.3; color: var(--ink); }
+  .agents .disc { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 10px 22px -8px rgba(14, 27, 69, .35); }
+  .agents img { width: 22px; height: 22px; object-fit: contain; }
+  .agents .t3 .disc { background: #000; }
+  .agents .t3 img { width: 28px; height: 28px; }
+  .agents li:has(.beta) .disc { background: color-mix(in srgb, #fff 55%, var(--cream)); box-shadow: none; }
+  .agents .beta { margin-left: -4px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--ink-soft); }
+  /* Only the name is the link, so a tap elsewhere shows the hint. */
+  .agents .t3 a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent); text-underline-offset: 4px; }
+  .agents .t3 a:hover { text-decoration-color: var(--ink); }
+  .agents .t3 a:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 4px; }
+  /* A hint above each agent on hover, or on focus, which a tap gives on a phone. */
+  .agents li::after { content: attr(data-hint); position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 5; width: max(100%, 240px);
+    padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; text-align: left; white-space: pre-line;
     opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; }
   .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
-  .agents li:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
-  @media (max-width: 759px) { .agents { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .agents li:focus-visible .disc { outline: 3px solid color-mix(in srgb, var(--blue) 45%, transparent); outline-offset: 3px; }
+  /* On a phone: the logos alone, four to a row, each name in its hint. */
+  @media (max-width: 759px) {
+    .agents { gap: 22px 0; }
+    .agents li { flex-direction: column; gap: 8px; }
+    .agents .disc { width: 52px; height: 52px; }
+    .agents img { width: 26px; height: 26px; }
+    .agents .t3 img { width: 34px; height: 34px; }
+    .agents .nm { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .agents .beta { margin: 0; }
+    .agents li::after { content: attr(data-name) "\A" attr(data-hint); width: 230px; left: calc(50% - 26px); }
+    .agents li:nth-child(4n + 3)::after, .agents li:nth-child(4n)::after { left: auto; right: calc(50% - 26px); }
+  }
   .agents-note { margin-top: 12px; font-size: 15.5px; line-height: 1.5; max-width: 72ch; color: var(--ink-soft); text-wrap: pretty; }
   .uses-lead { margin-top: 10px; font-size: 17px; line-height: 1.5; max-width: 64ch; color: var(--ink-soft); text-wrap: pretty; }
   .uses { list-style: none; padding: 0; margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 14px; }
@@ -1001,14 +1008,14 @@ void main() {
   <div class="setup-in">
     <h2>Supported</h2>
     <ul class="agents">
-      <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn."><img src="/agents/t3.svg" alt="" width="22" height="22"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/claude.svg" alt="" width="22" height="22">Claude Code</li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/codex.svg" alt="" width="22" height="22">Codex</li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/opencode.svg" alt="" width="22" height="22">OpenCode</li>
-      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own."><img src="/agents/pi.svg" alt="" width="22" height="22">Pi</li>
-      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox."><img src="/agents/muse.svg" alt="" width="22" height="22">Muse Code<span class="beta">Beta</span></li>
-      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox."><img src="/agents/grok.svg" alt="" width="22" height="22">Grok<span class="beta">Beta</span></li>
-      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox."><img src="/agents/antigravity.svg" alt="" width="22" height="22">Antigravity<span class="beta">Beta</span></li>
+      <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-name="T3 Code"><span class="disc"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="nm"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></span></li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Claude Code"><span class="disc"><img src="/agents/claude.svg" alt="" width="22" height="22"></span><span class="nm">Claude Code</span></li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Codex"><span class="disc"><img src="/agents/codex.svg" alt="" width="22" height="22"></span><span class="nm">Codex</span></li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="OpenCode"><span class="disc"><img src="/agents/opencode.svg" alt="" width="22" height="22"></span><span class="nm">OpenCode</span></li>
+      <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Pi"><span class="disc"><img src="/agents/pi.svg" alt="" width="22" height="22"></span><span class="nm">Pi</span></li>
+      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Muse Code"><span class="disc"><img src="/agents/muse.svg" alt="" width="22" height="22"></span><span class="nm">Muse Code</span><span class="beta">beta</span></li>
+      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Grok"><span class="disc"><img src="/agents/grok.svg" alt="" width="22" height="22"></span><span class="nm">Grok</span><span class="beta">beta</span></li>
+      <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Antigravity"><span class="disc"><img src="/agents/antigravity.svg" alt="" width="22" height="22"></span><span class="nm">Antigravity</span><span class="beta">beta</span></li>
     </ul>
     <p class="agents-note" data-prose>Muse Code, Grok and Antigravity are in beta. In T3 Code, every agent here gets a message as a new turn. On their own, those three keep it in their inbox until they check.</p>
   </div>
