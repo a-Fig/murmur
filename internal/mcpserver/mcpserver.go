@@ -1166,6 +1166,17 @@ func text(s string) *mcp.CallToolResult {
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
 func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 
+// statusLine is the status a session sets, cut to the line the daemon keeps (oneLine), after it
+// is checked for secrets as written: only the cleaned line goes to the daemon, and dropping a
+// zero-width space can join a key to the next word, which the daemon's check of the cleaned line
+// then misses (#1048), as for a subject (subjectAndBody).
+func statusLine(doing string) (string, error) {
+	if err := scrub.Check(doing); err != nil {
+		return "", err
+	}
+	return oneLine(doing), nil
+}
+
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
@@ -1344,7 +1355,11 @@ func (s *server) tools(srv *mcp.Server) {
 		"Update it when you switch tasks. Until you set one, your conversation's title is what they see; " +
 		"an empty status brings the title back."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: oneLine(in.Doing)})
+			doing, err := statusLine(in.Doing)
+			if err != nil {
+				return result(nil, proto.Response{}, err)
+			}
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: doing})
 			return result(view.Note, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +

@@ -85,7 +85,8 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 		}
 		return proto.Request{Op: proto.OpInbox}, nil
 	case "status":
-		return proto.Request{Op: proto.OpStatus, Doing: oneLine(strings.Join(args, " "))}, nil
+		doing, err := statusLine(strings.Join(args, " "))
+		return proto.Request{Op: proto.OpStatus, Doing: doing}, err
 	case "send":
 		return sendRequest(args, stdin, stderr)
 	}

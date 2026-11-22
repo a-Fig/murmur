@@ -616,8 +616,10 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return resp
 
 	case proto.OpStatus:
+		// Checked as kept and as sent, as a body is (see OpSend): dropping a zero-width space can join
+		// a key to the next word (#1048).
 		doing := bus.OneLine(req.Doing, 120)
-		if err := scrub.Check(doing); err != nil {
+		if err := scrub.Check(doing, req.Doing); err != nil {
 			return fail(err.Error())
 		}
 		d.mu.Lock()
