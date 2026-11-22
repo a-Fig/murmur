@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -275,9 +276,15 @@ func (t *treeFiles) read(name string) (real string, data []byte, exists bool, er
 		if f, ok := t.files[real]; ok {
 			return real, f.data, f.exists, nil
 		}
-		mode, blob, err := t.entry(real)
+		mode, blob, size, err := t.entry(real)
 		if err != nil {
 			return "", nil, false, err
+		}
+		if (mode == "100644" || mode == "100755" || mode == "120000") && size > maxRepoFile {
+			// Read whole, it would sit in memory, in every session's MCP server that checks the
+			// remote-tracking branch for the marker (markedAt), as readRepoFile keeps a working
+			// tree's file from doing (#947). ls-tree says its size, so the blob isn't read at all.
+			return "", nil, false, fmt.Errorf("%s is over %d MiB in %s, more than any file an agent reads", real, maxRepoFile>>20, t.tip)
 		}
 		switch mode {
 		case "":
@@ -306,22 +313,24 @@ func (t *treeFiles) read(name string) (real string, data []byte, exists bool, er
 	}
 }
 
-// entry is the mode and object of the path in the commit, or "" for both when it has none.
-func (t *treeFiles) entry(name string) (mode, object string, err error) {
-	out, err := t.g.Run(t.ctx, "", "ls-tree", "--full-tree", "-z", t.tip, "--", name)
+// entry is the mode, object and size of the path in the commit, or "" and 0 when it has none. A
+// size ls-tree doesn't give (a submodule's commit) is 0.
+func (t *treeFiles) entry(name string) (mode, object string, size int64, err error) {
+	out, err := t.g.Run(t.ctx, "", "ls-tree", "--full-tree", "-l", "-z", t.tip, "--", name)
 	if err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 	for _, rec := range strings.Split(out, "\x00") {
 		meta, p, ok := strings.Cut(rec, "\t")
 		if !ok || p != name {
 			continue
 		}
-		if fields := strings.Fields(meta); len(fields) == 3 {
-			return fields[0], fields[2], nil
+		if fields := strings.Fields(meta); len(fields) == 4 {
+			size, _ = strconv.ParseInt(fields[3], 10, 64)
+			return fields[0], fields[2], size, nil
 		}
 	}
-	return "", "", nil
+	return "", "", 0, nil
 }
 
 // fallback pushes the commit to FallbackBranch, after the server refused it on the default branch.
