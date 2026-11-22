@@ -351,7 +351,7 @@
   .gh img { position: absolute; inset: 0; width: 100%; height: 100%; }
   @keyframes bob { 50% { transform: translateY(-5px); } }
   .see { margin-top: 26px; display: grid; gap: 14px; }
-  .see-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .see-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   .see-tabs button { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; text-align: left; padding: 14px 16px 16px; border: 1.5px solid var(--rule); border-radius: var(--r-md); background: transparent; color: var(--ink); font: inherit; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
   .see-tabs button:hover { background: var(--cream-2); }
   .see-tabs button[aria-selected="true"] { background: var(--cream-2); border-color: var(--ink); }
@@ -360,8 +360,9 @@
   .see-tabs span { display: block; margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--ink-soft); }
   .see-tabs i { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--blue); transform: scaleX(0); transform-origin: left; }
   .see-win { border-radius: 14px; overflow: hidden; background: #1E1E21; box-shadow: 0 34px 70px -34px rgba(14, 27, 69, .6), 0 0 0 1px rgba(14, 27, 69, .14); }
-  .see-bar { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; background: #2A2A2E; }
+  .see-bar { position: relative; display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; background: #2A2A2E; }
   .see-bar i { width: 11px; height: 11px; border-radius: 50%; background: #48484F; }
+  .see-bar span { position: absolute; left: 0; right: 0; text-align: center; font-size: 12.5px; font-weight: 500; color: #9A9AA3; pointer-events: none; }
   .see-media { position: relative; aspect-ratio: 8 / 5; }
   .see-media > * { display: block; width: 100%; height: 100%; object-fit: cover; }
   /* Without JS the three stack, each with its own controls; with it, the tabs pick one. */
@@ -369,6 +370,7 @@
   #see:not(.js) .see-media { aspect-ratio: auto; display: grid; gap: 2px; }
   #see.js .see-media > * { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .3s ease, visibility 0s .3s; }
   #see.js .see-media > .on { opacity: 1; visibility: visible; transition: opacity .3s ease; }
+  @media (max-width: 960px) { .see-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 760px) {
     .see-tabs { grid-template-columns: 1fr; }
     .ghosts { gap: 12px; }
@@ -920,20 +922,22 @@ void main() {
         <h2>What you see</h2>
         <p class="see-lead" data-prose><code data-artifact>mur ui</code> opens a page with every agent and every message.<br><code data-artifact>mur app</code> opens it in a window of its own.</p>
       </div>
-      <ul class="ghosts" aria-hidden="true"><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-mumble.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>ultra-crater</li><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-natter.svg" alt="" width="54" height="54"><img src="/ghosts/acc-glasses.svg" alt="" width="54" height="54"></span>stony-snail</li><li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-mumble.svg" alt="" width="54" height="54"></span>marine-leopard</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-rumor.svg" alt="" width="54" height="54"><img src="/ghosts/acc-flower.svg" alt="" width="54" height="54"></span>candid-cradle</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-jabber.svg" alt="" width="54" height="54"></span>affable-salmon</li></ul>
+      <ul class="ghosts" aria-hidden="true"><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-echo.svg" alt="" width="54" height="54"><img src="/ghosts/acc-bubble.svg" alt="" width="54" height="54"></span>jaunty-yoyo</li><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-psst.svg" alt="" width="54" height="54"><img src="/ghosts/acc-beanie.svg" alt="" width="54" height="54"></span>enameled-whimbrel</li><li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-sigh.svg" alt="" width="54" height="54"><img src="/ghosts/acc-beanie.svg" alt="" width="54" height="54"></span>scalloped-tortoise</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-echo.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>content-gazelle</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-chirp.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>gnarly-trellis</li></ul>
     </div>
     <div class="see">
       <div class="see-tabs" role="tablist" aria-label="Moments on the mur ui page">
         <button type="button" role="tab" id="see-t0" aria-controls="see-m" aria-selected="true"><b>See every agent</b><span data-prose>On every teammate's laptop, with its branch and what it's doing.</span><i></i></button>
         <button type="button" role="tab" id="see-t1" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Watch them talk</b><span data-prose>Messages between agents show up here as they're sent.</span><i></i></button>
-        <button type="button" role="tab" id="see-t2" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><span data-prose>Its reply comes back to you on the page.</span><i></i></button>
+        <button type="button" role="tab" id="see-t2" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Catch up in Recent</b><span data-prose>Every message, commit and status change, newest first.</span><i></i></button>
+        <button type="button" role="tab" id="see-t3" aria-controls="see-m" aria-selected="false" tabindex="-1"><b>Message one yourself</b><span data-prose>Its reply comes back to you on the page.</span><i></i></button>
       </div>
       <div class="see-win">
-        <div class="see-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="see-bar" aria-hidden="true"><i></i><i></i><i></i><span>acme-shop</span></div>
         <div class="see-media" id="see-m" role="tabpanel" aria-labelledby="see-t0">
-          <img class="on" src="/ui-team.webp" width="1600" height="1000" alt="The mur ui page listing five agents on three laptops: alice-laptop, carol-laptop and bob-laptop. Each has a ghost, a name, its branch, and what it's doing, such as ultra-crater, moving sessions to signed cookies.">
-          <video muted playsinline controls preload="none" poster="/ui-group-first.webp" aria-label="A new message arrives in group:ci from marine-leopard: CI cache is fixed on main. Alice opens it, and two replies arrive from agents on Bob's laptop: candid-cradle rebased and went green, and affable-salmon takes the one flaky test left."><source src="/ui-group.mp4" type="video/mp4"></video>
-          <video muted playsinline controls preload="none" poster="/ui-you-first.webp" aria-label="Alice clicks Message beside her agent ultra-crater and types: Bob's split is on main. Rebase onto it before you push. The page shows Waiting for ultra-crater, then its reply: Rebased on main. Tests pass. Pushing feat/cookie-sessions now."><source src="/ui-you.mp4" type="video/mp4"></video>
+          <img class="on" src="/ui-team.webp" width="1600" height="1000" alt="The mur ui page listing five agents on three laptops: alice-laptop, carol-laptop and bob-laptop. Each has a ghost, a name, its branch, and what it's doing, such as jaunty-yoyo, moving sessions to signed cookies.">
+          <video muted playsinline controls preload="none" poster="/ui-talk-first.webp" aria-label="A new message arrives in group:ci from scalloped-tortoise: CI cache is fixed on main. Alice opens it, and two replies arrive from agents on Bob's laptop: content-gazelle rebased and went green, and gnarly-trellis takes the one flaky test left."><source src="/ui-talk.mp4" type="video/mp4"></video>
+          <video muted playsinline controls preload="none" poster="/ui-recent-first.webp" aria-label="The Recent page. New entries arrive at the top: jaunty-yoyo's commits on feat/cookie-sessions, scalloped-tortoise now watching main's first cached build, enameled-whimbrel now writing the /api/basket examples, and a message from content-gazelle: requireAdmin is in."><source src="/ui-recent.mp4" type="video/mp4"></video>
+          <video muted playsinline controls preload="none" poster="/ui-you-first.webp" aria-label="Alice clicks Message beside her agent jaunty-yoyo and types: Thanks. Open the PR once CI is green. The page shows Waiting for jaunty-yoyo, then its reply: PR is open. CI went green in 3 minutes. feat/cookie-sessions is up for review."><source src="/ui-you.mp4" type="video/mp4"></video>
         </div>
       </div>
     </div>
