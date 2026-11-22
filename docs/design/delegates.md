@@ -18,8 +18,14 @@ started.
   can't `send` or set a status; the refusal tells it to ask the thread that started it. Its commits
   are credited to its parent's session. The daemon reads a thread's state as its session registers,
   whether a server or a shell command registers it, so a delegate's first `send` is refused and it
-  is never listed (#945). Only if that read fails is it on the mesh until the next refresh, and a
-  name it took then is seen by nobody.
+  is never listed (#945). A Codex server in T3 registers before it knows its thread, which it
+  learns from its first tool call's `_meta.threadId`: the route that tells the daemon is read the
+  same way, and a call that changes something (anything but `who` and `lookup`) waits until the
+  server has looked the thread up and told the daemon, so a Codex delegate's first `send` is refused
+  too (#966). Only the calls that come during that first lookup wait, and only as long as it takes
+  (at most 3 s, as a rule milliseconds). Only if a
+  read fails, or T3 hasn't written the thread's row by then, is it on the mesh until the next
+  refresh, and a name it took then is seen by nobody.
   A Claude Code subagent inside one session never registers at all.
 - **Pi** (2026-11-11, #457) has no subagents of its own; packages add them. `pi-subagents` (0.31.0)
   runs each as a child `pi` that loads the user's extensions, Murmur's among them, and sets

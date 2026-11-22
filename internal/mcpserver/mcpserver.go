@@ -779,6 +779,9 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 func (s *server) callFrom(ctx context.Context, mreq *mcp.CallToolRequest, req proto.Request) (proto.Response, error) {
 	if !sharedAgent(s.opt.Agent) {
 		s.noteMeta(ctx, mreq)
+		if changes(req.Op) {
+			s.awaitThread(ctx)
+		}
 		return s.call(ctx, req)
 	}
 	l := s.sessionLinkFor(mreq)
@@ -844,6 +847,34 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 			ctx = context.WithoutCancel(ctx)
 		}
 		l.learnNative(ctx, c)
+	}
+}
+
+// changes says whether a call of op changes anything, which a delegate's may not: who and lookup
+// only read, and go on without waiting for the session's thread (see awaitThread).
+func changes(op string) bool { return op != proto.OpWho && op != proto.OpLookup }
+
+// awaitThread holds a call that changes something until the server has looked for the T3 thread of
+// the Codex thread a tool call named, and told the daemon what it found (#966). The daemon reads the
+// thread's lineage as it hears it, so a delegate's first send is refused rather than sent. Only the
+// calls that come while that first look is going wait, and it is bounded: the lookup by its timeout
+// and the route by sendRoute's.
+func (s *server) awaitThread(ctx context.Context) {
+	s.mu.Lock()
+	l := s.link
+	s.mu.Unlock()
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	looked := l.looked
+	l.mu.Unlock()
+	if looked == nil {
+		return
+	}
+	select {
+	case <-looked:
+	case <-ctx.Done():
 	}
 }
 
@@ -1264,6 +1295,10 @@ type link struct {
 	// (holdFirstHello); made on first use, and nativeClosed says it is closed.
 	nativeSeen   chan struct{}
 	nativeClosed bool
+	// looked is closed once the server, inside T3, has looked for the thread of the native ID it was
+	// last given and told the daemon what it found; nil until a tool call gives one (see
+	// awaitThread).
+	looked chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeWarned says the daemon's refusal of the route has been logged, which is done once. logf
@@ -1478,8 +1513,13 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 	l.native = id
 	l.hello.Native = id
 	l.hello.Child, l.hello.ParentNative = c.child, c.parent
+	var looked chan struct{}
 	if changed {
 		l.hello.T3Thread = "" // an ID for another conversation finds another thread
+		if l.find != nil {
+			looked = make(chan struct{})
+			l.looked = looked
+		}
 	}
 	if !l.nativeClosed {
 		close(l.nativeSeenLocked()) // a first hello held back for it goes now (see holdFirstHello)
@@ -1513,7 +1553,11 @@ func (l *link) learnNative(ctx context.Context, c codexCall) {
 		l.spawn(func() { l.tellRoute(ctx) })
 		return
 	}
+	// The call that brought the ID goes on now, and so does any later one that only reads; one that
+	// changes something waits for this (awaitThread). A session that isn't registered yet gets the
+	// thread into its hello instead, which the daemon reads the same way.
 	l.spawn(func() {
+		defer close(looked)
 		if l.lookupThread(ctx, 3*time.Second); l.threadKnown() {
 			l.tellRoute(ctx)
 		} else {
@@ -1659,9 +1703,10 @@ func (l *link) run(ctx context.Context) {
 		l.mu.Unlock()
 		l.learn(resp.ClaudeSession)
 		told := h.Route
-		if stale && route.Child {
-			// A subagent's call came while the hello was on its way: the daemon hears that the
-			// session is a child before the call, which waits for this registration, goes on.
+		if stale && (route.Child || route.T3Thread != h.Route.T3Thread) {
+			// A subagent's call came while the hello was on its way, or the T3 thread was found
+			// then: the daemon hears that the session is a child, or reads whether its thread is a
+			// delegate's (#966), before the call, which waits for this registration, goes on.
 			l.sendRoute(ctx, id, route)
 			told = route
 		}
