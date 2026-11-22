@@ -5,6 +5,7 @@ go 1.27.1
 toolchain go1.27.4
 
 require (
+	github.com/BurntSushi/toml v1.5.0
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/crgimenes/glaze v0.0.83
 	github.com/ebitengine/purego v0.11.3

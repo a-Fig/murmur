@@ -574,6 +574,9 @@ func (e Env) unregisterCodex(_ context.Context, groups [][]agentHome) (did, note
 			}
 			return nil, false
 		})
+		if err == nil && out != text {
+			err = checkTOMLEdit(text, out)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", c.path, err)
 		}
@@ -887,6 +890,9 @@ func (e Env) unregisterGrokAt(_ context.Context, hs []agentHome) (did, notes []s
 		var allowed bool
 		if err == nil {
 			out, allowed, err = removeTOMLListItem(out, "permission", "allow", grokAllow, "config.toml")
+		}
+		if err == nil && out != text {
+			err = checkTOMLEdit(text, out)
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", path, err)

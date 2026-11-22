@@ -29,6 +29,9 @@ func (e Env) registerCodexAt(h agentHome) (did []string, fresh bool, err error) 
 		return nil, false, err
 	}
 	out, changed, err := editCodexConfig(string(b), e.Exe)
+	if err == nil && changed {
+		err = checkTOMLEdit(string(b), out)
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
 	}
