@@ -126,7 +126,7 @@ func (d *Daemon) retryPending() {
 	// asking the remote, and only it gives the sends up for their age. A last retry that ends before
 	// the give-up time, as one whose push hung from 110 s to 165 s does, leaves them to the next: a
 	// retry with a whole minute's push would have ended past the time and given them up there, so
-	// the give-up can come one retry later than it did, about a minute and a half at the most.
+	// the give-up can come one retry later than it did, about two minutes at the most.
 	start, limit := time.Now(), d.opt.PendingPush
 	last := time.Since(d.pendFrom)+limit+pushLook >= d.opt.PendingGiveUp
 	if left := limit - pendingLook; last && left > 0 {
