@@ -24,7 +24,7 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 )
 
-// The shell commands (#913, #1118): `mur who`, `mur send`, `mur inbox`, `mur status`, `mur lookup` and `mur tags`, the
+// The shell commands (#913, #1118): `mur who`, `mur send`, `mur inbox`, `mur status`, `mur lookup`, `mur tags` and `mur mute`, the
 // tools of the same names for a harness Murmur has no tools in. Every harness can run a command, and one T3 Code
 // runs gives the commands of its thread's shell the thread's ID (T3CODE_THREAD_ID): T3's Claude,
 // Codex, Pi, Antigravity, Kiro, fx and ACP-registry drivers do; its Grok, OpenCode, Muse and Cursor
@@ -72,7 +72,7 @@ func Command(ctx context.Context, name string, args []string, stdin io.Reader, s
 		return err
 	}
 	render := map[string]func(proto.Response) string{"who": view.Who, "send": view.Sent, "inbox": view.Inbox, "status": view.Note,
-		"lookup": view.Lookup, "tags": view.Tags}[name]
+		"lookup": view.Lookup, "tags": view.Tags, "mute": view.Muted}[name]
 	fmt.Fprint(stdout, render(resp))
 	return nil
 }
@@ -96,6 +96,8 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 		return lookupRequest(args)
 	case "tags":
 		return tagsRequest(args)
+	case "mute":
+		return muteRequest(args)
 	}
 	return proto.Request{}, fmt.Errorf("unknown command %q", name)
 }
@@ -399,4 +401,25 @@ func tagsRequest(args []string) (proto.Request, error) {
 		return out
 	}
 	return proto.Request{Op: proto.OpTags, Add: list("add"), Remove: list("remove"), For: list("for")}, nil
+}
+
+// muteRequest is `mur mute [NAME] [--unmute]`: the mute tool's name and unmute. With no name it
+// only lists whom you have muted, as the tool does.
+func muteRequest(args []string) (proto.Request, error) {
+	usage := fmt.Errorf("usage: %s mute [NAME] [--unmute]", brand.Command)
+	words, _, set, err := options(args, nil, []string{"unmute"})
+	if err != nil {
+		return proto.Request{}, fmt.Errorf("%w; %v", err, usage)
+	}
+	if len(words) > 1 {
+		return proto.Request{}, usage
+	}
+	if len(words) == 0 && set["unmute"] {
+		return proto.Request{}, fmt.Errorf("--unmute needs the name of the session to unmute; %v", usage)
+	}
+	req := proto.Request{Op: proto.OpMute, Unmute: set["unmute"]}
+	if len(words) == 1 {
+		req.Name = words[0]
+	}
+	return req, nil
 }

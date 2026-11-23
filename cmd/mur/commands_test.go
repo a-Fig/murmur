@@ -46,5 +46,13 @@ func TestTheCommandsActAsTheThread(t *testing.T) {
 		t.Errorf("tags:\n%s\n%s\n%s\n%s", added, whoTagged, removed, listed)
 	}
 	t.Logf("mur tags --add reviewing,group:ui:\n%s\nmur tags --remove reviewing:\n%s\nmur tags:\n%s", added, removed, listed)
+	// mute: nobody to start with, a name that isn't one, and unmuting one that wasn't muted (#1121).
+	none := b.mustRun(b.clone, "mute")
+	noName, code1 := b.run(b.clone, "mute", "nobody-here")
+	notMuted, code2 := b.run(b.clone, "mute", "--unmute", "nobody-here")
+	if !strings.Contains(none, "muted nobody") || code1 != 1 || code2 != 1 {
+		t.Errorf("mute: %q, %d %q, %d %q", none, code1, noName, code2, notMuted)
+	}
+	t.Logf("mur mute:\n%s\nmur mute nobody-here:\n%s\nmur mute --unmute nobody-here:\n%s", none, noName, notMuted)
 	t.Logf("mur status:\n%s\nmur who:\n%s\nmur inbox:\n%s\nmur send nobody-here:\n%s", status, who, inbox, out)
 }

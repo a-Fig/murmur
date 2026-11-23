@@ -59,10 +59,13 @@ func entryIn(text, name string) string {
 	return b.String()
 }
 
+// allTools is the MCP server's tools; a variable, for tests.
+var allTools = mcpserver.Tools
+
 // withTools puts the MCP tools where text, a usage, has {tools}: one line each, from the server's
 // own list, tagged [CLI] when the tool is a command too.
 func withTools(text string) string {
-	tools := mcpserver.Tools()
+	tools := allTools()
 	var name, summary int
 	for _, t := range tools {
 		name, summary = max(name, len(t.Name)), max(summary, len(t.Summary))
@@ -83,7 +86,7 @@ func withTools(text string) string {
 // toolHelp is the entry for name if it is an MCP tool: its line in the list and its full
 // description, wrapped under it; "" if it is no tool.
 func toolHelp(name string) (string, error) {
-	for _, t := range mcpserver.Tools() {
+	for _, t := range allTools() {
 		if t.Name != name {
 			continue
 		}
@@ -106,7 +109,7 @@ func toolHelp(name string) (string, error) {
 }
 
 func isTool(name string) bool {
-	for _, t := range mcpserver.Tools() {
+	for _, t := range allTools() {
 		if t.Name == name {
 			return true
 		}
