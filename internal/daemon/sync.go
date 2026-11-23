@@ -252,15 +252,10 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	polled := time.Now()
 	wall := polled.Round(0)
 	d.mu.Lock()
-	own := d.presenceRef()
 	for _, ref := range changed {
 		if failed[ref] == nil {
 			d.known[ref] = remote[ref]
-			if ref == own {
-				// The fetch set the clone's copy to what the remote had, which may be junk
-				// pushed over this device's presence: the next presence writes it again.
-				d.presenceCopied = false
-			}
+			d.presenceFetchedLocked(ref)
 		}
 	}
 	d.mu.Unlock()
@@ -586,6 +581,9 @@ func (d *Daemon) endSlowFetch(ref, sha, got string, err error) {
 	defer d.mu.Unlock()
 	defer d.kickPoll()
 	d.slowRef, d.slowCancel = "", nil
+	if err == nil {
+		d.presenceFetchedLocked(ref)
+	}
 	f, ok := d.unfetched[ref]
 	if !ok || !f.slow {
 		return
@@ -2087,7 +2085,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	// presence, so the fetch would read nothing.
 	d.mu.Lock()
 	d.known[ref] = sha
-	copied := d.presenceCopied
+	copied, fetches := d.presenceCopied, d.presenceFetches
 	d.mu.Unlock()
 	// The clone's own copy of the ref is written once a run, with the first presence to land, and
 	// again after a fetch has set it to whatever the remote had. Nothing reads it for what it
@@ -2100,11 +2098,22 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			d.log.Printf("updating local %s: %v", ref, err)
 		} else {
 			d.mu.Lock()
-			d.presenceCopied = true
+			// Not if a fetch brought the ref meanwhile: its write may have come after this one.
+			d.presenceCopied = d.presenceFetches == fetches
 			d.mu.Unlock()
 		}
 	}
 	return nil
+}
+
+// presenceFetchedLocked notes that a fetch brought ref, if it is this device's own presence: the
+// fetch set the clone's copy to what the remote had, which may be junk pushed over the presence,
+// so the next presence writes the copy again (publishPresence). Caller holds mu.
+func (d *Daemon) presenceFetchedLocked(ref string) {
+	if ref == d.presenceRef() {
+		d.presenceFetches++
+		d.presenceCopied = false
+	}
 }
 
 // capSessions keeps at most n of a presence's sessions, the most recently active (by their last

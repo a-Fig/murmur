@@ -81,4 +81,16 @@ func TestTheClonesCopyOfItsPresenceIsWrittenOnceARun(t *testing.T) {
 	if got := local(); got != third || !sealed(got) {
 		t.Errorf("after the presence that follows the clone's copy is %q, want %s, sealed again", got, third)
 	}
+
+	// A fetch apart from the syncs, of a ref too slow for one, may have set the copy too.
+	d.endSlowFetch(ref, third, third, nil)
+	fourth := publish()
+	if got := local(); got != fourth {
+		t.Errorf("after a slow fetch of the ref and the next presence the clone's copy is %s, want %s", got, fourth)
+	}
+	// And a fetch of another ref leaves it alone.
+	d.endSlowFetch(d.meshRef(), "", "", nil)
+	if fifth := publish(); local() != fourth || fifth == fourth {
+		t.Errorf("after a slow fetch of another ref the clone's copy is %s, want it left at %s", local(), fourth)
+	}
 }
