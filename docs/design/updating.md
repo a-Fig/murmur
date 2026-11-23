@@ -133,7 +133,10 @@ information in the request; a network failure waits quietly for the next hour. A
     gone back from the prerelease in the hold (`murmur.updateBack`, the version and the
     executable's path), and an install found running that prerelease again takes the hold off and
     stays on it: whatever the older release read chose it (Opus's second review). Each Back is then
-    one trip at most, a download and a restart each way, never a loop.
+    one trip at most per install, a download and a restart each way, never a loop. The hold comes
+    off for the whole machine, so another install held on the older release takes the nightly
+    again too. Once v0.5.4 is the latest stable release, every release gone back to knows the hold
+    and none of this arises.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.

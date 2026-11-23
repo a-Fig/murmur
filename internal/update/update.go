@@ -403,7 +403,9 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 		return false, latest, err
 	}
 	if back {
-		if _, err := (gitx.Git{Dir: o.GitDir}).Run(ctx, "", "config", "--global", "--add", backKey, skip+" "+o.Executable); err != nil {
+		// Whatever happens to ctx now: the new binary is in place, and a daemon stopping just
+		// then would otherwise leave no record, and cost a trip more.
+		if _, err := (gitx.Git{Dir: o.GitDir}).Run(context.WithoutCancel(ctx), "", "config", "--global", "--add", backKey, skip+" "+o.Executable); err != nil {
 			o.Log.Printf("self-update: couldn't record going back in %s: %v", backKey, err)
 		}
 	}
@@ -463,7 +465,9 @@ func clearSkip(ctx context.Context, o Options, version string) {
 // takeHoldOff takes murmur.updateSkip off, with the record of going back from it (backKey), and
 // makes a held channel "prerelease" again.
 func takeHoldOff(ctx context.Context, o Options) {
-	for _, key := range []string{skipKey, backKey} {
+	// The record first: a hold left without it is a hold Back wrote, while a record left without
+	// the hold would take the next Back for one already gone back from (Opus review).
+	for _, key := range []string{backKey, skipKey} {
 		if last(configValues(ctx, o.GitDir, key), "global").value == "" {
 			continue // as at almost every check: git is asked only to read
 		}
