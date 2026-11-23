@@ -616,6 +616,11 @@ type Daemon struct {
 	// log it once a minute.
 	refused    map[string]time.Time
 	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
+	// presenceListed is, for each device, the presence SHA the remote last listed and this daemon's
+	// last good sync when it first did (colorDate's clamp): a presence read a sync or more after it
+	// was listed, its fetch having failed or been cut short, is dated from before the gap, not from
+	// the sync that read it (#1169). Under mu.
+	presenceListed map[string]listedPresence
 
 	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
 	// teamChanged is closed and replaced when an epoch is read. Under mu. teamMu serializes the team
@@ -847,6 +852,13 @@ const (
 )
 
 // peer is another device as its presence ref shows it.
+// listedPresence is a presence SHA the remote listed, and this daemon's last good sync before it
+// first did.
+type listedPresence struct {
+	sha   string
+	after time.Time
+}
+
 type peer struct {
 	pres bus.Presence
 	sha  string // the presence last read, or found unreadable
@@ -860,9 +872,9 @@ type peer struct {
 	// and written doesn't (colorGoneLocked).
 	written   time.Time
 	writtenOf string
-	// colorFrom is written, but no earlier than this daemon's last good sync before it read the
-	// presence (colorDate): what colorGoneLocked dates a presence by, so that a writer's clock a
-	// week behind doesn't make a live device's colour look a week old.
+	// colorFrom is written, but no earlier than this daemon's last good sync before the presence
+	// was first listed (colorDate, presenceListed): what colorGoneLocked dates a presence by, so
+	// that a writer's clock a week behind doesn't make a live device's colour look a week old.
 	colorFrom time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
