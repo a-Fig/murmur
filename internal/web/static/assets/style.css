@@ -407,24 +407,157 @@
   --surface-grain: none;
 }
 [data-theme="night"] [data-app-sidebar] {
-  --sidebar: #070c15;
+  --sidebar: #0b1321;
   --sidebar-foreground: #fff;
-  --sidebar-muted-foreground: #9ccbf3;
-  --sidebar-icon: #9ccbf3;
-  --sidebar-row-hover: rgb(255 255 255 / 5%);
-  --sidebar-row-active: #174a85; /* white 8.9:1, the light blue 5.2:1 on it */
-  --sidebar-row-selected: #174a85;
+  --sidebar-muted-foreground: #b8c5d8;
+  --sidebar-icon: #fff;
+  --sidebar-row-hover: rgb(255 255 255 / 6%);
+  --sidebar-row-active: #1767b0; /* white 5.8:1; quieter text on it turns white below */
+  --sidebar-row-selected: #1767b0;
   --sidebar-border: #18212f;
   --sidebar-edge: transparent;
-  --secondary-label: #9ccbf3;
+  --secondary-label: #b8c5d8;
 }
-[data-theme="night"] .chat-pane {
-  background: linear-gradient(155deg, #0b1321 20%, #0d1a2e 65%, #10223d);
+/* On a picked sidebar row in the v3 blue the light blue is 3.4:1, so its quieter text is white. */
+[data-theme="night"] :is(.menu-button, .side-session)[aria-current="page"] :is(.menu-count, .side-session-doing),
+[data-theme="night"] .settled-row.current .settled-when {
+  color: #fff;
+}
+[data-theme="night"] .menu-button {
+  color: var(--sidebar-foreground);
+}
+
+/* Night's layout is the v3 design's: a navy backdrop with soft blue glows, and the conversation
+ * list and the conversation (or a page) as rounded glass panels floating on it. Phones keep the
+ * usual sheets. */
+@media (min-width: 768px) {
+  /* The v3 design is drawn at 16px text and roomier rows; the page's rem sizes follow. */
+  :root[data-theme="night"] {
+    font-size: 17px;
+  }
+  [data-theme="night"] .app {
+    background:
+      radial-gradient(48% 60% at 92% -8%, rgb(37 142 227 / 26%), transparent 70%),
+      radial-gradient(42% 55% at 18% 108%, rgb(23 103 176 / 38%), transparent 70%),
+      radial-gradient(35% 45% at 70% 110%, rgb(156 203 243 / 14%), transparent 70%),
+      #0a1120;
+  }
+  [data-theme="night"] [data-app-sidebar] {
+    border-right: 0;
+  }
+  [data-theme="night"] .chat {
+    gap: 1rem;
+    padding: 0.8125rem 0.8125rem 0.8125rem 1rem;
+    grid-template-columns: 21.25rem minmax(0, 1fr);
+  }
+  [data-theme="night"] :is(.chat-list, .chat-pane),
+  [data-theme="night"] .main:not(:has(.content-chat)) {
+    border: 1px solid rgb(36 48 71 / 90%);
+    border-radius: 1.5rem;
+    background: rgb(11 19 33 / 78%);
+    box-shadow: 0 12px 40px -12px rgb(0 0 0 / 55%);
+    backdrop-filter: blur(24px);
+  }
+  [data-theme="night"] .chat-list {
+    --dot-ring: #0f1726;
+    padding: 0.5rem 0.75rem 1rem;
+    background: rgb(24 33 47 / 88%);
+  }
+  [data-theme="night"] .chat-pane {
+    overflow: hidden;
+  }
+  [data-theme="night"] .main:not(:has(.content-chat)) {
+    margin: 0.8125rem 0.8125rem 0.8125rem 1rem;
+    overflow: hidden;
+  }
+  [data-theme="night"] .chat-head {
+    height: 4.5rem;
+    min-height: 4.5rem;
+    padding-inline: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+}
+[data-theme="night"] .g-search {
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  background: #0f1726;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+[data-theme="night"] .segmented {
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background: #0f1726;
+}
+[data-theme="night"] .segmented button {
+  height: 1.75rem;
+  border-radius: 0.5rem;
+}
+[data-theme="night"] .segmented button:is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"]) {
+  background: #1767b0;
+  color: #fff;
+  box-shadow: none;
+}
+[data-theme="night"] .segmented button:is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"]) .g-tab-n {
+  color: #fff;
+}
+[data-theme="night"] .chat-row {
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem;
+}
+[data-theme="night"] :is(.menu-button, .side-session) {
+  border-radius: 0.625rem;
+}
+[data-theme="night"] .pane-foot-card,
+[data-theme="night"] .composer {
+  border-radius: 1.25rem;
+  background: #111926;
+  box-shadow: 0 0 0 1px var(--border);
+}
+[data-theme="night"] .chat-bubble {
+  border-radius: 1.125rem;
+  color: #fff;
 }
 /* Text the page writes in --primary (the new-messages line, a copied button): the v3 blue is 3.2:1 on
  * the page, so light blue instead. */
 [data-theme="night"] :is(.chat-new, .btn-ghost.copied) {
   color: var(--info-foreground);
+}
+/* The v3 design's header: the white inline lockup on its own row, the repo picker under it as a
+ * full-width pill. `content` swaps the mark's image without a second element in the markup. */
+[data-theme="night"] .sidebar-header {
+  flex-wrap: wrap;
+  height: auto;
+  row-gap: 0.75rem;
+  padding: 1.25rem 0.75rem 0.5rem 1.25rem;
+}
+[data-theme="night"] .brand-mark {
+  content: url("/assets/lockup-night.svg");
+  width: 8.5rem;
+  height: 2.5rem;
+  border-radius: 0;
+}
+[data-theme="night"] .sidebar-header .repo-btn {
+  order: 3;
+  flex: 1 0 100%;
+  justify-content: space-between;
+  height: 2.25rem;
+  margin: 0 0.5rem 0 -0.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: #111926;
+}
+[data-theme="night"] .sidebar-header .conn-badge {
+  order: 4;
+}
+[data-theme="night"] .group-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: #fff;
+}
+[data-theme="night"] .chat-list .g-head-text h2 {
+  font-size: 1.25rem;
 }
 
 /* Base. */

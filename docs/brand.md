@@ -133,12 +133,15 @@ Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 desig
 A pale blue sidebar and conversation list frame a cream-to-sky thread, with butter for
 a person's own messages. The panes keep the desktop page's spacing and hierarchy.
 
-Night (2026-11-22) is the Figma v3 design's dark version, also in Rubik: near-black navy panes
-(`#0B1321`, the sidebar `#070C15`), white text, a blue-grey (`#A8B8CF`) for quieter text, light blue
-(`#9CCBF3`) for the sidebar's, and the v3 blue (`#1767B0`) for what is pressed and for a person's
-own messages. White on that blue is 5.8:1, but as text on the page it is 3.2:1, so the new-messages
-line and a copied button use the light blue instead. The sidebar's picked row is a deeper blue
-(`#174A85`), since the light blue on `#1767B0` is only 3.4:1 and on `#174A85` it is 5.2:1.
+Night (2026-11-22) is the Figma v3 design's dark version, also in Rubik, and copies its layout
+as well as its colours: the conversation list, the thread and the other views float as rounded
+glass panels on a navy backdrop with soft blue glows, and the sidebar carries the design's white
+inline lockup (`internal/web/static/assets/lockup-night.svg`, exported from Figma) over the repo
+picker as a pill. Panes are near-black navy (`#0B1321`), text white, quieter text blue-grey
+(`#A8B8CF`, `#B8C5D8` in the sidebar), and the v3 blue (`#1767B0`) marks what is pressed, the
+picked sidebar row and a person's own messages: white on it is 5.8:1. As text on the page that
+blue is 3.2:1, so the new-messages line and a copied button use light blue (`#9CCBF3`) instead.
+The layout needs the page 768px or wider; narrower, Night keeps the colours on the usual layout.
 
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
