@@ -6,7 +6,7 @@ import {
   NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
-import { deny, hasUnsent, poll } from "./sync.js";
+import { deny, hasUnsent, poll, tokenEra } from "./sync.js";
 import { render, go } from "./render.js";
 import {
   liveSessions, quietSessions, hideButton, quietFold, deviceDot, presence, settledFold, deviceLabel, host,
@@ -20,7 +20,7 @@ import { updatesRow } from "./updates.js";
 
 export {
   setDrawer, pickSession, connBadge, sidebar, humanTag, restartStuck, updateInfo, versionSection,
-  closeRepoMenu, repoMenu,
+  closeRepoMenu, repoMenu, loadRepoCount,
 };
 
 // A row in the sidebar's nav, as T3 Code's: an icon, a label, and a count or badge at the end.
@@ -453,9 +453,13 @@ function versionSection() {
 }
 
 // The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking
-// one moves this tab to that repo's page, whose daemon is started if it isn't running.
+// one moves this tab to that repo's page, whose daemon is started if it isn't running. Its button
+// shows the repo as #1018 drew it (#1112): a dot, filled while the repo's daemon is running and a
+// ring while the page can't reach it, the repo, and how many repos the picker holds.
 function repoButton() {
   const name = ui.state ? ui.state.repo || NAME : ""; // nothing until the state says, rather than a name that changes
+  const up = ui.conn !== "down";
+  const n = ui.repos?.length;
   return h(
     "button",
     {
@@ -473,9 +477,25 @@ function repoButton() {
         loadRepos();
       },
     },
+    h("span", { class: "dot" + (up ? " ok" : ""), "aria-hidden": "true" }),
     h("span", { class: "repo-name truncate" }, name),
+    n ? h("span", { class: "repo-count" }, plural(n, "repo")) : null,
     icon("chevronDown"),
   );
+}
+
+// The button's count comes from the same list as the picker, asked for once a page; opening the
+// picker asks again, and its answer updates the count too. Without it the button goes without.
+async function loadRepoCount() {
+  const era = tokenEra;
+  try {
+    const r = await api("/api/repos");
+    if (era !== tokenEra) return;
+    ui.repos = r.repos || [];
+    render();
+  } catch {
+    // An error here is the poll's to show.
+  }
 }
 
 // The menu holds the keyboard while it is open (the page behind it is inert): the focus goes to its
@@ -498,6 +518,7 @@ async function loadRepos() {
     const r = await api("/api/repos");
     if (ui.repoMenu !== m) return;
     m.repos = r.repos || [];
+    ui.repos = m.repos;
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     if (ui.repoMenu !== m) return;
@@ -537,7 +558,7 @@ async function openRepo(r) {
     if (ui.repoMenu !== m) return;
     m.opening = null;
     m.err = e.message;
-    if (/isn't joined/.test(e.message)) m.repos = (m.repos || []).filter((x) => x.id !== r.id);
+    if (/isn't joined/.test(e.message)) ui.repos = m.repos = (m.repos || []).filter((x) => x.id !== r.id);
     render();
   }
 }

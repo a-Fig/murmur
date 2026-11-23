@@ -1218,7 +1218,7 @@ a.g-pr:hover {
 .sidebar-header .repo-btn {
   order: 3;
   flex: 1 0 100%;
-  justify-content: space-between;
+  gap: 0.5rem;
   height: 2.25rem;
   margin: 0 0.5rem 0 -0.25rem;
   padding: 0 0.75rem;
@@ -1228,6 +1228,18 @@ a.g-pr:hover {
 }
 .sidebar-header .conn-badge {
   order: 4;
+}
+/* As #1018 drew it (#1112): the dot, the repo in bold, and the count muted before the chevron. */
+.repo-btn .repo-name {
+  flex: 1;
+  font-weight: 600;
+  text-align: left;
+}
+.repo-count {
+  flex-shrink: 0;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--sidebar-muted-foreground);
 }
 .repo-btn .icon {
   flex-shrink: 0;
@@ -1245,12 +1257,13 @@ a.g-pr:hover {
 .repo-row:disabled {
   opacity: 0.5;
 }
-.repo-row .dot.ok {
-  background: var(--success);
+/* A repo whose daemon is running is #1018's blue dot, in every theme (#1112). */
+:is(.repo-btn, .repo-row) .dot.ok {
+  background: #258ee3;
 }
 /* A repo whose daemon isn't running is a ring, as an offline session is, not a dimmer dot (WCAG
  * 1.4.1, 1.4.11). */
-.repo-row .dot:not(.ok) {
+:is(.repo-btn, .repo-row) .dot:not(.ok) {
   border: 1.5px solid var(--dot-off);
   background: transparent;
 }
