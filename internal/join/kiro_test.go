@@ -242,6 +242,21 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Fatalf("retry register after transient hook failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
 	}
 
+	// Reverse failure: if updating settings/mcp.json fails (malformed JSON) during a renamed-binary
+	// join, the newly written hook is reverted so it is not stranded without a matching mcp.json.
+	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	write(t, mcpPath, "{malformed")
+	sb.Exe = devExe
+	if _, _, err := sb.registerKiroAt(h); err == nil {
+		t.Fatal("expected register failure on malformed mcp.json")
+	}
+	if exists(hookPath) {
+		t.Error("failed mcp.json write stranded a newly created renamed-binary hook")
+	}
+
 	// Windows 8.3 short-path ownership matching after the original long directory is gone.
 	shortHook, err := kiroHooks(`C:\PROGRA~1\MYAPP~1\mur-dev.exe hook kiro`)
 	if err != nil {
@@ -259,6 +274,20 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 	}
 	if isKiroHookFileFor(shortNameHook, `C:\Program Files\My App\other-tool.exe`) {
 		t.Error("isKiroHookFileFor falsely matched unrelated binary against 8.3 short filename")
+	}
+	// Different directory with tilde must NOT match (same depth or different depth).
+	for _, otherCmd := range []string{
+		`C:\OTHER~1\mur-dev.exe hook kiro`,
+		`C:\OTHER~1\MYAPP~1\mur-dev.exe hook kiro`,
+		`C:\dir\tool.x~1 hook kiro`,
+	} {
+		hDoc, err := kiroHooks(otherCmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if isKiroHookFileFor(hDoc, `C:\Program Files\My App\mur-dev.exe`, `C:\dir\other.x~1`) {
+			t.Errorf("isKiroHookFileFor falsely matched %q", otherCmd)
+		}
 	}
 }
 

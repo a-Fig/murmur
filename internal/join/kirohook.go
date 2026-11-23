@@ -184,41 +184,46 @@ func parseKiroHookCommand(cmd string) (string, bool) {
 
 // sameKiroExe says hookExe matches a registered executable path regExe, including when hookExe
 // was written as a Windows 8.3 short path whose original directory has since been moved or deleted.
+// Both paths must share the same Windows drive and segment count, and every segment must either
+// match case-insensitively or be a valid Windows 8.3 short form of the corresponding long segment.
 func sameKiroExe(hookExe, regExe string) bool {
 	if samePath(hookExe, regExe) {
 		return true
 	}
-	if volA, volB := winDrive(hookExe), winDrive(regExe); volA != "" && volB != "" && volA != volB {
+	volA, volB := winDrive(hookExe), winDrive(regExe)
+	if volA == "" || volA != volB {
 		return false
 	}
-	base := func(p string) string {
-		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
-			p = p[i+1:]
+	hParts := splitWinPath(hookExe[2:])
+	rParts := splitWinPath(regExe[2:])
+	if len(hParts) == 0 || len(hParts) != len(rParts) {
+		return false
+	}
+	for i := range hParts {
+		if strings.EqualFold(hParts[i], rParts[i]) {
+			continue
 		}
-		return strings.ToLower(p)
+		if !isShortFormOf(hParts[i], rParts[i]) {
+			return false
+		}
 	}
-	hb, rb := base(hookExe), base(regExe)
-	if hb == "" || rb == "" {
+	return true
+}
+
+func splitWinPath(p string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool { return r == '\\' || r == '/' })
+}
+
+// isShortFormOf says shortSeg is a valid Windows 8.3 short name (<prefix>~<digits>[.<ext>])
+// derived from longSeg.
+func isShortFormOf(shortSeg, longSeg string) bool {
+	sStem, sExt := splitExt(strings.ToLower(shortSeg))
+	lStem, lExt := splitExt(strings.ToLower(longSeg))
+	tilde := strings.IndexByte(sStem, '~')
+	if tilde <= 0 || len(sStem) > 8 || len(sExt) > 3 {
 		return false
 	}
-	if hb == rb {
-		return strings.Contains(hookExe, "~")
-	}
-	// Windows 8.3 short filename: <prefix>~<digits>[.<ext>] matching regExe's long filename.
-	tilde := strings.IndexByte(hb, '~')
-	if tilde <= 0 {
-		return false
-	}
-	hStem, hExt := splitExt(hb)
-	rStem, rExt := splitExt(rb)
-	if len(rExt) > 3 {
-		rExt = rExt[:3]
-	}
-	if hExt != rExt {
-		return false
-	}
-	prefix := hStem[:tilde]
-	digits := hStem[tilde+1:]
+	prefix, digits := sStem[:tilde], sStem[tilde+1:]
 	if digits == "" {
 		return false
 	}
@@ -227,13 +232,24 @@ func sameKiroExe(hookExe, regExe string) bool {
 			return false
 		}
 	}
-	var clean strings.Builder
-	for _, r := range rStem {
+	cleanExt := clean83(lExt)
+	if len(cleanExt) > 3 {
+		cleanExt = cleanExt[:3]
+	}
+	if sExt != cleanExt {
+		return false
+	}
+	return strings.HasPrefix(clean83(lStem), prefix)
+}
+
+func clean83(s string) string {
+	var b strings.Builder
+	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || strings.ContainsRune("-_", r) {
-			clean.WriteRune(r)
+			b.WriteRune(r)
 		}
 	}
-	return strings.HasPrefix(clean.String(), prefix)
+	return b.String()
 }
 
 func winDrive(p string) string {
@@ -252,34 +268,45 @@ func splitExt(name string) (stem, ext string) {
 
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
 // entry (such as a live or dangling symlink) or a customized file is left alone with an error,
-// matching removeOwned's ownership rules.
-func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err error) {
+// matching removeOwned's ownership rules. When it writes or updates the file, undo restores the
+// previous state if a later step (such as updating settings/mcp.json) fails.
+func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, undo func(), err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var prevBytes []byte
+	var hadPrev bool
 	if fi, lerr := os.Lstat(path); lerr == nil {
 		if !fi.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s already exists and isn't a regular file (a link, say), so it was left alone", path)
+			return nil, nil, fmt.Errorf("%s already exists and isn't a regular file (a link, say), so it was left alone", path)
 		}
 		have, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return nil, fmt.Errorf("%s: %w", path, rerr)
+			return nil, nil, fmt.Errorf("%s: %w", path, rerr)
 		}
 		if bytes.Equal(have, want) {
-			return nil, nil
+			return nil, nil, nil
 		}
 		if !isKiroHookFileFor(have, e.Exe, prevExe) {
-			return nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
+			return nil, nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
 		}
+		prevBytes, hadPrev = have, true
 	} else if !errors.Is(lerr, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s: %w", path, lerr)
+		return nil, nil, fmt.Errorf("%s: %w", path, lerr)
 	}
 	if err := writeAtomic(path, want, 0o644); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
+	undo = func() {
+		if hadPrev {
+			_ = writeAtomic(path, prevBytes, 0o644)
+		} else {
+			_ = os.Remove(path)
+		}
+	}
+	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, undo, nil
 }
 
 // removeKiroHook removes join's hook file from Kiro home h via removeOwned, leaving a symlink or

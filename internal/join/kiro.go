@@ -131,7 +131,7 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 		return nil, false, nil
 	}
 	prevExe := kiroRegisteredExe(h)
-	hookDid, hookErr := e.installKiroHook(h, prevExe)
+	hookDid, undoHook, hookErr := e.installKiroHook(h, prevExe)
 	did = append(did, hookDid...)
 	if hookErr != nil && prevExe != "" && !isMurBinary(prevExe) {
 		// Keep the previously registered renamed binary in mcp.json so a retry or manual removal
@@ -144,6 +144,12 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 	entry.Set("args", toAny(kiroArgs))
 	changed, added, err := setJSONIn(mcpPath, []string{"mcpServers", brand.MCPServer}, entry)
 	if err != nil {
+		if undoHook != nil && !isMurBinary(e.Exe) {
+			// Don't leave a newly written renamed-binary hook stranded without a matching mcp.json
+			// entry, which would prevent a later standard `mur` join or uninstall from recognizing it.
+			undoHook()
+			did = nil
+		}
 		return did, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)
 	}
 	fresh = added
