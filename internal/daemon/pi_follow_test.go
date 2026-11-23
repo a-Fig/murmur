@@ -357,3 +357,23 @@ func TestAPiOfAnotherProcessDoesNotFollowASessionItDidNotHave(t *testing.T) {
 		t.Fatalf("another process's hello: %s, %v", got, err)
 	}
 }
+
+// A second server of the same Pi process on the same file, while the first is still live (one
+// that hangs as Pi reloads), registers at the ID it took after its own was in use, as on main.
+// Before, it was handed the live session's ID again, and refused as in use, for as long as the
+// first stayed.
+func TestASecondPiServerOnTheSameFileKeepsTheIDItTook(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	first, _ := b.piStart(piFileA, "", procP) // still live
+	c, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "f0f0f0", Agent: "pi",
+		ClientPID: procP, TakesSelf: true, Route: proto.Route{Native: piFileA}})
+	if err != nil {
+		t.Fatalf("the second server, at the ID it took: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	if resp.Self == first || idOf(resp.Self) != "f0f0f0" {
+		t.Fatalf("the second server is at %s, not at f0f0f0 (the first is at %s)", resp.Self, first)
+	}
+}

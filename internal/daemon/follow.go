@@ -337,9 +337,11 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 	}
 	// A server of the same process on the same file, back after /reload, is the session there,
 	// whatever was recorded: the file may not be the session's in PiFiles, as another Pi had it open
-	// when the session moved to it (notePiMoveLocked).
+	// when the session moved to it (notePiMoveLocked). Not for a server that took another ID, after
+	// a live server of the same process held the session (one hanging while Pi reloads): it keeps
+	// that ID, or it would be refused as in use for as long as the other stays.
 	if h.ClientPID != 0 {
-		if s := ofProcess(h.Native); s != nil {
+		if s := ofProcess(h.Native); s != nil && (h.ID == proto.NativeID(h.Native) || !s.dropped.IsZero()) {
 			return s.id, false
 		}
 	}
