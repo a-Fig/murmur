@@ -92,15 +92,28 @@ func TestUsageListsTheTools(t *testing.T) {
 	}
 }
 
-// The real mur: help for one command, and a tool's name as a command.
+// The real mur: help for one command.
 func TestHelpForOneCommand(t *testing.T) {
 	b := newBox(t)
 	out := b.mustRun(b.root, "help", "stop")
 	if !strings.HasPrefix(out, "  mur stop") || strings.Contains(out, "mur init") {
 		t.Errorf("mur help stop:\n%s", out)
 	}
-	out, code := b.run(b.root, "lookup")
-	if code == 0 || !strings.Contains(out, "lookup is one of") || strings.Contains(out, "Setup:") {
-		t.Errorf("mur lookup: exit %d\n%s", code, out)
+}
+
+// A tool with no command, when there is one, says so as a command, and where its description is
+// (#813). Every tool is a command now (#1118), so a made-up one stands in.
+func TestAToolWithNoCommandSaysSo(t *testing.T) {
+	was := allTools
+	allTools = func() []mcpserver.ToolInfo {
+		return append(was(), mcpserver.ToolInfo{Name: "frobnicate", Summary: "does a thing"})
+	}
+	t.Cleanup(func() { allTools = was })
+	hint := toolOnly("frobnicate")
+	if !strings.HasPrefix(hint, "frobnicate is one of") || !strings.Contains(hint, brand.Command+" help frobnicate") {
+		t.Errorf("toolOnly(frobnicate) = %q", hint)
+	}
+	if toolOnly("who") != "" {
+		t.Error("a tool with a command is called tool-only")
 	}
 }

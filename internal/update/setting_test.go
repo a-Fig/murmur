@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -285,12 +286,16 @@ func TestUpdaterObeysEachChoice(t *testing.T) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		restarted := false
 		Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
-			Getenv: noEnv, Every: time.Hour, Report: func(s Status) { reports = append(reports, s); cancel() }}, func() { restarted = true })
+			Getenv: noEnv, Every: time.Hour, Report: func(s Status) {
+				if reports = append(reports, s); s.Latest != "" || s.Installed {
+					cancel() // the check's own report; with updates off, one saying so comes first
+				}
+			}}, func() { restarted = true })
 		cancel()
 		b, _ := os.ReadFile(path)
 		got := strings.TrimPrefix(string(b), "binary v")
 		if c.want == "" {
-			if restarted || string(b) != "old" || len(reports) != 1 || !reports[0].Off {
+			if restarted || string(b) != "old" || len(reports) != 2 || !reports[0].Off || reports[0].Latest != "" || !reports[1].Off || reports[1].Latest != "1.2.4" {
 				t.Errorf("off: installed %q, reports %+v", b, reports)
 			}
 			continue
@@ -379,7 +384,6 @@ func TestCheckSoonAfterAChange(t *testing.T) {
 	t.Cleanup(func() { checkGap = was })
 	global(t)
 	gitDir := repo(t)
-	gitConfig(t, "--global", "murmur.update", "false") // so no check reaches the network
 	path := filepath.Join(t.TempDir(), "mur")
 	os.WriteFile(path, []byte("old"), 0o755)
 	check := make(chan struct{}, 1)
@@ -387,7 +391,13 @@ func TestCheckSoonAfterAChange(t *testing.T) {
 	times := make(chan time.Time, 10)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: "http://127.0.0.1:1", OS: "linux", Arch: "amd64", Getenv: noEnv,
+	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: "http://127.0.0.1:1", OS: "linux", Arch: "amd64",
+		Getenv: func(k string) string { // so no check reaches the network, and each reports once
+			if k == "MURMUR_NO_UPDATE" {
+				return "1"
+			}
+			return ""
+		},
 		Every: time.Hour, Check: check, Report: func(Status) { reports.Add(1); times <- time.Now() }}, func() {})
 	first := <-times
 	check <- struct{}{}
@@ -459,7 +469,10 @@ func TestInstallWhileOff(t *testing.T) {
 			close(reports)
 		}()
 		var got []Status
-		got = append(got, <-reports) // the first check: off, so nothing
+		if getenv("MURMUR_NO_UPDATE") == "" {
+			<-reports // updates are off, reported before the first check
+		}
+		got = append(got, <-reports) // the first check: off, so it only learns what is out
 		install <- "1.2.4"
 		got = append(got, <-reports)
 		did := false
@@ -474,7 +487,7 @@ func TestInstallWhileOff(t *testing.T) {
 	}
 
 	bin, reports, restarted := run(releases(t, "v1.2.4", nil), noEnv)
-	if reports[0].Off != true || reports[0].Asked || reports[0].Latest != "" {
+	if reports[0].Off != true || reports[0].Asked || reports[0].Latest != "1.2.4" {
 		t.Errorf("the check before: %+v", reports[0])
 	}
 	if r := reports[1]; !r.Installed || !r.Asked || r.Latest != "1.2.4" || bin != "1.2.4" || !restarted {
@@ -516,6 +529,150 @@ func TestInstallWhileOff(t *testing.T) {
 	bin, reports, restarted = run(releases(t, "v1.2.4", nil), env)
 	if r := reports[1]; r.Installed || !r.Asked || !r.Failed || !strings.Contains(r.Error, "MURMUR_NO_UPDATE") || bin != "old" || restarted {
 		t.Errorf("with MURMUR_NO_UPDATE: binary %q, report %+v, restarted %v", bin, r, restarted)
+	}
+}
+
+// With updates off, the updater still checks, every time, to learn which release is out (#1099),
+// and never installs one: no check downloads a binary or its checksums, replaces the executable or
+// restarts the daemon, though a newer release is out on the channel. With MURMUR_NO_UPDATE it asks
+// GitHub nothing at all.
+func TestOffChecksButNeverInstalls(t *testing.T) {
+	global(t)
+	gitDir := repo(t)
+	ctx := context.Background()
+	for _, choice := range []string{ChoiceOn, ChoiceNightly} {
+		if _, err := Set(ctx, noEnv, gitDir, "1.2.3", choice); err != nil {
+			t.Fatal(err)
+		}
+		// Off from this repo's own config, the machine's choice aside.
+		gitConfig(t, "--file", filepath.Join(gitDir, "config"), "murmur.update", "false")
+		srv := releases(t, "v1.2.4", []rel{{"v1.2.5-nightly.20261108", true}, {"v1.2.4", false}})
+		inner := srv.Config.Handler
+		var mu sync.Mutex
+		var asked []string
+		srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			asked = append(asked, r.URL.Path)
+			mu.Unlock()
+			inner.ServeHTTP(w, r)
+		})
+		run := func(getenv func(string) string) (reports []Status) {
+			path := filepath.Join(t.TempDir(), "mur")
+			os.WriteFile(path, []byte("old"), 0o755)
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
+				Getenv: getenv, Every: 10 * time.Millisecond, Report: func(s Status) {
+					if reports = append(reports, s); len(reports) == 4 {
+						cancel()
+					}
+				}}, func() { t.Errorf("%s, off: the daemon restarted onto an update", choice) })
+			if b, _ := os.ReadFile(path); string(b) != "old" {
+				t.Errorf("%s, off: installed %q", choice, b)
+			}
+			if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+				t.Errorf("%s, off: left %d files beside the binary", choice, len(entries))
+			}
+			return reports
+		}
+		want := map[string]string{ChoiceOn: "1.2.4", ChoiceNightly: "1.2.5-nightly.20261108"}[choice]
+		reports := run(noEnv)
+		if r := reports[0]; !r.Off || r.Latest != "" {
+			t.Errorf("%s, off: the report before the first check: %+v", choice, r)
+		}
+		for _, r := range reports[1:] {
+			if !r.Off || r.Installed || r.Failed || r.Latest != want {
+				t.Errorf("%s, off: report %+v, want Off with Latest %s", choice, r, want)
+			}
+		}
+		if got := Newer(gitDir, "1.2.3"); got != want {
+			t.Errorf("%s, off: recorded %q, want %s", choice, got, want)
+		}
+		mu.Lock()
+		for _, p := range asked {
+			if strings.HasPrefix(p, "/binary/") || strings.HasPrefix(p, "/sums/") {
+				t.Errorf("%s, off: downloaded %s", choice, p)
+			}
+		}
+		if len(asked) < 3 {
+			t.Errorf("%s, off: %d requests in three checks, want one or more each", choice, len(asked))
+		}
+		asked = nil
+		mu.Unlock()
+
+		env := func(k string) string {
+			if k == "MURMUR_NO_UPDATE" {
+				return "1"
+			}
+			return ""
+		}
+		for _, r := range run(env) {
+			if !r.Off || r.Latest != "" {
+				t.Errorf("%s, MURMUR_NO_UPDATE: report %+v", choice, r)
+			}
+		}
+		mu.Lock()
+		if len(asked) != 0 {
+			t.Errorf("%s, MURMUR_NO_UPDATE: asked GitHub for %v", choice, asked)
+		}
+		mu.Unlock()
+		gitConfig(t, "--file", filepath.Join(gitDir, "config"), "--unset", "murmur.update")
+	}
+}
+
+// Updates just turned off are reported before the Off check asks GitHub anything, so the page stops
+// saying "Updating to X" at once rather than when a slow check ends.
+func TestOffIsReportedBeforeItsCheck(t *testing.T) {
+	was := checkGap
+	checkGap = 10 * time.Millisecond
+	t.Cleanup(func() { checkGap = was })
+	global(t)
+	gitDir := repo(t)
+	srv := releases(t, "v1.2.3", nil) // nothing newer, so the first check installs nothing
+	inner := srv.Config.Handler
+	var calls atomic.Int32
+	release := make(chan struct{})
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) > 1 {
+			select { // the Off check waits on GitHub
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		inner.ServeHTTP(w, r)
+	})
+	path := filepath.Join(t.TempDir(), "mur")
+	os.WriteFile(path, []byte("old"), 0o755)
+	check := make(chan struct{}, 1)
+	reports := make(chan Status, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
+		Getenv: noEnv, Every: time.Hour, Check: check, Report: func(s Status) { reports <- s }}, func() { t.Error("restarted") })
+	if r := <-reports; r.Off {
+		t.Fatalf("the first check, updates on: %+v", r)
+	}
+	if _, err := Set(context.Background(), noEnv, gitDir, "1.2.3", ChoiceOff); err != nil {
+		t.Fatal(err)
+	}
+	check <- struct{}{}
+	select {
+	case r := <-reports:
+		if !r.Off || r.Latest != "" {
+			t.Fatalf("before the Off check: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Off waited for its check to be reported")
+	}
+	close(release)
+	select {
+	case r := <-reports:
+		if !r.Off || r.Latest != "1.2.3" {
+			t.Fatalf("the Off check: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the Off check never reported")
 	}
 }
 

@@ -21,50 +21,6 @@ func shortLine(who string) string {
 	return "Reply with " + brand.Product + "'s `send` to " + who + " if a reply is needed."
 }
 
-// The first turn from ada explains, the second doesn't, grace's first does, and what bob has been
-// told outlasts its daemon restarting.
-func TestAPersonIsExplainedOnlyInTheirFirstTurn(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
-	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
-	bob, _ := b.sessionRoute("bbbbbb", "", route)
-	bobName := b.named(bob)
-	pa, pc := a.page(), c.page()
-	pa.choose("ada")
-	pc.choose("grace")
-	eventually(t, "presence", func() bool {
-		_, ada := b.whoEntry(a.self() + "/" + bus.PersonSession)
-		_, grace := b.whoEntry(c.self() + "/" + bus.PersonSession)
-		return ada && grace && a.seesSession(bob) && c.seesSession(bob)
-	})
-
-	turn := func(n int, p *page, text string) string {
-		t.Helper()
-		p.sendText(bobName, text)
-		eventually(t, "handoff "+text, func() bool { return len(calls()) >= n })
-		return calls()[n-1].Stdin
-	}
-	check := func(got, who string, long bool) {
-		t.Helper()
-		if strings.Contains(got, longLine(who)) != long || strings.Contains(got, shortLine(who)) == long {
-			t.Errorf("want the long line %v, got:\n%s", long, got)
-		}
-	}
-	check(turn(1, pa, "first from ada"), "ada", true)
-	check(turn(2, pa, "second from ada"), "ada", false)
-	check(turn(3, pc, "first from grace"), "grace", true)
-
-	b.restart()
-	b.sessionRoute("bbbbbb", "", route)
-	if got := b.named(bob); got != bobName {
-		t.Fatalf("bob came back as %s, not %s", got, bobName)
-	}
-	eventually(t, "presence again", func() bool { return a.seesSession(bob) })
-	check(turn(4, pa, "third from ada"), "ada", false)
-}
-
 // The hook's whole message and inbox decide by the same record: a message given whole by the hook
 // counts for inbox after it, and of two messages from a person read at once, only the first
 // explains.

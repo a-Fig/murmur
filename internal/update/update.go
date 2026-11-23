@@ -1,7 +1,8 @@
 // Package update installs checksum-verified GitHub releases, and keeps the latest release's version
-// so `mur version` can say when there is a newer one. It talks only to GitHub, and not at all while
-// updates are off, unless a person asks for one install (Options.Install). It takes stable releases
-// only, unless the prerelease channel is chosen.
+// so `mur version` can say when there is a newer one. It talks only to GitHub. While updates are off
+// it still checks, to learn which release is out, and installs nothing unless a person asks for one
+// install (Options.Install); MURMUR_NO_UPDATE stops the checks too. It takes stable releases only,
+// unless the prerelease channel is chosen.
 package update
 
 import (
@@ -57,7 +58,8 @@ type Status struct {
 	// far, or a newer binary was already installed by hand.
 	Latest string
 	// Off says updates are turned off (MURMUR_NO_UPDATE, murmur.update=false), so nothing is
-	// installed without the user.
+	// installed without the user. With murmur.update false the check still reads which release is
+	// out, and Latest says; with MURMUR_NO_UPDATE it asks GitHub nothing.
 	Off bool
 	// Failed says the check or the install failed: a release newer than this one isn't coming
 	// on its own, at least until the next check.
@@ -132,7 +134,9 @@ func Run(ctx context.Context, o Options, restart func()) {
 		}
 	}
 	cleanup(o.Executable)
+	wasOff := false // the last report's Off, so updates off show before the check ends
 	report := func(s Status) {
+		wasOff = s.Off
 		if o.Report != nil {
 			o.Report(s)
 		}
@@ -156,13 +160,27 @@ func Run(ctx context.Context, o Options, restart func()) {
 		checked = time.Now()
 		want, now := asked, asked != ""
 		asked = ""
-		if off := Off(ctx, o.Getenv, o.GitDir); off && (!now || envOff(o.Getenv)) {
+		if off := Off(ctx, o.Getenv, o.GitDir); off && envOff(o.Getenv) {
+			// The environment's opt-out may mean the binary is managed by something else, so it
+			// asks GitHub nothing, and refuses Update now.
 			s := Status{Off: true, Asked: now}
 			if now {
-				// The environment's opt-out may mean the binary is managed by something else.
 				s.Failed, s.Error = true, noUpdate+" is set for this daemon"
 			}
 			report(s)
+		} else if off && !now {
+			// Off only learns which release is out, so the page can offer Update now (#1099). A
+			// failed check waits quietly for the next, as with updates on. Updates just turned off,
+			// or off as the daemon starts, are reported first, so the page doesn't say "Updating"
+			// while the check runs.
+			if !wasOff {
+				report(Status{Off: true})
+			}
+			latest, _ := look(ctx, o)
+			if ctx.Err() != nil {
+				return
+			}
+			report(Status{Latest: latest, Off: true})
 		} else {
 			done, latest, err := install(ctx, o, original, want)
 			if done {
@@ -282,11 +300,7 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	// channel. Stable releases still do, so the machine never stays below the latest of them.
 	skip := skipped(ctx, o.GitDir, o.Version)
 	clearSkip(ctx, o, o.Version)
-	back := skip != "" && same(skip, o.Version)
-	rel, err := pick(ctx, o, !back && Prerelease(ctx, o.GitDir))
-	if err == nil && rel != nil && skip != "" && prerelease(rel.Tag) && !newer(rel.Tag, skip) {
-		rel, err = pick(ctx, o, false) // held: the latest stable release, if it is newer
-	}
+	rel, back, err := target(ctx, o, skip)
 	if err != nil {
 		return false, latest, err
 	}
@@ -349,6 +363,30 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
+}
+
+// target is the release a check would install, nil for none, given skip, the release gone back to
+// stable from (skipped). back says this check goes back to stable, so takes rel even if it is older.
+func target(ctx context.Context, o Options, skip string) (rel *release, back bool, err error) {
+	back = skip != "" && same(skip, o.Version)
+	rel, err = pick(ctx, o, !back && Prerelease(ctx, o.GitDir))
+	if err == nil && rel != nil && skip != "" && prerelease(rel.Tag) && !newer(rel.Tag, skip) {
+		rel, err = pick(ctx, o, false) // held: the latest stable release, if it is newer
+	}
+	return rel, back, err
+}
+
+// look is a check with updates off (#1099): it learns the release a check with them on would
+// install, records it for the page and `mur version`, and returns its version. It downloads no
+// binary, takes no lock and writes no config; it can't install, by construction, since nothing it
+// calls replaces the executable.
+func look(ctx context.Context, o Options) (latest string, err error) {
+	rel, _, err := target(ctx, o, skipped(ctx, o.GitDir, o.Version))
+	if err != nil || rel == nil {
+		return "", err
+	}
+	recordLatest(o.GitDir, rel.Tag)
+	return strings.TrimPrefix(rel.Tag, "v"), nil
 }
 
 // clearSkip takes murmur.updateSkip off once version, the one running or just installed, has
@@ -595,7 +633,8 @@ func Checked(gitDir string) time.Time {
 }
 
 // Newer returns the latest release the clone's daemon last saw, if it is newer than version and
-// not a prerelease held back by a return to stable (Back), else "".
+// not a prerelease held back by a return to stable (Back), else "". It reads a file, and for a
+// prerelease asks git config what is held back.
 func Newer(gitDir, version string) string {
 	var l latest
 	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
@@ -604,9 +643,14 @@ func Newer(gitDir, version string) string {
 	if l.Latest == "" || !newer(l.Latest, version) {
 		return ""
 	}
+	// Only a prerelease can be held back, so only for one is git asked what is: `mur version` and
+	// the page call this, and a stable release, the usual answer, costs them no process (#1164).
+	if !prerelease(l.Latest) {
+		return l.Latest
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if skip := skipped(ctx, gitDir, version); skip == "" || !prerelease(l.Latest) || newer(l.Latest, skip) {
+	if skip := skipped(ctx, gitDir, version); skip == "" || newer(l.Latest, skip) {
 		return l.Latest
 	}
 	return ""

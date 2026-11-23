@@ -22,11 +22,16 @@ import (
 )
 
 // ErrNotStarted is what Send's error wraps when the command never started, so that nothing can have
-// reached T3: the one failure that is safe to try again. Any other failure leaves open whether T3
+// reached T3: the one failure that is safe to try again. Any other but ErrRefused leaves open whether T3
 // took the message before it failed (it timed out, or exited with an error after it had accepted
 // it, or its output was lost), and `t3 thread send` has no key that would make a second call
 // harmless: it would be a second turn.
 var ErrNotStarted = errors.New("couldn't start the command")
+
+// ErrRefused wraps what Send returns when it wouldn't run `t3` at all, for what it was asked to
+// send to: nothing reached T3, as with ErrNotStarted, but the same call would be refused again, so
+// it isn't one to try again (#1164).
+var ErrRefused = errors.New("not run")
 
 // SendTimeout bounds one `t3 thread send`. It takes about a second where T3 is running; a T3 that
 // isn't running makes it fail sooner than this.
@@ -138,14 +143,15 @@ func StateDB(home string) string { return filepath.Join(home, "userdata", "state
 // Windows command-line quoting. home, if not empty, is T3's data directory (T3CODE_HOME).
 //
 // It returns once T3 has taken the message, not when the agent has finished with it. The error
-// says what T3 printed, in a line; it never holds the text. An error that wraps ErrNotStarted means
-// the message did not reach T3; any other means it may have.
+// says what T3 printed, in a line; it never holds the text. An error that wraps ErrNotStarted or
+// ErrRefused means the message did not reach T3; any other means it may have.
 func Send(ctx context.Context, cli, home, thread, text string) error {
 	if cli == "" || thread == "" {
 		return errors.New("no T3 command line or thread to send to")
 	}
 	if strings.HasPrefix(thread, "-") {
-		return fmt.Errorf("t3 thread send: %w: invalid thread ID", ErrNotStarted)
+		// t3 would read it as an option.
+		return fmt.Errorf("t3 thread send: %w: invalid thread ID", ErrRefused)
 	}
 	parent := ctx
 	timeout := sendTimeout

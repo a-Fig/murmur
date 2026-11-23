@@ -239,8 +239,10 @@ func TestSendRejectsFlagLikeThreadID(t *testing.T) {
 	exe, calls := fake(t, "")
 	for _, bad := range []string{"-h", "--help", "-"} {
 		err := Send(context.Background(), exe, "", bad, "x")
-		if err == nil || !errors.Is(err, ErrNotStarted) {
-			t.Errorf("Send(%q) = %v, want error wrapping ErrNotStarted", bad, err)
+		// Refused, not "couldn't start": the daemon tries a command that didn't start once more,
+		// and this would be refused again (#1164).
+		if !errors.Is(err, ErrRefused) || errors.Is(err, ErrNotStarted) {
+			t.Errorf("Send(%q) = %v, want error wrapping ErrRefused and not ErrNotStarted", bad, err)
 		}
 	}
 	if got := calls(); len(got) != 0 {

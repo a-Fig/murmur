@@ -618,6 +618,51 @@ func TestAntigravityToolHooksCreditCommits(t *testing.T) {
 	}
 }
 
+// A Pi session's shell calls are bracketed by the hook its extension runs (#868): the commits made
+// between the start and the end of a bash call are the session's, and a second session whose calls
+// carry the same IDs, which a model can give, neither takes credit for the first's commits nor ends
+// the first's call.
+func TestPiToolHooksCreditCommits(t *testing.T) {
+	slowHook(t)
+	a := newDevice(t, newRemote(t))
+	wt := a.linkedTree("wt-pi", "feat-pi")
+	const file, other = "/home/u/.pi/agent/sessions/--work--/a.jsonl", "/home/u/.pi/agent/sessions/--work--/b.jsonl"
+	var names []string
+	for i, f := range []string{file, other} {
+		conn, resp, err := a.c.Hello(context.Background(), proto.Hello{ID: []string{"aaaaaa", "bbbbbb"}[i], Agent: "pi", Cwd: a.tree(), Route: proto.Route{Native: f}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		names = append(names, a.named(resp.Self))
+	}
+	run := func(session, event, tool, id string) {
+		t.Helper()
+		payload, err := json.Marshal(map[string]any{"session_id": session, "hook_event_name": event, "cwd": wt,
+			"tool_name": tool, "tool_input": map[string]string{"command": "git commit"}, "tool_use_id": id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		hook.RunFor(hook.Pi, bytes.NewReader(payload), &out)
+	}
+	run(file, "PreToolUse", "bash", "call_1")
+	first := commitFile(t, wt, "pi.txt")
+	run(file, "PostToolUse", "bash", "call_1")
+	// The other session's call has the same ID, and ends first.
+	run(file, "PreToolUse", "bash", "call_2")
+	run(other, "PreToolUse", "bash", "call_2")
+	run(other, "PostToolUse", "bash", "call_2")
+	second := commitFile(t, wt, "during.txt")
+	run(file, "PostToolUse", "bash", "call_2")
+	if got := commitSHAs(a.look("aaaaaa", names[0])); !slices.Equal(got, []string{first, second}) {
+		t.Errorf("the session was credited with %v, want %s and %s", got, first, second)
+	}
+	if got := commitSHAs(a.look("bbbbbb", names[1])); len(got) != 0 {
+		t.Errorf("the other session was credited with %v: it ended its own call before any commit", got)
+	}
+}
+
 // With no daemon running, PreToolUse prints nothing and returns promptly: a tool is never held up
 // by Murmur being down, and nothing makes the hook exit with an error (2 would block the tool).
 func TestPreToolUseWithTheDaemonDownIsSilent(t *testing.T) {

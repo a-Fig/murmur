@@ -7,7 +7,7 @@ without Murmur's tools asks its user whether to join; and on a yes it installs m
 join`, which does the rest. Tyler also decided that messaging gets no commands (`who`, `send`,
 `inbox` and `log` were removed): "If everyone is using the CLI, there will be no one to message."
 Agents message through MCP, and people use the page. Since 2026-11-21 (#913) an agent Murmur has no
-tools for runs `mur who`, `mur send`, `mur inbox` and `mur status` in its shell instead ([any agent
+tools for runs commands that do the same (`mur who`, `mur send` and the rest) in its shell instead ([any agent
 in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 
 ## The marker
@@ -45,20 +45,22 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp` | user |
 | Permission for its tools | `mcp__murmur` in `permissions.allow` of Claude Code's `settings.json` | user |
 | The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME", "T3CODE_HOME"]` and `default_tools_approval_mode = "approve"` | user |
-| The MCP server, for OpenCode, Muse Code, Pi, Grok and Antigravity | see [other agents](clients.md) | user |
-| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi, and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
+| The MCP server, for OpenCode, Muse Code, Pi, Grok, Antigravity and Cursor | see [other agents](clients.md) | user |
+| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode, Pi and Cursor (`~/.cursor`), and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
 | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` | `settings.json` in each Claude Code home ([Claude Code's hook is per user](clients.md#claude-codes-hook-is-per-user)) | user |
 | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved | `hooks.json` in each Codex home, its trust in `config.toml` there ([Codex's and Grok's hook](clients.md#codexs-and-groks-hook)) | user |
 | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
 | The hook for Muse Code, on `UserPromptSubmit`, `PostToolUse` and `Stop` | `hooks` in each Muse home's `settings.json` ([Muse's hook](clients.md#muses-hook)) | user |
 | The hook for Antigravity, on `PreInvocation`, `Stop`, and before and after `run_command` | a `murmur` entry in `config/hooks.json` in each Antigravity home ([other agents](clients.md#antigravity)) | user |
+| The hook for Cursor, on `sessionStart`, `beforeSubmitPrompt`, `postToolUse` and `stop`, and the allow rule `Mcp(murmur:*)` | `~/.cursor/hooks.json`, and `permissions.allow` in Cursor's `cli-config.json` ([Cursor](clients.md#cursor)) | user |
 | The daemon | started, if none is running | clone |
 
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
   how to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a
-  team of agents as its user's COO (#548); a model may load it on its own, so it opens by saying to
-  follow it only when the user has made the session the manager in words. A SKILL.md of the same name without the skills'
-  marker comment is the user's own and is left alone. They cost every session of those agents their
+  team of agents as its user's GEM, general engineering manager (#548, #779); a model may load it
+  on its own, so it opens by saying to follow it only when the user has made the session the
+  manager in words. A SKILL.md of the same name without the skills' marker comment is the user's
+  own and is left alone. They cost every session of those agents their
   descriptions' worth of context in any repo, so each description says it applies only where the
   repo has the Murmur section. The folders are from each agent's documentation, not tried in a
   session (2026-11-08). OpenCode also reads `~/.claude/skills`, so beside Claude Code it sees each

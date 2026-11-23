@@ -87,6 +87,15 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
                                 TEXT is then the body
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
+  mur lookup NAME [--messages N]
+                                everything known about a session, as the lookup tool does, with its
+                                latest N messages (10 if not given, at most 50)
+  mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]
+                                add or remove your tags, as the tags tool does; --for NAME,... gives
+                                the group: tags in --add to those sessions, not to you unless you list
+                                your own name too; alone, lists yours
+  mur mute [NAME] [--unmute]    stop getting anything NAME sends, as the mute tool does; --unmute undoes
+                                it; alone, lists whom you have muted
 
 {tools}
 
@@ -158,7 +167,7 @@ func main() {
 		err = runRotate(ctx, args, os.Stdout)
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
-	case "who", "send", "inbox", "status":
+	case "who", "send", "inbox", "status", "lookup", "tags", "mute":
 		err = mcpserver.Command(ctx, cmd, args, os.Stdin, os.Stdout, os.Stderr)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)

@@ -2,9 +2,9 @@
 
 Murmur updates itself by default (#192, Tyler, 2026-11-07), so fixes reach an installed daemon
 without anyone reinstalling. `internal/update` checks GitHub's `a-Fig/murmur` releases/latest at
-daemon start and hourly, with no repo information in the request; a network failure waits quietly
-for the next hour. A development build (`-dev`) never updates itself. Versions from before the
-updater need one manual install to get it.
+daemon start and hourly, with updates off too (it then installs nothing), and with no repo
+information in the request; a network failure waits quietly for the next hour. A development build
+(`-dev`) never updates itself. Versions from before the updater need one manual install to get it.
 
 - **Download and install.** The daemon downloads its `mur-<os>-<arch>[.exe]` asset and the release's
   `SHA256SUMS`, checks the hash, and stages the file beside the running binary's resolved target.
@@ -71,16 +71,22 @@ updater need one manual install to get it.
     after a change), while an update waits for its restart, once this daemon's updater has
     stopped (a binary it can't replace), since nothing would act on it, or while
     `MURMUR_NO_UPDATE` is set on the daemon, which may mean something else manages the binary.
-  - *With updates off*, the updater makes no request, so the page knows of a newer release only
-    from a check this clone's daemon made before they were turned off (`latest.json`). A clone that
-    has always had them off isn't told of releases, and gets no button.
+  - *With updates off* (#1099, 2026-11-22), the updater still checks on the same schedule: at
+    start, hourly, and when the page asks, at least 10 s apart. An Off check reads which release a
+    check with updates on would install, records it (`latest.json`) and reports it, and stops
+    there: it downloads nothing, takes no lock and writes no config (`look`), so even a clone that
+    has always had updates off shows "X is out" and the button. Off means "don't install on your
+    own", not "no network"; before #1099 it meant both, and the button the setting was built for
+    never appeared on such a clone. `TestOffChecksButNeverInstalls` fails if an Off check downloads
+    a release or replaces the binary. `MURMUR_NO_UPDATE` still means no checks at all.
 - **The setting** (#1045, Tyler, 2026-11-22) is one per machine: Off, On (stable releases, the
   default) or On, nightly (prereleases and nightlies too), in Settings' About and as `mur updates
-  [off|on|nightly]`. It is the global git config, since one binary serves every clone: Off is
-  `murmur.update false`, nightly is `murmur.channel prerelease` (#244, so a release runs on our own
-  machines before a stable tag sends it to everyone, `docs/releasing.md`), and On is neither. Both
+  [off|on|nightly]`. Off still checks, to know what is out (*With updates off*, above). It is the
+  global git config, since one binary serves every clone: Off is `murmur.update false`, nightly is
+  `murmur.channel prerelease` (#244, so a release runs on our own machines before a stable tag
+  sends it to everyone, `docs/releasing.md`), and On is neither. Both
   are read on each check, so a change needs no restart; the page's change also asks its daemon for a
-  check within seconds (10 s apart at most, against GitHub's hourly allowance per address), while
+  check within seconds (at least 10 s apart, against GitHub's hourly allowance per address), while
   other clones' daemons and `mur updates` wait for the hourly one.
   - *Overrides.* A repo's own git config, the system's, and `MURMUR_NO_UPDATE=1` on the daemon
     still win, as git's order has them. The page and `mur updates` show the machine's choice and,
