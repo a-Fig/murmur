@@ -1,3 +1,6 @@
+// This file is the tools as clients see them: their names, descriptions and input schemas, and
+// the handler each one runs.
+
 package mcpserver
 
 import (

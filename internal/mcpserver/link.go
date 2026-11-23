@@ -1,3 +1,7 @@
+// This file is the link: the session's registration with the daemon, which reconnects when the
+// daemon goes away, tells it route changes, and holds a first hello for Codex's first call or
+// Cursor's hook.
+
 package mcpserver
 
 import (

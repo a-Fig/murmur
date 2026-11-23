@@ -1,3 +1,7 @@
+// This file is what the tool handlers share: a call made as the session (callOn, which asks again
+// whether the server is on), and what a send or a status carries, shared with the shell commands
+// in commands.go.
+
 package mcpserver
 
 import (

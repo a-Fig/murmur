@@ -1,3 +1,6 @@
+// This file finds the T3 thread a session is in, from the client's own ID for it, and holds a Codex
+// session's first send until the daemon has heard whether its thread is a delegate's.
+
 package mcpserver
 
 import (

@@ -1,3 +1,21 @@
+// This file turns the server on and off, and so holds its passive guarantee: in a repo this user
+// hasn't joined in this clone, the server lists no tools, gives no instructions, starts no daemon,
+// writes no ref and opens no connection. Where that is enforced:
+//
+//   - Serve gives Instructions only if join.Place.Joined holds at initialize, and runs sync, which
+//     turns the server on (activate) only while Joined holds, looked at every Options.Poll.
+//   - activate is the one place tools are added and a link to the daemon is made. deactivate takes
+//     both away on a leave or a move.
+//   - The client activate makes may start a daemon only while Joined holds (client.Client.MaySpawn).
+//   - A leave can come between two looks, so link.run asks again before every hello (link.allowed),
+//     and callOn before every request (handlers.go).
+//   - The server never writes to the bus: refs are the daemon's, and an off server reaches none.
+//
+// Two things run in every repo, both in the user's own directories and outside any repo: the
+// session's record for `mur join` (move.go), and Run's refresh of Pi's and OpenCode's plugin
+// files. The tests of all this are TestPassive*, TestJoinThenLeaveWhileRunning and the leave
+// tests in mcpserver_test.go, and lifecycle_test.go.
+
 package mcpserver
 
 import (

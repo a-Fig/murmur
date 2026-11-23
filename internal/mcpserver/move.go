@@ -1,3 +1,7 @@
+// This file is the server's record in the per-user directory (package here), and how the server
+// follows `mur join` into another repo: off in the old one first, then on in the new one at the
+// next sync (activation.go).
+
 package mcpserver
 
 import (

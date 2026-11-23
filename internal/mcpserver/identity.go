@@ -1,3 +1,6 @@
+// This file is who the session is, as its hello tells the daemon: its ID, its agent's name, and
+// the route to its client, read from the environment and from the processes above the server.
+
 package mcpserver
 
 import (
