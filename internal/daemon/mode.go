@@ -72,6 +72,11 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 	d.log.Printf("mode: %s", now)
 	if now == web.ModeInvisible {
 		d.presenceGone.Store(false)
+		// Its presence goes, so its colour looks free, as a stopped daemon's does: back online, it
+		// settles the colour again, and gives it up to whoever picked it meanwhile (#1084).
+		d.mu.Lock()
+		d.colorSettled = false
+		d.mu.Unlock()
 	}
 	if was == web.ModeInvisible {
 		d.kickNames() // what waited, without its own backoff to sit out

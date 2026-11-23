@@ -20,7 +20,7 @@ import (
 // A pick that loses is given up, not kept: the device goes back to Auto, and its person is told
 // who has the colour (st.ColorLostTo). It loses a race by the rule, and it loses on coming back
 // to a colour picked while it was away: a daemon that stops for being idle takes its presence off
-// the remote, so its colour looked free. Until its first full sync it leaves its pick out of its
+// the remote, so its colour looked free, and so does a device that goes invisible. Until its first full sync it leaves its pick out of its
 // presence, and then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come
 // back each time the holder's daemon went idle, and two devices would swap colours day by day.
 
@@ -72,7 +72,9 @@ func (d *Daemon) settleColorLocked() {
 			return
 		}
 	}
-	if !d.colorSettled {
+	// Not while the device is invisible: it has no presence for the pick to go in, and a teammate
+	// may pick the colour before it is back (#1084).
+	if !d.colorSettled && !d.hidden.Load() {
 		d.colorSettled = true
 		if d.st.Color != 0 {
 			d.kickPresence()
