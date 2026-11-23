@@ -17,6 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/join"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // Instructions reach the agent through the MCP initialize result; Claude Code puts them in its
@@ -149,6 +150,9 @@ type server struct {
 	// before it returns. closed, set as Serve stops, keeps any more from starting.
 	bg     sync.WaitGroup
 	closed bool
+	// direct, where set, makes every tool's request to the daemon in place of a link: `mur tool`'s
+	// session, which a command's hello registers (tool.go).
+	direct func(proto.Request) (proto.Response, error)
 }
 
 // goBGUnlocked is goBG for a caller that doesn't hold s.mu: a link's own goroutines.

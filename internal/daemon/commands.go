@@ -15,6 +15,11 @@ import (
 // thread, as it does a thread whose MCP server T3 stopped. The next command registers it again, at
 // the same address and name: the ID is made from the thread.
 //
+// `mur tool`, which Murmur's Hermes plugin runs for each tool call (#975), registers its session the
+// same way, keyed by the session's own ID (proto.Route.Native) with no thread. Its hold lasts until
+// the session has been idle for commandIdle, which with no T3 thread to read is since its last call
+// or hook.
+//
 // Not held across a daemon restart: a restarted daemon has the session stopped, as it has any
 // session whose server didn't come back, and the next command registers it again.
 
@@ -125,7 +130,7 @@ func (d *Daemon) waitHold(ctx context.Context, s *session, h *commandHold) bool 
 			over := s.hold == h && d.holdOverLocked(s, time.Now())
 			if over {
 				d.releaseHoldLocked(s, false)
-				d.log.Printf("session %s, which commands registered, is done with: its thread is idle or settled", s.id)
+				d.log.Printf("session %s, which commands registered, is done with: it is idle, or its thread settled", s.id)
 			}
 			d.mu.Unlock()
 			if over {

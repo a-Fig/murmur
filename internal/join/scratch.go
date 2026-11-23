@@ -3,6 +3,7 @@ package join
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -187,6 +188,9 @@ func (e Env) homeFrom(a agent, h agentHome, readT3 bool) string {
 		}
 		if v != "" && e.getenv(v) != "" {
 			return v
+		}
+		if a.driver == "hermes" && runtime.GOOS == "windows" && e.getenv("LOCALAPPDATA") != "" {
+			return "LOCALAPPDATA" // Hermes' default there (hermesHomeDir)
 		}
 		return e.homeVar()
 	}

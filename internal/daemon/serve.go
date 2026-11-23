@@ -199,7 +199,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, fail("hello needs a session ID of lowercase letters, digits and dashes"))
 		return
 	}
-	if h.Command && (h.T3CLI == "" || h.T3Thread == "") {
+	// A command's session is a T3 thread's, or one its client names itself (Native), as Murmur's
+	// Hermes plugin does for `mur tool` (#975): keyed by that, it is the same session each call.
+	if h.Command && (h.T3CLI == "" || h.T3Thread == "") && (h.Native == "" || h.T3Thread != "") {
 		writeResp(conn, fail("a command's session is a T3 thread's, and its hello names no thread"))
 		return
 	}
@@ -238,6 +240,14 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// command is that session, and nothing changes but that it was at work, and that its thread
 		// may be read now where it couldn't be before.
 		d.noteHelloThreadLocked(thread, o.id)
+		d.touchLocked(o, time.Now())
+		name := o.name
+		d.mu.Unlock()
+		writeResp(conn, proto.Response{OK: true, Self: bus.Addr(d.device, o.id), Name: name, NamePending: name == ""})
+		return
+	}
+	if o := d.sessions[h.ID]; h.Command && h.T3Thread == "" && o != nil && o.dropped.IsZero() && o.route.Native == h.Native {
+		// A session its client names, live already, from an earlier call: as above.
 		d.touchLocked(o, time.Now())
 		name := o.name
 		d.mu.Unlock()

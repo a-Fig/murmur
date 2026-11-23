@@ -298,6 +298,12 @@ func commandSession(ctx context.Context) (func(proto.Request) (proto.Response, e
 	// state itself as the session registers, so a delegate is one from its first command (#945).
 	h := proto.Hello{ID: threadID(thread), Agent: "agent in T3", Cwd: cwd, ByThread: true, Command: true,
 		Route: proto.Route{T3CLI: cli, T3Home: home, T3Thread: thread}}
+	return registerCommand(ctx, place, h)
+}
+
+// registerCommand says hello h for a command in clone place, and returns how to make a request as
+// the session it registers (see commandSession).
+func registerCommand(ctx context.Context, place join.Place, h proto.Hello) (func(proto.Request) (proto.Response, error), error) {
 	c := &client.Client{GitDir: place.GitDir, Spawn: true, MaySpawn: place.Joined}
 	hello := func() (string, error) {
 		hctx, cancel := context.WithTimeout(ctx, 30*time.Second)

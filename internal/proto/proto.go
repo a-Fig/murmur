@@ -99,7 +99,9 @@ const (
 //	23: a send's Files (#570): a daemon of 22 or less would send the message without them.
 //	24: a hello's Command (#913): a session `mur who` or `mur send` registers stays while its T3
 //	    thread is in use. A daemon of 23 or less would drop it a minute after the command exits.
-const Protocol = 24
+//	25: a command's hello keyed by Native, with no T3 thread: `mur tool` for Murmur's Hermes plugin
+//	    (#975). A daemon of 24 or less refuses it.
+const Protocol = 25
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
@@ -357,8 +359,10 @@ type Hello struct {
 	ByThread bool `json:"byThread,omitempty"`
 	// Command says a shell command (`mur who`, `mur send`) registers the session, for a harness
 	// with no Murmur tools (#913). Its connection closes with the command, so the daemon keeps the
-	// session for as long as its T3 thread is in use, which Route must name. If a session is live in
-	// that thread already, the command acts as it, and nothing is registered.
+	// session for as long as its T3 thread is in use, which Route must name, or, for `mur tool`
+	// from Murmur's Hermes plugin (#975), its Native ID, with no thread: then while it makes calls.
+	// If a session is live in that thread, or at that ID, already, the command acts as it, and
+	// nothing is registered.
 	Command bool `json:"command,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route

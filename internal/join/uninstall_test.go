@@ -21,7 +21,7 @@ func uninstallSandbox(t *testing.T) (*sandbox, string) {
 	t.Helper()
 	sb := newSandbox(t, true)
 	withAgents(sb)
-	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "GEMINI_HOME", "KIRO_HOME", "PI_CODING_AGENT_DIR"} {
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "GEMINI_HOME", "KIRO_HOME", "HERMES_HOME", "PI_CODING_AGENT_DIR"} {
 		t.Setenv(k, filepath.Join(sb.root, "home"))
 	}
 	record := filepath.Join(sb.root, "clones")

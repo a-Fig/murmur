@@ -19,6 +19,7 @@ func withAgents(sb *sandbox) {
 	sb.GrokHome = filepath.Join(sb.root, "grok")
 	sb.GeminiHome = filepath.Join(sb.root, "gemini")
 	sb.KiroHome = filepath.Join(sb.root, "kiro")
+	sb.HermesHome = filepath.Join(sb.root, "hermes")
 }
 
 // OpenCode 2's JSONC config gets the server and the allow rule, its comments and layout kept; once.

@@ -113,6 +113,8 @@ Started by other programs:
                                 kiro's, muse's, opencode's or pi's; reads the payload on stdin
   mur hook --event EVENT antigravity
                                 Antigravity's hook, for EVENT; reads the payload on stdin
+  mur tool --agent hermes TOOL  one call of TOOL for an agent whose plugin runs the tools (Hermes);
+                                reads its arguments as JSON on stdin. --list lists the tools
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Help:
@@ -155,6 +157,11 @@ func main() {
 		}
 	case "mcp":
 		err = runMCP(ctx, args)
+	case "tool":
+		err = runTool(ctx, args, os.Stdin, os.Stdout)
+		if mcpserver.ToolFailed(err) {
+			os.Exit(1) // its text, on stdout, says why
+		}
 	case "daemon":
 		err = runDaemon(ctx, args)
 	case "init":
@@ -252,6 +259,36 @@ func flags(name string) (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet(brand.Command+" "+name, flag.ExitOnError)
 	dir := fs.String("C", ".", "act on the repository at this directory")
 	return fs, dir
+}
+
+// runTool is `mur tool`: one call of one of Murmur's tools, or with --list the tools, for an agent
+// whose plugin runs them (Hermes, #975).
+func runTool(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	fs := flag.NewFlagSet(brand.Command+" tool", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	agent := fs.String("agent", "", "")
+	list := fs.Bool("list", false, "")
+	usage := fmt.Errorf("usage: %[1]s tool --agent hermes TOOL, with its arguments as JSON on stdin; or %[1]s tool --list", brand.Command)
+	if fs.Parse(args) != nil {
+		return usage
+	}
+	if *list {
+		if fs.NArg() != 0 {
+			return usage
+		}
+		// The Hermes plugin lists the tools as Hermes' gateway loads it, and is per user, like Pi's
+		// extension, and older after an update: brought up to this binary's for the gateway's next start.
+		if did, err := join.RefreshHermes(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s tool: couldn't update its Hermes plugin: %v\n", brand.Command, err)
+		} else if did {
+			fmt.Fprintf(os.Stderr, "%s tool: updated its Hermes plugin, which Hermes loads at its gateway's next start\n", brand.Command)
+		}
+		return mcpserver.ToolList(ctx, stdout)
+	}
+	if fs.NArg() != 1 || *agent == "" {
+		return usage
+	}
+	return mcpserver.Tool(ctx, *agent, fs.Arg(0), stdin, stdout)
 }
 
 func runMCP(ctx context.Context, args []string) error {

@@ -1,0 +1,409 @@
+package join
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"slices"
+	"strings"
+
+	"github.com/a-Fig/murmur/internal/brand"
+)
+
+// Hermes Agent (#975, #1183; Nous Research's hermes-agent at 8da3100, read 2026-11-23, and run from
+// source on Windows with a stand-in model) runs every session, from its classic CLI, TUI, Desktop or
+// ACP, in one gateway process per profile, and that process runs the profile's MCP servers: one
+// `mur mcp` would serve every Hermes session in every repo, and no MCP call says which session made
+// it. Its plugins run in the gateway too, but a plugin's tool handler is given its session's ID and
+// can read the session's working directory. So join writes a plugin of Murmur's own, which registers
+// Murmur's seven tools with Hermes, and no MCP entry: each call runs `mur tool` with the session's ID
+// and folder (internal/mcpserver, tool.go), which answers as the MCP tool does.
+//
+//   - Where: plugins/murmur/ (plugin.yaml and __init__.py) in Hermes' home, $HERMES_HOME, else
+//     %LOCALAPPDATA%\hermes on Windows and ~/.hermes elsewhere (hermes_constants.py), and in each of
+//     its profiles, profiles/<name>/, each a home of its own with its own config.yaml and plugins
+//     (user-guide/profiles.md). A folder counts as a profile only with one of the files Hermes
+//     names (hermesProfileFiles).
+//   - On: a plugin there loads only once its name is in plugins.enabled in config.yaml
+//     (user-guide/features/plugins.md, "Plugins are opt-in"), so join adds it there, editing the
+//     file as text (hermesyaml.go). A plugin the user put in plugins.disabled stays off: join says
+//     so and leaves it.
+//   - When: the gateway discovers plugins once, as it starts, for every session it runs
+//     ("Project-local plugins"), so sessions get the tools after `hermes gateway restart`.
+//   - The tools are named murmur_who and so on: who and send alone could meet a tool of Hermes' own
+//     or another plugin's, and Hermes refuses a second tool of one name.
+//   - They are there in every session, in any folder, and a call outside a joined clone answers that
+//     Murmur is off there, as the MCP server's passive tools do. They can't be left out where the
+//     session's folder isn't joined, as the MCP server leaves them out: Hermes keeps one list of
+//     tools for the whole process (get_tool_definitions in model_tools.py), checked about every 30
+//     seconds, so one session's folder would decide every session's tools (seen 2026-11-23). By
+//     default Hermes shows a plugin's tools only as a line each, in its tool_search tool, and loads
+//     a tool's schema when the model asks (user-guide/features/tool-search.md), so they cost little.
+//   - A subagent (delegate_task) acts as the session that started it, which the plugin learns from
+//     Hermes' subagent_start hook: its calls go as its parent's, as other agents' subagents do
+//     (docs/design/delegates.md), so it never shows as a session of its own.
+//   - Skills go in skills/ of each home, which Hermes scans for SKILL.md files.
+//
+// Messages as notices and turns are #1184. Hermes runs plugins in-process with the user's
+// credentials, as it does every plugin; Murmur's runs `mur` and nothing else.
+
+// hermesProfileFiles are the files that make a folder under profiles/ a profile to Hermes: one is
+// enough (user-guide/profiles.md).
+var hermesProfileFiles = []string{"config.yaml", ".env", "SOUL.md", "profile.yaml", "auth.json", "state.db"}
+
+// hermesHomeDir is Hermes' home as Hermes finds it: HERMES_HOME, else the platform's default, each
+// default with HERMES_DATA_DIR_SUFFIX.
+func hermesHomeDir(getenv func(string) string, home string) string {
+	return hermesHomeFor(getenv, home, runtime.GOOS == "windows")
+}
+
+func hermesHomeFor(getenv func(string) string, home string, windows bool) string {
+	if dir := strings.TrimSpace(getenv("HERMES_HOME")); dir != "" {
+		return expandHome(dir, home)
+	}
+	suffix := getenv("HERMES_DATA_DIR_SUFFIX")
+	if windows {
+		base := strings.TrimSpace(getenv("LOCALAPPDATA"))
+		if base == "" {
+			if home == "" {
+				return ""
+			}
+			base = filepath.Join(home, "AppData", "Local")
+		}
+		return filepath.Join(base, "hermes"+suffix)
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".hermes"+suffix)
+}
+
+// hermesProfiles are the homes of the profiles of Hermes home dir, each labeled. A dir that is a
+// profile itself (HERMES_HOME set to one) has its root's profiles, and the root, listed.
+func hermesProfiles(dir string) []agentHome {
+	if dir == "" {
+		return nil
+	}
+	root := dir
+	if filepath.Base(filepath.Dir(dir)) == "profiles" {
+		root = filepath.Dir(filepath.Dir(dir))
+	}
+	var out []agentHome
+	if !samePath(root, dir) && isDir(root) {
+		out = append(out, agentHome{Dir: root, Label: "Hermes"})
+	}
+	entries, _ := os.ReadDir(filepath.Join(root, "profiles"))
+	for _, en := range entries {
+		p := filepath.Join(root, "profiles", en.Name())
+		if !en.IsDir() || samePath(p, dir) || !slices.ContainsFunc(hermesProfileFiles, func(f string) bool { return exists(filepath.Join(p, f)) }) {
+			continue
+		}
+		out = append(out, agentHome{Dir: p, Label: "Hermes (profile " + en.Name() + ")"})
+	}
+	return out
+}
+
+// hermesPluginDir is Murmur's plugin folder in Hermes home dir.
+func hermesPluginDir(dir string) string { return filepath.Join(dir, "plugins", brand.MCPServer) }
+
+// hermesMarker starts both of the plugin's files.
+const hermesMarker = "# Written by `" + brand.Command + " join`"
+
+// hermesPluginFiles are the plugin's files for the mur at exe, by name.
+func hermesPluginFiles(exe string) map[string]string {
+	cmd, _ := json.Marshal(exe)
+	r := strings.NewReplacer("{{product}}", brand.Product, "{{command}}", brand.Command, "{{server}}", brand.MCPServer,
+		"{{exe}}", string(cmd), "{{sessionEnv}}", "MURMUR_HERMES_SESSION")
+	return map[string]string{"plugin.yaml": r.Replace(hermesManifest), "__init__.py": r.Replace(hermesPlugin)}
+}
+
+const hermesManifest = `# Written by ` + "`{{command}} join`" + ` ({{product}}, https://github.com/a-Fig/murmur), with __init__.py beside it.
+name: {{server}}
+version: "1"
+description: "{{product}}'s tools, to message the coding agents on your teammates' machines in this repo"
+`
+
+// hermesPlugin is the plugin, with its names left for package brand to fill in.
+const hermesPlugin = `# Written by ` + "`{{command}} join`" + ` ({{product}}, https://github.com/a-Fig/murmur). ` + "`{{command}} join`" + ` writes it again when {{command}} moves,
+# and {{command}} when it is updated, so edits here are lost; take this first line out to keep yours.
+# It gives each Hermes session {{product}}'s tools ({{server}}_who, {{server}}_send and the rest). Each call runs
+# ` + "`{{command}} tool`" + ` with the session's ID and working directory, which answers as {{product}}'s MCP server does.
+# ` + "`{{command}} uninstall`" + ` takes it out, or delete this folder and {{server}} from plugins.enabled in config.yaml.
+"""{{product}}'s tools for Hermes Agent."""
+
+import json
+import logging
+import os
+import subprocess
+import threading
+
+MUR = {{exe}}
+log = logging.getLogger(__name__)
+
+# A subagent acts as the session that started it: its calls go as its parent's, so it never shows
+# to others as a session of its own.
+_parents = {}
+_lock = threading.Lock()
+
+
+def _run(args, stdin="", cwd=None, env=None, timeout=120):
+    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    return subprocess.run([MUR, *args], input=stdin, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=cwd or None, env=env, timeout=timeout, **extra)
+
+
+def _session(session_id):
+    sid = session_id or ""
+    if not sid:
+        try:
+            from gateway.session_context import get_session_env
+            sid = get_session_env("HERMES_SESSION_ID", "")
+        except Exception:
+            sid = ""
+    with _lock:
+        seen = set()
+        while sid in _parents and sid not in seen:
+            seen.add(sid)
+            sid = _parents[sid]
+    return sid
+
+
+def _error(text):
+    return json.dumps({"error": text})
+
+
+def _handler(ctx, tool):
+    def handle(args, session_id=None, **_):
+        sid = _session(session_id)
+        if not sid:
+            return _error("{{product}} can't tell which Hermes session this is, so it can't act for it.")
+        env = dict(os.environ)
+        env["{{sessionEnv}}"] = sid
+        try:
+            p = _run(["tool", "--agent", "hermes", tool], json.dumps(args or {}), ctx.session_cwd(), env)
+        except subprocess.TimeoutExpired:
+            return _error("{{product}} took over two minutes to answer.")
+        except OSError as e:
+            return _error("couldn't run {{command}} (%s): %s" % (MUR, e))
+        out = p.stdout.strip()
+        if p.returncode == 0:
+            return out
+        return _error(out or p.stderr.strip() or "{{command}} exited with %d" % p.returncode)
+    return handle
+
+
+def _child_start(parent_session_id=None, child_session_id=None, **_):
+    if parent_session_id and child_session_id and parent_session_id != child_session_id:
+        with _lock:
+            _parents[str(child_session_id)] = str(parent_session_id)
+
+
+def _child_stop(child_session_id=None, **_):
+    if child_session_id:
+        with _lock:
+            _parents.pop(str(child_session_id), None)
+
+
+def register(ctx):
+    try:
+        p = _run(["tool", "--list"], timeout=8)
+        tools = json.loads(p.stdout) if p.returncode == 0 else []
+        if p.returncode != 0:
+            log.warning("{{product}}: ` + "`{{command}} tool --list`" + ` failed: %s", p.stderr.strip())
+    except Exception as e:
+        log.warning("{{product}}: couldn't list its tools with %s: %s", MUR, e)
+        tools = []
+    for t in tools:
+        name = "{{server}}_" + t["name"]
+        schema = {"name": name, "description": t["description"], "parameters": t["inputSchema"]}
+        ctx.register_tool(name=name, toolset="{{server}}", schema=schema, handler=_handler(ctx, t["name"]))
+    ctx.register_hook("subagent_start", _child_start)
+    ctx.register_hook("subagent_stop", _child_stop)
+`
+
+// hasHermes says Hermes is set up in home h: its folder is there. A hermes on PATH whose home
+// isn't there yet hasn't been run, and its first run makes the home.
+func (e Env) hasHermes(h agentHome) bool { return h.Dir != "" && isDir(h.Dir) }
+
+// writeHermesPlugin writes the plugin's files into dir, and says whether it changed either. A file
+// there that join didn't write is left alone, and is a problem.
+func writeHermesPlugin(dir, exe string) (bool, error) {
+	files := hermesPluginFiles(exe)
+	names := []string{"plugin.yaml", "__init__.py"}
+	for _, n := range names {
+		path := filepath.Join(dir, n)
+		b, err := os.ReadFile(path)
+		switch {
+		case err == nil && !bytes.HasPrefix(b, []byte(hermesMarker)):
+			return false, fmt.Errorf("%s is there and isn't the one join writes, so the plugin was left alone", path)
+		case err != nil && !errors.Is(err, os.ErrNotExist):
+			return false, err
+		}
+	}
+	changed := false
+	for _, n := range names {
+		path := filepath.Join(dir, n)
+		if b, err := os.ReadFile(path); err == nil && strings.ReplaceAll(string(b), "\r\n", "\n") == files[n] {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return changed, err
+		}
+		if err := writeAtomic(path, []byte(files[n]), 0o644); err != nil {
+			return changed, fmt.Errorf("%s: %w", path, err)
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+// registerHermesAt writes Murmur's plugin into Hermes home h and turns it on in its config.yaml.
+func (e Env) registerHermesAt(h agentHome) (did []string, fresh bool, err error) {
+	if !e.hasHermes(h) {
+		return nil, false, nil
+	}
+	dir := hermesPluginDir(h.Dir)
+	wrote, err := writeHermesPlugin(dir, e.Exe)
+	if err != nil {
+		return nil, false, err
+	}
+	if wrote {
+		did = append(did, h.Label+": wrote "+brand.Product+"'s plugin, which gives every session its tools ("+dir+")")
+	}
+	cfg := filepath.Join(h.Dir, "config.yaml")
+	text, err := readConfig(cfg)
+	if err != nil {
+		return did, wrote, err
+	}
+	off, err := yamlListHas(text, "disabled", brand.MCPServer)
+	if err != nil {
+		return did, wrote, fmt.Errorf("%s: %w, so %s wasn't added to plugins.enabled there: add it, or run `hermes plugins enable %s`", cfg, err, brand.MCPServer, brand.MCPServer)
+	}
+	if off {
+		return did, wrote, fmt.Errorf("%s has %s in plugins.disabled, which keeps it off: take it out of there to have its tools", cfg, brand.MCPServer)
+	}
+	out, changed, err := addYAMLPlugin(text, brand.MCPServer)
+	if err != nil {
+		return did, wrote, fmt.Errorf("%s: %w, so %s wasn't added to plugins.enabled there: add it, or run `hermes plugins enable %s`", cfg, err, brand.MCPServer, brand.MCPServer)
+	}
+	if changed {
+		if err := writeAtomic(cfg, []byte(out), 0o600); err != nil {
+			return did, wrote, fmt.Errorf("%s: %w", cfg, err)
+		}
+		did = append(did, h.Label+": turned the plugin on, in plugins.enabled ("+cfg+")")
+	}
+	return did, wrote || changed, nil
+}
+
+// RefreshHermes brings Murmur's Hermes plugin in each Hermes home up to this binary's, as the
+// plugin lists the tools when Hermes' gateway starts: an update replaces the binary and doesn't run
+// join again. It rewrites only a plugin join wrote that runs this very binary, and says whether it
+// rewrote any. The gateway has read the old one by then, and loads the new one at its next start.
+func RefreshHermes() (bool, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	home, _ := os.UserHomeDir()
+	dir := hermesHomeDir(os.Getenv, home)
+	did := false
+	var errs []error
+	for _, h := range append([]agentHome{{Dir: dir}}, hermesProfiles(dir)...) {
+		ok, err := refreshHermesAt(h.Dir, exe)
+		did = did || ok
+		errs = append(errs, err)
+	}
+	return did, errors.Join(errs...)
+}
+
+// hermesExeLine is the plugin's line that names the mur it runs.
+var hermesExeLine = regexp.MustCompile(`(?m)^MUR = ("(?:[^"\\]|\\.)*")\s*$`)
+
+func refreshHermesAt(dir, exe string) (bool, error) {
+	if dir == "" {
+		return false, nil
+	}
+	b, err := os.ReadFile(filepath.Join(hermesPluginDir(dir), "__init__.py"))
+	if err != nil || !bytes.HasPrefix(b, []byte(hermesMarker)) {
+		return false, nil
+	}
+	m := hermesExeLine.FindSubmatch(bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")))
+	var named string
+	if m == nil || json.Unmarshal(m[1], &named) != nil || !sameFile(named, exe) {
+		return false, nil
+	}
+	return writeHermesPlugin(hermesPluginDir(dir), named)
+}
+
+// unregisterHermesAt takes Murmur's plugin out of Hermes home hs[0], and its name out of
+// plugins.enabled there.
+func (e Env) unregisterHermesAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
+	h := hs[0]
+	dir := hermesPluginDir(h.Dir)
+	ours := func(b []byte) bool { return bytes.HasPrefix(b, []byte(hermesMarker)) }
+	var problems []error
+	gone := 0
+	for _, n := range []string{"__init__.py", "plugin.yaml"} {
+		removed, note, rerr := removeOwned(filepath.Join(dir, n), ours)
+		if note != "" {
+			notes = append(notes, h.Label+": "+note)
+		}
+		if rerr != nil {
+			problems = append(problems, rerr)
+		}
+		if removed {
+			gone++
+		}
+	}
+	if gone > 0 {
+		os.RemoveAll(filepath.Join(dir, "__pycache__")) // Python's, made as Hermes loaded the plugin
+		os.Remove(dir)                                  // stays if anything else is in it
+		did = append(did, h.Label+": removed "+brand.Product+"'s plugin ("+dir+")")
+	}
+	cfg := filepath.Join(h.Dir, "config.yaml")
+	if text, rerr := readConfig(cfg); rerr != nil {
+		problems = append(problems, rerr)
+	} else if text != "" {
+		out, changed, uerr := removeYAMLPlugin(text, brand.MCPServer)
+		switch {
+		case uerr != nil:
+			problems = append(problems, fmt.Errorf("%s: %w: take %s out of plugins.enabled by hand", cfg, uerr, brand.MCPServer))
+		case changed:
+			if werr := writeAtomic(cfg, []byte(out), 0o600); werr != nil {
+				problems = append(problems, werr)
+			} else {
+				did = append(did, h.Label+": took the plugin out of plugins.enabled ("+cfg+")")
+			}
+		}
+	}
+	return did, notes, errors.Join(problems...)
+}
+
+// hermesRemoval says how to take out by hand what join put in Hermes home h.
+func hermesRemoval(_ Env, h agentHome) string {
+	var steps []string
+	if dir := hermesPluginDir(h.Dir); exists(filepath.Join(dir, "__init__.py")) {
+		steps = append(steps, "delete "+dir)
+	}
+	cfg := filepath.Join(h.Dir, "config.yaml")
+	if text, err := readConfig(cfg); err == nil {
+		if on, _ := yamlListHas(text, "enabled", brand.MCPServer); on {
+			steps = append(steps, "take "+brand.MCPServer+" out of plugins.enabled in "+cfg)
+		}
+	}
+	return strings.Join(steps, ", and ")
+}
+
+// looksLikeHermes says the agent running join is Hermes, which gives every command a session runs
+// HERMES_SESSION_ID (tools/environments/local.py, seen 2026-11-23). An agent of another kind started
+// from Hermes' terminal inherits it, so theirs win.
+func (e Env) looksLikeHermes() bool {
+	return e.getenv("HERMES_SESSION_ID") != "" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi() &&
+		!e.looksLikeKiro() && !e.looksLikeAntigravity() && !e.looksLikeCursor()
+}
