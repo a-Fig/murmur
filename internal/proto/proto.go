@@ -99,7 +99,9 @@ const (
 //	23: a send's Files (#570): a daemon of 22 or less would send the message without them.
 //	24: a hello's Command (#913): a session `mur who` or `mur send` registers stays while its T3
 //	    thread is in use. A daemon of 23 or less would drop it a minute after the command exits.
-const Protocol = 24
+//	25: a hello's From (#1145): a Pi session that moved to another conversation keeps its address,
+//	    and a message to its old name reaches it. A daemon of 24 or less registers a new session.
+const Protocol = 25
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
@@ -124,6 +126,16 @@ const (
 	// refused the same.
 	RefusedSend = "send"
 )
+
+// NativeID is the session ID an MCP server makes from native, its client's own ID for the
+// conversation (Hello.Native): the same each time, so a server that restarts within the
+// conversation takes its session back, and hashed, since Muse's and OpenCode's IDs begin with the
+// time they were made, so that two of them often share their first six characters. The daemon
+// makes it too, to know which Pi file a session ID is made from (#1145).
+func NativeID(native string) string {
+	sum := sha256.Sum256([]byte(native))
+	return hex.EncodeToString(sum[:3])
+}
 
 // Proof is what the daemon whose token is token, listening at addr, answers to a ping carrying
 // nonce: an HMAC of the address and the nonce, keyed by the token. Only that daemon and the clients
@@ -360,6 +372,16 @@ type Hello struct {
 	// session for as long as its T3 thread is in use, which Route must name. If a session is live in
 	// that thread already, the command acts as it, and nothing is registered.
 	Command bool `json:"command,omitempty"`
+	// From is the client's own ID for the conversation the session was in before this one, where
+	// the client moved it to another in the same process: Pi's previous session file after /new,
+	// /resume or /fork, which Murmur's extension gives the server (#1145). The daemon may register
+	// the server at the address of the session it left, which follows it.
+	From string `json:"from,omitempty"`
+	// TakesSelf says the server goes by the session ID the reply's Self names, with or without
+	// From: after a Pi move, the daemon gives a server on either file the ID it recorded for that
+	// file (#1145). A server from before it, still running after an update, keeps its own ID, so
+	// the daemon gives it no other.
+	TakesSelf bool `json:"takesSelf,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route
 }

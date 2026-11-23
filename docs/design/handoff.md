@@ -137,6 +137,9 @@ user's role, never `sendUserMessage`, which Pi treats as the user's typing.
   `bash` or `powershell` call, and its `PostToolUse` after, with Pi's `toolCallId` to pair them, so
   the daemon credits the session with the commits made between, as for Claude Code. Other calls
   aren't bracketed. It costs one more `mur hook` before each shell call.
+- **A move to another file** (`/new`, `/fork`, `/resume`, #1145): the extension tells the new MCP
+  server which file the session left, so the session keeps its address and inbox, and a message to
+  its old name still reaches it ([session names](session-names.md#when-a-session-stays-the-same-session)).
 - **Not covered:** a session without a file (`--no-session`) gets turns and no notices, and no
   credit for commits, as the hook has no ID to name it by.
 

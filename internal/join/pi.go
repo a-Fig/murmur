@@ -22,7 +22,10 @@ import (
 // session's file in MURMUR_PI_SESSION_FILE (pi.registerMcpServer, docs/extensions.md and
 // docs/mcp.md of Pi's package, read 2026-11-01; Pi 0.99.0 showed it connected with its five tools,
 // 2026-11-01). "exposure": "direct" lists the tools themselves; Pi's
-// default hides them behind a tool of its own. Pi asks before no tool call; in T3, T3's own Pi
+// default hides them behind a tool of its own. After /new, /resume or /fork, which move the
+// session to another file in the same process, the server is also given the file the session left
+// (session_start's previousSessionFile, in MURMUR_PI_PREVIOUS_SESSION_FILE), so the daemon keeps
+// the session at its address and reaches it at its old name (#1145). Pi asks before no tool call; in T3, T3's own Pi
 // extension asks before each one outside full-access mode. A server named murmur in mcp.json would
 // win over the extension's, and its sessions would all look like one.
 
@@ -144,6 +147,9 @@ export default function (pi: any) {
   // parent is the one on {{product}}, and says what the subagent needs said.
   if (process.env.PI_SUBAGENT_CHILD === "1") return;
   let file = "";
+  // from is the file the session left on /new, /resume or /fork, which Pi's session_start names.
+  // The server tells the daemon, so the session keeps its address and is reached at its old name.
+  let from = "";
   let cwd = "";
   // on says the session is in a joined clone: the hook runs and the socket is open.
   let on = false;
@@ -161,7 +167,10 @@ export default function (pi: any) {
       command: mur,
       args: ["mcp", "--agent", "pi"],
       exposure: "direct",
-      env: { MURMUR_PI_SESSION_FILE: file, MURMUR_PI_MESSAGING_SOCKET: sock, MURMUR_PI_MESSAGING_TOKEN: token },
+      env: {
+        MURMUR_PI_SESSION_FILE: file, MURMUR_PI_PREVIOUS_SESSION_FILE: from,
+        MURMUR_PI_MESSAGING_SOCKET: sock, MURMUR_PI_MESSAGING_TOKEN: token,
+      },
     });
   // Registered as Pi loads, the server is one Pi waits for before the first prompt; registered
   // again when the session starts, it has the session's file and socket.
@@ -299,9 +308,10 @@ export default function (pi: any) {
     await listen(sock, token);
   };
 
-  pi.on("session_start", async (_event: any, ctx: any) => {
+  pi.on("session_start", async (event: any, ctx: any) => {
     close();
     file = String(ctx?.sessionManager?.getSessionFile?.() ?? "");
+    from = String(event?.previousSessionFile ?? "");
     cwd = String(ctx?.cwd ?? process.cwd());
     // Chosen now and given to the MCP server, which registers once the clone is joined: a message
     // that comes before the socket opens waits for the hook.

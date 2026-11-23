@@ -157,9 +157,9 @@ names routes by it all the same.
     `who`, `lookup` and the page still show the name on each device that claims it, and a message
     from such a session shows the name as its sender: taking the name off a presence the registry
     disagrees with would hide that clone's names for good.
-- **A name a session has left.** A session that followed Claude Code to another conversation (#9)
-  isn't called its old name any more, but the registry still has that name down for its Murmur ID. A
-  send to the old name reaches the session, and says it is called something else now. An error
+- **A name a session has left.** A session that followed Claude Code (#9) or Pi (#1145) to another
+  conversation isn't called its old name any more, but the registry still has that name down for
+  its Murmur ID. A send to the old name reaches the session, and says it is called something else now. An error
   saying the conversation ended would drop messages to a session that is alive and could read them
   (2026-10-29).
 - **A session that has left presence is shown by one name** (#502, 2026-11-15), the same in the
@@ -214,6 +214,7 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
 | Claude Code | session ID | compaction, every kind of resume, a killed process resumed | `/clear`, `--fork-session`, `/branch`, switching with `/resume` | A hook's `session_id` on stdin, always current |
 | T3 Code | thread ID | everything, for good | a fork, which is a new thread | `T3CODE_THREAD_ID`, for Claude Code; else T3's database ([handoff](handoff.md)) |
 | Codex | `threadId` | compaction, every kind of resume | `/new`, `/clear`, a fork | `_meta.threadId` on every MCP `tools/call`, and a hook's `session_id` |
+| Pi | the session's file | `/reload`, its MCP server restarting | `/new`, `/fork`, switching with `/resume` | `MURMUR_PI_SESSION_FILE`, which Murmur's extension gives the server, and after a move the file it left (below) |
 | Cursor | chat ID (`conversation_id`) | `agent --resume <id>`, `agent resume` | a new chat | A hook's `conversation_id`, and `CURSOR_CONVERSATION_ID` in its shell commands; none in an MCP server's environment, so the hook names it to the server ([Cursor](clients.md#cursor)) |
 
 - **Claude Code's MCP servers can't be trusted with the ID.** `CLAUDE_CODE_SESSION_ID` is set once
@@ -250,6 +251,46 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
   its thread at its first tool call. Hooks under Codex inherit the `CLAUDE_CODE_SESSION_ID` of any
   Claude Code session that started Codex, so that variable doesn't prove a hook runs under Claude
   Code.
+- **A Pi session follows its moves** (#1145, 2026-11-23). Pi runs one session per process and moves
+  it to another file on `/new`, `/fork` and `/resume`. Murmur's extension then
+  starts the MCP server again with the new file, and the server's ID is made from the file, so the
+  move used to make a new session with a new name. The old session's server was gone for good, and
+  what was sent to the old name waited in its inbox until its grace ran out, while `send` said it
+  was sent. Now the extension passes on the file the session left, which Pi's `session_start`
+  names (`previousSessionFile`, in Pi 0.99.0's types), and the server's hello says it (`From`).
+  The daemon gives the server the address of the session of the same Pi process that had that
+  file. The hello takes that session over, as a server back from its grace does, and its key, and
+  so its name, follow the new file, as a Claude Code session's do after a hook. Its address, inbox
+  and place on the bus stay, so a message to the old name still reaches it
+  ("A name a session has left", above), and `who` shows it once. A `/resume` back to a file that
+  had a name takes that name, as in Claude Code. If that file's own session is in its grace, its
+  Pi gone, the moved session takes what it had unread when the grace runs out, as the name's
+  holder, as after a Claude Code `/resume`.
+  - *Which ID each file has.* After a move, the session's ID is no longer the one its file makes,
+    and the file it left still makes that ID. So the daemon records both in its state file
+    (`PiFiles`): the new file has the session's ID, and the file it left gets a new one. A server
+    on either file registers at the recorded ID, with or without `From`. So a `/reload`, which
+    starts the server again with no `From`, or Pi started again on the file, finds the session that
+    moved there, with what it had unread. Another Pi on the file left is a session of its own at
+    once, and is never handed what the moved session had. A server of the same Pi process on the
+    file it is on is that process's session there, recorded or not. An entry goes 30 days after
+    its last use, once no session runs or is kept at either ID.
+  - *Two Pi processes on one file.* They are two sessions. A `/resume` of a file another Pi has
+    open, live or in its grace while its server restarts, still moves the session there, but the
+    file isn't recorded as the moved session's and nothing of the other's is taken: the other Pi's
+    server, started again, is back at its own address with its unread messages. Its name may
+    change, as the moved session took the file's name while it was away. Two Pis that open one file
+    without a move are as before: the later is refused for about 7 s, then takes an ID of its own.
+  - *Order.* Pi closes the old server as it starts the new one. A hello that comes before the
+    daemon has seen the old connection close is refused as in use and tried again. After three
+    refusals, about 7 s, the server gives up the move and registers at its file's own ID, as
+    before.
+  - *Older servers.* Only a server that says it goes by the ID the reply names (`TakesSelf`) is
+    given a recorded ID. One from before #1145, still running after an update, registers at the ID
+    it asks for, as before.
+  - *Not covered.* A move the daemon didn't see while the old session was still registered, because
+    the daemon restarted or the grace ran out in between, makes a new session, as before. Not run
+    with a real Pi: the extension's part was tried with a stand-in for Pi's API.
 - **Two live processes can hold one ID.** Claude Code lets a session be resumed twice at once.
 
 ## One address per T3 thread

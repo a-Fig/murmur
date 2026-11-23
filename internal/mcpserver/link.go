@@ -381,12 +381,18 @@ func (l *link) run(ctx context.Context) {
 						// T3CODE_THREAD_ID), or the thread's last provider session hasn't let
 						// go. It is a session of its own, whose thread T3's database may name,
 						// as before #642.
-						l.hello.ByThread, l.hello.T3Thread = false, ""
+						// The conversation it left goes too, or it would wait out its address a
+						// second time.
+						l.hello.ByThread, l.hello.T3Thread, l.hello.From = false, "", ""
 						if l.hello.Native != "" {
 							l.hello.ID = nativeID(l.hello.Native)
 						} else {
 							l.hello.ID = sessionID(l.hello.ClaudeSession)
 						}
+					} else if l.hello.From != "" {
+						// The session Pi left is live still, past the wait: the session is one
+						// of its own, at the ID made from its file, as before #1145.
+						l.hello.From = ""
 					} else {
 						l.hello.ID = bus.RandHex(6)
 					}
@@ -415,9 +421,10 @@ func (l *link) run(ctx context.Context) {
 		// past the wait just before the drop may yet use one up while the link is down.
 		l.retry = nil
 		l.hello.Reconnect = true // any later hello is a reconnection
-		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
+		if _, id := bus.SplitAddr(resp.Self); (h.ByThread || h.TakesSelf) && id != "" {
 			// The daemon may give the thread the address its name has had since before #642
-			// (see Hello.ByThread).
+			// (see Hello.ByThread), and a Pi session the address of the session that moved to
+			// its file, or of the one it left (Hello.From, #1145).
 			l.hello.ID = id
 		}
 		l.mu.Unlock()
