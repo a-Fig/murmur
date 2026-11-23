@@ -290,8 +290,8 @@ func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
 	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"within"}}`); code != http.StatusOK {
 		t.Fatalf("setting within: %d %s", code, body)
 	}
-	// Lifted through the page, the setting lets what waited go: the save wakes the handoff loop,
-	// with no message coming to do it.
+	// Lifted through the page, the setting lets what waited go. That the save itself wakes the
+	// handoff loop is TestWakeNeverKeepsTheNotice's: here a timer would, within this wait.
 	eventually(t, "the message that waited under never to go in", func() bool { return len(calls()) > n })
 	if in := calls()[n].Stdin; !strings.Contains(in, "while set to never") {
 		t.Errorf("what went in once never was lifted: %s", in)

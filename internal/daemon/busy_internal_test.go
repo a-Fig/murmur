@@ -340,7 +340,7 @@ func TestAnOlderHookGetsTheSubjectOnly(t *testing.T) {
 // is enough, as the setting is this device's own: it is saved as the page saves it (SetSettings),
 // to the file, and read by the look as the loop reads it. TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt
 // keeps never, put through the page's HTTP handler, holding a message back from a real t3, and
-// that message going in once never is lifted there. A session's own setting deciding a real
+// that message going in once never is lifted there. A session's own wake setting deciding a real
 // handoff has no test end to end now: sendTurn asks the setting again before it sends, by the same
 // mayWakeLocked the look uses. The two devices took 39 s on a Windows runner (main's run
 // 45190341796).
