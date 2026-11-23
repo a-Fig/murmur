@@ -16,19 +16,19 @@ func TestTurnFromAPerson(t *testing.T) {
 	name := brand.Product
 	m := proto.MessageView{From: "dev-0001/" + bus.PersonSession, FromName: "ada", FromAgent: bus.AgentPerson, FromOwner: "smash", To: "x", Subject: "look at this", Body: "please"}
 	last := "ada sees only what you `send`, not this conversation. Answer with " + name + "'s `send` to ada.\n"
-	want := "Message from ada [human] (on smash's machine) via " + name + ":\n\nlook at this\n\nplease\n\n" + last
+	want := "Message from ada [human] (on smash's machine) via " + name + ":\n\n> look at this\n\n> please\n\n" + last
 	if got := Turn(m); got != want {
 		t.Errorf("first turn:\n%s\nwant:\n%s", got, want)
 	}
 	m.Introduced = true
-	want = "Message from ada [human] via " + name + ":\n\nlook at this\n\nplease\n\n" + last // still marked
+	want = "Message from ada [human] via " + name + ":\n\n> look at this\n\n> please\n\n" + last // still marked
 	if got := Turn(m); got != want {
 		t.Errorf("later turn:\n%s\nwant:\n%s", got, want)
 	}
 
 	// A name seen on more than one device doesn't say who sent it, so every turn names the device.
 	m.FromDevice = "dev-0001"
-	want = "Message from ada [human] (from device dev-0001) via " + name + ":\n\nlook at this\n\nplease\n\n" + last
+	want = "Message from ada [human] (from device dev-0001) via " + name + ":\n\n> look at this\n\n> please\n\n" + last
 	if got := Turn(m); got != want {
 		t.Errorf("a later turn from a name on two devices:\n%s\nwant:\n%s", got, want)
 	}
@@ -91,7 +91,7 @@ func TestAPersonIsExplainedOnce(t *testing.T) {
 		t.Errorf("first turn:\n%s", got)
 	}
 	m.Explained = true
-	if got, want := Turn(m), "Message from ada [human] via "+name+":\n\nlook at this\n\n"+short; got != want {
+	if got, want := Turn(m), "Message from ada [human] via "+name+":\n\n> look at this\n\n"+short; got != want {
 		t.Errorf("later turn:\n%s\nwant:\n%s", got, want)
 	}
 	if got := Inbox(proto.Response{Messages: []proto.MessageView{m}}); !strings.Contains(got, "(Reply to ada.)\n") || strings.Contains(got, "sees only") {

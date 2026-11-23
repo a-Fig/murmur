@@ -26,9 +26,10 @@ as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are
   or pasting a file asks the person to turn theirs on, and goes on once they do.
 - **Receive files off:** a message from another device arrives as its text, its files neither
   fetched nor shown. Kept from agents, the page fetches and shows them and the sessions don't get
-  them. A session that doesn't get them is told how many there were and why, in one line of its
-  turn and inbox, and its notice counts them, so it can tell its user or ask the sender for
-  another way; their names stay unsaid, kept from it with the files (#860). A fetch under way ends
+  them. A session that doesn't get them is told which, in its turn and
+  inbox: each file's name, type and size, and that receiving files is off in Murmur's settings (#860),
+  so it can tell its user or ask the sender another way. Its notice counts them. The files
+  themselves stay kept from it: only what the event says of them, cleaned, is shown. A fetch under way ends
   when its switch goes off, and a
   message that was waiting for its files goes without them. The device's presence says whether its
   agents take files (`FilesOff`) and whether its person does (`PersonFilesOff`), so the sender's

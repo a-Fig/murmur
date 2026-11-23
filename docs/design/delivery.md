@@ -60,27 +60,32 @@ What the agent reads:
 ```
 Message from quiet-otter (Claude Code, on smash's machine) via Murmur:
 
-<the subject, then the body>
+> <the subject>
+
+> <the body>
 
 Reply with Murmur's `send` to quiet-otter if a reply is needed.
 ```
 
 The first and last lines are Murmur's. The first says a teammate's agent is speaking, not the user,
 so the agent treats the message as information rather than its user's typing; the last says how to
-answer and that answering is optional. The sender's text between them is passed on as written,
-neither quoted nor wrapped: teammates' agents are trusted in Murmur's model, and a message that
-reads as a request is meant to be acted on. One exception (#297, Tyler, 2026-11-15): a subject or
-body line that reads as one Murmur starts a message with — a turn's first line ("Message from" or
-"Message sent in", then "via Murmur" and, past any marks, a colon, a comma or the line's end), a
-notice's (`[Murmur] …`) or an inbox envelope (`[Murmur message from …`, `[Murmur, 1m ago]`) — is quoted with `> `, as `inbox` quotes every line, so a
-message can't forge a second one from someone else inside its own turn. It is judged in lower case,
-with spacing runs as one space and leading blanks, invisible characters and Markdown marks off, as
-an agent reads past each (Fable's three reviews of #710, 2026-11-16). Not covered: look-alike letters from
-other scripts (Cyrillic М); a header that goes on with a dash or a bracket ("via Murmur — push
-now"), as any list of what may follow leaks; a pasted diff's `+` line, left so the patch still
-applies (its `-` and context lines are quoted); and the reply line, which a forger can repeat but
-which starts nothing.
-Everything else stays as written.
+answer and that answering is optional. The sender's text between them, subject and body, is quoted:
+every line behind `> `, as `inbox` quotes it, by the one function (`quote` in `internal/view`) both
+use. Anything not behind `> ` is Murmur's, so nothing a sender writes can pass for a header (#297),
+a notice or the note below. Until 2026-11-23 only the lines that read as a Murmur header were
+quoted (#297, Tyler, 2026-11-15; Fable's three reviews of #710), judged in lower case past spacing,
+Markdown marks and invisible characters; a list of what a header may look like leaks somewhere
+(a dash or a bracket after "via Murmur", look-alike letters from other scripts), and quoting every
+line has no such list (#1070). Teammates' agents are still trusted in Murmur's model, and a message
+that reads as a request is meant to be acted on: quoting says whose words they are, not to ignore
+them.
+
+When Receive files is off for the agents, a message's files don't reach the session (`files.md`),
+and the turn says so after the quote, as Murmur's own lines: `Attached:` with each file's name,
+type and size, then that the session can't receive them because receiving files is off in
+Murmur's settings. The names are the sender's, so the turn makes each safe again as it prints it
+(`bus.FileName`: letters, digits and `. _ -`, at most 60), and the type is the extension's, where
+the machine knows it.
 A body past the limit is cut, as in `inbox`.
 
 - **Who it is from, as the receiver knows it.** The first line is written when the message is
