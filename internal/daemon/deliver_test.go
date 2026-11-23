@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -412,47 +411,6 @@ func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "body one") {
 		t.Errorf("the log has a message's text:\n%s", out.String())
-	}
-}
-
-// The page's wake setting "never" keeps messages as notices, for the device or for one session; a
-// message that waited is handed over when the setting is lifted.
-func TestWakeNeverKeepsTheNotice(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	bobName := b.named(bob)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	pg := b.page()
-	put := func(settings string) {
-		t.Helper()
-		if code, body := pg.call("PUT", "/api/settings", pg.token, settings); code != http.StatusOK {
-			t.Fatalf("PUT %s: %d %s", settings, code, body)
-		}
-	}
-	put(`{"wake":{"when":"never"}}`)
-	a.send("aaaaaa", bob, "held", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "held") })
-	holds(t, "no handoff under never", time.Second, func() bool { return len(calls()) == 0 })
-
-	// One session allowed while the device says never.
-	put(`{"wake":{"when":"never"},"sessionWake":{"` + bobName + `":{"when":"always"}}}`)
-	eventually(t, "handoff for the session that may be woken", func() bool { return len(calls()) == 1 })
-	if !strings.Contains(calls()[0].Stdin, "held") {
-		t.Errorf("the turn handed over: %q", calls()[0].Stdin)
-	}
-
-	// The device allowed while this session says never.
-	put(`{"wake":{"when":"always"},"sessionWake":{"` + bobName + `":{"when":"never"}}}`)
-	a.send("aaaaaa", bob, "held again", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "held again") })
-	holds(t, "no handoff to a session that says never", time.Second, func() bool { return len(calls()) == 1 })
-	if n := b.hook("claude-bob", 0); len(n) != 1 || n[0] != "held again" {
-		t.Errorf("notices: %q", n)
 	}
 }
 

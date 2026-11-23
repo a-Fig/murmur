@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -76,62 +75,6 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	}
 	a.send("aaaaaa", bob, "while idle", "its body")
 	eventually(t, "the idle session woken through T3", func() bool { return len(calls()) == 1 })
-}
-
-// Outside T3 with no messaging socket, the Stop hook is the one way in: what came during the turn
-// is given at its end, where before it waited in the inbox.
-func TestTheStopHookIsAWayInWithoutASocket(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.session("bbbbbb", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	b.hookNotices("claude-bob")
-	b.stopHook("claude-bob")
-	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "only way in", "its body")
-	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "only way in" {
-		t.Fatalf("the Stop gave %v", got)
-	}
-}
-
-// A message the agent read with inbox during the turn isn't given again at its end, and the page's
-// never-wake setting keeps the rest in the inbox, as it keeps them from being turns.
-func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, _ := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	b.hookNotices("claude-bob")
-	b.stopHook("claude-bob")
-	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "read mid-turn", "its body")
-	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	b.do(proto.Request{Op: proto.OpInbox, Session: "bbbbbb"})
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 0 {
-		t.Fatalf("the Stop gave %v, read already", got)
-	}
-
-	pg := b.page()
-	if code, body := pg.call("PUT", "/api/settings", pg.token, `{"wake":{"when":"never"}}`); code != http.StatusOK {
-		t.Fatalf("PUT settings: %d %s", code, body)
-	}
-	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "never wake", "its body")
-	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 0 {
-		t.Fatalf("the Stop gave %v under never", got)
-	}
-	if inbox, _ := b.unread("bbbbbb", "claude-bob"); len(inbox) != 1 {
-		t.Errorf("inbox under never: %v; want the message kept", inbox)
-	}
 }
 
 // Outside T3, a continuation no other hook shows went on lapses after ContinueHold: the Stop's

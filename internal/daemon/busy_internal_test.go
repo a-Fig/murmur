@@ -2,11 +2,14 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // What the hook's having a session at work does to its messages (#202), checked on stopRig: the
@@ -239,5 +242,136 @@ func TestBeforeTheFirstStopABusySessionGetsTheTurn(t *testing.T) {
 	arrive(d, "no stop hook")
 	if got := turn(d); !strings.Contains(got, "no stop hook") {
 		t.Fatalf("the turn: %q", got)
+	}
+}
+
+// bobsName is the name bob has in the tests that set the page's settings, which are kept by name.
+const bobsName = "brave-heron"
+
+// named gives bob his name, as it lands for a session.
+func named(d *Daemon) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.setNameLocked(d.sessions["bbbbbb"], bobsName)
+}
+
+// saveSettings saves the page's settings as its PUT /api/settings does, past the HTTP handler:
+// checked, written to the file, and the handoff loop kicked.
+func saveSettings(t *testing.T, d *Daemon, set web.Settings) {
+	t.Helper()
+	if _, err := (pageSource{d}).SetSettings(context.Background(), set); err != nil {
+		t.Fatalf("saving the settings: %v", err)
+	}
+}
+
+// A message whose handoff to T3 failed may be in T3's queue all the same: with whole messages set,
+// it still gets only its subject, as after any failed handoff, not a second telling in full.
+//
+// Kept from the two-device test it replaces: with bob set to whole messages, a message whose
+// handoff failed is told of by the hook, subject only. A fake is enough, as what the hook gives is
+// decided from the message's marks and the settings: the handoff is taken and marked as the
+// pusher does (attempt, finishPush), with an error where t3 exited 1.
+// TestFailedHandoffFallsBackToTheNotice keeps a real t3 failing, and
+// TestBusySessionGetsTheWholeMessageThroughTheHook the setting giving a message whole. The two
+// devices took 41 s on a Windows runner (main's run 45190341796).
+func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
+	t.Parallel()
+	d := stopRig(t)
+	named(d)
+	saveSettings(t, d, web.Settings{Wake: web.Wake{When: web.WakeAlways}, SessionBusy: map[string]string{bobsName: web.BusyWhole}})
+
+	arrive(d, "handed over")
+	j := look(d)
+	if j == nil || j.via != viaT3 {
+		t.Fatalf("the handoff: %+v, want a turn by T3", j)
+	}
+	d.finishPush(j, d.attempt(j.msgs, func() error { return errors.New("exit status 1") }))
+	r := hookNotices(t, d)
+	if len(r.Read) != 0 || len(r.Messages) != 1 || r.Messages[0].Subject != "handed over" || r.Messages[0].Body != "" {
+		t.Errorf("after a failed handoff the hook was given %+v; want the subject only", r)
+	}
+}
+
+// A hook from before Whole prints only the subjects in Messages (#229). With whole messages set, it
+// still gets the subject, and the message stays in the inbox, not given whole to a hook that would
+// print nothing of it. A hook that says it prints them is given the next one whole.
+//
+// Kept from the two-device test it replaces: with bob set to whole messages, a hook that doesn't
+// say it prints them gets the subject and the message stays in the inbox. Added here: the same
+// rig's next message goes whole to a hook that does say so, so the first wasn't kept back for some
+// other reason. A fake is enough, as what the hook is given is decided from its request and the
+// settings. The two devices took 37 s on a Windows runner (main's run 45190341796).
+func TestAnOlderHookGetsTheSubjectOnly(t *testing.T) {
+	t.Parallel()
+	d := stopRig(t)
+	named(d)
+	d.mu.Lock()
+	d.sessions["bbbbbb"].route = proto.Route{} // no way in but the hook, as the old test's session
+	d.mu.Unlock()
+	saveSettings(t, d, web.Settings{Wake: web.Wake{When: web.WakeAlways}, SessionBusy: map[string]string{bobsName: web.BusyWhole}})
+
+	arrive(d, "for an older hook")
+	r := d.handle(context.Background(), proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"})
+	if r.Error != "" || len(r.Read) != 0 || len(r.Messages) != 1 || r.Messages[0].Subject != "for an older hook" || r.Messages[0].Body != "" {
+		t.Errorf("a hook that doesn't print whole messages was given %+v; want the subject only", r)
+	}
+	arrive(d, "for a hook that prints them")
+	if r := hookNotices(t, d); len(r.Read) != 1 || r.Read[0].Subject != "for a hook that prints them" || r.Read[0].Body != "its body" {
+		t.Errorf("a hook that prints whole messages was given %+v; want the message whole", r)
+	}
+	r = d.handle(context.Background(), proto.Request{Op: proto.OpInbox, Session: "bbbbbb"})
+	if got := subjects(r.Messages); r.Error != "" || !slices.Equal(got, []string{"for an older hook"}) {
+		t.Errorf("the inbox has %v (%s); want the message told to an older hook, and not the one given whole", got, r.Error)
+	}
+}
+
+// The page's wake setting "never" keeps messages as notices, for the device or for one session; a
+// message that waited is handed over when the setting is lifted.
+//
+// Kept from the two-device test it replaces: under never no turn is made; a save that lets bob
+// alone be woken kicks the handoff loop, whose look then hands over what waited; and with the
+// device at always and bob at never, the next message is no turn and the hook tells of it. A fake
+// is enough, as the setting is this device's own: it is saved as the page saves it (SetSettings),
+// to the file, and read by the look as the loop reads it. TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt
+// keeps a setting put through the page's HTTP handler deciding a real handoff. The two devices
+// took 39 s on a Windows runner (main's run 45190341796).
+func TestWakeNeverKeepsTheNotice(t *testing.T) {
+	t.Parallel()
+	d := stopRig(t)
+	named(d)
+	never, always := web.Wake{When: web.WakeNever}, web.Wake{When: web.WakeAlways}
+	kicked := func() bool {
+		select {
+		case <-d.pushKick:
+			return true
+		default:
+			return false
+		}
+	}
+	saveSettings(t, d, web.Settings{Wake: never})
+	arrive(d, "held")
+	if j := look(d); j != nil {
+		t.Fatalf("a handoff under never: %q", j.text)
+	}
+
+	// One session allowed while the device says never.
+	kicked()
+	saveSettings(t, d, web.Settings{Wake: never, SessionWake: map[string]web.Wake{bobsName: always}})
+	if !kicked() {
+		t.Error("lifting the setting didn't kick the handoff loop, which is all that would look at what waited")
+	}
+	if got := turn(d); !strings.Contains(got, "held") {
+		t.Fatalf("the turn for the session that may be woken: %q", got)
+	}
+
+	// The device allowed while this session says never.
+	saveSettings(t, d, web.Settings{Wake: always, SessionWake: map[string]web.Wake{bobsName: never}})
+	arrive(d, "held again")
+	if j := look(d); j != nil {
+		t.Fatalf("a handoff to a session that says never: %q", j.text)
+	}
+	r := d.handle(context.Background(), proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"})
+	if got := subjects(r.Messages); r.Error != "" || !slices.Equal(got, []string{"held again"}) {
+		t.Errorf("notices: %q (%s)", got, r.Error)
 	}
 }
