@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
 )
@@ -87,6 +88,28 @@ func TestTheClonesCopyOfItsPresenceIsWrittenOnceARun(t *testing.T) {
 	fourth := publish()
 	if got := local(); got != fourth {
 		t.Errorf("after a slow fetch of the ref and the next presence the clone's copy is %s, want %s", got, fourth)
+	}
+	// A fetch of the ref that fails is noted too: it may have written the copy before it failed
+	// (#1130). Here the sync doesn't even try, the ref having failed a moment ago.
+	junk2, err := peer.NewCommit(ctx, "", "not a presence either\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.Push(ctx, junk2, ref, bus.Force, ""); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	d.unfetched = map[string]fetchFail{ref: {sha: junk2, at: time.Now()}}
+	d.mu.Unlock()
+	if err := d.pollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := local(); got != fourth {
+		t.Fatalf("after a sync that didn't fetch the ref the clone's copy is %s, want it still %s", got, fourth)
+	}
+	fourth = publish()
+	if got := local(); got != fourth {
+		t.Errorf("after a failed fetch of the ref and the next presence the clone's copy is %s, want %s", got, fourth)
 	}
 	// And a fetch of another ref leaves it alone.
 	d.endSlowFetch(d.meshRef(), "", "", nil)

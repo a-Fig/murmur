@@ -238,11 +238,12 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	// the rest of the sync goes on without it, and it is fetched again next time.
 	failed, tips := d.fetch(ctx, changed, remote)
 	// Noted before a sync that ran out of time returns: the fetch has set the clone's copy by now.
+	// Whether or not the fetch failed: one that fails may have written the ref first, as when the
+	// git that sets it is stopped at its deadline, and a note that wasn't needed costs one
+	// update-ref at the next heartbeat.
 	d.mu.Lock()
 	for _, ref := range changed {
-		if failed[ref] == nil {
-			d.presenceFetchedLocked(ref)
-		}
+		d.presenceFetchedLocked(ref)
 	}
 	d.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -590,9 +591,7 @@ func (d *Daemon) endSlowFetch(ref, sha, got string, err error) {
 	defer d.mu.Unlock()
 	defer d.kickPoll()
 	d.slowRef, d.slowCancel = "", nil
-	if err == nil {
-		d.presenceFetchedLocked(ref)
-	}
+	d.presenceFetchedLocked(ref) // also if it failed: it may have written the ref first
 	f, ok := d.unfetched[ref]
 	if !ok || !f.slow {
 		return
@@ -2128,9 +2127,10 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	return nil
 }
 
-// presenceFetchedLocked notes that a fetch brought ref, if it is this device's own presence: the
-// fetch set the clone's copy to what the remote had, which may be junk pushed over the presence,
-// so the next presence writes the copy again (publishPresence). Caller holds mu.
+// presenceFetchedLocked notes that a fetch of ref was tried, if it is this device's own presence:
+// the fetch may have set the clone's copy to what the remote had, which may be junk pushed over
+// the presence, so the next presence writes the copy again (publishPresence). It is called for a
+// fetch that failed too, which may have written the ref before it did (#1130). Caller holds mu.
 func (d *Daemon) presenceFetchedLocked(ref string) {
 	if ref == d.presenceRef() {
 		d.presenceFetches++
