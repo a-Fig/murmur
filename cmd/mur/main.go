@@ -82,6 +82,9 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
 
+An agent with Murmur's tools uses them instead: who, send, inbox, status, lookup, tags and mute,
+which its client lists as mcp__murmur__who and so on. lookup, tags and mute are tools only.
+
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
   mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
@@ -90,7 +93,7 @@ Started by other programs:
                                 Antigravity's hook, for EVENT; reads the payload on stdin
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
-Every command takes -C DIR to act on the repository at DIR.
+Every command takes -C DIR to act on the repository at DIR. mur help COMMAND shows one command.
 `)
 
 func main() {
@@ -150,9 +153,13 @@ func main() {
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)
 	case "help", "-h", "--help":
-		fmt.Print(usage)
+		err = runHelp(args, os.Stdout)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
+		if tool := toolOnly(cmd); tool != "" {
+			fmt.Fprintln(os.Stderr, tool)
+		} else {
+			fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
+		}
 		os.Exit(2)
 	}
 	if err != nil {
