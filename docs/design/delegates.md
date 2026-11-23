@@ -29,7 +29,8 @@ started.
   open, as a Claude Code session in T3 does (Tyler, 2026-11-22, #993: a delegate's message going out
   is awkward, not harmful, and a T3 database Murmur can't read mustn't stop T3's sessions sending).
   Only the calls that come during the first lookup, and the first one after it fails, wait; `who`,
-  `lookup` and `inbox` never do.
+  `lookup` and `inbox` never do. After a reconnect, if the daemon's reply to the hello says it
+  couldn't read the thread, the first such call gets one more retry (#1000).
   Until that first call a Codex delegate is listed, as any delegate is when the read fails or T3
   hasn't written its thread's row yet; once its thread is read, the name it took meanwhile is seen
   by nobody. A Claude Code session in T3 has its thread from its environment, and still goes on

@@ -874,11 +874,11 @@ func mutates(op string) bool {
 //
 // If the lookup failed, or the daemon couldn't read the thread (#980), the session looks again and
 // tells the daemon again, once, which gives a thread whose row T3 wrote late its classification;
-// every call that comes meanwhile waits for that one retry. Whatever it finds, the calls then go
-// on: they fail open, as a Claude Code session in T3 does (#945). A delegate's message going out is
-// awkward, not harmful (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop
-// T3's sessions from sending. Later calls don't look again; the seek goes on doing that in the
-// background.
+// every call that comes meanwhile waits for that one retry. Each registration gets its own: after
+// a reconnect, the first such call may look once more (#1000). Whatever it finds, the calls then go
+// on: they fail open, as a Claude Code session in T3 does (#945). A delegate's message going out is awkward, not harmful
+// (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop T3's sessions from
+// sending. Later calls don't look again; the seek goes on doing that in the background.
 func (l *link) classifyFirst(ctx context.Context) error {
 	l.mu.Lock()
 	looked, native := l.looked, l.native
@@ -1166,6 +1166,17 @@ func text(s string) *mcp.CallToolResult {
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
 func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
 
+// statusLine is the status a session sets, cut to the line the daemon keeps (oneLine), after it
+// is checked for secrets as written: only the cleaned line goes to the daemon, and dropping a
+// zero-width space can join a key to the next word, which the daemon's check of the cleaned line
+// then misses (#1048), as for a subject (subjectAndBody).
+func statusLine(doing string) (string, error) {
+	if err := scrub.Check(doing); err != nil {
+		return "", err
+	}
+	return oneLine(doing), nil
+}
+
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
@@ -1371,7 +1382,11 @@ func (s *server) tools(srv *mcp.Server) {
 		"Update it when you switch tasks. Until you set one, your conversation's title is what they see; " +
 		"an empty status brings the title back."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: oneLine(in.Doing)})
+			doing, err := statusLine(in.Doing)
+			if err != nil {
+				return result(nil, proto.Response{}, err)
+			}
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: doing})
 			return result(view.Note, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +
@@ -1473,7 +1488,7 @@ type link struct {
 	readThread string
 	// retry is closed once the session has looked for the thread of native again, and told the
 	// daemon, after the first look failed to get it classified; nil until a call starts that (see
-	// classifyFirst).
+	// classifyFirst), and again for a new native ID or a new registration with the daemon.
 	retry chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
@@ -1907,6 +1922,12 @@ func (l *link) run(ctx context.Context) {
 		backoff, inUse = time.Second, 0
 		l.mu.Lock()
 		l.noteReadLocked(h.Route, resp)
+		// A retry belongs to one registration (#1000). One used before this hello was told to a
+		// daemon that has gone, or found the link down and told none, so if this reply says the
+		// daemon couldn't read the thread, the first changing call after it looks again. It is
+		// cleared here, before the link is up, and not when the connection ends: a call that got
+		// past the wait just before the drop may yet use one up while the link is down.
+		l.retry = nil
 		l.hello.Reconnect = true // any later hello is a reconnection
 		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
 			// The daemon may give the thread the address its name has had since before #642

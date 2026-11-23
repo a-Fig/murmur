@@ -6,7 +6,9 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/view"
 	"io"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -358,5 +360,56 @@ func TestAgentsInChain(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%q: %d agents, want %d", c.chain, got, c.want)
 		}
+	}
+}
+
+// A send to several names, whose session Codex's server takes over at an ID of its own partway,
+// still reaches them all: the send the daemon refuses as not registered goes again, once, as the
+// session a new hello finds, and the ones before it don't (#953).
+func TestACommandSendGoesOnAfterItsThreadIsTakenOver(t *testing.T) {
+	const codex = "c0dec0"
+	var mu sync.Mutex
+	taken := false
+	f := &fakeDaemon{
+		helloReply: func(proto.Hello) (string, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if taken {
+				return "", codex // the thread's session is the server's now
+			}
+			return "", ""
+		},
+		sendReply: func(req proto.Request) proto.Response {
+			mu.Lock()
+			defer mu.Unlock()
+			if req.To == "brave-heron" {
+				taken = true // the server registered between the first send and this one
+			}
+			if taken && req.Session != codex {
+				return proto.Response{Error: proto.NotRegistered, Refused: proto.RefusedSend}
+			}
+			return proto.Response{OK: true, Self: "dev/" + req.Session,
+				Messages: []proto.MessageView{{ID: "m-" + req.To, To: "dev/" + req.To, ToName: req.To, Subject: req.Subject}}}
+		},
+	}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "send", []string{"quiet-otter,brave-heron,calm-finch", "hello all"}, nil, &out, io.Discard); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	var got []string
+	for _, r := range f.sends() {
+		got = append(got, r.To+" as "+r.Session)
+	}
+	first := threadID("thread-913")
+	want := []string{"quiet-otter as " + first, "brave-heron as " + first, "brave-heron as " + codex, "calm-finch as " + codex}
+	if !slices.Equal(got, want) {
+		t.Errorf("sends %q, want %q", got, want)
+	}
+	if n := f.helloCount(); n != 2 {
+		t.Errorf("%d hellos, want 2", n)
+	}
+	if strings.Contains(out.String(), "registered") {
+		t.Errorf("the send reported a refusal:\n%s", out.String())
 	}
 }
