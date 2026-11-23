@@ -91,11 +91,24 @@ func Tool(ctx context.Context, agent, name string, stdin io.Reader, stdout io.Wr
 		}
 		args = b
 	}
-	call, err := hermesSession(ctx)
+	register, err := hermesSession(ctx)
 	if err != nil {
 		return err
 	}
-	cs, done, err := inMemory(ctx, &server{direct: call})
+	// The session is registered when the tool's handler first reaches the daemon, not before: a
+	// call the tool refuses (an unknown tool, arguments it can't take) registers nothing.
+	var call func(proto.Request) (proto.Response, error)
+	direct := func(req proto.Request) (proto.Response, error) {
+		if call == nil {
+			c, err := register()
+			if err != nil {
+				return proto.Response{}, err
+			}
+			call = c
+		}
+		return call(req)
+	}
+	cs, done, err := inMemory(ctx, &server{direct: direct})
 	if err != nil {
 		return err
 	}
@@ -139,9 +152,10 @@ func inMemory(ctx context.Context, s *server) (*mcp.ClientSession, func(), error
 	return cs, func() { cs.Close(); ss.Close() }, nil
 }
 
-// hermesSession registers the Hermes session the plugin names, in the clone the working directory
-// is in, and returns how to make a request as it (see registerCommand).
-func hermesSession(ctx context.Context) (func(proto.Request) (proto.Response, error), error) {
+// hermesSession checks the Hermes session the plugin names and the clone the working directory is
+// in, and returns how to register the session, which returns how to make a request as it (see
+// registerCommand).
+func hermesSession(ctx context.Context) (func() (func(proto.Request) (proto.Response, error), error), error) {
 	id := os.Getenv(hermesSessionEnv)
 	if err := hermesSessionOK(id); err != nil {
 		return nil, err
@@ -157,7 +171,9 @@ func hermesSession(ctx context.Context) (func(proto.Request) (proto.Response, er
 	if !place.Joined() {
 		return nil, errPassive
 	}
-	return registerCommand(ctx, place, hermesHello(id, cwd))
+	return func() (func(proto.Request) (proto.Response, error), error) {
+		return registerCommand(ctx, place, hermesHello(id, cwd))
+	}, nil
 }
 
 // hermesHello is the hello of Hermes session id, at work in cwd.

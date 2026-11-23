@@ -20,7 +20,12 @@ func TestAddYAMLPluginKeepsTheFile(t *testing.T) {
 		{"block list", "plugins:\n  enabled:\n    - disk-cleanup  # yes\n  disabled: []\nmemory: {}\n",
 			"plugins:\n  enabled:\n    - disk-cleanup  # yes\n    - murmur\n  disabled: []\nmemory: {}\n"},
 		{"items at the key's indent", "plugins:\n  enabled:\n  - a\n  - 'b'\nx: 1\n", "plugins:\n  enabled:\n  - a\n  - 'b'\n  - murmur\nx: 1\n"},
-		{"flow list", "plugins:\n  enabled: [a, \"b\"]  # two\n", "plugins:\n  enabled: [a, b, murmur] # two\n"},
+		{"flow list", "plugins:\n  enabled: [a, \"b\"]  # two\n", "plugins:\n  enabled: [a, \"b\", murmur] # two\n"},
+		// Quoted items stay quoted: unquoted, "on" would read as true, and "x #y" would end the line.
+		{"quoted flow items", "plugins:\n  enabled: [\"on\", '1.0', \"x #y\"]\n", "plugins:\n  enabled: [\"on\", '1.0', \"x #y\", murmur]\n"},
+		{"null plugins", "plugins: ~  # none\n", "plugins: # none\n  enabled:\n    - murmur\n"},
+		{"null plugins spelled out", "plugins: null\nz: 1\n", "plugins:\n  enabled:\n    - murmur\nz: 1\n"},
+		{"byte-order mark", bom + "plugins:\n  enabled: []\n", bom + "plugins:\n  enabled: [murmur]\n"},
 		{"empty flow list", "plugins:\n  enabled: []\n", "plugins:\n  enabled: [murmur]\n"},
 		{"null list", "plugins:\n  enabled:\n  disabled:\n    - x\n", "plugins:\n  enabled:\n    - murmur\n  disabled:\n    - x\n"},
 		{"no enabled", "plugins:\n    disabled: [x]\n", "plugins:\n    enabled:\n      - murmur\n    disabled: [x]\n"},
@@ -81,6 +86,7 @@ func TestAddYAMLPluginRefusesFormsItCantRead(t *testing.T) {
 		"tab":                 "plugins:\n\tenabled: []\n",
 		"second document":     "a: 1\n---\nplugins: {}\n",
 		"scalar":              "plugins:\n  enabled: murmur\n",
+		"plugins twice":       "plugins:\n  enabled: []\nx: 1\nplugins:\n  enabled: [a]\n",
 		"plugins scalar":      "plugins: off\n",
 		"whole file is JSON":  "{\"plugins\": {}}\n",
 		"item with odd chars": "plugins:\n  enabled:\n    - \"a\\\"b\"\n",
@@ -276,5 +282,49 @@ func TestHermesAdvice(t *testing.T) {
 	// A Claude Code started from Hermes' terminal has HERMES_SESSION_ID too, and gets Claude Code's.
 	if envWith(map[string]string{"HERMES_SESSION_ID": "x", "CLAUDECODE": "1"}).looksLikeHermes() {
 		t.Error("Claude Code under Hermes taken for Hermes")
+	}
+}
+
+// HERMES_HOME set to a profile lists its root and the root's other profiles, where the root is a
+// Hermes home; a folder named profiles elsewhere isn't Hermes', and a dot folder isn't a profile.
+func TestHermesProfilesFromAProfile(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "config.yaml"), "")
+	for _, p := range []string{"work", "play", ".trash"} {
+		write(t, filepath.Join(root, "profiles", p, "config.yaml"), "")
+	}
+	var got []string
+	for _, h := range hermesProfiles(filepath.Join(root, "profiles", "work")) {
+		got = append(got, h.Label)
+	}
+	if strings.Join(got, ",") != "Hermes,Hermes (profile play)" {
+		t.Errorf("homes %q", got)
+	}
+	other := t.TempDir() // no Hermes files at its top
+	write(t, filepath.Join(other, "profiles", "a", "config.yaml"), "")
+	write(t, filepath.Join(other, "profiles", "b", "config.yaml"), "")
+	if hs := hermesProfiles(filepath.Join(other, "profiles", "a")); len(hs) != 0 {
+		t.Errorf("a profiles folder that isn't Hermes' gave %+v", hs)
+	}
+}
+
+// A plugin the user kept, by taking its first line out, keeps its manifest through an uninstall.
+func TestHermesUninstallKeepsAPluginTheUserKept(t *testing.T) {
+	sb := hermesSandbox(t)
+	h := sb.defaultHome(agents[agentIndex("hermes")])
+	if _, _, err := sb.registerHermesAt(h); err != nil {
+		t.Fatal(err)
+	}
+	dir := hermesPluginDir(h.Dir)
+	write(t, filepath.Join(dir, "__init__.py"), "# mine now\n")
+	_, notes, err := sb.unregisterHermesAt(context.Background(), []agentHome{h})
+	if err != nil || len(notes) != 1 {
+		t.Errorf("notes=%q err=%v", notes, err)
+	}
+	if !exists(filepath.Join(dir, "plugin.yaml")) || read(t, filepath.Join(dir, "__init__.py")) != "# mine now\n" {
+		t.Error("the user's plugin lost a file")
+	}
+	if r := hermesRemoval(sb.Env, h); strings.Contains(r, dir) {
+		t.Errorf("removal names the user's plugin: %q", r)
 	}
 }

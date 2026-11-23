@@ -19,7 +19,11 @@ import (
 type yamlLines struct {
 	lines []string
 	eol   string
+	bom   bool // the text began with a byte-order mark, which is kept
 }
+
+// bom is UTF-8's byte-order mark, which an editor on Windows may put first.
+var bom = string(rune(0xFEFF))
 
 func splitYAML(text string) yamlLines {
 	eol := "\n"
@@ -28,6 +32,9 @@ func splitYAML(text string) yamlLines {
 	}
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	y := yamlLines{eol: eol}
+	if t, ok := strings.CutPrefix(text, bom); ok {
+		text, y.bom = t, true
+	}
 	if text = strings.TrimSuffix(text, "\n"); text != "" {
 		y.lines = strings.Split(text, "\n")
 	}
@@ -38,6 +45,9 @@ func (y yamlLines) String() string {
 	out := strings.Join(y.lines, y.eol)
 	if len(y.lines) > 0 {
 		out += y.eol
+	}
+	if y.bom {
+		out = bom + out
 	}
 	return out
 }
@@ -110,9 +120,16 @@ type yamlKey struct {
 }
 
 // checkYAML refuses the forms join doesn't edit, anywhere in the file: tabs in an indentation, a
-// second document, a top-level key it can't read.
+// second document, a top-level key it can't read, plugins twice (YAML loaders keep the last, which
+// join would not be editing).
 func checkYAML(y yamlLines) error {
+	plugins := 0
 	for i, l := range y.lines {
+		if strings.HasPrefix(l, "plugins:") || strings.HasPrefix(l, "plugins ") {
+			if plugins++; plugins > 1 {
+				return yamlFormErr("plugins is there twice, the second on line %d", i+1)
+			}
+		}
 		if blankOrComment(l) {
 			continue
 		}
@@ -195,6 +212,8 @@ type yamlList struct {
 	key   yamlKey
 	flow  bool
 	items []string
+	// raw is each item as written, quotes and all, for a flow list written back.
+	raw   []string
 	lines []int // each block item's line
 	// itemIndent is the block items' indent, where there are some.
 	itemIndent int
@@ -222,7 +241,7 @@ func readList(y yamlLines, k yamlKey, end int) (yamlList, error) {
 			if !ok {
 				return l, yamlFormErr("line %d has a list item join can't read", k.line+1)
 			}
-			l.items = append(l.items, s)
+			l.items, l.raw = append(l.items, s), append(l.raw, strings.TrimSpace(part))
 		}
 		return l, nil
 	case !nullValueYML[v]:
@@ -318,13 +337,13 @@ func addYAMLPlugin(text, name string) (out string, changed bool, err error) {
 		if ind == 0 {
 			ind = 2
 		}
-		if plugins.value == "{}" {
+		if plugins.value != "" { // {}, or null spelled any way: it becomes the block
 			y.lines[plugins.line] = strings.TrimRight("plugins: "+plugins.comment, " ")
 		}
 		pad := strings.Repeat(" ", ind)
 		insert(plugins.line+1, pad+"enabled:", pad+"  - "+name)
 	case l.flow:
-		items := append(append([]string(nil), l.items...), name)
+		items := append(append([]string(nil), l.raw...), name)
 		line := y.lines[l.key.line]
 		head := line[:strings.Index(line, ":")+1]
 		y.lines[l.key.line] = strings.TrimRight(head+" ["+strings.Join(items, ", ")+"] "+l.key.comment, " ")
@@ -360,7 +379,7 @@ func removeYAMLPlugin(text, name string) (out string, changed bool, err error) {
 	line := y.lines[l.key.line]
 	head := line[:strings.Index(line, ":")+1]
 	if l.flow {
-		items := append(append([]string(nil), l.items[:at]...), l.items[at+1:]...)
+		items := append(append([]string(nil), l.raw[:at]...), l.raw[at+1:]...)
 		y.lines[l.key.line] = strings.TrimRight(head+" ["+strings.Join(items, ", ")+"] "+l.key.comment, " ")
 		return y.String(), true, nil
 	}

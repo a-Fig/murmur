@@ -84,15 +84,21 @@ func hermesHomeFor(getenv func(string) string, home string, windows bool) string
 	return filepath.Join(home, ".hermes"+suffix)
 }
 
+// isHermesHome says dir has one of the files that make a folder a Hermes home or profile.
+func isHermesHome(dir string) bool {
+	return slices.ContainsFunc(hermesProfileFiles, func(f string) bool { return exists(filepath.Join(dir, f)) })
+}
+
 // hermesProfiles are the homes of the profiles of Hermes home dir, each labeled. A dir that is a
-// profile itself (HERMES_HOME set to one) has its root's profiles, and the root, listed.
+// profile itself (HERMES_HOME set to one) has its root's profiles, and the root, listed, where the
+// root is a Hermes home too: a folder named profiles somewhere else isn't Hermes'.
 func hermesProfiles(dir string) []agentHome {
 	if dir == "" {
 		return nil
 	}
 	root := dir
-	if filepath.Base(filepath.Dir(dir)) == "profiles" {
-		root = filepath.Dir(filepath.Dir(dir))
+	if up := filepath.Dir(filepath.Dir(dir)); filepath.Base(filepath.Dir(dir)) == "profiles" && isHermesHome(up) {
+		root = up
 	}
 	var out []agentHome
 	if !samePath(root, dir) && isDir(root) {
@@ -101,7 +107,7 @@ func hermesProfiles(dir string) []agentHome {
 	entries, _ := os.ReadDir(filepath.Join(root, "profiles"))
 	for _, en := range entries {
 		p := filepath.Join(root, "profiles", en.Name())
-		if !en.IsDir() || samePath(p, dir) || !slices.ContainsFunc(hermesProfileFiles, func(f string) bool { return exists(filepath.Join(p, f)) }) {
+		if !en.IsDir() || strings.HasPrefix(en.Name(), ".") || samePath(p, dir) || !isHermesHome(p) { // Hermes passes over dot folders too
 			continue
 		}
 		out = append(out, agentHome{Dir: p, Label: "Hermes (profile " + en.Name() + ")"})
@@ -183,10 +189,15 @@ def _handler(ctx, tool):
         sid = _session(session_id)
         if not sid:
             return _error("{{product}} can't tell which Hermes session this is, so it can't act for it.")
+        cwd = ctx.session_cwd()
+        if not cwd:
+            return _error("{{product}} can't tell which folder this session works in, so it can't tell which repo it is in.")
+        if not os.path.isdir(cwd):
+            return _error("this session's folder, %s, isn't there any more." % cwd)
         env = dict(os.environ)
         env["{{sessionEnv}}"] = sid
         try:
-            p = _run(["tool", "--agent", "hermes", tool], json.dumps(args or {}), ctx.session_cwd(), env)
+            p = _run(["tool", "--agent", "hermes", tool], json.dumps(args or {}), cwd, env)
         except subprocess.TimeoutExpired:
             return _error("{{product}} took over two minutes to answer.")
         except OSError as e:
@@ -349,7 +360,12 @@ func (e Env) unregisterHermesAt(_ context.Context, hs []agentHome) (did, notes [
 	ours := func(b []byte) bool { return bytes.HasPrefix(b, []byte(hermesMarker)) }
 	var problems []error
 	gone := 0
-	for _, n := range []string{"__init__.py", "plugin.yaml"} {
+	names := []string{"__init__.py", "plugin.yaml"}
+	if b, err := os.ReadFile(filepath.Join(dir, "__init__.py")); err == nil && !ours(b) {
+		// The user kept the plugin, as its first line invites: its manifest stays with it.
+		names = names[:1]
+	}
+	for _, n := range names {
 		removed, note, rerr := removeOwned(filepath.Join(dir, n), ours)
 		if note != "" {
 			notes = append(notes, h.Label+": "+note)
@@ -385,10 +401,16 @@ func (e Env) unregisterHermesAt(_ context.Context, hs []agentHome) (did, notes [
 	return did, notes, errors.Join(problems...)
 }
 
+// hermesOwned says the file at path is one join wrote.
+func hermesOwned(path string) bool {
+	b, err := os.ReadFile(path)
+	return err == nil && bytes.HasPrefix(b, []byte(hermesMarker))
+}
+
 // hermesRemoval says how to take out by hand what join put in Hermes home h.
 func hermesRemoval(_ Env, h agentHome) string {
 	var steps []string
-	if dir := hermesPluginDir(h.Dir); exists(filepath.Join(dir, "__init__.py")) {
+	if dir := hermesPluginDir(h.Dir); hermesOwned(filepath.Join(dir, "__init__.py")) {
 		steps = append(steps, "delete "+dir)
 	}
 	cfg := filepath.Join(h.Dir, "config.yaml")

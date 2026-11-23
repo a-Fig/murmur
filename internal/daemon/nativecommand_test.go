@@ -67,3 +67,23 @@ func TestACommandHelloWithNothingToKeyItIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A held session keyed by its own ID isn't taken over by a hello for another at the same ID, as two
+// Hermes sessions whose IDs hash alike would be.
+func TestANativeCommandsHeldSessionIsntTakenByAnother(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	nativeCommandHello(t, b, "e5e5e5", "hermes:local-one")
+	_, _, err := b.c.Hello(context.Background(), proto.Hello{ID: "e5e5e5", Agent: "hermes", Command: true, Route: proto.Route{Native: "hermes:local-two"}})
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("another session's hello: %v", err)
+	}
+	conn, _, err := b.c.Hello(context.Background(), proto.Hello{ID: "e5e5e5", Agent: "claude-code"})
+	if err == nil {
+		conn.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("a server's hello: %v", err)
+	}
+}

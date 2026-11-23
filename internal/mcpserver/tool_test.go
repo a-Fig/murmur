@@ -131,3 +131,15 @@ func TestAToolCallThatCantRunStops(t *testing.T) {
 		t.Errorf("%d hellos", n)
 	}
 }
+
+// A call of a tool there isn't fails and registers nothing.
+func TestAToolCallOfNoToolRegistersNothing(t *testing.T) {
+	f := &fakeDaemon{}
+	toolRepo(t, f)
+	if err := Tool(context.Background(), "hermes", "nosuch", strings.NewReader("{}"), &strings.Builder{}); err == nil {
+		t.Error("ran")
+	}
+	if n := f.helloCount(); n != 0 {
+		t.Errorf("%d hellos", n)
+	}
+}
