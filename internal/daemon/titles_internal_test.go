@@ -11,7 +11,7 @@ import (
 // T3 no title is looked for by them, in Codex's state or anywhere.
 func TestNoCodexTitleForTheOtherAgents(t *testing.T) {
 	t.Parallel()
-	for _, agent := range []string{"opencode", "muse", "pi", "grok", "pi in T3"} {
+	for _, agent := range []string{"opencode", "muse", "pi", "grok", "pi in T3", "cursor"} {
 		if _, known, err := readTitle(context.Background(), titleJob{agent: agent, route: proto.Route{Native: "ses_1"}}); known || err != nil {
 			t.Errorf("%s: known %v, err %v", agent, known, err)
 		}
