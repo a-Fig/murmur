@@ -414,3 +414,54 @@ func TestThePersonsUnsureSendIsRefusedAtOnce(t *testing.T) {
 		t.Errorf("%d sends left pending, want none", pending)
 	}
 }
+
+// Rebuilding after a pending send's Send files switch went off (errSendOff) is not a push attempt
+// and must not consume the single rejection-reconciliation retry in appendEventIf (#861).
+func TestAppendEventIfReconcilesAfterPendingSendOff(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingGiveUp: time.Hour}, false)
+	ctx := context.Background()
+	tip := d.sendFirst(t)
+	ref := d.meshRef()
+
+	// Advance the remote tip so the real push will hit ErrRejected and need reconciliation.
+	ahead, err := d.repo.NewCommit(ctx, tip, "remote advance\n")
+	if err != nil {
+		t.Fatalf("NewCommit: %v", err)
+	}
+	if err := d.repo.Push(ctx, ahead, ref, bus.FastForward, ""); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	// Queue one pending send whose Send files switch turns off on the first push attempt,
+	// forcing appendEventIf to take the errSendOff continue path before trying the real push.
+	var allowed atomic.Bool
+	allowed.Store(true)
+	var dropped atomic.Bool
+	d.writeMu.Lock()
+	d.pendBase = tip
+	d.pendSends = []pendingSend{{
+		sha:    tip,
+		still:  func() bool { return allowed.Load() },
+		settle: func(bool, bool, error) { dropped.Store(true) },
+	}}
+	var calls atomic.Int32
+	d.testPush = func(real func() error) error {
+		if calls.Add(1) == 1 {
+			allowed.Store(false)
+			return errSendOff
+		}
+		return real()
+	}
+	d.writeMu.Unlock()
+
+	if err := d.appendEventIf(ctx, message(d, "after send off"), nil, nil); err != nil {
+		t.Fatalf("appendEventIf failed after errSendOff + ErrRejected: %v", err)
+	}
+	if !dropped.Load() {
+		t.Error("switched-off pending send was not dropped")
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("testPush called %d times, want 3 (errSendOff, rejected, reconciled)", got)
+	}
+}
