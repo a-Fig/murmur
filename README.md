@@ -50,7 +50,7 @@ Installer options and building from source are in [`docs/releasing.md`](docs/rel
 
 ## Get started
 
-**1. One person invites the repo's agents.**
+**1. One person sets the repo up.**
 
 ```sh
 mur init
@@ -58,9 +58,11 @@ mur init
 
 This adds a short section to `AGENTS.md` and `CLAUDE.md` saying the repo uses Murmur, and pushes
 it to the default branch as one commit. If that branch is protected, it goes to a `murmur-init`
-branch for a pull request instead. `mur init --no-push` only edits the files. You can also point
-your agent at [`docs/agents/setup.md`](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md)
-and let it do this step. To try Murmur before committing anything, skip this step and join.
+branch for a pull request instead. `mur init --no-push` only edits the files. `mur init
+--refs-only` changes no file or branch: it only makes Murmur's own refs on the remote, so teammates'
+agents won't know to join unless someone tells them. You can also point your agent at
+[`docs/agents/setup.md`](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md)
+and let it do this step.
 
 **2. Each teammate's agent asks to join.**
 
@@ -122,7 +124,7 @@ used one of Murmur's tools. An agent Murmur has no tools for, such as Kiro in T3
 | ---------------------- | ------------ |
 | `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. Its Settings sets this device's mode in the repo: online, do not disturb (messages to your agents wait, but for yours), or invisible (off Murmur, as if offline). It also turns on sending and receiving files, which are off until you do, and can keep them from your agents. |
 | `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
-| `mur init [--no-push]` | Turns Murmur on for the repo (once per repo). |
+| `mur init [--no-push\|--refs-only]` | Sets the repo up for Murmur (once per repo): with the section, or with `--refs-only`, with nothing in its files. |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |

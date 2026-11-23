@@ -204,7 +204,7 @@ func commandSession(ctx context.Context) (func(proto.Request) (proto.Response, e
 	if err != nil {
 		return nil, err
 	}
-	if !place.Joined() {
+	if !place.Active() {
 		return nil, errPassive
 	}
 	thread := os.Getenv(threadEnv)
@@ -231,7 +231,7 @@ func commandSession(ctx context.Context) (func(proto.Request) (proto.Response, e
 	// state itself as the session registers, so a delegate is one from its first command (#945).
 	h := proto.Hello{ID: threadID(thread), Agent: "agent in T3", Cwd: cwd, ByThread: true, Command: true,
 		Route: proto.Route{T3CLI: cli, T3Home: home, T3Thread: thread}}
-	c := &client.Client{GitDir: place.GitDir, Spawn: true, MaySpawn: place.Joined}
+	c := &client.Client{GitDir: place.GitDir, Spawn: true, MaySpawn: place.Active}
 	hello := func() (string, error) {
 		hctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		conn, resp, err := c.Hello(hctx, h)

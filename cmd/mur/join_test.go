@@ -16,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/clones"
 )
 
@@ -339,25 +340,100 @@ func TestJoinInACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 	}
 }
 
-// firstHereNote begins what join tells the user when nobody has used Murmur in the repo and its
-// files don't mention it.
-const firstHereNote = "Nobody else uses Murmur in this repo yet"
-
-// inviteNote is how join tells the user to invite teammates' agents, in a repo whose files don't.
-const inviteNote = "They can run `mur init` to invite those agents"
-
-// A repo whose AGENTS.md and CLAUDE.md don't mention Murmur can be joined: the section only invites
-// teammates' agents, and the user's yes turns Murmur on (Tyler, 2026-11-22, #830). The session's
-// server gets its tools, and join says the user is the first here, with init as theirs to run.
-func TestJoinWithoutTheSection(t *testing.T) {
+// join does nothing in a repo that wasn't set up with init, in either way: the user's yes is to a
+// repo that has been. It says what sets the repo up, both forms (#830).
+func TestJoinNeedsTheRepoSetUp(t *testing.T) {
 	b := newBox(t)
+	out, code := b.run(b.clone, "join")
+	if code == 0 || !strings.Contains(out, "isn't set up for Murmur") || !strings.Contains(out, "`mur init`") || !strings.Contains(out, "--refs-only") {
+		t.Errorf("exit %d:\n%s", code, out)
+	}
+	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur")) || exists(filepath.Join(b.clone, ".claude")) {
+		t.Error("join changed something in a repo that doesn't use Murmur")
+	}
+}
+
+// untouched is everything of a clone's and its remote's that init --refs-only must leave as it is:
+// the working tree and index, as git status and ls-files show them, every ref of the clone's (its
+// branches, its remote-tracking ones, and any local bus ref), and the remote's branches and tags.
+func untouched(t *testing.T, b *box) string {
+	t.Helper()
+	return git(t, b.clone, "status", "--porcelain=v2", "--branch", "--untracked-files=all") +
+		git(t, b.clone, "ls-files", "--stage") +
+		git(t, b.clone, "for-each-ref") +
+		git(t, b.remote, "for-each-ref", "refs/heads", "refs/tags")
+}
+
+// init --refs-only sets the repo up by the two shared bus refs alone, each at a root commit on the
+// empty tree that reads as empty: a registry of no names, and a team ref with no key. It changes
+// no file, index or branch, makes no per-device ref, and run again changes nothing (#830).
+func TestInitRefsOnly(t *testing.T) {
+	b := newBox(t)
+	os.WriteFile(filepath.Join(b.clone, "work.txt"), []byte("someone's edit\n"), 0o644)
+	git(t, b.clone, "add", "work.txt")
+	os.WriteFile(filepath.Join(b.clone, "more.txt"), []byte("not added\n"), 0o644)
+	before := untouched(t, b)
+
+	out := b.mustRun(b.clone, "init", "--refs-only")
+	if !strings.Contains(out, "made refs/murmur/names and refs/murmur/team on origin") || !strings.Contains(out, "newer than 0.5.3") {
+		t.Errorf("init's output:\n%s", out)
+	}
+	if after := untouched(t, b); after != before {
+		t.Errorf("init --refs-only changed the clone or a branch:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	refs := strings.Fields(git(t, b.remote, "for-each-ref", "--format=%(refname)", "refs/murmur"))
+	if want := []string{"refs/murmur/names", "refs/murmur/team"}; !slices.Equal(refs, want) {
+		t.Fatalf("the remote's bus refs are %q, want %q", refs, want)
+	}
+	empty := strings.TrimSpace(git(t, b.remote, "hash-object", "-t", "tree", "--stdin"))
+	tips := map[string]string{}
+	for _, ref := range refs {
+		tips[ref] = strings.TrimSpace(git(t, b.remote, "rev-parse", ref))
+		if roots := strings.TrimSpace(git(t, b.remote, "rev-list", "--max-parents=0", ref)); roots != tips[ref] {
+			t.Errorf("%s isn't one root commit: roots %q, tip %s", ref, roots, tips[ref])
+		}
+		if tree := strings.TrimSpace(git(t, b.remote, "rev-parse", ref+"^{tree}")); tree != empty {
+			t.Errorf("%s's tree is %s, not the empty tree", ref, tree)
+		}
+	}
+	var names bus.NameRecord
+	if err := bus.Decode(git(t, b.remote, "log", "-1", "--format=%B", "refs/murmur/names"), &names); err != nil ||
+		names.V != bus.Version || len(names.Claims()) != 0 || names.Name != "" {
+		t.Errorf("the registry's genesis isn't an empty snapshot: %+v, %v", names, err)
+	}
+	if msg := git(t, b.remote, "log", "-1", "--format=%B", "refs/murmur/team"); !bus.IsTeamGenesis(msg) {
+		t.Errorf("the team ref's genesis reads:\n%s", msg)
+	}
+
+	out = b.mustRun(b.clone, "init", "--refs-only")
+	if !strings.Contains(out, "Already set up") || !strings.Contains(out, "nothing changed") {
+		t.Errorf("init run again:\n%s", out)
+	}
+	for ref, tip := range tips {
+		if now := strings.TrimSpace(git(t, b.remote, "rev-parse", ref)); now != tip {
+			t.Errorf("init run again moved %s from %s to %s", ref, tip, now)
+		}
+	}
+}
+
+// unmentionedNote is what join tells the user in a repo set up by its refs alone.
+const unmentionedNote = "This repo's AGENTS.md and CLAUDE.md don't mention Murmur, so teammates' agents won't know to join unless someone tells them."
+
+// A repo set up by its refs alone can be joined: an open session's tools appear and work, join
+// says teammates' agents won't know to join, and nothing in the working tree changes (#830).
+func TestJoinARepoSetUpByRefs(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init", "--refs-only")
 	cs := b.mcpSession(t)
 	if names := tools(t, cs); len(names) != 0 {
 		t.Fatalf("tools before joining: %q", names)
 	}
 	out := b.mustRun(b.clone, "join")
-	if !strings.Contains(out, firstHereNote) || !strings.Contains(out, inviteNote) {
-		t.Errorf("join didn't say the user is the first here:\n%s", out)
+	if !strings.Contains(out, unmentionedNote) {
+		t.Errorf("join didn't say the repo's files don't mention Murmur:\n%s", out)
+	}
+	if strings.Contains(out, "Nobody else uses") {
+		t.Errorf("join said nobody else uses Murmur, which it can't know:\n%s", out)
 	}
 	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "who"})
@@ -367,42 +443,12 @@ func TestJoinWithoutTheSection(t *testing.T) {
 	if status := git(t, b.clone, "status", "--porcelain"); status != "" {
 		t.Errorf("join changed the working tree:\n%s", status)
 	}
-}
 
-// A clone joined while the repo had the section stays on once someone takes the section out of the
-// default branch: the consent is what counts (#830).
-func TestAJoinedCloneStaysOnWithoutTheSection(t *testing.T) {
-	b := newBox(t)
-	b.mustRun(b.clone, "init")
-	b.mustRun(b.clone, "join")
-	git(t, b.clone, "rm", "-q", "AGENTS.md", "CLAUDE.md")
-	git(t, b.clone, "commit", "-q", "-m", "no Murmur section")
-	git(t, b.clone, "push", "-q", "origin", "HEAD:refs/heads/main")
-	cs := b.mcpSession(t)
-	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
-}
-
-// The invitation is for a repo whose files don't invite teammates' agents yet, and the first-here
-// part only for one nobody has used Murmur in, as its remote's refs/murmur/* tell.
-func TestJoinSaysTheUserIsFirstOnlyWhenTheyAre(t *testing.T) {
-	// Someone used Murmur here before: a ref is on the remote, here the one a public repo's first
-	// clone pushes (internal/publicrepo). Teammates' agents still won't know to join.
-	b := newBox(t)
-	tip := strings.TrimSpace(git(t, b.remote, "rev-parse", "refs/heads/main"))
-	git(t, b.remote, "update-ref", "refs/murmur/reported", tip)
-	out := b.mustRun(b.clone, "join")
-	if strings.Contains(out, firstHereNote) {
-		t.Errorf("join said the user is the first, with a bus ref on the remote:\n%s", out)
-	}
-	if !strings.Contains(out, "This repo's AGENTS.md and CLAUDE.md don't mention Murmur") || !strings.Contains(out, inviteNote) {
-		t.Errorf("join didn't say how to invite teammates' agents, with a bus ref and no section:\n%s", out)
-	}
-
-	// The section invites teammates' agents already.
+	// The section's repo gets no such note.
 	b = newBox(t)
 	b.mustRun(b.clone, "init")
-	if out := b.mustRun(b.clone, "join"); strings.Contains(out, firstHereNote) || strings.Contains(out, inviteNote) {
-		t.Errorf("join said the user is the first, or how to invite, in a repo with the section:\n%s", out)
+	if out := b.mustRun(b.clone, "join"); strings.Contains(out, "don't mention Murmur") {
+		t.Errorf("join said the files don't mention Murmur, in a repo with the section:\n%s", out)
 	}
 }
 
@@ -545,6 +591,22 @@ func TestTheMCPServerIsPassiveWhereItIsNotInvited(t *testing.T) {
 		t.Error("instructions before joining")
 	}
 	quiet(t, b, "marker, not joined")
+	cs.Close()
+
+	// A repo set up by its refs alone, where this user hasn't joined (#830).
+	b = newBox(t)
+	b.mustRun(b.clone, "init", "--refs-only")
+	cs = b.mcpSession(t)
+	time.Sleep(3 * time.Second) // longer than the server waits between looks
+	if names := tools(t, cs); len(names) != 0 {
+		t.Errorf("tools before joining a repo set up by refs: %q", names)
+	}
+	if exists(filepath.Join(b.clone, ".git", "murmur")) {
+		t.Error("refs, not joined: a daemon's directory exists")
+	}
+	if refs := strings.Fields(git(t, b.remote, "for-each-ref", "--format=%(refname)", "refs/murmur")); len(refs) != 2 {
+		t.Errorf("refs, not joined: the remote's bus refs are %q, more than init made", refs)
+	}
 }
 
 // Joining while a session is open turns its server on, and leaving turns it off again, without

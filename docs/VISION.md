@@ -135,8 +135,10 @@ the mesh.
   should know Murmur is running.
 - **The marker is pushed to the default branch** (2026-11-01, #119), so teammates' agents on main
   read it.
-- **The marker only invites** (Tyler, 2026-11-22, #830): the user's consent in the clone turns
-  Murmur on, so a user can join a repo without committing anything first.
+- **A repo is set up once, by the marker or by the bus refs alone** (Tyler, 2026-11-23, #830): the
+  section invites teammates' agents, and a repo whose files are to say nothing can be set up by
+  `mur init --refs-only`, which makes only the shared `refs/murmur/*` refs. Join is each user's yes
+  after that, and refuses in a repo set up neither way.
 - **One server per user, passive where the repo isn't joined**: a session in any repo gets the tools
   the moment it joins, with no restart.
 - **Every harness as close to T3 Code as it can be** (2026-11-11): Claude Code, Codex, OpenCode,

@@ -48,8 +48,11 @@ var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command, "
 	`Murmur: coding agents on teammates' machines, in the same repo, finding each other.
 
 Setup:
-  mur init [--no-push]          add the section to AGENTS.md and CLAUDE.md that says this repo uses Murmur,
-                                as a commit pushed to the default branch; --no-push only edits the files here
+  mur init [--no-push|--refs-only]
+                                set this repo up for Murmur, once: add the section to AGENTS.md and CLAUDE.md
+                                that invites agents to join, as a commit pushed to the default branch;
+                                --no-push only edits the files here; --refs-only changes no file or branch,
+                                and only makes Murmur's empty refs/murmur/* refs on the remote
   mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this);
                                 the agent's session joins too, even one that started outside the repo;
                                 --leave undoes it
@@ -415,9 +418,16 @@ func redirectOutput(path string) error {
 func runInit(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("init")
 	noPush := fs.Bool("no-push", false, "only edit the files in this working tree, for you to review and commit")
+	refsOnly := fs.Bool("refs-only", false, "set the repo up through its refs/murmur/* refs alone: no file, commit or branch changes")
 	fs.Parse(args)
+	if *noPush && *refsOnly {
+		return errors.New("--no-push edits the files and --refs-only leaves them alone; choose one")
+	}
 	if *noPush {
 		return initWorkTree(ctx, *dir, out)
+	}
+	if *refsOnly {
+		return initRefsOnly(ctx, *dir, out)
 	}
 	p, err := setup.Push(ctx, *dir)
 	if err != nil {
@@ -481,6 +491,28 @@ func reportPublic(ctx context.Context, dir string, out io.Writer) {
 	if res, _ := publicrepo.Once(ctx, publicrepo.Options{Version: version, GitDir: gitDir}); res == publicrepo.Reported {
 		fmt.Fprintf(out, "\n%s\n", publicrepo.Told)
 	}
+}
+
+// initRefsOnly is `init --refs-only` (#830): the repo is set up by the shared bus refs, made in their
+// empty state, and nothing on any branch mentions Murmur.
+func initRefsOnly(ctx context.Context, dir string, out io.Writer) error {
+	s, err := setup.RefsOnly(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if len(s.Made) == 0 {
+		fmt.Fprintf(out, "Already set up: %s has %s; nothing changed.\n", s.Remote, strings.Join(s.Had, " and "))
+		return nil
+	}
+	fmt.Fprintf(out, "Set this repo up through its refs alone: made %s on %s, empty for now.\n", strings.Join(s.Made, " and "), s.Remote)
+	if len(s.Had) > 0 {
+		fmt.Fprintf(out, "%s was there already and is left as it is.\n", strings.Join(s.Had, " and "))
+	}
+	fmt.Fprintf(out, "No file, commit or branch changed.\n\n"+
+		"Each teammate joins for themselves, with `%[2]s join`. Nothing in the repo mentions %[1]s, so their agents\n"+
+		"won't know to ask unless someone tells them. Joining here takes a %[2]s newer than 0.5.3: an older one\n"+
+		"looks only for the section in AGENTS.md or CLAUDE.md, and refuses.\n", brand.Product, brand.Command)
+	return nil
 }
 
 // initWorkTree is init before it pushed, kept as --no-push: it edits this working tree and leaves

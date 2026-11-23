@@ -190,6 +190,29 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	steps := stepper{w: e.Progress, now: "reading which agents this machine has"}
 	defer steps.stop()
 
+	// The repo must have been set up, with `mur init`, in one of two ways: the section in AGENTS.md
+	// or CLAUDE.md, or the bus refs on the remote, for a repo whose files are to say nothing (Tyler,
+	// 2026-11-23, #830). Join is each user's yes after that. The remote is asked only when the
+	// section isn't there, and its answer is kept with the consent (Place.Active).
+	byRefs := false
+	if !p.Marked() {
+		steps.start("asking the remote whether this repo is set up for " + brand.Product)
+		ok, err := setUpByRefs(ctx, p.GitDir)
+		steps.stop()
+		if err != nil {
+			return r, fmt.Errorf("this repo's AGENTS.md and CLAUDE.md have no %s section, and %v; run `%s join` again once the remote answers",
+				brand.Product, err, brand.Command)
+		}
+		if !ok {
+			return r, fmt.Errorf("this repo isn't set up for %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section, "+
+				"here or on the default branch as this clone last fetched it, and the remote has no %[4]s* refs. "+
+				"`%[2]s init` sets it up, after the user agrees: it pushes the section to the default branch, or with --refs-only "+
+				"makes only the refs (%[3]s)", brand.Product, brand.Command, brand.SetupDoc, brand.RefRoot)
+		}
+		byRefs = true
+		steps.now = "reading which agents this machine has"
+	}
+
 	// Per user: the MCP server, registered once for every repo this user opens, in every
 	// configuration of each agent. Advice about the calling agent depends on its own home.
 	byAgent, notes := e.homes()
@@ -261,21 +284,16 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 
-	// A repo whose files don't mention Murmur can be joined all the same: the section only invites
-	// teammates' agents, and the user's yes is what turns Murmur on (Tyler, 2026-11-22, #830). The
-	// remote is asked before this clone's daemon starts and adds refs of its own.
-	uninvited, alone := !p.Marked(), false
-	if !cut() && uninvited {
-		steps.start("asking the remote whether anyone here uses " + brand.Product + " yet")
-		alone = nobodyHere(ctx, p.GitDir)
-	}
-
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
 	steps.stop()
 	if cut() {
 		return e.cutShort(r, parent, steps.now, false)
 	}
-	news, consentErr := p.RecordConsent()
+	record := p.RecordConsent
+	if byRefs {
+		record = p.RecordConsentByRefs
+	}
+	news, consentErr := record()
 	if consentErr != nil {
 		problem("recording that you joined", consentErr)
 	} else if news {
@@ -331,9 +349,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		cancel()
 		steps.stop()
 	}
-	if uninvited {
+	if byRefs {
 		last := len(r.Tell) - 1
-		r.Tell = append(r.Tell[:last], inviteNote(alone), r.Tell[last])
+		r.Tell = append(r.Tell[:last], unmentionedNote, r.Tell[last])
 	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
@@ -349,39 +367,32 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// inviteNote is what a join tells the user in a repo whose AGENTS.md and CLAUDE.md don't mention
-// Murmur: teammates' agents won't know to join until the section is there. With alone, the
-// remote has no refs/murmur/* yet, so it also says nobody else uses Murmur here. It names init as
-// the user's to run: init pushes to the default branch, which needs their OK
-// (docs/agents/setup.md).
-func inviteNote(alone bool) string {
-	note := "This repo's AGENTS.md and CLAUDE.md don't mention " + brand.Product + ", so teammates' agents won't know to join. "
-	if alone {
-		note = "Nobody else uses " + brand.Product + " in this repo yet, and its AGENTS.md and CLAUDE.md don't mention it, " +
-			"so teammates' agents won't know to join. "
-	}
-	return note + "They can run `" + brand.Command + " init` to invite those agents: " +
-		"it adds a short section to both files and pushes it to the default branch."
-}
-
-// nobodyHere reports whether the remote of the clone with this git dir has no bus refs, which
-// means nobody has used Murmur in the repo. It is one ls-remote, the round trip a daemon makes
-// every few seconds. A remote that can't be asked in time says nothing either way: false.
+// setUpByRefs reports whether the remote of the clone with this git dir has any refs/murmur/* ref:
+// the other proof, beside the section, that the repo was set up (`mur init --refs-only` makes two,
+// and every clone that has joined adds its own). It is one ls-remote, the round trip a daemon makes
+// every few seconds, within 15 s.
 //
 // Join runs in the user's terminal, so the ls-remote runs with none (gitx.Git.NoTerminal): an ssh
 // key with a passphrase and no agent would otherwise ask for it there, and could still be asking
 // after the 15 s limit ended git.
-func nobodyHere(ctx context.Context, gitDir string) bool {
+func setUpByRefs(ctx context.Context, gitDir string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	g := gitx.Git{Dir: gitDir, NoTerminal: true}
 	remote, err := bus.RemoteFor(ctx, g)
 	if err != nil {
-		return false
+		return false, err
 	}
 	refs, err := (&bus.Repo{Git: g, Remote: remote}).ListRemote(ctx)
-	return err == nil && len(refs) == 0
+	if err != nil {
+		return false, fmt.Errorf("asking %s for its %s* refs failed: %w", remote, brand.RefRoot, err)
+	}
+	return len(refs) > 0, nil
 }
+
+// unmentionedNote is what a join tells the user in a repo set up by its refs alone.
+var unmentionedNote = "This repo's AGENTS.md and CLAUDE.md don't mention " + brand.Product +
+	", so teammates' agents won't know to join unless someone tells them."
 
 // How long a join may take in all, and how long one step runs before the join says it is still on
 // it. Agents run join under a timeout of their own, and one that kills it sees nothing of what it
