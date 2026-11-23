@@ -28,6 +28,13 @@ and 1,015 s with 55 parallel, on an 8-core Mac that other work was loading heavi
 (2026-11-11, main at 3c275e4); with 53, on main at 6c1ca2e and as loaded, it took 1,352 s, so the
 gain on a quiet machine is still to be measured, in CI's timings.
 
+The package runs at most 6 of its parallel tests at once, where `go test` would run one per
+processor (`maxParallel` in `deliver_test.go`, #1036). On a 16-processor laptop with 15 GB, 16 at
+once started about 1,400 git processes a minute, and a few tests gave up their waits, different
+ones each run: main failed all three of three runs of 50 tests that way, and the same tests passed
+at 6 (2026-11-22, one run, 429 s on a machine other work was loading). CI's runners have 4
+processors or fewer, so it changes nothing there. `-parallel N` on the command line overrides it.
+
 A parallel test meets more load than it did alone, so a wait it took for granted may come late. A
 call's end, for one, is answered before its after-snapshot is taken: a test that commits right
 after an end looks the session up first, since a lookup waits for the ends still being judged. And
