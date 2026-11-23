@@ -126,6 +126,50 @@ func TestWhatMovesAConversation(t *testing.T) {
 	}
 }
 
+// A device back from invisible looks at the remote at once: its colour goes back into its presence
+// only after a sync, so a poll slowed to the cap left its teammates seeing an automatic colour for
+// that long (#1093). Going invisible, or to do not disturb from online, wakes nothing.
+func TestBackFromInvisibleThePollLooksAtOnce(t *testing.T) {
+	t.Parallel()
+	woken := func(d *Daemon) bool {
+		select {
+		case <-d.pollWake:
+			return true
+		default:
+			return false
+		}
+	}
+	moved := func(d *Daemon) bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return !d.convAt.IsZero()
+	}
+	d := rateDaemon(t)
+	d.pollWake = make(chan struct{}, 1) // as a running daemon's is
+	d.setMode("online", "dnd", time.Time{})
+	d.setMode("dnd", "invisible", time.Now())
+	if woken(d) || moved(d) {
+		t.Errorf("going to do not disturb and then invisible woke the poll")
+	}
+	d.setMode("invisible", "online", time.Now())
+	if !moved(d) || !woken(d) {
+		t.Errorf("coming back online from invisible didn't wake the poll")
+	}
+	// At the slowest rate the loop runs at with a session open, that wake ends its wait.
+	slow := pollRate{every: d.opt.PollCap, calm: d.opt.PollCap}
+	if !d.wakeEndsWait(d.opt.PollCap, slow, false) {
+		t.Errorf("the wake wouldn't end a wait at the cap")
+	}
+
+	d = rateDaemon(t)
+	d.pollWake = make(chan struct{}, 1)
+	d.setMode("online", "invisible", time.Now())
+	d.setMode("invisible", "dnd", time.Now())
+	if !moved(d) || !woken(d) {
+		t.Errorf("coming back from invisible to do not disturb didn't wake the poll")
+	}
+}
+
 // A message handed over to a session as a turn moves it; one whose handoff failed does not.
 func TestHandoffMovesTheConversation(t *testing.T) {
 	t.Parallel()

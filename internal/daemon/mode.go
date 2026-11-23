@@ -83,6 +83,15 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 		d.kickMarks()
 		d.kickFiles() // for the prune of files refs that was passed over meanwhile (pruneFiles)
 	}
+	if was == web.ModeInvisible && now != web.ModeInvisible {
+		// It looks at the remote at once, and often for a while, as when a conversation moves: its
+		// colour goes back into its presence only after a sync, and until then its teammates see
+		// it in an automatic one (#1093). A wake alone doesn't end the loop's wait unless the
+		// state calls for a faster rate, so with the poll slowed that was up to PollCap away.
+		d.mu.Lock()
+		d.noteConversationLocked()
+		d.mu.Unlock()
+	}
 	if now == web.ModeOnline {
 		d.mu.Lock()
 		d.releaseSinceLocked(away)
