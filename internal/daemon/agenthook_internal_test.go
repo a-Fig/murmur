@@ -18,6 +18,7 @@ import (
 func agentHookDaemon(t *testing.T) *Daemon {
 	return &Daemon{dir: t.TempDir(), log: log.New(io.Discard, "", 0), device: "here-0001", started: time.Now(),
 		sessions: map[string]*session{}, threadRead: map[threadKey]time.Time{}, peers: map[string]*peer{},
+		pushedAt: map[string]time.Time{}, introduced: map[string]map[string]bool{},
 		st: state{Inbox: map[string][]*inMsg{}}, pushKick: make(chan struct{}, 1)}
 }
 
@@ -336,7 +337,7 @@ func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
 		}
 	})
 
-	t.Run("unbounded ancestry with inherited outer ID still prefers nearer inner Kiro client", func(t *testing.T) {
+	t.Run("unbounded ancestry still prefers nearer inner Kiro client over outer", func(t *testing.T) {
 		d := agentHookDaemon(t)
 		d.mu.Lock()
 		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
@@ -348,22 +349,41 @@ func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
 			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
 			Arrived: time.Now(),
 		}}
+		d.st.Inbox[inner.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m2", From: "peer-0001/bbbbbb", Subject: "for inner", Body: "hello inner"},
+			Arrived: time.Now(),
+		}}
 		d.mu.Unlock()
 
+		// Even if ancestry wasn't trimmed and includes both 900 and 700, inner (900) wins, binds
+		// its own session ID, receives only its own message, and leaves outer's inbox untouched.
 		resp := d.turnEnd(proto.Request{
 			Op:            proto.OpTurnEnd,
 			Agent:         "kiro",
-			ClaudeSession: "kiro-outer",
+			ClaudeSession: "kiro-inner",
 			Ancestors:     []int{950, 900, 850, 700},
 			Continues:     true,
 		})
-		if len(resp.Read) != 0 {
-			t.Fatalf("inner hook leaked outer's messages: %+v", resp.Read)
+		if len(resp.Read) != 1 || resp.Read[0].Body != "hello inner" {
+			t.Fatalf("inner hook got %+v, want inner's message", resp.Read)
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if inner.hookNative != "kiro-inner" {
+			t.Fatalf("inner.hookNative = %q, want kiro-inner", inner.hookNative)
+		}
 		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
 			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+		// Subsequent hook for inner with its own ID keeps matching inner.
+		gotInner := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-inner",
+			Ancestors:     []int{950, 900, 850, 700},
+		})
+		if len(gotInner) != 1 || gotInner[0] != inner {
+			t.Fatalf("second inner hook got %v, want inner1", ids(gotInner))
 		}
 	})
 

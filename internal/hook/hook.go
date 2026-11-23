@@ -341,12 +341,6 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 			in.ToolName, in.ToolInput = in.ToolNameCamel, in.ToolInputCamel
 		}
 	}
-	envSession := false
-	if agent == Kiro && in.SessionID == "" {
-		if id := os.Getenv("KIRO_SESSION_ID"); id != "" {
-			in.SessionID, envSession = id, true
-		}
-	}
 	if agent == Antigravity && !fromAntigravity(&in, event) {
 		return
 	}
@@ -365,10 +359,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if agent != OpenCode {
 		in.Child, in.ParentNative = false, ""
 	}
-	who, ok := identify(agent, in, envSession)
-	if !ok {
-		return
-	}
+	who := identify(agent, in)
 	if in.Event == stop {
 		turnEnd(agent, in, who, stdout)
 		return
@@ -505,15 +496,14 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 
 // identify is what every request of the hook carries to say whose it is: the conversation's ID and,
 // for Claude Code, its process (CLAUDE_PID); for another agent, the agent's name and the hook's
-// ancestors, among which is the agent's process (proc.Ancestors). It returns ok=false when an
-// environment-derived Kiro session ID cannot be verified against a Kiro process boundary.
-func identify(agent string, in input, envSession bool) (proto.Request, bool) {
+// ancestors, among which is the agent's process (proc.Ancestors).
+func identify(agent string, in input) proto.Request {
 	if byExtension(agent) {
 		// The session is named by its file (Pi) or its session ID (OpenCode), which its MCP server
 		// registered with too, never by a Claude Code ID or process: a Pi started from a Claude Code
 		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
 		// Claude Code's form, and no call is bracketed, so their commits aren't credited to them.
-		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}, true
+		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}
 	if agent == "" {
@@ -521,50 +511,86 @@ func identify(agent string, in input, envSession bool) (proto.Request, bool) {
 	} else {
 		anc := proc.Ancestors(os.Getppid(), maxAncestors)
 		if agent == Kiro {
-			var bounded bool
-			anc, bounded = kiroHookAncestors(anc, kiroExeAt)
-			if envSession && !bounded {
-				return proto.Request{}, false
-			}
+			anc = kiroHookAncestors(anc, func(pid int) (string, string, bool) {
+				exe, err := proc.Exe(pid)
+				return exe, procComm(pid), err == nil
+			})
 		}
 		r.Agent, r.Ancestors = agent, anc
 	}
-	return r, true
-}
-
-// kiroExeAt looks up a PID's executable path and Linux comm name for kiroHookAncestors; tests
-// override it to exercise Kiro process-boundary checks without spawning kiro-cli.
-var kiroExeAt = func(pid int) (string, string, bool) {
-	exe, err := proc.Exe(pid)
-	return exe, procComm(pid), err == nil
+	return r
 }
 
 // kiroHookAncestors scopes a Kiro hook's ancestor list to the Kiro client process that spawned it,
 // so a nested kiro-cli started from an outer Kiro session's shell never includes the outer Kiro's
 // node (acp-server.js) process and cannot attach to or read the outer session's messages (#910).
-// When the nearest node sits directly under kiro-cli, only that node PID is returned; if kiro-cli
-// appears without node below it, the walk stops at that kiro-cli. bounded is true only when a Kiro
-// boundary was found.
-func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok bool)) ([]int, bool) {
-	isNamed := func(pid int, want string) bool {
+// Walking outward from the hook's parent shell:
+//   - If node sits directly under kiro-cli, only that node PID is returned.
+//   - If kiro-cli appears without node below it, the walk stops at that kiro-cli.
+//   - If an earlier PID cannot be identified or is not a shell (e.g. an unrecognized or renamed
+//     inner launcher), never skip past it to claim an outer Kiro boundary: keep the inner PIDs and
+//     trim before any outer Kiro boundary further up the chain.
+func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok bool)) []int {
+	nameOf := func(pid int) (string, bool) {
 		exe, comm, ok := exeAt(pid)
-		if comm == want {
-			return true
+		if ok {
+			if n := exeBaseName(exe); n != "" {
+				return n, true
+			}
 		}
-		if !ok {
-			return false
+		if comm != "" {
+			return comm, true
 		}
-		return exeBaseName(exe) == want
+		return "", false
 	}
 	for i, pid := range pids {
-		if isNamed(pid, "node") && i+1 < len(pids) && isNamed(pids[i+1], "kiro-cli") {
-			return []int{pid}, true
+		name, known := nameOf(pid)
+		if !known {
+			return trimBeforeKiro(pids, i, nameOf)
 		}
-		if isNamed(pid, "kiro-cli") {
-			return pids[:i+1], true
+		if name == "node" && i+1 < len(pids) {
+			next, nextKnown := nameOf(pids[i+1])
+			if !nextKnown {
+				return trimBeforeKiro(pids, i+1, nameOf)
+			}
+			if next == "kiro-cli" {
+				return []int{pid}
+			}
+		}
+		if name == "kiro-cli" {
+			return pids[:i+1]
+		}
+		if !isHookShell(name) {
+			return trimBeforeKiro(pids, i+1, nameOf)
 		}
 	}
-	return pids, false
+	return pids
+}
+
+func trimBeforeKiro(pids []int, from int, nameOf func(int) (string, bool)) []int {
+	for j := from; j < len(pids); j++ {
+		name, known := nameOf(pids[j])
+		if !known {
+			continue
+		}
+		if name == "kiro-cli" {
+			return pids[:j]
+		}
+		if name == "node" && j+1 < len(pids) {
+			if next, ok := nameOf(pids[j+1]); ok && next == "kiro-cli" {
+				return pids[:j]
+			}
+		}
+	}
+	return pids
+}
+
+func isHookShell(name string) bool {
+	switch name {
+	case "cmd", "sh", "bash", "zsh", "dash", "ash", "ksh", "fish", "pwsh", "powershell":
+		return true
+	}
+	return false
 }
 
 func exeBaseName(exe string) string {

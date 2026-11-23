@@ -122,3 +122,23 @@ func TestKiroHookMovedClone(t *testing.T) {
 		t.Errorf("OpTurnEnd = %+v, want sess_moved_clone in joined clone", ends)
 	}
 }
+
+// Kiro hooks require session_id in the stdin payload and must not fall back to KIRO_SESSION_ID
+// from the environment, which a nested Kiro session can inherit from an outer Kiro session.
+func TestKiroHookIgnoresEnvSessionIDWithoutPayload(t *testing.T) {
+	repo := newRepo(t)
+	got := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		return `{"ok":true}`
+	})
+	t.Setenv("KIRO_SESSION_ID", "inherited-outer-session")
+	payload, _ := json.Marshal(map[string]any{
+		"hook_event_name": "Stop",
+		"cwd":             repo,
+	})
+	if out := runKiro(string(payload)); out != "" {
+		t.Errorf("missing session_id printed %q, want empty", out)
+	}
+	if reqs := got(); len(reqs) != 0 {
+		t.Errorf("missing session_id contacted daemon with %+v", reqs)
+	}
+}
