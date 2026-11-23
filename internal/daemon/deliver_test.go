@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +68,7 @@ func TestMain(m *testing.M) {
 	// here, so it finds its clone from its working directory, and never a real session's.
 	os.Setenv(brand.SessionsDirEnv, filepath.Join(home, "sessions"))
 	testgit.Isolate() // HOME keeps out ~/.gitconfig, but not the system's, or a GIT_CONFIG_GLOBAL set already
+	capParallel()
 	started := time.Now()
 	code := m.Run()
 	os.RemoveAll(home)
@@ -78,6 +81,41 @@ func TestMain(m *testing.M) {
 		}
 	}
 	os.Exit(code)
+}
+
+// maxParallel is how many of this package's parallel tests run at once unless -parallel says
+// otherwise. go test's own default is one per processor, and each of these tests runs daemons that
+// start git by the hundred: on a 16-processor laptop with 15 GB, 16 at once started some 1,400 git
+// a minute and several tests gave up their waits, a different few each run; 6 at once passed
+// (#1036, 2026-11-22). CI's runners have 4 processors or fewer, so nothing changes there.
+const maxParallel = 6
+
+// parallelGiven says the run named -parallel itself, which capParallel leaves alone.
+var parallelGiven bool
+
+// capParallel holds the parallel tests to maxParallel at once. It parses the flags, as m.Run would,
+// to tell whether -parallel was given.
+func capParallel() {
+	flag.Parse()
+	flag.Visit(func(f *flag.Flag) { parallelGiven = parallelGiven || f.Name == "test.parallel" })
+	if !parallelGiven && runtime.GOMAXPROCS(0) > maxParallel {
+		flag.Set("test.parallel", strconv.Itoa(maxParallel))
+	}
+}
+
+// The parallel tests are held to maxParallel at once on a machine with more processors, where go
+// test's default overloads it (#1036). A run that names -parallel has what it asked for.
+func TestTheParallelTestsAreHeldToAFew(t *testing.T) {
+	if parallelGiven {
+		t.Skip("-parallel was given")
+	}
+	got, err := strconv.Atoi(flag.Lookup("test.parallel").Value.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := min(maxParallel, runtime.GOMAXPROCS(0)); got != want {
+		t.Errorf("%d tests run in parallel, want %d on %d processors", got, want, runtime.GOMAXPROCS(0))
+	}
 }
 
 // t3Call is one run of the stand-in `t3`, which also stands in for `codex` and `opencode` (#135).
