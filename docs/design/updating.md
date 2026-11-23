@@ -17,7 +17,10 @@ information in the request; a network failure waits quietly for the next hour. A
   links fail (FAT), it doesn't update. Before #944 it renamed the running exe aside first, and a kill
   between the two renames left no `mur.exe`. `install.ps1` swaps the same way since #959
   (2026-11-22); it installs the old way only where a running `mur.exe` can't be linked, or the
-  PowerShell can't make the call. The next daemon start removes staged files a kill left behind. A
+  PowerShell can't make the call. Every check, hourly and with updates off, removes staged files a
+  kill left behind and the backups nothing runs any more, the updater's and `install.ps1`'s
+  (`mur.exe.old-1a2b3c4d`); one a process still runs, as an MCP server may for days, stays until
+  the check after that process ends (#1171, 2026-11-23). A
   lock beside the executable serializes clones sharing an install, and a manual reinstall during
   the download is left alone. An install the daemon can't write (a package manager's) is logged
   once and left alone.
