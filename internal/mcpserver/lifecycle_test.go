@@ -60,7 +60,11 @@ type fileState struct {
 	mod  time.Time
 }
 
-// filesUnder is the state of every path under dir, dir included.
+// filesUnder is every path under dir, dir included, with the state of each regular file. Anything
+// else, a directory above all, is kept by its path alone: NTFS goes on moving a directory's
+// last-write time for a while after files are made in it, so the times git init and the fake
+// daemon left change under a server that does nothing (Windows CI, 2026-11-23). A file made,
+// changed or removed anywhere still shows, as itself.
 func filesUnder(t *testing.T, dir string) map[string]fileState {
 	t.Helper()
 	out := map[string]fileState{}
@@ -72,7 +76,11 @@ func filesUnder(t *testing.T, dir string) map[string]fileState {
 		if err != nil {
 			return err
 		}
-		out[path] = fileState{info.Size(), info.ModTime()}
+		if info.Mode().IsRegular() {
+			out[path] = fileState{info.Size(), info.ModTime()}
+		} else {
+			out[path] = fileState{}
+		}
 		return nil
 	})
 	if err != nil {
