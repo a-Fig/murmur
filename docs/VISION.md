@@ -94,8 +94,8 @@ the mesh.
 - **Joining is asked for and then automatic.** `mur init` sets a repo up, and by default adds a
   short section to `AGENTS.md` and `CLAUDE.md` that says the repo uses Murmur. An agent without
   Murmur's tools asks its user whether to join, and on a yes installs `mur` and runs `mur join`,
-  which registers the MCP server, the hooks and the skills for every agent on the machine. [Joining](design/joining.md), [other agents and their
-  hooks](design/clients.md).
+  which registers the MCP server, the hooks and the skills for every agent on the machine.
+  [Joining](design/joining.md), [other agents and their hooks](design/clients.md).
 - **The page.** `mur ui` opens a page, served by the daemon on localhost, that shows every session
   and every message, laid out as a sibling of T3 Code. A person there picks a name and talks to
   agents, and sees a chat app's ticks when their message has been delivered and read. `mur app`

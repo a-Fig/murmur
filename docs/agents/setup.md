@@ -26,16 +26,17 @@ older, tell your user to update git and stop here. Find the default branch: the 
 `git config murmur.remote` names, else origin, and `git ls-remote --symref <remote> HEAD` names its
 default branch (usually main). Then ask your user whether to set Murmur up here, and which way:
 
-- **With a section in AGENTS.md and CLAUDE.md** (`mur init`, the usual way). It leaves two Murmur
-  refs on the remote and one commit on the default branch. Teammates' agents read the section and
+- **With a section in AGENTS.md and CLAUDE.md** (`mur init`, the usual way). It leaves one Murmur
+  ref on the remote and one commit on the default branch. Teammates' agents read the section and
   ask their users whether to join.
-- **With nothing in the repo's files** (`mur init --refs-only`). It leaves only the two refs. No
-  file, commit or branch changes, so teammates' agents won't know to join unless someone tells them.
+- **With nothing in the repo's files** (`mur init --refs-only`). It leaves only two Murmur
+  refs. No file, commit or branch changes, so teammates' agents won't know to join unless someone
+  tells them, and each needs mur 0.5.4 or later to join.
 
 What `mur init` does:
 
-- It makes two refs on the remote, `refs/murmur/names` and `refs/murmur/team`, each one empty
-  commit. `mur join` looks for them. Branches don't show them, and `git clone` doesn't fetch them.
+- It makes one ref on the remote, `refs/murmur/names`, an empty commit, which `mur join` looks for.
+  Branches don't show it, and `git clone` doesn't fetch it.
 - It pushes one commit, in your user's name, to that branch on the remote. It adds a short
   section to AGENTS.md and CLAUDE.md (creating either if it is missing) that says the repo uses
   Murmur, and removes any Murmur entries an older version put in `.mcp.json` or
@@ -50,7 +51,8 @@ What `mur init` does:
 - Nothing is installed on teammates' machines, and Murmur does nothing for anyone until they join.
   A teammate's agent that reads the section asks its user whether to join.
 
-`mur init --refs-only` makes the two refs and nothing else, and sends nothing to murmur.afig.dev.
+`mur init --refs-only` makes that ref and `refs/murmur/team`, both empty, and nothing else. It sends
+nothing to murmur.afig.dev.
 
 Either way, you then join for your user. Say what joining does, from the list in step 1 of
 join.md, and what murmur.afig.dev receives and why, from "What murmur.afig.dev receives" there.
@@ -91,7 +93,9 @@ Tell your user what it printed:
 - "Already set up on <remote>'s <branch>; nothing pushed", or "already has the section": the default
   branch has it. Go on to step 4.
 
-Each of these may add "Made refs/murmur/... on <remote>": the refs join looks for.
+Each of these may add "Made refs/murmur/names on <remote>": the ref join looks for. If it says
+instead that the remote has no branch yet, the ref was made and the repo can be joined, but the
+section has nowhere to go: tell your user, and go on to step 4.
 
 A section whose `<!-- murmur:end -->` line is gone was edited by hand, and init leaves that file as
 it is (the repo still counts as set up). If your user wants it brought up to date, they restore that
@@ -111,8 +115,7 @@ the tools in this conversation, and that `mur ui` shows the agents and messages.
 
 ## What to tell your user about teammates
 
-- Each needs push access to the repo: Murmur's messages travel as git refs on its remote. Each
-  needs mur 0.5.4 or later too.
+- Each needs push access to the repo: Murmur's messages travel as git refs on its remote.
 - They don't run anything themselves. Their agent reads the section and asks them whether to join,
   and if they say yes, it installs mur and joins. In a repo set up with `--refs-only`, there is no
   section: someone has to tell them, or their agent, to join.

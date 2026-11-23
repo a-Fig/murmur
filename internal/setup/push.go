@@ -50,6 +50,9 @@ type Pushed struct {
 // server refuses the push for a reason of its own (a protected branch, a hook), the commit goes to
 // FallbackBranch instead, for a pull request. Last, a checkout on the default branch, behind the
 // commit and with no local changes to the files init edits, is fast-forwarded to it.
+// ErrNoBranch says the remote has no branch, so there is no commit for the section to go on.
+var ErrNoBranch = errors.New("the remote has no branch yet, so there is no commit to add the section to")
+
 func Push(ctx context.Context, dir string) (Pushed, error) {
 	var p Pushed
 	top, err := Top(ctx, dir)
@@ -62,6 +65,9 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 	}
 	if p.Remote, err = bus.RemoteFor(ctx, g); err != nil {
 		return p, err
+	}
+	if heads, err := g.Run(ctx, "", "ls-remote", "--heads", p.Remote); err == nil && strings.TrimSpace(heads) == "" {
+		return p, ErrNoBranch
 	}
 	if p.Branch, err = defaultBranch(ctx, g, p.Remote); err != nil {
 		return p, err

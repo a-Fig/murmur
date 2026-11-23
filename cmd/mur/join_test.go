@@ -365,32 +365,57 @@ func TestJoinNeedsTheRepoSetUp(t *testing.T) {
 	refused("the section on main, no refs")
 }
 
-// Every init that pushes makes the two bus refs join looks for, in their empty state, and leaves one
-// that is there alone (#830).
+// A default init makes the names registry, which join looks for, and leaves the team ref to the
+// first daemon, as a 0.5.3 daemon that joins through the section makes the first key only on a team
+// ref that isn't there. A registry already there is left alone (#830).
 func TestInitPushesTheBusRefs(t *testing.T) {
 	b := newBox(t)
 	out := b.mustRun(b.clone, "init")
-	if !strings.Contains(out, "Made refs/murmur/names and refs/murmur/team on origin") {
+	if !strings.Contains(out, "Made refs/murmur/names on origin") {
 		t.Errorf("init's output:\n%s", out)
 	}
-	if refs := strings.Fields(git(t, b.remote, "for-each-ref", "--format=%(refname)", "refs/murmur")); !slices.Equal(refs, []string{"refs/murmur/names", "refs/murmur/team"}) {
+	if refs := strings.Fields(git(t, b.remote, "for-each-ref", "--format=%(refname)", "refs/murmur")); !slices.Equal(refs, []string{"refs/murmur/names"}) {
 		t.Errorf("the remote's bus refs after init: %q", refs)
 	}
-	if msg := git(t, b.remote, "log", "-1", "--format=%B", "refs/murmur/team"); !bus.IsTeamGenesisMessage(msg) {
-		t.Errorf("the team ref after init reads:\n%s", msg)
+	var names bus.NameRecord
+	if err := bus.Decode(git(t, b.remote, "log", "-1", "--format=%B", "refs/murmur/names"), &names); err != nil || len(names.Claims()) != 0 {
+		t.Errorf("the registry after init isn't empty: %+v, %v", names, err)
 	}
 
-	// A repo whose daemons made the team ref already: init leaves it, and makes the registry.
+	// A repo whose daemons made the registry already: init leaves it.
 	b = newBox(t)
 	tip := strings.TrimSpace(git(t, b.remote, "rev-parse", "refs/heads/main"))
-	git(t, b.remote, "update-ref", "refs/murmur/team", tip)
+	git(t, b.remote, "update-ref", "refs/murmur/names", tip)
 	out = b.mustRun(b.clone, "init")
-	if !strings.Contains(out, "Made refs/murmur/names on origin") {
-		t.Errorf("init's output with a team ref there:\n%s", out)
+	if strings.Contains(out, "Made refs/murmur") {
+		t.Errorf("init made a ref that was there:\n%s", out)
 	}
-	if now := strings.TrimSpace(git(t, b.remote, "rev-parse", "refs/murmur/team")); now != tip {
-		t.Errorf("init moved the team ref that was there, to %s", now)
+	if now := strings.TrimSpace(git(t, b.remote, "rev-parse", "refs/murmur/names")); now != tip {
+		t.Errorf("init moved the registry that was there, to %s", now)
 	}
+}
+
+// In a repo with no branch yet, the section has nowhere to go, but the registry is made, so the repo
+// can be joined: init says so, points at --refs-only, and exits 0, as the repo is set up (#830).
+func TestInitInARepoWithNoBranch(t *testing.T) {
+	b := newBox(t)
+	empty := filepath.Join(b.root, "empty.git")
+	git(t, b.root, "init", "-q", "--bare", "--initial-branch=main", empty)
+	git(t, b.clone, "remote", "set-url", "origin", empty)
+	b.remote = empty
+	out := b.mustRun(b.clone, "init")
+	for _, want := range []string{"origin has no branch yet", "Made refs/murmur/names on origin", "`mur join` works here", "`mur init --refs-only`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init's output doesn't say %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--no-push") {
+		t.Errorf("init suggested --no-push:\n%s", out)
+	}
+	if heads := strings.TrimSpace(git(t, empty, "for-each-ref", "refs/heads")); heads != "" {
+		t.Errorf("init made a branch: %s", heads)
+	}
+	b.mustRun(b.clone, "join")
 }
 
 // untouched is everything of a clone's and its remote's that init --refs-only must leave as it is:
@@ -453,6 +478,22 @@ func TestInitRefsOnly(t *testing.T) {
 		if now := strings.TrimSpace(git(t, b.remote, "rev-parse", ref)); now != tip {
 			t.Errorf("init run again moved %s from %s to %s", ref, tip, now)
 		}
+	}
+}
+
+// A repo kept just for Murmur needs no first commit: init --refs-only sets up a clone of an empty
+// repo, and it can be joined (docs/agents/different-repos.md, #830).
+func TestARepoKeptForMurmurNeedsNoCommit(t *testing.T) {
+	b := newBox(t)
+	empty := filepath.Join(b.root, "murmur-only.git")
+	git(t, b.root, "init", "-q", "--bare", "--initial-branch=main", empty)
+	clone := filepath.Join(b.root, "murmur-only")
+	git(t, b.root, "clone", "-q", empty, clone)
+	b.remote, b.clone = empty, clone // the box's cleanup stops this clone's daemon
+	b.mustRun(clone, "init", "--refs-only")
+	b.mustRun(clone, "join")
+	if heads := strings.TrimSpace(git(t, empty, "for-each-ref", "refs/heads")); heads != "" {
+		t.Errorf("a branch appeared: %s", heads)
 	}
 }
 

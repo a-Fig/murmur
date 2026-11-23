@@ -49,13 +49,13 @@ var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command, "
 
 Setup:
   mur init [--no-push|--refs-only]
-                                set this repo up for Murmur, once: make Murmur's empty refs/murmur/* refs on
+                                set this repo up for Murmur, once: make Murmur's empty refs/murmur/names on
                                 the remote, which join looks for, and add the section to AGENTS.md and
                                 CLAUDE.md that invites agents to join, as a commit pushed to the default
-                                branch; --refs-only makes only the refs; --no-push only edits the files
-                                here and pushes nothing, so join refuses until a pushing init runs
+                                branch; --refs-only makes only Murmur's refs; --no-push only edits the
+                                files here and pushes nothing, so join refuses until a pushing init runs
   mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this); needs
-                                the refs mur init makes; the agent's session joins too, even one that
+                                the ref mur init makes; the agent's session joins too, even one that
                                 started outside the repo; --leave undoes it
   mur uninstall [--leave]       remove Murmur from this machine for you: its server, hooks and skills from
                                 every agent, its daemons, its folder in your config directory; refuses
@@ -430,18 +430,28 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	if *refsOnly {
 		return initRefsOnly(ctx, *dir, out)
 	}
-	// The refs first: they are what join looks for, so a section that went to a branch for a pull
-	// request still leaves the repo set up (#830).
-	refs, err := setup.RefsOnly(ctx, *dir)
+	// The names registry first: it is what join looks for, so a section that went to a branch for a
+	// pull request, or had no branch to go on, still leaves the repo set up (#830).
+	refs, err := setup.NamesOnly(ctx, *dir)
 	if err != nil {
 		return err
 	}
 	made := ""
 	if len(refs.Made) > 0 {
-		made = fmt.Sprintf("Made %s on %s, empty for now: `%s join` looks for them.\n",
+		made = fmt.Sprintf("Made %s on %s, empty for now: `%s join` looks for it.\n",
 			strings.Join(refs.Made, " and "), refs.Remote, brand.Command)
 	}
 	p, err := setup.Push(ctx, *dir)
+	if errors.Is(err, setup.ErrNoBranch) {
+		// The repo is set up all the same, as --refs-only would leave it, so this is no failure:
+		// exit 0, as an agent following setup.md goes on to join. It says the section is missing.
+		fmt.Fprintf(out, "%s has no branch yet, so there is no commit to add the section to.\n%s", refs.Remote, made)
+		fmt.Fprintf(out, "\nThe repo is set up: `%[1]s join` works here. Nothing in its files mentions %[2]s, so teammates'\n"+
+			"agents won't know to join unless someone tells them. For a repo that is to stay without files,\n"+
+			"`%[1]s init --refs-only` is the form to use; once it has a first commit, `%[1]s init` adds the section.\n",
+			brand.Command, brand.Product)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -480,9 +490,11 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	fmt.Fprint(out, made)
 	if p.Fallback != "" {
 		if p.PullURL != "" {
-			fmt.Fprintf(out, "\nOpen a pull request from it, for someone who may merge into %s: %s\n", p.Branch, p.PullURL)
+			fmt.Fprintf(out, "\nThe repo can be joined now. Teammates' agents see the section once it is merged: open a pull\n"+
+				"request from it, for someone who may merge into %s: %s\n", p.Branch, p.PullURL)
 		} else {
-			fmt.Fprintf(out, "\nMerge %s into %s to finish; someone who may push to %s can.\n", p.Fallback, p.Branch, p.Branch)
+			fmt.Fprintf(out, "\nThe repo can be joined now. Teammates' agents see the section once %s is merged into %s;\n"+
+				"someone who may push to %s can merge it.\n", p.Fallback, p.Branch, p.Branch)
 		}
 	} else if p.FastForwarded {
 		fmt.Fprintf(out, "\nThis checkout's %s is now at %s.\n", p.Branch, short)

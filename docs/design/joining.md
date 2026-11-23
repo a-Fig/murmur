@@ -4,12 +4,13 @@ Decided 2026-10-29 (#55), built the same day. Tyler's requirement: setup should 
 T3 Code users are the main customers, but the user should still know Murmur is running and choose to
 join. So a repo that uses Murmur says so in a section of `AGENTS.md` and `CLAUDE.md`; an agent
 without Murmur's tools asks its user whether to join; and on a yes it installs mur and runs `mur
-join`, which does the rest. Since 2026-11-23 (#830) the section only invites: what sets a repo up is
-its bus refs, which `mur init` pushes ([the bus refs](#the-bus-refs-set-a-repo-up)). Tyler also decided that messaging gets no commands (`who`, `send`,
-`inbox` and `log` were removed): "If everyone is using the CLI, there will be no one to message."
-Agents message through MCP, and people use the page. Since 2026-11-21 (#913) an agent Murmur has no
-tools for runs `mur who`, `mur send`, `mur inbox` and `mur status` in its shell instead ([any agent
-in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
+join`, which does the rest. Since 2026-11-23 (#830) the section only invites: what sets a repo up
+is its bus refs, which `mur init` pushes ([the bus refs](#the-bus-refs-set-a-repo-up)). Tyler also
+decided that messaging gets no commands (`who`, `send`, `inbox` and `log` were removed): "If
+everyone is using the CLI, there will be no one to message." Agents message through MCP, and people
+use the page. Since 2026-11-21 (#913) an agent Murmur has no tools for runs `mur who`, `mur send`,
+`mur inbox` and `mur status` in its shell instead ([any agent in
+T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 
 ## The marker
 
@@ -39,36 +40,38 @@ in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 ## The bus refs set a repo up
 
 Tyler's direction (2026-11-23, #830): join looks only at the remote's `refs/murmur/*`, never at a
-file or a branch. Every `mur init` that pushes (`setup.RefsOnly`) makes the two shared bus refs in
-their empty state, before the section's commit, so a section that went to `murmur-init` for a pull
-request still leaves the repo joinable. `init --refs-only` makes only the refs, for a repo whose
-files are to say nothing; `init --no-push` pushes nothing, so join refuses until a pushing init
-runs. A ref must point at a commit, so each gets a root commit on the empty tree, written with
-`commit-tree` and pushed as `<sha>:<ref>`, leased on the ref not being there:
+file or a branch. A default `mur init` makes the names registry (`setup.NamesOnly`) before the
+section's commit, so a section that went to `murmur-init` for a pull request, or found no branch to
+go on, still leaves the repo joinable. `init --refs-only` (`setup.RefsOnly`) makes the registry and
+the team ref, and nothing else, for a repo whose files are to say nothing. `init --no-push` pushes
+nothing, so join refuses until a pushing init runs. A ref must point at a commit, so each gets a root
+commit on the empty tree, written with `commit-tree` and pushed as `<sha>:<ref>`, leased on the ref
+not being there:
 
 - `refs/murmur/names` gets a snapshot of no names (`bus.NamesGenesis`), the record a daemon writes
   when it repairs a registry that held none. A snapshot counts on a history's root, so every daemon,
   released ones too, reads it as an empty registry and writes the first name on top.
-- `refs/murmur/team` gets an unsealed message saying there is no team key yet. A daemon that finds
-  the tip is that commit, a root on the empty tree (`Repo.IsTeamGenesis`; the message alone isn't
-  enough), and has read no epoch, makes epoch 1 on top of it, as it does on a team ref that isn't
-  there (`teamGenesisTip` in `internal/daemon/team.go`). The push is leased on the genesis, so of two
-  first daemons one lands and the other reads its epoch; one that read the genesis just as another
-  pushed epoch 1 is refused the same way.
+- `refs/murmur/team`, from `--refs-only` only, gets an unsealed message saying there is no team key
+  yet. A daemon that finds the tip is that commit, a root on the empty tree (`Repo.IsTeamGenesis`;
+  the message alone isn't enough), and has read no epoch, makes epoch 1 on top of it, as it does on
+  a team ref that isn't there (`teamGenesisTip` in `internal/daemon/team.go`). The push is leased on
+  the genesis, so of two first daemons one lands and the other reads its epoch; one that read the
+  genesis just as another pushed epoch 1 is refused the same way. A default init leaves the team ref
+  out because a 0.5.3 daemon, which can join through the section, makes the first key only on a team
+  ref that isn't there.
 
 The per-device refs, `mesh/<deviceId>` and `presence/<deviceId>`, are each daemon's own and come
 after its clone joins. A ref already on the remote is left alone, so a rerun makes nothing new. Once
 a repo has bus refs it stays joinable: Murmur never deletes the names or team ref, and taking the
 section out no longer stops anything.
 
-**Older versions** (checked against v0.5.3, 2026-11-23; Tyler: only post-0.5.3 needs to work). A
-0.5.3 `mur join` looks only for the section, so it refuses where there is none, and a 0.5.3 MCP
-server stays off there. A 0.5.3 daemon reads the names genesis as an empty registry, but makes no
-epoch on a team ref that is there: it passes over the genesis as unsealed and waits. Its presence
-stays encrypted for its own device, so nobody reads it, and each send fails after its wait with "the
-team's encryption key isn't set up yet". Nothing errors and nothing is overwritten, and once any
-0.5.4 daemon makes epoch 1, older ones read it and are granted the key as usual. Since daemons update
-themselves, that lasts until one does.
+**Older versions** (checked against v0.5.3, 2026-11-23; Tyler: only post-0.5.3 needs to work). In a
+repo set up the default way, 0.5.3 works as before: its join finds the section and its daemon makes
+the first key. Only a `--refs-only` repo needs 0.5.4: a 0.5.3 `mur join` looks only for the
+section, so it refuses there, and a 0.5.3 MCP server stays off. A 0.5.3 daemon that runs there
+anyway (its clone joined while the repo had the section) makes no epoch on the team genesis, so its
+presence stays encrypted for itself and its sends fail with "the team's encryption key isn't set up
+yet", until any 0.5.4 daemon makes epoch 1. It doesn't error or overwrite anything.
 
 ## What `mur join` writes
 

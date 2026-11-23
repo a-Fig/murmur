@@ -56,10 +56,10 @@ Installer options and building from source are in [`docs/releasing.md`](docs/rel
 mur init
 ```
 
-This makes Murmur's own refs on the remote, which is what `mur join` looks for. It also adds a short
+This makes a ref of Murmur's own on the remote, which is what `mur join` looks for. It also adds a short
 section to `AGENTS.md` and `CLAUDE.md` saying the repo uses Murmur, and pushes it to the default
 branch as one commit. If that branch is protected, the commit goes to a `murmur-init` branch for a
-pull request instead. `mur init --refs-only` makes only the refs, so no file or branch changes, and
+pull request instead. `mur init --refs-only` makes only Murmur's refs, so no file or branch changes, and
 teammates' agents won't know to join unless someone tells them. `mur init --no-push` only edits the
 files and pushes nothing, so nobody can join yet. You can also point your agent at
 [`docs/agents/setup.md`](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md)
