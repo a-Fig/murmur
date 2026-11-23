@@ -108,8 +108,17 @@ type Version struct {
 	// Auto says Latest is being installed without the user: updates are on and the last check
 	// went through.
 	Auto bool `json:"auto,omitempty"`
-	// Install is the command that installs the latest release by hand, for this OS.
-	Install string `json:"install,omitempty"`
+	// Off says the last check found updates off here, so Latest isn't coming on its own; else a
+	// Latest that isn't Auto is one whose check or install failed.
+	Off bool `json:"off,omitempty"`
+	// CanInstall says a person can install Latest from the page (Updates.InstallNow, #1045):
+	// updates won't, since they are off here or the last attempt failed, and this daemon's updater
+	// is running to do it.
+	CanInstall bool `json:"canInstall,omitempty"`
+	// Installing says a person asked for Latest to be installed and the daemon is at it.
+	Installing bool `json:"installing,omitempty"`
+	// InstallError is why the install a person last asked for failed, in words to show.
+	InstallError string `json:"installError,omitempty"`
 	// Daemon tells this daemon from the one that replaces it, even at the same version (a
 	// reinstall by hand): the page reloads when it changes.
 	Daemon string `json:"daemon,omitempty"`

@@ -176,6 +176,8 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Updates, if set, lets the page show and change how this machine updates itself (#1045).
+	Updates web.Updates
 	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
 	// daemon adds its clone there as it starts, so a clone that joined before the record existed
 	// is on it too. Tests leave it unset.

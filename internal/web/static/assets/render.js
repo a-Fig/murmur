@@ -13,6 +13,7 @@ import { conversationsPage, chatScroll, restoreChatScroll, markOpenRead, fitComp
 import { viewerDialog } from "./files.js";
 import { setupDialog, pickerDialog } from "./picker.js";
 import { settingsPage } from "./settings.js";
+import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
 export { announce, render, go, setView };
@@ -313,6 +314,9 @@ function go(view) {
 
 function setView(view) {
   ui.view = VIEWS.includes(view) ? view : "messages";
-  if (ui.view === "settings") loadSettings();
+  if (ui.view === "settings") {
+    loadSettings();
+    loadUpdates();
+  }
   render();
 }
