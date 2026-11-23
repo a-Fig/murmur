@@ -753,6 +753,10 @@ func (d *Daemon) readSendFiles(sender fileSender, paths []string) ([]sendFile, e
 
 // checkSendFiles holds the files of a send to the limits, and checks each for secrets as a body is
 // (textsOf).
+//
+// The limits come first, for every file, since they cost nothing, and the check for secrets reads
+// every byte: files 30 MB together were checked 20 MB deep before they were refused for their size,
+// which took a busy machine past a send's 30 s in the tests (#1075).
 func checkSendFiles(files []sendFile) error {
 	if len(files) > bus.MaxFiles {
 		return fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(files))
@@ -765,6 +769,8 @@ func checkSendFiles(files []sendFile) error {
 		if total += int64(len(f.data)); total > bus.MaxFilesTotal {
 			return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
 		}
+	}
+	for _, f := range files {
 		if err := scrub.Check(textsOf(f.data)...); err != nil {
 			return fmt.Errorf("%s: %v", f.name, err)
 		}

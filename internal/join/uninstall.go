@@ -942,7 +942,7 @@ func removeTOMLListItem(text, table, key, item, file string) (out string, change
 			continue
 		}
 		items, after, ok := stringListRest(val)
-		if !singleLine(val) || !ok || (after != "" && after[0] != '#') {
+		if !ok || (after != "" && after[0] != '#') {
 			if strings.Contains(val, item) {
 				return "", false, fmt.Errorf("%s has %s in [%s] in a form uninstall doesn't edit: take %q out of it by hand", file, key, table, item)
 			}
