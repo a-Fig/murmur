@@ -25,7 +25,8 @@ recipient a turn of their own work.
 3. **Ask the owner instead of guessing.** When your work builds on something another session is
    writing or about to write (an API's shape, a field's name or unit), ask it how it will build it
    before you write against a guess. Code that is finished you can read; a plan you have to ask
-   for. Ask it yourself, rather than asking your user to pass the question to a teammate.
+   for. Ask it yourself, rather than asking your user to pass the question to a teammate. Where you
+   can, propose the shape you'd use and ask yes or no.
 
 ## When a message arrives
 
