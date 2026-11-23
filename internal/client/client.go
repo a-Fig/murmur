@@ -427,7 +427,8 @@ func endOlder(ctx context.Context, gitDir string, info proto.Info) error {
 
 // isCommand reports whether exe, the path of the program a process runs, is this command: mur, or
 // mur.exe, or either as it is renamed aside when a running one is replaced (mur.exe.old-1a2b3c4d
-// by install.ps1, mur.exe.old-.mur-update-... by updaters before #944), with the " (deleted)"
+// by install.ps1 before #959 or where it can't link, mur.exe.old-.mur-update-... by updaters before
+// #944), with the " (deleted)"
 // Linux adds to a replaced file's path. The folder isn't compared: the new mur may be installed
 // somewhere else.
 func isCommand(exe string) bool {

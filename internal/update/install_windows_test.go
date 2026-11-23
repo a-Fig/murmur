@@ -13,10 +13,10 @@ import (
 // stood in for by one that runs the real command and then looks for mur.exe: a swap stopped after
 // any one of them must still leave it there.
 const installSwapHarness = `
-param([string]$Swap, [string]$Dir, [string]$State)
+param([string]$Swap, [string]$Root, [string]$State)
 $ErrorActionPreference = 'Stop'
-$dir = Join-Path $Dir 'bin'
-$tmp = Join-Path $Dir 'download'
+$dir = Join-Path $Root 'bin'
+$tmp = Join-Path $Root 'download'
 New-Item -ItemType Directory -Path $dir, $tmp | Out-Null
 $exe = Join-Path $dir 'mur.exe'
 $asset = 'mur-windows-amd64.exe'
@@ -24,10 +24,13 @@ $old = $null
 Set-Content -Path (Join-Path $tmp $asset) -Value 'NEW' -Encoding ascii
 $running = $null
 if ($State -ne 'none') { Copy-Item "$env:WINDIR\System32\waitfor.exe" $exe }
-if ($State -eq 'running') {
-    $running = Start-Process -FilePath $exe -ArgumentList 'MurInstallSwapTest', '/T', '120' -PassThru -WindowStyle Hidden
+if ($State -like 'running*') {
+    # A signal name of its own: a second waitfor on one name exits at once.
+    $running = Start-Process -FilePath $exe -ArgumentList ('MurSwap' + [Guid]::NewGuid().ToString('N').Substring(0, 12)), '/T', '120' -PassThru -WindowStyle Hidden
     Start-Sleep -Milliseconds 700
+    if ($running.HasExited) { throw 'the stand-in mur.exe did not stay running' }
 }
+if ($State -like '*no call') { function Add-Type { throw 'this PowerShell may not load the call' } }
 $had = Test-Path $exe
 function Watch($step) { if ($had -and -not (Test-Path $exe)) { Write-Output "no mur.exe after $step" } }
 function Move-Item { Microsoft.PowerShell.Management\Move-Item @args; Watch 'Move-Item' }
@@ -71,6 +74,9 @@ func TestInstallScriptNeverLeavesNoExe(t *testing.T) {
 		want  []string
 	}{
 		{"running", []string{"mur.exe holds NEW", "the old one still runs: True", "staged files left: 0"}},
+		// Constrained language mode, say: with the link made, the old way's move still finds a
+		// mur.exe to replace.
+		{"running, no call", []string{"mur.exe holds NEW", "the old one still runs: True", "staged files left: 0"}},
 		{"idle", []string{"mur.exe holds NEW", "staged files left: 0"}},
 		{"none", []string{"mur.exe holds NEW", "staged files left: 0"}},
 	} {
@@ -84,7 +90,7 @@ func TestInstallScriptNeverLeavesNoExe(t *testing.T) {
 				return path
 			}
 			out, err := exec.Command(powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", write("harness.ps1", installSwapHarness),
-				"-Swap", write("swap.ps1", swap), "-Dir", dir, "-State", c.state).CombinedOutput()
+				"-Swap", write("swap.ps1", swap), "-Root", dir, "-State", c.state).CombinedOutput()
 			if err != nil {
 				t.Fatalf("the harness: %v\n%s", err, out)
 			}
