@@ -1434,56 +1434,148 @@ a.g-pr:hover {
   transform: none;
 }
 
-/* The ask to star Murmur (#974, star.js): a card in the top corner, under the top bar, clear of the
-   composer. */
+/* The ask to star Murmur (#974, star.js): T3 Code's star toast, copied from its source (coss-ui's
+   toast.tsx and button.tsx, Tailwind classes noted beside each value) in this page's tokens. */
 .star-ask {
+  --toast-inset: 1rem; /* --spacing(4); --spacing(8) from sm up */
+  --glass-blur: 16px; /* T3's dark values; light themes below */
+  --glass-saturation: 1.08;
   position: fixed;
-  z-index: 60;
-  top: calc(var(--topbar-height) + 0.75rem);
-  right: 1rem;
-  display: flex;
-  gap: 0.75rem;
-  width: min(20rem, calc(100vw - 2rem));
-  padding: 0.875rem 1rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--popover);
+  z-index: 100;
+  top: calc(var(--toast-inset) + var(--topbar-height));
+  right: var(--toast-inset);
+  width: min(22.5rem, calc(100% - var(--toast-inset) * 2)); /* max-w-90 */
+  border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+  border-radius: var(--radius-lg); /* rounded-lg */
+  /* dropdown-glass */
+  background: color-mix(in srgb, var(--popover) 18%, color-mix(in srgb, var(--popover) 80%, transparent));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   color: var(--foreground);
-  box-shadow: var(--shadow-popover);
-  opacity: 0;
-  transform: translateY(-4px);
+  font-size: 0.875rem; /* text-sm */
+  line-height: 1.25rem;
+  box-shadow:
+    0 20px 25px -5px rgb(0 0 0 / 25%),
+    0 8px 10px -6px rgb(0 0 0 / 25%); /* shadow-xl shadow-black/25 */
+  user-select: none;
+  touch-action: none;
+  /* Base UI's start and end styles: in from the right, out the way it goes, fading. */
+  transform: translate(calc(100% + var(--toast-inset)), 0);
   transition:
-    opacity 0.2s var(--ease),
-    transform 0.2s var(--ease);
+    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.5s;
+}
+@media (min-width: 640px) {
+  .star-ask {
+    --toast-inset: 2rem;
+  }
+}
+:root:is([data-theme="light"], [data-theme="sky"], [data-theme="murmur"]) .star-ask {
+  --glass-blur: 12px;
+  --glass-saturation: 1.14;
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .star-ask {
+    background: var(--popover);
+  }
 }
 .star-ask.on {
-  opacity: 1;
-  transform: none;
+  transform: translate(var(--swipe-x, 0px), var(--swipe-y, 0px));
 }
-.star-ask-icon {
-  margin-top: 0.125rem;
-  color: var(--warning-foreground);
+.star-ask.swiping {
+  transition: none;
 }
-.star-ask-body {
-  flex: 1;
+.star-ask[data-leaving] {
+  opacity: 0;
+}
+.star-ask[data-leaving="up"] {
+  transform: translateY(calc(-100% - var(--toast-inset)));
+}
+/* The round close button on the card's corner. */
+.star-ask-close {
+  position: absolute;
+  z-index: 20;
+  top: -0.375rem; /* -top-1.5 -right-1.5 */
+  right: -0.375rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem; /* size-6 */
+  height: 1.5rem;
+  border: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--popover) 92%, transparent);
+  color: var(--muted-foreground);
+  box-shadow:
+    0 1px 3px 0 rgb(0 0 0 / 10%),
+    0 1px 2px -1px rgb(0 0 0 / 10%); /* shadow-sm */
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition:
+    color 0.15s var(--ease),
+    background-color 0.15s var(--ease);
+}
+.star-ask-close:hover {
+  background: var(--popover);
+  color: var(--foreground);
+}
+.star-ask-close .icon {
+  width: 0.75rem; /* size-3, stroke 2.25 */
+  height: 0.75rem;
+  stroke-width: 2.25;
+}
+/* The stacked layout: words, then the buttons at the end. */
+.star-ask-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem; /* gap-2 */
+  padding: 0.625rem 0.875rem; /* py-2.5 px-3.5 */
+}
+.star-ask-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem; /* gap-0.5 */
+  min-width: 0;
+  padding-right: 1.25rem; /* pr-5 */
+}
+.star-ask-head {
+  display: flex;
+  gap: 0.5rem;
   min-width: 0;
 }
+.star-ask-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1.25rem; /* h-lh */
+  color: var(--warning-foreground);
+}
 .star-ask h2 {
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1.25rem;
+  min-width: 0;
+  font-size: inherit;
+  font-weight: 500; /* font-medium */
+  line-height: inherit;
 }
 .star-ask p {
-  margin-top: 0.125rem;
+  min-width: 0;
   color: var(--muted-foreground);
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
+  user-select: text;
 }
 .star-ask-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  align-items: center;
+  gap: 0.375rem; /* gap-1.5 */
+}
+/* T3's ghost button: the foreground's color, not muted, with the accent on hover. */
+.star-ask-dismiss {
+  color: var(--foreground);
+}
+.star-ask-dismiss:hover {
+  background: var(--accent);
 }
 .side-tag .icon,
 .side-msg .icon,
