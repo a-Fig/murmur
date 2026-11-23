@@ -117,6 +117,9 @@ func TestABusySessionIsToldAndGetsTheTurnWhenIdle(t *testing.T) {
 // send started: the next message goes when it ends, not after the minute a handoff holds the
 // session for a turn the hook hasn't seen (#677). A T3 slow to answer, as on a loaded machine, left
 // the send returning after the turn's end, and the hold then covered a turn already over.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestATurnSeenBeforeItsHandoffReturnsHoldsNothing(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -124,16 +127,15 @@ func TestATurnSeenBeforeItsHandoffReturnsHoldsNothing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(exe), fakeT3Sleep), []byte("3s"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	b.finishedATurn("claude-bob")
-	a.send("aaaaaa", bob, "first", "its body")
+	b.send("aaaaaa", bob, "first", "its body")
 	eventually(t, "the first handed to T3", func() bool { return len(calls()) == 1 })
 	b.handedTurn("claude-bob", calls()[0]) // the turn the first started, over before the send returns
-	a.send("aaaaaa", bob, "second", "its body")
+	b.send("aaaaaa", bob, "second", "its body")
 	// Well within the minute of the hold, which the second waited out before.
 	for end := time.Now().Add(30 * time.Second); len(calls()) < 2; time.Sleep(50 * time.Millisecond) {
 		if time.Now().After(end) {

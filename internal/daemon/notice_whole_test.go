@@ -49,14 +49,16 @@ func TestAMessageWithNoBodyIsReadWhenTheHookShowsIt(t *testing.T) {
 }
 
 // A hook from before Whole prints only the notice, so the message stays unread for it, as before.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestAnOlderHookKeepsAMessageWithNoBodyUnread(t *testing.T) {
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.session("bbbbbb", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "for an older hook", "")
+	b.send("aaaaaa", bob, "for an older hook", "")
 	var r proto.Response
 	eventually(t, "the notice", func() bool {
 		r = b.do(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"})
@@ -72,20 +74,22 @@ func TestAnOlderHookKeepsAMessageWithNoBodyUnread(t *testing.T) {
 
 // A message with a body is told of by its subject, and given whole when the turn ends. That turn
 // says a notice told of it, so the agent doesn't take it for a second message.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestATurnSaysItsMessageWasToldOfBefore(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	const told = ", which a notice told you of "
 
 	// Handed over by T3 when the turn ends.
 	b.finishedATurn("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "told first", "and the rest of it")
+	b.send("aaaaaa", bob, "told first", "and the rest of it")
 	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
 	b.turnEnd("claude-bob")
 	eventually(t, "the turn", func() bool { return len(calls()) == 1 })
@@ -95,9 +99,9 @@ func TestATurnSaysItsMessageWasToldOfBefore(t *testing.T) {
 
 	// Given by the Stop hook, with one no notice told of.
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "told again", "with a body")
+	b.send("aaaaaa", bob, "told again", "with a body")
 	eventually(t, "the second notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	a.send("aaaaaa", bob, "untold", "with a body too")
+	b.send("aaaaaa", bob, "untold", "with a body too")
 	eventually(t, "the untold one to reach b", func() bool { return logHas(b, "untold") })
 	r := b.stopHook("claude-bob")
 	if got := viewSubjects(r.Read); len(got) != 2 || got[0] != "told again" || got[1] != "untold" {
