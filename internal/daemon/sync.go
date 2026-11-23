@@ -1497,7 +1497,8 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
 	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
-	for attempt := 0; ; attempt++ {
+	reconciled := false
+	for {
 		d.dropSwitchedOff(ctx)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1524,9 +1525,10 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 			d.ownLanded(ctx, ref, sha, e.Type == bus.Message)
 			return nil
 		}
-		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
+		if !errors.Is(err, bus.ErrRejected) || reconciled {
 			return err
 		}
+		reconciled = true
 		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
