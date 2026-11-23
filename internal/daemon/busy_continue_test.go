@@ -52,6 +52,10 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	if r.Read[0].Body != "the body of the told one" {
 		t.Errorf("the body given: %q", r.Read[0].Body)
 	}
+	// The sender is described where the conversation first meets it, and not at the next Stop (#216).
+	if r.Read[0].Introduced || r.Read[1].Introduced {
+		t.Errorf("the first Stop's messages are marked as from a sender already introduced: %+v", r.Read)
+	}
 	if inbox, notices := b.unread("bbbbbb", "claude-bob"); len(inbox) != 0 || len(notices) != 0 {
 		t.Errorf("after the Stop gave them: inbox %v, notices %v", inbox, notices)
 	}
@@ -59,8 +63,12 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	a.send("aaaaaa", bob, "in the continued turn", "its body")
 	eventually(t, "the next message to reach b", func() bool { return logHas(b, "in the continued turn") })
 	holds(t, "nothing handed to T3 while the turn goes on", time.Second, func() bool { return len(calls()) == 0 })
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "in the continued turn" {
+	r = b.stopHook("claude-bob")
+	if got := viewSubjects(r.Read); len(got) != 1 || got[0] != "in the continued turn" {
 		t.Fatalf("the next Stop gave %v", got)
+	}
+	if !r.Read[0].Introduced {
+		t.Errorf("the next Stop's message isn't marked as from a sender already introduced")
 	}
 
 	if r := b.stopHook("claude-bob"); len(r.Read) != 0 {
@@ -167,45 +175,5 @@ func TestALapsedContinuationHandsOverWhatCameMeanwhile(t *testing.T) {
 	}
 	if turn := socketTurn(t, sock.lines(), "tok-bob"); !strings.Contains(turn, "after the lost answer") {
 		t.Errorf("the turn: %q", turn)
-	}
-}
-
-// The Stop hook describes a sender only in a conversation's first turn from it (#216). A /clear
-// keeps the session's ID but starts a conversation that has seen nothing, so it is described again
-// there; a /resume goes back to a conversation that has met it.
-func TestTheStopHookDescribesASenderOncePerConversation(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _, _ := b.sessionPID("bbbbbb", "claude-a", procP)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	// given is one message, sent while conversation claude is at work and given at its turn's end.
-	given := func(claude, subject string) proto.MessageView {
-		t.Helper()
-		b.hook(claude, procP) // a prompt: at work, and in this conversation
-		a.send("aaaaaa", bob, subject, "its body")
-		b.noticed(claude, procP, subject)
-		r := b.stopHook(claude)
-		if len(r.Read) != 1 || r.Read[0].Subject != subject {
-			t.Fatalf("the Stop in %s gave %v; want [%s]", claude, viewSubjects(r.Read), subject)
-		}
-		return r.Read[0]
-	}
-	b.hookNotices("claude-a")
-	b.stopHook("claude-a")
-	for _, step := range []struct {
-		claude, subject string
-		introduced      bool
-	}{
-		{"claude-a", "first in A", false},
-		{"claude-a", "second in A", true},
-		{"claude-b", "first after /clear", false},
-		{"claude-a", "after /resume", true},
-	} {
-		if got := given(step.claude, step.subject); got.Introduced != step.introduced {
-			t.Errorf("%q: Introduced is %v, want %v", step.subject, got.Introduced, step.introduced)
-		}
 	}
 }

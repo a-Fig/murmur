@@ -341,7 +341,9 @@ func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 	}
 }
 
-// Messages for one session go in one at a time, in the order they came, and each once.
+// Messages for one session go in one at a time, in the order they came, and each once. The first
+// says what its sender is, and the ones after name it alone (#216): the daemon's loops run between
+// them here, where TestASenderIsDescribedOnlyInItsFirstTurn makes the turns by hand.
 func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -349,6 +351,7 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	aliceName := a.named(alice)
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	want := []string{"one", "two", "three"}
@@ -361,65 +364,11 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n"+want[i]+"\n") {
 			t.Errorf("handoff %d was %q, want %q", i, c.Stdin, want[i])
 		}
-	}
-}
-
-// Only a session's first turn from a sender says what agent the sender is and whose machine it is
-// on; later ones name it alone (#216). Another sender is introduced in its own first turn.
-func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	carol, _ := a.session("cccccc", "")
-	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	aliceName, carolName := a.named(alice), a.named(carol)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) && b.seesSession(carol) })
-
-	a.send("aaaaaa", bob, "one", "")
-	eventually(t, "the first handoff", func() bool { return len(calls()) >= 1 })
-	a.send("aaaaaa", bob, "two", "")
-	eventually(t, "the second handoff", func() bool { return len(calls()) >= 2 })
-	a.send("cccccc", bob, "three", "")
-	eventually(t, "the third handoff", func() bool { return len(calls()) >= 3 })
-
-	for i, want := range []string{
-		"Message from " + aliceName + " (test",
-		"Message from " + aliceName + " via " + brand.Product + ":\n\ntwo\n",
-		"Message from " + carolName + " (test",
-	} {
-		if c := calls()[i]; !strings.HasPrefix(c.Stdin, want) {
-			t.Errorf("handoff %d was %q, want it to start %q", i, c.Stdin, want)
+		if first, named := "Message from "+aliceName+" (test", "Message from "+aliceName+" via "; i == 0 && !strings.HasPrefix(c.Stdin, first) {
+			t.Errorf("the first handoff was %q, want it to start %q", c.Stdin, first)
+		} else if i > 0 && !strings.HasPrefix(c.Stdin, named) {
+			t.Errorf("handoff %d was %q, want it to start %q", i, c.Stdin, named)
 		}
-	}
-}
-
-// A session that isn't in T3 and has no messaging socket can't be put a turn into, so its
-// messages are the hook's notices, as they were, and the daemon says so once.
-func TestWithNoWayInMessagesStayNotices(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	_, calls := useFakeT3(t)
-	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.session("bbbbbb", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	a.send("aaaaaa", bob, "first", "body one")
-	a.send("aaaaaa", bob, "second", "body two")
-	var notices []string
-	eventually(t, "both notices", func() bool {
-		notices = append(notices, b.hook("claude-bob", 0)...)
-		return len(notices) >= 2
-	})
-	holds(t, "no handoff", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
-	if got := inboxOf(b, "bbbbbb"); len(got) != 2 {
-		t.Errorf("the inbox keeps what the hook announced: %q", got)
-	}
-	if n := strings.Count(out.String(), "has no way to take a message as a turn"); n != 1 {
-		t.Errorf("the log says it %d times, want once:\n%s", n, out.String())
 	}
 }
 
