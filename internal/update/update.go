@@ -1,6 +1,7 @@
 // Package update installs checksum-verified GitHub releases, and keeps the latest release's version
 // so `mur version` can say when there is a newer one. It talks only to GitHub, and not at all while
-// updates are off. It takes stable releases only, unless the prerelease channel is chosen.
+// updates are off, unless a person asks for one install (Options.Install). It takes stable releases
+// only, unless the prerelease channel is chosen.
 package update
 
 import (
@@ -40,6 +41,10 @@ type Options struct {
 	// Check asks for a check soon, as when a person changes the update setting: at once, or
 	// checkGap after the last one. Nil: only the hourly ones.
 	Check <-chan struct{}
+	// Install asks for one install of the latest release, as a person's "Update now" does: a check
+	// like Check's that installs even while updates are off here. It doesn't turn updates on; the
+	// checks after it are as before. Nil: none is asked for.
+	Install <-chan struct{}
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -58,6 +63,10 @@ type Status struct {
 	Failed bool
 	// Installed says a newer binary is in place and the daemon restarts onto it when it can.
 	Installed bool
+	// Asked says the check was one Install asked for, so its outcome is the answer to a person.
+	Asked bool
+	// Error is why a check Install asked for failed, in words to show to the person who asked.
+	Error string
 }
 
 // After says release version a comes after b. Development builds ("-dev") never do.
@@ -130,6 +139,7 @@ func Run(ctx context.Context, o Options, restart func()) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	var checked time.Time
+	asked := false // a person asked for an install (Install), which the next check makes
 	for {
 		select {
 		case <-ctx.Done():
@@ -137,22 +147,32 @@ func Run(ctx context.Context, o Options, restart func()) {
 		case <-o.Check:
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
+		case <-o.Install:
+			asked = true
+			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			continue
 		case <-timer.C:
 		}
 		checked = time.Now()
-		if Off(ctx, o.Getenv, o.GitDir) {
+		now := asked
+		asked = false
+		if off := Off(ctx, o.Getenv, o.GitDir); off && !now {
 			report(Status{Off: true})
 		} else {
 			done, latest, err := attempt(ctx, o, original)
 			if done {
-				report(Status{Latest: latest, Installed: true})
+				report(Status{Latest: latest, Installed: true, Asked: now})
 				restart()
 				return
 			}
 			if ctx.Err() != nil {
 				return
 			}
-			report(Status{Latest: latest, Failed: err != nil})
+			s := Status{Latest: latest, Off: off, Failed: err != nil, Asked: now}
+			if err != nil && now {
+				s.Error = err.Error()
+			}
+			report(s)
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
 				return

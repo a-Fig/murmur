@@ -11,7 +11,7 @@ import { settingsRow } from "./settings.js";
 export { loadUpdates, updatesRow };
 
 const CHOICES = [
-  ["off", "Off", "Nothing installs on its own; Settings shows the command for a new release"],
+  ["off", "Off", "Nothing installs on its own; Settings offers each new release to install"],
   ["on", "On", "Stable releases install on their own"],
   ["nightly", "On, nightly", "Prereleases and nightlies install too, as soon as they are out"],
 ];

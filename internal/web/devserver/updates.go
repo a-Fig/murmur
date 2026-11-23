@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -18,6 +20,13 @@ type devUpdates struct {
 	choice   string
 	override bool
 	skip     string
+	// installError is what Update now fails with; "" installs.
+	installError string
+}
+
+// canInstall is the daemon's Version.CanInstall: a newer release that updates won't install.
+func canInstall(v web.Version) bool {
+	return v.Latest != "" && !v.Ready && !v.Auto && !v.Installing
 }
 
 func (u *devUpdates) setting() web.UpdateSetting {
@@ -58,6 +67,7 @@ func (u *devUpdates) SetUpdates(ctx context.Context, choice string) (web.UpdateS
 	u.src.mu.Lock()
 	u.src.version.Off = s.Effective == web.UpdatesOff
 	u.src.version.Auto = !u.src.version.Off && u.src.version.Latest != ""
+	u.src.version.CanInstall = canInstall(u.src.version)
 	u.src.mu.Unlock()
 	return s, nil
 }
@@ -73,7 +83,38 @@ func (u *devUpdates) BackToStable(ctx context.Context) (web.UpdateSetting, error
 	}
 	u.src.mu.Lock()
 	u.skip = u.src.version.Running
-	u.src.version.Latest, u.src.version.Ready, u.src.version.Auto, u.src.version.Install = "0.3.0", true, true, "curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh"
+	u.src.version.Latest, u.src.version.Ready, u.src.version.Auto, u.src.version.CanInstall = "0.3.0", true, true, false
 	u.src.mu.Unlock()
 	return u.setting(), nil
+}
+
+// InstallNow acts out the daemon's Update now: a few seconds installing, then the release
+// installed and waiting for a restart, or the error -install-error names.
+func (u *devUpdates) InstallNow(ctx context.Context, version string) error {
+	u.src.mu.Lock()
+	defer u.src.mu.Unlock()
+	v := &u.src.version
+	switch {
+	case v.Installing:
+		return nil
+	case v.Latest != version:
+		return fmt.Errorf("%s is the newer release now, not %s", v.Latest, version)
+	case !v.CanInstall:
+		return errors.New("updates are on here, so it installs on its own")
+	}
+	v.Installing, v.InstallError, v.CanInstall = true, "", false
+	go func() {
+		time.Sleep(4 * time.Second)
+		u.src.mu.Lock()
+		defer u.src.mu.Unlock()
+		v := &u.src.version
+		v.Installing = false
+		if u.installError != "" {
+			v.InstallError = u.installError
+		} else {
+			v.Ready = true
+		}
+		v.CanInstall = canInstall(*v)
+	}()
+	return nil
 }

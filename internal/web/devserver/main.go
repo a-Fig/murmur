@@ -41,6 +41,7 @@ func main() {
 	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
 	updates := flag.String("updates", "on", "the machine's update setting (#1045): off, on or nightly")
 	updatesOverride := flag.Bool("updates-override", false, "act as if this repo's git config sets murmur.update false")
+	installError := flag.String("install-error", "", "Update now fails with this, as a bad download would; else it installs")
 	running := flag.String("running", "0.3.0", "the daemon's version; a prerelease, like 0.3.1-nightly.20261121, offers going back to stable")
 	repos := flag.String("repos", "", "comma-separated repo names: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
 	flag.Parse()
@@ -54,7 +55,7 @@ func main() {
 	}
 	token := randomHex(16)
 	src := newFixtures(time.Now())
-	src.version = web.Version{Running: *running, Daemon: "1", Install: "curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh"}
+	src.version = web.Version{Running: *running, Daemon: "1"}
 	switch *upd {
 	case "none":
 	case "auto":
@@ -77,9 +78,10 @@ func main() {
 	if (*updates == web.UpdatesOff || *updatesOverride) && !src.version.Ready {
 		src.version.Off, src.version.Auto = true, false
 	}
+	src.version.CanInstall = canInstall(src.version)
 	go src.run()
 	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
-	page.WithUpdates(&devUpdates{src: src, choice: *updates, override: *updatesOverride})
+	page.WithUpdates(&devUpdates{src: src, choice: *updates, override: *updatesOverride, installError: *installError})
 	if *repos != "" {
 		serveRepos(strings.Split(*repos, ","), ln, src, page)
 	}
@@ -830,7 +832,7 @@ func (f *fixtures) Restart(ctx context.Context) error {
 	if !f.version.Ready {
 		return web.ErrNoUpdate
 	}
-	f.version = web.Version{Running: f.version.Latest, Install: f.version.Install, Daemon: "2"}
+	f.version = web.Version{Running: f.version.Latest, Daemon: "2"}
 	f.downTill = time.Now().Add(3 * time.Second)
 	return nil
 }

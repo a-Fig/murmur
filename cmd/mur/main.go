@@ -312,7 +312,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	log.SetOutput(out)
 	logger := log.New(out, "", log.LstdFlags)
 	releases := newReleaseWatch(version, *gitDir)
-	updates := &updateSetting{running: version, gitDir: *gitDir, check: make(chan struct{}, 1), releases: releases}
+	updates := &updateSetting{running: version, gitDir: *gitDir, check: make(chan struct{}, 1), install: make(chan struct{}, 1), releases: releases}
 	inherited := page
 	page = nil // Run takes it
 	// The record of this machine's clones, for the page's repo picker (#348). Without it the page
@@ -333,8 +333,8 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		Clones: record, Repos: repos, ThemePath: themePath,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report, Check: updates.check}, restart)
-			updates.stopped.Store(true)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report, Check: updates.check, Install: updates.install}, restart)
+			releases.stopped.Store(true)
 		},
 		Version: releases.page,
 		Updates: updates,

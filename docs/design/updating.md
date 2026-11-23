@@ -43,9 +43,23 @@ updater need one manual install to get it.
     new daemon detaches it before taking it up.
 - **On the page**, a newer release shows above Settings: "Restart to update" while an installed
   update waits on the open page, "Updating to X" while the daemon will install it, and "X is out"
-  with the install command when updates are off here or the last check failed, which it says apart.
-  It learns the latest release from the updater, else from the `latest.json` a daemon in this clone
-  recorded, and never asks GitHub itself; `mur version` hears of newer releases the same way.
+  when updates are off here or the last check failed, which it says apart. It learns the latest
+  release from the updater, else from the `latest.json` a daemon in this clone recorded, and never
+  asks GitHub itself; `mur version` hears of newer releases the same way, and prints the install
+  command. Settings shows no commands (Tyler, 2026-11-22).
+- **Update now** (#1045, Tyler, 2026-11-22). When "X is out" and updates won't install it, because
+  they are off here or the last attempt failed, About offers "Update now". It asks the daemon's
+  updater for one check that installs even while updates are off (`Options.Install`), through the
+  same verified download, rename and restart as an automatic update, and leaves the setting as it
+  was. The page sends the version it showed, and the daemon refuses if that is no longer the
+  release it would install, so a release out since isn't installed unseen. The request returns at
+  once; the row says "Installing X", then "X is installed" with Restart now, or why it failed.
+  - *Not offered* while updates are on and working (they install it within the hour, or at once
+    after a change), while an update waits for its restart, or once this daemon's updater has
+    stopped (a binary it can't replace), since nothing would act on it.
+  - *With updates off*, the updater makes no request, so the page knows of a newer release only
+    from a check this clone's daemon made before they were turned off (`latest.json`). A clone that
+    has always had them off isn't told of releases, and gets no button.
 - **The setting** (#1045, Tyler, 2026-11-22) is one per machine: Off, On (stable releases, the
   default) or On, nightly (prereleases and nightlies too), in Settings' About and as `mur updates
   [off|on|nightly]`. It is the global git config, since one binary serves every clone: Off is

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"regexp"
 )
 
 // Updates reads and changes how Murmur updates itself on this machine (#1045). The daemon's is
@@ -14,6 +15,10 @@ type Updates interface {
 	// BackToStable installs the latest stable release in place of the prerelease running, and
 	// holds updates until a newer release than that prerelease is out.
 	BackToStable(ctx context.Context) (UpdateSetting, error)
+	// InstallNow installs version, the Latest the page shows, once, through the updater's own
+	// verified download and restart, without turning updates on. It returns once the updater has
+	// it; Version.Installing, then Ready or InstallError, say how it went.
+	InstallNow(ctx context.Context, version string) error
 }
 
 const (
@@ -43,6 +48,15 @@ func (s *Server) WithUpdates(u Updates) { s.updates = u }
 type updatesRequest struct {
 	Choice string `json:"choice"`
 }
+
+type installRequest struct {
+	// Version is the release the person saw, so that a newer one out since isn't installed in
+	// its place without them seeing it.
+	Version string `json:"version"`
+}
+
+// releaseVersion is a release's version without the v, as Version.Latest has it.
+var releaseVersion = regexp.MustCompile(`^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-[0-9A-Za-z.]{1,40})?$`)
 
 func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	if s.updates == nil {
@@ -98,4 +112,27 @@ func (s *Server) postBackToStable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, u)
+}
+
+func (s *Server) postInstallUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeError(w, http.StatusNotFound, "updates can't be installed from this page")
+		return
+	}
+	var req installRequest
+	if err := readJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !releaseVersion.MatchString(req.Version) {
+		writeError(w, http.StatusBadRequest, "version: must be a release's version, like 0.4.0")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	if err := s.updates.InstallNow(ctx, req.Version); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

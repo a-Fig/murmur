@@ -432,3 +432,70 @@ func TestBackDuringADownload(t *testing.T) {
 		t.Fatalf("the next check installed %q", got)
 	}
 }
+
+// Update now (Options.Install) installs the latest release once while updates are off, and says
+// which check answered it; it doesn't turn updates on, and a failed one says why.
+func TestInstallWhileOff(t *testing.T) {
+	was := checkGap
+	checkGap = 50 * time.Millisecond
+	t.Cleanup(func() { checkGap = was })
+	global(t)
+	gitDir := repo(t)
+	ctx := context.Background()
+	if _, err := Set(ctx, noEnv, gitDir, "1.2.3", ChoiceOff); err != nil {
+		t.Fatal(err)
+	}
+	run := func(srv *httptest.Server) (string, []Status, bool) {
+		path := filepath.Join(t.TempDir(), "mur")
+		os.WriteFile(path, []byte("old"), 0o755)
+		install := make(chan struct{}, 1)
+		reports := make(chan Status, 10)
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		restarted := make(chan struct{})
+		go func() {
+			Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
+				Getenv: noEnv, Every: time.Hour, Install: install, Report: func(s Status) { reports <- s }}, func() { close(restarted) })
+			close(reports)
+		}()
+		var got []Status
+		got = append(got, <-reports) // the first check: off, so nothing
+		install <- struct{}{}
+		got = append(got, <-reports)
+		did := false
+		select {
+		case <-restarted:
+			did = true
+		case <-time.After(time.Second):
+		}
+		cancel()
+		b, _ := os.ReadFile(path)
+		return strings.TrimPrefix(string(b), "binary v"), got, did
+	}
+
+	bin, reports, restarted := run(releases(t, "v1.2.4", nil))
+	if reports[0].Off != true || reports[0].Asked || reports[0].Latest != "" {
+		t.Errorf("the check before: %+v", reports[0])
+	}
+	if r := reports[1]; !r.Installed || !r.Asked || r.Latest != "1.2.4" || bin != "1.2.4" || !restarted {
+		t.Errorf("Update now: binary %q, report %+v, restarted %v", bin, r, restarted)
+	}
+	if s := Read(ctx, noEnv, gitDir, "1.2.4"); s.Choice != ChoiceOff {
+		t.Errorf("Update now turned updates %s", s.Choice)
+	}
+
+	// A release whose checksum doesn't match: nothing installs, and the answer says why.
+	bad := releases(t, "v1.2.4", nil)
+	inner := bad.Config.Handler
+	bad.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/binary/") {
+			fmt.Fprint(w, "tampered")
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	bin, reports, restarted = run(bad)
+	if r := reports[1]; r.Installed || !r.Asked || !r.Failed || !r.Off || !strings.Contains(r.Error, "checksum") || bin != "old" || restarted {
+		t.Errorf("a bad download: binary %q, report %+v, restarted %v", bin, r, restarted)
+	}
+}

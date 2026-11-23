@@ -13,7 +13,7 @@ import (
 // What the page is told of a newer release follows the updater's last check (#240).
 func TestReleaseWatch(t *testing.T) {
 	w := newReleaseWatch("0.3.0", t.TempDir())
-	if v := w.page(); v.Running != "0.3.0" || v.Latest != "" || !v.Auto || v.Install == "" {
+	if v := w.page(); v.Running != "0.3.0" || v.Latest != "" || !v.Auto || v.CanInstall {
 		t.Errorf("before any check: %+v", v)
 	}
 	for _, c := range []struct {
@@ -39,17 +39,6 @@ func TestReleaseWatch(t *testing.T) {
 	w.report(update.Status{Latest: "0.3.1", Installed: true})
 	if v := w.page(); v.Latest != "0.3.1" {
 		t.Errorf("installed 0.3.1, page told of %s", v.Latest)
-	}
-
-	// A prerelease, seen on the prerelease channel, is pinned in the install line; a stable one isn't.
-	pre := newReleaseWatch("0.3.0", t.TempDir())
-	pre.report(update.Status{Latest: "0.3.1-nightly.20261109"})
-	if v := pre.page(); v.Latest != "0.3.1-nightly.20261109" || !strings.Contains(v.Install, "MURMUR_VERSION") || !strings.Contains(v.Install, "v0.3.1-nightly.20261109") {
-		t.Errorf("prerelease: %+v", v)
-	}
-	pre.report(update.Status{Latest: "0.3.1"})
-	if v := pre.page(); strings.Contains(v.Install, "MURMUR_VERSION") {
-		t.Errorf("stable release pinned: %+v", v)
 	}
 
 	// A build from source says nothing of releases.
@@ -104,16 +93,16 @@ func TestGoingBackWaits(t *testing.T) {
 		t.Errorf("with an update waiting: %v", err)
 	}
 	w.report(update.Status{})
-	u.stopped.Store(true)
+	u.releases.stopped.Store(true)
 	if _, err := u.BackToStable(ctx); err == nil || !strings.Contains(err.Error(), "updater has stopped") {
 		t.Errorf("with the updater stopped: %v", err)
 	}
 	dev := &updateSetting{running: "0.1.0-dev", gitDir: gitDir, check: make(chan struct{}, 1), releases: newReleaseWatch("0.1.0-dev", gitDir)}
-	dev.stopped.Store(true)
+	dev.releases.stopped.Store(true)
 	if _, err := dev.BackToStable(ctx); err == nil || !strings.Contains(err.Error(), "development build") {
 		t.Errorf("a build from source: %v", err)
 	}
-	u.stopped.Store(false)
+	u.releases.stopped.Store(false)
 	if s, err := u.BackToStable(ctx); err != nil || s.CanGoBack || s.Hold == "" {
 		t.Fatalf("going back: %+v, %v", s, err)
 	}
@@ -121,5 +110,101 @@ func TestGoingBackWaits(t *testing.T) {
 	case <-u.check:
 	default:
 		t.Error("going back asked for no check")
+	}
+}
+
+// Update now (#1045) is offered when updates won't install a newer release on their own, installs
+// once through the updater, and the page follows it until the updater answers.
+func TestUpdateNow(t *testing.T) {
+	ctx := context.Background()
+	w := newReleaseWatch("0.3.0", t.TempDir())
+	u := &updateSetting{running: "0.3.0", gitDir: w.gitDir, check: make(chan struct{}, 1), install: make(chan struct{}, 1), releases: w}
+	asked := func() bool {
+		select {
+		case <-u.install:
+			return true
+		default:
+			return false
+		}
+	}
+
+	// Updates on and working: no button, and the endpoint refuses.
+	w.report(update.Status{Latest: "0.3.1"})
+	if v := w.page(); v.CanInstall {
+		t.Errorf("offered with updates on: %+v", v)
+	}
+	if err := u.InstallNow(ctx, "0.3.1"); err == nil || asked() {
+		t.Errorf("installed with updates on: %v", err)
+	}
+
+	// Off here, or the last attempt failed: offered.
+	for _, s := range []update.Status{{Latest: "0.3.1", Off: true}, {Latest: "0.3.1", Failed: true, Error: "download: 503"}} {
+		w.report(s)
+		if v := w.page(); !v.CanInstall {
+			t.Errorf("not offered after %+v: %+v", s, v)
+		}
+	}
+	// Nothing newer: nothing to offer.
+	w.report(update.Status{Latest: "0.3.0", Off: true})
+	if v := w.page(); v.CanInstall {
+		t.Errorf("offered with nothing newer: %+v", v)
+	}
+
+	w.report(update.Status{Latest: "0.3.1", Off: true})
+	if err := u.InstallNow(ctx, "0.3.2"); err == nil || asked() {
+		t.Errorf("installed a release the page didn't show: %v", err)
+	}
+	if err := u.InstallNow(ctx, "0.3.1"); err != nil || !asked() {
+		t.Fatalf("Update now: %v", err)
+	}
+	if v := w.page(); !v.Installing || v.CanInstall {
+		t.Errorf("while installing: %+v", v)
+	}
+	// A second click while it installs asks for nothing more.
+	if err := u.InstallNow(ctx, "0.3.1"); err != nil || asked() {
+		t.Errorf("second click: %v", err)
+	}
+	// An hourly check's answer isn't the one asked for.
+	w.report(update.Status{Off: true})
+	if v := w.page(); !v.Installing {
+		t.Errorf("an hourly check ended the install: %+v", v)
+	}
+	// It failed: the page says why, and offers it again.
+	w.report(update.Status{Latest: "0.3.1", Off: true, Failed: true, Asked: true, Error: "release checksum mismatch"})
+	if v := w.page(); v.Installing || v.InstallError != "release checksum mismatch" || !v.CanInstall {
+		t.Errorf("after a failed install: %+v", v)
+	}
+	// Again, and it installed: waiting for the restart, with nothing more to offer.
+	if err := u.InstallNow(ctx, "0.3.1"); err != nil || !asked() {
+		t.Fatalf("Update now again: %v", err)
+	}
+	if v := w.page(); v.InstallError != "" {
+		t.Errorf("an old error shown while installing again: %+v", v)
+	}
+	w.report(update.Status{Latest: "0.3.1", Installed: true, Asked: true})
+	if v := w.page(); v.Installing || v.CanInstall || v.Latest != "0.3.1" {
+		t.Errorf("installed: %+v", v)
+	}
+	if err := u.InstallNow(ctx, "0.3.1"); err == nil || !strings.Contains(err.Error(), "restart onto it") {
+		t.Errorf("with an update installed: %v", err)
+	}
+
+	// An updater that has stopped can't install, so it isn't offered.
+	s := newReleaseWatch("0.3.0", t.TempDir())
+	s.report(update.Status{Latest: "0.3.1", Off: true})
+	s.stopped.Store(true)
+	if v := s.page(); v.CanInstall {
+		t.Errorf("offered with the updater stopped: %+v", v)
+	}
+}
+
+// `mur version`'s install line pins a prerelease, since the installers' default is the latest
+// stable release, which is older; a stable one isn't pinned.
+func TestInstallLinePinsPrereleases(t *testing.T) {
+	if l := installLine("0.3.1-nightly.20261109"); !strings.Contains(l, "MURMUR_VERSION") || !strings.Contains(l, "v0.3.1-nightly.20261109") {
+		t.Errorf("prerelease: %s", l)
+	}
+	if l := installLine("0.3.1"); strings.Contains(l, "MURMUR_VERSION") {
+		t.Errorf("stable release pinned: %s", l)
 	}
 }

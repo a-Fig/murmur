@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -24,6 +25,13 @@ type releaseWatch struct {
 	recorded string    // update.Newer, read at most once a minute
 	readAt   time.Time // when recorded was read
 	interval time.Duration
+	// installing says a person asked for an install (Update now) that the updater hasn't answered;
+	// installErr is why the last one asked for failed.
+	installing bool
+	installErr string
+	// stopped says this daemon's updater has returned (a binary it can't replace, a build from
+	// source), so nothing it is asked for happens until the daemon restarts.
+	stopped atomic.Bool
 }
 
 func newReleaseWatch(running, gitDir string) *releaseWatch {
@@ -35,11 +43,29 @@ func (w *releaseWatch) report(s update.Status) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.last, w.heard = s, true
+	if s.Asked {
+		w.installing, w.installErr = false, s.Error
+	}
+	if s.Installed {
+		w.installing, w.installErr = false, ""
+	}
+}
+
+// ask notes a person's request for an install, unless one is on its way already: it says whether
+// this is a new one, for the updater to be told.
+func (w *releaseWatch) ask() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.installing {
+		return false
+	}
+	w.installing, w.installErr = true, ""
+	return true
 }
 
 // page is the daemon's Version. It reads a file at most once a minute, and never the network.
 func (w *releaseWatch) page() web.Version {
-	v := web.Version{Running: w.running, Install: installLine("")}
+	v := web.Version{Running: w.running}
 	if strings.HasSuffix(w.running, "-dev") {
 		return v // a build from source is updated from source
 	}
@@ -66,13 +92,15 @@ func (w *releaseWatch) page() web.Version {
 	// An installed release is shown even when it is older: going back to stable from a
 	// prerelease (#1045) installs one, and a restart starts it.
 	if latest != "" && (w.last.Installed || update.After(latest, w.running)) {
-		// A prerelease (on the prerelease channel) is pinned: the installers' default is older.
-		v.Latest, v.Install = latest, installLine(latest)
+		v.Latest = latest
 	}
 	// Until the updater's first check, which waits for the daemon's first sync, updates count as
 	// on: they are unless turned off, and the first check says so within seconds.
 	v.Auto = !w.heard || (!w.last.Off && !w.last.Failed)
 	v.Off = w.heard && w.last.Off
+	v.Installing, v.InstallError = w.installing, w.installErr
+	// Updates won't install Latest (off here, or the last attempt failed), so a person can.
+	v.CanInstall = v.Latest != "" && !w.last.Installed && !v.Auto && !w.installing && !w.stopped.Load()
 	return v
 }
 
@@ -89,10 +117,8 @@ func (w *releaseWatch) installed() bool {
 type updateSetting struct {
 	running, gitDir string
 	check           chan struct{}
+	install         chan struct{} // a person's Update now, for the updater's Options.Install
 	releases        *releaseWatch
-	// stopped says this daemon's updater has returned (a binary it can't replace, a build from
-	// source), so nothing it is asked for happens until the daemon restarts.
-	stopped atomic.Bool
 }
 
 func (u *updateSetting) nudge() {
@@ -108,7 +134,7 @@ func (u *updateSetting) waiting() error {
 	switch {
 	case u.releases.installed():
 		return errors.New("an update is installed; restart onto it first")
-	case u.stopped.Load():
+	case u.releases.stopped.Load():
 		return errors.New("this daemon's updater has stopped; restart the daemon first")
 	}
 	return nil
@@ -143,4 +169,33 @@ func (u *updateSetting) BackToStable(ctx context.Context) (web.UpdateSetting, er
 		u.nudge()
 	}
 	return u.web(s), err
+}
+
+// InstallNow is the page's Update now (#1045): the updater installs the latest release once,
+// even with updates off here, and the page follows it in Version. version is the release the page
+// showed, which must still be the one the updater would install.
+func (u *updateSetting) InstallNow(ctx context.Context, version string) error {
+	v := u.releases.page()
+	switch {
+	case v.Installing:
+		return nil // on its way already
+	case u.releases.installed():
+		return errors.New("an update is installed; restart onto it")
+	case u.releases.stopped.Load():
+		return errors.New("this daemon's updater has stopped; restart the daemon first")
+	case v.Latest == "":
+		return errors.New("no newer release is known here")
+	case v.Latest != version:
+		return fmt.Errorf("%s is the newer release now, not %s", v.Latest, version)
+	case !v.CanInstall:
+		return errors.New("updates are on here, so it installs on its own")
+	}
+	if !u.releases.ask() {
+		return nil
+	}
+	select {
+	case u.install <- struct{}{}:
+	default: // one is already waiting for the updater
+	}
+	return nil
 }
