@@ -40,6 +40,13 @@ import (
 //     the tool calls and before the next model request. A shell or MCP call's input and output go
 //     with it, as Claude Code's hook is given them, so an issue the call filed or closed is the
 //     session's on the page (#510, #864);
+//   - tool_call, which fires before a tool runs and which Pi waits for, is PreToolUse for a shell
+//     call: the daemon snapshots the branches there and at the call's end (PostToolUse), and
+//     credits the session with the commits between, as for Claude Code (#868). Both carry the call's
+//     ID (toolCallId), which pairs them. Only shell calls are bracketed, as in a Pi a commit comes
+//     from one; a commit an MCP tool makes isn't credited. A call that never runs (another
+//     extension blocks it after this one, or Escape aborts it first) gets no tool_result, and its
+//     start waits out the daemon's expiry;
 //   - agent_before_settle, the last point at which Pi lets an extension add entries and continue,
 //     is Stop: what the hook gives back keeps the work going, as a custom_message entry and
 //     continue: true. After an error, which ends Pi's run whatever it asks, and after an abort
@@ -60,8 +67,8 @@ import (
 // (internal/daemon, viaOf). An update doesn't run join again, so Pi's MCP server rewrites an
 // older extension (RefreshPi), which Pi loads from its next session. A session without a file
 // (`pi --no-session`) has nothing to give the hook, so it gets no notices, only turns through the
-// socket, which a busy one takes when it finishes. Not covered: Pi's commits aren't credited to
-// its session, as no tool call is bracketed (Claude Code's hook snapshots before and after each).
+// socket, which a busy one takes when it finishes. A shell call costs one more `mur hook` before it
+// runs, as in Claude Code, in a joined clone only.
 //
 // Pi has no subagents of its own (its docs and source, 0.99.0, read 2026-11-11). Packages add
 // them. pi-subagents (0.31.0, the one `pi install npm:pi-subagents` gives) runs each subagent as a
@@ -192,20 +199,26 @@ export default function (pi: any) {
       }
     });
   const notice = (r: any) => String(r?.hookSpecificOutput?.additionalContext ?? "");
+  // shell says a tool is one that runs a command, which can make a commit: the hook brackets those.
+  const shell = (name: any): boolean => name === "bash" || name === "powershell";
   // call is what the hook is told of a shell command or an MCP tool's call, under Claude Code's
   // names: what it was given and gave back, from which the hook learns of an issue it filed or
   // closed. The result is shaped as an MCP tool's, with Pi's isError beside the content, so an MCP
-  // call that failed, whose error names the issue, isn't taken for one that closed it. Nothing for
-  // other tools, nor for a call too big to pass: the hook reads at most 1 MiB.
+  // call that failed, whose error names the issue, isn't taken for one that closed it. A shell
+  // call also carries its ID, which pairs its end with its start (the tool_call below). Nothing
+  // for other tools, nor for a call too big to pass: the hook reads at most 1 MiB.
   const call = (event: any): any => {
     const name = String(event?.toolName ?? "");
-    if (name !== "bash" && name !== "powershell" && !name.includes("__")) return {};
+    if (!shell(name) && !name.includes("__")) return {};
     const response = { content: event?.content ?? [], isError: event?.isError === true };
-    const c = { tool_name: name, tool_input: event?.input ?? {}, tool_response: response };
+    const c: any = { tool_name: name, tool_input: event?.input ?? {}, tool_response: response };
+    if (shell(name) && event?.toolCallId) c.tool_use_id = String(event.toolCallId);
+    // Too big to pass, a shell call still gives its ID, which closes the bracket its start opened.
+    const idOnly = shell(name) && c.tool_use_id ? { tool_name: name, tool_use_id: c.tool_use_id } : {};
     try {
-      return Buffer.byteLength(JSON.stringify(c)) < 512 * 1024 ? c : {};
+      return Buffer.byteLength(JSON.stringify(c)) < 512 * 1024 ? c : idOnly;
     } catch {
-      return {};
+      return idOnly;
     }
   };
   // interrupted tells the daemon the work ended without a chance to go on (Escape, an error), so the
@@ -307,6 +320,18 @@ export default function (pi: any) {
     await turnOn();
     const text = notice(await hook("UserPromptSubmit", ctx));
     if (text) return { message: said(text) };
+  });
+  // Before a shell call runs, Pi waits for this: the daemon snapshots the clone's branches, so the
+  // commits the call makes are the session's.
+  // An error thrown here would block the call, so none gets out.
+  pi.on("tool_call", async (event: any, ctx: any) => {
+    try {
+      const name = String(event?.toolName ?? "");
+      if (!shell(name) || !event?.toolCallId) return;
+      await turnOn();
+      // Only the call's name and ID: the start never needs the command, which may be too big to pass.
+      await hook("PreToolUse", ctx, { tool_name: name, tool_use_id: String(event.toolCallId) });
+    } catch {}
   });
   pi.on("tool_result", async (event: any, ctx: any) => {
     await turnOn();

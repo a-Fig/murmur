@@ -42,6 +42,7 @@ type Repos interface {
 type Repo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
+	Slug    string `json:"slug,omitempty"`    // owner/name when its remote's address has an owner, else Name; "" when not known
 	Path    string `json:"path"`              // its top directory
 	Running bool   `json:"running,omitempty"` // its daemon answers
 	Current bool   `json:"current,omitempty"` // the clone this page is

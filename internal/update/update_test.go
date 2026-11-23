@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
@@ -705,5 +706,24 @@ func TestDownloadsStayOnHTTPS(t *testing.T) {
 				t.Fatalf("%d requests went over plain http", n)
 			}
 		})
+	}
+}
+
+// Newer asks git what is held back only for a prerelease, the one kind that can be: for a stable
+// release, the usual answer, `mur version` and the page start no process (#1164).
+func TestNewerStartsGitOnlyForAPrerelease(t *testing.T) {
+	gitDir := t.TempDir()
+	var started int
+	was := gitx.Observe
+	gitx.Observe = func(string, time.Time, time.Duration) { started++ }
+	t.Cleanup(func() { gitx.Observe = was })
+
+	recordLatest(gitDir, "v0.3.0")
+	if got := Newer(gitDir, "0.2.0"); got != "0.3.0" || started != 0 {
+		t.Errorf("a stable release: %q, with %d git started; want 0.3.0 and none", got, started)
+	}
+	recordLatest(gitDir, "v0.4.0-rc.1")
+	if got := Newer(gitDir, "0.3.0"); got != "0.4.0-rc.1" || started == 0 {
+		t.Errorf("a prerelease: %q, with %d git started; want 0.4.0-rc.1 and git asked what is held back", got, started)
 	}
 }

@@ -38,48 +38,82 @@ func TestEveryCommandHasItsHelp(t *testing.T) {
 	}
 }
 
-// Usage names every MCP tool, and says which have no command. A name that is a tool only says so,
-// in help and as a command (#813).
-func TestUsageNamesTheTools(t *testing.T) {
-	// The paragraph about the tools, as one line, however it is wrapped.
-	start := strings.Index(usage, "An agent with Murmur's tools")
-	if start < 0 {
-		t.Fatal("usage has no paragraph about the tools")
+// Usage lists every MCP tool with its line, marks the ones that are commands too, and says so of
+// nothing else (#1103). A name that is a tool only says so as a command (#813), and its help
+// gives the tool's full description.
+func TestUsageListsTheTools(t *testing.T) {
+	tools := mcpserver.Tools()
+	if len(tools) == 0 {
+		t.Fatal("no tools to list")
 	}
-	para, _, _ := strings.Cut(usage[start:], "\n\n")
-	para = strings.Join(strings.Fields(para), " ")
-	_, only, _ := strings.Cut(para, "Only ")
-	only, _, _ = strings.Cut(only, " have no command")
-	named := func(text, word string) bool { return regexp.MustCompile(`\b` + word + `\b`).MatchString(text) }
-	for _, tool := range mcpserver.ToolNames() {
-		if !named(para, tool) {
-			t.Errorf("usage's paragraph about the tools doesn't name %s: %q", tool, para)
+	for _, tool := range tools {
+		line := ""
+		for _, l := range strings.Split(usage, "\n") {
+			if strings.HasPrefix(l, "  "+tool.Name+" ") && strings.Contains(l, tool.Summary) {
+				line = l
+			}
 		}
-		isCommand := commandHelp(tool) != ""
-		if named(only, tool) == isCommand {
-			t.Errorf("%s: a command %v, but usage's list of tools with no command, %q, says otherwise", tool, isCommand, only)
+		if line == "" {
+			t.Errorf("usage has no line for tool %s: %s", tool.Name, usage)
+			continue
 		}
-		if hint := toolOnly(tool); isCommand != (hint == "") || !isCommand && !strings.HasPrefix(hint, tool+" is one of") {
-			t.Errorf("toolOnly(%s) = %q", tool, hint)
+		isCommand := commandHelp(tool.Name) != ""
+		if marked := strings.HasSuffix(line, "  [CLI]"); marked != isCommand {
+			t.Errorf("%s: a command %v, but its line says %q", tool.Name, isCommand, line)
+		}
+		desc, err := mcpserver.ToolDescription(tool.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := runHelp([]string{tool.Name}, &out); err != nil {
+			t.Errorf("mur help %s: %v", tool.Name, err)
+		}
+		if got := strings.Join(strings.Fields(out.String()), " "); !strings.Contains(got, strings.Join(strings.Fields(desc), " ")) {
+			t.Errorf("mur help %s doesn't give the description %q:\n%s", tool.Name, desc, out.String())
+		}
+		if hint := toolOnly(tool.Name); isCommand != (hint == "") || !isCommand && !strings.HasPrefix(hint, tool.Name+" is one of") {
+			t.Errorf("toolOnly(%s) = %q", tool.Name, hint)
 		}
 	}
-	if !strings.Contains(para, "mcp__"+brand.MCPServer+"__who") {
-		t.Errorf("usage doesn't give Claude Code's name for a tool: %q", para)
+	if !strings.Contains(usage, "mcp__"+brand.MCPServer+"__who") {
+		t.Errorf("usage doesn't give Claude Code's name for a tool:\n%s", usage)
+	}
+	if strings.Contains(usage, "{") {
+		t.Errorf("usage has an unfilled placeholder:\n%s", usage)
+	}
+	// A tool that is a command too gets both entries, the command's first.
+	var out bytes.Buffer
+	if err := runHelp([]string{"who"}, &out); err != nil || !strings.HasPrefix(out.String(), "  mur who") || !strings.Contains(out.String(), "\n  who  ") {
+		t.Errorf("mur help who: %v\n%s", err, out.String())
 	}
 	if toolOnly("nope") != "" {
 		t.Error("a name that is neither is called a tool")
 	}
 }
 
-// The real mur: help for one command, and a tool's name as a command.
+// The real mur: help for one command.
 func TestHelpForOneCommand(t *testing.T) {
 	b := newBox(t)
 	out := b.mustRun(b.root, "help", "stop")
 	if !strings.HasPrefix(out, "  mur stop") || strings.Contains(out, "mur init") {
 		t.Errorf("mur help stop:\n%s", out)
 	}
-	out, code := b.run(b.root, "lookup")
-	if code == 0 || !strings.Contains(out, "lookup is one of") || strings.Contains(out, "Setup:") {
-		t.Errorf("mur lookup: exit %d\n%s", code, out)
+}
+
+// A tool with no command, when there is one, says so as a command, and where its description is
+// (#813). Every tool is a command now (#1118), so a made-up one stands in.
+func TestAToolWithNoCommandSaysSo(t *testing.T) {
+	was := allTools
+	allTools = func() []mcpserver.ToolInfo {
+		return append(was(), mcpserver.ToolInfo{Name: "frobnicate", Summary: "does a thing"})
+	}
+	t.Cleanup(func() { allTools = was })
+	hint := toolOnly("frobnicate")
+	if !strings.HasPrefix(hint, "frobnicate is one of") || !strings.Contains(hint, brand.Command+" help frobnicate") {
+		t.Errorf("toolOnly(frobnicate) = %q", hint)
+	}
+	if toolOnly("who") != "" {
+		t.Error("a tool with a command is called tool-only")
 	}
 }

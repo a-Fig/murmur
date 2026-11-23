@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,12 +23,13 @@ import (
 // The test binary re-executes itself in these modes, so a test can start a process in a job object
 // the way an agent's MCP server would, without a second program to build.
 const (
-	helperStart  = "proc-helper-start"  // args: log path, PowerShell path ("" for the real one)
-	helperSleep  = "proc-helper-sleep"  // args: optionally --log FILE, as a WMI start passes it
-	helperArgv   = "proc-helper-argv"   // args: arguments..., --log FILE; writes what it received to FILE
-	readyMarker  = "proc helper: ready" // followed by the sleeper's PID
-	envFindFails = "MURMUR_PROC_TEST_FIND_FAILS"
-	envProbe     = "MURMUR_PROC_TEST_PROBE"
+	helperStart     = "proc-helper-start"     // args: log path, PowerShell path ("" for the real one)
+	helperSleep     = "proc-helper-sleep"     // args: optionally --log FILE, as a WMI start passes it
+	helperArgv      = "proc-helper-argv"      // args: arguments..., --log FILE; writes what it received to FILE
+	helperAncestors = "proc-helper-ancestors" // args: "spawn" | "leaf"; reports Ancestors() from a real child/grandchild
+	readyMarker     = "proc helper: ready"    // followed by the sleeper's PID
+	envFindFails    = "MURMUR_PROC_TEST_FIND_FAILS"
+	envProbe        = "MURMUR_PROC_TEST_PROBE"
 )
 
 func TestMain(m *testing.M) {
@@ -39,6 +41,8 @@ func TestMain(m *testing.M) {
 			helperSleepMain(os.Args[2:])
 		case helperArgv:
 			helperArgvMain(os.Args[2:])
+		case helperAncestors:
+			helperAncestorsMain(os.Args[2:])
 		}
 	}
 	os.Exit(m.Run())
@@ -143,6 +147,121 @@ func helperArgvMain(args []string) {
 		os.Exit(4)
 	}
 	os.Exit(0)
+}
+
+type ancestorsReport struct {
+	ChildPID  int   `json:"child_pid"`
+	LeafPID   int   `json:"leaf_pid"`
+	Ancestors []int `json:"ancestors"`
+}
+
+func helperAncestorsMain(args []string) {
+	if len(args) != 1 {
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "leaf":
+		b, err := json.Marshal(ancestorsReport{
+			LeafPID:   os.Getpid(),
+			Ancestors: Ancestors(os.Getpid(), 8),
+		})
+		if err != nil {
+			os.Exit(3)
+		}
+		_, _ = os.Stdout.Write(b)
+		os.Exit(0)
+	case "spawn":
+		// Put this process in a kill-on-close job before launching leaf so an outer test timeout
+		// killing spawn cannot leave leaf running. Keep the handle open until process exit.
+		job, err := windows.CreateJobObject(nil, nil)
+		if err != nil {
+			os.Exit(8)
+		}
+		info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+		info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+		if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+			os.Exit(8)
+		}
+		if err := windows.AssignProcessToJobObject(job, windows.CurrentProcess()); err != nil {
+			os.Exit(8)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			os.Exit(4)
+		}
+		leafCtx, leafCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer leafCancel()
+		leafCmd := exec.CommandContext(leafCtx, exe, helperAncestors, "leaf")
+		leafCmd.WaitDelay = 2 * time.Second
+		out, err := leafCmd.Output()
+		if err != nil {
+			os.Exit(5)
+		}
+		var rep ancestorsReport
+		if err := json.Unmarshal(out, &rep); err != nil {
+			os.Exit(6)
+		}
+		rep.ChildPID = os.Getpid()
+		b, err := json.Marshal(rep)
+		if err != nil {
+			os.Exit(7)
+		}
+		_, _ = os.Stdout.Write(b)
+		os.Exit(0)
+	default:
+		os.Exit(2)
+	}
+}
+
+// TestAncestorsChildReachesRealParentAndGrandparent checks that the Windows single-snapshot walk
+// and PID-reuse creation-time check still reach a real spawned parent and grandparent (#1140).
+func TestAncestorsChildReachesRealParentAndGrandparent(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, helperAncestors, "spawn")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("helperAncestors: %v", err)
+	}
+	var rep ancestorsReport
+	if err := json.Unmarshal(out, &rep); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	wantGrandparent := os.Getpid()
+	if len(rep.Ancestors) < 3 || rep.Ancestors[0] != rep.LeafPID || rep.Ancestors[1] != rep.ChildPID || rep.Ancestors[2] != wantGrandparent {
+		t.Fatalf("Ancestors(leaf=%d) = %v, want prefix [%d %d %d]",
+			rep.LeafPID, rep.Ancestors, rep.LeafPID, rep.ChildPID, wantGrandparent)
+	}
+}
+
+// TestWindowsOutOfRangePIDDoesNotTruncate verifies PIDs beyond uint32 return ErrGone instead of
+// truncating to a real process's PID (#1140).
+func TestWindowsOutOfRangePIDDoesNotTruncate(t *testing.T) {
+	// Adding 1<<32 to os.Getpid() would silently match this process if cast directly to uint32.
+	if uint64(math.MaxInt) <= math.MaxUint32 {
+		t.Skip("32-bit int cannot overflow uint32")
+	}
+	shift := uint(32)
+	huge := (1 << shift) + os.Getpid()
+	if _, err := Exe(huge); !errors.Is(err, ErrGone) {
+		t.Errorf("Exe(%d) = %v, want ErrGone", huge, err)
+	}
+	matched := false
+	if err := End(huge, func(string) bool {
+		matched = true
+		return false
+	}); !errors.Is(err, ErrGone) || matched {
+		t.Errorf("End(%d) = %v (matched=%v), want ErrGone without inspecting any process", huge, err, matched)
+	}
+	if got := Ancestors(huge, 4); len(got) != 1 || got[0] != huge {
+		t.Errorf("Ancestors(%d, 4) = %v, want [%d]", huge, got, huge)
+	}
 }
 
 // TestStartDetachedSurvivesJobClose is the reproduction for #28. A daemon started from a job that

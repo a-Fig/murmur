@@ -43,8 +43,10 @@ import (
 var version = "0.1.0-dev"
 
 // usage spells the names as they are, so its columns line up; the replacer keeps it in step with
-// package brand ("Murmur" first, so the "mur" inside it isn't taken for the command).
-var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command, "{server}", brand.MCPServer).Replace(
+// package brand ("Murmur" first, so the "mur" inside it isn't taken for the command). The MCP tools
+// are listed from the server's own list (#1103), once the commands are known, to say which of them
+// are commands too.
+var usage = withTools(strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command).Replace(
 	`Murmur: coding agents on teammates' machines, in the same repo, finding each other.
 
 Setup:
@@ -89,10 +91,17 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
                                 TEXT is then the body
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
+  mur lookup NAME [--messages N]
+                                everything known about a session, as the lookup tool does, with its
+                                latest N messages (10 if not given, at most 50)
+  mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]
+                                add or remove your tags, as the tags tool does; --for NAME,... gives
+                                the group: tags in --add to those sessions, not to you unless you list
+                                your own name too; alone, lists yours
+  mur mute [NAME] [--unmute]    stop getting anything NAME sends, as the mute tool does; --unmute undoes
+                                it; alone, lists whom you have muted
 
-An agent with Murmur's tools uses them instead: who, send, inbox, status, lookup, tags and mute,
-from the MCP server {server} (Claude Code lists them as mcp__{server}__who and so on).
-Only lookup, tags and mute have no command.
+{tools}
 
 For agents that can't open the links in the repo's section:
   mur docs [PAGE]               print a page of Murmur's instructions for agents, such as join or use,
@@ -107,11 +116,11 @@ Started by other programs:
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Help:
-  mur help [COMMAND]            every command, or one command's help
+  mur help [COMMAND|TOOL]       every command and tool, or one's help
   mur version                   mur's version, and a newer one if its daemon has seen it
 
 Every command takes -C DIR to act on the repository at DIR.
-`)
+`))
 
 func main() {
 	argv := os.Args[1:]
@@ -162,7 +171,7 @@ func main() {
 		err = runRotate(ctx, args, os.Stdout)
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
-	case "who", "send", "inbox", "status":
+	case "who", "send", "inbox", "status", "lookup", "tags", "mute":
 		err = mcpserver.Command(ctx, cmd, args, os.Stdin, os.Stdout, os.Stderr)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)

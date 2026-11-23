@@ -3,10 +3,10 @@
 import { icon } from "./icons.js";
 import { h, when, ago, plural, root } from "./dom.js";
 import {
-  NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount,
+  NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount, repoLabel,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
-import { deny, hasUnsent, poll } from "./sync.js";
+import { deny, hasUnsent, poll, tokenEra } from "./sync.js";
 import { render, go } from "./render.js";
 import {
   liveSessions, quietSessions, hideButton, quietFold, deviceDot, presence, settledFold, deviceLabel, host,
@@ -16,11 +16,11 @@ import { tagsOf, shownSessions, tagsGroup, tagButton } from "./tags.js";
 import { avatar, deviceColor, modeNote } from "./messages.js";
 import { startChat, askForName } from "./picker.js";
 import { settingsRow } from "./settings.js";
-import { updatesRow } from "./updates.js";
+import { updatesRow, daemonNote } from "./updates.js";
 
 export {
   setDrawer, pickSession, connBadge, sidebar, humanTag, restartStuck, updateInfo, versionSection,
-  closeRepoMenu, repoMenu,
+  closeRepoMenu, repoMenu, loadRepoCount,
 };
 
 // A row in the sidebar's nav, as T3 Code's: an icon, a label, and a count or badge at the end.
@@ -153,7 +153,7 @@ function sidebar() {
     h(
       "div",
       { class: "sidebar-header" },
-      h("img", { class: "brand-mark", src: "/assets/favicon.svg", alt: "" }),
+      h("img", { class: "brand-mark", src: "/assets/lockup-white.svg", alt: "" }),
       repoButton(),
       connBadge(false),
       NARROW.matches
@@ -426,36 +426,50 @@ async function installNow() {
   poll();
 }
 
-// Settings' Version section: this version, and what is known of a newer one.
+// Settings' About section: this version and, to its right, whether a newer one is out (#1114). Under
+// the version go the daemon's protocol and when it last checked; what the Updates row below already
+// says (its choice, and what overrides it) isn't said again here. Only what is happening to the
+// newer version is: it installing, installed and waiting for a restart, or failed.
 function versionSection() {
   const v = ui.state?.version;
   if (!v?.running) return null;
-  let description = null;
-  let control = null;
+  let detail = null;
+  let button = null;
   if (ui.restarting) {
-    description = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
+    detail = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
   } else if (v.ready) {
-    description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
-    control = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+    detail = "Installed. It starts when the daemon restarts.";
+    button = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
   } else if (v.latest && (v.installing || ui.installing)) {
-    description = "Installing " + v.latest + ".";
+    detail = "Installing it.";
   } else if (v.latest && v.auto) {
-    description = v.latest + " is out, and installing on its own.";
+    detail = "Installing it on its own.";
   } else if (v.latest) {
-    description = v.latest + (v.off ? " is out. Updates are off here." : " is out. The last update failed here.");
-    if (v.installError) description += " Couldn't install it: " + v.installError + ".";
+    // Off is the Updates row's own choice; a failure is news.
+    detail = [v.off ? "" : "The last update failed here.", v.installError && "Couldn't install it: " + v.installError + "."].filter(Boolean).join(" ") || null;
     if (v.canInstall) {
-      control = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
+      button = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
     }
   }
-  const row = settingsRow("version", NAME + " " + v.running, description, control);
+  const status = h(
+    "span",
+    { class: "version-status", "data-key": "version-status" },
+    h("span", { class: "version-dot " + (v.latest ? "warn" : "ok"), "aria-hidden": "true" }),
+    v.latest ? v.latest + " available" : "Up to date",
+  );
+  const note = [daemonNote(), detail && h("span", { class: "version-detail" }, detail)];
+  const row = settingsRow("version", COMMAND + " " + v.running, note.some(Boolean) ? note : null, [status, button]);
   return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row, updatesRow()));
 }
 
 // The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking
-// one moves this tab to that repo's page, whose daemon is started if it isn't running.
+// one moves this tab to that repo's page, whose daemon is started if it isn't running. Its button
+// shows the repo as #1018 drew it (#1112): a dot, filled while the repo's daemon is running and a
+// ring while the page can't reach it, the repo, and how many repos the picker holds.
 function repoButton() {
-  const name = ui.state ? ui.state.repo || NAME : ""; // nothing until the state says, rather than a name that changes
+  const name = ui.state ? repoLabel() : ""; // nothing until the state says, rather than a name that changes
+  const up = ui.conn !== "down";
+  const n = ui.repos?.length;
   return h(
     "button",
     {
@@ -473,9 +487,25 @@ function repoButton() {
         loadRepos();
       },
     },
+    h("span", { class: "dot" + (up ? " ok" : ""), "aria-hidden": "true" }),
     h("span", { class: "repo-name truncate" }, name),
+    n ? h("span", { class: "repo-count" }, plural(n, "repo")) : null,
     icon("chevronDown"),
   );
+}
+
+// The button's count comes from the same list as the picker, asked for once a page; opening the
+// picker asks again, and its answer updates the count too. Without it the button goes without.
+async function loadRepoCount() {
+  const era = tokenEra;
+  try {
+    const r = await api("/api/repos");
+    if (era !== tokenEra) return;
+    ui.repos = r.repos || [];
+    render();
+  } catch {
+    // An error here is the poll's to show.
+  }
 }
 
 // The menu holds the keyboard while it is open (the page behind it is inert): the focus goes to its
@@ -498,6 +528,7 @@ async function loadRepos() {
     const r = await api("/api/repos");
     if (ui.repoMenu !== m) return;
     m.repos = r.repos || [];
+    ui.repos = m.repos;
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
     if (ui.repoMenu !== m) return;
@@ -537,17 +568,17 @@ async function openRepo(r) {
     if (ui.repoMenu !== m) return;
     m.opening = null;
     m.err = e.message;
-    if (/isn't joined/.test(e.message)) m.repos = (m.repos || []).filter((x) => x.id !== r.id);
+    if (/isn't joined/.test(e.message)) ui.repos = m.repos = (m.repos || []).filter((x) => x.id !== r.id);
     render();
   }
 }
 
 function repoMenu() {
   const m = ui.repoMenu;
-  const repos = m.repos || [{ id: "", name: ui.state?.repo || NAME, current: true, running: true }];
+  const repos = m.repos || [{ id: "", name: repoLabel(), current: true, running: true }];
   // A path tells two clones of one repo apart; one alone goes by its name.
   const named = new Map();
-  for (const r of repos) named.set(r.name, (named.get(r.name) || 0) + 1);
+  for (const r of repos) named.set(repoLabel(r), (named.get(repoLabel(r)) || 0) + 1);
   const menu = h(
     "div",
     {
@@ -579,7 +610,7 @@ function repoMenu() {
             onclick: () => openRepo(r),
           },
           h("span", { class: "dot" + (r.running ? " ok" : ""), role: "img", "aria-label": r.running ? "Running" : "Not running" }),
-          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, r.name), named.get(r.name) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
+          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, repoLabel(r)), named.get(repoLabel(r)) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
           m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
         ),
       ),

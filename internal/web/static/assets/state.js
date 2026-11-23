@@ -6,7 +6,7 @@ import { when } from "./dom.js";
 export {
   NAME, COMMAND, TOKEN_KEY, POLL_MS, HIDDEN_POLL_MS, MAX_MESSAGES, MAX_OWN_MESSAGES, VIEWS, TITLES, NARROW,
   ui, devices, named, namesLearned, learn, nameOf, fromName, toName, findSession, sessionCount, HIDDEN,
-  personNames, me, myName, isPerson, people, findPerson, personOnline, unreadIds, unreadCount,
+  personNames, me, myName, repoLabel, isPerson, people, findPerson, personOnline, unreadIds, unreadCount,
 };
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
@@ -73,6 +73,7 @@ const ui = {
   fileNote: null, // why a file wasn't attached: { key, text, turnOn }, key the conversation's; turnOn, what to do once sending is turned on
   viewer: null, // the picture that is open: { file, name, size, from }, from the key of what opened it
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
+  repos: null, // the repos the picker last listed, for the count on its button (#1112)
   drawer: false, // on a phone, whether the sidebar's drawer is open
 };
 
@@ -102,6 +103,12 @@ function learn(addr, name) {
     named.set(addr, name);
     namesLearned++;
   }
+}
+
+// The repo this page is a clone of, as owner/name when its remote has an owner (a-Fig/murmur), else
+// its name, else the app's. A repo in the picker's list says it the same way.
+function repoLabel(r = ui.state) {
+  return r?.slug || r?.repo || r?.name || NAME;
 }
 
 function nameOf(addr, shown) {

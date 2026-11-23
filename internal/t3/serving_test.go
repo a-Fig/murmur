@@ -16,6 +16,10 @@ func TestServing(t *testing.T) {
 	if err := os.WriteFile(exe, nil, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t3Dir := filepath.Join(dir, "sub", "t3")
+	if err := os.MkdirAll(t3Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	onPath := func(string) (string, error) { return "/usr/local/bin/t3", nil }
 	noPath := func(string) (string, error) { return "", exec.ErrNotFound }
 	for _, c := range []struct {
@@ -26,6 +30,7 @@ func TestServing(t *testing.T) {
 		thread       bool
 	}{
 		{"its t3", exe, true, onPath, exe, true},
+		{"directory named t3 falls back to PATH", t3Dir, true, onPath, "/usr/local/bin/t3", true},
 		{"t3.exe", exe + ".exe", true, onPath, "/usr/local/bin/t3", true},
 		{"its t3, deleted", exe + " (deleted)", true, onPath, "/usr/local/bin/t3", true},
 		{"node, the npm t3 perhaps", "/usr/bin/node", true, onPath, "/usr/local/bin/t3", true},

@@ -107,6 +107,16 @@ test time per job, and a named test's time. On a laptop,
 `MURMUR_GIT_STATS=<file> go test -v -count=1 -run '<tests>' ./internal/daemon` writes the same
 count of git to the file and prints the same per-test times, for a few tests at a time.
 
+Some tests stood up two or three devices and a remote to check a decision that reads only the
+daemon's state: what a Stop hook gives, whether a person's message explains them. Those can build
+a `Daemon` by hand in an `_internal_test.go` file and call the handler or the `...Locked` method
+straight, as `threadsDaemon`, `tagsDaemon` and `stopRig` do, with no git and in milliseconds. On
+2026-11-23 (#1010) four slow ones went that way: 268 s of Windows test time, and
+about 1,770 git and 59 s on a laptop, became four tests of under 0.1 s with no git. Each says in its
+comment what it keeps, why that needs no git, and which test still runs the path end to end. A
+test whose point is the bus (ref writes, the registry, presence across devices, a restart against
+the remote, a git that is slow or refused) stays on real git.
+
 ## Testing `mur join` by hand
 
 A throwaway `HOME` isn't enough. Join also follows the variables that move an agent's settings,

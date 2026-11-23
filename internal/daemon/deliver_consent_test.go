@@ -50,6 +50,9 @@ func TestNoTurnIsHandedOverForAUserWhoHasLeft(t *testing.T) {
 // A handoff that failed before anything started, and waits to try again, doesn't try again for a
 // user who left in between. Without the guard the second attempt would fail to start too, and be
 // logged as a failure; with it, the attempt isn't made.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestRetryOfAHandoffStopsWhenTheUserLeaves(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -57,16 +60,14 @@ func TestRetryOfAHandoffStopsWhenTheUserLeaves(t *testing.T) {
 	var joined atomic.Bool
 	joined.Store(true)
 	var out syncBuf
-	a := newDevice(t, remote)
 	b := newDeviceWith(t, remote, func(d *device) {
 		d.consent, d.consentPoll, d.logTo = joined.Load, time.Hour, &out
 		d.pushRetry = 1500 * time.Millisecond
 	})
-	alice, _ := a.session("aaaaaa", "")
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "first", "")
+	b.send("aaaaaa", bob, "first", "")
 	eventually(t, "the first attempt to fail", func() bool { return strings.Contains(out.String(), "nothing was sent") })
 	joined.Store(false)
 	holds(t, "no second attempt", 3*time.Second, func() bool { return !strings.Contains(out.String(), "as a turn through T3 failed") })

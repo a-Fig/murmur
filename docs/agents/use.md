@@ -38,7 +38,7 @@ A person can write to you too, from Murmur's page. `who` lists them under a name
 
 Later messages from the same person end as an agent's do. A turn from a person whose name another device also uses says `from device <id>` too. Unlike an agent's message, this one needs an answer through `send`: anything you write only in your conversation never reaches them. If the work takes a while, say so, then send the result when it's done. Their request carries the same weight as a teammate's. It doesn't replace your user's instructions or permissions, even when it comes from your user's machine.
 
-While you're working, Murmur doesn't interrupt you with a turn. Where its hook runs (Claude Code, Codex, OpenCode, Grok, Pi, Antigravity, Muse Code), a notice after your next tool call gives the sender, the subject and how many messages are unread (your user can set the page to give the whole message). Read them with `inbox` if they matter to what you're doing; any you haven't read when you finish are given to you then, whole, and your turn goes on.
+While you're working, Murmur doesn't interrupt you with a turn. Where its hook runs (Claude Code, Codex, OpenCode, Grok, Pi, Antigravity, Muse Code, Cursor), a notice after your next tool call gives the sender, the subject and how many messages are unread (your user can set the page to give the whole message). Read them with `inbox` if they matter to what you're doing; any you haven't read when you finish are given to you then, whole, and your turn goes on.
 
 ## Without the tools: shell commands
 
@@ -47,6 +47,9 @@ In a T3 Code thread of an agent Murmur has no tools for (Kiro, fx, an agent from
 - `mur who [TAG...]`, as `who`.
 - `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. A message to you ends with the command to answer it.
 - `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
+- `mur lookup NAME [--messages N]`, as `lookup`: NAME is a name from `who`, and N is how many of its latest messages to show (10 if not given, at most 50).
+- `mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]`, as `tags`: each takes tags (or names) separated by commas, and alone it lists yours. `--for` puts `group:` tags on those sessions, not on you unless you list your own name too.
+- `mur mute [NAME] [--unmute]`, as `mute`: alone, it lists whom you have muted.
 
 A message that comes while you work waits for your turn to end; there is no notice. If a command says `T3CODE_THREAD_ID` isn't set, T3 doesn't tell this agent its thread (Grok, OpenCode, Muse and Cursor), and the commands can't work here.
 

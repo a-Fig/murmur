@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,15 +24,15 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 )
 
-// The shell commands (#913): `mur who`, `mur send`, `mur inbox` and `mur status`, the tools of the
-// same names for a harness Murmur has no tools in. Every harness can run a command, and one T3 Code
+// The shell commands (#913, #1118): `mur who`, `mur send`, `mur inbox`, `mur status`, `mur lookup`, `mur tags` and `mur mute`, the
+// tools of the same names for a harness Murmur has no tools in. Every harness can run a command, and one T3 Code
 // runs gives the commands of its thread's shell the thread's ID (T3CODE_THREAD_ID): T3's Claude,
 // Codex, Pi, Antigravity, Kiro, fx and ACP-registry drivers do; its Grok, OpenCode, Muse and Cursor
 // drivers don't (T3 0.1.11, read 2026-11-21). The session is the thread's, at the address the
 // thread's own server would register (threadID), and the daemon holds it while the thread is in use
 // (proto.Hello.Command), so a session that only ever runs these keeps its name and gets messages as
 // turns through `t3 thread send`, as any T3 thread does. Where the thread already has a session, its
-// MCP server's, the commands act as that one. Only these four: lookup, tags and mute stay tools.
+// MCP server's, the commands act as that one.
 
 // errNoThread is a command run where no T3 thread names its session.
 var errNoThread = fmt.Errorf("this command finds its session from %s, which T3 Code sets in a thread's shell, and it isn't set here. "+
@@ -69,7 +71,8 @@ func Command(ctx context.Context, name string, args []string, stdin io.Reader, s
 	if err != nil {
 		return err
 	}
-	render := map[string]func(proto.Response) string{"who": view.Who, "send": view.Sent, "inbox": view.Inbox, "status": view.Note}[name]
+	render := map[string]func(proto.Response) string{"who": view.Who, "send": view.Sent, "inbox": view.Inbox, "status": view.Note,
+		"lookup": view.Lookup, "tags": view.Tags, "mute": view.Muted}[name]
 	fmt.Fprint(stdout, render(resp))
 	return nil
 }
@@ -89,8 +92,72 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 		return proto.Request{Op: proto.OpStatus, Doing: doing}, err
 	case "send":
 		return sendRequest(args, stdin, stderr)
+	case "lookup":
+		return lookupRequest(args)
+	case "tags":
+		return tagsRequest(args)
+	case "mute":
+		return muteRequest(args)
 	}
 	return proto.Request{}, fmt.Errorf("unknown command %q", name)
+}
+
+// options takes the named options out of a command's arguments and returns the words left. A name
+// in valued takes the next argument or what follows an = ("--messages 5", "--messages=5", and with
+// one dash too, as send's --subject does); a name in flags takes nothing. A valued option given
+// twice has both values. -- ends the options. An argument that starts with a dash and is no option
+// is refused, so that a mistyped option isn't taken for a name.
+func options(args []string, valued, flags []string) (words []string, values map[string][]string, set map[string]bool, err error) {
+	values, set = map[string][]string{}, map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			words = append(words, a)
+			continue
+		}
+		name, value, hasValue := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+		switch {
+		case slices.Contains(valued, name):
+			if !hasValue {
+				if i+1 == len(args) {
+					return nil, nil, nil, fmt.Errorf("--%s needs a value after it", name)
+				}
+				i++
+				value = args[i]
+			}
+			values[name] = append(values[name], value)
+		case slices.Contains(flags, name) && !hasValue:
+			set[name] = true
+		default:
+			return nil, nil, nil, fmt.Errorf("unknown option %s", a)
+		}
+	}
+	return words, values, set, nil
+}
+
+// lookupRequest is `mur lookup NAME [--messages N]`: the lookup tool's name and messages.
+func lookupRequest(args []string) (proto.Request, error) {
+	usage := fmt.Errorf("usage: %s lookup NAME [--messages N]", brand.Command)
+	words, values, _, err := options(args, []string{"messages"}, nil)
+	if err != nil {
+		return proto.Request{}, fmt.Errorf("%w; %v", err, usage)
+	}
+	if len(words) != 1 || len(values["messages"]) > 1 {
+		return proto.Request{}, usage
+	}
+	req := proto.Request{Op: proto.OpLookup, Name: words[0]}
+	if v := values["messages"]; len(v) == 1 {
+		n, err := strconv.Atoi(v[0])
+		if err != nil || n < 1 {
+			return proto.Request{}, fmt.Errorf("--messages takes a number of messages, 1 or more, not %q", v[0])
+		}
+		req.Limit = n
+	}
+	return req, nil
 }
 
 // sendRequest is `mur send TO TEXT`: the message as one text, whose subject subjectFor makes, as
@@ -312,4 +379,47 @@ func agentsInChain(n int, at func(i int) (exe, comm string, ok bool)) int {
 		last = agent
 	}
 	return agents
+}
+
+// tagsRequest is `mur tags [--add TAG...] [--remove TAG...] [--for NAME...]`: the tags tool's add,
+// remove and for. Each takes tags or names separated by commas, and may be given more than once;
+// with none, the command only says what your tags are, as the tool does.
+func tagsRequest(args []string) (proto.Request, error) {
+	usage := fmt.Errorf("usage: %s tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]", brand.Command)
+	words, values, _, err := options(args, []string{"add", "remove", "for"}, nil)
+	if err != nil {
+		return proto.Request{}, fmt.Errorf("%w; %v", err, usage)
+	}
+	if len(words) > 0 {
+		return proto.Request{}, usage
+	}
+	list := func(name string) []string {
+		var out []string
+		for _, v := range values[name] {
+			out = append(out, recipients(v)...)
+		}
+		return out
+	}
+	return proto.Request{Op: proto.OpTags, Add: list("add"), Remove: list("remove"), For: list("for")}, nil
+}
+
+// muteRequest is `mur mute [NAME] [--unmute]`: the mute tool's name and unmute. With no name it
+// only lists whom you have muted, as the tool does.
+func muteRequest(args []string) (proto.Request, error) {
+	usage := fmt.Errorf("usage: %s mute [NAME] [--unmute]", brand.Command)
+	words, _, set, err := options(args, nil, []string{"unmute"})
+	if err != nil {
+		return proto.Request{}, fmt.Errorf("%w; %v", err, usage)
+	}
+	if len(words) > 1 {
+		return proto.Request{}, usage
+	}
+	if len(words) == 0 && set["unmute"] {
+		return proto.Request{}, fmt.Errorf("--unmute needs the name of the session to unmute; %v", usage)
+	}
+	req := proto.Request{Op: proto.OpMute, Unmute: set["unmute"]}
+	if len(words) == 1 {
+		req.Name = words[0]
+	}
+	return req, nil
 }

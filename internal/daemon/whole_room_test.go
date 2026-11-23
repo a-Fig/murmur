@@ -18,20 +18,22 @@ import (
 const oneMessagesRoom = 1500
 
 // A Stop gives only what fits, and the rest at the next one.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestTheStopHookGivesOnlyWhatFitsAReply(t *testing.T) {
 	t.Cleanup(daemon.SetMaxWholeReply(oneMessagesRoom))
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.session("bbbbbb", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob") // a prompt: the session is at work
-	a.send("aaaaaa", bob, "first", "its body")
+	b.send("aaaaaa", bob, "first", "its body")
 	eventually(t, "the first to reach b", func() bool { return logHas(b, "first") })
-	a.send("aaaaaa", bob, "second", "its body")
+	b.send("aaaaaa", bob, "second", "its body")
 	eventually(t, "the second to reach b", func() bool { return logHas(b, "second") })
 
 	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "first" {
@@ -45,21 +47,23 @@ func TestTheStopHookGivesOnlyWhatFitsAReply(t *testing.T) {
 // Two sessions of one agent (two MCP servers of one Claude Code) end their turn with one Stop. One
 // whose message the reply had no room for goes on with the turn too: its message isn't handed to T3
 // while the agent works, and comes with the next Stop (Sol's review of #376).
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestASessionWhoseMessageDidntFitGoesOnWithTheTurn(t *testing.T) {
 	t.Cleanup(daemon.SetMaxWholeReply(oneMessagesRoom))
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
 	bob2, _ := b.sessionRoute("bbbbb2", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(bob2) && b.seesSession(alice) })
 
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob") // a prompt: both are at work
-	a.send("aaaaaa", bob, "to one", "its body")
-	a.send("aaaaaa", bob2, "to two", "its body")
+	b.send("aaaaaa", bob, "to one", "its body")
+	b.send("aaaaaa", bob2, "to two", "its body")
 	eventually(t, "both to reach b", func() bool { return logHas(b, "to one") && logHas(b, "to two") })
 
 	first := viewSubjects(b.stopHook("claude-bob").Read)
@@ -76,21 +80,23 @@ func TestASessionWhoseMessageDidntFitGoesOnWithTheTurn(t *testing.T) {
 // A message for everyone is in the inbox of each session the hook speaks for, and goes once: also
 // when, in one of them, an older message the reply had no room for comes before it (Sol's review
 // of #376).
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestAMessageForEveryoneBehindOneThatDidntFitIsGivenOnce(t *testing.T) {
 	t.Cleanup(daemon.SetMaxWholeReply(oneMessagesRoom))
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.session("bbbbbb", "claude-bob")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
+	b.session("bbbbbb", "claude-bob")
 	bob2, _ := b.session("bbbbb2", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(bob2) && b.seesSession(alice) })
 
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob2, "older", "its body")
+	b.send("aaaaaa", bob2, "older", "its body")
 	eventually(t, "the older to reach b", func() bool { return logHas(b, "older") })
-	a.send("aaaaaa", "*", "everyone", "its body")
+	b.send("aaaaaa", "*", "everyone", "its body")
 	eventually(t, "the one for everyone to reach b", func() bool { return logHas(b, "everyone") })
 
 	var got []string
@@ -105,20 +111,22 @@ func TestAMessageForEveryoneBehindOneThatDidntFitIsGivenOnce(t *testing.T) {
 
 // A notice takes room too: one that doesn't fit isn't told of yet, and is at the hook's next call,
 // counted as unread meanwhile. A message for everyone is told of once.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestTheHookIsToldOfOnlyWhatFitsAReply(t *testing.T) {
 	t.Cleanup(daemon.SetMaxWholeReply(oneMessagesRoom))
 	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.session("bbbbbb", "claude-bob")
-	bob2, _ := b.session("bbbbb2", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && a.seesSession(bob2) && b.seesSession(alice) })
+	b.session("bbbbb2", "claude-bob")
 
 	b.hookNotices("claude-bob")
 	b.stopHook("claude-bob")
 	b.hookNotices("claude-bob")
-	a.send("aaaaaa", "*", "everyone", "its body")
-	a.send("aaaaaa", bob, "to bob", "its body")
+	b.send("aaaaaa", "*", "everyone", "its body")
+	b.send("aaaaaa", bob, "to bob", "its body")
 	eventually(t, "both to reach b", func() bool { return logHas(b, "everyone") && logHas(b, "to bob") })
 
 	var told []string
