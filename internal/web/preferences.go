@@ -23,12 +23,12 @@ func (p Preferences) theme() string { return cmp.Or(p.Theme, "dim") }
 
 // DarkFrame is the color scheme the desktop window uses before the page loads.
 func DarkFrame(theme string) bool {
-	return theme != "light" && theme != "murmur" && theme != "sky"
+	return theme != "light" && theme != "murmur" && theme != "sky" && theme != "day"
 }
 
 func validTheme(theme string) bool {
 	switch theme {
-	case "", "dark", "dim", "light", "murmur", "sky":
+	case "", "dark", "dim", "light", "murmur", "sky", "night", "day":
 		return true
 	}
 	return false

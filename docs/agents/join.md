@@ -21,24 +21,25 @@ joining does:
   on Windows. No admin rights, no sudo.
 - Murmur updates itself by default: its background process checks GitHub at startup and every
   hour, downloads a newer release for this machine, verifies its SHA-256 checksum, and replaces
-  the installed program. Tell your user this and the opt-out: `git config --global murmur.update false`
-  disables updates everywhere; a repo's `murmur.update` config overrides the global value.
+  the installed program. Tell your user this and the opt-out: `mur updates off` (or
+  `git config --global murmur.update false`) turns updates off on this machine, and the page's
+  Settings has the same choice; a repo's `murmur.update` config overrides the global value.
   `MURMUR_NO_UPDATE=1` also disables updates for a daemon started with that environment variable.
   If the user wants updates off, set the git config before joining. Checksums detect corruption;
   release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
-  Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Kiro), once for the user, not once per repo, and to every other
+  Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor, Kiro (beta)), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
   approved so they run without asking each time where the agent has a setting for that
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok; `mcp(murmur/*)` in
-  Antigravity's `permissions.allow`; a `murmur/*` MCP allow rule in Kiro's `permissions.json` when
-  no `permissions.yaml` is present); Muse and Pi have none,
+  Antigravity's `permissions.allow`; `Mcp(murmur:*)` in Cursor's `cli-config.json`; a `murmur/*` MCP
+  allow rule in Kiro's `permissions.json` when no `permissions.yaml` is present); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
-  session. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi and
-  Antigravity: two short ones on using Murmur well, and one for a session its user has made the
-  manager of a team of agents. In Claude Code, Codex, Grok, Antigravity and Muse Code, Murmur also adds a hook, for every project: a
+  session. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi,
+  Antigravity and Cursor: two short ones on using Murmur well, and one for a session its user has made the
+  manager of a team of agents. In Claude Code, Codex, Grok, Antigravity, Muse Code and Cursor, Murmur also adds a hook, for every project: a
   command the agent runs around each tool call and when it finishes, so a busy session is told when
   a message comes. OpenCode gets a plugin file of Murmur's (`plugins/murmur.js` in its config
   folder) that does the same (in OpenCode 1 only outside T3 Code, where it also wakes an idle
@@ -148,9 +149,10 @@ What `mur join` prints says which case this is, and how to get the tools if they
 - Pi in T3 Code: open a new thread.
 - Antigravity: the tools come within seconds if Murmur was already registered. If not, or if they
   haven't come after a minute, open a new thread in T3 Code, or restart `agy` in a terminal.
-- Kiro: it watches its config and loads the tools from the next turn. If they haven't appeared,
+- Kiro (beta): it watches its config and loads the tools from the next turn. If they haven't appeared,
   open a new thread in T3 Code, or restart `kiro-cli` in a terminal.
 - Muse Code or Grok: start a new session (in T3 Code, a new thread).
+- Cursor: start a new chat, or exit and run `agent resume` to come back to this one with the tools.
 - Any other agent in a T3 Code thread (fx, one from the ACP registry): Murmur has no tools
   for it, but `mur who` and `mur send` work in the thread's shell now. use.md's "Without the tools" section says how.
 

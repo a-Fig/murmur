@@ -16,7 +16,7 @@ import (
 // default one, or another account's that T3 Code runs (t3homes.go).
 type agentHome struct {
 	Dir   string // the agent's configuration directory
-	JSON  string // for Claude Code, the file it keeps user-scope MCP servers in
+	JSON  string // for Claude Code, the file it keeps user-scope MCP servers in; for Cursor, its cli-config.json
 	Label string // what the report calls it: "Claude Code", or with T3's name for the instance
 	Bin   string // the agent's command as T3 runs it, for an agent that isn't on PATH
 	// Named says a variable names Dir (CODEX_HOME) rather than Dir being the agent's default, which
@@ -72,6 +72,10 @@ var agents = []agent{
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerAntigravityAt(h) },
 		removal:    antigravityRemoval,
 		unregister: Env.unregisterAntigravityAt},
+	{driver: "cursor", label: "Cursor",
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCursorAt(h) },
+		removal:    cursorRemoval,
+		unregister: Env.unregisterCursorAt},
 	{driver: "kiro", label: "Kiro", t3Var: "KIRO_HOME",
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerKiroAt(h) },
 		removal:    kiroRemoval,
@@ -97,6 +101,8 @@ func (e Env) defaultHome(a agent) agentHome {
 		h.Dir = e.GrokHome
 	case "antigravity":
 		h.Dir = e.GeminiHome
+	case "cursor":
+		h.Dir, h.JSON = e.CursorDir, e.CursorConfig
 	case "kiro":
 		h.Dir = e.KiroHome
 	}
@@ -110,6 +116,11 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 		// A home of T3's own for each instance, which nothing in its settings moves.
 		h.Dir, h.T3Own = antigravityHomeOf(e.T3Settings, in.ID), true
 		return h, h.Dir != ""
+	}
+	if a.driver == "cursor" {
+		// T3 runs Cursor in its own process with Cursor's SDK, which reads the user's ~/.cursor: the
+		// default home, with nothing of an instance's own (@cursor/sdk 1.3.1 in T3 0.1.11).
+		return h, false
 	}
 	if a.driver == "kiro" {
 		// Kiro's T3 provider has no config.homePath; it uses KIRO_HOME from its environment

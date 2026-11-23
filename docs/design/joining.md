@@ -18,7 +18,10 @@ in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
   version of about twenty): the repo uses Murmur, and two links into `docs/agents/` by raw GitHub
   address, which work without login. `join.md` is for an agent without the tools (ask the user, say
   what joining does, install, run `mur join`); `use.md` is for one with them. A test holds the links
-  to files that exist. An older `init` put an `.mcp.json` entry and a hook in
+  to files that exist. An agent whose sandbox blocks its web fetch can't open them, so mur carries
+  the pages too: `mur docs join` prints one as the installed version has it (#831).
+  `docs/agents/pages.go` embeds the files themselves, so no copy can drift. The section still gives
+  the links (Tyler, 2026-11-16). With no network at all, installing and joining fail anyway. An older `init` put an `.mcp.json` entry and a hook in
   `.claude/settings.json`; `init` now removes Murmur's own entries from those. Committing installs
   nothing on a teammate's machine.
 - **`init` pushes its commit to the default branch** (Tyler, 2026-11-01, #119). Run in a T3
@@ -42,13 +45,14 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 | The MCP server, for Claude Code | `claude mcp add --scope user murmur -- <absolute path of mur> mcp` | user |
 | Permission for its tools | `mcp__murmur` in `permissions.allow` of Claude Code's `settings.json` | user |
 | The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME", "T3CODE_HOME"]` and `default_tools_approval_mode = "approve"` | user |
-| The MCP server, for OpenCode, Muse Code, Pi, Grok, Antigravity and Kiro | see [other agents](clients.md) | user |
-| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode and Pi, and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
+| The MCP server, for OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor and Kiro (beta) | see [other agents](clients.md) | user |
+| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode, Pi and Cursor (`~/.cursor`), and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
 | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` | `settings.json` in each Claude Code home ([Claude Code's hook is per user](clients.md#claude-codes-hook-is-per-user)) | user |
 | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved | `hooks.json` in each Codex home, its trust in `config.toml` there ([Codex's and Grok's hook](clients.md#codexs-and-groks-hook)) | user |
 | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
 | The hook for Muse Code, on `UserPromptSubmit`, `PostToolUse` and `Stop` | `hooks` in each Muse home's `settings.json` ([Muse's hook](clients.md#muses-hook)) | user |
 | The hook for Antigravity, on `PreInvocation`, `Stop`, and before and after `run_command` | a `murmur` entry in `config/hooks.json` in each Antigravity home ([other agents](clients.md#antigravity)) | user |
+| The hook for Cursor, on `sessionStart`, `beforeSubmitPrompt`, `postToolUse` and `stop`, and the allow rule `Mcp(murmur:*)` | `~/.cursor/hooks.json`, and `permissions.allow` in Cursor's `cli-config.json` ([Cursor](clients.md#cursor)) | user |
 | The daemon | started, if none is running | clone |
 
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and

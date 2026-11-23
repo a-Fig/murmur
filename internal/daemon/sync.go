@@ -72,6 +72,7 @@ func (d *Daemon) pollEvery(calm time.Duration) pollRate {
 // noteConversationLocked records that a conversation moved: the poll goes to Poll for FastFor,
 // starting now, and a loop that was waiting longer looks at once. Presence heartbeats and status
 // changes don't come here: they arrive all the time from active teammates and predict no reply.
+// A device coming back from invisible does (setMode): it has a sync's worth to catch up on.
 // Caller holds mu.
 func (d *Daemon) noteConversationLocked() {
 	d.convAt = time.Now()
@@ -168,6 +169,8 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
+	// Before the remote is listed: what this sync reads is no older (settleColorLocked).
+	began := time.Now()
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
 		return err
@@ -234,6 +237,15 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
 	// the rest of the sync goes on without it, and it is fetched again next time.
 	failed, tips := d.fetch(ctx, changed, remote)
+	// Noted before a sync that ran out of time returns: a fetch may have set the clone's copy by
+	// now. Every changed ref is noted, whether its fetch failed or wasn't tried at all: one that
+	// fails may have written the ref first, as when the git that sets it is stopped at its
+	// deadline, and a note that wasn't needed costs one update-ref at the next heartbeat.
+	d.mu.Lock()
+	for _, ref := range changed {
+		d.presenceFetchedLocked(ref)
+	}
+	d.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -317,7 +329,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		}
 	}
 	d.lastPollOK = polled
-	d.settleColorLocked()
+	d.settleColorLocked(began)
 	d.kickTeam() // a device to grant the team keys to, or a team ref still empty
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
@@ -579,6 +591,7 @@ func (d *Daemon) endSlowFetch(ref, sha, got string, err error) {
 	defer d.mu.Unlock()
 	defer d.kickPoll()
 	d.slowRef, d.slowCancel = "", nil
+	d.presenceFetchedLocked(ref) // also if it failed: it may have written the ref first
 	f, ok := d.unfetched[ref]
 	if !ok || !f.slow {
 		return
@@ -1494,7 +1507,8 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
 	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
-	for attempt := 0; ; attempt++ {
+	reconciled := false
+	for {
 		d.dropSwitchedOff(ctx)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1521,9 +1535,10 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 			d.ownLanded(ctx, ref, sha, e.Type == bus.Message)
 			return nil
 		}
-		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
+		if !errors.Is(err, bus.ErrRejected) || reconciled {
 			return err
 		}
+		reconciled = true
 		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
@@ -1989,6 +2004,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
+	d.colorAwayLocked()
+	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
@@ -2076,15 +2093,49 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
 		return err
 	}
-	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
-	// updatePeer skips this device's own presence, so the fetch would read nothing.
-	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
-		d.log.Printf("updating local %s: %v", ref, err)
-	}
+	// Known at once, so the next poll doesn't fetch it back: updatePeer skips this device's own
+	// presence, so the fetch would read nothing.
 	d.mu.Lock()
 	d.known[ref] = sha
+	copied, fetches := d.presenceCopied, d.presenceFetches
+	// When it was built, not when it landed: a push begun before a machine slept can land after
+	// it wakes, with what the device knew a week before. Such a one carried the pick, so the next
+	// is built at once, without it, where it would have waited for the heartbeat.
+	d.presenceLanded = built
+	if was := d.colorSettled; was {
+		if d.colorAwayLocked(); !d.colorSettled && d.st.Color != 0 {
+			d.kickPresence() // once: the next build finds it unsettled already
+		}
+	}
 	d.mu.Unlock()
+	// The clone's own copy of the ref is written once a run, with the first presence to land, and
+	// again after a fetch has set it to whatever the remote had. Nothing reads it for what it
+	// says: loadIdentity asks only whether it is sealed by this device, to tell that a clone whose
+	// keys and state are both lost had published keys. Every presence is sealed, with keys that
+	// don't change in a run, so any one of them answers that, and a git for every heartbeat was a
+	// third of what a heartbeat costs (#1002).
+	if !copied {
+		if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+			d.log.Printf("updating local %s: %v", ref, err)
+		} else {
+			d.mu.Lock()
+			// Not if a fetch brought the ref meanwhile: its write may have come after this one.
+			d.presenceCopied = d.presenceFetches == fetches
+			d.mu.Unlock()
+		}
+	}
 	return nil
+}
+
+// presenceFetchedLocked notes that a fetch of ref was tried, if it is this device's own presence:
+// the fetch may have set the clone's copy to what the remote had, which may be junk pushed over
+// the presence, so the next presence writes the copy again (publishPresence). It is called for a
+// fetch that failed too, which may have written the ref before it did (#1130). Caller holds mu.
+func (d *Daemon) presenceFetchedLocked(ref string) {
+	if ref == d.presenceRef() {
+		d.presenceFetches++
+		d.presenceCopied = false
+	}
 }
 
 // capSessions keeps at most n of a presence's sessions, the most recently active (by their last

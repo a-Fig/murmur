@@ -61,7 +61,10 @@ var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 // State is what the page's sessions view and mute list show.
 type State struct {
 	// Repo is the name of the repository this page is a clone of, as the repo picker shows it.
-	Repo    string   `json:"repo,omitempty"`
+	Repo string `json:"repo,omitempty"`
+	// Slug is the repository's owner/name from its remote's address ("a-Fig/murmur"), which the page
+	// shows where it says which repo it is. Without an owner in the address it is Repo.
+	Slug    string   `json:"slug,omitempty"`
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
@@ -108,8 +111,17 @@ type Version struct {
 	// Auto says Latest is being installed without the user: updates are on and the last check
 	// went through.
 	Auto bool `json:"auto,omitempty"`
-	// Install is the command that installs the latest release by hand, for this OS.
-	Install string `json:"install,omitempty"`
+	// Off says the last check found updates off here, so Latest isn't coming on its own; else a
+	// Latest that isn't Auto is one whose check or install failed.
+	Off bool `json:"off,omitempty"`
+	// CanInstall says a person can install Latest from the page (Updates.InstallNow, #1045):
+	// updates won't, since they are off here or the last attempt failed, and this daemon's updater
+	// is running to do it.
+	CanInstall bool `json:"canInstall,omitempty"`
+	// Installing says a person asked for Latest to be installed and the daemon is at it.
+	Installing bool `json:"installing,omitempty"`
+	// InstallError is why the install a person last asked for failed, in words to show.
+	InstallError string `json:"installError,omitempty"`
 	// Daemon tells this daemon from the one that replaces it, even at the same version (a
 	// reinstall by hand): the page reloads when it changes.
 	Daemon string `json:"daemon,omitempty"`

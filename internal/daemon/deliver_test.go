@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -76,7 +75,10 @@ func TestMain(m *testing.M) {
 		// How git did over the whole run, failing or not, added to the file it names (#513). go test
 		// shows a passing package's output only with -v, so CI prints the file in a step of its own.
 		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-			fmt.Fprintf(f, "git in a test run of %s: %s\n", time.Since(started).Round(time.Second), gitStats.summary(24*time.Hour))
+			// With how many tests ran at once, on how many processors, for a run to be set beside
+			// another (scripts/daemon-test-times.sh, #1008).
+			fmt.Fprintf(f, "git in a test run of %s, %s tests at once on %d processors: %s\n", time.Since(started).Round(time.Second),
+				flag.Lookup("test.parallel").Value, runtime.GOMAXPROCS(0), gitStats.summary(24*time.Hour))
 			f.Close()
 		}
 	}
@@ -338,7 +340,9 @@ func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 	}
 }
 
-// Messages for one session go in one at a time, in the order they came, and each once.
+// Messages for one session go in one at a time, in the order they came, and each once. The first
+// says what its sender is, and the ones after name it alone (#216): the daemon's loops run between
+// them here, where TestASenderIsDescribedOnlyInItsFirstTurn makes the turns by hand.
 func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -346,6 +350,7 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	aliceName := a.named(alice)
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	want := []string{"one", "two", "three"}
@@ -358,83 +363,31 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n"+want[i]+"\n") {
 			t.Errorf("handoff %d was %q, want %q", i, c.Stdin, want[i])
 		}
-	}
-}
-
-// Only a session's first turn from a sender says what agent the sender is and whose machine it is
-// on; later ones name it alone (#216). Another sender is introduced in its own first turn.
-func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	carol, _ := a.session("cccccc", "")
-	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	aliceName, carolName := a.named(alice), a.named(carol)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) && b.seesSession(carol) })
-
-	a.send("aaaaaa", bob, "one", "")
-	eventually(t, "the first handoff", func() bool { return len(calls()) >= 1 })
-	a.send("aaaaaa", bob, "two", "")
-	eventually(t, "the second handoff", func() bool { return len(calls()) >= 2 })
-	a.send("cccccc", bob, "three", "")
-	eventually(t, "the third handoff", func() bool { return len(calls()) >= 3 })
-
-	for i, want := range []string{
-		"Message from " + aliceName + " (test",
-		"Message from " + aliceName + " via " + brand.Product + ":\n\ntwo\n",
-		"Message from " + carolName + " (test",
-	} {
-		if c := calls()[i]; !strings.HasPrefix(c.Stdin, want) {
-			t.Errorf("handoff %d was %q, want it to start %q", i, c.Stdin, want)
+		if first, named := "Message from "+aliceName+" (test", "Message from "+aliceName+" via "; i == 0 && !strings.HasPrefix(c.Stdin, first) {
+			t.Errorf("the first handoff was %q, want it to start %q", c.Stdin, first)
+		} else if i > 0 && !strings.HasPrefix(c.Stdin, named) {
+			t.Errorf("handoff %d was %q, want it to start %q", i, c.Stdin, named)
 		}
-	}
-}
-
-// A session that isn't in T3 and has no messaging socket can't be put a turn into, so its
-// messages are the hook's notices, as they were, and the daemon says so once.
-func TestWithNoWayInMessagesStayNotices(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	_, calls := useFakeT3(t)
-	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.session("bbbbbb", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	a.send("aaaaaa", bob, "first", "body one")
-	a.send("aaaaaa", bob, "second", "body two")
-	var notices []string
-	eventually(t, "both notices", func() bool {
-		notices = append(notices, b.hook("claude-bob", 0)...)
-		return len(notices) >= 2
-	})
-	holds(t, "no handoff", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
-	if got := inboxOf(b, "bbbbbb"); len(got) != 2 {
-		t.Errorf("the inbox keeps what the hook announced: %q", got)
-	}
-	if n := strings.Count(out.String(), "has no way to take a message as a turn"); n != 1 {
-		t.Errorf("the log says it %d times, want once:\n%s", n, out.String())
 	}
 }
 
 // A failed handoff is left to the hook's notice, which still shows the message, and the log says so
 // once per session however many messages fail. It is not tried again: the failure may have come
 // after T3 took the message (see deliver_repeat_test.go).
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1")
 	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "first", "body one")
+	b.send("aaaaaa", bob, "first", "body one")
 	eventually(t, "the attempt", func() bool { return len(calls()) >= 1 })
 	var notices []string
 	eventually(t, "the notice", func() bool {
@@ -444,7 +397,7 @@ func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	if notices[0] != "first" {
 		t.Fatalf("notices: %q", notices)
 	}
-	a.send("aaaaaa", bob, "second", "body two")
+	b.send("aaaaaa", bob, "second", "body two")
 	eventually(t, "an attempt more", func() bool { return len(calls()) >= 2 })
 	eventually(t, "the second notice", func() bool {
 		n := b.hook("claude-bob", 0)
@@ -460,47 +413,6 @@ func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "body one") {
 		t.Errorf("the log has a message's text:\n%s", out.String())
-	}
-}
-
-// The page's wake setting "never" keeps messages as notices, for the device or for one session; a
-// message that waited is handed over when the setting is lifted.
-func TestWakeNeverKeepsTheNotice(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	bobName := b.named(bob)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	pg := b.page()
-	put := func(settings string) {
-		t.Helper()
-		if code, body := pg.call("PUT", "/api/settings", pg.token, settings); code != http.StatusOK {
-			t.Fatalf("PUT %s: %d %s", settings, code, body)
-		}
-	}
-	put(`{"wake":{"when":"never"}}`)
-	a.send("aaaaaa", bob, "held", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "held") })
-	holds(t, "no handoff under never", time.Second, func() bool { return len(calls()) == 0 })
-
-	// One session allowed while the device says never.
-	put(`{"wake":{"when":"never"},"sessionWake":{"` + bobName + `":{"when":"always"}}}`)
-	eventually(t, "handoff for the session that may be woken", func() bool { return len(calls()) == 1 })
-	if !strings.Contains(calls()[0].Stdin, "held") {
-		t.Errorf("the turn handed over: %q", calls()[0].Stdin)
-	}
-
-	// The device allowed while this session says never.
-	put(`{"wake":{"when":"always"},"sessionWake":{"` + bobName + `":{"when":"never"}}}`)
-	a.send("aaaaaa", bob, "held again", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "held again") })
-	holds(t, "no handoff to a session that says never", time.Second, func() bool { return len(calls()) == 1 })
-	if n := b.hook("claude-bob", 0); len(n) != 1 || n[0] != "held again" {
-		t.Errorf("notices: %q", n)
 	}
 }
 
@@ -570,18 +482,20 @@ func TestNameFollowsTheT3Thread(t *testing.T) {
 // A session that finds its thread after it registered (the MCP server reads T3's database in the
 // background) keeps its name, and from then on takes messages as turns, including one that came
 // while the thread was unknown.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe})
 	name := b.named(bob)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "early", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "early") })
+	b.send("aaaaaa", bob, "early", "")
+	eventually(t, "the message to be queued for bob", func() bool { return logHas(b, "early") })
 	holds(t, "no handoff without a thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 
 	r := b.do(proto.Request{Op: proto.OpRoute, Session: "bbbbbb", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-bob"}})
@@ -590,7 +504,7 @@ func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 	}
 	eventually(t, "the early message to be handed over", func() bool { return len(calls()) == 1 })
 	b.nameIs(bob, name)
-	a.send("aaaaaa", bob, "late", "")
+	b.send("aaaaaa", bob, "late", "")
 	eventually(t, "the late message to be handed over", func() bool { return len(calls()) == 2 })
 }
 

@@ -128,10 +128,10 @@ func isMurmurGroup(g any) bool {
 	return setup.IsHookCommand(cmd) || isAgentHookCommand(cmd)
 }
 
-// isAgentHookCommand says a command line is `<mur> hook codex`, `<mur> hook grok` or
-// `<mur> hook muse`, however the path is written.
+// isAgentHookCommand says a command line is `<mur> hook codex`, `<mur> hook grok`,
+// `<mur> hook muse` or `<mur> hook cursor`, however the path is written.
 func isAgentHookCommand(cmd string) bool {
-	for _, a := range []string{"codex", "grok", "muse"} {
+	for _, a := range []string{"codex", "grok", "muse", "cursor"} {
 		if rest, ok := strings.CutSuffix(strings.TrimSpace(cmd), " hook "+a); ok {
 			rest = strings.Trim(strings.TrimPrefix(strings.TrimSpace(rest), "& "), `'"`)
 			return isMurBinary(rest)

@@ -20,12 +20,13 @@ import (
 // 2.31), or the names asked for aren't ones a Reader takes. The caller reads another way.
 var ErrNoReader = errors.New("no object reader")
 
-// Object is what a Reader says of one object name.
+// Object is what a Reader says of one name: an object's, or for Refs a ref's.
 type Object struct {
 	Name    string
+	ID      string // the object's own name, as git gives it: Name again, or what the ref is at
 	Type    string // "commit", "tree", ...; empty when Missing
 	Size    int64
-	Missing bool   // nothing here has that name
+	Missing bool   // nothing here has that name; for Refs, also a ref that is broken or at no object
 	Data    []byte // from Contents only
 }
 
@@ -87,6 +88,33 @@ func (r *Reader) Contents(ctx context.Context, names []string, max int64) ([]Obj
 	return r.ask(ctx, "contents", names, max)
 }
 
+// Refs says, for each ref, the object it is at (Object.ID) and that object's type and size, or that
+// nothing answers to the name. The answers come in the order asked.
+//
+// It is for refs made since the Reader's git started, under names nobody else could have made, as
+// the refs of a bus.Repo.Fetch are, and its answers are sound only for those:
+//   - A ref made after the git started is found: git looks a ref up when it is asked. The tests
+//     hold it to that for loose refs, for refs made after a packing, and for reftable.
+//   - A ref that has moved, or gone, can be answered at where it was. Git takes its copy of
+//     packed-refs for current by the file's size and time, and on Windows a rewrite within the
+//     same second, at the same size, isn't seen (found in review, 2026-11-23). So don't ask twice
+//     about one name.
+//   - A name that is no ref can be answered by something else. Git takes a name for a revision,
+//     and looks for refs/X under refs/, refs/tags/, refs/heads/ and refs/remotes/ too (there also
+//     as X/HEAD), so another's tag named refs/X would answer for it; and where file names ignore
+//     case, a loose ref answers for its name in another case.
+//
+// Only plain full ref names are taken (IsRefName), and anything else is ErrNoReader: a name goes to
+// git as a line, where a space, a newline or an option could be read as something else.
+func (r *Reader) Refs(ctx context.Context, names []string) ([]Object, error) {
+	for _, n := range names {
+		if !IsRefName(n) {
+			return nil, ErrNoReader
+		}
+	}
+	return r.askNames(ctx, "info", names, 0, true)
+}
+
 // Close ends the Reader's git, and waits for it to be gone, so that nothing of the repository is
 // held open after it returns. A Reader that is closed answers ErrNoReader.
 func (r *Reader) Close() {
@@ -104,6 +132,12 @@ func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64
 			return nil, ErrNoReader
 		}
 	}
+	return r.askNames(ctx, verb, names, max, false)
+}
+
+// askNames puts names its caller has checked to the git: object names, or with refs set, ref names,
+// which git answers with the name of the object each is at.
+func (r *Reader) askNames(ctx context.Context, verb string, names []string, max int64, refs bool) ([]Object, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -113,11 +147,11 @@ func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64
 		return nil, ctx.Err()
 	}
 	defer func() { <-r.turn }()
-	objs, fresh, err := r.askOnce(ctx, verb, names, max)
+	objs, fresh, err := r.askOnce(ctx, verb, names, max, refs)
 	if err != nil && (!fresh || errors.Is(err, proc.ErrStartHung)) && ctx.Err() == nil && !errors.Is(err, ErrNoReader) {
 		// The git that was kept had gone (killed, or its repository moved), or a new one's start
 		// hung (#217): ask a new one, once.
-		objs, fresh, err = r.askOnce(ctx, verb, names, max)
+		objs, fresh, err = r.askOnce(ctx, verb, names, max, refs)
 	}
 	if err != nil {
 		return nil, err
@@ -138,7 +172,7 @@ func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64
 		return objs, nil
 	}
 	r.end()
-	again, _, err := r.askOnce(ctx, verb, missing, max)
+	again, _, err := r.askOnce(ctx, verb, missing, max, refs)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +186,7 @@ func (r *Reader) ask(ctx context.Context, verb string, names []string, max int64
 }
 
 // askOnce puts one question to the running git, or to a new one, and says which it was.
-func (r *Reader) askOnce(ctx context.Context, verb string, names []string, max int64) (objs []Object, fresh bool, err error) {
+func (r *Reader) askOnce(ctx context.Context, verb string, names []string, max int64, refs bool) (objs []Object, fresh bool, err error) {
 	if r.closed || r.none {
 		return nil, true, ErrNoReader
 	}
@@ -180,7 +214,7 @@ func (r *Reader) askOnce(ctx context.Context, verb string, names []string, max i
 		p.cancel()
 		p.outEnd.Close()
 	})
-	objs, err = p.ask(verb, names, max)
+	objs, err = p.ask(verb, names, max, refs)
 	if !stop() && err == nil {
 		err = ctx.Err() // answered, but the git is being killed
 	}
@@ -307,7 +341,7 @@ func (r *Reader) end() {
 // ask writes the questions and reads the answers. The writing has a goroutine of its own: git
 // answers as it reads, and with enough names both pipes would otherwise fill, each side waiting for
 // the other to read.
-func (p *readerProc) ask(verb string, names []string, max int64) ([]Object, error) {
+func (p *readerProc) ask(verb string, names []string, max int64, refs bool) ([]Object, error) {
 	wrote := make(chan error, 1)
 	go func() {
 		var b strings.Builder
@@ -319,7 +353,7 @@ func (p *readerProc) ask(verb string, names []string, max int64) ([]Object, erro
 	}()
 	objs := make([]Object, 0, len(names))
 	for _, n := range names {
-		o, err := p.answer(n, verb == "contents", max)
+		o, err := p.answer(n, verb == "contents", max, refs)
 		if err != nil {
 			return nil, err
 		}
@@ -331,9 +365,9 @@ func (p *readerProc) ask(verb string, names []string, max int64) ([]Object, erro
 	return objs, nil
 }
 
-// answer reads git's answer about name: "<name> <type> <size>", then for contents the object and a
-// newline; or "<name> missing".
-func (p *readerProc) answer(name string, contents bool, max int64) (Object, error) {
+// answer reads git's answer about name: "<object> <type> <size>", then for contents the object and
+// a newline; or "<name> missing". The object is name itself, or for a ref the one it is at.
+func (p *readerProc) answer(name string, contents bool, max int64, ref bool) (Object, error) {
 	line, err := p.out.ReadString('\n')
 	if err != nil {
 		return Object{}, fmt.Errorf("reading git's answer: %w", err)
@@ -342,14 +376,14 @@ func (p *readerProc) answer(name string, contents bool, max int64) (Object, erro
 	if len(f) == 2 && f[0] == name && f[1] == "missing" {
 		return Object{Name: name, Missing: true}, nil
 	}
-	if len(f) != 3 || f[0] != name {
+	if len(f) != 3 || !ref && f[0] != name || ref && !IsObjectName(f[0]) {
 		return Object{}, fmt.Errorf("git answered %q for %s", strings.TrimSpace(line), name)
 	}
 	size, err := strconv.ParseInt(f[2], 10, 64)
 	if err != nil || size < 0 {
 		return Object{}, fmt.Errorf("git answered %q for %s", strings.TrimSpace(line), name)
 	}
-	o := Object{Name: name, Type: f[1], Size: size}
+	o := Object{Name: name, ID: f[0], Type: f[1], Size: size}
 	if !contents {
 		return o, nil
 	}
@@ -403,4 +437,41 @@ func (t *tailBuffer) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return string(t.b)
+}
+
+// IsRefName says s is a full ref name a Reader takes: under refs/, of parts made of letters,
+// digits, '.', '_' and '-', with '/' between them, none empty, none starting with '.' or '-' or
+// ending in ".lock". That is narrower than git allows, on purpose: no space, newline or revision
+// operator ("..", "@{", "^", "~", ":") can be in it.
+//
+// Nor may it end as git describe's output does, in "-g" and hex digits: where no ref has such a
+// name, git takes the hex for an object's short name, and answers with that object, whatever it is
+// (found in review, 2026-11-23; "evil-1-gd466" answered with a commit, "a-0-g4b825d" with the
+// empty tree).
+func IsRefName(s string) bool {
+	rest, ok := strings.CutPrefix(s, "refs/")
+	if !ok || len(s) > 1024 || describeEnd(s) {
+		return false
+	}
+	for _, part := range strings.Split(rest, "/") {
+		if part == "" || part[0] == '.' || part[0] == '-' || strings.HasSuffix(part, ".lock") || strings.Contains(part, "..") {
+			return false
+		}
+		for _, c := range part {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// describeEnd says s ends in "-g" and one or more hex digits, of either case, as the output of git
+// describe does.
+func describeEnd(s string) bool {
+	i := len(s)
+	for i > 0 && (s[i-1] >= '0' && s[i-1] <= '9' || s[i-1] >= 'a' && s[i-1] <= 'f' || s[i-1] >= 'A' && s[i-1] <= 'F') {
+		i--
+	}
+	return i < len(s) && i >= 2 && s[i-2] == '-' && (s[i-1] == 'g' || s[i-1] == 'G')
 }

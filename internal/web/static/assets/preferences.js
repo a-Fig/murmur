@@ -16,6 +16,8 @@ const THEMES = [
   ["light", "Light"],
   ["murmur", "Murmur"],
   ["sky", "Sky"],
+  ["night", "Night"],
+  ["day", "Day"],
 ];
 const initialTheme = document.documentElement.dataset.theme;
 const legacyKeys = { theme: ":theme", onlyMine: ":only-mine", tagsFolded: ":tags-folded" };
@@ -105,7 +107,7 @@ function flashbang() {
 }
 
 function setTheme(t) {
-  if (t === "light" && (theme === "dark" || theme === "dim")) flashbang();
+  if (t === "light" && (theme === "dark" || theme === "dim" || theme === "night")) flashbang();
   theme = t;
   document.documentElement.dataset.theme = t;
   savePreference("theme", t);

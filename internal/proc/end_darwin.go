@@ -1,9 +1,9 @@
 package proc
 
 import (
-	"bytes"
 	"errors"
 	"io/fs"
+	"math"
 
 	"golang.org/x/sys/unix"
 )
@@ -13,14 +13,6 @@ import (
 func end(pid int, is func(exe string) bool) error {
 	exe, err := exeOf(pid)
 	if err != nil {
-		// The kernel says EINVAL, not ESRCH, of an ID no process has (seen on GitHub's macOS
-		// runners, 2026-11-11), and of other things too, so the process is asked for by a signal
-		// that does nothing.
-		gone := errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ESRCH) ||
-			(errors.Is(err, unix.EINVAL) && errors.Is(unix.Kill(pid, 0), unix.ESRCH))
-		if gone {
-			return ErrGone
-		}
 		return err
 	}
 	if !is(exe) {
@@ -39,16 +31,19 @@ func end(pid int, is func(exe string) bool) error {
 // a count of them in the first four bytes, then the path the program was started from, ended by a
 // zero byte. The kernel gives it only for the user's own processes.
 func exeOf(pid int) (string, error) {
+	if pid > math.MaxInt32 {
+		return "", ErrGone
+	}
 	b, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
+		// The kernel says EINVAL, not ESRCH, of an ID no process has (seen on GitHub's macOS
+		// runners, 2026-11-11), and of other things too, so the process is asked for by a signal
+		// that does nothing.
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ESRCH) ||
+			(errors.Is(err, unix.EINVAL) && errors.Is(unix.Kill(pid, 0), unix.ESRCH)) {
+			return "", ErrGone
+		}
 		return "", err
 	}
-	if len(b) <= 4 {
-		return "", fs.ErrNotExist // what a process that is exiting leaves
-	}
-	b = b[4:]
-	if i := bytes.IndexByte(b, 0); i >= 0 {
-		b = b[:i]
-	}
-	return string(b), nil
+	return parseDarwinProcArgs2(b)
 }

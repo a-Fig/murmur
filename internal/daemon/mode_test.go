@@ -129,31 +129,3 @@ func TestDoNotDisturbHoldsEveryMessageToTheDevice(t *testing.T) {
 		t.Errorf("the held message isn't told of once back online: %q", notices)
 	}
 }
-
-// A turn that ends while the device is invisible ends: back online, the session is idle, and a
-// message goes in as a turn, not held for a turn's end that already came (Sol's review of v0.5.0).
-func TestATurnEndedWhileInvisibleLeavesTheSessionIdle(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	b.finishedATurn("claude-bob")
-	b.hookNotices("claude-bob") // a prompt: the session is at work
-	p := b.page()
-	p.mode("invisible")
-	if r := b.do(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob", Continues: true}); r.Error != "" || len(r.Read) > 0 {
-		t.Fatalf("a turn's end while invisible: %+v", r)
-	}
-	p.mode("online")
-	eventually(t, "a to see bob again", func() bool { return a.seesSession(bob) })
-
-	a.send("aaaaaa", bob, "after", "its body")
-	eventually(t, "the message as a turn", func() bool { return len(calls()) == 1 })
-	if !strings.Contains(calls()[0].Stdin, "after") {
-		t.Errorf("the turn: %q", calls()[0].Stdin)
-	}
-}

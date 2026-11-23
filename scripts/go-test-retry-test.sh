@@ -38,6 +38,33 @@ FAIL	github.com/x/a	1.2s
 ok  	github.com/x/b	0.2s
 FAIL
 EOF
+# go test -v prints every test, passing ones too, and a package's PASS before its verdict (#1008).
+scenario "a flake under -v is retried and passes" 0 2 1 <<'EOF'
+=== RUN   TestA
+=== PAUSE TestA
+=== RUN   TestB
+--- PASS: TestB (0.10s)
+=== CONT  TestA
+    a_test.go:1: timed out waiting for a name
+--- FAIL: TestA (1.00s)
+FAIL
+exit status 1
+FAIL	github.com/x/a	1.2s
+=== RUN   TestC
+--- PASS: TestC (0.00s)
+PASS
+ok  	github.com/x/b	0.2s
+FAIL
+EOF
+scenario "a binary that exits early under -v is not retried" 1 1 1 <<'EOF'
+=== RUN   TestA
+--- FAIL: TestA (1.00s)
+    a_test.go:1: boom
+=== RUN   TestB
+exit status 3
+FAIL	github.com/x/a	1.2s
+FAIL
+EOF
 scenario "a data race is not retried" 1 1 1 <<'EOF'
 ==================
 WARNING: DATA RACE

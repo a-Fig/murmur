@@ -670,7 +670,7 @@ func TestAppPageSaysSo(t *testing.T) {
 // restart onto an installed one (#240).
 func TestVersionAndRestart(t *testing.T) {
 	src := newFake()
-	src.state.Version = Version{Running: "0.3.0", Latest: "0.3.1", Install: "curl -fsSL https://example.test/install.sh | sh"}
+	src.state.Version = Version{Running: "0.3.0", Latest: "0.3.1", Off: true, CanInstall: true}
 	h := start(t, src, noPRs)
 	got := decode[stateResponse](t, h.ok("GET", "/api/state", ""))
 	if got.Version != src.state.Version {
