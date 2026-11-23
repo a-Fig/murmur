@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/a-Fig/murmur/internal/proto"
@@ -357,28 +358,17 @@ func TestHookPayloadAndIssueHardeningGuards(t *testing.T) {
 			t.Errorf("depth 3 JSON string = %v, want nil (capped)", m)
 		}
 
-		// Large flat slice beyond maxWalkNodes stays bounded and visits early items first.
+		// Wide slice beyond maxWalkNodes reports truncation immediately and suppresses shell issue attribution.
 		big := make([]any, maxWalkNodes+5000)
-		for i := range big {
-			big[i] = "x"
-		}
-		big[0] = "first"
-		big[len(big)-1] = "last"
+		big[0] = "https://github.com/a-Fig/murmur/issues/11\n"
+		big[len(big)-1] = "https://github.com/a-Fig/murmur/issues/88\n"
 		var visited int
-		var first string
-		var sawLast bool
-		walk(big, func(s string) {
-			if visited == 0 {
-				first = s
-			}
-			if s == "last" {
-				sawLast = true
-			}
-			visited++
-		})
-		if first != "first" || sawLast || visited != maxWalkNodes-1 {
-			t.Errorf("walk(big): first=%q sawLast=%v visited=%d, want first=%q sawLast=false visited=%d",
-				first, sawLast, visited, "first", maxWalkNodes-1)
+		if truncated := walk(big, func(string) { visited++ }); !truncated || visited != 0 {
+			t.Errorf("walk(big): truncated=%v visited=%d, want true, 0", truncated, visited)
+		}
+		bigResp, _ := json.Marshal(big)
+		if got := shellIssues(json.RawMessage(`{"command":"gh issue create"}`), bigResp); got != nil {
+			t.Errorf("shellIssues on truncated wide response = %+v, want nil", got)
 		}
 
 		bigRes := make([]any, maxWalkNodes+5000)
@@ -386,11 +376,31 @@ func TestHookPayloadAndIssueHardeningGuards(t *testing.T) {
 		if m := resultIssue(bigRes); m != nil {
 			t.Errorf("resultIssue past maxWalkNodes = %v, want nil", m)
 		}
+		// Wide map exceeding maxWalkNodes still checks top-level url without sorting all keys,
+		// and reports truncation in walk.
+		bigMap := make(map[string]any, maxWalkNodes+50)
+		for i := range maxWalkNodes + 50 {
+			bigMap[strconv.Itoa(i)] = "x"
+		}
+		if truncated := walk(bigMap, func(string) {}); !truncated {
+			t.Error("walk(bigMap): want truncated=true")
+		}
+		bigMap["html_url"] = "https://github.com/a-Fig/murmur/issues/33"
+		if m := resultIssue(bigMap); m == nil || m[3] != "33" {
+			t.Errorf("resultIssue(bigMap with top-level html_url) = %v, want 33", m)
+		}
 	})
 
-	t.Run("mcpIssues rejects non-integer, overflowing, or non-positive issue_number", func(t *testing.T) {
+	t.Run("mcpIssues accepts exact integral JSON numbers and rejects fractional or overflowing values", func(t *testing.T) {
 		resp := json.RawMessage(`{"url":"https://github.com/a-Fig/murmur/issues/47"}`)
-		for _, num := range []string{`47.5`, `99999999999999999999999`, `-47`, `0`, `true`, `{"n":47}`} {
+		want := []proto.Issue{{Repo: "a-Fig/murmur", Number: 47, Closed: true}}
+		for _, num := range []string{`47`, `47.0`, `4.7e1`, `470e-1`, `"47"`} {
+			in := json.RawMessage(`{"method":"update","state":"closed","issue_number":` + num + `}`)
+			if got := mcpIssues("issue_write", in, resp); !reflect.DeepEqual(got, want) {
+				t.Errorf("issue_number=%s: got %+v, want %+v", num, got, want)
+			}
+		}
+		for _, num := range []string{`47.5`, `1e100000000`, `99999999999999999999999`, `-47`, `0`, `true`, `{"n":47}`} {
 			in := json.RawMessage(`{"method":"update","state":"closed","issue_number":` + num + `}`)
 			if got := mcpIssues("issue_write", in, resp); got != nil {
 				t.Errorf("issue_number=%s: got %+v, want nil", num, got)

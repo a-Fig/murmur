@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"math/big"
 	"regexp"
 	"slices"
 	"strconv"
@@ -118,7 +119,7 @@ func shellIssues(input, response json.RawMessage) []proto.Issue {
 		}
 		*list = append(*list, is)
 	}
-	walk(v, func(s string) {
+	if walk(v, func(s string) {
 		if creates > 0 {
 			for _, m := range createdLine.FindAllStringSubmatch(s, maxIssues+1) {
 				add(&filed, m, false)
@@ -129,7 +130,9 @@ func shellIssues(input, response json.RawMessage) []proto.Issue {
 				add(&shut, m, true)
 			}
 		}
-	})
+	}) {
+		return nil // response exceeded maxWalkNodes; suppress attribution rather than credit a partial view
+	}
 	if len(filed) > creates || len(shut) > closes {
 		return nil
 	}
@@ -290,12 +293,6 @@ func resultIssue(v any) []string {
 	}
 	queue := []node{{v: v}}
 	enqueued := 1
-	enqueue := func(x any, depth int) {
-		if enqueued < maxWalkNodes {
-			queue = append(queue, node{v: x, depth: depth})
-			enqueued++
-		}
-	}
 	for head := 0; head < len(queue); head++ {
 		cur := queue[head]
 		queue[head] = node{}
@@ -311,19 +308,24 @@ func resultIssue(v any) []string {
 					}
 				}
 			}
-			for _, k := range sortedKeys(t) {
-				enqueue(t[k], cur.depth)
+			if rem := maxWalkNodes - enqueued; rem > 0 && len(t) <= rem {
+				for _, k := range sortedKeys(t) {
+					queue = append(queue, node{v: t[k], depth: cur.depth})
+					enqueued++
+				}
 			}
 		case []any:
-			for _, y := range t {
-				enqueue(y, cur.depth)
+			for i := 0; i < len(t) && enqueued < maxWalkNodes; i++ {
+				queue = append(queue, node{v: t[i], depth: cur.depth})
+				enqueued++
 			}
 		case string:
-			if cur.depth < maxJSONDepth {
+			if cur.depth < maxJSONDepth && enqueued < maxWalkNodes {
 				if s := strings.TrimSpace(t); strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
 					var y any
 					if json.Unmarshal([]byte(s), &y) == nil {
-						enqueue(y, cur.depth+1)
+						queue = append(queue, node{v: y, depth: cur.depth + 1})
+						enqueued++
 					}
 				}
 			}
@@ -332,8 +334,9 @@ func resultIssue(v any) []string {
 	return nil
 }
 
-// walk calls f on every string in v, a decoded JSON value, up to maxWalkNodes total nodes.
-func walk(v any, f func(string)) {
+// walk calls f on every string in v, a decoded JSON value. If v exceeds maxWalkNodes total nodes,
+// walk stops early and reports truncated=true so callers do not act on a partial traversal.
+func walk(v any, f func(string)) (truncated bool) {
 	stack := []any{v}
 	enqueued := 1
 	for len(stack) > 0 {
@@ -344,20 +347,25 @@ func walk(v any, f func(string)) {
 		case string:
 			f(t)
 		case []any:
-			n := min(len(t), maxWalkNodes-enqueued)
-			for i := n - 1; i >= 0; i-- {
+			if len(t) > maxWalkNodes-enqueued {
+				return true
+			}
+			for i := len(t) - 1; i >= 0; i-- {
 				stack = append(stack, t[i])
 			}
-			enqueued += n
+			enqueued += len(t)
 		case map[string]any:
+			if len(t) > maxWalkNodes-enqueued {
+				return true
+			}
 			keys := sortedKeys(t)
-			n := min(len(keys), maxWalkNodes-enqueued)
-			for i := n - 1; i >= 0; i-- {
+			for i := len(keys) - 1; i >= 0; i-- {
 				stack = append(stack, t[keys[i]])
 			}
-			enqueued += n
+			enqueued += len(keys)
 		}
 	}
+	return false
 }
 
 func sortedKeys(m map[string]any) []string {
@@ -369,15 +377,33 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-// fmtNumber is a JSON positive integer or numeric string as the decimal digits it holds.
+// fmtNumber is a JSON positive integer (including exact integral forms like 42.0 or 4.2e1) or
+// numeric string as the decimal digits it holds.
 func fmtNumber(v any) string {
 	switch n := v.(type) {
 	case json.Number:
-		i, err := strconv.ParseInt(string(n), 10, 64)
-		if err != nil || i <= 0 {
+		s := string(n)
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			if i <= 0 {
+				return ""
+			}
+			return strconv.FormatInt(i, 10)
+		}
+		if len(s) > 64 || strings.ContainsRune(s, '/') {
 			return ""
 		}
-		return strconv.FormatInt(i, 10)
+		if i := strings.IndexAny(s, "eE"); i >= 0 {
+			exp, err := strconv.Atoi(s[i+1:])
+			if err != nil || exp < -20 || exp > 20 {
+				return ""
+			}
+		}
+		if r, ok := new(big.Rat).SetString(s); ok && r.IsInt() {
+			if i := r.Num(); i.Sign() > 0 && i.IsInt64() {
+				return strconv.FormatInt(i.Int64(), 10)
+			}
+		}
+		return ""
 	case float64:
 		if n <= 0 || n != math.Trunc(n) || n >= 1<<53 {
 			return ""
