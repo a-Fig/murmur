@@ -11,7 +11,7 @@ import { settingsRow } from "./settings.js";
 export { loadUpdates, updatesRow, daemonNote };
 
 const CHOICES = [
-  ["off", "Off", "Nothing installs on its own"],
+  ["off", "Off", "New releases show here and install only when you ask"],
   ["on", "On", "Stable releases install on their own"],
   ["nightly", "On, nightly", "Prereleases and nightlies install too, as soon as they are out"],
 ];

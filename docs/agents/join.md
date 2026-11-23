@@ -23,8 +23,10 @@ joining does:
   hour, downloads a newer release for this machine, verifies its SHA-256 checksum, and replaces
   the installed program. Tell your user this and the opt-out: `mur updates off` (or
   `git config --global murmur.update false`) turns updates off on this machine, and the page's
-  Settings has the same choice; a repo's `murmur.update` config overrides the global value.
-  `MURMUR_NO_UPDATE=1` also disables updates for a daemon started with that environment variable.
+  Settings has the same choice; a repo's `murmur.update` config overrides the global value. With
+  updates off the hourly check still runs, so the page can offer a new release, but nothing
+  installs unless your user clicks Update now. `MURMUR_NO_UPDATE=1` stops the checks too, for a
+  daemon started with that environment variable.
   If the user wants updates off, set the git config before joining. Checksums detect corruption;
   release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
