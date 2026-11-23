@@ -101,7 +101,7 @@ func TestATurnKnowsTheSenderFetchedWithItsMessage(t *testing.T) {
 		t.Fatal("the message was never queued for a handoff")
 	}
 	want := "Message from " + name + " (codex, on smash's machine) via " + brand.Product + ":\n\n" +
-		"auth middleware?\n\nAre you changing it?\n\n" +
+		"> auth middleware?\n\n> Are you changing it?\n\n" +
 		"Reply with " + brand.Product + "'s `send` to " + name + " if a reply is needed.\n"
 	if got != want {
 		t.Errorf("the turn reads:\n%s\nwant:\n%s", got, want)

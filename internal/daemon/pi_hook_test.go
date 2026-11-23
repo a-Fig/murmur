@@ -138,7 +138,7 @@ func TestAnInterruptedPiSessionIsIdle(t *testing.T) {
 		t.Fatalf("an interrupted end gave %+v", r)
 	}
 	eventually(t, "the turn on the socket", func() bool { return len(sock.lines()) >= 2 })
-	if turn := socketTurn(t, sock.lines(), "tok-bbbbbb"); !strings.Contains(turn, "told mid-work\n\nthe body") {
+	if turn := socketTurn(t, sock.lines(), "tok-bbbbbb"); !strings.Contains(turn, "> told mid-work\n\n> the body") {
 		t.Errorf("the turn: %s", turn)
 	}
 }

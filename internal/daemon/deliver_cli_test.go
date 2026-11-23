@@ -42,7 +42,7 @@ func TestMessageForACodexSessionGoesThroughItsQueue(t *testing.T) {
 	turn := strings.TrimPrefix(c.Args[3], "--message=")
 	for _, want := range []string{
 		"Message from " + aliceName + " (test",
-		"via " + brand.Product + ":\n\nauth middleware?\n\n" + body + "\n",
+		"via " + brand.Product + ":\n\n> auth middleware?\n\n> Are you changing it?\n> I say \"yes\" — and 100% über-sure.\n",
 		"Reply with " + brand.Product + "'s `send` to " + aliceName + " if a reply is needed.",
 	} {
 		if !strings.Contains(turn, want) {
@@ -88,7 +88,7 @@ func TestMessageForAnOpenCodeSessionGoesThroughItsServer(t *testing.T) {
 	if err := json.Unmarshal([]byte(c.Args[5]), &sent); err != nil {
 		t.Fatalf("the body %q: %v", c.Args[5], err)
 	}
-	if sent.Delivery != "queue" || !strings.Contains(sent.Text, "auth middleware?\n\nAre you \"changing\" it?\nSay so.\n") {
+	if sent.Delivery != "queue" || !strings.Contains(sent.Text, "> auth middleware?\n\n> Are you \"changing\" it?\n> Say so.\n") {
 		t.Errorf("the body is %+v", sent)
 	}
 	eventually(t, "the message to be marked read", func() bool { return strings.Contains(out.String(), "through OpenCode's server") })

@@ -79,7 +79,7 @@ func TestBusySessionGetsTheWholeMessageThroughTheHook(t *testing.T) {
 	text := view.Hook(r.Read, r.Messages, r.Unread)
 	for _, want := range []string{
 		"Message from " + aliceName + " (test",
-		"via " + brand.Product + ":\n\nauth middleware?\n\n" + body + "\n",
+		"via " + brand.Product + ":\n\n> auth middleware?\n\n> Are you changing it?\n> I say \"yes\" — and 100% über-sure.\n",
 		"Reply with " + brand.Product + "'s `send` to " + aliceName + " if a reply is needed.",
 		"1 message unread.",
 	} {
