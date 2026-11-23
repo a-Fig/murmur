@@ -82,9 +82,9 @@ What it shows:
   ran for 452 s in all (6 ms each); 109,922 on macOS, for 9,926 s (90 ms each); and 111,631 on
   Windows, for 35,996 s (322 ms each). Git's seconds pass the tests' on macOS and Windows because
   a test's daemons run several git at once; on Linux they are half the tests'. The slower machines
-  also start more git for the same tests. The excess is in the writes (`push`, `commit-tree` and
-  `update-ref` are 1.6 to 1.9 times Linux's on Windows) and not in `ls-remote`, which is no more;
-  this run doesn't say why.
+  also start more git for the same tests: on Windows `push`, `commit-tree`, `update-ref`, `fetch`
+  and `for-each-ref` are 1.6 to 2 times Linux's, and only `ls-remote` is no more. This run doesn't
+  say why. Linux's 452 s is loose, too: its means print in whole milliseconds, of 1 to 4.
 - **By subcommand, on Windows:** `push` 12,157 s (16,815 of them), `ls-remote` 5,917 s (18,202),
   `fetch` 5,539 s (9,931), `update-ref` 4,725 s (25,090), `commit-tree` 3,574 s (16,265),
   `for-each-ref` 1,883 s (11,089). Those six are 94% of git's time there. So the helpers to look
@@ -103,9 +103,9 @@ What it shows:
 
 A change meant to make the tests cheaper can cite, from the same script on its own run: the git
 started and their time in all per job (the count times the mean, added over the subcommands), the
-test time per job, and a named test's time. On a
-laptop, `MURMUR_GIT_STATS=<file> go test -v -count=1 -run '<tests>' ./internal/daemon` writes the
-same count of git to the file and prints the same per-test times, for a few tests at a time.
+test time per job, and a named test's time. On a laptop,
+`MURMUR_GIT_STATS=<file> go test -v -count=1 -run '<tests>' ./internal/daemon` writes the same
+count of git to the file and prints the same per-test times, for a few tests at a time.
 
 ## Testing `mur join` by hand
 
