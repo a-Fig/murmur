@@ -96,6 +96,25 @@ func TestACommandWithNoThreadOfItsOwnStops(t *testing.T) {
 	}
 }
 
+// mur lookup asks the daemon what the lookup tool does, as the thread's session, and prints how
+// the tool's answer reads (#1119).
+func TestALookupCommandAsksForTheSession(t *testing.T) {
+	f := &fakeDaemon{}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "lookup", []string{"quiet-otter", "--messages", "2"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	h := f.lastHello()
+	got := f.requestsOf(proto.OpLookup)
+	if len(got) != 1 || got[0].Session != h.ID || got[0].Name != "quiet-otter" || got[0].Limit != 2 {
+		t.Errorf("requests %+v, want one lookup of quiet-otter, 2 messages, as %s", got, h.ID)
+	}
+	if out.String() != view.Lookup(proto.Response{}) {
+		t.Errorf("printed %q", out.String())
+	}
+}
+
 func TestCommandRequests(t *testing.T) {
 	long := strings.Repeat("word ", 60) + "end"
 	for _, c := range []struct {
@@ -110,6 +129,16 @@ func TestCommandRequests(t *testing.T) {
 		{"inbox", nil, "", proto.Request{Op: proto.OpInbox}, false},
 		{"inbox", []string{"x"}, "", proto.Request{}, true},
 		{"lookup", nil, "", proto.Request{}, true},
+		{"lookup", []string{"quiet-otter"}, "", proto.Request{Op: proto.OpLookup, Name: "quiet-otter"}, false},
+		{"lookup", []string{"quiet-otter", "--messages", "3"}, "", proto.Request{Op: proto.OpLookup, Name: "quiet-otter", Limit: 3}, false},
+		{"lookup", []string{"--messages=3", "dev/sess"}, "", proto.Request{Op: proto.OpLookup, Name: "dev/sess", Limit: 3}, false},
+		{"lookup", []string{"-messages", "3", "a"}, "", proto.Request{Op: proto.OpLookup, Name: "a", Limit: 3}, false},
+		{"lookup", []string{"a", "b"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages", "x"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages", "0"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages", "1", "--messages", "2"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--nope"}, "", proto.Request{}, true},
 		// The new form: one text, its subject made from it (#1027).
 		{"send", []string{"a"}, "", proto.Request{}, true},
 		{"send", []string{"a,b", "short"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "short"}, false},
@@ -140,7 +169,7 @@ func TestCommandRequests(t *testing.T) {
 			continue
 		}
 		if !c.bad && (got.Op != c.want.Op || got.Doing != c.want.Doing || got.To != c.want.To || got.Subject != c.want.Subject ||
-			got.Body != c.want.Body || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
+			got.Body != c.want.Body || got.Name != c.want.Name || got.Limit != c.want.Limit || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
 			t.Errorf("%s %q: %+v, want %+v", c.name, c.args, got, c.want)
 		}
 	}

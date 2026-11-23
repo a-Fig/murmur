@@ -47,6 +47,7 @@ In a T3 Code thread of an agent Murmur has no tools for (Kiro, fx, an agent from
 - `mur who [TAG...]`, as `who`.
 - `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. A message to you ends with the command to answer it.
 - `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
+- `mur lookup NAME [--messages N]`, as `lookup`: NAME is a name from `who`, and N is how many of its latest messages to show (10 if not given, at most 50).
 
 A message that comes while you work waits for your turn to end; there is no notice. If a command says `T3CODE_THREAD_ID` isn't set, T3 doesn't tell this agent its thread (Grok, OpenCode, Muse and Cursor), and the commands can't work here.
 

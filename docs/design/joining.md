@@ -7,7 +7,7 @@ without Murmur's tools asks its user whether to join; and on a yes it installs m
 join`, which does the rest. Tyler also decided that messaging gets no commands (`who`, `send`,
 `inbox` and `log` were removed): "If everyone is using the CLI, there will be no one to message."
 Agents message through MCP, and people use the page. Since 2026-11-21 (#913) an agent Murmur has no
-tools for runs `mur who`, `mur send`, `mur inbox` and `mur status` in its shell instead ([any agent
+tools for runs commands that do the same (`mur who`, `mur send` and the rest) in its shell instead ([any agent
 in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 
 ## The marker
