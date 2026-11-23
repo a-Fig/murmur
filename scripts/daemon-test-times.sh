@@ -8,8 +8,8 @@
 # `gh`, only what GitHub keeps for a run: the jobs' step times, their logs and their annotations.
 # docs/testing.md has a dated baseline made with it, to set a later run beside (#1008).
 #
-# For each job that runs internal/daemon (test-linux, and the macOS and Windows daemon shards on a
-# run at the `full` level) it prints:
+# For each job that runs internal/daemon (test-linux, the Windows daemon shards on a run at the
+# `full` level, and the macOS ones on an rc tag or a run by hand, #1179) it prints:
 #   - how long the job and its go test step took;
 #   - go's own time for the package, and whether it passed;
 #   - how many tests ran at once on how many processors, and how many git the tests started, by

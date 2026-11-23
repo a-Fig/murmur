@@ -3,17 +3,22 @@
 #
 # The jobs run in parallel on GitHub's own runners, which are free for a public repo and start fresh
 # for every job. `changes` picks which of them a pull request needs from the files it touches
-# (scripts/ci-level.sh); a push to `main` and a run by hand run them all. A pull request runs
-# internal/daemon's tests on Linux alone unless it is `full` (Go that differs per OS, go.mod and
-# go.sum, the workflows, scripts/): on macOS and Windows they are most of CI's time, and main's run
-# still finds what they catch before the nightly takes it (#879). docs/testing.md has the reasons
-# and the times.
+# (scripts/ci-level.sh); a push to `main`, an rc tag and a run by hand run them all. A pull request
+# runs internal/daemon's tests on Linux alone unless it is `full` (Go that differs per OS, go.mod and
+# go.sum, the workflows, scripts/): on Windows they are most of CI's time, and main's run still
+# finds what they catch before the nightly takes it (#879).
+#
+# macOS runs only on an rc tag (v1.2.3-rc.1) and on a run by hand, never on a pull request or a push
+# to `main`: GitHub's macOS runners are scarce, and their queue held up merges and nightlies. So a
+# break on macOS alone is found at the next rc, before the stable tag (Tyler, 2026-11-23, #1179).
+# docs/testing.md has the reasons and the times.
 name: test
 
 on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*-rc.*']
   workflow_dispatch:
 
 permissions:
@@ -21,9 +26,10 @@ permissions:
 
 # A newer push to a pull request cancels its run in progress. A push to `main` is its own group, so
 # each one's run finishes: the nightly takes the newest commit whose run passed. The event is in the
-# name so a run by hand on that commit doesn't cancel the push's.
+# name so a run by hand on that commit doesn't cancel the push's, and a tag's ref is, so an rc
+# tagged on main's newest commit doesn't cancel main's run of the same commit.
 concurrency:
-  group: test-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: test-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.ref_type == 'tag') && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -35,6 +41,7 @@ jobs:
       pull-requests: read
     outputs:
       level: ${{ steps.level.outputs.level }}
+      macos: ${{ steps.level.outputs.macos }}
     steps:
       # A pull request's checkout is the merge of it into main, so its first parent is main as it
       # was: scripts/ci-level.sh reads what the change did to Go from that.
@@ -69,12 +76,21 @@ jobs:
             none | site | page | go | full) ;;
             *) echo "::error::scripts/ci-level.sh answered '$level'"; exit 1 ;;
           esac
+          # macOS at an rc tag and by hand alone (#1179). Those are always `full`.
+          macos=false
+          case "$EVENT $GITHUB_REF" in
+            "workflow_dispatch "* | "push refs/tags/v"*-rc.*) macos=true ;;
+          esac
           echo "level=$level" >> "$GITHUB_OUTPUT"
+          echo "macos=$macos" >> "$GITHUB_OUTPUT"
           echo "Jobs for this run: \`$level\` (scripts/ci-level.sh)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$level" != full ]; then
-            echo "The daemon's tests on macOS and Windows run when this merges. To run them now: \`gh workflow run test.yml --ref <branch>\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "The daemon's tests on Windows run when this merges." >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "level: $level"
+          if [ "$macos" != true ]; then
+            echo "macOS runs at the next rc tag (#1179). To run it and every other job now: \`gh workflow run test.yml --ref <branch>\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "level: $level, macos: $macos"
 
   test-linux:
     needs: changes
@@ -120,10 +136,11 @@ jobs:
           if [ -f "$f" ]; then cat "$f"; { echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"; fi
 
   # macOS and Windows run `internal/daemon` apart from the other packages, in shards (below): alone
-  # it took 1,154 s of this job's 20 minutes on 2026-11-12, and the others together about 4.
+  # it took 1,154 s of this job's 20 minutes on 2026-11-12, and the others together about 4. macOS
+  # runs at an rc tag and by hand only, both `full` (#1179).
   test-macos:
     needs: changes
-    if: needs.changes.outputs.level == 'go' || needs.changes.outputs.level == 'full'
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-latest
     timeout-minutes: 60
     defaults:
@@ -177,8 +194,9 @@ jobs:
       - run: go list ./... | grep -v '/internal/daemon$' | xargs bash scripts/go-test-retry.sh -race -count=1 -timeout 25m
 
   # The daemon package's tests, dealt out by position in their sorted list to one runner each: four
-  # on Windows, where they are slowest, and two on macOS. A test added later lands in some shard on
-  # its own, so none goes unrun. A pull request runs them only at `full` (#879).
+  # on Windows, where they are slowest, and two on macOS (test-macos-daemon, below, with the same
+  # steps). A test added later lands in some shard on its own, so none goes unrun. A pull request
+  # runs them on Windows only at `full` (#879), and never on macOS (#1179).
   #
   # A test that hangs should end in Go's -timeout panic, which names it and prints every goroutine,
   # not in the job's cancellation, which keeps no log (#727). A hang is never retried, so what must
@@ -201,12 +219,10 @@ jobs:
           - { os: windows, shard: 1, of: 4 }
           - { os: windows, shard: 2, of: 4 }
           - { os: windows, shard: 3, of: 4 }
-          - { os: macos, shard: 0, of: 2 }
-          - { os: macos, shard: 1, of: 2 }
     defaults:
       run:
         shell: bash
-    steps:
+    steps: &daemon-steps
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -229,3 +245,22 @@ jobs:
         run: |
           f="$RUNNER_TEMP/git-stats.txt"
           if [ -f "$f" ]; then cat "$f"; { echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"; fi
+
+  # The macOS shards, apart so that a run without macOS never asks for a macOS runner: a matrix
+  # can't leave out some of its entries by a condition. Its steps are test-daemon's (the anchor).
+  test-macos-daemon:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    name: test-macos-daemon (${{ matrix.shard }})
+    runs-on: macos-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: 0, of: 2 }
+          - { shard: 1, of: 2 }
+    defaults:
+      run:
+        shell: bash
+    steps: *daemon-steps

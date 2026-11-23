@@ -55,7 +55,9 @@ jobs:
           }
 
           # The newest commit on main whose test run passed. A run still going on main's head
-          # leaves an older green commit, rather than no nightly.
+          # leaves an older green commit, rather than no nightly. A push to main skips the macOS
+          # jobs (#1179), and a skipped job leaves the run's conclusion `success`, so a nightly
+          # waits on Linux and Windows alone.
           sha=$(gh api "repos/$GH_REPO/actions/workflows/test.yml/runs?branch=main&event=push&status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha // empty')
           if [ -z "$sha" ]; then echo "::notice::No passing test run on main; nothing tagged."; exit 0; fi

@@ -6,11 +6,14 @@
 #   site  site/ only: the site's own tests, which take seconds
 #   page  the page's static files (internal/web/static): they are built into the binary, so the Go
 #         tests run, on Linux alone, since CSS and JS don't behave differently per OS
-#   go    Go and the files its tests read: every package on Linux, and on macOS and Windows every
-#         package but internal/daemon, whose tests there are most of CI's time; a push to main runs
-#         them (#879)
+#   go    Go and the files its tests read: every package on Linux, and on Windows every package
+#         but internal/daemon, whose tests there are most of CI's time; a push to main runs them
+#         (#879)
 #   full  anything else, Go that is built or behaves differently per OS (see perOS), go.mod,
-#         go.sum, the workflows and these scripts: every job
+#         go.sum, the workflows and these scripts: every job but macOS's
+#
+# No level runs macOS: a pull request never does, and an rc tag or a run by hand runs it, whatever
+# the files (#1179).
 #
 # CI_LEVEL_BASE names the commit the change is made against (the merge commit's first parent, in
 # the workflow). Without it, or when git can't read it, every Go file is `full`, since what it
@@ -42,7 +45,8 @@ tag='^[[:space:]]*//[[:space:]]*(go:build|\+build)'
 # architecture), one with a build constraint before or after the change (a deleted or renamed file is
 # read as it was), and a change that adds or removes a line naming runtime.GOOS. An edit inside an
 # existing runtime.GOOS branch is `go`: whole files that test runtime.GOOS include the daemon's
-# most-changed ones (sync.go, files.go), and main's run catches the rest (docs/testing.md).
+# most-changed ones (sync.go, files.go), and main's run catches the rest on Windows, and the next
+# rc's on macOS (docs/testing.md).
 perOS() {
   case "$1" in
     *_windows.go | *_windows_*.go | *_darwin.go | *_darwin_*.go | *_linux.go | *_linux_*.go | \
