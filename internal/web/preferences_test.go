@@ -84,3 +84,14 @@ func TestNightIsADarkTheme(t *testing.T) {
 		t.Fatal("an unknown theme should be refused")
 	}
 }
+
+// Day, the v3 design's light version, is a theme the page can save, and the desktop window opens
+// light for it before the page loads.
+func TestDayIsALightTheme(t *testing.T) {
+	if !validTheme("day") {
+		t.Fatal("day should be a theme the page can save")
+	}
+	if DarkFrame("day") {
+		t.Fatal("the desktop window should open light for Day")
+	}
+}

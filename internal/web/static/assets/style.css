@@ -184,7 +184,7 @@
   --secondary-label: #a3a6b0;
 }
 
-:root:is([data-theme="light"], [data-theme="sky"]) {
+:root:is([data-theme="light"], [data-theme="sky"], [data-theme="day"]) {
   color-scheme: light;
   --background: oklch(99.2% 0 0);
   --foreground: oklch(21% 0.006 285.885);
@@ -223,7 +223,7 @@
   --edge: color-mix(in oklab, var(--foreground) 55%, transparent);
   --dot-off: var(--muted-foreground);
 }
-:is([data-theme="light"], [data-theme="sky"]) [data-app-sidebar] {
+:is([data-theme="light"], [data-theme="sky"], [data-theme="day"]) [data-app-sidebar] {
   --sidebar: oklch(98.5% 0 0);
   --sidebar-foreground: oklch(21% 0.006 285.885);
   --sidebar-muted-foreground: oklch(48% 0.016 285.938);
@@ -530,6 +530,68 @@
 }
 [data-theme="night"] .chat-list .g-head-text h2 {
   font-size: 1.25rem;
+}
+
+/* Day is the Figma v3 design's light version (#1018's light frame): a butter page, a cream sidebar,
+ * navy text, butter for the picked sidebar row and the v3 blue for a person's own messages and what
+ * is pressed. It starts from Light's tokens for the colours of states, a step darker as on Murmur's
+ * cream, and keeps the usual panes. */
+:root[data-theme="day"] {
+  --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --background: #fff6c2;
+  --foreground: #05224d;
+  --card: #fffdf4;
+  --popover: #fffdf4;
+  --primary: #1767b0; /* cream on it is 5.7:1, and as text it is 5.3:1 on the page (WCAG 1.4.3) */
+  --primary-foreground: #fffdf4;
+  --secondary: #fbf5de;
+  --secondary-foreground: #05224d;
+  --muted: #fbf5de;
+  --muted-foreground: #3a4f73; /* 7.5:1 on the page, 7:1 on butter */
+  --secondary-label: #3a4f73;
+  --message-surface: #1767b0;
+  --accent: rgb(5 34 77 / 6%);
+  --accent-foreground: #05224d;
+  --destructive-foreground: oklch(48% 0.2 27.518);
+  --border: rgb(5 34 77 / 12%);
+  --input: rgb(5 34 77 / 22%);
+  --ring: #258ee3;
+  --info: #258ee3;
+  --info-foreground: #1767b0;
+  --success: oklch(57% 0.145 163.225);
+  --success-foreground: oklch(44% 0.118 165.612);
+  --warning: oklch(53% 0.163 48.998);
+  --warning-foreground: oklch(45% 0.163 48.998);
+  --pr-open: oklch(47% 0.118 165.612);
+  --pr-merged: oklch(47% 0.22 304);
+  --row-hover: rgb(255 253 244 / 60%);
+  --row-selected: #fffdf4;
+  --composer: #fffdf4;
+  --composer-edge: rgb(5 34 77 / 12%);
+  --scrollbar-thumb: rgb(5 34 77 / 16%);
+  --scrollbar-thumb-hover: rgb(5 34 77 / 26%);
+  --scrim: rgb(5 34 77 / 28%);
+  --surface-grain: none;
+}
+[data-theme="day"] [data-app-sidebar] {
+  --sidebar: #fffdf4;
+  --sidebar-foreground: #05224d;
+  --sidebar-muted-foreground: #3a4f73;
+  --sidebar-icon: #3a4f73;
+  --sidebar-row-hover: rgb(5 34 77 / 5%);
+  --sidebar-row-active: #ffef8c; /* the v3 butter: navy on it is 13:1 */
+  --sidebar-row-selected: #ffef8c;
+  --sidebar-border: rgb(5 34 77 / 10%);
+  --secondary-label: #3a4f73;
+}
+/* The thread is the v3 design's frosted card: cream over the butter, with the frame's soft blue. */
+[data-theme="day"] .chat-pane {
+  background:
+    radial-gradient(60% 50% at 100% 100%, rgb(156 203 243 / 30%), transparent 70%),
+    linear-gradient(165deg, #fffdf4 20%, #fffae0);
+}
+[data-theme="day"] .chat-bubble {
+  color: #fffdf4;
 }
 
 /* Base. */
@@ -1185,6 +1247,9 @@ a.g-pr:hover {
 }
 [data-theme="sky"] .brand-mark {
   content: url("/assets/lockup-navy.svg");
+}
+[data-theme="day"] .brand-mark {
+  content: url("/assets/lockup-blue.svg");
 }
 .brand {
   font-size: 0.875rem;
