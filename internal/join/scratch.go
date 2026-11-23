@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/skills"
 	"github.com/a-Fig/murmur/internal/t3"
 )
 
@@ -211,7 +212,7 @@ func (e Env) keepToScratch(byAgent [][]agentHome, readT3, skippedT3 bool, cmd st
 	}
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
-			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) && (a.driver != "kiro" || kiroPathsInTemp(h.Dir)) {
+			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) && (a.driver != "kiro" || kiroPathsInTemp(h.Dir)) && (a.driver != "cursor" || cursorPathsInTemp(h)) {
 				continue
 			}
 			left = append(left, h.Label+" in "+h.Dir+" (from "+e.homeFrom(a, h, readT3)+")")
@@ -224,4 +225,24 @@ func (e Env) keepToScratch(byAgent [][]agentHome, readT3, skippedT3 bool, cmd st
 	return "Left these alone, because your home, " + scratch + ", is in the temporary folder, as a test's is, and they are outside it: " +
 		strings.Join(left, "; ") + ". To test in that home alone, unset the variables named here or point them into it. " +
 		"To change these anyway, run `" + brand.Command + " " + cmd + " --outside-home`."
+}
+
+// pathsInTemp says every path resolves into the temporary folder (inTemp).
+func pathsInTemp(paths []string) bool {
+	for _, p := range paths {
+		if !inTemp(p, false) {
+			return false
+		}
+	}
+	return true
+}
+
+// skillPaths are the folder of an agent's skills and each of Murmur's skills in it, with its
+// SKILL.md: everything installSkills writes.
+func skillPaths(root string) []string {
+	paths := []string{root}
+	for _, s := range skills.All() {
+		paths = append(paths, filepath.Join(root, s.Name), filepath.Join(root, s.Name, "SKILL.md"))
+	}
+	return paths
 }
