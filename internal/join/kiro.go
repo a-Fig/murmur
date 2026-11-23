@@ -131,20 +131,25 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 		return nil, false, nil
 	}
 	prevExe := kiroRegisteredExe(h)
+	hookDid, hookErr := e.installKiroHook(h, prevExe)
+	did = append(did, hookDid...)
+	if hookErr != nil && prevExe != "" && !isMurBinary(prevExe) {
+		// Keep the previously registered renamed binary in mcp.json so a retry or manual removal
+		// still recognizes hooks/murmur.json as owned by Murmur.
+		return did, false, hookErr
+	}
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	entry := jsonedit.New()
 	entry.Set("command", e.Exe)
 	entry.Set("args", toAny(kiroArgs))
 	changed, added, err := setJSONIn(mcpPath, []string{"mcpServers", brand.MCPServer}, entry)
 	if err != nil {
-		return nil, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)
+		return did, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)
 	}
 	fresh = added
 	if changed {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+mcpPath+")")
 	}
-	hookDid, hookErr := e.installKiroHook(h, prevExe)
-	did = append(did, hookDid...)
 	allowed, permPath, permErr := allowKiroTools(h.Dir)
 	if allowed {
 		if permErr != nil {
@@ -447,19 +452,31 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 	h := hs[0]
 	var problems []error
 	prevExe := kiroRegisteredExe(h)
+	hookDid, hookNotes, herr := removeKiroHook(h, e.Exe, prevExe)
+	if herr != nil {
+		problems = append(problems, herr)
+	} else {
+		did = append(did, hookDid...)
+		notes = append(notes, hookNotes...)
+	}
+	// If removing a hook written by a renamed binary failed (e.g. transient lock/permission error),
+	// keep mcpServers.murmur in mcp.json so a retry or manual removal still recognizes the hook.
+	keepMCP := herr != nil && prevExe != "" && !isMurBinary(prevExe)
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
-	if text, rerr := readConfig(mcpPath); rerr != nil {
-		problems = append(problems, rerr)
-	} else if text != "" {
-		out, changed, uerr := jsonSteps(text, deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers"))
-		switch {
-		case uerr != nil:
-			problems = append(problems, fmt.Errorf("%s: %w", mcpPath, uerr))
-		case changed:
-			if werr := writeJSONConfig(mcpPath, out, 0o644); werr != nil {
-				problems = append(problems, werr)
-			} else {
-				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+mcpPath+")")
+	if !keepMCP {
+		if text, rerr := readConfig(mcpPath); rerr != nil {
+			problems = append(problems, rerr)
+		} else if text != "" {
+			out, changed, uerr := jsonSteps(text, deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers"))
+			switch {
+			case uerr != nil:
+				problems = append(problems, fmt.Errorf("%s: %w", mcpPath, uerr))
+			case changed:
+				if werr := writeJSONConfig(mcpPath, out, 0o644); werr != nil {
+					problems = append(problems, werr)
+				} else {
+					did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+mcpPath+")")
+				}
 			}
 		}
 	}
@@ -487,12 +504,6 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 				notes = append(notes, h.Label+": left "+permPath+" alone because "+yamlPath+" takes precedence over it; if you remove permissions.yaml later, remove \""+kiroAllowPattern+"\" from "+permPath)
 			}
 		}
-	}
-	if hookDid, hookNotes, herr := removeKiroHook(h, e.Exe, prevExe); herr != nil {
-		problems = append(problems, herr)
-	} else {
-		did = append(did, hookDid...)
-		notes = append(notes, hookNotes...)
 	}
 	return did, notes, errors.Join(problems...)
 }

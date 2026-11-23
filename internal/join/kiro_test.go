@@ -209,6 +209,57 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 	if did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h}); err != nil || len(did) != 2 || len(notes) != 0 || exists(hookPath) {
 		t.Fatalf("dev uninstall without mcp.json: did=%q notes=%q err=%v exists=%v", did, notes, err, exists(hookPath))
 	}
+
+	// Retry after a transient hook-write failure (hooks/murmur.json blocked by a directory or
+	// lock): mcp.json must preserve mur-dev so a subsequent retry with standard mur still
+	// recognizes and replaces the hook.
+	sb.Exe = devExe
+	if _, _, err := sb.registerKiroAt(h); err != nil {
+		t.Fatalf("re-register dev 3: %v", err)
+	}
+	origHook := read(t, hookPath)
+	// Simulate a transient write failure by temporarily replacing hooks/murmur.json with a
+	// directory (making installKiroHook fail), then restoring the mur-dev hook file.
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	mustMakeDir(t, hookPath)
+	sb.Exe = stdExe
+	if _, _, err := sb.registerKiroAt(h); err == nil {
+		t.Fatal("expected register failure while hookPath is blocked")
+	}
+	if got := kiroRegisteredExe(h); got != devExe {
+		t.Fatalf("mcp.json lost renamed binary on failed hook update: got %q, want %q", got, devExe)
+	}
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	write(t, hookPath, origHook)
+	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, "delete "+hookPath) {
+		t.Errorf("kiroRemoval after failed hook update = %q", rem)
+	}
+	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 2 || strings.Contains(read(t, hookPath), "mur-dev") {
+		t.Fatalf("retry register after transient hook failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
+	}
+
+	// Windows 8.3 short-path ownership matching after the original long directory is gone.
+	shortHook, err := kiroHooks(`C:\PROGRA~1\MYAPP~1\mur-dev.exe hook kiro`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isKiroHookFileFor(shortHook, `C:\Program Files\My App\mur-dev.exe`) {
+		t.Error("isKiroHookFileFor missed 8.3 short directory path for renamed binary")
+	}
+	shortNameHook, err := kiroHooks(`C:\PROGRA~1\MYAPP~1\MURMUR~1.EXE hook kiro`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isKiroHookFileFor(shortNameHook, `C:\Program Files\My App\murmur-dev.exe`) {
+		t.Error("isKiroHookFileFor missed 8.3 short filename for renamed binary")
+	}
+	if isKiroHookFileFor(shortNameHook, `C:\Program Files\My App\other-tool.exe`) {
+		t.Error("isKiroHookFileFor falsely matched unrelated binary against 8.3 short filename")
+	}
 }
 
 // Because Kiro's addUserRule merges single-match rules of the same capability and effect into one

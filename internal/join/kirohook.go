@@ -127,10 +127,14 @@ func isKiroHookFileFor(b []byte, extraExes ...string) bool {
 		return false
 	}
 	cmd := doc.Hooks[0].Action.Command
-	owned := isKiroHookCommand(cmd)
+	hookExe, ok := parseKiroHookCommand(cmd)
+	if !ok {
+		return false
+	}
+	owned := isMurBinary(hookExe)
 	if !owned {
 		for _, exe := range extraExes {
-			if exe != "" && cmd == kiroHookCommand(exe) {
+			if exe != "" && (cmd == kiroHookCommand(exe) || sameKiroExe(hookExe, exe)) {
 				owned = true
 				break
 			}
@@ -146,26 +150,104 @@ func isKiroHookFileFor(b []byte, extraExes ...string) bool {
 // isKiroHookCommand says cmd has one of the exact `<mur> hook kiro` shapes kiroHookCommand writes
 // (sh single-quoted, Windows bare-safe, or cmdQuotePath-quoted), with Murmur's binary as the command.
 func isKiroHookCommand(cmd string) bool {
+	exe, ok := parseKiroHookCommand(cmd)
+	return ok && isMurBinary(exe)
+}
+
+// parseKiroHookCommand extracts the executable path from a canonical `<exe> hook kiro` command
+// written by kiroHookCommand (sh single-quoted, Windows bare-safe, or cmdQuotePath-quoted).
+func parseKiroHookCommand(cmd string) (string, bool) {
 	rest, ok := strings.CutSuffix(cmd, " hook kiro")
 	if !ok || rest == "" {
-		return false
+		return "", false
 	}
 	if strings.HasPrefix(rest, "'") && strings.HasSuffix(rest, "'") && len(rest) >= 2 {
 		inner := rest[1 : len(rest)-1]
 		if strings.Contains(strings.ReplaceAll(inner, `'\''`, ""), "'") {
-			return false
+			return "", false
 		}
-		return isMurBinary(strings.ReplaceAll(inner, `'\''`, "'"))
+		return strings.ReplaceAll(inner, `'\''`, "'"), true
 	}
 	if bareSafe(rest) {
-		return isMurBinary(rest)
+		return rest, true
 	}
 	parts := strings.Split(rest, "^%")
 	for i, part := range parts {
 		parts[i] = strings.ReplaceAll(part, `"`, "")
 	}
 	exe := strings.Join(parts, "%")
-	return cmdQuotePath(exe) == rest && isMurBinary(exe)
+	if cmdQuotePath(exe) != rest {
+		return "", false
+	}
+	return exe, true
+}
+
+// sameKiroExe says hookExe matches a registered executable path regExe, including when hookExe
+// was written as a Windows 8.3 short path whose original directory has since been moved or deleted.
+func sameKiroExe(hookExe, regExe string) bool {
+	if samePath(hookExe, regExe) {
+		return true
+	}
+	if volA, volB := winDrive(hookExe), winDrive(regExe); volA != "" && volB != "" && volA != volB {
+		return false
+	}
+	base := func(p string) string {
+		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+			p = p[i+1:]
+		}
+		return strings.ToLower(p)
+	}
+	hb, rb := base(hookExe), base(regExe)
+	if hb == "" || rb == "" {
+		return false
+	}
+	if hb == rb {
+		return strings.Contains(hookExe, "~")
+	}
+	// Windows 8.3 short filename: <prefix>~<digits>[.<ext>] matching regExe's long filename.
+	tilde := strings.IndexByte(hb, '~')
+	if tilde <= 0 {
+		return false
+	}
+	hStem, hExt := splitExt(hb)
+	rStem, rExt := splitExt(rb)
+	if len(rExt) > 3 {
+		rExt = rExt[:3]
+	}
+	if hExt != rExt {
+		return false
+	}
+	prefix := hStem[:tilde]
+	digits := hStem[tilde+1:]
+	if digits == "" {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	var clean strings.Builder
+	for _, r := range rStem {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || strings.ContainsRune("-_", r) {
+			clean.WriteRune(r)
+		}
+	}
+	return strings.HasPrefix(clean.String(), prefix)
+}
+
+func winDrive(p string) string {
+	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) {
+		return strings.ToLower(p[:1])
+	}
+	return ""
+}
+
+func splitExt(name string) (stem, ext string) {
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		return name[:dot], name[dot+1:]
+	}
+	return name, ""
 }
 
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
