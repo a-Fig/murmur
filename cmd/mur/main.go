@@ -92,8 +92,8 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
                                 latest N messages (10 if not given, at most 50)
   mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]
                                 add or remove your tags, as the tags tool does; --for NAME,... gives
-                                the group: tags in --add to those sessions, not to you; alone, lists
-                                yours
+                                the group: tags in --add to those sessions, not to you unless you list
+                                your own name too; alone, lists yours
   mur mute [NAME] [--unmute]    stop getting anything NAME sends, as the mute tool does; --unmute undoes
                                 it; alone, lists whom you have muted
 
