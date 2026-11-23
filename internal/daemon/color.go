@@ -38,8 +38,30 @@ const colorHold = 7 * 24 * time.Hour
 // colour, as of this daemon's last successful sync. It is judged as staleLocked judges, but by the
 // wall clock (Round strips the other reading): the time a machine spent asleep counts toward a
 // week, where it must not toward staleness's minutes. Caller holds mu.
+//
+// A presence this daemon reads only after a long sleep of its own is dated from now, though its
+// writer may have gone quiet a week before (updatePeer): one dated over colorHold ago by
+// colorFrom, with nothing newer listed, holds no colour either. Otherwise the waking reader would
+// show it holding its colour for another week, against teammates who let it go (#1165).
 func (d *Daemon) colorGoneLocked(p *peer) bool {
-	return !d.lastPollOK.IsZero() && d.lastPollOK.Round(0).Sub(p.lastChange.Round(0)) > cmp.Or(d.opt.ColorHold, colorHold)
+	if d.lastPollOK.IsZero() {
+		return false
+	}
+	hold, now := cmp.Or(d.opt.ColorHold, colorHold), d.lastPollOK.Round(0)
+	return now.Sub(p.lastChange.Round(0)) > hold || p.writtenOf == p.listed && !p.colorFrom.IsZero() && now.Sub(p.colorFrom.Round(0)) > hold
+}
+
+// colorDate dates a presence for its colour: its commit time by the writer's clock, but no earlier
+// than lastGood, this daemon's last good sync before it read it. A reader that slept a week has a
+// lastGood a week back, so an old presence it reads on waking is judged old; a reader that has
+// kept syncing has a lastGood seconds back, so a live writer whose clock runs a week behind isn't
+// (#1169). Before a first good sync there is nothing to clamp to, and the writer's clock stands,
+// as it does for a device seen for the first time (firstSight).
+func colorDate(written, lastGood time.Time) time.Time {
+	if !lastGood.IsZero() && written.Before(lastGood) {
+		return lastGood
+	}
+	return written
 }
 
 // colorsLocked is every device's colour, this one's included, by the devices in presence. A
@@ -107,8 +129,11 @@ func (d *Daemon) settleColorLocked(began time.Time) {
 	for _, p := range d.peers {
 		// A live holder could be hiding in it: settled once every live presence can be read. A
 		// stale one may never open (written before its device read a team key), and whether to
-		// hold this device's own pick back is this device's call, so its clock may judge.
-		if p.locked && !d.staleLocked(p) {
+		// hold this device's own pick back is this device's call, so its clock may judge. A
+		// presence listed but not fetched (sawPresence) could hide one too: a teammate who picked
+		// the colour while this device was away, whose newest presence this sync failed to fetch,
+		// would lose the pick to this device's older one (#1165).
+		if (p.locked || p.sha != p.listed) && !d.staleLocked(p) {
 			return
 		}
 	}

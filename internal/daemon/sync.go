@@ -154,8 +154,11 @@ func (d *Daemon) pollNext(wait, calm time.Duration, failed bool) (pollRate, time
 // page or a conversation's move came. If the loop was running at a slower rate than that calls
 // for, it looks now and from here on at the faster; if not, it is as quick as it gets. A failure's
 // backoff is not ended by it either, unless the loop was quiet: a session that comes then is the
-// reason to look now.
+// reason to look now. A device back from invisible ends any wait but a failure's (lookNow).
 func (d *Daemon) wakeEndsWait(calm time.Duration, rate pollRate, failing bool) bool {
+	if d.lookNow.Swap(false) && !failing {
+		return true
+	}
 	return !(d.pollEvery(calm).every >= rate.every || failing && !rate.quiet)
 }
 
@@ -169,7 +172,9 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
-	// Before the remote is listed: what this sync reads is no older (settleColorLocked).
+	// Before the remote is listed: what this sync reads is no older (settleColorLocked), and it is
+	// the one a device back from invisible wanted (lookNow).
+	d.lookNow.Store(false)
 	began := time.Now()
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
@@ -177,6 +182,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	}
 	remote := readable(listed)
 	d.mu.Lock()
+	d.notePresencesListedLocked(remote)
 	d.syncing = true // an append may leave its tip to this sync from here on (leaveOwnTip)
 	d.mu.Unlock()
 	d.advMu.Lock()
@@ -326,6 +332,11 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	for dev := range d.peers {
 		if _, ok := remote[brand.PresencePrefix+dev]; !ok {
 			delete(d.peers, dev) // its daemon said goodbye
+		}
+	}
+	for dev := range d.presenceListed {
+		if _, ok := remote[brand.PresencePrefix+dev]; !ok {
+			delete(d.presenceListed, dev)
 		}
 	}
 	d.lastPollOK = polled
@@ -1329,7 +1340,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	} else if old := d.peers[dev]; old != nil {
 		read = old.read // a box that doesn't open here says nothing new of files
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked, read: read}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, writtenOf: sha, colorFrom: colorDate(c.Time, d.listedAfterLocked(dev, sha)), sealed: sealed, locked: locked, read: read}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 		d.droppedThereLocked(dev, pres.Sessions)
@@ -2127,10 +2138,37 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	return nil
 }
 
+// notePresencesListedLocked records, for each device's presence in a listing of the remote, the
+// last good sync before its SHA was first listed (presenceListed). Caller holds mu.
+func (d *Daemon) notePresencesListedLocked(remote map[string]string) {
+	for ref, sha := range remote {
+		dev, ok := strings.CutPrefix(ref, brand.PresencePrefix)
+		if !ok || dev == d.device || !bus.ValidDevice(dev) {
+			continue
+		}
+		if d.presenceListed == nil {
+			d.presenceListed = map[string]listedPresence{}
+		}
+		if d.presenceListed[dev].sha != sha {
+			d.presenceListed[dev] = listedPresence{sha: sha, after: d.lastPollOK}
+		}
+	}
+}
+
+// listedAfterLocked is this daemon's last good sync before dev's presence sha was first listed,
+// or its last good sync if no listing recorded it (a read outside a sync). Caller holds mu.
+func (d *Daemon) listedAfterLocked(dev, sha string) time.Time {
+	if l, ok := d.presenceListed[dev]; ok && l.sha == sha {
+		return l.after
+	}
+	return d.lastPollOK
+}
+
 // presenceFetchedLocked notes that a fetch of ref was tried, if it is this device's own presence:
 // the fetch may have set the clone's copy to what the remote had, which may be junk pushed over
 // the presence, so the next presence writes the copy again (publishPresence). It is called for a
-// fetch that failed too, which may have written the ref before it did (#1130). Caller holds mu.
+// fetch that failed too, which may have written the ref before it did (#1130), and for a copy
+// found broken and removed (repairRefs). Caller holds mu.
 func (d *Daemon) presenceFetchedLocked(ref string) {
 	if ref == d.presenceRef() {
 		d.presenceFetches++

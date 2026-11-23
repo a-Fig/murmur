@@ -152,3 +152,73 @@ func TestADaemonAwayAWeekKeepsAColourNobodyTook(t *testing.T) {
 		t.Errorf("after the sync the presence carries colour %d (lost to %q), want its pick, 3", color, d.st.ColorLostTo)
 	}
 }
+
+// A device coming back doesn't settle its colour while a teammate's newest presence is listed but
+// not fetched: that teammate may have picked the colour meanwhile, and it would lose the pick to
+// this device's older one (#1165).
+func TestAColourWaitsForAPresenceNotFetched(t *testing.T) {
+	t.Parallel()
+	d := colorRig(t, time.Hour)
+	d.peers = map[string]*peer{}
+	d.opt.StaleAfter = time.Minute // b is live: the rig's zero would make every peer stale at once
+	d.setMode("online", "invisible", time.Time{})
+	d.setMode("invisible", "online", time.Now())
+	// The sync after: b's presence is in the listing, but its fetch failed.
+	d.sawPresence("b-0001", "1111111111111111111111111111111111111111", false)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastPollOK = time.Now()
+	d.settleColorLocked(time.Now().Add(time.Second))
+	if color, _ := d.shownColorLocked(); color != 0 || d.st.Color != 3 {
+		t.Fatalf("with b's presence not fetched, the presence carries colour %d (pick %d), want none yet and the pick kept", color, d.st.Color)
+	}
+	// The next sync reads it: b picked the colour while this device was away, and has it.
+	now := time.Now()
+	p := d.peers["b-0001"]
+	p.sha, p.lastChange = p.listed, now
+	p.pres = bus.Presence{V: bus.Version, Device: "b-0001", Color: 3, ColorAt: now.Add(-time.Minute).UTC()}
+	d.lastPollOK = now
+	d.settleColorLocked(now.Add(time.Second))
+	if d.st.Color != 0 || d.st.ColorLostTo == "" {
+		t.Errorf("after b's presence is read: pick %d, lost to %q; want it given up to b", d.st.Color, d.st.ColorLostTo)
+	}
+}
+
+// A presence read only now, after this daemon slept, but written over a week ago by its writer's
+// clock, holds no colour: the daemon would otherwise date it from now and show its device holding
+// the colour for another week, against teammates who let it go (#1165). One with a newer presence
+// listed, not read yet or found unreadable, is alive and holds it.
+func TestAPresenceWrittenAWeekAgoAndReadNowLetsItsColourGo(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		newer      bool
+		unreadable bool
+		picked     bool
+	}{
+		{"nothing newer listed", false, false, false},
+		{"a newer one listed", true, false, true},
+		{"a newer one found unreadable", true, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := colorRig(t, 0) // read just now
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			d.st.Color, d.st.ColorAt = 0, time.Time{}
+			p := d.peers["dead-0001"]
+			written := time.Now().Add(-8 * 24 * time.Hour)
+			// This daemon's last good sync before the read was before its sleep, older still.
+			p.sha, p.listed, p.writtenOf = "aaaa", "aaaa", "aaaa"
+			p.written, p.colorFrom = written, colorDate(written, written.Add(-time.Hour))
+			if c.newer {
+				p.listed = "bbbb"
+			}
+			if c.unreadable {
+				p.sha = "bbbb" // as sawPresence leaves it: tried, and not worth reading again
+			}
+			if got := d.colorsLocked()["dead-0001"]; got.Picked != c.picked {
+				t.Errorf("the peer's colour is %+v, want it picked: %v", got, c.picked)
+			}
+		})
+	}
+}

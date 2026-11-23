@@ -616,6 +616,11 @@ type Daemon struct {
 	// log it once a minute.
 	refused    map[string]time.Time
 	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
+	// presenceListed is, for each device, the presence SHA the remote last listed and this daemon's
+	// last good sync when it first did (colorDate's clamp): a presence read a sync or more after it
+	// was listed, its fetch having failed or been cut short, is dated from before the gap, not from
+	// the sync that read it (#1169). Under mu.
+	presenceListed map[string]listedPresence
 
 	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
 	// teamChanged is closed and replaced when an epoch is read. Under mu. teamMu serializes the team
@@ -680,6 +685,11 @@ type Daemon struct {
 	agentsSendOff, agentsReceiveOff atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
+	// lookNow says a sync begun from here on is wanted at once, whatever the poll's rate: the
+	// device came back from invisible (setMode), and its colour waits for that sync. A sync that
+	// begins clears it (pollOnce), and so does pollLoop's next wake (wakeEndsWait), which it ends
+	// unless the poll is failing.
+	lookNow atomic.Bool
 
 	kick       chan struct{}
 	pollWake   chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
@@ -841,6 +851,13 @@ const (
 	catchUpWindow = 30 * time.Second
 )
 
+// listedPresence is a presence SHA the remote listed, and this daemon's last good sync before it
+// first did.
+type listedPresence struct {
+	sha   string
+	after time.Time
+}
+
 // peer is another device as its presence ref shows it.
 type peer struct {
 	pres bus.Presence
@@ -851,8 +868,14 @@ type peer struct {
 	listed     string
 	lastChange time.Time
 	// written is the committer time of the presence read: the writer's clock when git wrote it
-	// (groupAddWhyLocked).
-	written time.Time
+	// (groupAddWhyLocked). writtenOf is that presence's SHA: sha moves on past one found unreadable,
+	// and written doesn't (colorGoneLocked).
+	written   time.Time
+	writtenOf string
+	// colorFrom is written, but no earlier than this daemon's last good sync before the presence
+	// was first listed (colorDate, presenceListed): what colorGoneLocked dates a presence by, so
+	// that a writer's clock a week behind doesn't make a live device's colour look a week old.
+	colorFrom time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.
@@ -1618,7 +1641,9 @@ func clearBrokenRefs(gitDir string, l *log.Logger) (removed []string) {
 
 // repairRefs removes the bus refs clearBrokenRefs finds, and forgets what was fetched into them,
 // so the next sync fetches each again even if the remote's hasn't moved. It says whether it
-// removed any. Takes mu.
+// removed any. The clone's copy of this device's own presence is written again by the next
+// presence, as after a fetch: with the remote's presence gone, while the device is invisible,
+// no fetch would bring it back, and loadIdentity needs it (#1165). Takes mu.
 func (d *Daemon) repairRefs() bool {
 	removed := clearBrokenRefs(d.opt.GitDir, d.log)
 	if len(removed) == 0 {
@@ -1627,6 +1652,7 @@ func (d *Daemon) repairRefs() bool {
 	d.mu.Lock()
 	for _, ref := range removed {
 		delete(d.known, ref)
+		d.presenceFetchedLocked(ref)
 	}
 	d.mu.Unlock()
 	return true
