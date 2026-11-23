@@ -322,13 +322,16 @@ func TestAWriteWaitingToSetRefsEndsWithItsContext(t *testing.T) {
 // which was a process for every fetch (#1008). What it returns, the bus refs it sets, the refs of
 // its own it leaves to Tidy, and what a fetch that failed leaves are as they are without one.
 func TestFetchAsksTheKeptGitWhatItWrote(t *testing.T) {
-	for _, kept := range []bool{false, true} {
-		name := map[bool]string{false: "a git for each read", true: "a git kept between reads"}[kept]
-		t.Run(name, func(t *testing.T) {
+	for _, mode := range []string{"a git for each read", "a git kept between reads", "a kept git that has gone"} {
+		kept := mode == "a git kept between reads"
+		t.Run(mode, func(t *testing.T) {
 			f := newFetchRig(t)
-			if kept {
+			if mode != "a git for each read" {
 				f.r.KeepReader()
 				t.Cleanup(f.r.Close)
+			}
+			if mode == "a kept git that has gone" {
+				f.r.Close() // it answers no more, and the refs are listed as without one
 			}
 			listed := 0
 			was := gitx.Observe

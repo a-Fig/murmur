@@ -282,10 +282,12 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) (map[string]string, err
 //
 // The kept reader is asked where there is one: a git for-each-ref for every fetch was 5% of git's
 // time in the daemon's tests on Windows (#1008), and the reader answers without a process being
-// started. Each of the fetch's refs has a name no fetch before it had, so the answer can't be an
-// old one, and a ref the reader calls missing is confirmed by a new git (gitx.Reader.Refs). With no
-// reader, a git too old for one (before 2.36), a name it won't take, or any failure of it, the refs
-// are listed with for-each-ref, as they were.
+// started. Each of the fetch's refs has a name no fetch before it had, with 64 random bits that
+// never leave this clone, so the answer can't be an old one or another's ref, and a ref the reader
+// calls missing is confirmed by a new git (gitx.Reader.Refs). With no reader, a git too old for one
+// (before 2.36), a name it won't take, or any failure of it, the refs are listed with for-each-ref,
+// as they were. The reader has readerWait of the time, so that the listing has the rest if the
+// reader is busy with another read.
 func (r *Repo) fetched(ctx context.Context, own string, of map[string]string) (tips map[string]string, wrote []string, err error) {
 	tips = map[string]string{}
 	if r.reader != nil {
@@ -294,7 +296,10 @@ func (r *Repo) fetched(ctx context.Context, own string, of map[string]string) (t
 			names = append(names, at)
 		}
 		slices.Sort(names)
-		if objs, rerr := r.reader.Refs(ctx, names); rerr == nil && len(objs) == len(names) {
+		rctx, cancel := context.WithTimeout(ctx, readerWait)
+		objs, rerr := r.reader.Refs(rctx, names)
+		cancel()
+		if rerr == nil && len(objs) == len(names) {
 			for i, o := range objs {
 				if !o.Missing {
 					tips[of[names[i]]] = o.ID
@@ -313,6 +318,10 @@ func (r *Repo) fetched(ctx context.Context, own string, of map[string]string) (t
 	}
 	return tips, wrote, err
 }
+
+// readerWait is how long a Fetch gives the kept reader to say what it wrote, of the 15 s it has for
+// that and for setting the bus refs.
+const readerWait = 5 * time.Second
 
 // testBeforeSet, set only by tests, is called as a Fetch that worked is about to set the bus refs.
 var testBeforeSet func(refs []string)

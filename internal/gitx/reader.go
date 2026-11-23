@@ -26,7 +26,7 @@ type Object struct {
 	ID      string // the object's own name, as git gives it: Name again, or what the ref is at
 	Type    string // "commit", "tree", ...; empty when Missing
 	Size    int64
-	Missing bool   // nothing here has that name
+	Missing bool   // nothing here has that name; for Refs, also a ref that is broken or at no object
 	Data    []byte // from Contents only
 }
 
@@ -89,12 +89,21 @@ func (r *Reader) Contents(ctx context.Context, names []string, max int64) ([]Obj
 }
 
 // Refs says, for each ref, the object it is at (Object.ID) and that object's type and size, or that
-// there is no such ref. The answers come in the order asked. A ref made after the Reader's git
-// started is found like any other: git looks a ref up when it is asked, and the tests hold it to
-// that for loose refs, packed ones and reftable.
+// nothing answers to the name. The answers come in the order asked.
 //
-// Only full ref names are taken (IsRefName), and anything else is ErrNoReader: a name goes to git
-// as a line, where a space, a newline or an option could be read as something else.
+// It is for refs made since the Reader's git started, under names nobody else could have made, as
+// the refs of a bus.Repo.Fetch are, and its answers are sound only for those:
+//   - A ref made after the git started is found: git looks a ref up when it is asked. The tests
+//     hold it to that for loose refs, for refs made after a packing, and for reftable.
+//   - A ref that has moved can be answered at where it was. Git takes its copy of packed-refs for
+//     current by the file's size and time, and on Windows a rewrite within the same second, at the
+//     same size, isn't seen (found in review, 2026-11-23). So don't ask twice about one name.
+//   - A name that is no ref can be answered by something else. Git takes a name for a revision,
+//     and looks for refs/X under refs/tags/, refs/heads/ and refs/remotes/ too, so another's tag
+//     named refs/X would answer for it.
+//
+// Only plain full ref names are taken (IsRefName), and anything else is ErrNoReader: a name goes to
+// git as a line, where a space, a newline or an option could be read as something else.
 func (r *Reader) Refs(ctx context.Context, names []string) ([]Object, error) {
 	for _, n := range names {
 		if !IsRefName(n) {
@@ -430,11 +439,16 @@ func (t *tailBuffer) String() string {
 
 // IsRefName says s is a full ref name a Reader takes: under refs/, of parts made of letters,
 // digits, '.', '_' and '-', with '/' between them, none empty, none starting with '.' or '-' or
-// ending in ".lock". That is narrower than git allows, on purpose: no space, newline, or anything
-// git reads as a revision's syntax ("..", "@{", "^", "~", ":") can be in it.
+// ending in ".lock". That is narrower than git allows, on purpose: no space, newline or revision
+// operator ("..", "@{", "^", "~", ":") can be in it.
+//
+// Nor may it end as git describe's output does, in "-g" and hex digits: where no ref has such a
+// name, git takes the hex for an object's short name, and answers with that object, whatever it is
+// (found in review, 2026-11-23; "evil-1-gd466" answered with a commit, "a-0-g4b825d" with the
+// empty tree).
 func IsRefName(s string) bool {
 	rest, ok := strings.CutPrefix(s, "refs/")
-	if !ok || len(s) > 1024 {
+	if !ok || len(s) > 1024 || describeEnd(s) {
 		return false
 	}
 	for _, part := range strings.Split(rest, "/") {
@@ -448,4 +462,14 @@ func IsRefName(s string) bool {
 		}
 	}
 	return true
+}
+
+// describeEnd says s ends in "-g" and one or more hex digits, of either case, as the output of git
+// describe does.
+func describeEnd(s string) bool {
+	i := len(s)
+	for i > 0 && (s[i-1] >= '0' && s[i-1] <= '9' || s[i-1] >= 'a' && s[i-1] <= 'f' || s[i-1] >= 'A' && s[i-1] <= 'F') {
+		i--
+	}
+	return i < len(s) && i >= 2 && s[i-2] == '-' && (s[i-1] == 'g' || s[i-1] == 'G')
 }

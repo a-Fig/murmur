@@ -11,10 +11,15 @@ import (
 )
 
 // refsRepo is readerRepo with the ref storage named: "files", or "reftable" where this git has it.
+// The files kind is asked for by naming nothing: --ref-format came with git 2.45.
 func refsRepo(t *testing.T, format string) (g Git, commit string, starts *atomic.Int32) {
 	t.Helper()
 	g = Git{Dir: t.TempDir()}
-	if out, err := exec.Command("git", "init", "-q", "--bare", "--ref-format="+format, g.Dir).CombinedOutput(); err != nil {
+	args := []string{"init", "-q", "--bare"}
+	if format != "files" {
+		args = append(args, "--ref-format="+format)
+	}
+	if out, err := exec.Command("git", append(args, g.Dir)...).CombinedOutput(); err != nil {
 		if format != "files" {
 			t.Skipf("this git has no %s refs: %s", format, strings.TrimSpace(string(out)))
 		}
@@ -54,10 +59,13 @@ func TestReaderRefsSaysWhatARefIsAt(t *testing.T) {
 	}
 }
 
-// A git that has run a while finds a ref made after it started, one moved since, and one made or
-// moved after the refs were packed, without another git being started: bus.Repo.Fetch asks for
-// refs that a fetch has only just written. Held to for loose and packed refs, and for reftable
-// where this git has it. A ref that has gone is called missing, which a new git confirms.
+// A git that has run a while finds a ref made after it started, also one made after the refs were
+// packed, without another git being started: bus.Repo.Fetch asks for refs that a fetch has only
+// just written. Held to for loose and packed refs, and for reftable where this git has it. A ref
+// that has gone is called missing, which a new git confirms.
+//
+// The moves here are found too, each leaving a loose ref. A ref that lives only in packed-refs and
+// moves there needn't be (Reader.Refs says why), which is why a Fetch never asks twice of a name.
 func TestReaderSeesRefsMadeAfterItStarted(t *testing.T) {
 	for _, format := range []string{"files", "reftable"} {
 		t.Run(format, func(t *testing.T) {
@@ -121,6 +129,8 @@ func TestReaderRefsTakesOnlyPlainRefNames(t *testing.T) {
 		"refs/heads/main\x00", "refs/heads/main\t", "refs/heads/..", "refs/heads/a..b", "refs/heads/.hidden", "refs/heads/-x",
 		"refs/heads/main.lock", "refs/heads/main^", "refs/heads/main~1", "refs/heads/main:x", "refs/heads/main@{1}",
 		"refs/heads/ma*n", "refs/heads/ma?n", "refs/heads/ma[n", "refs/heads/ma\\n", "refs/heads/maïn", "--batch-all-objects",
+		// As git describe's output ends: git would answer with the object the hex names.
+		"refs/murmur/fetch-0123456789abcdef/mesh/evil-1-g" + commit[:7], "refs/heads/v1-0-gabcd", "refs/heads/x-gABCDEF0", "refs/heads/a-g1",
 		"refs/" + strings.Repeat("a", 1100),
 	} {
 		if IsRefName(name) {
@@ -134,7 +144,8 @@ func TestReaderRefsTakesOnlyPlainRefNames(t *testing.T) {
 		t.Errorf("%d gits started, want none", n)
 	}
 	for _, name := range []string{"refs/heads/main", "refs/murmur/names", "refs/murmur/fetch-0123456789abcdef/mesh/device-1a2b3c4d",
-		"refs/murmur/fetch-0123456789abcdef/presence/toms-laptop-3f2a", "refs/a.b_c-d/E9"} {
+		"refs/murmur/fetch-0123456789abcdef/presence/toms-laptop-3f2a", "refs/a.b_c-d/E9", "refs/heads/big", "refs/heads/a-g", "refs/heads/x-gabc/y",
+		"refs/heads/logabc", "refs/heads/a-gx1"} {
 		if !IsRefName(name) {
 			t.Errorf("IsRefName(%q) is false", name)
 		}
