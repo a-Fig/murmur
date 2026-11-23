@@ -1,0 +1,286 @@
+package join
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/a-Fig/murmur/internal/brand"
+)
+
+func TestKiroHomeDir(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	custom := filepath.Join(root, "custom-kiro")
+	mustMakeDir(t, home)
+
+	for _, tc := range []struct {
+		name string
+		env  string
+		want string
+	}{
+		{"unset", "", filepath.Join(home, ".kiro")},
+		{"whitespace", "   ", filepath.Join(home, ".kiro")},
+		{"relative ignored", "relative/kiro", filepath.Join(home, ".kiro")},
+		{"root ignored", filepath.VolumeName(root) + string(filepath.Separator), filepath.Join(home, ".kiro")},
+		{"equals home ignored", home, filepath.Join(home, ".kiro")},
+		{"contains home ignored", root, filepath.Join(home, ".kiro")},
+		{"valid absolute override", custom, custom},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := kiroHomeDir(func(k string) string {
+				if k == "KIRO_HOME" {
+					return tc.env
+				}
+				return ""
+			}, home)
+			if !samePath(got, tc.want) {
+				t.Errorf("kiroHomeDir(%q) = %q, want %q", tc.env, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHasKiro(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	dir := filepath.Join(home, ".kiro")
+	h := agentHome{Dir: dir, Label: "Kiro"}
+	e := Env{Home: home, LookPath: func(string) (string, error) { return "", exec.ErrNotFound }}
+
+	if e.hasKiro(h) {
+		t.Fatal("reported Kiro installed with no dir, binary or PATH entry")
+	}
+	if !(Env{Home: home, LookPath: func(name string) (string, error) {
+		if name == "kiro-cli" {
+			return "/usr/local/bin/kiro-cli", nil
+		}
+		return "", exec.ErrNotFound
+	}}).hasKiro(h) {
+		t.Error("missed kiro-cli on PATH")
+	}
+	if !e.hasKiro(agentHome{Dir: dir, Bin: "/opt/kiro-cli", Label: "Kiro"}) {
+		t.Error("missed T3 binaryPath")
+	}
+
+	winBin := filepath.Join(home, "AppData", "Local", "Kiro-Cli", "kiro-cli.exe")
+	write(t, winBin, "")
+	if !e.hasKiro(h) {
+		t.Error("missed default Windows per-user kiro-cli.exe")
+	}
+	if err := os.Remove(winBin); err != nil {
+		t.Fatal(err)
+	}
+	mustMakeDir(t, dir)
+	if !e.hasKiro(h) {
+		t.Error("missed existing ~/.kiro directory")
+	}
+}
+
+func TestRegisterAndUnregisterKiro(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	mustMakeDir(t, sb.KiroHome)
+	h := sb.defaultHome(agents[agentIndex("kiro")])
+
+	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
+	permPath := filepath.Join(sb.KiroHome, "settings", "permissions.json")
+	write(t, mcpPath, "{\n  // user server\n  \"mcpServers\": {\n    \"other\": {\"command\": \"o\", \"args\": []}\n  }\n}\n")
+
+	did, fresh, err := sb.registerKiroAt(h)
+	if err != nil || !fresh || len(did) != 2 {
+		t.Fatalf("first register: did=%q fresh=%v err=%v", did, fresh, err)
+	}
+	mcpText := read(t, mcpPath)
+	for _, want := range []string{"// user server", `"other"`, `"` + brand.MCPServer + `"`, `"--agent"`, `"kiro"`} {
+		if !strings.Contains(mcpText, want) {
+			t.Errorf("mcp.json lacks %s:\n%s", want, mcpText)
+		}
+	}
+	permText := read(t, permPath)
+	if !json.Valid([]byte(permText)) {
+		t.Fatalf("permissions.json isn't valid plain JSON:\n%s", permText)
+	}
+	for _, want := range []string{`"rules"`, `"capability": "mcp"`, `"` + kiroAllowPattern + `"`, `"effect": "allow"`} {
+		if !strings.Contains(permText, want) {
+			t.Errorf("permissions.json lacks %s:\n%s", want, permText)
+		}
+	}
+
+	// Idempotent rerun changes nothing.
+	did, fresh, err = sb.registerKiroAt(h)
+	if err != nil || fresh || len(did) != 0 || read(t, mcpPath) != mcpText || read(t, permPath) != permText {
+		t.Errorf("second register: did=%q fresh=%v err=%v", did, fresh, err)
+	}
+
+	// Repointing a moved binary updates command without marking fresh.
+	sb.Exe = filepath.Join(sb.root, "bin2", exeName("mur"))
+	did, fresh, err = sb.registerKiroAt(h)
+	if err != nil || fresh || len(did) != 1 || !strings.Contains(read(t, mcpPath), "bin2") {
+		t.Errorf("repoint register: did=%q fresh=%v err=%v\n%s", did, fresh, err, read(t, mcpPath))
+	}
+
+	// Manual removal describes both files.
+	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, mcpPath) || !strings.Contains(rem, permPath) {
+		t.Errorf("kiroRemoval = %q", rem)
+	}
+
+	// Uninstall removes both while keeping the user's other server and valid "rules": [].
+	did, _, err = sb.unregisterKiroAt(context.Background(), []agentHome{h})
+	if err != nil || len(did) != 2 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if got := read(t, mcpPath); strings.Contains(got, `"`+brand.MCPServer+`"`) || !strings.Contains(got, `"other"`) || !strings.Contains(got, "// user server") {
+		t.Errorf("mcp.json after uninstall:\n%s", got)
+	}
+	if got := read(t, permPath); strings.Contains(got, kiroAllowPattern) || !strings.Contains(got, `"rules"`) || !json.Valid([]byte(got)) {
+		t.Errorf("permissions.json after uninstall:\n%s", got)
+	}
+	if rem := kiroRemoval(sb.Env, h); rem != "" {
+		t.Errorf("kiroRemoval after uninstall = %q", rem)
+	}
+}
+
+// Because Kiro's addUserRule merges single-match rules of the same capability and effect into one
+// rule's match array, uninstall removes only murmur/* and preserves the user's other patterns.
+func TestUnregisterKiroPreservesMergedAllowPatterns(t *testing.T) {
+	h := agentHome{Dir: t.TempDir(), Label: "Kiro"}
+	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
+	write(t, permPath, "{\n  \"rules\": [\n    {\"capability\": \"mcp\", \"match\": [\"murmur/*\", \"github/*\"], \"effect\": \"allow\"},\n    {\"capability\": \"shell\", \"match\": [\"git status\"], \"effect\": \"allow\"}\n  ]\n}\n")
+
+	did, _, err := (Env{}).unregisterKiroAt(context.Background(), []agentHome{h})
+	if err != nil || len(did) != 1 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	got := read(t, permPath)
+	if strings.Contains(got, kiroAllowPattern) || !strings.Contains(got, `"github/*"`) || !strings.Contains(got, `"git status"`) || !json.Valid([]byte(got)) {
+		t.Errorf("permissions.json:\n%s", got)
+	}
+}
+
+// Kiro reads permissions.yaml instead of permissions.json when permissions.yaml exists. Join
+// still registers the MCP server, doesn't create permissions.json, and returns an approvalNote
+// unless permissions.yaml already allows murmur/*.
+func TestRegisterKiroWithPermissionsYAML(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	mustMakeDir(t, sb.KiroHome)
+	h := sb.defaultHome(agents[agentIndex("kiro")])
+	yamlPath := filepath.Join(sb.KiroHome, "settings", "permissions.yaml")
+	jsonPath := filepath.Join(sb.KiroHome, "settings", "permissions.json")
+
+	write(t, yamlPath, "rules:\n  - capability: shell\n    match:\n      - git status\n    effect: allow\n")
+	did, fresh, err := sb.registerKiroAt(h)
+	var note approvalNote
+	if !errors.As(err, &note) || !fresh || len(did) != 1 {
+		t.Fatalf("with yaml without murmur: did=%q fresh=%v err=%v", did, fresh, err)
+	}
+	if exists(jsonPath) {
+		t.Error("created permissions.json alongside permissions.yaml")
+	}
+
+	write(t, yamlPath, "rules:\n  - capability: mcp\n    match:\n      - murmur/*\n    effect: allow\n")
+	did, fresh, err = sb.registerKiroAt(h)
+	if err != nil || fresh || len(did) != 0 {
+		t.Fatalf("with yaml allowing murmur: did=%q fresh=%v err=%v", did, fresh, err)
+	}
+}
+
+func TestRegisterKiroHandlesMalformedPermissionsJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"comment", "{\n  // not plain json\n  \"rules\": []\n}\n"},
+		{"rules not a list", `{"rules": {}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := newSandbox(t, false)
+			withAgents(sb)
+			mustMakeDir(t, sb.KiroHome)
+			h := sb.defaultHome(agents[agentIndex("kiro")])
+			permPath := filepath.Join(sb.KiroHome, "settings", "permissions.json")
+			write(t, permPath, tc.body)
+
+			did, fresh, err := sb.registerKiroAt(h)
+			var note approvalNote
+			if !errors.As(err, &note) || !fresh || len(did) != 1 {
+				t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
+			}
+			if read(t, permPath) != tc.body {
+				t.Errorf("permissions.json was modified:\n%s", read(t, permPath))
+			}
+		})
+	}
+}
+
+func TestRegisterKiroExistingBroadAllowRule(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	mustMakeDir(t, sb.KiroHome)
+	h := sb.defaultHome(agents[agentIndex("kiro")])
+	permPath := filepath.Join(sb.KiroHome, "settings", "permissions.json")
+
+	// A rule with exclude doesn't cover murmur/* unambiguously, so join adds ours.
+	write(t, permPath, `{"rules": [{"capability": "mcp", "match": ["*"], "exclude": ["murmur/*"], "effect": "allow"}]}`+"\n")
+	if _, _, err := sb.registerKiroAt(h); err != nil {
+		t.Fatalf("with exclude: %v", err)
+	}
+	if strings.Count(read(t, permPath), kiroAllowPattern) != 2 {
+		t.Errorf("expected murmur/* allow rule added beside excluded rule:\n%s", read(t, permPath))
+	}
+
+	// An unconditional MCP allow rule already covers murmur/*, so join doesn't add a duplicate.
+	broad := `{"rules": [{"capability": "mcp", "match": ["*"], "effect": "allow"}]}` + "\n"
+	write(t, permPath, broad)
+	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 0 || read(t, permPath) != broad {
+		t.Errorf("broad rule: did=%q err=%v\n%s", did, err, read(t, permPath))
+	}
+}
+
+func TestUnregisterKiroContinuesAfterMalformedFile(t *testing.T) {
+	h := agentHome{Dir: t.TempDir(), Label: "Kiro"}
+	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
+	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
+	write(t, mcpPath, "{")
+	write(t, permPath, `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "allow"}]}`)
+
+	did, _, err := (Env{}).unregisterKiroAt(context.Background(), []agentHome{h})
+	if err == nil || !strings.Contains(err.Error(), mcpPath) || len(did) != 1 {
+		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if read(t, mcpPath) != "{" || strings.Contains(read(t, permPath), kiroAllowPattern) {
+		t.Errorf("did not clean valid file independently: perm=%s", read(t, permPath))
+	}
+}
+
+func TestKiroT3InstanceAndScratchIsolation(t *testing.T) {
+	sb := scratchSandbox(t)
+	real := filepath.Join(sb.root, "real")
+	sb.T3Settings = filepath.Join(sb.Home, ".t3", "userdata", "settings.json")
+	write(t, sb.T3Settings, `{
+  "providerInstances": {
+    "kiro_off": {"driver": "kiro", "displayName": "Kiro Off"},
+    "kiro_on": {"driver": "kiro", "displayName": "Kiro On", "enabled": true,
+      "environment": [{"name": "KIRO_HOME", "value": "`+filepath.ToSlash(filepath.Join(real, "kiro-ext"))+`"}]}
+  }
+}`)
+	byAgent, notes := sb.homes()
+	note := strings.Join(notes, "\n")
+	if !strings.Contains(note, `Kiro as T3 Code's "Kiro Off" is turned off`) {
+		t.Errorf("kiro should default to off in T3:\n%s", note)
+	}
+	if !strings.Contains(note, "Kiro (Kiro On in T3 Code)") || !strings.Contains(note, sb.T3Settings) {
+		t.Errorf("scratch isolation should leave external T3 Kiro home alone:\n%s", note)
+	}
+	for _, h := range byAgent[agentIndex("kiro")] {
+		if h.Dir != "" && strings.HasPrefix(h.Dir, real) {
+			t.Errorf("external Kiro home was not filtered: %+v", h)
+		}
+	}
+}

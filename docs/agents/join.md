@@ -27,12 +27,13 @@ joining does:
   If the user wants updates off, set the git config before joining. Checksums detect corruption;
   release signing is still planned (#193).
 - Murmur is added to the settings of each coding agent your user has installed (Claude Code,
-  Codex, OpenCode, Muse Code, Pi, Grok, Antigravity), once for the user, not once per repo, and to every other
+  Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Kiro), once for the user, not once per repo, and to every other
   account of them that T3 Code runs (a second Claude Code with its own home, say). Its tools are
   approved so they run without asking each time where the agent has a setting for that
   (`mcp__murmur` in Claude Code's allowed permissions; `default_tools_approval_mode = "approve"` in
   Codex; a `murmur_*` allow rule in OpenCode; `MCPTool(murmur__*)` in Grok; `mcp(murmur/*)` in
-  Antigravity's `permissions.allow`); Muse and Pi have none,
+  Antigravity's `permissions.allow`; a `murmur/*` MCP allow rule in Kiro's `permissions.json` when
+  no `permissions.yaml` is present); Muse and Pi have none,
   and ask in T3 unless the thread runs in full-access mode. For Pi it is a small extension file of
   Murmur's in Pi's extensions folder, which in a joined repo also brings messages into the
   session. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi and

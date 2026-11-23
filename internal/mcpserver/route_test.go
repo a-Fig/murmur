@@ -47,8 +47,8 @@ func TestHeadlessT3IsFound(t *testing.T) {
 	t.Setenv(threadEnv, "thread-1")
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
 	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
-	t.Cleanup(func() { servingT3 = func() (string, bool) { return "", false } })
-	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	t.Cleanup(func() { servingT3 = func(string) (string, bool) { return "", false } })
+	servingT3 = func(string) (string, bool) { return "/home/u/.local/bin/t3", true }
 	h := helloFor("claude-code", "/work")
 	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-1",
 		MsgSocket: "/tmp/claude.sock", MsgToken: "tok-1"}); h.Route != want {
@@ -58,14 +58,14 @@ func TestHeadlessT3IsFound(t *testing.T) {
 		t.Errorf("hello %+v: want it registered by its thread, as in T3", h)
 	}
 
-	servingT3 = func() (string, bool) { return "", true }
+	servingT3 = func(string) (string, bool) { return "", true }
 	h = helloFor("claude-code", "/work")
 	if h.Route.MsgSocket != "" || h.Route.T3CLI != "" || h.ByThread || h.Agent != "claude-code" {
 		t.Errorf("with no t3 to be found: %+v, want no socket, no T3 command line, and not by its thread", h)
 	}
 
 	// Only Claude Code's thread is looked for: another agent with the variable keeps its own route.
-	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	servingT3 = func(string) (string, bool) { return "/home/u/.local/bin/t3", true }
 	t.Setenv("MURMUR_PI_MESSAGING_SOCKET", "/tmp/pi.sock")
 	t.Setenv("MURMUR_PI_MESSAGING_TOKEN", "tok-2")
 	if h := helloFor("pi", "/work"); h.Route.T3CLI != "" || h.Route.MsgSocket != "/tmp/pi.sock" || h.Agent != "pi" {
@@ -73,8 +73,8 @@ func TestHeadlessT3IsFound(t *testing.T) {
 	}
 
 	// A claude run from the thread's shell isn't the thread: it keeps its own socket, and isn't T3's.
-	agentAbove = func() bool { return true }
-	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
 	if h := helloFor("claude-code", "/work"); h.Route.MsgSocket != "/tmp/claude.sock" || h.Route.T3CLI != "" || h.ByThread {
 		t.Errorf("under the thread's agent: %+v", h)
 	}
@@ -90,8 +90,8 @@ func TestHeadlessT3AntigravityIsFound(t *testing.T) {
 	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
 	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
-	t.Cleanup(func() { servingT3 = func() (string, bool) { return "", false } })
-	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
+	t.Cleanup(func() { servingT3 = func(string) (string, bool) { return "", false } })
+	servingT3 = func(string) (string, bool) { return "/home/u/.local/bin/t3", true }
 	h := helloFor("antigravity", "/work")
 	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-agy-1"}); h.Route != want {
 		t.Errorf("route %+v, want %+v", h.Route, want)
@@ -100,22 +100,54 @@ func TestHeadlessT3AntigravityIsFound(t *testing.T) {
 		t.Errorf("hello %+v: want registered by thread as antigravity in T3", h)
 	}
 
-	servingT3 = func() (string, bool) { return "", true }
+	servingT3 = func(string) (string, bool) { return "", true }
 	h = helloFor("antigravity", "/work")
 	if h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.Route.MsgSocket != "" || h.ByThread || h.Agent != "antigravity" {
 		t.Errorf("with no t3 found: %+v", h)
 	}
 
-	servingT3 = func() (string, bool) { return "", false }
+	servingT3 = func(string) (string, bool) { return "", false }
 	h = helloFor("antigravity", "/work")
 	if h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.ByThread || h.Agent != "antigravity" {
 		t.Errorf("under another parent (tmux/editor): %+v", h)
 	}
 
-	servingT3 = func() (string, bool) { return "/home/u/.local/bin/t3", true }
-	agentAbove = func() bool { return true }
-	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	servingT3 = func(string) (string, bool) { return "/home/u/.local/bin/t3", true }
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
 	if h := helloFor("antigravity", "/work"); h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.ByThread || h.Agent != "antigravity" {
+		t.Errorf("under another agent: %+v", h)
+	}
+}
+
+// Kiro under T3's headless server (`t3 serve`) has T3CODE_THREAD_ID and T3CODE_HOME without
+// T3CODE_CLI_PATH (#908): it finds the serving `t3` like Claude Code and Antigravity do.
+func TestHeadlessT3KiroIsFound(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	t.Setenv(threadEnv, "thread-kiro-1")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
+	t.Cleanup(func() { servingT3 = func(string) (string, bool) { return "", false } })
+	servingT3 = func(string) (string, bool) { return "/home/u/.local/bin/t3", true }
+	h := helloFor("kiro", "/work")
+	if want := (proto.Route{T3CLI: "/home/u/.local/bin/t3", T3Home: "/home/u/.t3", T3Thread: "thread-kiro-1"}); h.Route != want {
+		t.Errorf("route %+v, want %+v", h.Route, want)
+	}
+	if !h.ByThread || h.ID != threadID("thread-kiro-1") || h.Agent != "kiro in T3" {
+		t.Errorf("hello %+v: want registered by thread as kiro in T3", h)
+	}
+
+	servingT3 = func(string) (string, bool) { return "", false }
+	h = helloFor("kiro", "/work")
+	if h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.ByThread || h.Agent != "kiro" {
+		t.Errorf("under another parent: %+v", h)
+	}
+
+	servingT3 = func(string) (string, bool) { return "/home/u/.local/bin/t3", true }
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
+	if h := helloFor("kiro", "/work"); h.Route.T3CLI != "" || h.Route.T3Thread != "" || h.ByThread || h.Agent != "kiro" {
 		t.Errorf("under another agent: %+v", h)
 	}
 }
@@ -383,13 +415,13 @@ func TestHeadlessT3CodexIsFound(t *testing.T) {
 		t.Errorf("a codex t3 doesn't run: %+v", h)
 	}
 
-	agentAbove = func() bool { return true }
-	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
 	asked, codexT3 = false, found
 	if h := helloFor("codex", "/work"); h.Route.T3CLI != "" || h.Agent != "codex" || asked {
 		t.Errorf("a codex under the thread's codex: %+v, looked for t3: %v", h, asked)
 	}
-	agentAbove = func() bool { return false }
+	agentAbove = func(string) bool { return false }
 
 	t.Setenv("T3CODE_HOME", "")
 	asked = false

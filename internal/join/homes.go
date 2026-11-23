@@ -72,6 +72,10 @@ var agents = []agent{
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerAntigravityAt(h) },
 		removal:    antigravityRemoval,
 		unregister: Env.unregisterAntigravityAt},
+	{driver: "kiro", label: "Kiro", t3Var: "KIRO_HOME",
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerKiroAt(h) },
+		removal:    kiroRemoval,
+		unregister: Env.unregisterKiroAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -93,6 +97,8 @@ func (e Env) defaultHome(a agent) agentHome {
 		h.Dir = e.GrokHome
 	case "antigravity":
 		h.Dir = e.GeminiHome
+	case "kiro":
+		h.Dir = e.KiroHome
 	}
 	return h
 }
@@ -143,6 +149,7 @@ var userDefault = map[string][]string{
 	"muse":     {".config", "muse"},
 	"pi":       {".pi", "agent"},
 	"grok":     {".grok"},
+	"kiro":     {".kiro"},
 }
 
 // homes lists, for each agent, every configuration join registers in: the default first, then the

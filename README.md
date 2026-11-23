@@ -27,7 +27,7 @@ repo's own git remote: no server, no accounts.
 
 Same agents, same speed, and the repo stays coherent.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok and Antigravity**, in
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity and Kiro**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Install
@@ -100,6 +100,8 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 | Grok (beta)             | a terminal            | inbox     | notice after its next tool call        |
 | Antigravity (beta)      | T3 Code               | turn      | notice after its next tool call        |
 | Antigravity (beta)      | a terminal            | inbox     | notice after its next tool call        |
+| Kiro (beta)             | T3 Code               | turn      | waits for the turn to end, then a turn |
+| Kiro (beta)             | a terminal            | inbox     | inbox                                  |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (beta)       | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
@@ -113,7 +115,7 @@ idle less than its wake setting allows (5 minutes by default). A **notice** is o
 sender and subject, added after the agent's next tool call; the agent reads the message with
 `inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
-used one of Murmur's tools. An agent Murmur has no tools for, such as Kiro in T3 Code, runs
+used one of Murmur's tools. An agent Murmur has no tools for in T3 Code runs
 `mur who` and `mur send` in its thread's shell instead.
 
 ## For humans

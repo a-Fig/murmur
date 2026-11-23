@@ -15,6 +15,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 | Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
+| Kiro | `mcpServers.murmur` in `settings/mcp.json` in `$KIRO_HOME` (`~/.kiro`), and a `murmur/*` MCP allow rule in `settings/permissions.json` when `settings/permissions.yaml` is absent | One `kiro-cli` -> `node` (`acp-server.js`) per session; `T3CODE_THREAD_ID` in T3 | `T3CODE_THREAD_ID` (Kiro CLI 3.4.0 V3, read 2026-11-22) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older

@@ -166,7 +166,7 @@ func (s *server) initHere() {
 		claude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
 	thread := os.Getenv(t3.ThreadEnv)
-	if thread != "" && agentAbove() {
+	if thread != "" && agentAbove(s.opt.Agent) {
 		thread = "" // A client started by another agent may inherit its thread ID.
 	}
 	s.hereDir = dir
@@ -312,9 +312,9 @@ const threadEnv = t3.ThreadEnv
 // whose parent may have exited and its PID gone to anything since. A variable, for tests: their
 // own process runs under whatever agent started them. An agent run through a program the walk
 // stops at isn't seen; on one daemon the thread's address being in use catches it.
-var agentAbove = func() bool {
+var agentAbove = func(agent string) bool {
 	pids := proc.Ancestors(os.Getppid(), 10)
-	return agentInChain(len(pids), func(i int) (exe, comm string, ok bool) {
+	return agentInChainFor(agent, len(pids), func(i int) (exe, comm string, ok bool) {
 		exe, err := proc.Exe(pids[i])
 		return exe, commOf(pids[i]), err == nil
 	})
@@ -323,7 +323,22 @@ var agentAbove = func() bool {
 // agentInChain is agentAbove's walk over n processes, the client first, each read by at: its
 // program's path, its comm (or ""), and whether it could be read. The client itself is skipped.
 func agentInChain(n int, at func(i int) (exe, comm string, ok bool)) bool {
-	for i := min(1, n); i < n; i++ {
+	return agentInChainFor("", n, at)
+}
+
+// agentInChainFor is agentInChain for agent's MCP server. Kiro CLI 3.4.0 runs its V3 engine in
+// node (acp-server.js) under kiro-cli, and node spawns stdio MCP servers directly; for
+// agent == "kiro", that kiro-cli parent of node is the client itself, not an enclosing agent.
+func agentInChainFor(agent string, n int, at func(i int) (exe, comm string, ok bool)) bool {
+	start := min(1, n)
+	if agent == "kiro" && n >= 2 {
+		exe0, _, ok0 := at(0)
+		exe1, comm1, ok1 := at(1)
+		if ok0 && ok1 && programName(exe0) == "node" && (programName(exe1) == "kiro-cli" || comm1 == "kiro-cli") {
+			start = 2
+		}
+	}
+	for i := start; i < n; i++ {
 		exe, comm, ok := at(i)
 		if !ok {
 			return false
@@ -346,8 +361,10 @@ func agentInChain(n int, at func(i int) (exe, comm string, ok bool)) bool {
 // and so the name the walk would read, hasn't been seen; localharness_external, a native program
 // there too, is reached first. Release 1.5.13 runs directly as agy (seen on Windows, 2026-11-20,
 // #889: powershell.exe under agy.exe under T3), so agy is listed too alongside the 1.4.5 names.
+// Kiro CLI 3.4.0 runs as kiro-cli (which launches node acp-server.js, seen on Windows 2026-11-22).
 var agentPrograms = map[string]bool{"claude": true, "codex": true, "grok": true, "muse": true,
-	"opencode": true, "pi": true, "gemini": true, "agy": true, "agy_acp_server": true, "localharness_external": true}
+	"opencode": true, "pi": true, "gemini": true, "agy": true, "agy_acp_server": true, "localharness_external": true,
+	"kiro-cli": true}
 
 // passThrough are the programs between an agent and a claude it runs that agentAbove looks past:
 // shells, and what runs a command for one.
@@ -388,9 +405,11 @@ func threadID(thread string) string { return nativeID("t3:" + thread) }
 func isClaude(agent string) bool { return agent == "" || agent == "claude-code" }
 
 // takesThreadEnv says whether agent's MCP server may take its T3 thread from threadEnv: Claude
-// Code (#642) and Antigravity (#886), each of which runs one server per thread and passes T3's
-// environment on to it.
-func takesThreadEnv(agent string) bool { return isClaude(agent) || agent == "antigravity" }
+// Code (#642), Antigravity (#886) and Kiro (#908), each of which runs one server per thread and
+// passes T3's environment on to it.
+func takesThreadEnv(agent string) bool {
+	return isClaude(agent) || agent == "antigravity" || agent == "kiro"
+}
 
 // nativeEnv names, for each agent that has one, the variable its MCP servers get the session's own
 // ID in: the ID T3 Code keeps for the thread's provider session, and so how the thread is found.
@@ -469,12 +488,12 @@ type t3Seen struct {
 // only a t3 that runs Codex itself, for the walk can stop short of that codex, at a tmux, say.
 func t3Of(agent string) t3Seen {
 	seen := t3Seen{cli: os.Getenv("T3CODE_CLI_PATH")}
-	seen.thread = takesThreadEnv(agent) && os.Getenv(threadEnv) != "" && !agentAbove()
+	seen.thread = takesThreadEnv(agent) && os.Getenv(threadEnv) != "" && !agentAbove(agent)
 	switch {
 	case seen.cli != "":
 	case seen.thread:
-		seen.cli, seen.thread = servingT3()
-	case agent == "codex" && os.Getenv("T3CODE_HOME") != "" && !agentAbove():
+		seen.cli, seen.thread = servingT3(agent)
+	case agent == "codex" && os.Getenv("T3CODE_HOME") != "" && !agentAbove(agent):
 		seen.cli = codexT3()
 	}
 	return seen
@@ -482,13 +501,31 @@ func t3Of(agent string) t3Seen {
 
 // servingT3 is the `t3` that runs the client (the server's parent), as t3Of finds it, and whether
 // the client is the thread at all. A variable, so that tests needn't have T3.
-var servingT3 = func() (cli string, thread bool) {
-	parent, read := "", false
-	if pids := proc.Ancestors(os.Getppid(), 2); len(pids) == 2 {
-		exe, err := proc.Exe(pids[1])
-		parent, read = exe, err == nil
-	}
+var servingT3 = func(agent string) (cli string, thread bool) {
+	pids := proc.Ancestors(os.Getppid(), 3)
+	parent, read := servingT3Parent(agent, len(pids), func(i int) (exe, comm string, ok bool) {
+		exe, err := proc.Exe(pids[i])
+		return exe, commOf(pids[i]), err == nil
+	})
 	return t3.Serving(parent, read, exec.LookPath)
+}
+
+// servingT3Parent picks the process above the client that T3 would be, skipping kiro-cli when
+// Kiro's V3 node engine (acp-server.js) sits directly under kiro-cli.
+func servingT3Parent(agent string, n int, at func(i int) (exe, comm string, ok bool)) (parent string, read bool) {
+	idx := 1
+	if agent == "kiro" && n >= 3 {
+		exe0, _, ok0 := at(0)
+		exe1, comm1, ok1 := at(1)
+		if ok0 && ok1 && programName(exe0) == "node" && (programName(exe1) == "kiro-cli" || comm1 == "kiro-cli") {
+			idx = 2
+		}
+	}
+	if n <= idx {
+		return "", false
+	}
+	exe, _, ok := at(idx)
+	return exe, ok
 }
 
 // codexT3 is the `t3` that runs Codex, the server's parent: Codex's own parent, only if it is t3,
