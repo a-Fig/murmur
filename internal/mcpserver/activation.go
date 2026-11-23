@@ -4,11 +4,16 @@
 //
 //   - Serve gives Instructions only if join.Place.Joined holds at initialize, and runs sync, which
 //     turns the server on (activate) only while Joined holds, looked at every Options.Poll.
-//   - activate is the one place tools are added and a link to the daemon is made. deactivate takes
-//     both away on a leave or a move.
+//   - activate is the one place tools are added. It makes the session's link to the daemon, or, for
+//     a shared server, sets s.links, without which sessionLinkFor makes none. deactivate takes all
+//     of it away on a leave or a move.
 //   - The client activate makes may start a daemon only while Joined holds (client.Client.MaySpawn).
 //   - A leave can come between two looks, so link.run asks again before every hello (link.allowed),
-//     and callOn before every request (handlers.go).
+//     and callOn before each tool call's request (calls.go). Route updates don't pass through
+//     callOn: tellRoute and sendRoute, from a tool call's _meta (noteMeta, learnNative), from
+//     classifyFirst's retry, which runs before callOn's check, and from the seek. Those rely on the
+//     daemon, which checks the consent itself on every request but stop and ping
+//     (docs/design/joining.md).
 //   - The server never writes to the bus: refs are the daemon's, and an off server reaches none.
 //
 // Two things run in every repo, both in the user's own directories and outside any repo: the
