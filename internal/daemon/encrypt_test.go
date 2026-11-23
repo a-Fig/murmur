@@ -475,6 +475,13 @@ func TestLostKeysTakeANewDevice(t *testing.T) {
 		_, sealed := sealedCopy(filepath.Dir(a.gitDir), second)
 		return sealed
 	})
+	// A few heartbeats on, when the copy is no longer the newest presence: it is written once a
+	// run, and is sealed all the same (#1002).
+	ref := "refs/murmur/presence/" + second
+	for range 3 {
+		was := git(t, remote, "rev-parse", ref)
+		eventually(t, "a's next heartbeat", func() bool { return gitOK(remote, "rev-parse", ref) != was })
+	}
 	a.stop()
 	for _, f := range []string{"keys", "state.json"} {
 		if err := os.Remove(filepath.Join(stateDir, f)); err != nil {

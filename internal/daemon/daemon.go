@@ -714,6 +714,9 @@ type Daemon struct {
 	// colorSettled says a full sync has checked this device's picked colour against its peers',
 	// so its presence may carry it (color.go).
 	colorSettled bool
+	// presenceCopied says the clone's own copy of this device's presence ref holds a presence of
+	// this run, so later ones needn't be written to it (publishPresence).
+	presenceCopied bool
 }
 
 type session struct {

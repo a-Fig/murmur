@@ -252,9 +252,15 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	polled := time.Now()
 	wall := polled.Round(0)
 	d.mu.Lock()
+	own := d.presenceRef()
 	for _, ref := range changed {
 		if failed[ref] == nil {
 			d.known[ref] = remote[ref]
+			if ref == own {
+				// The fetch set the clone's copy to what the remote had, which may be junk
+				// pushed over this device's presence: the next presence writes it again.
+				d.presenceCopied = false
+			}
 		}
 	}
 	d.mu.Unlock()
@@ -2077,14 +2083,27 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
 		return err
 	}
-	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
-	// updatePeer skips this device's own presence, so the fetch would read nothing.
-	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
-		d.log.Printf("updating local %s: %v", ref, err)
-	}
+	// Known at once, so the next poll doesn't fetch it back: updatePeer skips this device's own
+	// presence, so the fetch would read nothing.
 	d.mu.Lock()
 	d.known[ref] = sha
+	copied := d.presenceCopied
 	d.mu.Unlock()
+	// The clone's own copy of the ref is written once a run, with the first presence to land, and
+	// again after a fetch has set it to whatever the remote had. Nothing reads it for what it
+	// says: loadIdentity asks only whether it is sealed by this device, to tell that a clone whose
+	// keys and state are both lost had published keys. Every presence is sealed, with keys that
+	// don't change in a run, so any one of them answers that, and a git for every heartbeat was a
+	// third of what a heartbeat costs (#1002).
+	if !copied {
+		if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+			d.log.Printf("updating local %s: %v", ref, err)
+		} else {
+			d.mu.Lock()
+			d.presenceCopied = true
+			d.mu.Unlock()
+		}
+	}
 	return nil
 }
 
