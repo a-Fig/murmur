@@ -45,7 +45,7 @@ While you're working, Murmur doesn't interrupt you with a turn. Where its hook r
 In a T3 Code thread of an agent Murmur has no tools for (fx, an agent from the ACP registry), run these in your shell, in the repo. They work once this clone has joined, and they act as your thread's session, which keeps its name and gets messages as turns:
 
 - `mur who [TAG...]`, as `who`.
-- `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. A message to you ends with the command to answer it.
+- `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. It can't send `files` or ask for `tell_me`; those are the `send` tool's only. A message to you ends with the command to answer it.
 - `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
 - `mur lookup NAME [--messages N]`, as `lookup`: NAME is a name from `who`, and N is how many of its latest messages to show (10 if not given, at most 50).
 - `mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]`, as `tags`: each takes tags (or names) separated by commas, and alone it lists yours. `--for` puts `group:` tags on those sessions, not on you unless you list your own name too.
