@@ -242,6 +242,33 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Fatalf("retry register after transient hook failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
 	}
 
+	// Switching between two renamed binaries (mur-dev -> mur-preview) also preserves mur-dev in
+	// mcp.json if the hook write fails, so a retry after the failure clears still succeeds.
+	sb.Exe = devExe
+	if _, _, err := sb.registerKiroAt(h); err != nil {
+		t.Fatalf("re-register dev 4: %v", err)
+	}
+	origHook = read(t, hookPath)
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	mustMakeDir(t, hookPath)
+	previewExe := filepath.Join(sb.root, "preview", exeName("mur-preview"))
+	sb.Exe = previewExe
+	if _, _, err := sb.registerKiroAt(h); err == nil {
+		t.Fatal("expected preview register failure while hookPath is blocked")
+	}
+	if got := kiroRegisteredExe(h); got != devExe {
+		t.Fatalf("mcp.json lost mur-dev on failed preview hook update: got %q, want %q", got, devExe)
+	}
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	write(t, hookPath, origHook)
+	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 2 || !strings.Contains(read(t, hookPath), "mur-preview") {
+		t.Fatalf("retry preview register: did=%q err=%v\n%s", did, err, read(t, hookPath))
+	}
+
 	// Reverse failure: if updating settings/mcp.json fails (malformed JSON) during a fresh
 	// renamed-binary join, mcp.json is checked before writing the hook so no hook is stranded.
 	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
@@ -257,19 +284,21 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Error("failed mcp.json write stranded a newly created renamed-binary hook")
 	}
 
-	// Ambiguous 8.3 short-path prefixes and case-differing nonexistent paths must NOT be claimed
-	// as owned without matching filesystem identity.
+	// Ambiguous 8.3 short-path prefixes, case-differing nonexistent paths (properly quoted so they
+	// reach sameKiroExe), and uncleaned `link/../` paths must NOT be claimed without matching
+	// filesystem identity.
 	for _, otherCmd := range []string{
 		`C:\MYAPPL~1\mur-dev.exe hook kiro`,
 		`C:\OTHER~1\mur-dev.exe hook kiro`,
-		`C:\My Application Tools\MUR-DEV.EXE hook kiro`,
+		`"C:\My Application Tools\MUR-DEV.EXE" hook kiro`,
 		`C:\dir\tool.x~1 hook kiro`,
+		`'/opt/murmur/link/../mur-dev' hook kiro`,
 	} {
 		hDoc, err := kiroHooks(otherCmd)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if isKiroHookFileFor(hDoc, `C:\My Application Tools\mur-dev.exe`, `C:\dir\other.x~1`) {
+		if isKiroHookFileFor(hDoc, `C:\My Application Tools\mur-dev.exe`, `C:\dir\other.x~1`, `/opt/murmur/mur-dev`) {
 			t.Errorf("isKiroHookFileFor falsely matched ambiguous %q", otherCmd)
 		}
 	}
@@ -806,7 +835,7 @@ func TestCmdQuotePathEscapesPercent(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, cmd := range []string{
-				cmdHookCommand(exeCopy, " cmd.exe", "", ""),
+				cmdHookCommand(exeCopy, " cmd.exe", "", "", false),
 				cmdQuotePath(exeCopy) + " cmd.exe",
 			} {
 				out, err := kiroShellCmd(cmd).Output()

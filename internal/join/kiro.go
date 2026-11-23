@@ -134,12 +134,11 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	var hookDid []string
 	var hookErr error
-	// When replacing a renamed binary's hook with standard mur, update the hook before mcp.json so
-	// a failed hook write preserves the renamed binary in mcp.json for retry, while a succeeded
-	// hook write already targets standard mur (recognized even if mcp.json fails next). Otherwise
-	// update mcp.json first so a malformed or locked mcp.json never creates a renamed-binary hook
-	// without a matching mcp.json entry.
-	hookFirst := prevExe != "" && !isMurBinary(prevExe) && isMurBinary(e.Exe)
+	// When replacing a renamed binary's hook with a different binary (standard mur or another
+	// renamed binary), update the hook before mcp.json so a failed hook write preserves the old
+	// renamed binary in mcp.json for retry/uninstall. Otherwise update mcp.json first so a
+	// malformed or locked mcp.json never creates a renamed-binary hook without a matching entry.
+	hookFirst := prevExe != "" && !isMurBinary(prevExe) && prevExe != e.Exe
 	if hookFirst {
 		hookDid, hookErr = e.installKiroHook(h, prevExe)
 		did = append(did, hookDid...)

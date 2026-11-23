@@ -254,15 +254,17 @@ func antigravityHook(exe string) *jsonedit.Object {
 func antigravityHookCommand(exe, event string) string {
 	args := " hook --event " + event + " antigravity"
 	if event == "PreToolUse" {
-		return cmdHookCommand(exe, args, `echo {"decision":"allow"}`, `printf '{"decision":"allow"}\n'`)
+		return cmdHookCommand(exe, args, `echo {"decision":"allow"}`, `printf '{"decision":"allow"}\n'`, true)
 	}
-	return cmdHookCommand(exe, args, "", "")
+	return cmdHookCommand(exe, args, "", "", true)
 }
 
 // cmdHookCommand formats a hook command line for agents that run command hooks via cmd.exe on
 // Windows (such as Antigravity and Node's child_process.spawn(..., {shell: true}) in Kiro) and
 // sh elsewhere. When winFallback / unixFallback are non-empty, they are appended after ` || `.
-func cmdHookCommand(exe, args, winFallback, unixFallback string) string {
+// When preferShort is true on Windows, an existing 8.3 short path is preferred over quoting; Kiro
+// passes false so hooks/murmur.json stores the exact executable path recorded in settings/mcp.json.
+func cmdHookCommand(exe, args, winFallback, unixFallback string, preferShort bool) string {
 	if runtime.GOOS == "windows" {
 		if winFallback != "" {
 			args += " || " + winFallback
@@ -270,8 +272,10 @@ func cmdHookCommand(exe, args, winFallback, unixFallback string) string {
 		if bareSafe(exe) {
 			return exe + args
 		}
-		if short := shortPath(exe); bareSafe(short) {
-			return short + args
+		if preferShort {
+			if short := shortPath(exe); bareSafe(short) {
+				return short + args
+			}
 		}
 		quoted := cmdQuotePath(exe)
 		if winFallback != "" && strings.HasPrefix(quoted, `"`) {

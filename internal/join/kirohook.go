@@ -51,7 +51,9 @@ type kiroHookAction struct {
 }
 
 // kiroHookCommand formats the command line Kiro runs via cmd.exe on Windows and sh elsewhere.
-func kiroHookCommand(exe string) string { return cmdHookCommand(exe, " hook kiro", "", "") }
+// It preserves exe verbatim (without 8.3 shortPath substitution) so hooks/murmur.json always
+// records the same path as settings/mcp.json even if the install directory is later moved.
+func kiroHookCommand(exe string) string { return cmdHookCommand(exe, " hook kiro", "", "", false) }
 
 // kiroHooks is the JSON content of join's ~/.kiro/hooks/murmur.json running command.
 func kiroHooks(command string) ([]byte, error) {
@@ -182,12 +184,11 @@ func parseKiroHookCommand(cmd string) (string, bool) {
 	return exe, true
 }
 
-// sameKiroExe says hookExe and regExe refer to the same executable: either the exact same cleaned
-// path string, or both exist on disk and refer to the same file (handling e.g. Windows 8.3 short
-// paths and case-insensitive volumes while respecting distinct case-differing files on
-// case-sensitive filesystems).
+// sameKiroExe says hookExe and regExe refer to the same executable: either the exact same path
+// string (without cleaning `..` segments that could traverse a symlink), or both exist on disk
+// and refer to the same file via os.SameFile.
 func sameKiroExe(hookExe, regExe string) bool {
-	if filepath.Clean(hookExe) == filepath.Clean(regExe) {
+	if hookExe == regExe {
 		return true
 	}
 	fiA, errA := os.Stat(hookExe)
@@ -197,7 +198,9 @@ func sameKiroExe(hookExe, regExe string) bool {
 
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
 // entry (such as a live or dangling symlink) or a customized file is left alone with an error,
-// matching removeOwned's ownership rules.
+// matching removeOwned's ownership rules. It writes via writeOwnedFile (which renames directly at
+// path without resolving a leaf symlink) so a concurrently introduced symlink target is never
+// overwritten.
 func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
@@ -221,10 +224,42 @@ func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err err
 	} else if !errors.Is(lerr, os.ErrNotExist) {
 		return nil, fmt.Errorf("%s: %w", path, lerr)
 	}
-	if err := writeAtomic(path, want, 0o644); err != nil {
+	if err := writeOwnedFile(path, want, 0o644); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
+}
+
+// writeOwnedFile atomically replaces path without following a symlink at path itself (unlike
+// writeAtomic, which intentionally writes through user config symlinks).
+func writeOwnedFile(path string, data []byte, perm os.FileMode) error {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+		perm = fi.Mode().Perm()
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".murmurtmp*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, perm)
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
 // removeKiroHook removes join's hook file from Kiro home h via removeOwned, leaving a symlink or
