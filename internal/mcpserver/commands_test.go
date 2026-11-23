@@ -115,6 +115,25 @@ func TestALookupCommandAsksForTheSession(t *testing.T) {
 	}
 }
 
+// mur tags changes the thread's session's tags as the tags tool does, and prints the tool's answer
+// (#1120).
+func TestATagsCommandChangesTheSessionsTags(t *testing.T) {
+	f := &fakeDaemon{}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "tags", []string{"--add", "reviewing,group:ui", "--remove", "old"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	h := f.lastHello()
+	got := f.requestsOf(proto.OpTags)
+	if len(got) != 1 || got[0].Session != h.ID || !slices.Equal(got[0].Add, []string{"reviewing", "group:ui"}) || !slices.Equal(got[0].Remove, []string{"old"}) {
+		t.Errorf("requests %+v, want one tags request as %s", got, h.ID)
+	}
+	if out.String() != view.Tags(proto.Response{}) {
+		t.Errorf("printed %q", out.String())
+	}
+}
+
 func TestCommandRequests(t *testing.T) {
 	long := strings.Repeat("word ", 60) + "end"
 	for _, c := range []struct {
@@ -139,6 +158,14 @@ func TestCommandRequests(t *testing.T) {
 		{"lookup", []string{"a", "--messages", "0"}, "", proto.Request{}, true},
 		{"lookup", []string{"a", "--messages", "1", "--messages", "2"}, "", proto.Request{}, true},
 		{"lookup", []string{"a", "--nope"}, "", proto.Request{}, true},
+		{"tags", nil, "", proto.Request{Op: proto.OpTags}, false},
+		{"tags", []string{"--add", "reviewing"}, "", proto.Request{Op: proto.OpTags, Add: []string{"reviewing"}}, false},
+		{"tags", []string{"--add", "a,b", "--add=c", "--remove", "d"}, "", proto.Request{Op: proto.OpTags, Add: []string{"a", "b", "c"}, Remove: []string{"d"}}, false},
+		{"tags", []string{"--add", "group:ui", "--for", "quiet-otter,brisk-finch"}, "", proto.Request{Op: proto.OpTags, Add: []string{"group:ui"}, For: []string{"quiet-otter", "brisk-finch"}}, false},
+		{"tags", []string{"-add", `["a","b"]`}, "", proto.Request{Op: proto.OpTags, Add: []string{"a", "b"}}, false},
+		{"tags", []string{"reviewing"}, "", proto.Request{}, true},
+		{"tags", []string{"--add"}, "", proto.Request{}, true},
+		{"tags", []string{"--nope", "x"}, "", proto.Request{}, true},
 		// The new form: one text, its subject made from it (#1027).
 		{"send", []string{"a"}, "", proto.Request{}, true},
 		{"send", []string{"a,b", "short"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "short"}, false},
@@ -169,7 +196,7 @@ func TestCommandRequests(t *testing.T) {
 			continue
 		}
 		if !c.bad && (got.Op != c.want.Op || got.Doing != c.want.Doing || got.To != c.want.To || got.Subject != c.want.Subject ||
-			got.Body != c.want.Body || got.Name != c.want.Name || got.Limit != c.want.Limit || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
+			got.Body != c.want.Body || got.Name != c.want.Name || got.Limit != c.want.Limit || !slices.Equal(got.Add, c.want.Add) || !slices.Equal(got.Remove, c.want.Remove) || !slices.Equal(got.For, c.want.For) || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
 			t.Errorf("%s %q: %+v, want %+v", c.name, c.args, got, c.want)
 		}
 	}
