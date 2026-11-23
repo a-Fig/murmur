@@ -560,3 +560,41 @@ func TestSettlePendingOnKeepsUncheckedOnCanceledContext(t *testing.T) {
 		t.Errorf("settled=%v len=%d, want unchecked send preserved", settled, len(d.pendSends))
 	}
 }
+
+// When reconciliation fails repeatedly on a rejected retry, retryPending still honors PendingGiveUp
+// once the give-up deadline has elapsed rather than leaving sends pending forever (#1073).
+func TestRejectedRetryGivesUpPastDeadlineWhenReconcileFails(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingPush: 200 * time.Millisecond, PendingGiveUp: 50 * time.Millisecond}, false)
+	ctx := context.Background()
+	tip := d.sendFirst(t)
+	ref := d.meshRef()
+	// Advance remote so overRemoteTip succeeds with over=false.
+	c, err := d.repo.NewCommit(ctx, tip, "remote advance\n")
+	if err != nil {
+		t.Fatalf("NewCommit: %v", err)
+	}
+	if err := d.repo.Push(ctx, c, ref, bus.FastForward, ""); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	// Put a bogus sha in pendSends so IsAncestor fails in settlePendingOn, and set pendFrom past
+	// PendingGiveUp so retryPending must give it up instead of returning early forever.
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.testPush = func(func() error) error { return bus.ErrRejected }
+	d.pendBase = tip
+	d.pendFrom = time.Now().Add(-time.Second)
+	var settled bool
+	var gotLanded bool
+	d.pendSends = []pendingSend{{
+		sha: "not-a-valid-object-name",
+		settle: func(landed, _ bool, _ error) {
+			settled = true
+			gotLanded = landed
+		},
+	}}
+	d.retryPending()
+	if !settled || gotLanded || len(d.pendSends) != 0 {
+		t.Errorf("settled=%v landed=%v remaining=%d, want given up", settled, gotLanded, len(d.pendSends))
+	}
+}

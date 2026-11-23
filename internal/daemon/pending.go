@@ -182,12 +182,15 @@ func (d *Daemon) retryPending() {
 		d.ownLanded(ctx, ref, sha, false)
 		return
 	}
+	looked := false
 	if errors.Is(err, bus.ErrRejected) {
 		// The remote's tip isn't under this one: an older copy of the log, or junk, to push over,
 		// as appendEventIf does; or a log that went on without the pending sends. Give this look
 		// its own time (pendingLook, reserved above), not what is left of the push's: if the push
 		// was rejected just before its limit, an expired ctx during IsAncestor would miss landed
-		// sends (#1073).
+		// sends (#1073). Share that reserved budget with give-up below (looked=true) so a failed
+		// lookup never adds a second pendingLook past a queued send's 90 s wait on writeMu.
+		looked = true
 		lctx, lcancel := context.WithTimeout(d.bgCtx, pendingLook)
 		defer lcancel()
 		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil {
@@ -195,10 +198,10 @@ func (d *Daemon) retryPending() {
 				if !over {
 					if d.settlePendingOn(lctx, tip, err, false) {
 						d.ownTip = tip
+						return
 					}
-					return
-				}
-				if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
+					// Unchecked sends stay pending, unless give-up below says time is up.
+				} else if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
 					d.ownLanded(ctx, ref, sha, false)
 					return
 				}
@@ -214,7 +217,7 @@ func (d *Daemon) retryPending() {
 		return // the daemon is stopping: pendingLoop gives them up, which knows how long it has
 	}
 	if gone || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
-		d.giveUpPending(err, true)
+		d.giveUpPending(err, !looked)
 	}
 }
 
