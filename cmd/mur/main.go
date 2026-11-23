@@ -94,6 +94,8 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
                                 add or remove your tags, as the tags tool does; --for NAME,... gives
                                 the group: tags in --add to those sessions, not to you; alone, lists
                                 yours
+  mur mute [NAME] [--unmute]    stop getting anything NAME sends, as the mute tool does; --unmute undoes
+                                it; alone, lists whom you have muted
 
 {tools}
 
@@ -165,7 +167,7 @@ func main() {
 		err = runRotate(ctx, args, os.Stdout)
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
-	case "who", "send", "inbox", "status", "lookup", "tags":
+	case "who", "send", "inbox", "status", "lookup", "tags", "mute":
 		err = mcpserver.Command(ctx, cmd, args, os.Stdin, os.Stdout, os.Stderr)
 	case "ui":
 		err = runUI(ctx, args, os.Stdout, browse)

@@ -296,7 +296,7 @@ so an agent T3 runs that Murmur has no join for (Kiro, fx, any agent from the AC
 none. Every harness can run a command, so `mur who`, `mur send`, `mur inbox` and `mur status` do
 what the tools of those names do (`internal/mcpserver/commands.go`, rendered by `internal/view`).
 Since 2026-11-23 (#1118, Tyler: every tool that can be a command without exorbitant effort is one)
-`mur lookup` (#1119) and `mur tags` (#1120) do too; `mute` stays a tool until its command (#1121).
+`mur lookup` (#1119), `mur tags` (#1120) and `mur mute` (#1121) do too: every tool is a command.
 
 - **Which session.** The command's shell has the thread's ID in `T3CODE_THREAD_ID`. Read in T3
   0.1.11's source (2026-11-21, not run): its Claude, Codex, Pi, Antigravity, Kiro, fx and

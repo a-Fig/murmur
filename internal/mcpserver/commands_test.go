@@ -134,6 +134,27 @@ func TestATagsCommandChangesTheSessionsTags(t *testing.T) {
 	}
 }
 
+// mur mute mutes, unmutes and lists as the thread's session, and prints the tool's answer (#1121).
+func TestAMuteCommandMutesAsTheSession(t *testing.T) {
+	f := &fakeDaemon{}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "mute", []string{"quiet-otter"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := Command(context.Background(), "mute", []string{"--unmute", "quiet-otter"}, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	h := f.lastHello()
+	got := f.requestsOf(proto.OpMute)
+	if len(got) != 2 || got[0].Session != h.ID || got[0].Name != "quiet-otter" || got[0].Unmute || !got[1].Unmute || got[1].Session != h.ID {
+		t.Errorf("requests %+v, want a mute and an unmute of quiet-otter as %s", got, h.ID)
+	}
+	if out.String() != view.Muted(proto.Response{}) {
+		t.Errorf("printed %q", out.String())
+	}
+}
+
 func TestCommandRequests(t *testing.T) {
 	long := strings.Repeat("word ", 60) + "end"
 	for _, c := range []struct {
@@ -166,6 +187,14 @@ func TestCommandRequests(t *testing.T) {
 		{"tags", []string{"reviewing"}, "", proto.Request{}, true},
 		{"tags", []string{"--add"}, "", proto.Request{}, true},
 		{"tags", []string{"--nope", "x"}, "", proto.Request{}, true},
+		{"mute", nil, "", proto.Request{Op: proto.OpMute}, false},
+		{"mute", []string{"quiet-otter"}, "", proto.Request{Op: proto.OpMute, Name: "quiet-otter"}, false},
+		{"mute", []string{"--unmute", "quiet-otter"}, "", proto.Request{Op: proto.OpMute, Name: "quiet-otter", Unmute: true}, false},
+		{"mute", []string{"quiet-otter", "-unmute"}, "", proto.Request{Op: proto.OpMute, Name: "quiet-otter", Unmute: true}, false},
+		{"mute", []string{"--unmute"}, "", proto.Request{}, true},
+		{"mute", []string{"a", "b"}, "", proto.Request{}, true},
+		{"mute", []string{"a", "--unmute=no"}, "", proto.Request{}, true},
+		{"mute", []string{"a", "--nope"}, "", proto.Request{}, true},
 		// The new form: one text, its subject made from it (#1027).
 		{"send", []string{"a"}, "", proto.Request{}, true},
 		{"send", []string{"a,b", "short"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "short"}, false},
@@ -196,7 +225,7 @@ func TestCommandRequests(t *testing.T) {
 			continue
 		}
 		if !c.bad && (got.Op != c.want.Op || got.Doing != c.want.Doing || got.To != c.want.To || got.Subject != c.want.Subject ||
-			got.Body != c.want.Body || got.Name != c.want.Name || got.Limit != c.want.Limit || !slices.Equal(got.Add, c.want.Add) || !slices.Equal(got.Remove, c.want.Remove) || !slices.Equal(got.For, c.want.For) || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
+			got.Body != c.want.Body || got.Unmute != c.want.Unmute || got.Name != c.want.Name || got.Limit != c.want.Limit || !slices.Equal(got.Add, c.want.Add) || !slices.Equal(got.Remove, c.want.Remove) || !slices.Equal(got.For, c.want.For) || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
 			t.Errorf("%s %q: %+v, want %+v", c.name, c.args, got, c.want)
 		}
 	}

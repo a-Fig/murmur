@@ -49,6 +49,7 @@ In a T3 Code thread of an agent Murmur has no tools for (Kiro, fx, an agent from
 - `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
 - `mur lookup NAME [--messages N]`, as `lookup`: NAME is a name from `who`, and N is how many of its latest messages to show (10 if not given, at most 50).
 - `mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]`, as `tags`: each takes tags (or names) separated by commas, and alone it lists yours. `--for` puts `group:` tags on those sessions, not on you unless you list your own name too.
+- `mur mute [NAME] [--unmute]`, as `mute`: alone, it lists whom you have muted.
 
 A message that comes while you work waits for your turn to end; there is no notice. If a command says `T3CODE_THREAD_ID` isn't set, T3 doesn't tell this agent its thread (Grok, OpenCode, Muse and Cursor), and the commands can't work here.
 
