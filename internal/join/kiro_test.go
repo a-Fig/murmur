@@ -242,8 +242,8 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Fatalf("retry register after transient hook failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
 	}
 
-	// Reverse failure: if updating settings/mcp.json fails (malformed JSON) during a renamed-binary
-	// join, the newly written hook is reverted so it is not stranded without a matching mcp.json.
+	// Reverse failure: if updating settings/mcp.json fails (malformed JSON) during a fresh
+	// renamed-binary join, mcp.json is checked before writing the hook so no hook is stranded.
 	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
 	if err := os.Remove(hookPath); err != nil {
 		t.Fatal(err)
@@ -257,29 +257,12 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Error("failed mcp.json write stranded a newly created renamed-binary hook")
 	}
 
-	// Concurrent edit guard on undo: if hooks/murmur.json changes before undo runs, undo refuses
-	// to overwrite the concurrent edit and returns an error.
-	if _, undo, err := sb.installKiroHook(h, ""); err != nil || undo == nil {
-		t.Fatalf("installKiroHook: undo=%v err=%v", undo != nil, err)
-	} else {
-		const concurrent = `{"version":"v1","hooks":[]}` + "\n"
-		write(t, hookPath, concurrent)
-		if uerr := undo(); uerr == nil || !strings.Contains(uerr.Error(), "concurrently") {
-			t.Errorf("undo over concurrent edit = %v, want concurrency error", uerr)
-		}
-		if read(t, hookPath) != concurrent {
-			t.Error("undo overwrote concurrent edit")
-		}
-		if err := os.Remove(hookPath); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// Ambiguous 8.3 short-path prefixes (where the path does not exist or points to a different
-	// directory/file) must NOT be claimed as owned.
+	// Ambiguous 8.3 short-path prefixes and case-differing nonexistent paths must NOT be claimed
+	// as owned without matching filesystem identity.
 	for _, otherCmd := range []string{
 		`C:\MYAPPL~1\mur-dev.exe hook kiro`,
 		`C:\OTHER~1\mur-dev.exe hook kiro`,
+		`C:\My Application Tools\MUR-DEV.EXE hook kiro`,
 		`C:\dir\tool.x~1 hook kiro`,
 	} {
 		hDoc, err := kiroHooks(otherCmd)

@@ -182,11 +182,12 @@ func parseKiroHookCommand(cmd string) (string, bool) {
 	return exe, true
 }
 
-// sameKiroExe says hookExe and regExe refer to the same executable: either the same normalized
-// path, or both exist on disk and refer to the same file (handling e.g. Windows 8.3 short paths
-// without guessing from ambiguous prefixes when the path is gone).
+// sameKiroExe says hookExe and regExe refer to the same executable: either the exact same cleaned
+// path string, or both exist on disk and refer to the same file (handling e.g. Windows 8.3 short
+// paths and case-insensitive volumes while respecting distinct case-differing files on
+// case-sensitive filesystems).
 func sameKiroExe(hookExe, regExe string) bool {
-	if samePath(hookExe, regExe) {
+	if filepath.Clean(hookExe) == filepath.Clean(regExe) {
 		return true
 	}
 	fiA, errA := os.Stat(hookExe)
@@ -196,59 +197,34 @@ func sameKiroExe(hookExe, regExe string) bool {
 
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
 // entry (such as a live or dangling symlink) or a customized file is left alone with an error,
-// matching removeOwned's ownership rules. When it writes or updates the file, undo restores the
-// previous state if a later step (such as updating settings/mcp.json) fails, refusing to overwrite
-// a concurrent modification.
-func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, undo func() error, err error) {
+// matching removeOwned's ownership rules.
+func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	var prevBytes []byte
-	var hadPrev bool
 	if fi, lerr := os.Lstat(path); lerr == nil {
 		if !fi.Mode().IsRegular() {
-			return nil, nil, fmt.Errorf("%s already exists and isn't a regular file (a link, say), so it was left alone", path)
+			return nil, fmt.Errorf("%s already exists and isn't a regular file (a link, say), so it was left alone", path)
 		}
 		have, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return nil, nil, fmt.Errorf("%s: %w", path, rerr)
+			return nil, fmt.Errorf("%s: %w", path, rerr)
 		}
 		if bytes.Equal(have, want) {
-			return nil, nil, nil
+			return nil, nil
 		}
 		if !isKiroHookFileFor(have, e.Exe, prevExe) {
-			return nil, nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
+			return nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
 		}
-		prevBytes, hadPrev = have, true
 	} else if !errors.Is(lerr, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("%s: %w", path, lerr)
+		return nil, fmt.Errorf("%s: %w", path, lerr)
 	}
 	if err := writeAtomic(path, want, 0o644); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	undo = func() error {
-		fi, lerr := os.Lstat(path)
-		if lerr != nil {
-			return lerr
-		}
-		if !fi.Mode().IsRegular() {
-			return errors.New("file was replaced by a non-regular entry")
-		}
-		cur, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return rerr
-		}
-		if !bytes.Equal(cur, want) {
-			return errors.New("file was modified concurrently")
-		}
-		if hadPrev {
-			return writeAtomic(path, prevBytes, 0o644)
-		}
-		return os.Remove(path)
-	}
-	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, undo, nil
+	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
 }
 
 // removeKiroHook removes join's hook file from Kiro home h via removeOwned, leaving a symlink or

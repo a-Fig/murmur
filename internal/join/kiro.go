@@ -131,32 +131,36 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 		return nil, false, nil
 	}
 	prevExe := kiroRegisteredExe(h)
-	hookDid, undoHook, hookErr := e.installKiroHook(h, prevExe)
-	did = append(did, hookDid...)
-	if hookErr != nil && prevExe != "" && !isMurBinary(prevExe) {
-		// Keep the previously registered renamed binary in mcp.json so a retry or manual removal
-		// still recognizes hooks/murmur.json as owned by Murmur.
-		return did, false, hookErr
-	}
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
+	var hookDid []string
+	var hookErr error
+	// When replacing a renamed binary's hook with standard mur, update the hook before mcp.json so
+	// a failed hook write preserves the renamed binary in mcp.json for retry, while a succeeded
+	// hook write already targets standard mur (recognized even if mcp.json fails next). Otherwise
+	// update mcp.json first so a malformed or locked mcp.json never creates a renamed-binary hook
+	// without a matching mcp.json entry.
+	hookFirst := prevExe != "" && !isMurBinary(prevExe) && isMurBinary(e.Exe)
+	if hookFirst {
+		hookDid, hookErr = e.installKiroHook(h, prevExe)
+		did = append(did, hookDid...)
+		if hookErr != nil {
+			return did, false, hookErr
+		}
+	}
 	entry := jsonedit.New()
 	entry.Set("command", e.Exe)
 	entry.Set("args", toAny(kiroArgs))
 	changed, added, err := setJSONIn(mcpPath, []string{"mcpServers", brand.MCPServer}, entry)
 	if err != nil {
-		if undoHook != nil && !isMurBinary(e.Exe) {
-			// Don't leave a newly written renamed-binary hook stranded without a matching mcp.json
-			// entry, which would prevent a later standard `mur` join or uninstall from recognizing it.
-			if uerr := undoHook(); uerr != nil {
-				return did, false, fmt.Errorf("%s: %w, so the server wasn't added (and couldn't roll back %s: %v)", mcpPath, err, filepath.Join(h.Dir, "hooks", kiroHookFile), uerr)
-			}
-			did = nil
-		}
 		return did, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)
 	}
 	fresh = added
 	if changed {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+mcpPath+")")
+	}
+	if !hookFirst {
+		hookDid, hookErr = e.installKiroHook(h, prevExe)
+		did = append(did, hookDid...)
 	}
 	allowed, permPath, permErr := allowKiroTools(h.Dir)
 	if allowed {
