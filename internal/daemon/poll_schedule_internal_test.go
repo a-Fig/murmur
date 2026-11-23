@@ -17,7 +17,12 @@ import (
 // code reads, convAt and lastPage, set relative to now. TestPollFollowsTheConversation and the
 // other rateRig tests still run the real loop against a real remote.
 
-// The defaults are the numbers the design doc gives.
+// The defaults the design docs give, and one they don't. docs/design/transport.md gives Poll,
+// PollCap, FastFor and QuietPoll ("How often it polls"), the minute a failing poll backs off to
+// ("Speed") and FetchLimit ("A ref too slow to fetch"). docs/design/daemon.md gives FirstSyncLimit's
+// 10 s ("It answers before its first sync"). ReadFirstLimit's 15 s is in no doc
+// (docs/design/delivery.md names it without a number), so only this test and its comment in
+// daemon.go pin it down.
 func TestPollDefaultsAreTheDocsNumbers(t *testing.T) {
 	t.Parallel()
 	var o Options
@@ -281,14 +286,22 @@ func TestReadOrderPutsNamesPresenceAndTeamBeforeLogs(t *testing.T) {
 // look: pollOnce returns cutShort's error before it sets lastPollOK, which staleness is judged by.
 func TestACutShortSyncIsNoFreshLook(t *testing.T) {
 	t.Parallel()
-	live := context.Background()
-	cancelled, cancel := context.WithCancel(live)
-	cancel()
-	expired, cancel2 := context.WithDeadline(live, time.Now().Add(-time.Second))
-	defer cancel2()
+	// Each case makes its sync's context in its own subtest: one made out here would be cancelled
+	// by this function's return before the parallel subtests run.
+	live := func(*testing.T) context.Context { return context.Background() }
+	cancelled := func(*testing.T) context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		return ctx
+	}
+	expired := func(t *testing.T) context.Context {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		t.Cleanup(cancel)
+		return ctx
+	}
 	for _, c := range []struct {
 		name     string
-		ctx      context.Context
+		ctx      func(*testing.T) context.Context
 		firstErr error
 		want     error // nil for a fresh look
 		says     string
@@ -302,7 +315,7 @@ func TestACutShortSyncIsNoFreshLook(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			err := cutShort(c.ctx, c.firstErr, 2468*time.Millisecond)
+			err := cutShort(c.ctx(t), c.firstErr, 2468*time.Millisecond)
 			if c.want == nil {
 				if err != nil {
 					t.Fatalf("a full sync is cut short: %v", err)
