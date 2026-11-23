@@ -245,7 +245,8 @@ func TestAPersonsMessageBecomesATurnAndTheAnswerReachesThePage(t *testing.T) {
 
 // A person's direct message goes in past how long a thread has been idle, ahead of the agent's that
 // is left waiting. A broadcast from the page doesn't, or it would wake every thread in the repo.
-// Do not disturb and Never are a human's choices too, and hold.
+// Do not disturb and Never are a human's choices too, and hold; what Never held goes in when it is
+// lifted.
 func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -288,6 +289,12 @@ func TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt(t *testing.T) {
 	holds(t, "never to hold against a person", 800*time.Millisecond, func() bool { return len(calls()) == n })
 	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"within"}}`); code != http.StatusOK {
 		t.Fatalf("setting within: %d %s", code, body)
+	}
+	// Lifted through the page, the setting lets what waited go: the save wakes the handoff loop,
+	// with no message coming to do it.
+	eventually(t, "the message that waited under never to go in", func() bool { return len(calls()) > n })
+	if in := calls()[n].Stdin; !strings.Contains(in, "while set to never") {
+		t.Errorf("what went in once never was lifted: %s", in)
 	}
 }
 

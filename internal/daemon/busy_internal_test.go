@@ -268,17 +268,19 @@ func saveSettings(t *testing.T, d *Daemon, set web.Settings) {
 // it still gets only its subject, as after any failed handoff, not a second telling in full.
 //
 // Kept from the two-device test it replaces: with bob set to whole messages, a message whose
-// handoff failed is told of by the hook, subject only. A fake is enough, as what the hook gives is
-// decided from the message's marks and the settings: the handoff is taken and marked as the
-// pusher does (attempt, finishPush), with an error where t3 exited 1.
-// TestFailedHandoffFallsBackToTheNotice keeps a real t3 failing, and
-// TestBusySessionGetsTheWholeMessageThroughTheHook the setting giving a message whole. The two
-// devices took 41 s on a Windows runner (main's run 45190341796).
+// handoff failed is told of by the hook, subject only. Added here: the next message, which no
+// handoff was tried for, is given whole by the same hook, so it was the failure that kept the
+// first to its subject. A fake is enough, as what the hook gives is decided from the message's
+// marks and the settings: the handoff is taken and marked as the pusher does (attempt,
+// finishPush), with an error where t3 exited 1. TestFailedHandoffFallsBackToTheNotice keeps a real
+// t3 failing, and TestBusySessionGetsTheWholeMessageThroughTheHook the setting giving a message
+// whole. The two devices took 41 s on a Windows runner (main's run 45190341796).
 func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
 	t.Parallel()
 	d := stopRig(t)
 	named(d)
 	saveSettings(t, d, web.Settings{Wake: web.Wake{When: web.WakeAlways}, SessionBusy: map[string]string{bobsName: web.BusyWhole}})
+	finishedATurn(t, d) // so the hook's next prompt has bob at work, for the second message
 
 	arrive(d, "handed over")
 	j := look(d)
@@ -289,6 +291,10 @@ func TestAFailedHandoffIsNotGivenWhole(t *testing.T) {
 	r := hookNotices(t, d)
 	if len(r.Read) != 0 || len(r.Messages) != 1 || r.Messages[0].Subject != "handed over" || r.Messages[0].Body != "" {
 		t.Errorf("after a failed handoff the hook was given %+v; want the subject only", r)
+	}
+	arrive(d, "never tried")
+	if r := hookNotices(t, d); len(r.Read) != 1 || r.Read[0].Subject != "never tried" || len(r.Messages) != 0 {
+		t.Errorf("a message no handoff was tried for: the hook was given %+v; want it whole", r)
 	}
 }
 
@@ -333,8 +339,11 @@ func TestAnOlderHookGetsTheSubjectOnly(t *testing.T) {
 // device at always and bob at never, the next message is no turn and the hook tells of it. A fake
 // is enough, as the setting is this device's own: it is saved as the page saves it (SetSettings),
 // to the file, and read by the look as the loop reads it. TestAPersonWakesALongIdleThreadWhereAnAgentWouldnt
-// keeps a setting put through the page's HTTP handler deciding a real handoff. The two devices
-// took 39 s on a Windows runner (main's run 45190341796).
+// keeps never, put through the page's HTTP handler, holding a message back from a real t3, and
+// that message going in once never is lifted there. A session's own setting deciding a real
+// handoff has no test end to end now: sendTurn asks the setting again before it sends, by the same
+// mayWakeLocked the look uses. The two devices took 39 s on a Windows runner (main's run
+// 45190341796).
 func TestWakeNeverKeepsTheNotice(t *testing.T) {
 	t.Parallel()
 	d := stopRig(t)
