@@ -130,6 +130,7 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 	if !e.hasKiro(h) {
 		return nil, false, nil
 	}
+	prevExe := kiroRegisteredExe(h)
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	entry := jsonedit.New()
 	entry.Set("command", e.Exe)
@@ -142,7 +143,7 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 	if changed {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+mcpPath+")")
 	}
-	hookDid, hookErr := e.installKiroHook(h)
+	hookDid, hookErr := e.installKiroHook(h, prevExe)
 	did = append(did, hookDid...)
 	allowed, permPath, permErr := allowKiroTools(h.Dir)
 	if allowed {
@@ -445,6 +446,7 @@ func removeKiroAllow(text string) (out string, changed bool, err error) {
 func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
 	var problems []error
+	prevExe := kiroRegisteredExe(h)
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	if text, rerr := readConfig(mcpPath); rerr != nil {
 		problems = append(problems, rerr)
@@ -486,7 +488,7 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 			}
 		}
 	}
-	if hookDid, hookNotes, herr := removeKiroHook(h); herr != nil {
+	if hookDid, hookNotes, herr := removeKiroHook(h, e.Exe, prevExe); herr != nil {
 		problems = append(problems, herr)
 	} else {
 		did = append(did, hookDid...)
@@ -496,7 +498,7 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 }
 
 // kiroRemoval says how to take out by hand what join put in Kiro home h.
-func kiroRemoval(_ Env, h agentHome) string {
+func kiroRemoval(e Env, h agentHome) string {
 	var steps []string
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	if b, err := os.ReadFile(mcpPath); err == nil {
@@ -504,7 +506,7 @@ func kiroRemoval(_ Env, h agentHome) string {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+mcpPath)
 		}
 	}
-	if step := kiroHookRemoval(h); step != "" {
+	if step := kiroHookRemoval(h, e.Exe, kiroRegisteredExe(h)); step != "" {
 		steps = append(steps, step)
 	}
 	if _, yerr := os.Stat(filepath.Join(h.Dir, "settings", "permissions.yaml")); errors.Is(yerr, os.ErrNotExist) {

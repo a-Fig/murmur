@@ -160,6 +160,57 @@ func TestRegisterAndUnregisterKiro(t *testing.T) {
 	}
 }
 
+// A hook written by a renamed Murmur binary (e.g. mur-dev.exe) is still recognized and replaced
+// when standard mur joins later, and cleanly removed by either mur or mur-dev on uninstall.
+func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	mustMakeDir(t, sb.KiroHome)
+	h := sb.defaultHome(agents[agentIndex("kiro")])
+	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
+
+	devExe := filepath.Join(sb.root, "dev", exeName("mur-dev"))
+	stdExe := sb.Exe
+	sb.Exe = devExe
+	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 3 {
+		t.Fatalf("dev register: did=%q err=%v", did, err)
+	}
+	if !strings.Contains(read(t, hookPath), "mur-dev") {
+		t.Fatalf("expected mur-dev in hook file:\n%s", read(t, hookPath))
+	}
+
+	// Standard mur sees the dev hook in manual removal and replaces it on join.
+	sb.Exe = stdExe
+	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, "delete "+hookPath) {
+		t.Errorf("kiroRemoval for renamed binary = %q", rem)
+	}
+	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 2 || strings.Contains(read(t, hookPath), "mur-dev") {
+		t.Fatalf("std register over dev hook: did=%q err=%v\n%s", did, err, read(t, hookPath))
+	}
+
+	// Reinstall with mur-dev, then uninstall with standard mur: hook must be removed.
+	sb.Exe = devExe
+	if _, _, err := sb.registerKiroAt(h); err != nil {
+		t.Fatalf("re-register dev: %v", err)
+	}
+	sb.Exe = stdExe
+	if did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h}); err != nil || len(did) != 3 || len(notes) != 0 || exists(hookPath) {
+		t.Fatalf("std uninstall of dev hook: did=%q notes=%q err=%v exists=%v", did, notes, err, exists(hookPath))
+	}
+
+	// Reinstall with mur-dev and uninstall with mur-dev (even if mcp.json was already deleted).
+	sb.Exe = devExe
+	if _, _, err := sb.registerKiroAt(h); err != nil {
+		t.Fatalf("re-register dev 2: %v", err)
+	}
+	if err := os.Remove(filepath.Join(sb.KiroHome, "settings", "mcp.json")); err != nil {
+		t.Fatal(err)
+	}
+	if did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h}); err != nil || len(did) != 2 || len(notes) != 0 || exists(hookPath) {
+		t.Fatalf("dev uninstall without mcp.json: did=%q notes=%q err=%v exists=%v", did, notes, err, exists(hookPath))
+	}
+}
+
 // Because Kiro's addUserRule merges single-match rules of the same capability and effect into one
 // rule's match array, uninstall removes only murmur/* and preserves the user's other patterns.
 func TestUnregisterKiroPreservesMergedAllowPatterns(t *testing.T) {
