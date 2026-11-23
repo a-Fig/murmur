@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -154,4 +155,274 @@ func TestIssuesACallFiledOrClosed(t *testing.T) {
 			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
 		}
 	}
+}
+
+// TestRealPayloadShapesRegression pins real payload shapes from Claude Code, Codex, Grok, Pi,
+// and Antigravity (taken from existing tests and docs/design/clients.md) so hardening never
+// changes what issues or events real harnesses extract (#1142).
+func TestRealPayloadShapesRegression(t *testing.T) {
+	opened := func(repo string, n int) proto.Issue { return proto.Issue{Repo: repo, Number: n} }
+	closed := func(repo string, n int) proto.Issue { return proto.Issue{Repo: repo, Number: n, Closed: true} }
+
+	issuePayloads := []struct {
+		name    string
+		agent   string
+		payload string
+		want    []proto.Issue
+	}{
+		{
+			name:  "Claude Code Bash gh issue create with CRLF",
+			agent: "",
+			payload: `{"session_id":"claude-1","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"Bash","tool_use_id":"toolu_1",` +
+				`"tool_input":{"command":"gh issue create --title \"Bug\" --body \"details\""},` +
+				`"tool_response":{"stdout":"Creating issue in a-Fig/murmur\r\n\r\nhttps://github.com/a-Fig/murmur/issues/1142\r\n","stderr":"","interrupted":false}}`,
+			want: []proto.Issue{opened("a-Fig/murmur", 1142)},
+		},
+		{
+			name:  "Claude Code Bash gh issue close without checkmark",
+			agent: "",
+			payload: `{"session_id":"claude-1","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"Bash","tool_use_id":"toolu_2",` +
+				`"tool_input":{"command":"gh issue close 1142 --reason completed"},` +
+				`"tool_response":{"stdout":"","stderr":"Closed issue a-Fig/murmur#1142 (Harden hook)\r\n","interrupted":false}}`,
+			want: []proto.Issue{closed("a-Fig/murmur", 1142)},
+		},
+		{
+			name:  "Claude Code GitHub MCP issue_write create",
+			agent: "",
+			payload: `{"session_id":"claude-1","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"mcp__github__issue_write","tool_use_id":"toolu_3",` +
+				`"tool_input":{"method":"create","owner":"a-Fig","repo":"murmur","title":"t"},` +
+				`"tool_response":{"content":[{"type":"text","text":"{\"id\":1,\"number\":501,\"html_url\":\"https://github.com/a-Fig/murmur/issues/501\"}"}],"isError":false}}`,
+			want: []proto.Issue{opened("a-Fig/murmur", 501)},
+		},
+		{
+			name:  "Codex Bash argv gh issue create",
+			agent: Codex,
+			payload: `{"session_id":"codex-1","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"Bash","tool_use_id":"call_1",` +
+				`"tool_input":{"command":["gh","issue","create","-t","x","-b","y"]},` +
+				`"tool_response":"https://github.com/a-Fig/murmur/issues/502\n"}`,
+			want: []proto.Issue{opened("a-Fig/murmur", 502)},
+		},
+		{
+			name:  "Codex Bash shell argv gh issue close",
+			agent: Codex,
+			payload: `{"session_id":"codex-1","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"Bash","tool_use_id":"call_2",` +
+				`"tool_input":{"command":["bash","-lc","gh issue close 502"]},` +
+				`"tool_response":"✓ Closed issue a-Fig/murmur#502 (x)\n"}`,
+			want: []proto.Issue{closed("a-Fig/murmur", 502)},
+		},
+		{
+			name:  "Grok run_terminal_command with toolResult and tool_response",
+			agent: Grok,
+			payload: `{"sessionId":"grok-1","hook_event_name":"PostToolUse","cwd":"/repo","toolName":"run_terminal_command",` +
+				`"toolInput":{"command":"gh issue close 503"},` +
+				`"toolResult":{"type":"Bash"},"tool_response":{"type":"Bash","exit_code":0,"output_for_prompt":"✓ Closed issue a-Fig/murmur#503 (x)\n"}}`,
+			want: []proto.Issue{closed("a-Fig/murmur", 503)},
+		},
+		{
+			name:  "Grok MCP github__create_issue",
+			agent: Grok,
+			payload: `{"sessionId":"grok-1","hook_event_name":"PostToolUse","cwd":"/repo","toolName":"github__create_issue",` +
+				`"toolInput":{"title":"x"},` +
+				`"tool_response":{"content":[{"type":"text","text":"{\"html_url\":\"https://github.com/a-Fig/murmur/issues/504\"}"}]}}`,
+			want: []proto.Issue{opened("a-Fig/murmur", 504)},
+		},
+		{
+			name:  "Pi powershell gh issue create",
+			agent: Pi,
+			payload: `{"session_id":"/s/p.jsonl","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"powershell",` +
+				`"tool_input":{"command":"gh issue create -t x -b y"},` +
+				`"tool_response":{"content":[{"type":"text","text":"https://github.com/a-Fig/murmur/issues/505\r\n"}],"isError":false}}`,
+			want: []proto.Issue{opened("a-Fig/murmur", 505)},
+		},
+	}
+
+	for _, tc := range issuePayloads {
+		var in input
+		if err := json.Unmarshal([]byte(tc.payload), &in); err != nil {
+			t.Fatalf("%s: unmarshal: %v", tc.name, err)
+		}
+		if tc.agent == Grok {
+			normalizeGrok(&in)
+		}
+		if got := issuesOf(in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: issuesOf = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+
+	// Real Antigravity payload shapes (PreInvocation, Stop, PreToolUse, PostToolUse).
+	agyCases := []struct {
+		name      string
+		event     string
+		payload   string
+		wantOK    bool
+		wantEvent string
+		wantID    string
+		wantTool  string
+		wantUseID string
+	}{
+		{
+			name:      "Antigravity PreInvocation first call",
+			event:     "PreInvocation",
+			payload:   `{"conversationId":"conv-1","workspacePaths":["/repo"],"lastUserInput":"fix bug"}`,
+			wantOK:    true,
+			wantEvent: "UserPromptSubmit",
+			wantID:    "conv-1",
+		},
+		{
+			name:      "Antigravity Stop ordinary end",
+			event:     "Stop",
+			payload:   `{"conversationId":"conv-1","cwd":"/repo","terminationReason":"NO_TOOL_CALL","fullyIdle":true}`,
+			wantOK:    true,
+			wantEvent: stop,
+			wantID:    "conv-1",
+		},
+		{
+			name:      "Antigravity PreToolUse run_command",
+			event:     preTool,
+			payload:   `{"conversationId":"conv-1","cwd":"/repo","stepIdx":3,"toolCall":{"id":"toolu_9","name":"run_command","args":{"Cwd":"/repo"}}}`,
+			wantOK:    true,
+			wantEvent: preTool,
+			wantID:    "conv-1",
+			wantTool:  antigravityCommand,
+			wantUseID: "toolu_9",
+		},
+		{
+			name:      "Antigravity PostToolUse failure with stepIdx fallback",
+			event:     postTool,
+			payload:   `{"conversationId":"conv-1","cwd":"/repo","stepIdx":4,"error":"exit status 1","toolCall":{"id":"","name":"run_command","args":{"Cwd":""}}}`,
+			wantOK:    true,
+			wantEvent: postFailure,
+			wantID:    "conv-1",
+			wantTool:  antigravityCommand,
+			wantUseID: "step-4",
+		},
+	}
+	for _, tc := range agyCases {
+		var in input
+		if err := json.Unmarshal([]byte(tc.payload), &in); err != nil {
+			t.Fatalf("%s: unmarshal: %v", tc.name, err)
+		}
+		ok := fromAntigravity(&in, tc.event)
+		if ok != tc.wantOK || in.Event != tc.wantEvent || in.SessionID != tc.wantID ||
+			in.ToolName != tc.wantTool || in.ToolUseID != tc.wantUseID {
+			t.Errorf("%s: ok=%v event=%q id=%q tool=%q useID=%q",
+				tc.name, ok, in.Event, in.SessionID, in.ToolName, in.ToolUseID)
+		}
+	}
+}
+
+func TestHookPayloadAndIssueHardeningGuards(t *testing.T) {
+	t.Run("normalizeGrok separates toolName, toolInput, and toolResult fallbacks", func(t *testing.T) {
+		var mixed input
+		if err := json.Unmarshal([]byte(`{"sessionId":"g1","toolName":"run_terminal_command","tool_input":{"command":"gh issue close 7"},"toolResult":{"output":"✓ Closed issue a-Fig/murmur#7 (x)\n"}}`), &mixed); err != nil {
+			t.Fatal(err)
+		}
+		normalizeGrok(&mixed)
+		want := []proto.Issue{{Repo: "a-Fig/murmur", Number: 7, Closed: true}}
+		if got := issuesOf(mixed); !reflect.DeepEqual(got, want) {
+			t.Errorf("mixed Grok fields: %+v, want %+v", got, want)
+		}
+
+		var snakeNameCamelInput input
+		if err := json.Unmarshal([]byte(`{"session_id":"g2","tool_name":"run_terminal_command","toolInput":{"command":"gh issue create"},"tool_response":null,"toolResult":"https://github.com/a-Fig/murmur/issues/8\n"}`), &snakeNameCamelInput); err != nil {
+			t.Fatal(err)
+		}
+		normalizeGrok(&snakeNameCamelInput)
+		want2 := []proto.Issue{{Repo: "a-Fig/murmur", Number: 8}}
+		if got := issuesOf(snakeNameCamelInput); !reflect.DeepEqual(got, want2) {
+			t.Errorf("snake tool_name + camel toolInput + null tool_response: %+v, want %+v", got, want2)
+		}
+	})
+
+	t.Run("resultIssue is deterministic and bounds JSON-string re-decode depth and queue size", func(t *testing.T) {
+		sibling := map[string]any{
+			"z": map[string]any{"url": "https://github.com/a-Fig/murmur/issues/99"},
+			"a": map[string]any{"url": "https://github.com/a-Fig/murmur/issues/11"},
+		}
+		for range 20 {
+			m := resultIssue(sibling)
+			if m == nil || m[3] != "11" {
+				t.Fatalf("resultIssue sibling = %v, want deterministic match 11", m)
+			}
+		}
+
+		// Depth 2 (double-wrapped JSON string) is decoded; depth 3 is capped.
+		inner, _ := json.Marshal(map[string]any{"url": "https://github.com/a-Fig/murmur/issues/22"})
+		d1, _ := json.Marshal(map[string]any{"text": string(inner)})
+		d2, _ := json.Marshal(map[string]any{"text": string(d1)})
+		if m := resultIssue(map[string]any{"content": string(d1)}); m == nil || m[3] != "22" {
+			t.Errorf("depth 2 JSON string = %v, want 22", m)
+		}
+		if m := resultIssue(map[string]any{"content": string(d2)}); m != nil {
+			t.Errorf("depth 3 JSON string = %v, want nil (capped)", m)
+		}
+
+		// Large flat slice beyond maxWalkNodes stays bounded and visits early items first.
+		big := make([]any, maxWalkNodes+5000)
+		for i := range big {
+			big[i] = "x"
+		}
+		big[0] = "first"
+		big[len(big)-1] = "last"
+		var visited int
+		var first string
+		var sawLast bool
+		walk(big, func(s string) {
+			if visited == 0 {
+				first = s
+			}
+			if s == "last" {
+				sawLast = true
+			}
+			visited++
+		})
+		if first != "first" || sawLast || visited != maxWalkNodes-1 {
+			t.Errorf("walk(big): first=%q sawLast=%v visited=%d, want first=%q sawLast=false visited=%d",
+				first, sawLast, visited, "first", maxWalkNodes-1)
+		}
+
+		bigRes := make([]any, maxWalkNodes+5000)
+		bigRes[len(bigRes)-1] = map[string]any{"url": "https://github.com/a-Fig/murmur/issues/88"}
+		if m := resultIssue(bigRes); m != nil {
+			t.Errorf("resultIssue past maxWalkNodes = %v, want nil", m)
+		}
+	})
+
+	t.Run("mcpIssues rejects non-integer, overflowing, or non-positive issue_number", func(t *testing.T) {
+		resp := json.RawMessage(`{"url":"https://github.com/a-Fig/murmur/issues/47"}`)
+		for _, num := range []string{`47.5`, `99999999999999999999999`, `-47`, `0`, `true`, `{"n":47}`} {
+			in := json.RawMessage(`{"method":"update","state":"closed","issue_number":` + num + `}`)
+			if got := mcpIssues("issue_write", in, resp); got != nil {
+				t.Errorf("issue_number=%s: got %+v, want nil", num, got)
+			}
+		}
+	})
+
+	t.Run("shellIssues rejects non-string argv and shell metachars in direct gh argv", func(t *testing.T) {
+		resp := json.RawMessage(`"https://github.com/a-Fig/murmur/issues/77\n"`)
+		if got := shellIssues(json.RawMessage(`{"command":["gh",123,"issue","create"]}`), resp); got != nil {
+			t.Errorf("non-string argv = %+v, want nil", got)
+		}
+		if got := shellIssues(json.RawMessage(`{"command":["gh","issue","create; gh issue close 77"]}`), resp); got != nil {
+			t.Errorf("direct gh argv with metachars = %+v, want nil", got)
+		}
+	})
+
+	t.Run("fromAntigravity tolerates non-object args and skips empty workspacePaths", func(t *testing.T) {
+		var strArgs input
+		if err := json.Unmarshal([]byte(`{"conversationId":"conv-2","workspacePaths":["","/repo"],"toolCall":{"id":"t1","name":"view_file","args":"raw string"}}`), &strArgs); err != nil {
+			t.Fatalf("unmarshal non-object args: %v", err)
+		}
+		if !fromAntigravity(&strArgs, preTool) || strArgs.Cwd != "/repo" || strArgs.ToolName != "view_file" {
+			t.Errorf("fromAntigravity(string args) = %+v", strArgs)
+		}
+
+		var relCwd input
+		if err := json.Unmarshal([]byte(`{"conversationId":"conv-3","workspacePaths":["","/repo"],"toolCall":{"id":"t2","name":"run_command","args":{"Cwd":"sub"}}}`), &relCwd); err != nil {
+			t.Fatalf("unmarshal relative Cwd with workspacePaths: %v", err)
+		}
+		if !fromAntigravity(&relCwd, preTool) || relCwd.Cwd != "/repo" || relCwd.toolCallCwd != filepath.Join("/repo", "sub") {
+			t.Errorf("fromAntigravity(workspacePaths + relative Cwd): cwd=%q toolCallCwd=%q", relCwd.Cwd, relCwd.toolCallCwd)
+		}
+	})
 }

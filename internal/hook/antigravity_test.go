@@ -229,4 +229,20 @@ func TestAntigravityToolHooks(t *testing.T) {
 	if out.String() != "{\"decision\":\"allow\"}\n" {
 		t.Errorf("malformed PreToolUse printed %q", out.String())
 	}
+
+	// Non-object args on another tool and nil stdin/stdout never panic and preserve Antigravity's
+	// JSON contract (#1142).
+	out.Reset()
+	hook.RunForEvent(hook.Antigravity, "PreToolUse",
+		strings.NewReader(`{"conversationId":"conv-1","cwd":"`+filepath.ToSlash(repo)+`","toolCall":{"id":"t1","name":"view_file","args":"not-an-object"}}`), &out)
+	if out.String() != "{\"decision\":\"allow\"}\n" {
+		t.Errorf("non-object args PreToolUse printed %q", out.String())
+	}
+	out.Reset()
+	hook.RunForEvent(hook.Antigravity, "PreToolUse", nil, &out)
+	if out.String() != "{\"decision\":\"allow\"}\n" {
+		t.Errorf("nil stdin PreToolUse printed %q", out.String())
+	}
+	hook.RunForEvent(hook.Antigravity, "PreToolUse", nil, nil)
+	hook.RunForEvent("", "PostToolUse", nil, nil)
 }

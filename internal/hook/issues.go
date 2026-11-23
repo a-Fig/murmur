@@ -1,8 +1,11 @@
 package hook
 
 import (
+	"bytes"
 	"encoding/json"
+	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,7 +31,11 @@ import (
 var shellTools = map[string]bool{"Bash": true, "run_terminal_command": true, "bash": true, "powershell": true}
 
 // maxIssues bounds what one call can report.
-const maxIssues = 10
+const (
+	maxIssues    = 10
+	maxWalkNodes = 10000
+	maxJSONDepth = 2
+)
 
 var (
 	// gh issue create (or new) or close where a command starts, in a command whose quoted text and
@@ -38,8 +45,8 @@ var (
 	// What gh prints (cli/cli's pkg/cmd/issue, read 2026-11-15): `create` the new issue's address
 	// on a line of its own, and `close` "✓ Closed issue owner/name#37 (title)", on stderr whether
 	// or not that is a terminal. An issue that was closed already is "! Issue ... is already closed".
-	createdLine = regexp.MustCompile(`(?m)^\s*https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)\s*$`)
-	closedLine  = regexp.MustCompile(`(?m)^\s*(?:✓\s*)?Closed issue ([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+) \(`)
+	createdLine = regexp.MustCompile(`(?m)^[ \t]*https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)[ \t\r]*$`)
+	closedLine  = regexp.MustCompile(`(?m)^[ \t]*(?:✓[ \t]*)?Closed issue ([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+) \(`)
 	issueURL    = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)$`)
 )
 
@@ -70,15 +77,22 @@ func shellIssues(input, response json.RawMessage) []proto.Issue {
 	case string:
 		creates, closes = ghIssueCalls(c)
 	case []any:
-		var words []string
+		words := make([]string, 0, len(c))
 		for _, w := range c {
-			if s, ok := w.(string); ok {
-				words = append(words, s)
+			s, ok := w.(string)
+			if !ok {
+				return nil
 			}
+			words = append(words, s)
 		}
 		// argv is one command: gh's own words, or a shell's, whose last word is its script.
 		if len(words) >= 3 && words[0] == "gh" && words[1] == "issue" {
-			creates, closes = ghIssueCalls(strings.Join(words[:3], " "))
+			switch words[2] {
+			case "create", "new":
+				creates = 1
+			case "close":
+				closes = 1
+			}
 		} else if len(words) > 0 {
 			creates, closes = ghIssueCalls(words[len(words)-1])
 		}
@@ -232,7 +246,9 @@ func mcpIssues(tool string, input, response json.RawMessage) []proto.Issue {
 		State  string `json:"state"`
 		Number any    `json:"issue_number"`
 	}
-	if json.Unmarshal(input, &args) != nil {
+	dec := json.NewDecoder(bytes.NewReader(input))
+	dec.UseNumber()
+	if dec.Decode(&args) != nil {
 		return nil
 	}
 	closed := false
@@ -268,11 +284,22 @@ func mcpIssues(tool string, input, response json.RawMessage) []proto.Issue {
 // html_url or url of the shallowest object that has one. A result's text that is JSON is read as
 // such. Nil if there is none, or the result is an error.
 func resultIssue(v any) []string {
-	queue := []any{v}
-	for seen := 0; len(queue) > 0 && seen < 10000; seen++ {
-		x := queue[0]
-		queue = queue[1:]
-		switch t := x.(type) {
+	type node struct {
+		v     any
+		depth int
+	}
+	queue := []node{{v: v}}
+	enqueued := 1
+	enqueue := func(x any, depth int) {
+		if enqueued < maxWalkNodes {
+			queue = append(queue, node{v: x, depth: depth})
+			enqueued++
+		}
+	}
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
+		queue[head] = node{}
+		switch t := cur.v.(type) {
 		case map[string]any:
 			if e, _ := t["isError"].(bool); e {
 				return nil
@@ -284,16 +311,20 @@ func resultIssue(v any) []string {
 					}
 				}
 			}
-			for _, y := range t {
-				queue = append(queue, y)
+			for _, k := range sortedKeys(t) {
+				enqueue(t[k], cur.depth)
 			}
 		case []any:
-			queue = append(queue, t...)
+			for _, y := range t {
+				enqueue(y, cur.depth)
+			}
 		case string:
-			if s := strings.TrimSpace(t); strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
-				var y any
-				if json.Unmarshal([]byte(s), &y) == nil {
-					queue = append(queue, y)
+			if cur.depth < maxJSONDepth {
+				if s := strings.TrimSpace(t); strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
+					var y any
+					if json.Unmarshal([]byte(s), &y) == nil {
+						enqueue(y, cur.depth+1)
+					}
 				}
 			}
 		}
@@ -301,32 +332,63 @@ func resultIssue(v any) []string {
 	return nil
 }
 
-// walk calls f on every string in v, a decoded JSON value, up to a bound.
+// walk calls f on every string in v, a decoded JSON value, up to maxWalkNodes total nodes.
 func walk(v any, f func(string)) {
 	stack := []any{v}
-	for seen := 0; len(stack) > 0 && seen < 10000; seen++ {
+	enqueued := 1
+	for len(stack) > 0 {
 		x := stack[len(stack)-1]
+		stack[len(stack)-1] = nil
 		stack = stack[:len(stack)-1]
 		switch t := x.(type) {
 		case string:
 			f(t)
 		case []any:
-			stack = append(stack, t...)
-		case map[string]any:
-			for _, y := range t {
-				stack = append(stack, y)
+			n := min(len(t), maxWalkNodes-enqueued)
+			for i := n - 1; i >= 0; i-- {
+				stack = append(stack, t[i])
 			}
+			enqueued += n
+		case map[string]any:
+			keys := sortedKeys(t)
+			n := min(len(keys), maxWalkNodes-enqueued)
+			for i := n - 1; i >= 0; i-- {
+				stack = append(stack, t[keys[i]])
+			}
+			enqueued += n
 		}
 	}
 }
 
-// fmtNumber is a JSON number or string as the digits it holds.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// fmtNumber is a JSON positive integer or numeric string as the decimal digits it holds.
 func fmtNumber(v any) string {
 	switch n := v.(type) {
+	case json.Number:
+		i, err := strconv.ParseInt(string(n), 10, 64)
+		if err != nil || i <= 0 {
+			return ""
+		}
+		return strconv.FormatInt(i, 10)
 	case float64:
+		if n <= 0 || n != math.Trunc(n) || n >= 1<<53 {
+			return ""
+		}
 		return strconv.FormatInt(int64(n), 10)
 	case string:
-		return strings.TrimSpace(n)
+		i, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		if err != nil || i <= 0 {
+			return ""
+		}
+		return strconv.FormatInt(i, 10)
 	}
 	return ""
 }

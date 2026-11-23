@@ -71,6 +71,7 @@ type input struct {
 	ToolResponse   json.RawMessage `json:"tool_response"`
 	ToolNameCamel  string          `json:"toolName"`
 	ToolInputCamel json.RawMessage `json:"toolInput"`
+	ToolResult     json.RawMessage `json:"toolResult"`
 	// ToolUseID is on PreToolUse, PostToolUse and PostToolUseFailure alike, and the same for one
 	// call: it is what pairs the two ends (measured on Claude Code 2.1.312, 2026-10-29).
 	ToolUseID string `json:"tool_use_id"`
@@ -99,6 +100,7 @@ type input struct {
 	ToolCall          *antigravityToolCall `json:"toolCall"`
 	StepIdx           *int                 `json:"stepIdx"`
 	Error             string               `json:"error"`
+	toolCallCwd       string
 }
 
 type output struct {
@@ -159,6 +161,26 @@ func claudePID() int {
 		return 0
 	}
 	return pid
+}
+
+func normalizeGrok(in *input) {
+	if in.SessionID == "" {
+		in.SessionID = in.SessionIDCamel
+	}
+	if in.ToolName == "" {
+		in.ToolName = in.ToolNameCamel
+	}
+	if rawEmpty(in.ToolInput) {
+		in.ToolInput = in.ToolInputCamel
+	}
+	if rawEmpty(in.ToolResponse) {
+		in.ToolResponse = in.ToolResult
+	}
+}
+
+func rawEmpty(b json.RawMessage) bool {
+	s := strings.TrimSpace(string(b))
+	return s == "" || s == "null"
 }
 
 // bracketOp is the daemon op that tells it about the call this event is the start or end of, or ""
@@ -310,6 +332,9 @@ func RunFor(agent string, stdin io.Reader, stdout io.Writer) { RunForEvent(agent
 // RunForEvent is RunFor with the event its command line names. Antigravity's hook answers every
 // event with a JSON object.
 func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
+	if stdout == nil {
+		stdout = io.Discard
+	}
 	if agent == Antigravity {
 		w := &written{w: stdout}
 		stdout = w
@@ -325,7 +350,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		}()
 	}
 	defer func() { recover() }()
-	if !KnownAgent(agent) {
+	if !KnownAgent(agent) || stdin == nil {
 		return
 	}
 	var in input
@@ -333,12 +358,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	if agent == Grok {
-		if in.SessionID == "" {
-			in.SessionID = in.SessionIDCamel
-		}
-		if in.ToolName == "" {
-			in.ToolName, in.ToolInput = in.ToolNameCamel, in.ToolInputCamel
-		}
+		normalizeGrok(&in)
 	}
 	if agent == Antigravity && !fromAntigravity(&in, event) {
 		return
@@ -391,8 +411,8 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	// own: a session moved into this clone works in another, and its commits there aren't credited.
 	callDir, callCwd := gitDir, in.Cwd
 	if op != "" {
-		if agent == Antigravity && in.ToolCall.Args.Cwd != "" {
-			callCwd = in.ToolCall.Args.Cwd
+		if agent == Antigravity && in.toolCallCwd != "" {
+			callCwd = in.toolCallCwd
 		}
 		if placed || callCwd != in.Cwd {
 			callDir, _ = findClone(ctx, callCwd)
