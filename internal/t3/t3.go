@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -21,15 +22,32 @@ import (
 )
 
 // ErrNotStarted is what Send's error wraps when the command never started, so that nothing can have
-// reached T3: the one failure that is safe to try again. Any other failure leaves open whether T3
+// reached T3: the one failure that is safe to try again. Any other but ErrRefused leaves open whether T3
 // took the message before it failed (it timed out, or exited with an error after it had accepted
 // it, or its output was lost), and `t3 thread send` has no key that would make a second call
 // harmless: it would be a second turn.
 var ErrNotStarted = errors.New("couldn't start the command")
 
+// ErrRefused wraps what Send returns when it wouldn't run `t3` at all, for what it was asked to
+// send to: nothing reached T3, as with ErrNotStarted, but the same call would be refused again, so
+// it isn't one to try again (#1164).
+var ErrRefused = errors.New("not run")
+
 // SendTimeout bounds one `t3 thread send`. It takes about a second where T3 is running; a T3 that
 // isn't running makes it fail sooner than this.
 const SendTimeout = 30 * time.Second
+
+// WaitDelay bounds how long Send waits for stdout/stderr pipes to close after `t3` exits or is
+// killed, so a grandchild process inheriting the pipes cannot hang delivery indefinitely.
+// sendTimeout and WaitDelay are variables so tests needn't wait them out.
+var (
+	sendTimeout = SendTimeout
+	WaitDelay   = 2 * time.Second
+)
+
+// maxOutput bounds how much of `t3`'s combined stdout/stderr Send buffers; firstLine only reads
+// the first non-blank line (at most 200 bytes).
+const maxOutput = 8 << 10
 
 // startLimit is how long `t3` may take to start (proc.StartWithin).
 const startLimit = 30 * time.Second
@@ -79,7 +97,7 @@ func Serving(parent string, read bool, lookPath func(string) (string, error)) (s
 		switch programName(parent) {
 		case "t3":
 			if !strings.HasSuffix(parent, " (deleted)") {
-				if _, err := os.Stat(parent); err == nil {
+				if fi, err := os.Stat(parent); err == nil && !fi.IsDir() {
 					return parent, true
 				}
 			}
@@ -125,23 +143,30 @@ func StateDB(home string) string { return filepath.Join(home, "userdata", "state
 // Windows command-line quoting. home, if not empty, is T3's data directory (T3CODE_HOME).
 //
 // It returns once T3 has taken the message, not when the agent has finished with it. The error
-// says what T3 printed, in a line; it never holds the text. An error that wraps ErrNotStarted means
-// the message did not reach T3; any other means it may have.
+// says what T3 printed, in a line; it never holds the text. An error that wraps ErrNotStarted or
+// ErrRefused means the message did not reach T3; any other means it may have.
 func Send(ctx context.Context, cli, home, thread, text string) error {
 	if cli == "" || thread == "" {
 		return errors.New("no T3 command line or thread to send to")
 	}
+	if strings.HasPrefix(thread, "-") {
+		// t3 would read it as an option.
+		return fmt.Errorf("t3 thread send: %w: invalid thread ID", ErrRefused)
+	}
 	parent := ctx
-	ctx, cancel := context.WithTimeout(parent, SendTimeout)
+	timeout := sendTimeout
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cli, "thread", "send", thread, "-")
+	cmd.WaitDelay = WaitDelay
 	cmd.Stdin = strings.NewReader(text)
-	cmd.Env = os.Environ()
+	env := os.Environ()
 	if home != "" {
-		cmd.Env = append(cmd.Env, "T3CODE_HOME="+home)
+		env = withEnv(env, "T3CODE_HOME", home)
 	}
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Env = env
+	out := &cappedBuffer{max: maxOutput}
+	cmd.Stdout, cmd.Stderr = out, out
 	hideWindow(cmd)
 	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
 		if errors.Is(err, proc.ErrStartHung) {
@@ -158,10 +183,13 @@ func Send(ctx context.Context, cli, home, thread, text string) error {
 	}
 	if err := cmd.Wait(); err != nil {
 		switch {
+		case errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success():
+			// `t3` exited 0 before timeout; only an inherited pipe stayed open past WaitDelay.
+			return nil
 		case parent.Err() != nil:
 			return fmt.Errorf("t3 thread send: %w", parent.Err())
 		case ctx.Err() != nil:
-			return fmt.Errorf("t3 thread send took over %s", SendTimeout)
+			return fmt.Errorf("t3 thread send took over %s", timeout)
 		}
 		if line := firstLine(out.String()); line != "" {
 			return fmt.Errorf("t3 thread send: %v: %s", err, line)
@@ -169,6 +197,62 @@ func Send(ctx context.Context, cli, home, thread, text string) error {
 		return fmt.Errorf("t3 thread send: %v", err)
 	}
 	return nil
+}
+
+// withEnv returns env with any existing entry for key (matched case-insensitively, as Windows
+// requires) replaced by key=val.
+func withEnv(env []string, key, val string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.EqualFold(k, key) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, key+"="+val)
+}
+
+// cappedBuffer keeps the first max bytes written and discards the rest without returning an error,
+// so a verbose `t3` process cannot spike memory or hit EPIPE.
+type cappedBuffer struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if rem := c.max - c.buf.Len(); rem > 0 {
+		if len(p) > rem {
+			c.buf.Write(p[:rem])
+			c.truncated = true
+		} else {
+			c.buf.Write(p)
+		}
+	} else if len(p) > 0 {
+		c.truncated = true
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b := c.buf.Bytes()
+	if c.truncated {
+		// Drop any trailing incomplete UTF-8 rune split by the max-byte cutoff.
+		for i := len(b) - 1; i >= 0 && len(b)-i < utf8.UTFMax; i-- {
+			if utf8.RuneStart(b[i]) {
+				if !utf8.FullRune(b[i:]) {
+					b = b[:i]
+				}
+				break
+			}
+		}
+	}
+	return string(b)
 }
 
 // firstLine is the first line of what the command printed that isn't blank, kept short.

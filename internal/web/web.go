@@ -69,6 +69,8 @@ type Server struct {
 	preferences     Preferences
 	savePreferences func(Preferences) error
 	themePath       string
+
+	updates Updates // nil: the page shows no update setting
 }
 
 // New returns the page's handler. token is the page's own, not the one that opens the daemon to
@@ -119,6 +121,10 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 	s.mux.HandleFunc("POST /api/unmute", s.postUnmute)
 	s.mux.HandleFunc("POST /api/tags", s.postTags)
 	s.mux.HandleFunc("POST /api/restart", s.postRestart)
+	s.mux.HandleFunc("GET /api/updates", s.getUpdates)
+	s.mux.HandleFunc("PUT /api/updates", s.putUpdates)
+	s.mux.HandleFunc("POST /api/updates/back", s.postBackToStable)
+	s.mux.HandleFunc("POST /api/updates/install", s.postInstallUpdate)
 	s.mux.HandleFunc("PUT /api/account", s.putAccount)
 	s.mux.HandleFunc("PUT /api/nick", s.putNick)
 	s.mux.HandleFunc("PUT /api/color", s.putColor)

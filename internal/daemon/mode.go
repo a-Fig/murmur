@@ -67,6 +67,14 @@ func (d *Daemon) modeView() string {
 // device last left online.
 func (d *Daemon) setMode(was, now string, away time.Time) {
 	was, now = cmp.Or(was, web.ModeOnline), cmp.Or(now, web.ModeOnline)
+	if was == web.ModeInvisible && now != web.ModeInvisible {
+		// Its colour is settled by a sync begun from here on: one already under way may have listed
+		// the remote before a teammate picked the colour (settleColorLocked). Stamped before the
+		// device stops being hidden, which is what holds such a sync off until then.
+		d.mu.Lock()
+		d.colorAwayAt = time.Now()
+		d.mu.Unlock()
+	}
 	d.hidden.Store(now == web.ModeInvisible)
 	d.dnd.Store(now == web.ModeDND)
 	d.log.Printf("mode: %s", now)
@@ -82,6 +90,15 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 		d.kickNames() // what waited, without its own backoff to sit out
 		d.kickMarks()
 		d.kickFiles() // for the prune of files refs that was passed over meanwhile (pruneFiles)
+	}
+	if was == web.ModeInvisible && now != web.ModeInvisible {
+		// It looks at the remote at once, and often for a while, as when a conversation moves: its
+		// colour goes back into its presence only after a sync, and until then its teammates see
+		// it in an automatic one (#1093). A wake alone doesn't end the loop's wait unless the
+		// state calls for a faster rate, so with the poll slowed that was up to PollCap away.
+		d.mu.Lock()
+		d.noteConversationLocked()
+		d.mu.Unlock()
 	}
 	if now == web.ModeOnline {
 		d.mu.Lock()

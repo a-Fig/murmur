@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -716,7 +717,8 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	if len(byID) > 0 {
 		return byID
 	}
-	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
+	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" &&
+		(!isAgent(byProcess[0].agent, "cursor") || cursorCLI(byProcess[0].clientPID)) {
 		s := byProcess[0]
 		s.hookNative = req.ClaudeSession
 		if isAgent(s.agent, "antigravity") && s.hookNative != "" && s.route.T3CLI != "" && s.route.T3Thread == "" {
@@ -730,6 +732,11 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	return nil
 }
 
+// cursorCLI is here.CursorCLI: only Cursor's command line runs one chat per process, so outside it
+// (T3 Code or the editor) the daemon must not bind a hook's chat to a server by process. A
+// variable, for tests.
+var cursorCLI = func(pid int) bool { return here.CursorCLI(pid) }
+
 // isAgent says a session's agent, as its MCP server named it ("codex", or "codex in T3"), is agent.
 func isAgent(sessionAgent, agent string) bool {
 	return sessionAgent == agent || strings.HasPrefix(sessionAgent, agent+" ")
@@ -739,12 +746,12 @@ func isAgent(sessionAgent, agent string) bool {
 var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpStatus: true, proto.OpTags: true, proto.OpMute: true,
 	proto.OpSend: true, proto.OpInbox: true}
 
-// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225, #461),
-// and Pi, whose extension join writes runs it (#205). OpenCode isn't one, though join's plugin runs the
+// hookedAgents are the agents Murmur's hook runs in: those join installs it in (#202, #225, #461,
+// #922), and Pi, whose extension join writes runs it (#205). OpenCode isn't one, though join's plugin runs the
 // hook in OpenCode 2 and, outside T3, OpenCode 1 (#431, #446): join writes no plugin for an
 // OpenCode whose version it can't learn, and OpenCode 1's plugin does nothing in T3, so a session
 // there would be told to run join again, which changes nothing for it.
-var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity", "muse", "kiro"}
+var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity", "muse", "cursor", "kiro"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs
 // the hook in, it called one of Murmur's tools more than hookGrace ago, and no hook of it has

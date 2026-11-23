@@ -151,17 +151,19 @@ func TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket(t *testing.T)
 
 // A session in T3 is reached through T3 even if its environment also had a messaging socket: the
 // socket is T3's, and T3 may not take a turn it didn't start.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestSessionInT3IsNotWrittenToItsSocket(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob", MsgSocket: sock.path, MsgToken: "tok"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "hi", "there")
+	b.send("aaaaaa", bob, "hi", "there")
 	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	holds(t, "nothing on the socket", 500*time.Millisecond, func() bool { return len(sock.lines()) == 0 })
 	pg := b.page()
@@ -196,6 +198,9 @@ func TestMessagingSocketNeedsTheSessionToBeRunning(t *testing.T) {
 
 // Where the socket can't be written, the message is the hook's notice after one more try, and the
 // log says so once, without the socket's address, its token or the message.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestFailedSocketHandoffFallsBackToTheNotice(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -206,13 +211,12 @@ func TestFailedSocketHandoffFallsBackToTheNotice(t *testing.T) {
 	defer os.RemoveAll(dir)
 	missing := filepath.Join(dir, "gone-socket-5d2e")
 	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{MsgSocket: missing, MsgToken: "tok-secret-5d2e"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "first", "body one")
-	a.send("aaaaaa", bob, "second", "body two")
+	b.send("aaaaaa", bob, "first", "body one")
+	b.send("aaaaaa", bob, "second", "body two")
 	var notices []string
 	eventually(t, "both notices", func() bool {
 		notices = append(notices, b.hook("claude-bob", 0)...)

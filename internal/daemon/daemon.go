@@ -48,6 +48,7 @@ type Options struct {
 	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed, give or take a fifth; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
+	ColorHold  time.Duration // presence unchanged this long lets the device's picked colour go; a week (color.go)
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
@@ -176,6 +177,8 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Updates, if set, lets the page show and change how this machine updates itself (#1045).
+	Updates web.Updates
 	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
 	// daemon adds its clone there as it starts, so a clone that joined before the record existed
 	// is on it too. Tests leave it unset.
@@ -430,9 +433,9 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
-	// repoName is the repository's name from its remote's address, which the page's repo picker
-	// shows.
-	repoName string
+	// repoName is the repository's name from its remote's address; repoSlug is its owner/name
+	// (clones.SlugOf). The page shows both.
+	repoName, repoSlug string
 	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
 	// asks it for a key.
 	page    atomic.Pointer[web.Server]
@@ -710,8 +713,18 @@ type Daemon struct {
 	// a daemon Run didn't start, which has no first sync to wait for.
 	firstSync chan struct{}
 	// colorSettled says a full sync has checked this device's picked colour against its peers',
-	// so its presence may carry it (color.go).
-	colorSettled bool
+	// so its presence may carry it (color.go). presenceLanded is when the last presence of this
+	// device's to reach the remote was built, and colorAwayAt when it was last found to have been
+	// away so long that its colour must be settled again (colorAwayLocked), or came back from
+	// invisible (setMode).
+	colorSettled   bool
+	presenceLanded time.Time
+	colorAwayAt    time.Time
+	// presenceCopied says the clone's own copy of this device's presence ref was written with a
+	// presence of this run, and no fetch has brought the ref since, so later presences needn't be
+	// written to it; presenceFetches counts those fetches (publishPresence).
+	presenceCopied  bool
+	presenceFetches uint64
 }
 
 type session struct {
@@ -1208,7 +1221,7 @@ func Run(ctx context.Context, opt Options) error {
 	// answering, `mur join` that started it or another clone's page, then finds the record as this
 	// daemon leaves it, and not the join's version being replaced (#479).
 	if d.opt.Clones != "" {
-		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName, Slug: d.repoSlug}); err != nil {
 			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
 		}
 	}
@@ -1441,7 +1454,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
-	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
+	remoteURL := d.repo.Config(ctx, "remote."+d.repo.Remote+".url")
+	d.repoName, d.repoSlug = clones.NameOf(remoteURL), clones.SlugOf(remoteURL)
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}

@@ -36,11 +36,15 @@ type Env struct {
 	PiDir       string // Pi's agent directory
 	GrokHome    string // Grok's home, with its config.toml
 	GeminiHome  string // Antigravity's home, with its config/mcp_config.json
-	KiroHome    string // Kiro's home, with its settings/mcp.json
-	Home        string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
-	T3Settings  string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
-	Getenv      func(string) string
-	LookPath    func(string) (string, error)
+	CursorDir   string // Cursor's, ~/.cursor, with its mcp.json and hooks.json
+	// CursorConfig is Cursor's cli-config.json, where its permissions are: in CursorDir unless a
+	// variable moves it (cursorConfigDir).
+	CursorConfig string
+	KiroHome     string // Kiro's home, with its settings/mcp.json
+	Home         string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
+	T3Settings   string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
+	Getenv       func(string) string
+	LookPath     func(string) (string, error)
 	// Run runs a program and returns what it printed, for asking an agent its version (OpenCode's,
 	// whose two versions want different configs); nil, as tests leave it, runs nothing, and the
 	// version isn't known.
@@ -96,6 +100,10 @@ func EnvFromProcess() (Env, error) {
 	if e.GeminiHome = os.Getenv("GEMINI_HOME"); e.GeminiHome == "" {
 		e.GeminiHome = filepath.Join(home, ".gemini")
 	}
+	// Cursor reads mcp.json and hooks.json in ~/.cursor whatever its variables say, and its
+	// cli-config.json where they say (cursor.go).
+	e.CursorDir = filepath.Join(home, ".cursor")
+	e.CursorConfig = filepath.Join(cursorConfigDir(os.Getenv, home), "cli-config.json")
 	e.KiroHome = kiroHomeDir(os.Getenv, home)
 	return e, nil
 }
@@ -283,7 +291,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// its clone too as it starts; this is for one that doesn't start.
 	if consentErr == nil {
 		if dir, err := clones.DefaultDir(); err == nil {
-			err = clones.Add(dir, clones.Clone{GitDir: p.GitDir, Name: clones.NameIn(ctx, p.GitDir)})
+			err = clones.Add(dir, clones.Clone{GitDir: p.GitDir, Name: clones.NameIn(ctx, p.GitDir), Slug: clones.SlugIn(ctx, p.GitDir)})
 			if err != nil {
 				r.Notes = append(r.Notes, "This clone isn't on the record of this machine's clones, so another repo's page can't switch to it until its daemon starts: "+err.Error())
 			}
@@ -616,6 +624,11 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, proble
 		} else {
 			out = append(out, brand.Product+" is on for this repo. Antigravity should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
 		}
+	// Cursor reads its MCP servers as a chat starts (not seen whether a running chat picks up one
+	// added later: no Cursor account was at hand, 2026-11-22). Resuming starts a new process.
+	case e.looksLikeCursor():
+		out = append(out, brand.Product+" is on for this repo. If this chat doesn't have its tools ("+brand.MCPServer+" who, status, send, inbox), "+
+			"start a new chat in this repo, or exit and run `agent resume` to come back to this one with them.")
 	default:
 		out = append(out, brand.Product+" is on for this repo. Claude Code sessions pick up its tools within seconds if "+brand.Product+" was already registered with Claude Code, "+
 			"and otherwise after a restart (press Stop and send a message in T3; `claude --continue` in a terminal). "+
@@ -640,6 +653,14 @@ func (e Env) looksLikeKiro() bool {
 func (e Env) looksLikeAntigravity() bool {
 	return (e.getenv("ANTIGRAVITY_AGENT") == "1" || e.getenv("ANTIGRAVITY_CONVERSATION_ID") != "") &&
 		e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi() && !e.looksLikeKiro()
+}
+
+// looksLikeCursor reports whether the agent running join is Cursor, which sets CURSOR_AGENT=1 for
+// the shell commands it runs (cursor-agent 2026.11.22-e9042b2, read in its source). An agent of
+// another kind started from Cursor's shell inherits it, so theirs win.
+func (e Env) looksLikeCursor() bool {
+	return e.getenv("CURSOR_AGENT") == "1" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi() &&
+		!e.looksLikeKiro() && !e.looksLikeAntigravity()
 }
 
 // looksLikePi reports whether the agent running join is Pi, which sets PI_CODING_AGENT=true for

@@ -10,7 +10,7 @@ import {
 import { loadPreferences } from "./preferences.js";
 import { AuthError, takeToken, takeKey, api } from "./api.js";
 import { announce, render } from "./render.js";
-import { restartStuck } from "./sidebar.js";
+import { restartStuck, loadRepoCount } from "./sidebar.js";
 import {
   inGroup, isGroupTag, tagWanted, sessionByAddr, tagQueues, groupJoins, groupMisses, tagSessions,
   forgetJoins,
@@ -19,6 +19,7 @@ import { conversationOf, composers, composing, deviceMode, namesOf } from "./mes
 import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } from "./files.js";
 import { askForName } from "./picker.js";
 import { minuteEdits, cancelMinutes } from "./settings.js";
+import { loadUpdates } from "./updates.js";
 
 export {
   deliver, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
@@ -417,7 +418,7 @@ async function start() {
   await takeKey();
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, draftGroup: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, updates: null, conversation: null, chatListTop: 0, draftTo: null, draftGroup: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null, repos: null });
     // Recent's feed is the old daemon's repo's too, and its cursor means nothing to the new one (#485).
     Object.assign(ui, { acts: [], actCursor: "", github: [], recentWho: "" });
     ui.actIds = new Set();
@@ -448,6 +449,8 @@ async function start() {
   render();
   if (!ui.token) return;
   loadSettings(); // the wake-up settings say which of this device's sessions show red
+  loadRepoCount();
+  if (ui.view === "settings") loadUpdates();
   poll();
 }
 

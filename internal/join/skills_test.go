@@ -40,7 +40,7 @@ func TestInstallSkills(t *testing.T) {
 func TestSkillsDirOnlyForAgentsThatReadThem(t *testing.T) {
 	for _, a := range agents {
 		got := skillsDir(a, agentHome{Dir: "/x"})
-		want := map[string]bool{"claudeAgent": true, "codex": true, "opencode": true, "pi": true, "antigravity": true, "kiro": true}[a.driver]
+		want := map[string]bool{"claudeAgent": true, "codex": true, "opencode": true, "pi": true, "antigravity": true, "cursor": true, "kiro": true}[a.driver]
 		if (got != "") != want {
 			t.Errorf("%s: %q", a.driver, got)
 		}

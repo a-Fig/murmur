@@ -111,8 +111,9 @@ review, 2026-11-15).
 
 A daemon can still go: a crash, `mur stop`. Every 10 seconds the window asks for its clone's page,
 starting the daemon if it isn't running, and goes to the new address when the daemon came back on
-another port. So `mur stop` with the app open is undone within 10 seconds; leaving the repo isn't,
-as a clone that left is never started again. A daemon that keeps failing to start is logged once,
+another port. So `mur stop` with the app open is undone within 10 seconds, and `mur stop` says so
+when the window shows that clone (#639); leaving the repo isn't undone, as a clone that left is
+never started again. A daemon that keeps failing to start is logged once,
 not every 10 seconds.
 
 ## Starting it

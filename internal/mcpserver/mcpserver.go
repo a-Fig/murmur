@@ -741,9 +741,34 @@ func (s *server) activate(ctx context.Context) {
 		return
 	}
 	l := s.newLink(lctx, c, helloFor(s.opt.Agent, s.cwd))
+	if s.opt.Agent == "cursor" && s.hereDir != "" && l.native == "" && cursorCLI(s.self.ClientPID) {
+		dir, self := s.hereDir, s.self
+		l.named = func() (string, bool) { return namedOnly(dir, self) }
+	}
 	s.link = l
 	s.tools(s.srv)
 	s.goBG(func() { l.run(lctx) })
+}
+
+// cursorCLI is here.CursorCLI: only a server Cursor's command line started waits for its hook to name
+// the chat. A variable, for tests.
+var cursorCLI = func(pid int) bool { return here.CursorCLI(pid) }
+
+// namedOnly is the conversation Cursor's hook named for the client of the server whose record is
+// self (here.NamedFor), only while that client runs one server of Cursor's: in T3 Code one process
+// runs every Cursor thread, and a name left for it may be any of theirs, so shared says no name
+// will come.
+func namedOnly(dir string, self here.Session) (native string, shared bool) {
+	n := 0
+	for _, r := range here.Of(dir, []int{self.ClientPID}) {
+		if r.Agent == self.Agent {
+			n++
+		}
+	}
+	if n > 1 {
+		return "", true
+	}
+	return here.NamedFor(dir, self), false
 }
 
 // newLink makes the link for a registration, which runs in ctx. Its goroutines are background work
@@ -879,7 +904,11 @@ func (s *server) noteMeta(ctx context.Context, req *mcp.CallToolRequest) {
 	s.mu.Lock()
 	l := s.link
 	s.mu.Unlock()
-	if l == nil || req == nil || req.Params == nil {
+	if l == nil {
+		return
+	}
+	l.callCame()
+	if req == nil || req.Params == nil {
 		return
 	}
 	if c := codexCallOf(req.Params.GetMeta()); c.thread != "" {
@@ -1390,9 +1419,6 @@ type (
 	}
 )
 
-// toolNames are the tools tools lists, for taking them away again.
-var toolNames = []string{"who", "lookup", "status", "tags", "send", "inbox", "mute"}
-
 func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +
 		"session, its name, agent and branch, when it was last active and what it is doing, and which one is you. " +
@@ -1447,6 +1473,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"your subject after its next tool call and reads the body with inbox; what it hasn't read when it finishes is usually given to it then, and its turn goes on. " +
 		"To send the same message to several sessions, name them all, separated by commas: each gets an ordinary message from you, " +
 		"not told who else got it, and the result says what became of each. files sends files along, which the recipient gets as paths on its own machine: " +
+		"files are off by default until your user turns them on in " + brand.Product + "'s Settings, and " +
 		"each file's text is checked for secrets as the body is, but nothing compressed, as an image or a zip, is unpacked to check. Message to coordinate, not to chat.",
 		InputSchema: objectSchema(map[string]*jsonschema.Schema{
 			"to":      {Type: "string", Description: "a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's group (group:device-…, from who) for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"},
@@ -1484,7 +1511,7 @@ func (s *server) tools(srv *mcp.Server) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "mute", Description: "Stop getting anything another session sends: its messages to you, to your device and to everyone. " +
 		"For a session whose messages keep interrupting your work after you have asked it to stop; do-not-disturb (tags) is for holding everyone's for a while. " +
-		"It isn't told, unless it sends to you again, when " + brand.Product + " tells it you have muted it. Mutes show in lookup and on the page, where your user can undo one."},
+		"The muted session isn't notified unless it sends to you again, when " + brand.Product + " tells it you have muted it. Mutes show in lookup and on the page, where your user can undo one."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in muteIn) (*mcp.CallToolResult, any, error) {
 			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpMute, Name: in.Name, Unmute: in.Unmute})
 			return result(view.Muted, resp, err)
@@ -1527,6 +1554,14 @@ type link struct {
 	// daemon, after the first look failed to get it classified; nil until a call starts that (see
 	// classifyFirst), and again for a new native ID or a new registration with the daemon.
 	retry chan struct{}
+	// named is the conversation Cursor's hook named for this session's client, "" until it has
+	// (here.Named, #921), and shared where the client runs other servers of Cursor's too, and so no
+	// name will come; nil for every other agent.
+	named func() (native string, shared bool)
+	// called is closed at the session's first tool call, which ends the wait for named
+	// (holdForName); calledOnce closes it.
+	called     chan struct{}
+	calledOnce sync.Once
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
@@ -1863,6 +1898,116 @@ func (l *link) wait(ctx context.Context, timeout time.Duration) (string, error) 
 // tool call's _meta (see holdFirstHello). A variable, for tests.
 var codexFirstCallWait = time.Second
 
+// cursorNameWait is how long a Cursor session's server holds its first hello for the hook to name
+// the conversation (holdForName), and cursorNamePoll how often it looks. A new chat's sessionStart
+// names it as Cursor starts; a resumed chat has no sessionStart, and is named by its first prompt.
+// Variables, for tests.
+var cursorNameWait, cursorNamePoll = 2 * time.Minute, 100 * time.Millisecond
+
+// holdForName keeps a Cursor session from registering until its hook has named the conversation
+// (here.Named), for up to cursorNameWait, and then registers it by that name's ID, as Muse's and
+// Grok's servers register by the ID in their environment: the same conversation, resumed in
+// another process, is the same session, with its name and its unread messages. Cursor gives its
+// MCP servers no ID of its own (cursor.go in internal/hook). A session not named by then registers
+// under an ID of its own, and the daemon still pairs it with its hook through the process
+// (agentHookSessionsLocked). Held, the session isn't on the mesh: before a resumed chat's first
+// prompt, or where the hook doesn't run. One of several in its process doesn't wait, and a tool
+// call ends the wait: the call waits for the registration, and the hook that names the chat runs
+// only after it (headless `agent -p` can start the chat before the server is up). A session
+// registered unnamed goes on looking (awaitLateName).
+func (l *link) holdForName(ctx context.Context) {
+	if l.named == nil {
+		return
+	}
+	deadline := time.Now().Add(cursorNameWait)
+	for {
+		native, shared := l.named()
+		if native != "" {
+			l.takeName(native, true)
+			return
+		}
+		if shared {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-l.calledChan():
+			if native, _ := l.named(); native != "" {
+				l.takeName(native, true)
+				return
+			}
+			deadline = time.Time{}
+		case <-time.After(cursorNamePoll):
+		}
+	}
+	l.spawn(func() { l.awaitLateName(ctx) })
+}
+
+// awaitLateName looks for the hook's name for a session that registered without one, and tells the
+// daemon when it comes, which keys the session by the chat from then on, its name kept. It looks
+// less often as time goes on, every cursorLatePoll at most.
+func (l *link) awaitLateName(ctx context.Context) {
+	wait := cursorNamePoll
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		native, shared := l.named()
+		if shared {
+			return
+		}
+		if native != "" {
+			if l.takeName(native, false) {
+				l.tellRoute(ctx)
+			}
+			return
+		}
+		wait = min(2*wait, cursorLatePoll)
+	}
+}
+
+// cursorLatePoll is the longest awaitLateName waits between looks. A variable, for tests.
+var cursorLatePoll = 10 * time.Second
+
+// callCame notes a tool call of the session's (holdForName).
+func (l *link) callCame() {
+	if l.named != nil {
+		l.calledOnce.Do(func() { close(l.calledChan()) })
+	}
+}
+
+// calledChan is called, made on first use.
+func (l *link) calledChan() chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.called == nil {
+		l.called = make(chan struct{})
+	}
+	return l.called
+}
+
+// takeName takes the conversation's ID the hook named, for the hello's Native, and for its ID where
+// the session hasn't registered yet (first). Once registered, a session keeps its ID. It says
+// whether it took one.
+func (l *link) takeName(native string, first bool) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.native != "" {
+		return false
+	}
+	l.native, l.hello.Native = native, native
+	if first && !l.hello.ByThread {
+		l.hello.ID = nativeID(native)
+	}
+	return true
+}
+
 // nativeSeenLocked is nativeSeen, made if it isn't yet. Caller holds mu.
 func (l *link) nativeSeenLocked() chan struct{} {
 	if l.nativeSeen == nil {
@@ -1902,6 +2047,7 @@ func (l *link) run(ctx context.Context) {
 	l.lookupThread(ctx, 3*time.Second)
 	l.startSeek(ctx)
 	l.holdFirstHello(ctx)
+	l.holdForName(ctx)
 	for ctx.Err() == nil {
 		// The user can leave while this runs, and leaving stops the daemon: the next thing this
 		// loop would do is start another. So ask before every hello, not once.
@@ -1913,6 +2059,11 @@ func (l *link) run(ctx context.Context) {
 			case <-time.After(backoff):
 			}
 			continue
+		}
+		if l.named != nil {
+			if native, _ := l.named(); native != "" {
+				l.takeName(native, false) // named after the hold: the ID stays, the daemon learns the conversation
+			}
 		}
 		l.mu.Lock()
 		h := l.hello

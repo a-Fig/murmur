@@ -2,7 +2,7 @@
 
 import { icon } from "./icons.js";
 import { h, when, agoEl, plural, root } from "./dom.js";
-import { NAME, ui, me, myName } from "./state.js";
+import { ui, me, myName, repoLabel } from "./state.js";
 import { THEMES, theme, setTheme } from "./preferences.js";
 import { AuthError, api } from "./api.js";
 import { saveSettings, deny, poll } from "./sync.js";
@@ -400,6 +400,8 @@ const THEME_TIPS = {
   light: "White page with dark text",
   murmur: "Cream page with ink text and blue accents, like the Murmur website",
   sky: "Pale blue panes with navy text, Rubik and butter message bubbles",
+  night: "Near-black navy panes with white text, Rubik and blue message bubbles",
+  day: "Butter page with a cream sidebar, navy text, Rubik and blue message bubbles",
 };
 
 function themeSection() {
@@ -633,7 +635,7 @@ function settingsScope() {
     "p",
     { class: "settings-scope" },
     "For ",
-    h("strong", null, ui.state.repo || NAME),
+    h("strong", null, repoLabel()),
     self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
   );
 }

@@ -27,7 +27,7 @@ repo's own git remote: no server, no accounts.
 
 Same agents, same speed, and the repo stays coherent.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity and Kiro**, in
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor and Kiro (beta)**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Install
@@ -84,7 +84,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
-`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity and Kiro.
+`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity, Cursor and Kiro (beta).
 Two help agents decide when to use Murmur and coordinate over several messages. The third,
 `murmur-manager`, is for an agent you ask to manage your team as COO. Their source is in
 [`internal/skills`](internal/skills).
@@ -108,6 +108,8 @@ Two help agents decide when to use Murmur and coordinate over several messages. 
 | OpenCode 1              | T3 Code               | turn      | waits for the turn to end, then a turn |
 | Muse Code               | T3 Code               | turn      | notice after its next tool call        |
 | Muse Code               | a terminal            | inbox     | notice after its next tool call        |
+| Cursor (beta)           | a terminal            | inbox     | notice after its next tool call        |
+| Cursor (beta)           | T3 Code               | inbox     | inbox                                  |
 | Any other (beta)        | T3 Code               | turn      | waits for the turn to end, then a turn |
 
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
@@ -115,7 +117,8 @@ idle less than its wake setting allows (5 minutes by default). A **notice** is o
 sender and subject, added after the agent's next tool call; the agent reads the message with
 `inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
-used one of Murmur's tools. An agent Murmur has no tools for in T3 Code runs
+used one of Murmur's tools. In T3 Code, Murmur can't yet tell one Cursor thread from another
+([#924](https://github.com/a-Fig/murmur/issues/924)). An agent Murmur has no tools for in T3 Code runs
 `mur who` and `mur send` in its thread's shell instead.
 
 ## For humans
@@ -128,11 +131,15 @@ used one of Murmur's tools. An agent Murmur has no tools for in T3 Code runs
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
+| `mur updates [off\|on\|nightly\|back]` | How Murmur updates itself on this machine: off, stable releases (on, the default), or prereleases and nightlies too. `back` goes back to the latest stable release from a prerelease, until a newer release is out. Alone, it says what applies in this repo. Settings in `mur ui` has the same choices. |
 | `mur stop`             | Stops this clone's daemon. |
 | `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
 | `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
+
+An agent that can't open the pages the repo's section links to can print them instead:
+`mur docs join`, `mur docs use`, or `mur docs` for the list.
 
 ## How it works
 
@@ -173,10 +180,10 @@ people use Murmur; the address is already public, so there is nothing to turn of
 [privacy page](https://murmur.afig.dev/privacy/) lists what it counts from those public repos.
 
 **Murmur updates itself.** The daemon checks GitHub's releases hourly, and installs a newer `mur`
-after verifying its checksum. To turn that off:
+after verifying its checksum. To turn that off, on this machine:
 
 ```sh
-git config --global murmur.update false
+mur updates off
 ```
 
 [`docs/agents/join.md`](docs/agents/join.md#what-murmurafigdev-receives-and-why) says exactly what

@@ -152,6 +152,9 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	if d.opt.Repos != nil {
 		page.WithRepos(d.opt.Repos)
 	}
+	if d.opt.Updates != nil {
+		page.WithUpdates(d.opt.Updates)
+	}
 	d.page.Store(page)
 	// Any local user can connect, and a connection Go keeps open costs the daemon a file descriptor:
 	// one that sends a request and then sits idle would be kept for good, and enough of them would
@@ -250,7 +253,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	colors := d.colorsLocked()
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
 	self.DND = d.dnd.Load()
-	st := web.State{Repo: d.repoName, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
+	st := web.State{Repo: d.repoName, Slug: d.repoSlug, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
 		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
 		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load()}
 	for _, id := range sortedKeys(d.peers) {

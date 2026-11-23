@@ -16,10 +16,12 @@ import (
 // skillsDir is where agent home h reads user skills, each a folder with a SKILL.md, "" for an
 // agent with no documented place. The four were taken from each agent's documentation on
 // 2026-11-08, not tried in a session: Claude Code and Pi read <dir>/skills, Codex
-// $CODEX_HOME/skills, OpenCode ~/.config/opencode/skills. Muse Code and Grok document none.
+// $CODEX_HOME/skills, OpenCode ~/.config/opencode/skills. Muse Code and Grok document none. Cursor
+// reads ~/.cursor/skills (cursor.com/docs/skills, 2026-11-22), and Claude Code's and Codex's folders
+// too, so beside them it sees each skill twice, as OpenCode does.
 func skillsDir(a agent, h agentHome) string {
 	switch a.driver {
-	case "claudeAgent", "codex", "opencode", "pi", "kiro":
+	case "claudeAgent", "codex", "opencode", "pi", "cursor", "kiro":
 		if h.Dir != "" {
 			return filepath.Join(h.Dir, "skills")
 		}

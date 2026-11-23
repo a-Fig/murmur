@@ -356,28 +356,32 @@ function conversationList(list) {
     h(
       "div",
       { class: "g-head" },
+      // A picked session's profile, as #1018 drew it (#1115): the way back, its face and name large
+      // with how it is under them, what it is doing, what it runs on, and its tags.
       name
         ? [
             h(
+              "button",
+              { class: "g-back", "data-key": "head-back", onclick: () => ((ui.filter = null), (ui.conversation = null), go("messages")) },
+              icon("chevronRight"),
+              "All conversations",
+            ),
+            h(
               "div",
-              { class: "g-head-who" },
+              { class: "g-head-who g-profile" },
               f ? presence(name, f.device) : avatar(name),
-              h("h2", { class: "truncate" }, name),
+              h(
+                "div",
+                { class: "g-head-id" },
+                h("h2", { class: "truncate" }, name),
+                // Its profile (#631): how it is now, where it runs, and since when.
+                f ? profileLine(f.device, f.session) : h("p", { class: "g-head-status" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
+              ),
               f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
             ),
             f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
-            f &&
-              h(
-                "p",
-                { class: "g-head-meta" },
-                h("span", { class: "truncate" }, [f.session.agent, modelOf(f.session)].filter(Boolean).join(" · ")),
-                f.session.branch && h("span", { class: "g-branch", title: "Branch " + f.session.branch }, icon("branch"), h("span", { class: "truncate" }, f.session.branch)),
-                prFor(f.session) && prBadge(prFor(f.session), true, "pr-head-" + f.session.name),
-              ),
-            // Its profile (#631): where it runs, how it is now, and since when.
-            f && profileLine(f.device, f.session),
+            f && headMeta(f.session),
             f && tagsLine(f.session),
-            !f && h("p", { class: "g-head-doing" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
           ]
         : h(
             "div",
@@ -458,6 +462,28 @@ function conversationList(list) {
     ui.showOlder && older.map(conversationRow),
     !rows.length && (q || !older.length) && h("p", { class: "g-none" }, q ? "Nothing matches." : kind === "dm" ? "No direct messages" : kind === "group" ? "No group chats" : "No conversations"),
     kind === "group" && !q && !name && h("div", { class: "g-none-action" }, h("button", { class: "btn btn-outline btn-sm", "data-key": "list-new-group", onclick: () => openPicker(true) }, icon("users"), "New group chat")),
+  );
+}
+
+// What a picked session runs on: its harness and model, its branch, the pull request open from that
+// branch as a chip, when it started, and the other branches it has committed to (#631).
+function headMeta(s) {
+  const started = when(s.started);
+  const pr = prFor(s);
+  const chip = pr && prBadge(pr, true, "pr-head-" + s.name);
+  if (chip) {
+    chip.classList.add("g-pr-chip");
+    if (pr.draft) chip.append(" draft");
+  }
+  const others = (s.committed || []).filter((b) => b && b !== s.branch);
+  return h(
+    "p",
+    { class: "g-head-meta" },
+    h("span", { class: "truncate" }, [s.agent, modelOf(s)].filter(Boolean).join(" · ")),
+    s.branch && h("span", { class: "g-branch", title: "Branch " + s.branch }, icon("branch"), h("span", { class: "truncate" }, s.branch)),
+    chip,
+    started && agoEl("span", null, started, "Started "),
+    others.length > 0 && h("span", { class: "truncate", title: "Also committed to " + others.join(", ") }, "Also on " + others.join(", ")),
   );
 }
 

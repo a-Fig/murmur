@@ -99,6 +99,14 @@ type input struct {
 	ToolCall          *antigravityToolCall `json:"toolCall"`
 	StepIdx           *int                 `json:"stepIdx"`
 	Error             string               `json:"error"`
+	// Cursor's payload (cursor.go). Status is stop's: "completed" at a turn's ordinary end.
+	// CursorVersion is on every event of Cursor's, which is how Claude Code's hook knows Cursor ran
+	// it from Claude Code's settings.
+	ConversationIDSnake string   `json:"conversation_id"`
+	Status              string   `json:"status"`
+	WorkspaceRoots      []string `json:"workspace_roots"`
+	CursorVersion       string   `json:"cursor_version"`
+	ParentToolCallID    string   `json:"parent_tool_call_id"`
 }
 
 type output struct {
@@ -261,10 +269,12 @@ func ownRecord(agent, native, t3Thread string, recs []here.Session) (here.Sessio
 	if threadMatches == 1 {
 		return threadRec, true
 	}
-	// Each agy or kiro-cli V3 client process runs one conversation and starts its own MCP server.
-	// Only accept the sole record for that PID with neither ID known and a matching agent label.
-	// The label rules out a parent Claude Code or Codex whose record was the nearest one.
-	if (agent == Antigravity || agent == Kiro) && len(recs) == 1 {
+	// Each agy or kiro-cli V3 client process runs one conversation and starts its own MCP server,
+	// as a Cursor process does outside T3 (a server takes Cursor's conversation from the hook a
+	// moment after it runs: cursor.go). Only accept the sole record for that PID with neither ID
+	// known and the agent's label. The label rules out a parent Claude Code or Codex whose record
+	// was the nearest one.
+	if (agent == Antigravity || agent == Cursor || agent == Kiro) && len(recs) == 1 {
 		r := recs[0]
 		if r.Native == "" && r.T3Thread == "" && (r.Agent == agent || strings.HasPrefix(r.Agent, agent+" ")) {
 			return r, true
@@ -280,7 +290,7 @@ func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 // Agents other than Claude Code that join installs the hook in, by the name their hook's command
 // line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
 // some fields of its own (#225) and Muse's with side sessions of its own (muse.go, #461), except
-// Antigravity's, which has its own (antigravity.go). Pi's is
+// Antigravity's and Cursor's, which have their own (antigravity.go, cursor.go). Pi's is
 // run by Murmur's own extension, which gives the session's file for its ID (#205), and OpenCode's
 // by Murmur's plugin, with OpenCode's session ID (#431).
 const (
@@ -290,13 +300,15 @@ const (
 	OpenCode    = "opencode"
 	Antigravity = "antigravity"
 	Muse        = "muse"
+	Cursor      = "cursor"
 	Kiro        = "kiro"
 )
 
 // KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode,
-// antigravity, muse or kiro.
+// antigravity, muse, cursor or kiro.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse || agent == Kiro
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse ||
+		agent == Cursor || agent == Kiro
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
@@ -308,10 +320,10 @@ func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 // than take another agent's hook for Claude Code's. Claude Code's hook sends its transcript.
 func RunFor(agent string, stdin io.Reader, stdout io.Writer) { RunForEvent(agent, "", stdin, stdout) }
 
-// RunForEvent is RunFor with the event its command line names. Antigravity's hook answers every
-// event with a JSON object.
+// RunForEvent is RunFor with the event its command line names. Antigravity's and Cursor's hooks
+// answer every event with a JSON object.
 func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
-	if agent == Antigravity {
+	if agent == Antigravity || agent == Cursor {
 		w := &written{w: stdout}
 		stdout = w
 		defer func() {
@@ -344,6 +356,12 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	if agent == Antigravity && !fromAntigravity(&in, event) {
 		return
 	}
+	if agent == "" && in.CursorVersion != "" {
+		return // Cursor running Claude Code's hooks (cursor.go): its own hook speaks for the session
+	}
+	if agent == Cursor && !fromCursor(&in) {
+		return
+	}
 	if agent == Muse {
 		if museSideSession(in) {
 			return
@@ -360,12 +378,16 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		in.Child, in.ParentNative = false, ""
 	}
 	who := identify(agent, in)
+	if agent == Cursor {
+		nameServer(in, who.Ancestors)
+	}
 	if in.Event == stop {
 		turnEnd(agent, in, who, stdout)
 		return
 	}
 	var op string
-	if agent == "" || agent == Antigravity && in.ToolName == antigravityCommand {
+	if agent == "" || agent == Pi || agent == Antigravity && in.ToolName == antigravityCommand {
+		// Pi's extension gives a tool_use_id only for a shell call, the one kind of call it brackets.
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
@@ -440,6 +462,8 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	switch agent {
 	case Antigravity:
 		inbox = view.AntigravityInboxTool
+	case Cursor:
+		inbox = view.CursorInboxTool
 	case Kiro:
 		inbox = view.KiroInboxTool
 	}
@@ -449,6 +473,10 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	if agent == Antigravity {
 		json.NewEncoder(stdout).Encode(antigravitySteps(text))
+		return
+	}
+	if agent == Cursor {
+		json.NewEncoder(stdout).Encode(cursorAnswer{AdditionalContext: text})
 		return
 	}
 	if agent == Kiro {
@@ -487,6 +515,10 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	if err != nil || len(resp.Read) == 0 || !who.Continues {
 		return
 	}
+	if agent == Cursor {
+		json.NewEncoder(stdout).Encode(cursorAnswer{FollowupMessage: view.Hook(resp.Read, nil, 0)})
+		return
+	}
 	decision := "block"
 	if agent == Antigravity {
 		decision = "continue" // its word for not stopping
@@ -502,7 +534,8 @@ func identify(agent string, in input) proto.Request {
 		// The session is named by its file (Pi) or its session ID (OpenCode), which its MCP server
 		// registered with too, never by a Claude Code ID or process: a Pi started from a Claude Code
 		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
-		// Claude Code's form, and no call is bracketed, so their commits aren't credited to them.
+		// Claude Code's form. Pi's extension brackets a shell call with a tool_use_id of its own; no
+		// OpenCode call is bracketed, so its commits aren't credited to it.
 		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}

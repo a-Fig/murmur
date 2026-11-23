@@ -124,15 +124,17 @@ func TestClientCommandLineNeedsItsConversationAndARunningSession(t *testing.T) {
 }
 
 // A session in T3 is reached through T3, whatever else its route names.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestSessionInT3IsNotReachedByItsClientCommandLine(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob", CodexCLI: exe, Native: "0199-thread"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "hi", "there")
+	b.send("aaaaaa", bob, "hi", "there")
 	eventually(t, "the handoff", func() bool { return len(calls()) == 1 })
 	if c := calls()[0]; strings.Join(c.Args, " ") != "thread send thread-bob -" {
 		t.Errorf("the handoff ran %q, want t3's thread send", c.Args)
@@ -141,17 +143,19 @@ func TestSessionInT3IsNotReachedByItsClientCommandLine(t *testing.T) {
 
 // A command that fails leaves the message to the inbox and the hook's notice, and the log says so
 // once, without the message.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestFailedClientCommandFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1")
 	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{OpenCodeCLI: exe, Native: "ses_bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "first", "body one 7c1e")
+	b.send("aaaaaa", bob, "first", "body one 7c1e")
 	eventually(t, "the failed handoff", func() bool {
 		return strings.Contains(out.String(), "handing a message over as a turn through OpenCode's server failed")
 	})

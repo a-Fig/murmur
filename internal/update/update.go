@@ -1,6 +1,7 @@
 // Package update installs checksum-verified GitHub releases, and keeps the latest release's version
 // so `mur version` can say when there is a newer one. It talks only to GitHub, and not at all while
-// updates are off. It takes stable releases only, unless the prerelease channel is chosen.
+// updates are off, unless a person asks for one install (Options.Install). It takes stable releases
+// only, unless the prerelease channel is chosen.
 package update
 
 import (
@@ -21,7 +22,6 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
@@ -38,6 +38,14 @@ type Options struct {
 	Getenv   func(string) string
 	Log      *log.Logger
 	Every    time.Duration
+	// Check asks for a check soon, as when a person changes the update setting: at once, or
+	// checkGap after the last one. Nil: only the hourly ones.
+	Check <-chan struct{}
+	// Install asks for one install of the release it names, as a person's "Update now" does: a
+	// check like Check's that installs even while updates are off in git config. It installs only
+	// that release, the one the person saw: if the check finds another, it fails and says which.
+	// It doesn't turn updates on, and MURMUR_NO_UPDATE still refuses it. Nil: none is asked for.
+	Install <-chan string
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -56,18 +64,18 @@ type Status struct {
 	Failed bool
 	// Installed says a newer binary is in place and the daemon restarts onto it when it can.
 	Installed bool
+	// Asked says the check was one Install asked for, so its outcome is the answer to a person.
+	Asked bool
+	// Error is why a check Install asked for failed, in words to show to the person who asked.
+	Error string
 }
 
 // After says release version a comes after b. Development builds ("-dev") never do.
 func After(a, b string) bool { return newer(a, b) }
 
+// Off says updates are off in the clone at gitDir: MURMUR_NO_UPDATE, or murmur.update false.
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
-	v := strings.TrimSpace(getenv("MURMUR_NO_UPDATE"))
-	if v != "" && v != "0" && !strings.EqualFold(v, "false") {
-		return true
-	}
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--type=bool", "--get", "murmur.update")
-	return err == nil && strings.TrimSpace(out) == "false"
+	return envOff(getenv) || last(updateValues(ctx, gitDir), "").value == "false"
 }
 
 // Prerelease says whether git config chooses the prerelease channel (`murmur.channel prerelease`),
@@ -75,9 +83,12 @@ func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 // channel. It is a key of its own because daemons from before it read murmur.update as a bool, and
 // they ignore this one, so they keep taking stable releases until one of those brings the channel.
 func Prerelease(ctx context.Context, gitDir string) bool {
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--get", "murmur.channel")
-	return err == nil && strings.EqualFold(strings.TrimSpace(out), "prerelease")
+	return strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "").value, "prerelease")
 }
+
+// checkGap is the least time between a check and one a changed setting asks for (Options.Check),
+// so that clicking through the choices can't spend GitHub's hourly allowance for this address.
+var checkGap = 10 * time.Second
 
 // Run checks immediately and hourly. Network failures wait quietly until the next check.
 // A successful install calls restart once; its caller waits for handoffs before stopping.
@@ -128,25 +139,52 @@ func Run(ctx context.Context, o Options, restart func()) {
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var checked time.Time
+	asked := "" // the release a person asked to install (Install), which the next check does
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-o.Check:
+			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			continue
+		case asked = <-o.Install:
+			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			continue
 		case <-timer.C:
 		}
-		if Off(ctx, o.Getenv, o.GitDir) {
-			report(Status{Off: true})
+		checked = time.Now()
+		want, now := asked, asked != ""
+		asked = ""
+		if off := Off(ctx, o.Getenv, o.GitDir); off && (!now || envOff(o.Getenv)) {
+			s := Status{Off: true, Asked: now}
+			if now {
+				// The environment's opt-out may mean the binary is managed by something else.
+				s.Failed, s.Error = true, noUpdate+" is set for this daemon"
+			}
+			report(s)
 		} else {
-			done, latest, err := attempt(ctx, o, original)
+			done, latest, err := install(ctx, o, original, want)
 			if done {
-				report(Status{Latest: latest, Installed: true})
+				report(Status{Latest: latest, Installed: true, Asked: now})
 				restart()
 				return
 			}
 			if ctx.Err() != nil {
 				return
 			}
-			report(Status{Latest: latest, Failed: err != nil})
+			// Another release than the one asked for isn't a failed update: with updates on, the
+			// next check installs it, and soon.
+			other := errors.Is(err, errNotAsked)
+			s := Status{Latest: latest, Off: off, Failed: err != nil && !other, Asked: now}
+			if err != nil && now {
+				s.Error = err.Error()
+			}
+			report(s)
+			if other && !off {
+				timer.Reset(checkGap)
+				continue
+			}
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
 				return
@@ -214,9 +252,17 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// errNotAsked says the release a person asked to install isn't the one the check found.
+var errNotAsked = errors.New("another release is out")
+
 // attempt installs the latest release if it is newer than this one. latest is that release's
 // version, once the check has read it.
 func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, latest string, err error) {
+	return install(ctx, o, original, "")
+}
+
+// install is attempt, and if want isn't "", installs only that release: a person asked for it.
+func install(ctx context.Context, o Options, original os.FileInfo, want string) (done bool, latest string, err error) {
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
@@ -231,16 +277,31 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
-	rel, err := pick(ctx, o, Prerelease(ctx, o.GitDir))
+	// Going back to stable from a prerelease (Back) takes the latest stable release, older or not.
+	// After that, no prerelease installs that isn't newer than the one gone back from, on either
+	// channel. Stable releases still do, so the machine never stays below the latest of them.
+	skip := skipped(ctx, o.GitDir, o.Version)
+	clearSkip(ctx, o, o.Version)
+	back := skip != "" && same(skip, o.Version)
+	rel, err := pick(ctx, o, !back && Prerelease(ctx, o.GitDir))
+	if err == nil && rel != nil && skip != "" && prerelease(rel.Tag) && !newer(rel.Tag, skip) {
+		rel, err = pick(ctx, o, false) // held: the latest stable release, if it is newer
+	}
 	if err != nil {
 		return false, latest, err
 	}
 	if rel == nil {
+		if want != "" {
+			return false, "", fmt.Errorf("%s isn't a release to install now", want)
+		}
 		return false, "", nil
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
-	if !newer(rel.Tag, o.Version) {
+	if want != "" && !same(want, rel.Tag) {
+		return false, latest, fmt.Errorf("%w: %s is the release to install now, not %s", errNotAsked, latest, want)
+	}
+	if !back && !newer(rel.Tag, o.Version) {
 		return false, latest, nil
 	}
 	name := assetName(o.OS, o.Arch)
@@ -277,11 +338,31 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
+	// A person may have gone back to stable from this version while the release downloaded: that
+	// choice wins over a release picked before it, and the next check, which Back asks for, goes back.
+	if !back && same(skipped(ctx, o.GitDir, o.Version), o.Version) {
+		return false, latest, nil
+	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
+	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
+}
+
+// clearSkip takes murmur.updateSkip off once version, the one running or just installed, has
+// passed it, so a later prerelease that misbehaves starts from no hold. It reads the key again
+// each time: a person may have gone back from another prerelease since the check began. It is the
+// global key Back writes; a repo's own is left alone.
+func clearSkip(ctx context.Context, o Options, version string) {
+	v := last(configValues(ctx, o.GitDir, skipKey), "global").value
+	if v == "" || validVersion(v) && !newer(version, v) {
+		return
+	}
+	if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
+		o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+	}
 }
 
 type release struct {
@@ -513,13 +594,25 @@ func Checked(gitDir string) time.Time {
 	return fi.ModTime()
 }
 
-// Newer returns the latest release the clone's daemon last saw, if it is newer than version, else "".
+// Newer returns the latest release the clone's daemon last saw, if it is newer than version and
+// not a prerelease held back by a return to stable (Back), else "". It reads a file, and for a
+// prerelease asks git config what is held back.
 func Newer(gitDir, version string) string {
 	var l latest
 	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
 		json.Unmarshal(b, &l)
 	}
-	if l.Latest != "" && newer(l.Latest, version) {
+	if l.Latest == "" || !newer(l.Latest, version) {
+		return ""
+	}
+	// Only a prerelease can be held back, so only for one is git asked what is: `mur version` and
+	// the page call this, and a stable release, the usual answer, costs them no process (#1164).
+	if !prerelease(l.Latest) {
+		return l.Latest
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if skip := skipped(ctx, gitDir, version); skip == "" || newer(l.Latest, skip) {
 		return l.Latest
 	}
 	return ""

@@ -47,6 +47,76 @@ so a developer's own settings don't change what they see (#262). As of 2026-11-0
 `publicrepo`, `setup`, `daemon` and `cmd/mur`; the others that reach it passed with all three keys
 set.
 
+## Where the daemon tests' time goes
+
+`scripts/daemon-test-times.sh [run] [slowest]` reads one run of `test.yml` back through `gh`: for
+each job that tests `internal/daemon`, the job's and the go test step's time, go's time for the
+package, how many tests ran at once on how many processors, the git the tests started by
+subcommand, the tests that were retried, and the slowest tests. With no run it takes main's last
+push run; a pull request's run has the macOS and Windows shards only at the `full` level. The
+per-test times come from `go test -v`, which those jobs run with since 2026-11-22 (#1008): it costs
+log lines, not time. `scripts/retried-tests.sh` counts retries over many runs.
+
+The baseline, to set a later run beside: run 45109949890, at c2e5f654, 2026-11-22
+(`scripts/daemon-test-times.sh 45109949890`). One run, so a job's time is good to about a factor of
+two, as runners vary; the counts of git and the shares hold better.
+
+| Job | go test step | Package | Tests | Test time | At once, on processors | Git started | A push, mean |
+|---|---|---|---|---|---|---|---|
+| test-linux (the whole package, beside every other package) | 482 s | 460 s | 665 | 904 s | 4 on 4 | 78,688 | 14 ms |
+| test-macos-daemon (0) | 869 s | 850 s | 332 | 1,926 s | 3 on 3 | 55,991 | 210 ms |
+| test-macos-daemon (1) | 733 s | 715 s | 333 | 1,605 s | 3 on 3 | 53,931 | 158 ms |
+| test-windows-daemon (0) | 844 s | 807 s | 166 | 2,287 s | 4 on 4 | 28,283 | 602 ms |
+| test-windows-daemon (1) | 1,000 s | 961 s | 167 | 2,957 s | 4 on 4 | 30,237 | 655 ms |
+| test-windows-daemon (2) | 1,069 s | 1,030 s | 166 | 3,293 s | 4 on 4 | 26,453 | 792 ms |
+| test-windows-daemon (3) | 1,128 s | 1,087 s | 165 | 3,594 s | 4 on 4 | 26,658 | 857 ms |
+
+Test time is the tests' own times added up, without the time a test waited its turn. No test was
+retried in that run.
+
+What it shows:
+
+- **On macOS and Windows the time is git's, and a git costs about 56 times as much on Windows as
+  on Linux.** The same tests, but for five that are one OS's alone, took 904 s of test time on
+  Linux, 3,531 s on macOS and 12,130 s on Windows. The tests started 78,688 git on Linux, which
+  ran for 452 s in all (6 ms each); 109,922 on macOS, for 9,926 s (90 ms each); and 111,631 on
+  Windows, for 35,996 s (322 ms each). Git's seconds pass the tests' on macOS and Windows because
+  a test's daemons run several git at once; on Linux they are half the tests'. The slower machines
+  also start more git for the same tests: on Windows `push`, `commit-tree`, `update-ref`, `fetch`
+  and `for-each-ref` are 1.6 to 2 times Linux's, and only `ls-remote` is no more. This run doesn't
+  say why. Linux's 452 s is loose, too: its means print in whole milliseconds, of 1 to 4.
+- **By subcommand, on Windows:** `push` 12,157 s (16,815 of them), `ls-remote` 5,917 s (18,202),
+  `fetch` 5,539 s (9,931), `update-ref` 4,725 s (25,090), `commit-tree` 3,574 s (16,265),
+  `for-each-ref` 1,883 s (11,089). Those six are 94% of git's time there. So the helpers to look
+  at are the ones behind a write to the bus (`commit-tree`, `push`, `update-ref`) and a poll
+  (`ls-remote`, `fetch`, `for-each-ref`), not any one test.
+- **No test file has more than 7% of the time.** The largest share of Windows test time is
+  `switch_test.go` at 7.0%, with 23 of the 664 tests, so twice its share by count; then
+  `files_test.go` 5.2%, `person_test.go` 5.0%, `names_more_test.go` 4.9% and `names_test.go` 4.2%.
+  The top sixteen of 139 files are 57%. These shares aren't printed by the script: they are the
+  per-job lists, with `slowest` at 1000, added up by the file each test is defined in.
+- **The slowest single tests,** all on Windows: `TestDamagedRegistryFreesNoName` 123 s,
+  `TestGarbageRegistryTip` 113 s, `TestSendByNameAcrossDevices` 96 s,
+  `TestMessageForEveryoneReachesAThreadOnce` 95 s,
+  `TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart` 94 s. On Linux the slowest is
+  `TestASendDoesNotWaitForASyncsSlowFetch`, 43 s, which waits on purpose.
+
+A change meant to make the tests cheaper can cite, from the same script on its own run: the git
+started and their time in all per job (the count times the mean, added over the subcommands), the
+test time per job, and a named test's time. On a laptop,
+`MURMUR_GIT_STATS=<file> go test -v -count=1 -run '<tests>' ./internal/daemon` writes the same
+count of git to the file and prints the same per-test times, for a few tests at a time.
+
+Some tests stood up two or three devices and a remote to check a decision that reads only the
+daemon's state: what a Stop hook gives, whether a person's message explains them. Those can build
+a `Daemon` by hand in an `_internal_test.go` file and call the handler or the `...Locked` method
+straight, as `threadsDaemon`, `tagsDaemon` and `stopRig` do, with no git and in milliseconds. On
+2026-11-23 (#1010) four slow ones went that way: 268 s of Windows test time, and
+about 1,770 git and 59 s on a laptop, became four tests of under 0.1 s with no git. Each says in its
+comment what it keeps, why that needs no git, and which test still runs the path end to end. A
+test whose point is the bus (ref writes, the registry, presence across devices, a restart against
+the remote, a git that is slow or refused) stays on real git.
+
 ## Testing `mur join` by hand
 
 A throwaway `HOME` isn't enough. Join also follows the variables that move an agent's settings,

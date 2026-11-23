@@ -86,6 +86,41 @@ func TestAMuseHookFindsItsSessionByItsID(t *testing.T) {
 	}
 }
 
+// A Cursor session's server registers by the chat its hook named (#921), and the hook finds it by
+// that ID; one that registered before the hook named it is found by its process only when its
+// client is Cursor's command line (not a shared T3 Code or editor process), once, and keeps that
+// chat.
+func TestACursorHookFindsItsSession(t *testing.T) {
+	d := agentHookDaemon(t)
+	cli := false
+	old := cursorCLI
+	cursorCLI = func(int) bool { return cli }
+	t.Cleanup(func() { cursorCLI = old })
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	named := d.newSessionLocked(&proto.Hello{ID: "aaaaaa", ClientPID: 700}, "cursor", "", "aaaaaa")
+	named.clientPID, named.route.Native = 700, "chat-a"
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-a", Ancestors: []int{800, 700}}); len(got) != 1 || got[0] != named {
+		t.Fatalf("by its chat: %v", ids(got))
+	}
+	late := d.newSessionLocked(&proto.Hello{ID: "bbbbbb", ClientPID: 900}, "cursor", "", "bbbbbb")
+	late.clientPID = 900
+	// Outside Cursor's CLI (T3 Code or the editor), a hook never binds to a sole unnamed session
+	// by process: another thread in that process could send its hook first.
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-b", Ancestors: []int{901, 900}}); len(got) != 0 || late.hookNative != "" || !late.hookSeen {
+		t.Fatalf("outside CLI: got %v, hookNative %q, hookSeen %v", ids(got), late.hookNative, late.hookSeen)
+	}
+	cli = true
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-b", Ancestors: []int{901, 900}}); len(got) != 1 || got[0] != late || late.hookNative != "chat-b" {
+		t.Fatalf("by its process: %v, hookNative %q", ids(got), late.hookNative)
+	}
+	// Another chat in that process (a new chat in the same terminal) isn't taken for it.
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-c", Ancestors: []int{901, 900}}); len(got) != 0 {
+		t.Fatalf("another chat took %v", ids(got))
+	}
+}
+
 // Two sessions of one process with no ID yet (T3 runs every Codex thread in one app server):
 // nothing tells them apart, so the hook speaks for neither, but both have a hook that runs.
 func TestAnAgentHookOfSeveralUnknownSessionsTakesNone(t *testing.T) {
@@ -149,6 +184,7 @@ func TestHookOff(t *testing.T) {
 		{"pi in T3", long, false, true},
 		{"muse", long, false, true},
 		{"muse in T3", long, false, true},
+		{"cursor", long, false, true},
 		{"kiro", long, false, true},
 		{"kiro in T3", long, false, true},
 		{"codex", long, true, false},

@@ -172,6 +172,14 @@ func (e Env) t3Vars() []string {
 // for its default home; the home's for one in the home, as the shared ~/.gemini and the defaults T3
 // runs instances in are; else T3's settings, which named it.
 func (e Env) homeFrom(a agent, h agentHome, readT3 bool) string {
+	if a.driver == "cursor" && h.JSON != "" && !inTemp(h.JSON, false) {
+		// Its cli-config.json, which these move (cursorConfigDir).
+		for _, v := range []string{"CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"} {
+			if strings.TrimSpace(e.getenv(v)) != "" {
+				return v
+			}
+		}
+	}
 	if samePath(h.Dir, e.defaultHome(a).Dir) {
 		v := a.t3Var
 		if a.driver == "antigravity" {
