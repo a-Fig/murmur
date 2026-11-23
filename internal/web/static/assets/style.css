@@ -522,34 +522,6 @@
 [data-theme="night"] :is(.chat-new, .btn-ghost.copied) {
   color: var(--info-foreground);
 }
-/* The v3 design's header: the white inline lockup on its own row, the repo picker under it as a
- * full-width pill. `content` swaps the mark's image without a second element in the markup. */
-[data-theme="night"] .sidebar-header {
-  flex-wrap: wrap;
-  height: auto;
-  row-gap: 0.75rem;
-  padding: 1.25rem 0.75rem 0.5rem 1.25rem;
-}
-[data-theme="night"] .brand-mark {
-  content: url("/assets/lockup-night.svg");
-  width: 8.5rem;
-  height: 2.5rem;
-  border-radius: 0;
-}
-[data-theme="night"] .sidebar-header .repo-btn {
-  order: 3;
-  flex: 1 0 100%;
-  justify-content: space-between;
-  height: 2.25rem;
-  margin: 0 0.5rem 0 -0.25rem;
-  padding: 0 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: #111926;
-}
-[data-theme="night"] .sidebar-header .conn-badge {
-  order: 4;
-}
 [data-theme="night"] .group-label {
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1188,18 +1160,31 @@ a.g-pr:hover {
   color: var(--sidebar-foreground);
   --dot-ring: var(--sidebar);
 }
+/* The sidebar's corner is the v3 design's in every theme (#1068, #1102): the inline lockup with the
+ * fold button on its row, the repo picker under it as a full-width bordered select. A theme changes
+ * only its colours, and the lockup's file, in a colour that reads on its sidebar. `content` swaps
+ * the lockup's image without a second element in the markup. */
 .sidebar-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  height: var(--topbar-height);
-  padding: 0 0.75rem 0 calc(var(--sidebar-content-inset) + var(--sidebar-row-content-inset));
+  row-gap: 0.75rem;
+  padding: 1.25rem 0.75rem 0.5rem 1.25rem;
   flex-shrink: 0;
 }
 .brand-mark {
-  width: 1rem;
-  height: 1rem;
-  border-radius: 4px;
+  width: 8.5rem;
+  height: 2.5rem;
+}
+[data-theme="light"] .brand-mark {
+  content: url("/assets/lockup-ink.svg");
+}
+[data-theme="murmur"] .brand-mark {
+  content: url("/assets/lockup-cream.svg");
+}
+[data-theme="sky"] .brand-mark {
+  content: url("/assets/lockup-navy.svg");
 }
 .brand {
   font-size: 0.875rem;
@@ -1210,7 +1195,7 @@ a.g-pr:hover {
   margin-left: auto;
 }
 /* The repo picker (#348): the repo's name, which opens this machine's other joined repos. It sits
- * where the product's name was, beside the mark, and takes the sidebar's colors in every theme. */
+ * under the lockup and takes the sidebar's colors in every theme. */
 .repo-btn {
   display: inline-flex;
   align-items: center;
@@ -1229,6 +1214,20 @@ a.g-pr:hover {
 .repo-btn:hover,
 .repo-btn[aria-expanded="true"] {
   background: var(--sidebar-row-hover);
+}
+.sidebar-header .repo-btn {
+  order: 3;
+  flex: 1 0 100%;
+  justify-content: space-between;
+  height: 2.25rem;
+  margin: 0 0.5rem 0 -0.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+.sidebar-header .conn-badge {
+  order: 4;
 }
 .repo-btn .icon {
   flex-shrink: 0;
