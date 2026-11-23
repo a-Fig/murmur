@@ -185,15 +185,18 @@ func TestRegisterKiroWithPermissionsYAML(t *testing.T) {
 		t.Error("created permissions.json alongside permissions.yaml")
 	}
 
-	// Even if a fallback permissions.json exists with murmur/*, uninstall and removal leave it alone.
+	// Even if a fallback permissions.json exists with murmur/*, uninstall leaves it alone with a note.
 	shadow := `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "allow"}]}` + "\n"
 	write(t, jsonPath, shadow)
 	if rem := kiroRemoval(sb.Env, h); strings.Contains(rem, jsonPath) {
 		t.Errorf("kiroRemoval named shadowed permissions.json: %q", rem)
 	}
-	did, _, err = sb.unregisterKiroAt(context.Background(), []agentHome{h})
+	did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
 	if err != nil || len(did) != 1 || read(t, jsonPath) != shadow {
 		t.Fatalf("unregister with yaml: did=%q err=%v perm=%s", did, err, read(t, jsonPath))
+	}
+	if got := strings.Join(notes, "\n"); !strings.Contains(got, jsonPath) || !strings.Contains(got, yamlPath) {
+		t.Errorf("unregister with shadowed permissions.json lacked note: %q", notes)
 	}
 }
 
@@ -207,6 +210,8 @@ func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 	}{
 		{"deny all mcp", `{"rules": [{"capability": "mcp", "match": ["*"], "effect": "deny"}]}`, `"deny"`},
 		{"ask murmur", `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "ask"}]}`, `"ask"`},
+		{"deny single tool send", `{"rules": [{"capability": "mcp", "match": ["murmur/send"], "effect": "deny"}]}`, `"deny"`},
+		{"ask single tool mute", `{"rules": [{"capability": "mcp", "match": ["murmur/mute"], "effect": "ask"}]}`, `"ask"`},
 		{"deny all unconditional", `{"rules": [{"capability": "all", "effect": "deny"}]}`, `"deny"`},
 		{"ask excluding murmur allows adding rule", `{"rules": [{"capability": "mcp", "match": ["*"], "exclude": ["murmur/*"], "effect": "ask"}]}`, ""},
 	} {
@@ -314,6 +319,8 @@ func TestKiroT3InstanceAndScratchIsolation(t *testing.T) {
     "kiro_bad_env": {"driver": "kiro", "displayName": "Kiro Bad Env", "enabled": true,
       "config": {"homePath": "`+filepath.ToSlash(filepath.Join(real, "ignored-homepath"))+`"},
       "environment": [{"name": "KIRO_HOME", "value": "~"}]},
+    "kiro_padded": {"driver": "kiro", "displayName": "Kiro Padded", "enabled": true,
+      "environment": [{"name": "KIRO_HOME", "value": "  `+filepath.ToSlash(filepath.Join(sb.Home, "kiro-padded"))+`  "}]},
     "kiro_on": {"driver": "kiro", "displayName": "Kiro On", "enabled": true,
       "environment": [{"name": "KIRO_HOME", "value": "`+filepath.ToSlash(filepath.Join(real, "kiro-ext"))+`"}]}
   }
@@ -328,8 +335,9 @@ func TestKiroT3InstanceAndScratchIsolation(t *testing.T) {
 	}
 	// kiro_bad_env has config.homePath (which T3's Kiro driver ignores) and KIRO_HOME=~ (which
 	// Kiro V3 rejects because it equals home), so it must resolve to <Home>/.kiro.
+	// kiro_padded has whitespace around an absolute path inside the scratch home and must trim it.
 	kiroHomes := byAgent[agentIndex("kiro")]
-	foundDefault := false
+	foundDefault, foundPadded := false, false
 	for _, h := range kiroHomes {
 		if h.Dir != "" && strings.HasPrefix(h.Dir, real) {
 			t.Errorf("external or ignored Kiro home was not filtered: %+v", h)
@@ -337,16 +345,20 @@ func TestKiroT3InstanceAndScratchIsolation(t *testing.T) {
 		if samePath(h.Dir, filepath.Join(sb.Home, ".kiro")) {
 			foundDefault = true
 		}
+		if samePath(h.Dir, filepath.Join(sb.Home, "kiro-padded")) {
+			foundPadded = true
+		}
 	}
-	if !foundDefault {
-		t.Errorf("kiro_bad_env did not fall back to ~/.kiro: %+v", kiroHomes)
+	if !foundDefault || !foundPadded {
+		t.Errorf("foundDefault=%v foundPadded=%v, homes=%+v", foundDefault, foundPadded, kiroHomes)
 	}
 }
 
 // A link at settings/, settings/mcp.json, or settings/permissions.json inside a scratch Kiro home
-// pointing outside the temporary folder must be caught by keepToScratch (#995).
+// pointing outside the temporary folder (including via a linked directory followed by `..`) must
+// be caught by keepToScratch (#995).
 func TestKiroScratchNestedLinkOutIsOutside(t *testing.T) {
-	for _, kind := range []string{"settings-dir", "settings-junction", "mcp-file", "perm-file"} {
+	for _, kind := range []string{"settings-dir", "settings-junction", "mcp-file", "perm-file", "mcp-dotdot-via-link"} {
 		t.Run(kind, func(t *testing.T) {
 			sb := scratchSandbox(t)
 			real := filepath.Join(sb.root, "real")
@@ -370,6 +382,14 @@ func TestKiroScratchNestedLinkOutIsOutside(t *testing.T) {
 			case "perm-file":
 				mustMakeDir(t, filepath.Join(sb.KiroHome, "settings"))
 				linkOrSkip(t, filepath.Join(real, "permissions.json"), filepath.Join(sb.KiroHome, "settings", "permissions.json"))
+			case "mcp-dotdot-via-link":
+				settings := filepath.Join(sb.KiroHome, "settings")
+				mustMakeDir(t, settings)
+				sub := filepath.Join(real, "sub")
+				mustMakeDir(t, sub)
+				linkOrSkip(t, sub, filepath.Join(settings, "alias"))
+				sep := string(filepath.Separator)
+				linkOrSkip(t, "alias"+sep+".."+sep+"mcp.json", filepath.Join(settings, "mcp.json"))
 			}
 			byAgent, notes := sb.homes()
 			if got := dirsOf(byAgent[agentIndex("kiro")]); len(got) != 1 || got[0] != "" {

@@ -114,7 +114,7 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 	if a.driver == "kiro" {
 		// Kiro's T3 provider has no config.homePath; it uses KIRO_HOME from its environment
 		// (subject to Kiro V3's resolveUserConfigDir validation), else ~/.kiro.
-		if dir := kiroHomeDir(func(k string) string { return expandHome(in.Env[k], e.Home) }, e.Home); dir != "" {
+		if dir := kiroHomeDir(func(k string) string { return expandHome(strings.TrimSpace(in.Env[k]), e.Home) }, e.Home); dir != "" {
 			h.Dir = dir
 			return h, true
 		}

@@ -59,16 +59,31 @@ var tempRoots = func() []string {
 // resolved is path with every link in it followed, as a write there would follow them: symbolic
 // links, Windows junctions, which EvalSymlinks leaves as written (since Go 1.23), and links whose
 // target isn't there yet. A part that doesn't exist is kept as named. "" past 40 links, a loop.
-func resolved(path string) string { return resolveIn(filepath.Clean(path), 40) }
+// Path components are walked before handling `..` so a target like `alias/../file` follows
+// `alias` before stepping up, matching OS path resolution rather than lexical cleaning.
+func resolved(path string) string { return resolveFrom("", path, 40) }
 
-func resolveIn(path string, hops int) string {
-	vol := filepath.VolumeName(path)
-	cur := vol
-	if strings.HasPrefix(path[len(vol):], string(filepath.Separator)) {
-		cur += string(filepath.Separator)
+func resolveFrom(base, path string, hops int) string {
+	path = filepath.FromSlash(path)
+	sep := string(filepath.Separator)
+	var cur, rest string
+	if filepath.IsAbs(path) {
+		vol := filepath.VolumeName(path)
+		cur = vol
+		rest = path[len(vol):]
+		if strings.HasPrefix(rest, sep) {
+			cur += sep
+		}
+	} else {
+		cur = base
+		rest = path
 	}
-	for _, part := range strings.Split(path[len(vol):], string(filepath.Separator)) {
-		if part == "" {
+	for _, part := range strings.Split(rest, sep) {
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
 			continue
 		}
 		next := filepath.Join(cur, part)
@@ -78,17 +93,14 @@ func resolveIn(path string, hops int) string {
 				if hops == 0 {
 					return ""
 				}
-				if !filepath.IsAbs(target) {
-					target = filepath.Join(cur, target)
-				}
-				if next = resolveIn(filepath.Clean(target), hops-1); next == "" {
+				if next = resolveFrom(cur, target, hops-1); next == "" {
 					return ""
 				}
 			}
 		}
 		cur = next
 	}
-	return cur
+	return filepath.Clean(cur)
 }
 
 // inTemp says path is in one of the temporary folders, or, unless strict, is one. A home (strict)

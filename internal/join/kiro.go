@@ -45,9 +45,10 @@ var kiroArgs = []string{"mcp", "--agent", "kiro"}
 // policy resource path.
 var kiroAllowPattern = brand.MCPServer + "/*"
 
-// kiroSampleTool is a representative "<server>/<tool>" resource path used to check whether an
-// existing deny/ask policy rule in Kiro's permissions.json overrides an allow rule for Murmur.
-var kiroSampleTool = brand.MCPServer + "/who"
+// kiroMurmurTools are every MCP tool Murmur's server registers (internal/mcpserver). Checking
+// every tool ensures a per-tool deny/ask rule like "murmur/send" isn't missed when deciding
+// whether Kiro's permissions.json overrides our allow rule.
+var kiroMurmurTools = []string{"who", "lookup", "status", "tags", "send", "inbox", "mute"}
 
 // kiroPathsInTemp reports whether Kiro's settings directory and the files join/uninstall edit under
 // dir resolve inside the temporary folder (protecting scratch homes against nested symlinks or
@@ -199,7 +200,7 @@ func allowKiroTools(dir string) (changed bool, path string, err error) {
 }
 
 // kiroRulesBlockMurmur reports the strongest overriding effect ("deny", else "ask") in rules that
-// matches Murmur's MCP tools, or "" if none does.
+// matches any of Murmur's MCP tools, or "" if none does.
 func kiroRulesBlockMurmur(rules []any) string {
 	blocker := ""
 	for _, r := range rules {
@@ -215,7 +216,14 @@ func kiroRulesBlockMurmur(rules []any) string {
 		if effVal != "deny" && effVal != "ask" {
 			continue
 		}
-		if !kiroRuleMatchesTool(o, kiroSampleTool) {
+		matched := false
+		for _, name := range kiroMurmurTools {
+			if kiroRuleMatchesTool(o, brand.MCPServer+"/"+name) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			continue
 		}
 		if effVal == "deny" {
@@ -402,8 +410,9 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 			}
 		}
 	}
-	if _, yerr := os.Stat(filepath.Join(h.Dir, "settings", "permissions.yaml")); errors.Is(yerr, os.ErrNotExist) {
-		permPath := filepath.Join(h.Dir, "settings", "permissions.json")
+	yamlPath := filepath.Join(h.Dir, "settings", "permissions.yaml")
+	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
+	if _, yerr := os.Stat(yamlPath); errors.Is(yerr, os.ErrNotExist) {
 		if text, rerr := readConfig(permPath); rerr != nil {
 			problems = append(problems, rerr)
 		} else if text != "" {
@@ -419,8 +428,14 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 				}
 			}
 		}
+	} else if yerr == nil {
+		if text, rerr := readConfig(permPath); rerr == nil && text != "" {
+			if _, found, _ := removeKiroAllow(text); found {
+				notes = append(notes, h.Label+": left "+permPath+" alone because "+yamlPath+" takes precedence over it; if you remove permissions.yaml later, remove \""+kiroAllowPattern+"\" from "+permPath)
+			}
+		}
 	}
-	return did, nil, errors.Join(problems...)
+	return did, notes, errors.Join(problems...)
 }
 
 // kiroRemoval says how to take out by hand what join put in Kiro home h.
