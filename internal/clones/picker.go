@@ -30,6 +30,9 @@ var _ web.Repos = Picker{}
 // runningWait is how long a clone's daemon has to accept a connection to count as running.
 const runningWait = 500 * time.Millisecond
 
+// slugWait is how long git has to say the remote of a clone recorded without a slug.
+const slugWait = 2 * time.Second
+
 // List is every clone on the record. Its daemon put this one there as it started.
 func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	list, err := List(p.Dir, p.Joined)
@@ -49,7 +52,9 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 		go func() {
 			defer wg.Done()
 			if out[i].Slug == "" { // recorded before slugs were, until its daemon next starts
-				out[i].Slug = SlugIn(ctx, c.GitDir)
+				sctx, cancel := context.WithTimeout(ctx, slugWait)
+				out[i].Slug = SlugIn(sctx, c.GitDir)
+				cancel()
 			}
 			rctx, cancel := context.WithTimeout(ctx, runningWait)
 			defer cancel()

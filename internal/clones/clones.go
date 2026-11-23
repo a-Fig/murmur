@@ -260,10 +260,13 @@ func SlugOf(remoteURL string) string {
 func pathOf(remoteURL string) (p string, onHost bool) {
 	s := strings.TrimSpace(remoteURL)
 	if u, err := url.Parse(s); err == nil && u.Scheme != "" && len(u.Scheme) > 1 {
-		s, onHost = u.Path, u.Host != ""
+		s, onHost = u.Path, u.Host != "" && u.Scheme != "file"
 	} else if i := strings.Index(s, ":"); i > 1 && !strings.ContainsAny(s[:i], `/\`) {
 		s, onHost = s[i+1:], true // scp-like: host:path
 	}
-	s = path.Clean("/" + strings.ReplaceAll(s, `\`, "/"))
-	return strings.TrimSuffix(strings.Trim(s, "/"), ".git"), onHost
+	s = strings.Trim(path.Clean("/"+strings.ReplaceAll(s, `\`, "/")), "/")
+	if path.Base(s) == ".git" { // a clone's own .git folder: the repository is the folder above it
+		s = strings.Trim(path.Dir(s), "/.")
+	}
+	return strings.TrimSuffix(s, ".git"), onHost
 }
