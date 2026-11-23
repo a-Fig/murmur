@@ -117,7 +117,7 @@ a failed example, and more than five failures at once are not retried. What the 
 a test that fails only beside another: alone, it passes.
 
 One run's page shows only that run's retries. `scripts/retried-tests.sh [runs]` reads the
-annotations of main's last runs (20 unless told otherwise) through `gh` and counts each test, so
+annotations of main's last runs (20 unless told otherwise) through `gh` and counts them by test, so
 one that keeps needing the retry stands out (#1011): on 2026-11-23 it showed
 `TestFilesASendRefuses` retried in 6 of main's last 12 runs. Since that day an annotation names
 the test's package, the runner's OS and the daemon shard as well as the test. A retry still
