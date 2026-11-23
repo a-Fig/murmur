@@ -42,6 +42,7 @@ type Env struct {
 	// CursorConfig is Cursor's cli-config.json, where its permissions are: in CursorDir unless a
 	// variable moves it (cursorConfigDir).
 	CursorConfig string
+	KiroHome     string // Kiro's home, with its settings/mcp.json
 	Home         string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
 	T3Settings   string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
 	Getenv       func(string) string
@@ -105,6 +106,7 @@ func EnvFromProcess() (Env, error) {
 	// cli-config.json where they say (cursor.go).
 	e.CursorDir = filepath.Join(home, ".cursor")
 	e.CursorConfig = filepath.Join(cursorConfigDir(os.Getenv, home), "cli-config.json")
+	e.KiroHome = kiroHomeDir(os.Getenv, home)
 	return e, nil
 }
 
@@ -213,7 +215,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// configuration of each agent. Advice about the calling agent depends on its own home.
 	byAgent, notes := e.homes()
 	r.Notes = append(r.Notes, notes...)
-	var claudeFresh, codexFresh, antigravityFresh bool
+	var claudeFresh, codexFresh, antigravityFresh, kiroFresh bool
 	var othersFresh []string
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
@@ -259,6 +261,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 			// (~/.gemini, another instance) fall through, so their open sessions hear to restart.
 			case a.driver == "antigravity" && e.looksLikeAntigravity() && sameEntry(h.Dir, e.GeminiHome):
 				antigravityFresh = true
+			case a.driver == "kiro" && e.looksLikeKiro() && sameEntry(h.Dir, e.KiroHome):
+				kiroFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -326,7 +330,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return e.cutShort(r, parent, steps.now, consentErr == nil)
 	}
 
-	r.Tell = e.advice(claudeFresh, codexFresh, antigravityFresh, len(r.Problems) > 0)
+	r.Tell = e.advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
@@ -512,7 +516,7 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
 	r.Tell = []string{
-		brand.Product + " is off for this repo. Open Claude Code, Pi and Antigravity sessions lose its tools within seconds. In Codex, the tools stay listed until the session ends and report that they are off if called.",
+		brand.Product + " is off for this repo. Open Claude Code, Pi, Antigravity and Kiro sessions lose its tools within seconds. In Codex, the tools stay listed until the session ends and report that they are off if called.",
 		"The " + brand.Product + " MCP server stays registered with the agents, with its hook and its skills, since that is per user. The server and the hook do nothing in a repo that hasn't joined; " +
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
@@ -555,17 +559,24 @@ func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
-// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse reads
-// its servers when a session starts, as does Antigravity (1.5.13, 2026-11-20). Pi reads them then
-// and on /reload in its terminal (2026-11-17, #864). Grok documents loading them at startup.
+// just added to, by what each was seen to do (2026-11-01): OpenCode and Kiro watch their config,
+// Muse reads its servers when a session starts, as does Antigravity (1.5.13, 2026-11-20). Pi reads
+// them then and on /reload in its terminal (2026-11-17, #864). Grok documents loading them at
+// startup.
 func othersAdvice(labels []string) string {
 	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
-	if slices.Contains(labels, "OpenCode") {
-		s += " OpenCode sessions get its tools within seconds, from their next turn."
+	var watched []string
+	for _, l := range labels {
+		if l == "OpenCode" || l == "Kiro" {
+			watched = append(watched, l)
+		}
+	}
+	if len(watched) > 0 {
+		s += " " + strings.Join(watched, " and ") + " sessions get its tools within seconds, from their next turn."
 	}
 	var restart []string
 	for _, l := range labels {
-		if l != "OpenCode" && l != "Pi" {
+		if l != "OpenCode" && l != "Kiro" && l != "Pi" {
 			restart = append(restart, l)
 		}
 	}
@@ -603,7 +614,7 @@ func servingT3(getenv func(string) string) string {
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
 // (docs/design/joining.md, "Reloading MCP servers").
-func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []string {
+func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
 	}
@@ -638,6 +649,16 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []
 	case e.looksLikeCodex():
 		out = append(out, brand.Product+" is on for this repo. Codex loads MCP servers only when a session starts, so this session doesn't have the tools: "+
 			"start a new session in this repo to get them.")
+	case e.looksLikeKiro():
+		restart := "restart `kiro-cli` in this repo"
+		if e.inT3() {
+			restart = "open a new thread in this project"
+		}
+		if kiroFresh {
+			out = append(out, brand.Product+" was just added to Kiro. Its tools should appear on your next turn; if they don't, "+restart+".")
+		} else {
+			out = append(out, brand.Product+" is on for this repo. Kiro should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
+		}
 	case e.looksLikeAntigravity():
 		restart := "restart `agy` in this repo"
 		if e.inT3() {
@@ -664,11 +685,19 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, problems bool) []
 	return append(out, "They can run `"+brand.Command+" ui` to see the agents and messages on a page. To stop, `"+brand.Command+" join --leave` in this repo.")
 }
 
-// Claude Code, Codex or Pi started from Antigravity inherit its shell markers and take precedence.
+// looksLikeKiro reports whether the agent running join is Kiro, which sets KIRO_SESSION_ID in
+// every shell command it runs (Kiro CLI 3.4.0 V3, 2026-11-22). Claude Code, Codex and Pi take
+// precedence; Kiro takes precedence over Antigravity so a T3 thread handed off from Antigravity
+// to Kiro gets Kiro's advice (#909).
+func (e Env) looksLikeKiro() bool {
+	return e.getenv("KIRO_SESSION_ID") != "" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi()
+}
+
+// Claude Code, Codex, Pi or Kiro started from Antigravity inherit its shell markers and take precedence.
 // The markers are the same in reverse, so Antigravity started from one of them gets their advice.
 func (e Env) looksLikeAntigravity() bool {
 	return (e.getenv("ANTIGRAVITY_AGENT") == "1" || e.getenv("ANTIGRAVITY_CONVERSATION_ID") != "") &&
-		e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi()
+		e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi() && !e.looksLikeKiro()
 }
 
 // looksLikeCursor reports whether the agent running join is Cursor, which sets CURSOR_AGENT=1 for
@@ -676,7 +705,7 @@ func (e Env) looksLikeAntigravity() bool {
 // another kind started from Cursor's shell inherits it, so theirs win.
 func (e Env) looksLikeCursor() bool {
 	return e.getenv("CURSOR_AGENT") == "1" && e.getenv("CLAUDECODE") != "1" && !e.looksLikeCodex() && !e.looksLikePi() &&
-		!e.looksLikeAntigravity()
+		!e.looksLikeKiro() && !e.looksLikeAntigravity()
 }
 
 // looksLikePi reports whether the agent running join is Pi, which sets PI_CODING_AGENT=true for

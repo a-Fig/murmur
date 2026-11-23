@@ -16,6 +16,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 | Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
 | Cursor (beta) | `mcpServers.murmur` in `~/.cursor/mcp.json`, the hook in `~/.cursor/hooks.json`, `Mcp(murmur:*)` in `cli-config.json` (below) | One `agent` process per chat; the chat's ID reaches only hooks and shell commands, so the hook names it to the server | Not yet: T3 runs every Cursor thread in one process of its own (#924) |
+| Kiro (beta) | `mcpServers.murmur` in `settings/mcp.json` in `$KIRO_HOME` (`~/.kiro`), and a `murmur/*` MCP allow rule in `settings/permissions.json` when `settings/permissions.yaml` is absent (Kiro's policy rules match by server name, not executable, so in a trusted workspace a project `murmur` server inherits the rule) | One `kiro-cli` -> `node` (`acp-server.js`) per session; `T3CODE_THREAD_ID` in T3 | `T3CODE_THREAD_ID` (Kiro CLI 3.4.0 V3, read 2026-11-22) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older
@@ -339,7 +340,7 @@ does, against a real daemon. Details and sources are in `internal/join/cursor.go
 ## Any agent in T3 Code: the shell commands
 
 2026-11-21, #913 (Tyler approved option 2 that day). `mur join` gives tools only to agents it knows,
-so an agent T3 runs that Murmur has no join for (Kiro, fx, any agent from the ACP registry) had
+so an agent T3 runs that Murmur has no join for (fx, any agent from the ACP registry) had
 none. Every harness can run a command, so `mur who`, `mur send`, `mur inbox` and `mur status` do
 what the tools of those names do (`internal/mcpserver/commands.go`, rendered by `internal/view`).
 Since 2026-11-23 (#1118, Tyler: every tool that can be a command without exorbitant effort is one)
@@ -349,7 +350,7 @@ Since 2026-11-23 (#1118, Tyler: every tool that can be a command without exorbit
   0.1.11's source (2026-11-21, not run): its Claude, Codex, Pi, Antigravity, Kiro, fx and
   ACP-registry drivers set it in the agent's process, so in its shell; Grok's drops it, and
   OpenCode, Muse and Cursor never set it. There the commands stop and say so. The session's ID is
-  `threadID(thread)`, the one a Claude or Antigravity thread's own server registers, so the
+  `threadID(thread)`, the one a Claude, Antigravity or Kiro thread's own server registers, so the
   address and name are the thread's whichever registers first. If a session is live in the thread
   already (its MCP server's), the command acts as it. A command under two agents' programs (an
   agent started from another's thread shell) has the outer thread's variable, and stops. The walk

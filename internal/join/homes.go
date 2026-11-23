@@ -76,6 +76,10 @@ var agents = []agent{
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerCursorAt(h) },
 		removal:    cursorRemoval,
 		unregister: Env.unregisterCursorAt},
+	{driver: "kiro", label: "Kiro", t3Var: "KIRO_HOME",
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerKiroAt(h) },
+		removal:    kiroRemoval,
+		unregister: Env.unregisterKiroAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -99,6 +103,8 @@ func (e Env) defaultHome(a agent) agentHome {
 		h.Dir = e.GeminiHome
 	case "cursor":
 		h.Dir, h.JSON = e.CursorDir, e.CursorConfig
+	case "kiro":
+		h.Dir = e.KiroHome
 	}
 	return h
 }
@@ -115,6 +121,16 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 		// T3 runs Cursor in its own process with Cursor's SDK, which reads the user's ~/.cursor: the
 		// default home, with nothing of an instance's own (@cursor/sdk 1.3.1 in T3 0.1.11).
 		return h, false
+	}
+	if a.driver == "kiro" {
+		// Kiro's T3 provider has no config.homePath; it uses KIRO_HOME from its environment
+		// (subject to Kiro V3's resolveUserConfigDir validation), else ~/.kiro.
+		if dir := kiroHomeDir(func(k string) string { return expandHome(strings.TrimSpace(in.Env[k]), e.Home) }, e.Home); dir != "" {
+			h.Dir = dir
+			return h, true
+		}
+		h.Dir = e.defaultHome(a).Dir
+		return h, h.Dir != ""
 	}
 	dir := in.homeOf(a.t3Var, e.Home)
 	switch {
@@ -154,6 +170,7 @@ var userDefault = map[string][]string{
 	"muse":     {".config", "muse"},
 	"pi":       {".pi", "agent"},
 	"grok":     {".grok"},
+	"kiro":     {".kiro"},
 }
 
 // homes lists, for each agent, every configuration join registers in: the default first, then the

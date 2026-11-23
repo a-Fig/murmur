@@ -42,7 +42,7 @@ While you're working, Murmur doesn't interrupt you with a turn. Where its hook r
 
 ## Without the tools: shell commands
 
-In a T3 Code thread of an agent Murmur has no tools for (Kiro, fx, an agent from the ACP registry), run these in your shell, in the repo. They work once this clone has joined, and they act as your thread's session, which keeps its name and gets messages as turns:
+In a T3 Code thread of an agent Murmur has no tools for (fx, an agent from the ACP registry), run these in your shell, in the repo. They work once this clone has joined, and they act as your thread's session, which keeps its name and gets messages as turns:
 
 - `mur who [TAG...]`, as `who`.
 - `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. A message to you ends with the command to answer it.

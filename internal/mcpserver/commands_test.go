@@ -438,7 +438,9 @@ func TestAgentsInChain(t *testing.T) {
 		{[]string{"bash", "claude", "t3"}, 1},
 		{[]string{"bash", "claude", "bash", "claude", "t3"}, 2},
 		{[]string{"powershell", "localharness_external", "agy_acp_server", "t3"}, 1},
-		{[]string{"powershell", "kiro-cli", "t3"}, 0},
+		{[]string{"powershell", "node", "kiro-cli", "t3"}, 1},
+		{[]string{"powershell", "node", "kiro-cli", "powershell", "claude", "t3"}, 2},
+		{[]string{"powershell", "fx-cli", "t3"}, 0},
 		{[]string{"bash", "tmux", "bash", "claude"}, 0},
 	} {
 		got := agentsInChain(len(c.chain), func(i int) (string, string, bool) { return "/usr/bin/" + c.chain[i], "", true })

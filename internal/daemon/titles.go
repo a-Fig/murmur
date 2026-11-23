@@ -127,10 +127,10 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 }
 
 // ownTitleUnread says whether agent is one that gives the daemon its own ID for the conversation
-// but whose own name for it Murmur doesn't read: OpenCode, Muse, Pi, Grok, Antigravity and Cursor. Codex is the one whose
+// but whose own name for it Murmur doesn't read: OpenCode, Muse, Pi, Grok, Antigravity, Cursor and Kiro. Codex is the one whose
 // ID is read, in Codex's state.
 func ownTitleUnread(agent string) bool {
-	for _, a := range []string{"opencode", "muse", "pi", "grok", "antigravity", "cursor"} {
+	for _, a := range []string{"opencode", "muse", "pi", "grok", "antigravity", "cursor", "kiro"} {
 		if agent == a || strings.HasPrefix(agent, a+" ") {
 			return true
 		}

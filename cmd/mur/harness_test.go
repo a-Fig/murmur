@@ -164,9 +164,9 @@ func (b *box) env() []string {
 		"CLAUDECODE": true, "CLAUDE_CODE_SESSION_ID": true, "T3CODE_CLI_PATH": true, "T3CODE_THREAD_ID": true, "CODEX_THREAD_ID": true,
 		"CODEX_SANDBOX": true, "CODEX_CI": true, "XDG_CONFIG_HOME": true, jointest.LogEnv: true,
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
-		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true, "GEMINI_HOME": true,
+		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true, "GEMINI_HOME": true, "KIRO_HOME": true,
 		// Which session ran the command, and where sessions are found (internal/here).
-		"CLAUDE_PID": true, "ANTIGRAVITY_AGENT": true, "ANTIGRAVITY_CONVERSATION_ID": true,
+		"CLAUDE_PID": true, "ANTIGRAVITY_AGENT": true, "ANTIGRAVITY_CONVERSATION_ID": true, "KIRO_SESSION_ID": true,
 		brand.SessionsDirEnv: true, clones.DirEnv: true}
 	var env []string
 	for _, kv := range os.Environ() {

@@ -18,6 +18,7 @@ func withAgents(sb *sandbox) {
 	sb.PiDir = filepath.Join(sb.root, "pi", "agent")
 	sb.GrokHome = filepath.Join(sb.root, "grok")
 	sb.GeminiHome = filepath.Join(sb.root, "gemini")
+	sb.KiroHome = filepath.Join(sb.root, "kiro")
 }
 
 // OpenCode 2's JSONC config gets the server and the allow rule, its comments and layout kept; once.
@@ -51,7 +52,7 @@ func TestRegisterOpenCodeKeepsTheConfig(t *testing.T) {
 func TestOtherAgentsSkipAMachineWithoutThem(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
-	for _, d := range []string{"opencode", "muse", "pi", "grok", "antigravity"} {
+	for _, d := range []string{"opencode", "muse", "pi", "grok", "antigravity", "kiro"} {
 		a := agents[agentIndex(d)]
 		did, fresh, err := a.register(sb.Env, context.Background(), sb.defaultHome(a))
 		if err != nil || fresh || len(did) != 0 {
@@ -467,5 +468,8 @@ func TestOthersAdvice(t *testing.T) {
 	}
 	if got := othersAdvice([]string{"Pi", "Muse Code"}); !strings.Contains(got, "In a Pi session already open, type /reload") || strings.Contains(got, "Pi, Muse Code load") {
 		t.Errorf("advice for Pi: %s", got)
+	}
+	if got := othersAdvice([]string{"OpenCode", "Kiro", "Muse Code"}); !strings.Contains(got, "OpenCode and Kiro sessions get its tools within seconds") || !strings.Contains(got, "Muse Code loads") {
+		t.Errorf("advice for Kiro: %s", got)
 	}
 }

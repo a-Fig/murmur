@@ -98,7 +98,7 @@ func TestAntigravityPublishesT3ThreadBeforeAndAfterMove(t *testing.T) {
 func TestHerePublishesKnownT3ThreadWithoutInheritingParentThread(t *testing.T) {
 	t.Setenv(threadEnv, "parent-thread")
 	old := agentAbove
-	agentAbove = func() bool { return true }
+	agentAbove = func(string) bool { return true }
 	t.Cleanup(func() { agentAbove = old })
 	s := &server{opt: Options{Agent: "antigravity", HereDir: t.TempDir()}}
 	s.initHere()

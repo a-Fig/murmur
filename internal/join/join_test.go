@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 		k, _, _ := strings.Cut(kv, "=")
 		switch up := strings.ToUpper(k); {
 		case strings.HasPrefix(up, "T3CODE_"), up == "CLAUDE_CONFIG_DIR", up == "CODEX_HOME", up == "GEMINI_HOME",
-			up == "GROK_HOME", up == "PI_CODING_AGENT_DIR", up == "XDG_CONFIG_HOME":
+			up == "GROK_HOME", up == "KIRO_HOME", up == "KIRO_SESSION_ID", up == "PI_CODING_AGENT_DIR", up == "XDG_CONFIG_HOME":
 			os.Unsetenv(k)
 		}
 	}
@@ -435,7 +435,7 @@ func TestLeaveInACloneThatNeverJoined(t *testing.T) {
 	if len(r.Did) != 1 || !strings.Contains(r.Did[0], "Nothing to undo") {
 		t.Errorf("did %q", r.Did)
 	}
-	if got := r.Tell[0]; !strings.Contains(got, "Claude Code, Pi and Antigravity sessions lose its tools within seconds") || !strings.Contains(got, "In Codex, the tools stay listed") {
+	if got := r.Tell[0]; !strings.Contains(got, "Claude Code, Pi, Antigravity and Kiro sessions lose its tools within seconds") || !strings.Contains(got, "In Codex, the tools stay listed") {
 		t.Errorf("leave advice: %q", got)
 	}
 }
