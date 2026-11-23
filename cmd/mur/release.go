@@ -85,7 +85,8 @@ func (w *releaseWatch) stop() {
 	}
 }
 
-// page is the daemon's Version. It reads a file at most once a minute, and never the network.
+// page is the daemon's Version. At most once a minute it reads a file and, when the release there
+// is a prerelease, asks git config for one key (update.Newer). It never asks the network.
 func (w *releaseWatch) page() web.Version {
 	v := web.Version{Running: w.running}
 	if strings.HasSuffix(w.running, "-dev") {

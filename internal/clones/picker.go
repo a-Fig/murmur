@@ -51,10 +51,17 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if out[i].Slug == "" { // recorded before slugs were, until its daemon next starts
+			if out[i].Slug == "" { // recorded before slugs were
 				sctx, cancel := context.WithTimeout(ctx, slugWait)
 				out[i].Slug = SlugIn(sctx, c.GitDir)
 				cancel()
+				// Recorded, so the next listing has it without a git: the page lists the repos on
+				// every load, and the clone's own daemon records it only when it next starts
+				// (#1164). A remote git can't say, or one with no name in it, is asked again.
+				if out[i].Slug != "" {
+					c.Slug = out[i].Slug
+					Add(p.Dir, c) // a record that can't be written is asked for again next time
+				}
 			}
 			rctx, cancel := context.WithTimeout(ctx, runningWait)
 			defer cancel()

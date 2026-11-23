@@ -28,6 +28,11 @@ import (
 // harmless: it would be a second turn.
 var ErrNotStarted = errors.New("couldn't start the command")
 
+// ErrRefused wraps what Send returns when it wouldn't run `t3` at all, for what it was asked to
+// send to: nothing reached T3, as with ErrNotStarted, but the same call would be refused again, so
+// it isn't one to try again (#1164).
+var ErrRefused = errors.New("not run")
+
 // SendTimeout bounds one `t3 thread send`. It takes about a second where T3 is running; a T3 that
 // isn't running makes it fail sooner than this.
 const SendTimeout = 30 * time.Second
@@ -145,7 +150,8 @@ func Send(ctx context.Context, cli, home, thread, text string) error {
 		return errors.New("no T3 command line or thread to send to")
 	}
 	if strings.HasPrefix(thread, "-") {
-		return fmt.Errorf("t3 thread send: %w: invalid thread ID", ErrNotStarted)
+		// t3 would read it as an option.
+		return fmt.Errorf("t3 thread send: %w: invalid thread ID", ErrRefused)
 	}
 	parent := ctx
 	timeout := sendTimeout

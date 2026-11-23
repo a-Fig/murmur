@@ -996,7 +996,7 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 		}
 		err = d.sendTurn(ctx, j)
 		<-d.pushSem
-		if err == nil || errors.Is(err, ErrNoConsent) || !notReached(err) {
+		if err == nil || errors.Is(err, ErrNoConsent) || !worthAnotherTry(err) {
 			return err
 		}
 	}
@@ -1004,9 +1004,16 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 }
 
 // notReached says an attempt failed before it could have put the message anywhere: the command
-// didn't start, or the socket couldn't be connected to.
+// didn't start or wasn't run, or the socket couldn't be connected to.
 func notReached(err error) bool {
-	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
+	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, t3.ErrRefused) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
+}
+
+// worthAnotherTry says a failed attempt is one handOver makes again: it reached nothing, and the
+// same call might work a moment later. One refused for what it was asked to send to would be
+// refused again.
+func worthAnotherTry(err error) bool {
+	return notReached(err) && !errors.Is(err, t3.ErrRefused)
 }
 
 // sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it
