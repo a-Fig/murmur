@@ -214,6 +214,11 @@ func TestNamed(t *testing.T) {
 	if got := NamedFor(dir, later); got != "" {
 		t.Errorf("a later process with the PID: %q", got)
 	}
+	next := self
+	next.ServerPID++
+	if got := NamedFor(dir, next); got != "" {
+		t.Errorf("the process's next server: %q", got)
+	}
 	fi, _ := os.Stat(namedPath(dir, self.ClientPID))
 	if err := Name(dir, self, "chat-1", time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
@@ -238,5 +243,27 @@ func TestNamed(t *testing.T) {
 	}
 	if got := NamedFor(dir, self); got != "chat-1" {
 		t.Errorf("a live process's name went: %q", got)
+	}
+}
+
+// Cursor's command line is a node with its launcher beside it, as its package installs it.
+func TestCursorCLIExe(t *testing.T) {
+	dir := t.TempDir()
+	node := filepath.Join(dir, "node.exe")
+	if cursorCLIExe(node) {
+		t.Error("a node alone")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cursor-agent.cmd"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !cursorCLIExe(node) {
+		t.Error("a node beside cursor-agent.cmd")
+	}
+	other := t.TempDir()
+	if err := os.Mkdir(filepath.Join(other, "cursor-agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if cursorCLIExe(filepath.Join(other, "node")) {
+		t.Error("a folder named cursor-agent")
 	}
 }

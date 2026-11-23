@@ -58,7 +58,9 @@ func TestCursorHook(t *testing.T) {
 	if a := answer(cursorRun(t, repo, "sessionStart", "is_background_agent", false, "composer_mode", "agent")); a["additional_context"] == "" {
 		t.Errorf("sessionStart: %q", a)
 	}
-	cursorRun(t, repo, "beforeSubmitPrompt", "prompt", "Read probe.txt", "attachments", []any{})
+	if a := answer(cursorRun(t, repo, "beforeSubmitPrompt", "prompt", "Read probe.txt", "attachments", []any{})); a["additional_context"] == "" {
+		t.Errorf("beforeSubmitPrompt: %q", a)
+	}
 	a := answer(cursorRun(t, repo, "postToolUse", "tool_name", "Shell", "tool_input", map[string]any{"command": "ls"},
 		"tool_output", "a", "tool_use_id", "tool_1", "cwd", repo, "duration", 12))
 	if a["additional_context"] == "" || a["followup_message"] != "" {
@@ -131,17 +133,27 @@ func TestClaudeCodesHookStepsAsideForCursor(t *testing.T) {
 }
 
 // Cursor gives its MCP servers no ID for the chat, so its hook names the chat to the server the
-// Cursor process above it started (#921): once, and only where that process has one server of
-// Cursor's, with no chat yet. A subagent's call names nothing.
+// Cursor process above it started (#921): only where that process is Cursor's command line and has
+// one server of Cursor's, with no chat yet. A subagent's call names nothing.
 func TestCursorHookNamesTheChatToItsServer(t *testing.T) {
 	repo := newRepo(t)
 	fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
 	dir := os.Getenv("MURMUR_SESSIONS_DIR")
 	t.Cleanup(func() { os.RemoveAll(dir); os.MkdirAll(dir, 0o700) })
+	cli := false
+	old := here.CursorCLI
+	here.CursorCLI = func(int) bool { return cli }
+	t.Cleanup(func() { here.CursorCLI = old })
 	rec := here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), ClientStarted: "t0", Agent: "cursor"}
 	if err := here.Publish(dir, rec); err != nil {
 		t.Fatal(err)
 	}
+	// Not Cursor's command line (T3 Code's process, or the editor's): no name.
+	cursorRun(t, repo, "sessionStart")
+	if got := here.NamedFor(dir, rec); got != "" {
+		t.Errorf("outside Cursor's command line, named %q", got)
+	}
+	cli = true
 	cursorRun(t, repo, "postToolUse", "tool_name", "Read", "tool_use_id", "t2", "cwd", repo, "parent_tool_call_id", "task-1")
 	if got := here.NamedFor(dir, rec); got != "" {
 		t.Errorf("a subagent's call named %q", got)
@@ -149,6 +161,21 @@ func TestCursorHookNamesTheChatToItsServer(t *testing.T) {
 	cursorRun(t, repo, "sessionStart")
 	if got := here.NamedFor(dir, rec); got != "c0ffee-chat" {
 		t.Errorf("named %q", got)
+	}
+
+	// A server that already has a chat isn't renamed by a later hook.
+	os.Remove(filepath.Join(dir, "named-"+strconv.Itoa(os.Getppid())+".json"))
+	named := rec
+	named.Native = "already-named"
+	if err := here.Publish(dir, named); err != nil {
+		t.Fatal(err)
+	}
+	cursorRun(t, repo, "sessionStart")
+	if got := here.NamedFor(dir, named); got != "" {
+		t.Errorf("with Native set, named %q", got)
+	}
+	if err := here.Publish(dir, rec); err != nil {
+		t.Fatal(err)
 	}
 
 	// Two servers of Cursor's under one process (T3 Code's): no name for either.

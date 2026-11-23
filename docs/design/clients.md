@@ -15,7 +15,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Pi | an extension, `extensions/murmur.ts` in `~/.pi/agent`, that registers the server with the session's file in `MURMUR_PI_SESSION_FILE` | One process per session | T3 knows a Pi thread by that file |
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 | Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
-| Cursor (beta) | `mcpServers.murmur` in `~/.cursor/mcp.json`, the hook in `~/.cursor/hooks.json`, `Mcp(murmur:*)` in `cli-config.json` (below) | One `agent` process per chat; the chat's ID reaches only hooks and shell commands, so the hook names it to the server | Not yet: T3 runs every Cursor thread in its own process (#924) |
+| Cursor (beta) | `mcpServers.murmur` in `~/.cursor/mcp.json`, the hook in `~/.cursor/hooks.json`, `Mcp(murmur:*)` in `cli-config.json` (below) | One `agent` process per chat; the chat's ID reaches only hooks and shell commands, so the hook names it to the server | Not yet: T3 runs every Cursor thread in one process of its own (#924) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
   alignment stay. A file in a form join can't read safely (a key given twice, or Muse's older
@@ -303,12 +303,15 @@ does, against a real daemon. Details and sources are in `internal/join/cursor.go
 
 - **Which session.** Cursor starts an MCP server with only PATH, TEMP and the home's variables, and
   no ID for the chat. Hooks get it (`conversation_id`), and so do shell commands
-  (`CURSOR_CONVERSATION_ID`). So the hook leaves it in the per-user records (`here.Named`, keyed by
-  Cursor's process, which is both the server's parent and the hook's ancestor), and the server
-  waits up to two minutes for it before it registers, by an ID made from it. A new chat's
-  `sessionStart` names it as Cursor starts; a resumed chat, which fires none, is named by its first
-  prompt, and comes back at its old address with its name and unread messages. One the hook never
-  names registers under an ID of its own, and the daemon pairs its hook with it by process, as
+  (`CURSOR_CONVERSATION_ID`). So the hook leaves it in the per-user records (`here.Named`, for the
+  one server of Cursor's process, which is both the server's parent and the hook's ancestor), and
+  the server waits up to two minutes for it before it registers, by an ID made from it. Only where
+  that process is Cursor's command line (`here.CursorCLI`, by the `cursor-agent` launcher beside
+  its node), which runs one chat. A new chat's `sessionStart` names it as Cursor starts; a resumed
+  chat, which fires none, is named by its first prompt, and comes back at its old address with its
+  name and unread messages. A tool call ends the wait, as a call waits for the registration. One
+  registered unnamed goes on looking, and tells the daemon the chat when it is named, which keys
+  the session by it from then on; until then the daemon pairs its hook with it by process, as
   Antigravity's.
 - **The hook.** `sessionStart`, `beforeSubmitPrompt` and `postToolUse` answer `additional_context`,
   which reaches the model; `stop` with status `completed` answers `followup_message`, which Cursor
@@ -322,11 +325,16 @@ does, against a real daemon. Details and sources are in `internal/join/cursor.go
   join writes plain JSON there and leaves a file with a comment alone. A server in the user's
   `mcp.json` needs no approval; only a project's does.
 - **Not covered.** A turn for an idle chat (#923; `agent --resume <id> -p` is the way in to try). T3
-  Code (#924): one process runs every Cursor thread, so neither the hook nor the server can tell
-  them apart, and they get no name from the hook and no notices; a server there doesn't wait. A
+  Code (#924): one process runs every Cursor thread, and nothing in the hook's payload or the
+  server's environment says which thread is which. Its process isn't Cursor's command line, so the
+  hook names no chat there and the server doesn't wait; with one Cursor thread the daemon may still
+  pair the hook with the server by process (not tried), with several it pairs none, and their
+  messages wait in `inbox`. Past `loop_limit` follow-ups in a row Cursor runs no `stop` hook, so the
+  daemon keeps that session at work until its next prompt. A
   second chat started in the same `agent` process is unknown to the daemon, as its process's
   session already has a chat. Commits aren't credited, nor issues filed from Cursor's shell. The
-  editor reads the same files and wasn't tried; its processes may not pair. `mur who` and `mur
+  editor reads the same files and wasn't tried: it isn't Cursor's command line, so it is handled as
+  T3's is. `mur who` and `mur
   send` in Cursor's shell, which has the chat's ID, aren't wired up.
 
 ## Any agent in T3 Code: the shell commands

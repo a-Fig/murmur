@@ -70,9 +70,10 @@ type cursorAnswer struct {
 
 // nameServer leaves the conversation's ID for the session's MCP server (here.Name), which waits for
 // it before it registers (internal/mcpserver). The server is the one Cursor's process among the
-// hook's ancestors started. Only where that process has one server of Cursor's, with no
-// conversation yet: T3 Code runs every Cursor thread in its own process, and a hook there can't
-// say which server is its thread's. A subagent's call names nothing, being another conversation.
+// hook's ancestors started. Only where that process is Cursor's command line (here.CursorCLI),
+// which runs one chat, and has one server of Cursor's, with no conversation yet: T3 Code runs every
+// Cursor thread in one process of its own, and a hook there can't say which server is its thread's.
+// A subagent's call names nothing, being another conversation.
 func nameServer(in input, pids []int) {
 	if in.SessionID == "" || in.AgentID != "" {
 		return
@@ -87,7 +88,7 @@ func nameServer(in input, pids []int) {
 			mine = append(mine, r)
 		}
 	}
-	if len(mine) != 1 || mine[0].Native != "" {
+	if len(mine) != 1 || mine[0].Native != "" || !here.CursorCLI(mine[0].ClientPID) {
 		return
 	}
 	here.Name(dir, mine[0], in.SessionID, time.Now())

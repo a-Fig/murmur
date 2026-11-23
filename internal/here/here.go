@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // Session is what an MCP server says about itself.
@@ -207,13 +208,15 @@ func Asked(dir string, self Session) (Move, bool) {
 	return m, true
 }
 
-// Named is a hook's word for which conversation the agent process ClientPID runs, for a server that
-// can't learn it otherwise: Cursor gives its conversation's ID to hooks and shell commands, and none
-// to the MCP servers it starts (#921). The server takes its ID from it, so the session keeps its
-// name when the conversation is resumed in a new process.
+// Named is a hook's word for which conversation the server ServerPID's agent process, ClientPID,
+// runs, for a server that can't learn it otherwise: Cursor gives its conversation's ID to hooks and
+// shell commands, and none to the MCP servers it starts (#921). The server takes its ID from it, so
+// the session keeps its name when the conversation is resumed in a new process. It names one
+// server: a later server of the same process is another session, maybe another conversation.
 type Named struct {
 	ClientPID     int       `json:"clientPid"`
 	ClientStarted string    `json:"clientStarted,omitempty"` // as the server published it
+	ServerPID     int       `json:"serverPid"`
 	Native        string    `json:"native"`
 	At            time.Time `json:"at"`
 }
@@ -226,20 +229,46 @@ func namedPath(dir string, clientPID int) string {
 // writes nothing where the file says so already.
 func Name(dir string, s Session, native string, now time.Time) error {
 	var old Named
-	if readJSON(namedPath(dir, s.ClientPID), &old) == nil && old.ClientStarted == s.ClientStarted && old.Native == native {
+	if readJSON(namedPath(dir, s.ClientPID), &old) == nil && old.ClientStarted == s.ClientStarted && old.ServerPID == s.ServerPID &&
+		old.Native == native {
 		return nil
 	}
-	return writeJSON(namedPath(dir, s.ClientPID), Named{ClientPID: s.ClientPID, ClientStarted: s.ClientStarted, Native: native, At: now})
+	return writeJSON(namedPath(dir, s.ClientPID), Named{ClientPID: s.ClientPID, ClientStarted: s.ClientStarted, ServerPID: s.ServerPID,
+		Native: native, At: now})
 }
 
-// NamedFor is the conversation a hook named for the client of the server whose record is self, ""
-// if none did. A file left for an earlier process that had the PID is passed over.
+// NamedFor is the conversation a hook named for the server whose record is self, "" if none did.
+// A name left for another server of the client, or for an earlier process that had the PID, is
+// passed over.
 func NamedFor(dir string, self Session) string {
 	var n Named
-	if readJSON(namedPath(dir, self.ClientPID), &n) != nil || n.ClientPID != self.ClientPID || n.ClientStarted != self.ClientStarted {
+	if readJSON(namedPath(dir, self.ClientPID), &n) != nil || n.ClientPID != self.ClientPID || n.ClientStarted != self.ClientStarted ||
+		n.ServerPID != self.ServerPID {
 		return ""
 	}
 	return n.Native
+}
+
+// CursorCLI says process pid is Cursor's command line, `agent`: a node beside its launcher
+// (cursor-agent, or cursor-agent.cmd and .ps1 on Windows), as its package installs it
+// (%LOCALAPPDATA%\cursor-agent\versions\<version> on Windows, 2026.11.22-e9042b2). One such process runs
+// one chat, as its MCP servers' parent and its hooks' ancestor, which is what lets a hook name the
+// chat to the server. T3 Code runs every Cursor thread in one process of its own, and the editor wasn't
+// tried, so neither counts. A variable, for tests.
+var CursorCLI = func(pid int) bool {
+	exe, err := proc.Exe(pid)
+	return err == nil && cursorCLIExe(exe)
+}
+
+// cursorCLIExe says exe is the node of Cursor's command line, by the launcher beside it.
+func cursorCLIExe(exe string) bool {
+	dir := filepath.Dir(exe)
+	for _, name := range []string{"cursor-agent", "cursor-agent.cmd", "cursor-agent.ps1"} {
+		if fi, err := os.Stat(filepath.Join(dir, name)); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // Ancestors are the command's ancestors, its parent first.

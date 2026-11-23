@@ -183,3 +183,32 @@ func TestCursorConfigDir(t *testing.T) {
 		}
 	}
 }
+
+// A hooks.json without its version gets one, as Cursor reads none without it; the user's hooks stay.
+func TestCursorHooksWithoutAVersion(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := withCursor(t, sb)
+	path := filepath.Join(sb.CursorDir, "hooks.json")
+	write(t, path, `{"hooks": {"stop": [{"command": "say done"}]}}`)
+	if _, _, err := sb.registerCursorAt(h); err != nil {
+		t.Fatal(err)
+	}
+	if got := cursorHooks(t, read(t, path)); len(got["stop"]) != 2 || got["stop"][0] != "say done" {
+		t.Errorf("hooks: %q", got)
+	}
+}
+
+// An allow value that isn't a list (null, string, object) is left alone, with a reason.
+func TestCursorAllowThatIsntAList(t *testing.T) {
+	for _, allow := range []string{"null", `"Shell(ls)"`, "{}"} {
+		sb := newSandbox(t, false)
+		h := withCursor(t, sb)
+		before := `{"permissions": {"allow": ` + allow + `}}`
+		write(t, sb.CursorConfig, before)
+		_, _, err := sb.registerCursorAt(h)
+		got := read(t, sb.CursorConfig)
+		if err == nil || !strings.Contains(err.Error(), "isn't a list") || got != before {
+			t.Errorf("allow %s: err=%v\n%s", allow, err, got)
+		}
+	}
+}
