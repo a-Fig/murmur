@@ -308,7 +308,7 @@ func TestHermesProfilesFromAProfile(t *testing.T) {
 	}
 }
 
-// A plugin the user kept, by taking its first line out, keeps its manifest through an uninstall.
+// A plugin the user kept, by taking its first line out, stays through an uninstall: both files, and on.
 func TestHermesUninstallKeepsAPluginTheUserKept(t *testing.T) {
 	sb := hermesSandbox(t)
 	h := sb.defaultHome(agents[agentIndex("hermes")])
@@ -324,7 +324,10 @@ func TestHermesUninstallKeepsAPluginTheUserKept(t *testing.T) {
 	if !exists(filepath.Join(dir, "plugin.yaml")) || read(t, filepath.Join(dir, "__init__.py")) != "# mine now\n" {
 		t.Error("the user's plugin lost a file")
 	}
-	if r := hermesRemoval(sb.Env, h); strings.Contains(r, dir) {
-		t.Errorf("removal names the user's plugin: %q", r)
+	if on, _ := yamlListHas(read(t, filepath.Join(h.Dir, "config.yaml")), "enabled", "murmur"); !on {
+		t.Error("the user's plugin was turned off")
+	}
+	if r := hermesRemoval(sb.Env, h); r != "" {
+		t.Errorf("removal names steps for the user's plugin: %q", r)
 	}
 }

@@ -353,19 +353,17 @@ func refreshHermesAt(dir, exe string) (bool, error) {
 }
 
 // unregisterHermesAt takes Murmur's plugin out of Hermes home hs[0], and its name out of
-// plugins.enabled there.
+// plugins.enabled there. A plugin the user kept, as its first line invites, stays whole and on.
 func (e Env) unregisterHermesAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
 	dir := hermesPluginDir(h.Dir)
+	if hermesKept(dir) {
+		return nil, []string{h.Label + ": left " + dir + " alone, and on in plugins.enabled: it isn't the plugin " + brand.Product + " writes"}, nil
+	}
 	ours := func(b []byte) bool { return bytes.HasPrefix(b, []byte(hermesMarker)) }
 	var problems []error
 	gone := 0
-	names := []string{"__init__.py", "plugin.yaml"}
-	if b, err := os.ReadFile(filepath.Join(dir, "__init__.py")); err == nil && !ours(b) {
-		// The user kept the plugin, as its first line invites: its manifest stays with it.
-		names = names[:1]
-	}
-	for _, n := range names {
+	for _, n := range []string{"__init__.py", "plugin.yaml"} {
 		removed, note, rerr := removeOwned(filepath.Join(dir, n), ours)
 		if note != "" {
 			notes = append(notes, h.Label+": "+note)
@@ -407,10 +405,20 @@ func hermesOwned(path string) bool {
 	return err == nil && bytes.HasPrefix(b, []byte(hermesMarker))
 }
 
+// hermesKept says the plugin in dir is there but no longer join's: the user changed it.
+func hermesKept(dir string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, "__init__.py"))
+	return err == nil && !bytes.HasPrefix(b, []byte(hermesMarker))
+}
+
 // hermesRemoval says how to take out by hand what join put in Hermes home h.
 func hermesRemoval(_ Env, h agentHome) string {
 	var steps []string
-	if dir := hermesPluginDir(h.Dir); hermesOwned(filepath.Join(dir, "__init__.py")) {
+	dir := hermesPluginDir(h.Dir)
+	if hermesKept(dir) {
+		return ""
+	}
+	if hermesOwned(filepath.Join(dir, "__init__.py")) {
 		steps = append(steps, "delete "+dir)
 	}
 	cfg := filepath.Join(h.Dir, "config.yaml")
