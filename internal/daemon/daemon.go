@@ -720,6 +720,11 @@ type Daemon struct {
 	colorSettled   bool
 	presenceLanded time.Time
 	colorAwayAt    time.Time
+	// presenceCopied says the clone's own copy of this device's presence ref was written with a
+	// presence of this run, and no fetch has brought the ref since, so later presences needn't be
+	// written to it; presenceFetches counts those fetches (publishPresence).
+	presenceCopied  bool
+	presenceFetches uint64
 }
 
 type session struct {

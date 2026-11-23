@@ -237,6 +237,14 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
 	// the rest of the sync goes on without it, and it is fetched again next time.
 	failed, tips := d.fetch(ctx, changed, remote)
+	// Noted before a sync that ran out of time returns: the fetch has set the clone's copy by now.
+	d.mu.Lock()
+	for _, ref := range changed {
+		if failed[ref] == nil {
+			d.presenceFetchedLocked(ref)
+		}
+	}
+	d.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -582,6 +590,9 @@ func (d *Daemon) endSlowFetch(ref, sha, got string, err error) {
 	defer d.mu.Unlock()
 	defer d.kickPoll()
 	d.slowRef, d.slowCancel = "", nil
+	if err == nil {
+		d.presenceFetchedLocked(ref)
+	}
 	f, ok := d.unfetched[ref]
 	if !ok || !f.slow {
 		return
@@ -2083,13 +2094,11 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
 		return err
 	}
-	// Recorded as the device's other pushes are, so the next poll doesn't fetch it back:
-	// updatePeer skips this device's own presence, so the fetch would read nothing.
-	if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
-		d.log.Printf("updating local %s: %v", ref, err)
-	}
+	// Known at once, so the next poll doesn't fetch it back: updatePeer skips this device's own
+	// presence, so the fetch would read nothing.
 	d.mu.Lock()
 	d.known[ref] = sha
+	copied, fetches := d.presenceCopied, d.presenceFetches
 	// When it was built, not when it landed: a push begun before a machine slept can land after
 	// it wakes, with what the device knew a week before. Such a one carried the pick, so the next
 	// is built at once, without it, where it would have waited for the heartbeat.
@@ -2100,7 +2109,33 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 	}
 	d.mu.Unlock()
+	// The clone's own copy of the ref is written once a run, with the first presence to land, and
+	// again after a fetch has set it to whatever the remote had. Nothing reads it for what it
+	// says: loadIdentity asks only whether it is sealed by this device, to tell that a clone whose
+	// keys and state are both lost had published keys. Every presence is sealed, with keys that
+	// don't change in a run, so any one of them answers that, and a git for every heartbeat was a
+	// third of what a heartbeat costs (#1002).
+	if !copied {
+		if err := d.repo.UpdateLocal(ctx, ref, sha); err != nil {
+			d.log.Printf("updating local %s: %v", ref, err)
+		} else {
+			d.mu.Lock()
+			// Not if a fetch brought the ref meanwhile: its write may have come after this one.
+			d.presenceCopied = d.presenceFetches == fetches
+			d.mu.Unlock()
+		}
+	}
 	return nil
+}
+
+// presenceFetchedLocked notes that a fetch brought ref, if it is this device's own presence: the
+// fetch set the clone's copy to what the remote had, which may be junk pushed over the presence,
+// so the next presence writes the copy again (publishPresence). Caller holds mu.
+func (d *Daemon) presenceFetchedLocked(ref string) {
+	if ref == d.presenceRef() {
+		d.presenceFetches++
+		d.presenceCopied = false
+	}
 }
 
 // capSessions keeps at most n of a presence's sessions, the most recently active (by their last
