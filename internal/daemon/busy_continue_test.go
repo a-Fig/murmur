@@ -52,6 +52,10 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	if r.Read[0].Body != "the body of the told one" {
 		t.Errorf("the body given: %q", r.Read[0].Body)
 	}
+	// The sender is described where the conversation first meets it, and not at the next Stop (#216).
+	if r.Read[0].Introduced || r.Read[1].Introduced {
+		t.Errorf("the first Stop's messages are marked as from a sender already introduced: %+v", r.Read)
+	}
 	if inbox, notices := b.unread("bbbbbb", "claude-bob"); len(inbox) != 0 || len(notices) != 0 {
 		t.Errorf("after the Stop gave them: inbox %v, notices %v", inbox, notices)
 	}
@@ -59,8 +63,12 @@ func TestTheStopHookKeepsTheTurnGoing(t *testing.T) {
 	a.send("aaaaaa", bob, "in the continued turn", "its body")
 	eventually(t, "the next message to reach b", func() bool { return logHas(b, "in the continued turn") })
 	holds(t, "nothing handed to T3 while the turn goes on", time.Second, func() bool { return len(calls()) == 0 })
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "in the continued turn" {
+	r = b.stopHook("claude-bob")
+	if got := viewSubjects(r.Read); len(got) != 1 || got[0] != "in the continued turn" {
 		t.Fatalf("the next Stop gave %v", got)
+	}
+	if !r.Read[0].Introduced {
+		t.Errorf("the next Stop's message isn't marked as from a sender already introduced")
 	}
 
 	if r := b.stopHook("claude-bob"); len(r.Read) != 0 {

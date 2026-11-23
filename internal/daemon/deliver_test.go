@@ -341,7 +341,9 @@ func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 	}
 }
 
-// Messages for one session go in one at a time, in the order they came, and each once.
+// Messages for one session go in one at a time, in the order they came, and each once. The first
+// says what its sender is, and the ones after name it alone (#216): the daemon's loops run between
+// them here, where TestASenderIsDescribedOnlyInItsFirstTurn makes the turns by hand.
 func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -349,6 +351,7 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
 	bob, _ := b.sessionRoute("bbbbbb", "", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
+	aliceName := a.named(alice)
 	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
 	want := []string{"one", "two", "three"}
@@ -360,6 +363,11 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	for i, c := range calls() {
 		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n"+want[i]+"\n") {
 			t.Errorf("handoff %d was %q, want %q", i, c.Stdin, want[i])
+		}
+		if first, named := "Message from "+aliceName+" (test", "Message from "+aliceName+" via "; i == 0 && !strings.HasPrefix(c.Stdin, first) {
+			t.Errorf("the first handoff was %q, want it to start %q", c.Stdin, first)
+		} else if i > 0 && !strings.HasPrefix(c.Stdin, named) {
+			t.Errorf("handoff %d was %q, want it to start %q", i, c.Stdin, named)
 		}
 	}
 }

@@ -177,8 +177,10 @@ func TestAPersonIsExplainedOnlyInTheirFirstTurn(t *testing.T) {
 // finished as the handoff loop makes them (nextPushLocked, finishPush), but for running t3. That a
 // first turn's description crosses the bus from a real presence to a real t3 call is
 // TestMessageForAT3SessionIsHandedOverAsATurn's, and to a messaging socket
-// TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket's. The two devices started about
-// 310 git: 10 s on a laptop and 57 s on a Windows runner (main's run 45142751635).
+// TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket's; that the turns after it name
+// the sender alone, with the daemon's loops running between them, is
+// TestMessagesForOneSessionAreHandedOverInOrder's. The two devices started about 310 git: 10 s on
+// a laptop and 57 s on a Windows runner (main's run 45142751635).
 func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
 	t.Parallel()
 	d := explainRig(t, t.TempDir(), "")
