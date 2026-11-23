@@ -1334,7 +1334,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 	} else if old := d.peers[dev]; old != nil {
 		read = old.read // a box that doesn't open here says nothing new of files
 	}
-	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, sealed: sealed, locked: locked, read: read}
+	d.peers[dev] = &peer{pres: pres, sha: sha, listed: sha, lastChange: changed, written: c.Time, writtenOf: sha, sealed: sealed, locked: locked, read: read}
 	if !locked {
 		d.noteSessionsLocked(dev, pres.Sessions, pres.At)
 		d.droppedThereLocked(dev, pres.Sessions)

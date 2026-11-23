@@ -682,7 +682,8 @@ type Daemon struct {
 	presenceGone atomic.Bool
 	// lookNow says a sync begun from here on is wanted at once, whatever the poll's rate: the
 	// device came back from invisible (setMode), and its colour waits for that sync. A sync that
-	// begins clears it (pollOnce), and so does the wake that ends pollLoop's wait (wakeEndsWait).
+	// begins clears it (pollOnce), and so does pollLoop's next wake (wakeEndsWait), which it ends
+	// unless the poll is failing.
 	lookNow atomic.Bool
 
 	kick       chan struct{}
@@ -855,8 +856,10 @@ type peer struct {
 	listed     string
 	lastChange time.Time
 	// written is the committer time of the presence read: the writer's clock when git wrote it
-	// (groupAddWhyLocked).
-	written time.Time
+	// (groupAddWhyLocked). writtenOf is that presence's SHA: sha moves on past one found unreadable,
+	// and written doesn't (colorGoneLocked).
+	written   time.Time
+	writtenOf string
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.

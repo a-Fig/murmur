@@ -48,7 +48,7 @@ func (d *Daemon) colorGoneLocked(p *peer) bool {
 		return false
 	}
 	hold, now := cmp.Or(d.opt.ColorHold, colorHold), d.lastPollOK.Round(0)
-	return now.Sub(p.lastChange.Round(0)) > hold || p.sha == p.listed && !p.written.IsZero() && now.Sub(p.written) > hold
+	return now.Sub(p.lastChange.Round(0)) > hold || p.writtenOf == p.listed && !p.written.IsZero() && now.Sub(p.written) > hold
 }
 
 // colorsLocked is every device's colour, this one's included, by the devices in presence. A

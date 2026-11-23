@@ -186,16 +186,18 @@ func TestAColourWaitsForAPresenceNotFetched(t *testing.T) {
 // A presence read only now, after this daemon slept, but written over a week ago by its writer's
 // clock, holds no colour: the daemon would otherwise date it from now and show its device holding
 // the colour for another week, against teammates who let it go (#1165). One with a newer presence
-// listed, not read yet, is alive and holds it.
+// listed, not read yet or found unreadable, is alive and holds it.
 func TestAPresenceWrittenAWeekAgoAndReadNowLetsItsColourGo(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name   string
-		newer  bool
-		picked bool
+		name       string
+		newer      bool
+		unreadable bool
+		picked     bool
 	}{
-		{"nothing newer listed", false, false},
-		{"a newer one listed", true, true},
+		{"nothing newer listed", false, false, false},
+		{"a newer one listed", true, false, true},
+		{"a newer one found unreadable", true, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			d := colorRig(t, 0) // read just now
@@ -203,9 +205,12 @@ func TestAPresenceWrittenAWeekAgoAndReadNowLetsItsColourGo(t *testing.T) {
 			defer d.mu.Unlock()
 			d.st.Color, d.st.ColorAt = 0, time.Time{}
 			p := d.peers["dead-0001"]
-			p.sha, p.listed, p.written = "aaaa", "aaaa", time.Now().Add(-8*24*time.Hour)
+			p.sha, p.listed, p.written, p.writtenOf = "aaaa", "aaaa", time.Now().Add(-8*24*time.Hour), "aaaa"
 			if c.newer {
 				p.listed = "bbbb"
+			}
+			if c.unreadable {
+				p.sha = "bbbb" // as sawPresence leaves it: tried, and not worth reading again
 			}
 			if got := d.colorsLocked()["dead-0001"]; got.Picked != c.picked {
 				t.Errorf("the peer's colour is %+v, want it picked: %v", got, c.picked)
