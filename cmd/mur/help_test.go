@@ -58,7 +58,7 @@ func TestUsageListsTheTools(t *testing.T) {
 			continue
 		}
 		isCommand := commandHelp(tool.Name) != ""
-		if marked := strings.Contains(line, "also: "+brand.Command+" "+tool.Name); marked != isCommand {
+		if marked := strings.HasSuffix(line, "  [CLI]"); marked != isCommand {
 			t.Errorf("%s: a command %v, but its line says %q", tool.Name, isCommand, line)
 		}
 		desc, err := mcpserver.ToolDescription(tool.Name)

@@ -60,7 +60,7 @@ func entryIn(text, name string) string {
 }
 
 // withTools puts the MCP tools where text, a usage, has {tools}: one line each, from the server's
-// own list, marked when the tool is a command too.
+// own list, tagged [CLI] when the tool is a command too.
 func withTools(text string) string {
 	tools := mcpserver.Tools()
 	var name, summary int
@@ -68,13 +68,12 @@ func withTools(text string) string {
 		name, summary = max(name, len(t.Name)), max(summary, len(t.Summary))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "For agents with %s's tools, used instead of those commands (Claude Code: mcp__%s__who and so on).\n",
-		brand.Product, brand.MCPServer)
-	fmt.Fprintf(&b, "\"also\" marks a tool with a command too. %s help TOOL gives a tool's full description:\n", brand.Command)
+	fmt.Fprintf(&b, "MCP tools, for agents that have them (Claude Code lists them as mcp__%s__who and so on).\n", brand.MCPServer)
+	fmt.Fprintf(&b, "Those marked [CLI] also run as a command: %s plus the tool's name. %s help TOOL describes one.\n", brand.Command, brand.Command)
 	for _, t := range tools {
 		line := fmt.Sprintf("  %-*s  %s", name, t.Name, t.Summary)
 		if entryIn(text, t.Name) != "" {
-			line = fmt.Sprintf("%-*s  also: %s %s", name+2+2+summary, line, brand.Command, t.Name)
+			line = fmt.Sprintf("%-*s  [CLI]", name+2+2+summary, line)
 		}
 		b.WriteString(line + "\n")
 	}
