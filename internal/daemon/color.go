@@ -20,9 +20,10 @@ import (
 // A pick that loses is given up, not kept: the device goes back to Auto, and its person is told
 // who has the colour (st.ColorLostTo). It loses a race by the rule, and it loses on coming back
 // to a colour picked while it was away: a daemon that stops for being idle takes its presence off
-// the remote, so its colour looked free, and so does a device that goes invisible. Until its first full sync it leaves its pick out of its
-// presence, and then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come
-// back each time the holder's daemon went idle, and two devices would swap colours day by day.
+// the remote, so its colour looked free, and so does a device that goes invisible. Until its first
+// full sync, or its first after it is back online, it leaves its pick out of its presence, and
+// then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come back each time
+// the holder's daemon went idle, and two devices would swap colours day by day.
 
 // colorsLocked is every device's colour, this one's included, by the devices in presence. A
 // device whose presence is stale still holds its colour: staleness is each reader's own clock,
@@ -37,7 +38,8 @@ func (d *Daemon) colorsLocked() map[string]bus.DeviceColor {
 }
 
 // shownColorLocked is the pick this device's presence carries: none until its first full sync
-// has settled it. Caller holds mu.
+// has settled it, and none while it is invisible or just back. The page shows this device's own
+// faces by it too, so they are in an automatic colour meanwhile. Caller holds mu.
 func (d *Daemon) shownColorLocked() (int, time.Time) {
 	if !d.colorSettled {
 		return 0, time.Time{}
