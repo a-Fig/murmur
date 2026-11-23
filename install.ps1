@@ -164,7 +164,27 @@
             # PowerShell that may not load the call), the old way, which a stop between its steps can
             # leave without a mur.exe: the old file is moved aside, and the new one put in its place.
             if ((Test-Path $exe) -and -not $linked) { Move-Item -Force -Path $exe -Destination $old }
-            Move-Item -Force -Path $new -Destination $exe
+            try {
+                Move-Item -Force -Path $new -Destination $exe
+            } catch {
+                # The new file couldn't be put in place: a scanner may still hold it. If that left
+                # no mur.exe (it was moved aside above, or this move took it away before it failed),
+                # the old one goes back under its name, so a failed install leaves the mur.exe that
+                # was there (#1171).
+                $why = "$_"
+                if (-not (Test-Path $exe) -and $old -and (Test-Path $old)) {
+                    try { Move-Item -Force -Path $old -Destination $exe } catch { }
+                }
+                Remove-Item -Force -Path $new -ErrorAction SilentlyContinue
+                if (Test-Path $exe) {
+                    if ($old) { Remove-Item -Force -Path $old -ErrorAction SilentlyContinue }
+                    throw "mur install: could not put the new mur.exe in place at $exe ($why); the one installed is unchanged."
+                }
+                if (-not $old) {
+                    throw "mur install: could not put mur.exe in place at $exe ($why); nothing was installed."
+                }
+                throw "mur install: could not put the new mur.exe in place at $exe ($why), and could not put the old one back. Rename $old to mur.exe."
+            }
         }
         if ($old) { Remove-Item -Force -Path $old -ErrorAction SilentlyContinue }
         # swap:end

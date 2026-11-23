@@ -61,7 +61,7 @@ func TestKilledUpdateLeavesAWorkingBinary(t *testing.T) {
 				t.Fatalf("killed at point %d: %s doesn't run: %v\n%s", point, name, err, out)
 			}
 		}
-		cleanup(path)
+		cleanup(path, runtime.GOOS)
 		entries, _ := os.ReadDir(filepath.Dir(path))
 		var left []string
 		for _, e := range entries {

@@ -133,7 +133,6 @@ func Run(ctx context.Context, o Options, restart func()) {
 			return
 		}
 	}
-	cleanup(o.Executable)
 	wasOff := false // the last report's Off, so updates off show before the check ends
 	report := func(s Status) {
 		wasOff = s.Off
@@ -158,6 +157,10 @@ func Run(ctx context.Context, o Options, restart func()) {
 		case <-timer.C:
 		}
 		checked = time.Now()
+		// At every check, not only as the daemon starts: a backup stays while a process still runs
+		// it, an MCP server for days, and went only at the next daemon start after that process
+		// ended, which an update's restart is the usual cause of (#1171).
+		cleanup(o.Executable, o.OS)
 		want, now := asked, asked != ""
 		asked = ""
 		if off := Off(ctx, o.Getenv, o.GitDir); off && envOff(o.Getenv) {
@@ -544,21 +547,44 @@ func replace(path string, data []byte, goos string, fs files) error {
 }
 
 // cleanup removes what an update left beside the binary at path: a staged file a kill left behind,
-// and backups no process runs any more. It takes the update lock first, so as not to take another
-// updater's staged file, and does nothing if another holds it.
-func cleanup(path string) {
+// and backups no process runs any more, the updater's and, on Windows (goos), install.ps1's.
+// Windows won't remove one a process still runs, so those stay for a later call. It takes the
+// update lock first, so as not to take another updater's staged file, and does nothing if another
+// holds it.
+//
+// The lock covers the updater's own backups: one is made and done with under it, so any found here
+// is left over. install.ps1 takes no lock, and its backup is its hard link to mur.exe from the
+// moment it makes one until it renames the new file over mur.exe. Taken in between, with nothing
+// running mur.exe to make Windows refuse, the link's loss sends the installer to its two-step
+// swap, which a held file can leave with no mur.exe at all (Sol's review of #1173). Where it can't
+// link, it moves mur.exe aside under the backup's name, and for a moment that is the only copy.
+// So an installer's backup that is still a second name of the binary at path stays, and so does
+// every one while there is no binary at path: once a swap is done its backup is an older binary.
+// One left as a link to the binary by an install that was stopped stays until the binary is next
+// replaced.
+func cleanup(path, goos string) {
 	dir := filepath.Dir(path)
 	entries, _ := os.ReadDir(dir)
-	var stale []string
+	var stale, installers []string
 	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
 		n := e.Name()
 		backup, isBackup := strings.CutPrefix(n, filepath.Base(path)+".old-")
+		switch {
 		// Backups from before #944 have no binary name in them.
-		if !e.IsDir() && (staged(n, path) || isBackup && (staged(backup, path) || numbered(backup, ".mur-update-"))) {
+		case staged(n, path) || isBackup && (staged(backup, path) || numbered(backup, ".mur-update-")):
 			stale = append(stale, filepath.Join(dir, n))
+		// install.ps1's have eight hex digits (mur.exe.old-1a2b3c4d): it removes them itself, but
+		// only when it next runs, and a machine that updates itself may never run it again
+		// (#1171). Only Windows has an install.ps1: elsewhere a file of that name is somebody's
+		// own, and removing a file there works even while it runs.
+		case isBackup && goos == "windows" && installerBackup(backup):
+			installers = append(installers, filepath.Join(dir, n))
 		}
 	}
-	if len(stale) == 0 {
+	if len(stale)+len(installers) == 0 {
 		return
 	}
 	lock, err := proc.Lock(path + ".update.lock")
@@ -567,6 +593,20 @@ func cleanup(path string) {
 	}
 	defer lock.Close()
 	for _, p := range stale {
+		os.Remove(p)
+	}
+	for _, p := range installers {
+		// Asked just before each removal, so that as little as can be happens between, and by
+		// opening each file (Identity): os.Stat on Windows keeps only the path, and SameFile
+		// then opens it again later and says "not the same" of a path that has gone meanwhile,
+		// which is the moment a backup is the only copy (Opus's review of #1173).
+		current, err := Identity(path)
+		if err != nil {
+			return
+		}
+		if fi, err := Identity(p); err != nil || os.SameFile(current, fi) {
+			continue
+		}
 		os.Remove(p)
 	}
 }
@@ -579,6 +619,12 @@ func stagedPrefix(path string) string { return ".mur-update-" + filepath.Base(pa
 // staged says name is a file an update of the binary at path staged. The number os.CreateTemp
 // puts after the prefix keeps mur's apart from mur-nightly's, whose prefix starts the same.
 func staged(name, path string) bool { return numbered(name, stagedPrefix(path)) }
+
+// installerBackup says suffix is what install.ps1 puts after ".old-" in a backup's name: the first
+// eight digits of a GUID, in lower-case hex.
+func installerBackup(suffix string) bool {
+	return len(suffix) == 8 && strings.Trim(suffix, "0123456789abcdef") == ""
+}
 
 func numbered(name, prefix string) bool {
 	n, ok := strings.CutPrefix(name, prefix)
