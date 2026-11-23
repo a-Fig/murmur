@@ -118,6 +118,18 @@ func TestCodexFailsSoftly(t *testing.T) {
 		if got, err := Codex(ctx, other, "t1"); err != nil || got != "Indexed" {
 			t.Errorf("the index with an unreadable database: %q, %v", got, err)
 		}
+		// Renamed id column errors cleanly rather than misreading.
+		renamedID := t.TempDir()
+		writeDB(t, filepath.Join(renamedID, "state_5.sqlite"), `CREATE TABLE threads (thread_id TEXT, name TEXT)`, `INSERT INTO threads VALUES ('t1', 'named')`)
+		if got, err := Codex(ctx, renamedID, "t1"); err == nil || got != "" {
+			t.Errorf("renamed id column: %q, %v", got, err)
+		}
+		// Extra columns added by a newer Codex release change nothing.
+		extra := t.TempDir()
+		writeDB(t, filepath.Join(extra, "state_5.sqlite"), `CREATE TABLE threads (id TEXT PRIMARY KEY, extra_mid TEXT, name TEXT, extra_end INTEGER)`, `INSERT INTO threads VALUES ('t1', 'x', 'Still works', 42)`)
+		if got, err := Codex(ctx, extra, "t1"); err != nil || got != "Still works" {
+			t.Errorf("extra columns: %q, %v", got, err)
+		}
 	})
 	t.Run("not a database", func(t *testing.T) {
 		dir := t.TempDir()
@@ -244,6 +256,67 @@ func TestClaudeFailsSoftly(t *testing.T) {
 	}
 	if got, err := Claude(transcript(t, "\x00\x01 not json {{{\n\n[1,2]\n")); err != nil || got != "" {
 		t.Errorf("garbage: %q, %v", got, err)
+	}
+}
+
+// codexIndex streams oversized lines past maxIndexLine without buffering them whole, reads
+// multi-buffer lines under the cap, and fails cleanly if session_index.jsonl is a directory.
+func TestCodexIndexBoundedLineReading(t *testing.T) {
+	t.Run("oversized line skipped and later valid line still read", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "session_index.jsonl")
+		oversized := `{"id":"t1","thread_name":"` + strings.Repeat("x", maxIndexLine+1024) + `"}` + "\n"
+		content := `{"id":"t1","thread_name":"Before"}` + "\n" +
+			oversized +
+			`{"id":"t1","thread_name":"After"}` + "\n"
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := codexIndex(p, "t1"); err != nil || got != "After" {
+			t.Errorf("got %q, %v; want After", got, err)
+		}
+	})
+	t.Run("oversized final line without newline keeps earlier valid name", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "session_index.jsonl")
+		content := `{"id":"t1","thread_name":"Kept"}` + "\n" +
+			`{"id":"t1","thread_name":"` + strings.Repeat("y", maxIndexLine+1024) + `"}`
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := codexIndex(p, "t1"); err != nil || got != "Kept" {
+			t.Errorf("got %q, %v; want Kept", got, err)
+		}
+	})
+	t.Run("multi-buffer valid line under cap is read", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "session_index.jsonl")
+		// Longer than the 64 KiB bufio buffer, well under maxIndexLine.
+		pad := strings.Repeat("a", 80<<10)
+		line := `{"id":"t1","pad":"` + pad + `","thread_name":"Long valid"}` + "\n"
+		if err := os.WriteFile(p, []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := codexIndex(p, "t1"); err != nil || got != "Long valid" {
+			t.Errorf("got %q, %v; want Long valid", got, err)
+		}
+	})
+	t.Run("directory returns error", func(t *testing.T) {
+		if _, err := codexIndex(t.TempDir(), "t1"); err == nil {
+			t.Error("directory session_index.jsonl gave no error")
+		}
+	})
+}
+
+// A transcript truncated between Stat and ReadAt returns a short read with io.EOF; claudeTail
+// must slice to n bytes so trailing zero padding doesn't break JSON parsing on the final line.
+func TestClaudeShortReadAtDropsStaleTail(t *testing.T) {
+	line := `{"type":"ai-title","aiTitle":"Truncated cleanly","sessionId":"s"}`
+	r := strings.NewReader(line)
+	// Observed size (4096) is larger than the actual remaining bytes (len(line)).
+	if got, err := claudeTail(r, 4096); err != nil || got != "Truncated cleanly" {
+		t.Errorf("short ReadAt: got %q, %v; want %q", got, err, "Truncated cleanly")
+	}
+	// Truncated below the tail window offset: ReadAt returns (0, io.EOF).
+	if got, err := claudeTail(r, tailBytes+4096); err != nil || got != "" {
+		t.Errorf("truncated below offset: got %q, %v; want empty", got, err)
 	}
 }
 

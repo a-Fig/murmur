@@ -52,6 +52,10 @@ var Total = 3 * time.Second
 // tailBytes is how much of the end of a Claude Code transcript is searched for its title.
 const tailBytes = 128 << 10
 
+// maxIndexLine bounds how many bytes of a single line codexIndex buffers before discarding the
+// rest of that line, so a corrupt or newline-less session_index.jsonl cannot spike memory.
+const maxIndexLine = 1 << 20
+
 // Clean makes a title fit for presence: on one line, at most Max runes, and "" if it holds
 // something scrub would stop in a status (a title is the user's words or a model's, and goes to
 // everyone who reads the bus). The whole title is checked before it is cut: a token that runs
@@ -150,19 +154,25 @@ func latestState(dir string) string {
 }
 
 // codexIndex finds the last name given to thread id in Codex's session index, a file of lines
-// {"id":...,"thread_name":...,"updated_at":...}.
+// {"id":...,"thread_name":...,"updated_at":...}. Oversized lines (over maxIndexLine bytes) are
+// streamed past and skipped without buffering the whole line in memory.
 func codexIndex(path, id string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return "", err
+	} else if fi.IsDir() {
+		return "", errors.New("the session index is a directory")
+	}
 	var name string
 	r := bufio.NewReaderSize(f, 64<<10)
 	needle := []byte(id)
 	for {
-		line, err := r.ReadBytes('\n')
-		if len(line) > 0 && len(line) < 1<<20 && bytes.Contains(line, needle) {
+		line, tooLong, err := readLineBounded(r, maxIndexLine)
+		if !tooLong && len(line) > 0 && bytes.Contains(line, needle) {
 			var e struct {
 				ID   string `json:"id"`
 				Name string `json:"thread_name"`
@@ -175,8 +185,41 @@ func codexIndex(path, id string) (string, error) {
 			if err == io.EOF {
 				return name, nil
 			}
-			return name, err
+			return "", err
 		}
+	}
+}
+
+// readLineBounded reads one '\n'-terminated line (or the final line before io.EOF) from r,
+// capping buffered memory at limit bytes. Lines longer than limit are drained through '\n' or
+// io.EOF and reported with tooLong=true and line=nil.
+func readLineBounded(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+	var buf []byte
+	for {
+		frag, rerr := r.ReadSlice('\n')
+		if rerr == bufio.ErrBufferFull {
+			if !tooLong {
+				if len(buf)+len(frag) > limit {
+					tooLong, buf = true, nil
+				} else {
+					buf = append(buf, frag...)
+				}
+			}
+			continue
+		}
+		if tooLong {
+			return nil, true, rerr
+		}
+		if len(buf) == 0 {
+			if len(frag) > limit {
+				return nil, true, rerr
+			}
+			return frag, false, rerr
+		}
+		if len(buf)+len(frag) > limit {
+			return nil, true, rerr
+		}
+		return append(buf, frag...), false, rerr
 	}
 }
 
@@ -195,11 +238,22 @@ func Claude(path string) (string, error) {
 	if fi.IsDir() {
 		return "", errors.New("the transcript is a directory")
 	}
-	off := max(fi.Size()-tailBytes, 0)
-	buf := make([]byte, fi.Size()-off)
-	if _, err := f.ReadAt(buf, off); err != nil && err != io.EOF {
+	return claudeTail(f, fi.Size())
+}
+
+// claudeTail scans the last tailBytes of r (of observed size) for Claude Code's custom/ai title
+// lines. Short reads (e.g. concurrent truncation) are sliced to the bytes actually read.
+func claudeTail(r io.ReaderAt, size int64) (string, error) {
+	if size <= 0 {
+		return "", nil
+	}
+	off := max(size-tailBytes, 0)
+	buf := make([]byte, size-off)
+	n, err := r.ReadAt(buf, off)
+	if err != nil && err != io.EOF {
 		return "", err
 	}
+	buf = buf[:n]
 	if off > 0 { // the window starts inside a line
 		if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 			buf = buf[i+1:]
