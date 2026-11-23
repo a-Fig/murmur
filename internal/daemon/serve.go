@@ -309,16 +309,26 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base, claude)
 	}
 	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude), h.ID)
-	if s == nil && h.Reconnect && base != "session:"+h.ID && d.st.NameKeys[base] == "" {
+	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
+	if s == nil && h.Reconnect && key != "session:"+h.ID && d.st.NameKeys[key] == "" {
 		// A session that registered unnamed (for example a Cursor session whose hold ended before
 		// its hook ran) and learned its chat while the daemon was down keeps its earlier name on
-		// the new key, as rekeyLocked does when OpRoute arrives while connected.
+		// its resolved key (including a suffixed key when another live session already took the
+		// base key), as long as no live session already holds that name.
 		if old := d.st.NameKeys["session:"+h.ID]; old != "" {
-			d.st.NameKeys[base] = old
-			d.saveLocked()
+			nameTaken := false
+			for _, o := range d.sessions {
+				if o.id != h.ID && o.dropped.IsZero() && o.name == old {
+					nameTaken = true
+					break
+				}
+			}
+			if !nameTaken {
+				d.st.NameKeys[key] = old
+				d.saveLocked()
+			}
 		}
 	}
-	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
 		// A session in its grace: this connection takes it over, with its inbox and its unread

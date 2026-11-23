@@ -77,4 +77,39 @@ func TestReconnectWithLateNativeKeepsSessionName(t *testing.T) {
 	if got := d.named(r2c.Self); got != name2 {
 		t.Fatalf("resumed chat name: %q, want %q", got, name2)
 	}
+
+	// 3. Post-restart collision: another process claims the chat first and stays live, so the
+	// reconnecting original session gets a suffixed key and still keeps its saved name.
+	c4, r4, err := d.c.Hello(context.Background(), proto.Hello{ID: "c44444", Agent: "cursor"})
+	if err != nil {
+		t.Fatalf("collision original hello: %v", err)
+	}
+	name4 := d.named(r4.Self)
+	c4.Close()
+
+	d.restart()
+	c5, r5, err := d.c.Hello(context.Background(), proto.Hello{
+		ID: "c55555", Agent: "cursor",
+		Route: proto.Route{Native: "chat-collision"},
+	})
+	if err != nil {
+		t.Fatalf("collision peer hello: %v", err)
+	}
+	t.Cleanup(func() { c5.Close() })
+	name5 := d.named(r5.Self)
+
+	c4b, r4b, err := d.c.Hello(context.Background(), proto.Hello{
+		ID: "c44444", Agent: "cursor", Reconnect: true,
+		Route: proto.Route{Native: "chat-collision"},
+	})
+	if err != nil {
+		t.Fatalf("collision reconnect hello: %v", err)
+	}
+	t.Cleanup(func() { c4b.Close() })
+	if got := d.named(r4b.Self); got != name4 {
+		t.Fatalf("post-restart collision reconnect changed name: %q -> %q (peer has %q)", name4, got, name5)
+	}
+	if name5 == name4 {
+		t.Fatalf("peer took the same name %q", name4)
+	}
 }
