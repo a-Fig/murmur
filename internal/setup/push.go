@@ -43,6 +43,9 @@ type Pushed struct {
 	Checkout      string
 }
 
+// ErrNoBranch says the remote has no branch, so there is no commit for the section to go on.
+var ErrNoBranch = errors.New("the remote has no branch yet, so there is no commit to add the section to")
+
 // Push makes init's edits as a commit on the default branch of the clone's remote (the one its bus
 // is on, bus.RemoteFor) and pushes it there, never forced. The commit is built from the branch's
 // fetched tip with a temporary index, so neither the working tree nor the index changes. When the
@@ -50,9 +53,6 @@ type Pushed struct {
 // server refuses the push for a reason of its own (a protected branch, a hook), the commit goes to
 // FallbackBranch instead, for a pull request. Last, a checkout on the default branch, behind the
 // commit and with no local changes to the files init edits, is fast-forwarded to it.
-// ErrNoBranch says the remote has no branch, so there is no commit for the section to go on.
-var ErrNoBranch = errors.New("the remote has no branch yet, so there is no commit to add the section to")
-
 func Push(ctx context.Context, dir string) (Pushed, error) {
 	var p Pushed
 	top, err := Top(ctx, dir)

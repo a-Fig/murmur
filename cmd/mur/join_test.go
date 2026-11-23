@@ -363,6 +363,16 @@ func TestJoinNeedsTheRepoSetUp(t *testing.T) {
 	git(t, b.clone, "commit", "-q", "-m", "the Murmur section")
 	git(t, b.clone, "push", "-q", "origin", "HEAD:refs/heads/main")
 	refused("the section on main, no refs")
+	if out, _ := b.run(b.clone, "join"); !strings.Contains(out, "a mur older than 0.5.4 set it up, and running `mur init` again adds what join needs") {
+		t.Errorf("join didn't say what to do about a section from an older init:\n%s", out)
+	}
+
+	// That repo, as an older init left it: running init again makes the registry, and join works.
+	out := b.mustRun(b.clone, "init")
+	if !strings.Contains(out, "already has the section") || !strings.Contains(out, "Made refs/murmur/names on origin") {
+		t.Errorf("init again in a repo with the section and no refs:\n%s", out)
+	}
+	b.mustRun(b.clone, "join")
 }
 
 // A default init makes the names registry, which join looks for, and leaves the team ref to the

@@ -126,9 +126,11 @@ your user what it says; running `mur join` again retries. If a step gets stuck, 
 about 100 seconds and says which step; run it once more before telling your user. Give the command
 a timeout of 2 minutes or more.
 
-If it says the repo isn't set up for Murmur, nobody has run `mur init` there yet, so tell your
-user. Never run `mur init` to get past this; that is for a user who asked to set Murmur up in a
-repo: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
+If it says the repo isn't set up for Murmur, tell your user. If AGENTS.md or CLAUDE.md already has
+the Murmur section, a mur older than 0.5.4 set the repo up, and running `mur init` again adds what
+join needs; say so, and leave running it to your user's call. Never run `mur init` on your own to get
+past this; that is for a user who asked to set Murmur up in a repo:
+https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
 
 If it says instead that the repo "doesn't say it uses Murmur", this mur is older than 0.5.4, which
 can't join a repo set up without the section. Install it again (step 2). If that still gives an
