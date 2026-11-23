@@ -180,7 +180,10 @@
                     if ($old) { Remove-Item -Force -Path $old -ErrorAction SilentlyContinue }
                     throw "mur install: could not put the new mur.exe in place at $exe ($why); the one installed is unchanged."
                 }
-                throw "mur install: could not put the new mur.exe in place at $exe ($why), and could not put the old one back: it is at $old."
+                if (-not $old) {
+                    throw "mur install: could not put mur.exe in place at $exe ($why); nothing was installed."
+                }
+                throw "mur install: could not put the new mur.exe in place at $exe ($why), and could not put the old one back. Rename $old to mur.exe."
             }
         }
         if ($old) { Remove-Item -Force -Path $old -ErrorAction SilentlyContinue }

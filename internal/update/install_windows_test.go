@@ -23,7 +23,7 @@ $asset = 'mur-windows-amd64.exe'
 $old = $null
 Set-Content -Path (Join-Path $tmp $asset) -Value 'NEW' -Encoding ascii
 $running = $null
-if ($State -ne 'none') { Copy-Item "$env:WINDIR\System32\waitfor.exe" $exe }
+if ($State -notlike 'none*') { Copy-Item "$env:WINDIR\System32\waitfor.exe" $exe }
 if ($State -eq 'read-only') { (Get-Item $exe).IsReadOnly = $true }
 if ($State -like 'running*') {
     # A signal name of its own: a second waitfor on one name exits at once.
@@ -61,7 +61,10 @@ try {
         $failed = "$_"
     }
     if ($failed) {
-        Write-Output ("the swap failed, saying unchanged: " + ($failed -like '*the one installed is unchanged*'))
+        $said = 'something else'
+        if ($failed -like '*the one installed is unchanged*') { $said = 'unchanged' }
+        if ($failed -like '*nothing was installed*') { $said = 'nothing installed' }
+        Write-Output "the swap failed, saying: $said"
         $same = (Test-Path $exe) -and ((Get-FileHash $exe).Hash -eq (Get-FileHash "$env:WINDIR\System32\waitfor.exe").Hash)
         Write-Output ("mur.exe is the old one: " + $same)
         Write-Output ("backups left: " + @(Get-ChildItem $dir -Filter 'mur.exe.old-*').Count)
@@ -110,10 +113,13 @@ func TestInstallScriptNeverLeavesNoExe(t *testing.T) {
 		// (#1171). With no link the old mur.exe was moved aside first, and is moved back; with one,
 		// PowerShell's move may have taken mur.exe away before it failed, and the link is moved
 		// back in its place. Either way the install fails and leaves the mur.exe that was there.
-		{"idle, no call, no link, held", []string{"no mur.exe after Move-Item", "the swap failed, saying unchanged: True",
+		{"idle, no call, no link, held", []string{"no mur.exe after Move-Item", "the swap failed, saying: unchanged",
 			"mur.exe is the old one: True", "backups left: 0", "staged files left: 0"}},
-		{"idle, no call, held", []string{"the swap failed, saying unchanged: True",
+		{"idle, no call, held", []string{"the swap failed, saying: unchanged",
 			"mur.exe is the old one: True", "backups left: 0", "staged files left: 0"}},
+		// A first install has no old one to put back, and says so.
+		{"none, no call, held", []string{"the swap failed, saying: nothing installed",
+			"mur.exe is the old one: False", "backups left: 0", "staged files left: 0"}},
 	} {
 		t.Run(c.state, func(t *testing.T) {
 			dir := t.TempDir()
