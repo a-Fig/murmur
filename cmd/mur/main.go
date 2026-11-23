@@ -82,7 +82,7 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
 
-For agents with no internet:
+For agents that can't open the links in the repo's section:
   mur docs [PAGE]               print a page of Murmur's instructions for agents, such as join or use,
                                 as this version has it; alone, lists the pages
 

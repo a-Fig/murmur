@@ -127,11 +127,13 @@ used one of Murmur's tools. An agent Murmur has no tools for, such as Kiro in T3
 | `mur join --leave`     | Undoes joining. |
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
 | `mur stop`             | Stops this clone's daemon. |
-| `mur docs [PAGE]`      | Prints a page of the instructions for agents (`join`, `use` and the others in `docs/agents/`) as your installed version has them, for an agent with no internet. Alone, lists the pages. |
 | `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
 | `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
+
+An agent that can't open the pages the repo's section links to can print them instead:
+`mur docs join`, `mur docs use`, or `mur docs` for the list.
 
 ## How it works
 

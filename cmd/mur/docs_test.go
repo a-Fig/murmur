@@ -41,6 +41,10 @@ func TestDocsPrintsTheAgentPages(t *testing.T) {
 	if err := runDocs([]string{"nope"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "join") {
 		t.Errorf("mur docs nope: %v", err)
 	}
+	var help bytes.Buffer
+	if err := runDocs([]string{"--help"}, &help); err != nil || help.String() != list.String() {
+		t.Errorf("mur docs --help: %v, %q", err, help.String())
+	}
 	if err := runDocs([]string{"join", "use"}, &bytes.Buffer{}); err == nil {
 		t.Error("mur docs with two pages worked")
 	}
