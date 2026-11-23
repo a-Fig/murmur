@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// The page names each person's ghost and accessory from two lists in its scripts (#579); every name
+// The page names each session's ghost and accessory from two lists in its scripts (#579); every name
 // has to have a file that scripts/ghosts.py drew, or a session's face loses a layer.
 func TestGhostFilesExist(t *testing.T) {
 	src := []byte(pageSource(t))
@@ -17,17 +17,19 @@ func TestGhostFilesExist(t *testing.T) {
 		if m == nil {
 			t.Fatalf("the page has no %s list", list)
 		}
-		var names []string
+		names := make(map[string]bool)
 		for _, q := range strings.Split(string(m[1]), ",") {
-			if n := strings.Trim(strings.TrimSpace(q), `"`); n != "" {
-				names = append(names, n)
+			n := strings.Trim(strings.TrimSpace(q), `"`)
+			if n == "" || names[n] {
+				t.Errorf("%s has an empty or repeated name %q", list, n)
+				continue
 			}
+			names[n] = true
 		}
-		// ghostOf picks from 16 of each: an empty accessory is the 16th, "none".
-		if want := map[string]int{"GHOSTS": 16, "GHOST_ACCESSORIES": 15}[list]; len(names) != want {
-			t.Errorf("%s has %d names, want %d", list, len(names), want)
+		if len(names) != 16 {
+			t.Errorf("%s has %d distinct names, want 16", list, len(names))
 		}
-		for _, n := range names {
+		for n := range names {
 			if _, err := fs.Stat(static, "static/assets/ghosts/"+prefix+n+".svg"); err != nil {
 				t.Errorf("%s names %q, but there is no %s%s.svg", list, n, prefix, n)
 			}

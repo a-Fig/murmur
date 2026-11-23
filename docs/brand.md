@@ -160,12 +160,14 @@ palette, keeps the usual panes, a blue sidebar and butter bubbles.
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
 drawn in three layers: a round tile in its device's colour, one of 16 ghosts (`ghost-*.svg` in
-`internal/web/static/assets/ghosts/`) and one of 15 accessories (`acc-*.svg`) or none, so 256 faces
-in all. Each ghost has its own silhouette and expression. Hush pulls up a blanket, Coo hugs a
-heart, and Psst carries a note. Murmur has the mark's quotation-mark eyes and Mumble its leaning
-ovals. The ghosts use light tints and ink outlines so they stay visible on all twelve device hues.
-A session's name picks its ghost and accessory (`ghostOf` in `messages.js`). The ghosts share an
-eye line and head size so hats and glasses fit the cast. Accessories such as the typing bubble can
+`internal/web/static/assets/ghosts/`) and one of 16 accessories (`acc-*.svg`), so 256 faces
+in all. Each ghost has its own silhouette and expression. Chatter throws up both arms, Sigh
+cries in streaks, and Buzz has a jagged hem. Murmur has the mark's quotation-mark eyes and
+Mumble its leaning ovals. Light tints and ink outlines keep the ghosts visible on all twelve
+device hues.
+A session's name picks its ghost and accessory (`ghostOf` in `messages.js`). The moon clip fills the
+slot that used to leave ghosts bare. The ghosts share enough of an eye line and head size for
+hats and glasses to fit the cast. Accessories such as the typing bubble can
 extend past the tile. `scripts/ghosts.py` generates the SVGs and [the full gallery](ghosts.html).
 
 ## Renders

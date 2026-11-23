@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><clipPath id="body"><path d="M13 29C13 17 21 9 31 9C43 9 51 17 51 28Q51 38 56 42Q57 49 48 49Q46 55 38 51Q35 59 26 55Q16 59 12 51Q4 49 7 43Q12 38 13 29Z"/></clipPath></defs>
+  <defs><clipPath id="body"><path d="M12 29Q10 20 17 14Q23 9 32 10Q42 7 47 15Q52 19 52 28Q50 33 54 40Q59 46 55 52Q51 57 44 52Q43 58 35 54Q29 60 23 55Q14 57 10 51Q5 45 9 38Z"/></clipPath></defs>
   <ellipse cx="32" cy="58" rx="14" ry="2" fill="#00000026"/>
-  <g clip-path="url(#body)"><path d="M13 29C13 17 21 9 31 9C43 9 51 17 51 28Q51 38 56 42Q57 49 48 49Q46 55 38 51Q35 59 26 55Q16 59 12 51Q4 49 7 43Q12 38 13 29Z" fill="#A5C7E9"/><path d="M13 29C13 17 21 9 31 9C43 9 51 17 51 28Q51 38 56 42Q57 49 48 49Q46 55 38 51Q35 59 26 55Q16 59 12 51Q4 49 7 43Q12 38 13 29Z" fill="#E5F2FF" transform="translate(-1.5 -3.5)"/></g>
-  <path d="M13 29C13 17 21 9 31 9C43 9 51 17 51 28Q51 38 56 42Q57 49 48 49Q46 55 38 51Q35 59 26 55Q16 59 12 51Q4 49 7 43Q12 38 13 29Z" fill="none" stroke="#0E1B45" stroke-width="1.65" stroke-linejoin="round"/>
-  <path d="M21 27q4 5 8 1m6 0q4 4 8-1" fill="none" stroke="#0E1B45" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="33" cy="36" rx="2.8" ry="3.4" fill="#0E1B45"/><path d="M35 43q7-4 13 0q3 2 6 0m-24 6q6-3 11 0" fill="none" stroke="#628DC1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="56" cy="35" rx="3" ry="2" fill="#D0E8FC"/>
+  <g clip-path="url(#body)"><path d="M12 29Q10 20 17 14Q23 9 32 10Q42 7 47 15Q52 19 52 28Q50 33 54 40Q59 46 55 52Q51 57 44 52Q43 58 35 54Q29 60 23 55Q14 57 10 51Q5 45 9 38Z" fill="#A1BDDC"/><path d="M12 29Q10 20 17 14Q23 9 32 10Q42 7 47 15Q52 19 52 28Q50 33 54 40Q59 46 55 52Q51 57 44 52Q43 58 35 54Q29 60 23 55Q14 57 10 51Q5 45 9 38Z" fill="#E4F1FF" transform="translate(-1.5 -3.5)"/></g>
+  <path d="M12 29Q10 20 17 14Q23 9 32 10Q42 7 47 15Q52 19 52 28Q50 33 54 40Q59 46 55 52Q51 57 44 52Q43 58 35 54Q29 60 23 55Q14 57 10 51Q5 45 9 38Z" fill="none" stroke="#0E1B45" stroke-width="1.65" stroke-linejoin="round"/>
+  <path d="M21 26q4 5 8 1m6 0q4 4 8-1" fill="none" stroke="#0E1B45" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 30q2 1 5 0v9q0 3-2 3q-3 0-3-3Zm17 0q3 1 5-1v13q0 3-2 3q-3 0-3-3Z" fill="#719FD8"/><ellipse cx="32" cy="39" rx="2.6" ry="3.3" fill="#0E1B45"/>
 </svg>
