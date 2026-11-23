@@ -972,7 +972,7 @@ func (d *Daemon) batchLocked(id string, first *inMsg, via string, wake pageSetti
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
-// if the first attempt never reached the way in (notReached): `t3 thread send` takes no key that
+// if the first attempt never reached the way in and might the next time (worthAnotherTry): `t3 thread send` takes no key that
 // would make a repeat harmless, and the socket answers nothing, so a call that failed after it
 // started may have handed the message over, and a second one would make a second turn of it. A message
 // whose handoff failed that way is left to the hook's notice, which the agent still gets, and stays
@@ -996,7 +996,7 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 		}
 		err = d.sendTurn(ctx, j)
 		<-d.pushSem
-		if err == nil || errors.Is(err, ErrNoConsent) || !notReached(err) {
+		if err == nil || errors.Is(err, ErrNoConsent) || !worthAnotherTry(err) {
 			return err
 		}
 	}
@@ -1004,9 +1004,16 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 }
 
 // notReached says an attempt failed before it could have put the message anywhere: the command
-// didn't start, or the socket couldn't be connected to.
+// didn't start or wasn't run, or the socket couldn't be connected to.
 func notReached(err error) bool {
-	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
+	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, t3.ErrRefused) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
+}
+
+// worthAnotherTry says a failed attempt is one handOver makes again: it reached nothing, and the
+// same call might work a moment later. One refused for what it was asked to send to would be
+// refused again.
+func worthAnotherTry(err error) bool {
+	return notReached(err) && !errors.Is(err, t3.ErrRefused)
 }
 
 // sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it

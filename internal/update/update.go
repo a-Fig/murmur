@@ -595,7 +595,8 @@ func Checked(gitDir string) time.Time {
 }
 
 // Newer returns the latest release the clone's daemon last saw, if it is newer than version and
-// not a prerelease held back by a return to stable (Back), else "".
+// not a prerelease held back by a return to stable (Back), else "". It reads a file, and for a
+// prerelease asks git config what is held back.
 func Newer(gitDir, version string) string {
 	var l latest
 	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
@@ -604,9 +605,14 @@ func Newer(gitDir, version string) string {
 	if l.Latest == "" || !newer(l.Latest, version) {
 		return ""
 	}
+	// Only a prerelease can be held back, so only for one is git asked what is: `mur version` and
+	// the page call this, and a stable release, the usual answer, costs them no process (#1164).
+	if !prerelease(l.Latest) {
+		return l.Latest
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if skip := skipped(ctx, gitDir, version); skip == "" || !prerelease(l.Latest) || newer(l.Latest, skip) {
+	if skip := skipped(ctx, gitDir, version); skip == "" || newer(l.Latest, skip) {
 		return l.Latest
 	}
 	return ""

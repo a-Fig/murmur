@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -46,6 +47,76 @@ func TestThePickerListsEachClonesSlug(t *testing.T) {
 	for name, slug := range want {
 		if slugs[name] != slug {
 			t.Errorf("%s's slug is %q, want %q (all: %v)", name, slugs[name], slug, slugs)
+		}
+	}
+}
+
+// A slug the list had to ask git for is written to the record, so the next listing starts no git
+// for it (#1164): the page lists the repos on every load.
+func TestThePickerRecordsASlugItHadToAskFor(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "record")
+	clone := func(name, remote string) string {
+		top := filepath.Join(root, name)
+		if err := os.MkdirAll(top, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", remote}} {
+			if out, err := exec.Command("git", append([]string{"-C", top}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		return filepath.Join(top, ".git")
+	}
+	self := clone("self", "git@github.com:a-Fig/murmur.git")
+	old := clone("old", "https://gitlab.com/group/sub/old.git")
+	for _, rec := range []Clone{{GitDir: self, Name: "murmur", Slug: "a-Fig/murmur"}, {GitDir: old, Name: "old"}} {
+		if err := Add(dir, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	joined := func(string) bool { return true }
+	if _, err := (Picker{Dir: dir, Self: self, Joined: joined}).List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := List(dir, joined)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Clone{
+		filepath.Clean(self): {GitDir: filepath.Clean(self), Name: "murmur", Slug: "a-Fig/murmur"},
+		filepath.Clean(old):  {GitDir: filepath.Clean(old), Name: "old", Slug: "group/sub/old"},
+	}
+	if len(recorded) != len(want) {
+		t.Errorf("the record has %d clones, want %d: %+v", len(recorded), len(want), recorded)
+	}
+	for _, c := range recorded {
+		if c != want[c.GitDir] {
+			t.Errorf("after a listing the record has %+v, want %+v", c, want[c.GitDir])
+		}
+	}
+
+	// A clone that has left by the time git answers isn't put back with a slug.
+	left := clone("left", "https://github.com/a-Fig/left.git")
+	if err := Add(dir, Clone{GitDir: left, Name: "left"}); err != nil {
+		t.Fatal(err)
+	}
+	// Joined when the list reads the record, and not when it is asked again before the write.
+	var asked atomic.Int32
+	gone := func(gitDir string) bool {
+		return filepath.Clean(gitDir) != filepath.Clean(left) || asked.Add(1) == 1
+	}
+	all := Picker{Dir: dir, Self: self, Joined: gone}
+	if _, err := all.List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	every, err := List(dir, joined)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range every {
+		if c.Name == "left" && c.Slug != "" {
+			t.Errorf("a clone that left was written to the record again: %+v", c)
 		}
 	}
 }
