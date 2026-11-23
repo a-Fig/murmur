@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,7 +159,6 @@ func TestOffDuringADownload(t *testing.T) {
 	}
 
 	// Update now, asked with updates off, goes ahead though the setting is read again.
-	gitConfig(t, "--file", path, "--unset-all", "murmur.update")
 	o := Options{Version: "1.2.3", GitDir: gitDir, Executable: exe, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(), Getenv: noEnv}
 	o.Log = log.New(io.Discard, "", 0)
 	original, _ := Identity(exe)
@@ -203,12 +203,69 @@ func TestStableDuringANightlyDownload(t *testing.T) {
 	}
 }
 
+// installedAt is installed, for the install at exe: one binary, a check of the updater's on it as
+// running, and the version it installed, "" for none. The record of going back is per install.
+func installedAt(t *testing.T, srv *httptest.Server, gitDir, running, exe string) string {
+	t.Helper()
+	os.WriteFile(exe, []byte("old"), 0o755)
+	original, _ := Identity(exe)
+	o := Options{Version: running, GitDir: gitDir, Executable: exe, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(), Getenv: noEnv, Log: log.New(io.Discard, "", 0)}
+	done, _, err := attempt(context.Background(), o, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done {
+		return ""
+	}
+	b, _ := os.ReadFile(exe)
+	return strings.TrimPrefix(string(b), "binary v")
+}
+
+// The loop through a channel Back can't hold: a repo's own murmur.channel prerelease, which is how
+// `git config murmur.channel prerelease` writes it, and which v0.5.3 reads in that clone. The
+// nightly goes back to v0.5.3, which takes it again; back on it, the install has gone back from it
+// once already, so the hold comes off and the nightly stays, rather than a download and a restart
+// each time for ever (Opus's second review of #1197). Another install, which hasn't gone back,
+// still goes back.
+func TestGoingBackHappensOncePerInstall(t *testing.T) {
+	path := global(t)
+	gitDir := repo(t)
+	ctx := context.Background()
+	const bad = "0.5.4-nightly.20261123"
+	gitConfig(t, "--file", filepath.Join(gitDir, "config"), "murmur.channel", "prerelease")
+	if _, err := Back(ctx, noEnv, gitDir, bad); err != nil {
+		t.Fatal(err)
+	}
+	srv := releases(t, "v0.5.3", []rel{{"v" + bad, true}, {"v0.5.3", false}})
+	exe := filepath.Join(t.TempDir(), "mur")
+	if got := installedAt(t, srv, gitDir, bad, exe); got != "0.5.3" {
+		t.Fatalf("going back installed %q", got)
+	}
+	if got := v053Installs(t, srv, srv.URL, gitDir); got != bad {
+		t.Fatalf("v0.5.3 with the repo's prerelease installed %q", got)
+	}
+	if got := installed(t, srv, gitDir, bad); got != "0.5.3" {
+		t.Fatalf("another install of the nightly went back to %q", got)
+	}
+	if got := installedAt(t, srv, gitDir, bad, exe); got != "" {
+		t.Fatalf("the nightly went back a second time, to %q", got)
+	}
+	for _, key := range []string{"murmur.updateSkip", "murmur.updateBack"} {
+		if out, _ := exec.Command("git", "config", "--file", path, "--get-all", key).Output(); len(out) != 0 {
+			t.Errorf("%s stayed: %q", key, out)
+		}
+	}
+	if s := Read(ctx, noEnv, gitDir, bad); s.Skip != "" || !s.CanGoBack {
+		t.Errorf("after the hold came off: %+v", s)
+	}
+}
+
 // A person on v0.5.3 after going back sees the stable channel, and its only way to nightlies is
-// `murmur.channel prerelease`. v0.5.3 then takes the nightly gone back from, which goes back
-// again: once, since the going back holds the channel again before it installs, and v0.5.3 stays
-// (Opus review of #1197). The same holds if another clone's updater put "prerelease" back as Back
-// wrote the hold.
-func TestBackHoldsTheChannelAgainAsItInstalls(t *testing.T) {
+// `murmur.channel prerelease`. v0.5.3 then takes the nightly gone back from, which stays: the
+// install has gone back from it once, so it was chosen again (wentBack). Another clone's updater
+// that put "prerelease" back as Back wrote the hold is caught as the release gone back to installs:
+// the channel is held again just before (holdChannel), so v0.5.3 stays.
+func TestChoosingNightlyAgainOnV053(t *testing.T) {
 	path := global(t)
 	gitDir := repo(t)
 	ctx := context.Background()
@@ -220,17 +277,24 @@ func TestBackHoldsTheChannelAgainAsItInstalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := releases(t, "v0.5.3", []rel{{"v" + bad, true}, {"v0.5.3", false}})
-	if got := installed(t, srv, gitDir, bad); got != "0.5.3" {
+	// The race: "prerelease" again before the release gone back to installs.
+	gitConfig(t, "--file", path, "murmur.channel", "prerelease")
+	exe := filepath.Join(t.TempDir(), "mur")
+	if got := installedAt(t, srv, gitDir, bad, exe); got != "0.5.3" {
 		t.Fatalf("going back installed %q", got)
 	}
+	if got := v053Installs(t, srv, srv.URL, gitDir); got != "" {
+		t.Fatalf("v0.5.3 installed %s: the channel wasn't held again", got)
+	}
+	// The person chooses nightlies on v0.5.3.
 	gitConfig(t, "--file", path, "murmur.channel", "prerelease")
 	if got := v053Installs(t, srv, srv.URL, gitDir); got != bad {
 		t.Fatalf("v0.5.3 on prerelease installed %q", got)
 	}
-	if got := installed(t, srv, gitDir, bad); got != "0.5.3" {
-		t.Fatalf("the nightly again went back to %q", got)
+	if got := installedAt(t, srv, gitDir, bad, exe); got != "" {
+		t.Fatalf("the nightly chosen again went back to %q", got)
 	}
-	if got := v053Installs(t, srv, srv.URL, gitDir); got != "" {
-		t.Fatalf("v0.5.3 installed %s a second time", got)
+	if out, _ := exec.Command("git", "config", "--file", path, "--get-all", "murmur.channel").Output(); strings.TrimSpace(string(out)) != "prerelease" {
+		t.Errorf("channel %q", out)
 	}
 }

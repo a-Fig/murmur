@@ -123,12 +123,17 @@ information in the request; a network failure waits quietly for the next hour. A
     and older don't know `murmur.updateSkip`, and take a prerelease whenever `murmur.channel` is
     `prerelease`: gone back to, v0.5.3 installed the same nightly again, which went back again. So
     on the nightly channel Back also makes the global `murmur.channel` `prerelease-held`, which
-    those releases read as stable and later ones as nightly; the updater writes `prerelease` again
-    once the hold is off. It holds the channel again just before it installs the release gone back
-    to, as it may read `prerelease` by then: on v0.5.3 that is the only way to nightlies, and it
-    takes the nightly gone back from, which then goes back once more and stays. While such a release runs, the machine waits for the next stable release,
-    not the next nightly. A repo's own `murmur.channel prerelease` isn't changed, so in that repo
-    the old release still takes the nightly.
+    those releases read as stable and later ones as nightly, and the updater holds it again just
+    before it installs the release gone back to, in case it reads `prerelease` by then. Once the
+    hold is off, it writes `prerelease` again. While such a release runs, the machine waits for the
+    next stable release, not the next nightly.
+  - *At most once per install.* A channel Back can't hold still loops: a repo's own `prerelease`
+    (how `git config murmur.channel prerelease` writes it, v0.5.3's way to nightlies), the
+    system's, or a person on v0.5.3 setting it again. So the updater records each install that has
+    gone back from the prerelease in the hold (`murmur.updateBack`, the version and the
+    executable's path), and an install found running that prerelease again takes the hold off and
+    stays on it: whatever the older release read chose it (Opus's second review). Each Back is then
+    one trip at most, a download and a restart each way, never a loop.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.

@@ -167,6 +167,9 @@ func Replace(ctx context.Context, gitDir string) (*Client, error) {
 // Stopping it would only start the same version again, and stop it again at every reconnect.
 func (c *Client) connect(ctx context.Context) error {
 	replaced := false
+	c.mu.Lock()
+	c.notOwn = "" // asked again below, if this connect finds an older daemon
+	c.mu.Unlock()
 	if c.found(ctx) {
 		if !c.Outdated() || !c.mayStart() || !c.mayReplace() {
 			return nil

@@ -315,6 +315,17 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	// channel. Stable releases still do, so the machine never stays below the latest of them.
 	skip := skipped(ctx, o.GitDir, o.Version)
 	clearSkip(ctx, o, o.Version)
+	if skip != "" && same(skip, o.Version) && wentBack(ctx, o.GitDir, skip, o.Executable) {
+		// This install went back from this prerelease once, and it runs again: the release gone
+		// back to took it again, so whatever that release reads chose it (#1197). v0.5.3 and older
+		// know no hold, and take it whenever any git config file says murmur.channel prerelease,
+		// a repo's own as `git config murmur.channel prerelease` writes it, or a person setting it
+		// again. Going back again would loop, a download and a restart each time, so the hold
+		// comes off and the prerelease stays.
+		o.Log.Printf("self-update: back on %s after going back from it, so it was chosen again: %s comes off", o.Version, skipKey)
+		takeHoldOff(ctx, o)
+		skip = ""
+	}
 	rel, back, err := target(ctx, o, skip)
 	if err != nil {
 		return false, latest, err
@@ -391,6 +402,11 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
+	if back {
+		if _, err := (gitx.Git{Dir: o.GitDir}).Run(ctx, "", "config", "--global", "--add", backKey, skip+" "+o.Executable); err != nil {
+			o.Log.Printf("self-update: couldn't record going back in %s: %v", backKey, err)
+		}
+	}
 	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
@@ -420,6 +436,18 @@ func look(ctx context.Context, o Options) (latest string, err error) {
 	return strings.TrimPrefix(rel.Tag, "v"), nil
 }
 
+// wentBack says the install at exe has gone back to stable from skip before: backKey has it, as
+// the updater records it once the release gone back to is in place.
+func wentBack(ctx context.Context, gitDir, skip, exe string) bool {
+	for _, v := range configValues(ctx, gitDir, backKey) {
+		version, path, ok := strings.Cut(v.value, " ")
+		if ok && same(version, skip) && path == exe {
+			return true
+		}
+	}
+	return false
+}
+
 // clearSkip takes murmur.updateSkip off once version, the one running or just installed, has
 // passed it, so a later prerelease that misbehaves starts from no hold. It reads the key again
 // each time: a person may have gone back from another prerelease since the check began. It is the
@@ -429,9 +457,18 @@ func clearSkip(ctx context.Context, o Options, version string) {
 	if v != "" && validVersion(v) && !newer(version, v) {
 		return
 	}
-	if v != "" {
-		if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
-			o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+	takeHoldOff(ctx, o)
+}
+
+// takeHoldOff takes murmur.updateSkip off, with the record of going back from it (backKey), and
+// makes a held channel "prerelease" again.
+func takeHoldOff(ctx context.Context, o Options) {
+	for _, key := range []string{skipKey, backKey} {
+		if last(configValues(ctx, o.GitDir, key), "global").value == "" {
+			continue // as at almost every check: git is asked only to read
+		}
+		if err := unsetGlobal(ctx, o.GitDir, key); err != nil {
+			o.Log.Printf("self-update: couldn't take %s off: %v", key, err)
 			return
 		}
 	}

@@ -24,7 +24,10 @@ const (
 	channelKey = "murmur.channel"
 	// skipKey holds a prerelease a person went back to stable from (#1045): the updater installs
 	// no prerelease that isn't newer than it, and takes the key off once a newer version is in.
-	skipKey  = "murmur.updateSkip"
+	skipKey = "murmur.updateSkip"
+	// backKey records each install that has gone back from the prerelease in skipKey, as
+	// "<version> <executable>", so that it goes back from it at most once (#1197): see wentBack.
+	backKey  = "murmur.updateBack"
 	noUpdate = "MURMUR_NO_UPDATE"
 	// heldNightly is murmur.channel while a return to stable from a nightly holds (#1197): the
 	// nightly channel to this release and later ones, the stable channel to v0.5.3 and older,
