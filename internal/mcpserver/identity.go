@@ -43,6 +43,11 @@ func helloFor(agent, cwd string) proto.Hello {
 			h.ID, h.Native = nativeID(native), native
 		}
 	}
+	if agent == "pi" {
+		// The file the session left on /new, /resume or /fork (#1145): the daemon gives the server
+		// the address of the session that had it, which follows the session here.
+		h.From = os.Getenv("MURMUR_PI_PREVIOUS_SESSION_FILE")
+	}
 	if t3.thread && h.T3CLI != "" {
 		thread := os.Getenv(threadEnv)
 		h.ID, h.T3Thread, h.ByThread = threadID(thread), thread, true

@@ -284,6 +284,34 @@ func (d *Daemon) threadIDLocked(h *proto.Hello) string {
 	return id
 }
 
+// fromIDLocked is the session ID for a hello that says which conversation its client left (h.From,
+// #1145): the ID of the session of the same client process that registered with that one, in its
+// grace or still live, else h.ID. Pi moves a session to another file on /new, /resume and /fork,
+// in the same process, and starts Murmur's server again with the new file. That was a new ID, so a
+// new session and a new name, and the old session, whose server was gone for good, kept what was
+// sent to its name until its grace ran out. With the old ID, the hello takes the old session over,
+// as any server back from its grace does, and its key, and so its name, follow the new file, as
+// followLocked moves a Claude Code session on /clear: its address, inbox and place on the bus
+// stay, and the registry still has the old name at that address, so a message to it reaches the
+// session.
+//
+// Only a server's first registration (not Reconnect): one coming back has its ID already. Only
+// the same process, as a hook's PID moves only its own process's sessions: another Pi on the file
+// this one left is a conversation of its own. A session still live there is the server Pi is
+// closing, not yet seen gone: the hello is refused as in use, and tried again. The server takes
+// the ID the reply's Self names. Caller holds mu.
+func (d *Daemon) fromIDLocked(h *proto.Hello) string {
+	if h.From == "" || h.From == h.Native || h.ClientPID == 0 || h.Reconnect {
+		return h.ID
+	}
+	for _, s := range d.sortedSessionsLocked() {
+		if s.route.Native == h.From && s.claudeSession == "" && s.clientPID == h.ClientPID && s.hold == nil {
+			return s.id
+		}
+	}
+	return h.ID
+}
+
 // setNameLocked gives s its name, "" if it has none yet. A name that lands is also recorded as
 // held by s, the last to take it, and as s's own last: that is how a message for the session the
 // registry has the name down for finds s (see forwardLocked). s also takes what was kept for the
@@ -556,9 +584,9 @@ func (d *Daemon) hookSessionsLocked(req proto.Request) []*session {
 
 // nativeSessionsLocked finds the live sessions the hook of an agent other than Claude Code speaks
 // for: those whose MCP server registered with native, the client's own ID for its conversation
-// (Pi's session file, which Murmur's extension gives both, #205). Nothing follows: a Pi session
-// that moves to another file (/new, /resume) starts its server again with the new one, a session
-// of its own. Caller holds mu.
+// (Pi's session file, which Murmur's extension gives both, #205). A Pi session that moves to
+// another file (/new, /resume, /fork) starts its server again with the new one, and the server's
+// hello follows the move (fromIDLocked). Caller holds mu.
 func (d *Daemon) nativeSessionsLocked(native string) []*session {
 	if native == "" {
 		return nil
@@ -585,8 +613,13 @@ func (d *Daemon) followLocked(s *session, claude string) {
 		d.kickNames()
 	}
 	d.kickPresence()
+	d.noteFollowedLocked(s, "Claude Code", from)
+}
 
-	// The log is local, so it can say the names but not the Claude IDs, which are never published.
+// noteFollowedLocked logs that s followed client to another conversation, where it was called from.
+// The log is local, so it can say the names but not the client's IDs, which are never published.
+// Caller holds mu.
+func (d *Daemon) noteFollowedLocked(s *session, client, from string) {
 	addr := bus.Addr(d.device, s.id)
 	shown := func(name string) string {
 		if name == "" {
@@ -594,9 +627,9 @@ func (d *Daemon) followLocked(s *session, claude string) {
 		}
 		return name
 	}
-	d.noteLocked(time.Now(), fmt.Sprintf("%s followed Claude Code to another conversation: %s -> %s",
-		addr, shown(from), shown(s.name)))
-	d.log.Printf("session %s followed Claude Code to another conversation (%s -> %s)", addr, shown(from), shown(s.name))
+	d.noteLocked(time.Now(), fmt.Sprintf("%s followed %s to another conversation: %s -> %s",
+		addr, client, shown(from), shown(s.name)))
+	d.log.Printf("session %s followed %s to another conversation (%s -> %s)", addr, client, shown(from), shown(s.name))
 }
 
 // receivesLocked says whether a message can be put in id's inbox: it is registered here, or it

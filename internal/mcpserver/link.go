@@ -387,6 +387,10 @@ func (l *link) run(ctx context.Context) {
 						} else {
 							l.hello.ID = sessionID(l.hello.ClaudeSession)
 						}
+					} else if l.hello.From != "" {
+						// The session Pi left is live still, past the wait: the session is one
+						// of its own, at the ID made from its file, as before #1145.
+						l.hello.From = ""
 					} else {
 						l.hello.ID = bus.RandHex(6)
 					}
@@ -415,9 +419,9 @@ func (l *link) run(ctx context.Context) {
 		// past the wait just before the drop may yet use one up while the link is down.
 		l.retry = nil
 		l.hello.Reconnect = true // any later hello is a reconnection
-		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
+		if _, id := bus.SplitAddr(resp.Self); (h.ByThread || h.From != "") && id != "" {
 			// The daemon may give the thread the address its name has had since before #642
-			// (see Hello.ByThread).
+			// (see Hello.ByThread), and a Pi session the address of the one it left (Hello.From).
 			l.hello.ID = id
 		}
 		l.mu.Unlock()

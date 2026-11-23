@@ -245,6 +245,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	h.ID = d.threadIDLocked(h)
+	moved := false // to another conversation of its client (#1145)
+	if id := d.fromIDLocked(h); id != h.ID {
+		h.ID, moved = id, true
+	}
 	s := d.sessions[h.ID]
 	// A held session is taken over by its thread's server, or, with no thread named yet, only if it
 	// is still a server's (a command in that server's grace): a command's own session would be a
@@ -334,6 +338,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		// A session in its grace: this connection takes it over, with its inbox and its unread
 		// notices. Everyone else was never told it was gone.
 		taken = true
+		from := s.name
 		if s.agent != agent || s.branch != branch || s.key != key {
 			d.kickPresence() // what presence shows changed; otherwise nothing is written
 		}
@@ -353,6 +358,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		} else {
 			s.key = key
 			d.setNameLocked(s, d.nameForKeyLocked(s, key))
+		}
+		if moved {
+			d.noteFollowedLocked(s, "Pi", from)
 		}
 		s.dropped = time.Time{}
 		if s.takeover != nil { // nil for a session a command held

@@ -58,6 +58,49 @@ func TestPiHelloCarriesTheExtensionsSocket(t *testing.T) {
 	}
 }
 
+// After Pi moves its session to another file (/new, /resume, /fork), the server says the file the
+// session left, and goes by the address the daemon gives it, that of the session it left, from
+// then on (#1145). While that address stays in use, it gives the file up after a few tries and is
+// a session of its own, at the ID made from its file, as before.
+func TestAMovedPiServerTakesTheAddressOfTheSessionItLeft(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv("MURMUR_PI_SESSION_FILE", "/s/b.jsonl")
+	t.Setenv("MURMUR_PI_PREVIOUS_SESSION_FILE", "/s/a.jsonl")
+	if h := helloFor("pi", "/work"); h.From != "/s/a.jsonl" || h.Native != "/s/b.jsonl" || h.ID != nativeID("/s/b.jsonl") {
+		t.Fatalf("pi: %+v", h)
+	}
+	if h := helloFor("muse", "/work"); h.From != "" {
+		t.Errorf("muse took Pi's file: %+v", h)
+	}
+
+	f := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.From != "" {
+			return "", "0a0a0a"
+		}
+		return "", ""
+	}}
+	l := startedLink(t, f, nil, helloFor("pi", "/work"))
+	if id, _ := l.wait(context.Background(), time.Second); id != "0a0a0a" {
+		t.Fatalf("registered as %s, not the address the daemon gave", id)
+	}
+	f.dropConnections()
+	waitFor(t, "a reconnection", func() bool { return f.helloCount() == 2 })
+	if h := f.lastHello(); h.ID != "0a0a0a" || !h.Reconnect {
+		t.Errorf("the reconnection: %+v", h)
+	}
+
+	g := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.From != "" {
+			return "session ID 0a0a0a is in use", ""
+		}
+		return "", ""
+	}}
+	startedLink(t, g, nil, helloFor("pi", "/work"))
+	if h := g.lastHello(); h.ID != nativeID("/s/b.jsonl") || h.From != "" {
+		t.Errorf("past the address in use, registered with %+v", h)
+	}
+}
+
 func openCodeCall(session string) *mcp.CallToolRequest {
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "who"}}
 	if session != "" {
