@@ -12,7 +12,6 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/jsonedit"
-	"github.com/a-Fig/murmur/internal/skills"
 )
 
 // Kiro (#906), AWS's coding agent CLI (`kiro-cli`, V3 KAS engine `@kiro/agent`). Read in Kiro CLI
@@ -58,20 +57,12 @@ func kiroPathsInTemp(dir string) bool {
 	settings := filepath.Join(dir, "settings")
 	hooks := filepath.Join(dir, "hooks")
 	skillsRoot := filepath.Join(dir, "skills")
+	perms := filepath.Join(settings, "permissions.json")
 	paths := []string{
-		settings, filepath.Join(settings, "mcp.json"), filepath.Join(settings, "permissions.json"),
+		settings, filepath.Join(settings, "mcp.json"), perms, ruleRecordPath(perms),
 		hooks, filepath.Join(hooks, kiroHookFile),
-		skillsRoot,
 	}
-	for _, s := range skills.All() {
-		paths = append(paths, filepath.Join(skillsRoot, s.Name), filepath.Join(skillsRoot, s.Name, "SKILL.md"))
-	}
-	for _, p := range paths {
-		if !inTemp(p, false) {
-			return false
-		}
-	}
-	return true
+	return pathsInTemp(append(paths, skillPaths(skillsRoot)...))
 }
 
 // kiroHomeDir is Kiro's user configuration directory, following V3's resolveUserConfigDir:
@@ -131,10 +122,7 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 		return nil, false, nil
 	}
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
-	entry := jsonedit.New()
-	entry.Set("command", e.Exe)
-	entry.Set("args", toAny(kiroArgs))
-	changed, added, err := setJSONIn(mcpPath, []string{"mcpServers", brand.MCPServer}, entry)
+	changed, added, err := setMCPServerFile(mcpPath, e.Exe, kiroArgs)
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)
 	}
@@ -228,7 +216,12 @@ func allowKiroTools(dir string) (changed bool, path string, err error) {
 	if err != nil {
 		return false, jsonPath, err
 	}
+	// Recorded first, so a rule is never in the file that join can't say it added (ruleowned.go).
+	if err := recordRule(jsonPath, kiroAllowPattern); err != nil {
+		return false, jsonPath, err
+	}
 	if err := writeJSONConfig(jsonPath, string(b), 0o644); err != nil {
+		_ = forgetRule(jsonPath, kiroAllowPattern)
 		return false, jsonPath, err
 	}
 	return true, jsonPath, blockNote
@@ -449,13 +442,16 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 	if text, rerr := readConfig(mcpPath); rerr != nil {
 		problems = append(problems, rerr)
 	} else if text != "" {
-		out, changed, uerr := jsonSteps(text, deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers"))
+		out, changed, kept, uerr := removeMCPServer(text)
 		switch {
 		case uerr != nil:
 			problems = append(problems, fmt.Errorf("%s: %w", mcpPath, uerr))
 		case changed:
 			if werr := writeJSONConfig(mcpPath, out, 0o644); werr != nil {
 				problems = append(problems, werr)
+			} else if len(kept) > 0 {
+				did = append(did, h.Label+": removed the command of the "+brand.MCPServer+" MCP server ("+mcpPath+")")
+				notes = append(notes, keptServerNote(h.Label, mcpPath, kept))
 			} else {
 				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+mcpPath+")")
 			}
@@ -464,20 +460,14 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 	yamlPath := filepath.Join(h.Dir, "settings", "permissions.yaml")
 	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
 	if _, yerr := os.Stat(yamlPath); errors.Is(yerr, os.ErrNotExist) {
-		if text, rerr := readConfig(permPath); rerr != nil {
-			problems = append(problems, rerr)
-		} else if text != "" {
-			out, changed, uerr := removeKiroAllow(text)
-			switch {
-			case uerr != nil:
-				problems = append(problems, fmt.Errorf("%s: %w", permPath, uerr))
-			case changed:
-				if werr := writeJSONConfig(permPath, out, 0o644); werr != nil {
-					problems = append(problems, werr)
-				} else {
-					did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+permPath+")")
-				}
-			}
+		removed, note, perr := takeOutAddedRule(h.Label, permPath, kiroAllowPattern, removeKiroAllow)
+		switch {
+		case perr != nil:
+			problems = append(problems, perr)
+		case removed:
+			did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+permPath+")")
+		case note != "":
+			notes = append(notes, note)
 		}
 	} else if yerr == nil {
 		if text, rerr := readConfig(permPath); rerr == nil && text != "" {
@@ -510,7 +500,7 @@ func kiroRemoval(_ Env, h agentHome) string {
 	if _, yerr := os.Stat(filepath.Join(h.Dir, "settings", "permissions.yaml")); errors.Is(yerr, os.ErrNotExist) {
 		permPath := filepath.Join(h.Dir, "settings", "permissions.json")
 		if text, err := readConfig(permPath); err == nil && text != "" {
-			if _, found, _ := removeKiroAllow(text); found {
+			if _, found, _ := removeKiroAllow(text); found && joinAddedRule(permPath, kiroAllowPattern) {
 				steps = append(steps, "remove \""+kiroAllowPattern+"\" from the MCP allow rule in "+permPath)
 			}
 		}
