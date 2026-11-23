@@ -266,7 +266,9 @@ func pathOf(remoteURL string) (p string, onHost bool) {
 	}
 	s = strings.Trim(path.Clean("/"+strings.ReplaceAll(s, `\`, "/")), "/")
 	if path.Base(s) == ".git" { // a clone's own .git folder: the repository is the folder above it
-		s = strings.Trim(path.Dir(s), "/.")
+		if s = path.Dir(s); s == "." {
+			s = ""
+		}
 	}
 	return strings.TrimSuffix(s, ".git"), onHost
 }
