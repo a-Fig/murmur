@@ -203,6 +203,7 @@ await handlers.tool_result({ toolName: "read", toolCallId: "call_8", input: { pa
 const denied = [{ type: "text", text: JSON.stringify({ message: "Not Found", url: "https://github.com/a-Fig/murmur/issues/7" }) }];
 await handlers.tool_result({ toolName: "mcp__github__issue_write", input: { method: "update", issue_number: 7, state: "closed" }, content: denied, isError: true }, { cwd: repo });
 await handlers.tool_result({ toolName: "bash", input: { command: "cat big" }, content: [{ type: "text", text: "x".repeat(600 * 1024) }] }, { cwd: repo });
+await handlers.tool_result({ toolName: "bash", toolCallId: "call_10", input: { command: "cat big" }, content: [{ type: "text", text: "x".repeat(600 * 1024) }] }, { cwd: repo });
 await handlers.session_shutdown?.();
 for (const line of fs.readFileSync(path.join(repo, "calls.jsonl"), "utf8").split("\n").filter(Boolean)) {
   const p = JSON.parse(line);
@@ -216,7 +217,8 @@ for (const line of fs.readFileSync(path.join(repo, "calls.jsonl"), "utf8").split
 // Not for other tools, whose output the hook never reads, nor for a call too big for the hook,
 // which reads at most 1 MiB; their hook still runs, for the notice. A shell call is also announced
 // before it runs, and carries Pi's ID for the call at both ends, so the daemon can credit the
-// commits it makes (#868); no other call is, as none can commit.
+// commits it makes (#868); no other call is. A shell call whose output is too big still carries
+// its ID, or its start would never be closed.
 func TestPiExtensionGivesTheHookAShellCall(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -258,6 +260,7 @@ func TestPiExtensionGivesTheHookAShellCall(t *testing.T) {
 		`PostToolUse {}`,
 		`PostToolUse {"name":"mcp__github__issue_write","input":{"method":"update","issue_number":7,"state":"closed"},"response":{"content":[{"type":"text","text":"{\"message\":\"Not Found\",\"url\":\"https://github.com/a-Fig/murmur/issues/7\"}"}],"isError":true}}`,
 		`PostToolUse {}`,
+		`PostToolUse {"name":"bash","id":"call_10"}`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the hook was given:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

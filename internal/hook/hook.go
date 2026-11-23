@@ -365,7 +365,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	var op string
 	if agent == "" || agent == Pi || agent == Antigravity && in.ToolName == antigravityCommand {
-		// Pi's extension gives a tool_use_id only for a shell call, the only one that can commit.
+		// Pi's extension gives a tool_use_id only for a shell call, the one kind of call it brackets.
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt

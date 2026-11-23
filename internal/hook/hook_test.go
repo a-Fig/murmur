@@ -542,7 +542,7 @@ func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil || !strings.Contains(got.HookSpecificOutput.AdditionalContext, `"hi"`) {
 		t.Fatalf("PostToolUse printed %q: %v", out, err)
 	}
-	// A call whose ID the extension doesn't give (an MCP tool's) is not bracketed.
+	// A call whose ID the extension doesn't give isn't bracketed.
 	pi("PostToolUse", nil)
 	pi("Stop", nil)
 	var reqs []proto.Request

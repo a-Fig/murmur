@@ -619,9 +619,9 @@ func TestAntigravityToolHooksCreditCommits(t *testing.T) {
 }
 
 // A Pi session's shell calls are bracketed by the hook its extension runs (#868): the commits made
-// between the start and the end of a bash call are the session's, a read between them isn't
-// bracketed, and a second session whose calls carry the same IDs, which a model can give, neither
-// takes credit for the first's commits nor ends the first's call.
+// between the start and the end of a bash call are the session's, and a second session whose calls
+// carry the same IDs, which a model can give, neither takes credit for the first's commits nor ends
+// the first's call.
 func TestPiToolHooksCreditCommits(t *testing.T) {
 	slowHook(t)
 	a := newDevice(t, newRemote(t))
