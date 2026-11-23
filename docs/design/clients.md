@@ -316,6 +316,16 @@ what the tools of those names do (`internal/mcpserver/commands.go`, rendered by 
   thread that is idle"); the next command registers it again at the same address. A server of the
   thread's own takes the session over from a hold. A daemon restart ends holds, and the next command
   makes one again.
+- **A takeover mid-command** (2026-11-22, #953). A command says hello, then makes its requests,
+  one per name for a send to several. If the thread's server registers in between at an ID of its
+  own, as Codex's does, the daemon lets the command's session go, and the next request is refused
+  as not registered (`proto.NotRegistered`). The command then says hello again, which finds the
+  server's session, and makes that request again as it, once per command. A daemon that restarted
+in between is met the same way. The daemon refuses that
+  way before a request does anything, so nothing is sent twice. No other failure is retried: a
+  lost connection may come after the daemon sent the message. Resolving the thread's owner in the
+  daemon at each request was the other fix; it would need the thread on every request, a protocol
+  change, where this one is in the command alone.
 - **Delivery.** A turn through `t3 thread send`, as for any T3 thread, and its last line says to
   answer with `mur send NAME "TEXT"`, written out. There is no hook, so no notice mid-turn: busy or
   idle comes from T3's database (#699), and a message waits for the turn's end.
