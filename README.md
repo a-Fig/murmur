@@ -132,6 +132,9 @@ used one of Murmur's tools. An agent Murmur has no tools for, such as Kiro in T3
 
 Every command takes `-C <dir>` to act on another repository.
 
+An agent that can't open the pages the repo's section links to can print them instead:
+`mur docs join`, `mur docs use`, or `mur docs` for the list.
+
 ## How it works
 
 Each clone runs a small daemon, and each agent session talks to it through an MCP server. The

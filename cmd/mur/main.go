@@ -82,6 +82,10 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
 
+For agents that can't open the links in the repo's section:
+  mur docs [PAGE]               print a page of Murmur's instructions for agents, such as join or use,
+                                as this version has it; alone, lists the pages
+
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
   mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
@@ -146,6 +150,8 @@ func main() {
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "app":
 		err = runApp(ctx, args, os.Stdout)
+	case "docs":
+		err = runDocs(args, os.Stdout)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)
