@@ -235,6 +235,14 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
 	// the rest of the sync goes on without it, and it is fetched again next time.
 	failed, tips := d.fetch(ctx, changed, remote)
+	// Noted before a sync that ran out of time returns: the fetch has set the clone's copy by now.
+	d.mu.Lock()
+	for _, ref := range changed {
+		if failed[ref] == nil {
+			d.presenceFetchedLocked(ref)
+		}
+	}
+	d.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -255,7 +263,6 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	for _, ref := range changed {
 		if failed[ref] == nil {
 			d.known[ref] = remote[ref]
-			d.presenceFetchedLocked(ref)
 		}
 	}
 	d.mu.Unlock()
