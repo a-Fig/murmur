@@ -395,9 +395,11 @@ func TestCleanup(t *testing.T) {
 	// mur-nightly is another binary, which its own lock covers, though its staged names start with
 	// mur's prefix.
 	staged := filepath.Join(dir, ".mur-update-mur-456")
+	// install.ps1's backup has eight lower-case hex digits; names that only look like one stay.
+	installers := path + ".old-99e92547"
 	others := []string{path + ".old-unrelated", filepath.Join(dir, ".mur-update-mur-nightly-789"),
-		path + ".old-.mur-update-mur-nightly-789"}
-	for _, p := range append([]string{path, path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged}, others...) {
+		path + ".old-.mur-update-mur-nightly-789", path + ".old-99e9254", path + ".old-99e925470", path + ".old-99e9254g", path + "-nightly.old-99e92547"}
+	for _, p := range append([]string{path, path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged, installers}, others...) {
 		os.WriteFile(p, nil, 0600)
 	}
 	// Another updater's staged file is not stale.
@@ -411,7 +413,7 @@ func TestCleanup(t *testing.T) {
 	}
 	lock.Close()
 	cleanup(path)
-	for _, p := range []string{path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged} {
+	for _, p := range []string{path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged, installers} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatal(p, err)
 		}
@@ -725,5 +727,54 @@ func TestNewerStartsGitOnlyForAPrerelease(t *testing.T) {
 	recordLatest(gitDir, "v0.4.0-rc.1")
 	if got := Newer(gitDir, "0.3.0"); got != "0.4.0-rc.1" || started == 0 {
 		t.Errorf("a prerelease: %q, with %d git started; want 0.4.0-rc.1 and git asked what is held back", got, started)
+	}
+}
+
+// A backup that couldn't go when the daemon started, as a process still ran it, goes at a later
+// check, once nothing does (#1171): the updater looks at every check, with updates off too, which
+// asks GitHub nothing.
+func TestBackupsAreClearedAtEveryCheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mur")
+	if err := os.WriteFile(path, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checks := make(chan struct{}, 100)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(ctx, Options{Version: "1.2.3", GitDir: t.TempDir(), Executable: path, URL: "http://127.0.0.1:1", OS: "linux", Arch: "amd64",
+			Getenv: func(k string) string { return map[string]string{"MURMUR_NO_UPDATE": "1"}[k] }, Every: 20 * time.Millisecond,
+			Report: func(Status) {
+				select {
+				case checks <- struct{}{}:
+				default:
+				}
+			}}, func() {})
+	}()
+	defer func() { cancel(); <-done }()
+	<-checks // the daemon's start, with nothing to clear
+	left := []string{path + ".old-.mur-update-mur-123", path + ".old-99e92547"}
+	for _, p := range left {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for end := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		gone := true
+		for _, p := range left {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				gone = false
+			}
+		}
+		if gone {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal("backups left beside the binary after the daemon's start weren't cleared at a later check")
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the binary itself: %v", err)
 	}
 }
