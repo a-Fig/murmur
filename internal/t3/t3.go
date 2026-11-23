@@ -209,9 +209,10 @@ func withEnv(env []string, key, val string) []string {
 // cappedBuffer keeps the first max bytes written and discards the rest without returning an error,
 // so a verbose `t3` process cannot spike memory or hit EPIPE.
 type cappedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-	max int
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	max       int
+	truncated bool
 }
 
 func (c *cappedBuffer) Write(p []byte) (int, error) {
@@ -220,9 +221,12 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 	if rem := c.max - c.buf.Len(); rem > 0 {
 		if len(p) > rem {
 			c.buf.Write(p[:rem])
+			c.truncated = true
 		} else {
 			c.buf.Write(p)
 		}
+	} else if len(p) > 0 {
+		c.truncated = true
 	}
 	return len(p), nil
 }
@@ -230,7 +234,19 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 func (c *cappedBuffer) String() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.buf.String()
+	b := c.buf.Bytes()
+	if c.truncated {
+		// Drop any trailing incomplete UTF-8 rune split by the max-byte cutoff.
+		for i := len(b) - 1; i >= 0 && len(b)-i < utf8.UTFMax; i-- {
+			if utf8.RuneStart(b[i]) {
+				if !utf8.FullRune(b[i:]) {
+					b = b[:i]
+				}
+				break
+			}
+		}
+	}
+	return string(b)
 }
 
 // firstLine is the first line of what the command printed that isn't blank, kept short.
