@@ -107,8 +107,17 @@ jobs:
       # The site's Worker and the files machines read on it (site/test), with the runner's own node,
       # before the Go tests, which take most of the job. A change to site/ alone stops here.
       - run: node --test --import ./site/test/register.mjs site/test/*.test.mjs
+      # -v prints each test's time, which scripts/daemon-test-times.sh reads back from the log to
+      # say where the daemon package's time goes (#1008); it costs log lines, not time.
       - if: env.GO == 'true'
-        run: bash scripts/go-test-retry.sh -race -count=1 -timeout 25m ./...
+        env:
+          MURMUR_GIT_STATS: ${{ runner.temp }}/git-stats.txt
+        run: bash scripts/go-test-retry.sh -v -race -count=1 -timeout 25m ./...
+      - name: How git did (#513)
+        if: always() && env.GO == 'true'
+        run: |
+          f="$RUNNER_TEMP/git-stats.txt"
+          if [ -f "$f" ]; then cat "$f"; { echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"; fi
 
   # macOS and Windows run `internal/daemon` apart from the other packages, in shards (below): alone
   # it took 1,154 s of this job's 20 minutes on 2026-11-12, and the others together about 4.
@@ -213,7 +222,8 @@ jobs:
           names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} -v n=${{ matrix.of }} 'NR % n == k')
           test -n "$names"
           echo "$names" | wc -l
-          bash scripts/go-test-retry.sh -race -count=1 -timeout 45m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
+          # -v for each test's time (scripts/daemon-test-times.sh, #1008).
+          bash scripts/go-test-retry.sh -v -race -count=1 -timeout 45m -run "^($(echo "$names" | paste -sd'|' -))\$" ./internal/daemon
       - name: How git did (#513)
         if: always()
         run: |
