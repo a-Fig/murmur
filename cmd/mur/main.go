@@ -44,7 +44,7 @@ var version = "0.1.0-dev"
 
 // usage spells the names as they are, so its columns line up; the replacer keeps it in step with
 // package brand ("Murmur" first, so the "mur" inside it isn't taken for the command).
-var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command).Replace(
+var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command, "{server}", brand.MCPServer).Replace(
 	`Murmur: coding agents on teammates' machines, in the same repo, finding each other.
 
 Setup:
@@ -86,6 +86,10 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
 
+An agent with Murmur's tools uses them instead: who, send, inbox, status, lookup, tags and mute,
+from the MCP server {server} (Claude Code lists them as mcp__{server}__who and so on).
+Only lookup, tags and mute have no command.
+
 For agents that can't open the links in the repo's section:
   mur docs [PAGE]               print a page of Murmur's instructions for agents, such as join or use,
                                 as this version has it; alone, lists the pages
@@ -97,6 +101,10 @@ Started by other programs:
   mur hook --event EVENT antigravity
                                 Antigravity's hook, for EVENT; reads the payload on stdin
   mur daemon [--git-dir DIR]    the daemon, in the foreground
+
+Help:
+  mur help [COMMAND]            every command, or one command's help
+  mur version                   mur's version, and a newer one if its daemon has seen it
 
 Every command takes -C DIR to act on the repository at DIR.
 `)
@@ -162,9 +170,13 @@ func main() {
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)
 	case "help", "-h", "--help":
-		fmt.Print(usage)
+		err = runHelp(args, os.Stdout)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
+		if tool := toolOnly(cmd); tool != "" {
+			fmt.Fprintln(os.Stderr, tool)
+		} else {
+			fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
+		}
 		os.Exit(2)
 	}
 	if err != nil {
