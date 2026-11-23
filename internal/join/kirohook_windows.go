@@ -3,22 +3,15 @@
 package join
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 )
 
-// publishNewFile atomically publishes a complete staged sibling file at dst on Windows. It tries
-// os.Link first (which handles long paths natively on NTFS), and falls back to MoveFileW with
-// extended-length path prefixing for filesystems without hard links (such as exFAT and FAT32),
-// failing without overwriting if dst already exists.
+// publishNewFile atomically publishes a complete staged sibling file at dst on Windows using
+// MoveFileW with extended-length path normalization, which works on NTFS, exFAT, and FAT32,
+// avoids leaving a second hard link behind, and fails without overwriting if dst already exists.
 func publishNewFile(src, dst string) error {
-	if err := os.Link(src, dst); err == nil {
-		return nil
-	} else if os.IsExist(err) {
-		return err
-	}
 	from, err := syscall.UTF16PtrFromString(winLongPath(src))
 	if err != nil {
 		return err
@@ -31,11 +24,11 @@ func publishNewFile(src, dst string) error {
 }
 
 func winLongPath(p string) string {
-	if len(p) < 248 || strings.HasPrefix(p, `\\?\`) {
+	if len(p) < 248 || strings.HasPrefix(p, `\\?\`) || strings.HasPrefix(p, `\\.\`) {
 		return p
 	}
 	abs, err := filepath.Abs(p)
-	if err != nil {
+	if err != nil || strings.HasPrefix(abs, `\\?\`) || strings.HasPrefix(abs, `\\.\`) {
 		return p
 	}
 	if strings.HasPrefix(abs, `\\`) {
