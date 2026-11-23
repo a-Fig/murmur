@@ -223,8 +223,8 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 // the order the messages did. The first message waits for its retry because the first attempt could
 // not start `t3`, which is not there yet.
 //
-// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
-// message came from. deliver_repeat_test.go says why that is enough.
+// One device (#1010): the sender is a session beside the recipients, as nothing here turns on
+// where a message came from. deliver_repeat_test.go says why that is enough.
 func TestReplacementHandsOverInOrderWhatWasOnItsWay(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)

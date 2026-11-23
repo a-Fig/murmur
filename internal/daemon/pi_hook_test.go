@@ -74,8 +74,8 @@ func TestPiSessionGetsNoticesWhileBusyAndTurnsWhenIdle(t *testing.T) {
 // The hook of a Pi session speaks only for the session with its file: not another agent's session,
 // which has no Claude Code ID either, nor a Claude Code session.
 //
-// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
-// message came from. deliver_repeat_test.go says why that is enough.
+// One device (#1010): the sender is a session beside the recipients, as nothing here turns on
+// where a message came from. deliver_repeat_test.go says why that is enough.
 func TestPiHookSpeaksOnlyForItsSession(t *testing.T) {
 	remote := newRemote(t)
 	b := newDevice(t, remote)
