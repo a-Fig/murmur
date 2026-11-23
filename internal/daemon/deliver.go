@@ -1040,9 +1040,7 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 	case viaT3:
 		return d.attempt(j.msgs, func() error {
 			d.mu.Lock()
-			if s := d.sessions[j.id]; s != nil {
-				s.sending, s.sendingSeen = turnStart(j.text), false
-			}
+			d.sendingLocked(j)
 			d.mu.Unlock()
 			return t3.Send(ctx, j.route.T3CLI, j.route.T3Home, j.route.T3Thread, j.text)
 		})
@@ -1133,6 +1131,14 @@ func (d *Daemon) markAttempted(msgs []*inMsg, v bool) error {
 		d.log.Printf("saving state: %v", err)
 	}
 	return nil
+}
+
+// sendingLocked notes that `t3 thread send` is about to run for job j: until finishPush, a prompt
+// that is j's turn is taken for the turn the send started (session.sending, #677). Caller holds mu.
+func (d *Daemon) sendingLocked(j *pushJob) {
+	if s := d.sessions[j.id]; s != nil {
+		s.sending, s.sendingSeen = turnStart(j.text), false
+	}
 }
 
 // finishPush records how a handoff went. A message handed over leaves the inbox (see
