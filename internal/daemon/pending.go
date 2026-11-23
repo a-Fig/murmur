@@ -163,7 +163,7 @@ func (d *Daemon) retryPending() {
 	}
 	ctx, cancel := context.WithTimeout(d.bgCtx, limit)
 	defer cancel()
-	if d.dropSwitchedOff(); len(d.pendSends) == 0 {
+	if d.dropSwitchedOff(d.bgCtx); len(d.pendSends) == 0 {
 		return
 	}
 	ref, sha := d.meshRef(), d.ownTip
@@ -172,7 +172,7 @@ func (d *Daemon) retryPending() {
 		// Send files went off as the push waited its turn. If the wait left no time to ask the
 		// remote, the next retry drops them as it starts; nothing is pushed until then.
 		if room() {
-			d.dropSwitchedOff()
+			d.dropSwitchedOff(d.bgCtx)
 		}
 		return
 	}
@@ -183,11 +183,15 @@ func (d *Daemon) retryPending() {
 	}
 	if errors.Is(err, bus.ErrRejected) {
 		// The remote's tip isn't under this one: an older copy of the log, or junk, to push over,
-		// as appendEventIf does; or a log that went on without the pending sends.
-		if tip, rerr := d.repo.RemoteRef(ctx, ref); rerr == nil {
-			if over, oerr := d.overRemoteTip(ctx, ref, tip); oerr == nil {
+		// as appendEventIf does; or a log that went on without the pending sends. Give this look
+		// its own time (pendingLook), not what is left of the push's: if the push was rejected just
+		// before its limit, an expired ctx during IsAncestor would settle landed sends as refused (#1073).
+		lctx, lcancel := context.WithTimeout(d.bgCtx, pendingLook)
+		defer lcancel()
+		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil {
+			if over, oerr := d.overRemoteTip(lctx, ref, tip); oerr == nil {
 				if !over {
-					d.settlePendingOn(ctx, tip, err)
+					d.settlePendingOn(lctx, tip, err)
 					d.ownTip = tip
 					return
 				}
@@ -331,15 +335,24 @@ func (d *Daemon) pendingStill() bool {
 // may carry it to the remote, its files' keys with it (Sol's review of rc.2). The log's next write
 // builds on what came before it. Those the remote has already, as a push that ended unsure may
 // have landed, are settled as landed first, so none is called not sent that went (Sol's re-review).
-// The remote is asked in time of its own, as in giveUpPending: the push's may have gone on waiting
-// its turn. Caller holds writeMu.
-func (d *Daemon) dropSwitchedOff() {
+// The remote is asked in time of its own (pendingLook), bounded by both the daemon's context and
+// the caller's ctx so a send doesn't hold writeMu past its own deadline (#1073). If ctx ends before
+// the check completes, the sends are left for retryPending rather than dropped unchecked. Caller
+// holds writeMu.
+func (d *Daemon) dropSwitchedOff(ctx context.Context) {
 	off := func(p pendingSend) bool { return p.still != nil && !p.still() }
 	if !slices.ContainsFunc(d.pendSends, off) {
 		return
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return
+	}
 	lctx, cancel := context.WithTimeout(d.bgCtx, pendingLook)
 	defer cancel()
+	if ctx != nil && ctx != d.bgCtx {
+		stop := context.AfterFunc(ctx, cancel)
+		defer stop()
+	}
 	ref := d.meshRef()
 	if tip, err := d.repo.RemoteRef(lctx, ref); err == nil && tip != "" && d.fetchOne(lctx, ref) == nil {
 		landed := -1
@@ -358,6 +371,9 @@ func (d *Daemon) dropSwitchedOff() {
 				p.settle(true, false, nil)
 			}
 		}
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return
 	}
 	i := slices.IndexFunc(d.pendSends, off)
 	if i < 0 {

@@ -414,3 +414,109 @@ func TestThePersonsUnsureSendIsRefusedAtOnce(t *testing.T) {
 		t.Errorf("%d sends left pending, want none", pending)
 	}
 }
+
+// A send calling dropSwitchedOff stops waiting when its own context ends, rather than holding
+// writeMu for pendingLook, and leaves unchecked pending sends for retryPending (#1073).
+func TestDropSwitchedOffRespectsCallersContext(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingGiveUp: time.Hour}, false)
+	before := d.sendFirst(t)
+	d.writeMu.Lock()
+	d.pendBase = before
+	settled := false
+	d.pendSends = []pendingSend{{
+		sha:    before,
+		still:  func() bool { return false },
+		settle: func(bool, bool, error) { settled = true },
+	}}
+	d.writeMu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	err := d.appendEventIf(ctx, message(d, "after cancel"), nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("appendEventIf with canceled ctx: %v, want context.Canceled", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Errorf("appendEventIf waited %v past its canceled ctx", time.Since(start))
+	}
+	d.writeMu.Lock()
+	left := len(d.pendSends)
+	d.writeMu.Unlock()
+	if settled || left != 1 {
+		t.Errorf("settled=%v left=%d, want unchecked pending send left for retryPending", settled, left)
+	}
+}
+
+// When retryPending's push is rejected just as its push timeout expires, settling pending sends
+// against the remote tip still uses its own pendingLook timeout so landed sends aren't falsely
+// reported as refused (#1073).
+func TestRejectedRetrySettlesLandedSendWithOwnTimeout(t *testing.T) {
+	t.Parallel()
+	const pushTime = 200 * time.Millisecond
+	d, _, _ := rateRig(t, Options{PendingRetry: 20 * time.Millisecond, PendingPush: pushTime, PendingGiveUp: 2 * time.Second}, false)
+	ctx := context.Background()
+	d.sendFirst(t)
+	type settled struct {
+		landed, absent bool
+	}
+	cut := errors.New("the connection dropped")
+	ref := d.meshRef()
+	var n atomic.Int32
+	d.writeMu.Lock()
+	d.testPush = func(real func() error) error {
+		switch n.Add(1) {
+		case 1:
+			// First send lands on remote, then reports unsure.
+			if err := real(); err != nil {
+				return err
+			}
+			return cut
+		case 2:
+			// Second send is lost locally.
+			return cut
+		}
+		// Advance remote tip on top of the landed first send so the retry is rejected,
+		// and sleep past pushTime so retryPending's push ctx is already expired on ErrRejected.
+		tip, rerr := d.repo.RemoteRef(ctx, ref)
+		if rerr == nil && tip != "" {
+			if c, cerr := d.repo.NewCommit(ctx, tip, "remote advance\n"); cerr == nil {
+				_ = d.repo.Push(ctx, c, ref, bus.FastForward, "")
+			}
+		}
+		time.Sleep(pushTime + 80*time.Millisecond)
+		return bus.ErrRejected
+	}
+	d.writeMu.Unlock()
+
+	first, second := make(chan settled, 1), make(chan settled, 1)
+	for _, c := range []struct {
+		subject string
+		got     chan settled
+	}{{"landed", first}, {"lost", second}} {
+		err := d.appendEventIf(ctx, message(d, c.subject), nil, func(landed, absent bool, _ error) {
+			c.got <- settled{landed, absent}
+		})
+		if !errors.As(err, new(pendingError)) {
+			t.Fatalf("send %q: %v, want pending", c.subject, err)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		got  chan settled
+		want settled
+	}{
+		{"landed send", first, settled{landed: true}},
+		{"lost send", second, settled{absent: true}},
+	} {
+		select {
+		case s := <-c.got:
+			if s != c.want {
+				t.Errorf("%s: settled %+v, want %+v", c.name, s, c.want)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s was never settled", c.name)
+		}
+	}
+}
