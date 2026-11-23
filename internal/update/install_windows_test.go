@@ -24,6 +24,7 @@ $old = $null
 Set-Content -Path (Join-Path $tmp $asset) -Value 'NEW' -Encoding ascii
 $running = $null
 if ($State -ne 'none') { Copy-Item "$env:WINDIR\System32\waitfor.exe" $exe }
+if ($State -eq 'read-only') { (Get-Item $exe).IsReadOnly = $true }
 if ($State -like 'running*') {
     # A signal name of its own: a second waitfor on one name exits at once.
     $running = Start-Process -FilePath $exe -ArgumentList ('MurSwap' + [Guid]::NewGuid().ToString('N').Substring(0, 12)), '/T', '120' -PassThru -WindowStyle Hidden
@@ -78,6 +79,7 @@ func TestInstallScriptNeverLeavesNoExe(t *testing.T) {
 		// mur.exe to replace.
 		{"running, no call", []string{"mur.exe holds NEW", "the old one still runs: True", "staged files left: 0"}},
 		{"idle", []string{"mur.exe holds NEW", "staged files left: 0"}},
+		{"read-only", []string{"mur.exe holds NEW", "staged files left: 0"}},
 		{"none", []string{"mur.exe holds NEW", "staged files left: 0"}},
 	} {
 		t.Run(c.state, func(t *testing.T) {

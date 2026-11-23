@@ -137,9 +137,15 @@
         try {
             # MoveFileEx with MOVEFILE_REPLACE_EXISTING (1): the one-step rename. PowerShell 5.1 has no
             # other name for it.
-            Add-Type -Namespace MurInstall -Name Win32 -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool MoveFileEx(string from, string to, int flags);'
+            # A window that ran an earlier install has the type already, and adding it again under
+            # another definition would fail.
+            if (-not ('MurInstall.Win32' -as [type])) {
+                Add-Type -Namespace MurInstall -Name Win32 -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool MoveFileEx(string from, string to, int flags);'
+            }
             $loaded = $true
         } catch { }
+        # The rename won't replace a read-only file, which the old way's move aside did.
+        try { if ((Test-Path $exe) -and (Get-Item $exe).IsReadOnly) { (Get-Item $exe).IsReadOnly = $false } } catch { }
         $swapped = $false
         # A few tries: a scanner may hold the new file for a moment after it is written.
         for ($try = 0; $loaded -and -not $swapped -and $try -lt 5; $try++) {
@@ -152,7 +158,7 @@
                 # The rename was possible and didn't happen. The old way would only risk the mur.exe
                 # that is there, so it stays.
                 Remove-Item -Force -Path $new, $old -ErrorAction SilentlyContinue
-                throw "mur install: could not put the new mur.exe in place at $exe; the one installed is unchanged. Try again in a moment."
+                throw "mur install: could not put the new mur.exe in place at $exe; the one installed is unchanged."
             }
             # Where the rename can't be done (a running mur.exe on a volume without links, or a
             # PowerShell that may not load the call), the old way, which a stop between its steps can

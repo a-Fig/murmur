@@ -16,10 +16,11 @@ updater need one manual install to get it.
   hard-links it to a backup (`mur.exe.old-.mur-update-*`), which goes once nothing runs it; where
   links fail (FAT), it doesn't update. Before #944 it renamed the running exe aside first, and a kill
   between the two renames left no `mur.exe`. `install.ps1` swaps the same way since #959
-  (2026-11-22), and installs the old way where it can't link or can't make that call. The next daemon start removes
-  staged files a kill left behind. A lock beside the executable serializes clones sharing an
-  install, and a manual reinstall during the download is left alone. An install the daemon can't
-  write (a package manager's) is logged once and left alone.
+  (2026-11-22); it installs the old way only where a running `mur.exe` can't be linked, or the
+  PowerShell can't make the call. The next daemon start removes staged files a kill left behind. A
+  lock beside the executable serializes clones sharing an install, and a manual reinstall during
+  the download is left alone. An install the daemon can't write (a package manager's) is logged
+  once and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another
   clone's page handed out is still good (#348), since the next daemon's page wouldn't know it. It
