@@ -37,5 +37,14 @@ func TestTheCommandsActAsTheThread(t *testing.T) {
 		t.Errorf("lookup of nobody: exit %d\n%s", code, missing)
 	}
 	t.Logf("mur lookup %s:\n%s\nmur lookup nobody-here:\n%s", self, lookup, missing)
+	// tags: add two, see them in who, take one off, and list (#1120).
+	added := b.mustRun(b.clone, "tags", "--add", "reviewing,group:ui")
+	whoTagged := b.mustRun(b.clone, "who")
+	removed := b.mustRun(b.clone, "tags", "--remove", "reviewing")
+	listed := b.mustRun(b.clone, "tags")
+	if !strings.Contains(added, "reviewing") || !strings.Contains(whoTagged, "reviewing") || strings.Contains(removed, "reviewing") || !strings.Contains(listed, "group:ui") {
+		t.Errorf("tags:\n%s\n%s\n%s\n%s", added, whoTagged, removed, listed)
+	}
+	t.Logf("mur tags --add reviewing,group:ui:\n%s\nmur tags --remove reviewing:\n%s\nmur tags:\n%s", added, removed, listed)
 	t.Logf("mur status:\n%s\nmur who:\n%s\nmur inbox:\n%s\nmur send nobody-here:\n%s", status, who, inbox, out)
 }

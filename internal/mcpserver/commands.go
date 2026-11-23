@@ -24,7 +24,7 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 )
 
-// The shell commands (#913, #1118): `mur who`, `mur send`, `mur inbox`, `mur status` and `mur lookup`, the
+// The shell commands (#913, #1118): `mur who`, `mur send`, `mur inbox`, `mur status`, `mur lookup` and `mur tags`, the
 // tools of the same names for a harness Murmur has no tools in. Every harness can run a command, and one T3 Code
 // runs gives the commands of its thread's shell the thread's ID (T3CODE_THREAD_ID): T3's Claude,
 // Codex, Pi, Antigravity, Kiro, fx and ACP-registry drivers do; its Grok, OpenCode, Muse and Cursor
@@ -72,7 +72,7 @@ func Command(ctx context.Context, name string, args []string, stdin io.Reader, s
 		return err
 	}
 	render := map[string]func(proto.Response) string{"who": view.Who, "send": view.Sent, "inbox": view.Inbox, "status": view.Note,
-		"lookup": view.Lookup}[name]
+		"lookup": view.Lookup, "tags": view.Tags}[name]
 	fmt.Fprint(stdout, render(resp))
 	return nil
 }
@@ -94,6 +94,8 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 		return sendRequest(args, stdin, stderr)
 	case "lookup":
 		return lookupRequest(args)
+	case "tags":
+		return tagsRequest(args)
 	}
 	return proto.Request{}, fmt.Errorf("unknown command %q", name)
 }
@@ -375,4 +377,26 @@ func agentsInChain(n int, at func(i int) (exe, comm string, ok bool)) int {
 		last = agent
 	}
 	return agents
+}
+
+// tagsRequest is `mur tags [--add TAG...] [--remove TAG...] [--for NAME...]`: the tags tool's add,
+// remove and for. Each takes tags or names separated by commas, and may be given more than once;
+// with none, the command only says what your tags are, as the tool does.
+func tagsRequest(args []string) (proto.Request, error) {
+	usage := fmt.Errorf("usage: %s tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]", brand.Command)
+	words, values, _, err := options(args, []string{"add", "remove", "for"}, nil)
+	if err != nil {
+		return proto.Request{}, fmt.Errorf("%w; %v", err, usage)
+	}
+	if len(words) > 0 {
+		return proto.Request{}, usage
+	}
+	list := func(name string) []string {
+		var out []string
+		for _, v := range values[name] {
+			out = append(out, recipients(v)...)
+		}
+		return out
+	}
+	return proto.Request{Op: proto.OpTags, Add: list("add"), Remove: list("remove"), For: list("for")}, nil
 }
