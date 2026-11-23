@@ -40,7 +40,7 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	out := make([]web.Repo, len(list))
 	var wg sync.WaitGroup
 	for i, c := range list {
-		out[i] = web.Repo{ID: c.ID(), Name: c.Label(), Path: shortPath(c.Top()), Current: c.ID() == self}
+		out[i] = web.Repo{ID: c.ID(), Name: c.Label(), Slug: c.Slug, Path: shortPath(c.Top()), Current: c.ID() == self}
 		if out[i].Current {
 			out[i].Running = true
 			continue
@@ -48,6 +48,9 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if out[i].Slug == "" { // recorded before slugs were, until its daemon next starts
+				out[i].Slug = SlugIn(ctx, c.GitDir)
+			}
 			rctx, cancel := context.WithTimeout(ctx, runningWait)
 			defer cancel()
 			out[i].Running = client.Running(rctx, c.GitDir)

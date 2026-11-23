@@ -11,6 +11,7 @@
 package clones
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,6 +37,9 @@ type Clone struct {
 	// Name is the repository's name from its remote's address ("murmur" for
 	// github.com/a-Fig/murmur), or "" if it wasn't known when the clone was recorded.
 	Name string `json:"name,omitempty"`
+	// Slug is the repository's owner/name from its remote's address ("a-Fig/murmur"), the Name
+	// alone when the address has no owner, or "" if it wasn't known when the clone was recorded.
+	Slug string `json:"slug,omitempty"`
 }
 
 // ID names the clone in the record and to the page: a hash of its git dir, so the page never
@@ -87,15 +91,15 @@ func DefaultDir() (string, error) {
 
 func file(dir, gitDir string) string { return filepath.Join(dir, ID(gitDir)+".json") }
 
-// Add records the clone, or updates its record. A name of "" keeps the name already recorded:
-// `mur join` has none to give, and the clone's daemon gives it on starting.
+// Add records the clone, or updates its record. A name or slug of "" keeps the one already
+// recorded: `mur join` has none to give, and the clone's daemon gives it on starting.
 func Add(dir string, c Clone) error {
 	c.GitDir = filepath.Clean(c.GitDir)
-	if c.Name == "" {
+	if c.Name == "" || c.Slug == "" {
 		var old Clone
 		if b, err := read(file(dir, c.GitDir), false); err == nil && json.Unmarshal(b, &old) == nil {
 			if old.GitDir == c.GitDir {
-				c.Name = old.Name
+				c.Name, c.Slug = cmp.Or(c.Name, old.Name), cmp.Or(c.Slug, old.Slug)
 			}
 		}
 	}
@@ -208,7 +212,13 @@ func List(dir string, joined func(gitDir string) bool) ([]Clone, error) {
 
 // NameIn is the name of the repository whose clone has this git dir, from the address of the remote
 // its bus is on (murmur.remote, else origin); "" if git can't say.
-func NameIn(ctx context.Context, gitDir string) string {
+func NameIn(ctx context.Context, gitDir string) string { return NameOf(remoteIn(ctx, gitDir)) }
+
+// SlugIn is NameIn's owner/name (see SlugOf).
+func SlugIn(ctx context.Context, gitDir string) string { return SlugOf(remoteIn(ctx, gitDir)) }
+
+// remoteIn is the address of the remote the clone's bus is on, "" if git can't say.
+func remoteIn(ctx context.Context, gitDir string) string {
 	g := gitx.Git{Dir: gitDir}
 	remote, _ := g.Run(ctx, "", "config", "--get", brand.ConfigRemote)
 	if remote = strings.TrimSpace(remote); remote == "" {
@@ -218,26 +228,42 @@ func NameIn(ctx context.Context, gitDir string) string {
 	if err != nil {
 		return ""
 	}
-	return NameOf(u)
+	return u
 }
 
 // NameOf is a repository's name from its remote's address: the last part of its path, without
 // .git. https://github.com/a-Fig/murmur.git, git@github.com:a-Fig/murmur and /srv/murmur.git all
 // give "murmur". An address it can't read gives "".
 func NameOf(remoteURL string) string {
+	p, _ := pathOf(remoteURL)
+	if p == "" {
+		return ""
+	}
+	return path.Base(p)
+}
+
+// SlugOf is a repository's name as its host spells it, owner and all: "a-Fig/murmur" for
+// https://github.com/a-Fig/murmur.git and git@github.com:a-Fig/murmur. A host whose paths nest
+// (GitLab's group/sub/repo) gives the whole path. An address with no host (a folder, a file: URL)
+// gives what NameOf does, since a folder's parents say nothing of who owns the repository, and so
+// does a path of one part (https://host/murmur.git). An address it can't read gives "".
+func SlugOf(remoteURL string) string {
+	p, onHost := pathOf(remoteURL)
+	if p == "" || !onHost {
+		return NameOf(remoteURL)
+	}
+	return p
+}
+
+// pathOf is the path of a remote's address, without slashes at its ends or .git, "" if it has
+// none, and whether the address names a host, which is when its path is owner/repo.
+func pathOf(remoteURL string) (p string, onHost bool) {
 	s := strings.TrimSpace(remoteURL)
-	if s == "" {
-		return ""
-	}
 	if u, err := url.Parse(s); err == nil && u.Scheme != "" && len(u.Scheme) > 1 {
-		s = u.Path
+		s, onHost = u.Path, u.Host != ""
 	} else if i := strings.Index(s, ":"); i > 1 && !strings.ContainsAny(s[:i], `/\`) {
-		s = s[i+1:] // scp-like: host:path
+		s, onHost = s[i+1:], true // scp-like: host:path
 	}
-	s = strings.TrimRight(strings.ReplaceAll(s, `\`, "/"), "/")
-	s = strings.TrimSuffix(path.Base(s), ".git")
-	if s == "." || s == "/" {
-		return ""
-	}
-	return s
+	s = path.Clean("/" + strings.ReplaceAll(s, `\`, "/"))
+	return strings.TrimSuffix(strings.Trim(s, "/"), ".git"), onHost
 }

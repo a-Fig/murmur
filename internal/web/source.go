@@ -61,7 +61,10 @@ var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 // State is what the page's sessions view and mute list show.
 type State struct {
 	// Repo is the name of the repository this page is a clone of, as the repo picker shows it.
-	Repo    string   `json:"repo,omitempty"`
+	Repo string `json:"repo,omitempty"`
+	// Slug is the repository's owner/name from its remote's address ("a-Fig/murmur"), which the page
+	// shows where it says which repo it is. Without an owner in the address it is Repo.
+	Slug    string   `json:"slug,omitempty"`
 	Device  string   `json:"device"` // this device's ID
 	Devices []Device `json:"devices"`
 	Mutes   []Mute   `json:"mutes"`
