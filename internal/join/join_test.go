@@ -378,11 +378,12 @@ func TestTheNewHookStaysWhereAWorktreesFileLinksToTheHome(t *testing.T) {
 	}
 }
 
-// Whether Murmur may run is the repo's invitation and the user's consent together, read from files.
-func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
+// Whether Murmur may run is the user's consent alone, read from a file (#830). The section only
+// invites teammates' agents.
+func TestJoinedIsTheConsentAlone(t *testing.T) {
 	p, _ := clone(t)
-	if !p.Marked() || p.Joined() || p.Active() {
-		t.Fatalf("marked=%v joined=%v active=%v before joining", p.Marked(), p.Joined(), p.Active())
+	if !p.Marked() || p.Joined() {
+		t.Fatalf("marked=%v joined=%v before joining", p.Marked(), p.Joined())
 	}
 	if news, err := p.RecordConsent(); err != nil || !news {
 		t.Fatalf("consent: %v, %v", news, err)
@@ -390,15 +391,15 @@ func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 	if news, _ := p.RecordConsent(); news {
 		t.Error("recording consent twice was news")
 	}
-	if !p.Joined() || !p.Active() || !Joined(p.GitDir) {
-		t.Error("not active after joining")
+	if !p.Joined() || !Joined(p.GitDir) {
+		t.Error("not joined after joining")
 	}
 
-	// A working tree without the marker (an older branch) is not one Murmur runs in, joined or not.
+	// Someone removes the section: the clone stays joined.
 	os.Remove(filepath.Join(p.Top, "AGENTS.md"))
 	os.Remove(filepath.Join(p.Top, "CLAUDE.md"))
-	if p.Marked() || p.Active() || !p.Joined() {
-		t.Errorf("without the marker: marked=%v joined=%v active=%v", p.Marked(), p.Joined(), p.Active())
+	if p.Marked() || !p.Joined() {
+		t.Errorf("without the marker: marked=%v joined=%v", p.Marked(), p.Joined())
 	}
 	if had, err := p.ForgetConsent(); err != nil || !had {
 		t.Fatalf("forget: %v, %v", had, err)
@@ -408,7 +409,7 @@ func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 	}
 
 	// No clone, no consent: nothing may be read from a path relative to wherever the process is.
-	if (Place{}).Joined() || (Place{}).Active() || Joined("") {
+	if (Place{}).Joined() || Joined("") {
 		t.Error("an empty place is joined")
 	}
 }

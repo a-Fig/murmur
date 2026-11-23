@@ -178,7 +178,8 @@ const (
 var markerFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
 // Marked reports whether the repo says it uses Murmur, as seen from the working tree at top, which
-// is what makes a repo one that Murmur may start in. The marker in either file is enough, in the
+// is what invites teammates' agents to join. Since #830 it turns nothing on: join asks it only to
+// say whether the user is the first here. The marker in either file is enough, in the
 // working tree or on the clone's remote-tracking default branch (refs/remotes/<remote>/HEAD, read
 // without the network): `mur init` puts the section on the default branch, and a worktree on a
 // branch made before that would otherwise stay unmarked until it merged the default branch.
@@ -195,15 +196,14 @@ func markedTree(top string) bool {
 }
 
 // maxRepoFile is the most readRepoFile reads. Codex reads only the first 32 KiB of an AGENTS.md by
-// default; 4 MiB is over a hundred times that, so no file an agent really reads comes near it, and
-// reading one every 2 seconds is still cheap.
+// default; 4 MiB is over a hundred times that, so no file an agent really reads comes near it.
 const maxRepoFile = 4 << 20
 
 // readRepoFile reads a file of the working tree for the marker check and for init: a regular file,
 // or a link to one (CLAUDE.md is often a link to AGENTS.md), of at most maxRepoFile. The tree holds
-// whatever a commit put there, someone else's pull request included, and every session's MCP server
-// reads the marker files every 2 seconds: a link to /dev/zero would be read until memory ran out,
-// /dev/stdin would swallow the server's own requests, and a terminal or a pipe would block it.
+// whatever a commit put there, someone else's pull request included: a link to /dev/zero would be
+// read until memory ran out, /dev/stdin would swallow the reader's own input, and a terminal or a
+// pipe would block it.
 func readRepoFile(path string) ([]byte, error) {
 	if fi, err := os.Stat(path); err != nil {
 		return nil, err
@@ -230,9 +230,9 @@ func readRepoFile(path string) ([]byte, error) {
 	return b, nil
 }
 
-// upstreamRecheck is how long markedUpstream's answer for a working tree stands. The MCP server asks
-// Marked every 2 seconds, and the answer takes git processes, which on Windows cost a tenth of a
-// second or more each (#21); the remote-tracking branch moves only on a fetch anyway.
+// upstreamRecheck is how long markedUpstream's answer for a working tree stands. Until #830 the MCP
+// server asked Marked every 2 seconds, and the answer takes git processes, which on Windows cost a
+// tenth of a second or more each (#21); the remote-tracking branch moves only on a fetch anyway.
 var upstreamRecheck = 20 * time.Second
 
 var upstream = struct {

@@ -50,7 +50,7 @@ Installer options and building from source are in [`docs/releasing.md`](docs/rel
 
 ## Get started
 
-**1. One person turns it on for the repo.**
+**1. One person invites the repo's agents.**
 
 ```sh
 mur init
@@ -60,7 +60,7 @@ This adds a short section to `AGENTS.md` and `CLAUDE.md` saying the repo uses Mu
 it to the default branch as one commit. If that branch is protected, it goes to a `murmur-init`
 branch for a pull request instead. `mur init --no-push` only edits the files. You can also point
 your agent at [`docs/agents/setup.md`](https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md)
-and let it do this step.
+and let it do this step. To try Murmur before committing anything, skip this step and join.
 
 **2. Each teammate's agent asks to join.**
 

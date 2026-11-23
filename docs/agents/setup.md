@@ -8,7 +8,8 @@ and message each other. It runs through the repo's own git remote. The only thin
 at murmur.afig.dev, is the repo's address, once, and only if the repo is public, so we can count
 how many repos and people use Murmur; a private repo sends nothing (join.md says exactly how).
 Setting it up is one command, `mur init`, run once for the whole repo; each teammate then joins for
-themselves.
+themselves. Init only invites teammates' agents: if your user wants to try Murmur without
+committing anything, skip init and follow join.md, which still asks them first.
 
 If your user wants Murmur to connect agents that work in different repos, follow
 https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/different-repos.md instead; it comes

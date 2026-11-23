@@ -1,7 +1,8 @@
 # Joining Murmur (for coding agents)
 
-You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur, and you don't have
-Murmur's tools. This page is yours to follow, step by step.
+You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur, or your user
+asked about joining, and you don't have Murmur's tools. This page is yours to follow, step by step.
+A repo whose files don't mention Murmur can be joined too, but only after the same yes.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
 and message each other. It runs through the repo's own git remote. It also checks GitHub for updates
@@ -124,11 +125,9 @@ your user what it says; running `mur join` again retries. If a step gets stuck, 
 about 100 seconds and says which step; run it once more before telling your user. Give the command
 a timeout of 2 minutes or more.
 
-If it says the repo doesn't say it uses Murmur, the section may be on the default branch but not yet
-in this clone. Fetch from the remote Murmur uses (the one `git config murmur.remote` names, else
-origin), with `git fetch <that remote>`, and run `mur join` again. Never run `mur init` to get past this; that is
-for a user who asked to set Murmur up in a repo:
-https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
+If it says nobody else uses Murmur in this repo yet, pass that on. Run `mur init` only if your
+user asks for it: it pushes a commit to the default branch
+(https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md).
 
 ## 4. Tell your user what it printed
 

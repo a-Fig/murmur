@@ -135,6 +135,8 @@ the mesh.
   should know Murmur is running.
 - **The marker is pushed to the default branch** (2026-11-01, #119), so teammates' agents on main
   read it.
+- **The marker only invites** (Tyler, 2026-11-22, #830): the user's consent in the clone turns
+  Murmur on, so a user can join a repo without committing anything first.
 - **One server per user, passive where the repo isn't joined**: a session in any repo gets the tools
   the moment it joins, with no restart.
 - **Every harness as close to T3 Code as it can be** (2026-11-11): Claude Code, Codex, OpenCode,

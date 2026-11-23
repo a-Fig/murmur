@@ -339,15 +339,63 @@ func TestJoinInACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 	}
 }
 
-// join does nothing in a repo that doesn't say it uses Murmur: the user's yes was to this repo's invitation.
-func TestJoinNeedsTheMarker(t *testing.T) {
+// firstHereNote begins what join tells the user when nobody has used Murmur in the repo and its
+// files don't mention it.
+const firstHereNote = "Nobody else uses Murmur in this repo yet"
+
+// A repo whose AGENTS.md and CLAUDE.md don't mention Murmur can be joined: the section only invites
+// teammates' agents, and the user's yes turns Murmur on (Tyler, 2026-11-22, #830). The session's
+// server gets its tools, and join says the user is the first here, with init as theirs to run.
+func TestJoinWithoutTheSection(t *testing.T) {
 	b := newBox(t)
-	out, code := b.run(b.clone, "join")
-	if code == 0 || !strings.Contains(out, "doesn't say it uses Murmur") {
-		t.Errorf("exit %d:\n%s", code, out)
+	cs := b.mcpSession(t)
+	if names := tools(t, cs); len(names) != 0 {
+		t.Fatalf("tools before joining: %q", names)
 	}
-	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur")) || exists(filepath.Join(b.clone, ".claude")) {
-		t.Error("join changed something in a repo that doesn't use Murmur")
+	out := b.mustRun(b.clone, "join")
+	if !strings.Contains(out, firstHereNote) || !strings.Contains(out, "the user can run `mur init`") {
+		t.Errorf("join didn't say the user is the first here:\n%s", out)
+	}
+	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "who"})
+	if err != nil || res.IsError {
+		t.Fatalf("who after joining: %v %+v", err, res)
+	}
+	if status := git(t, b.clone, "status", "--porcelain"); status != "" {
+		t.Errorf("join changed the working tree:\n%s", status)
+	}
+}
+
+// A clone joined while the repo had the section stays on once someone takes the section out of the
+// default branch: the consent is what counts (#830).
+func TestAJoinedCloneStaysOnWithoutTheSection(t *testing.T) {
+	b := newBox(t)
+	b.mustRun(b.clone, "init")
+	b.mustRun(b.clone, "join")
+	git(t, b.clone, "rm", "-q", "AGENTS.md", "CLAUDE.md")
+	git(t, b.clone, "commit", "-q", "-m", "no Murmur section")
+	git(t, b.clone, "push", "-q", "origin", "HEAD:refs/heads/main")
+	cs := b.mcpSession(t)
+	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
+}
+
+// The first-here note is only for a repo nobody has used Murmur in, as its remote's refs/murmur/*
+// tell, and whose files don't invite teammates' agents yet.
+func TestJoinSaysTheUserIsFirstOnlyWhenTheyAre(t *testing.T) {
+	// Someone used Murmur here before: a ref is on the remote, here the one a public repo's first
+	// clone pushes (internal/publicrepo).
+	b := newBox(t)
+	tip := strings.TrimSpace(git(t, b.remote, "rev-parse", "refs/heads/main"))
+	git(t, b.remote, "update-ref", "refs/murmur/reported", tip)
+	if out := b.mustRun(b.clone, "join"); strings.Contains(out, firstHereNote) {
+		t.Errorf("join said the user is the first, with a bus ref on the remote:\n%s", out)
+	}
+
+	// The section invites teammates' agents already.
+	b = newBox(t)
+	b.mustRun(b.clone, "init")
+	if out := b.mustRun(b.clone, "join"); strings.Contains(out, firstHereNote) {
+		t.Errorf("join said the user is the first, in a repo with the section:\n%s", out)
 	}
 }
 

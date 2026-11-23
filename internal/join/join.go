@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/t3"
 )
@@ -178,11 +180,6 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	if err != nil {
 		return r, err
 	}
-	if !p.Marked() {
-		return r, fmt.Errorf("this repo doesn't say it uses %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section, "+
-			"here or on the default branch as this clone last fetched it. `%[2]s init` adds it and pushes it to the default branch, "+
-			"after the user agrees (%[3]s)", brand.Product, brand.Command, brand.SetupDoc)
-	}
 	// A step cut short by the deadline fails with it; the problem added at the end says so once.
 	cut := func() bool { return ctx.Err() != nil }
 	problem := func(what string, err error) {
@@ -264,6 +261,15 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		}
 	}
 
+	// A repo whose files don't mention Murmur can be joined all the same: the section only invites
+	// teammates' agents, and the user's yes is what turns Murmur on (Tyler, 2026-11-22, #830). The
+	// remote is asked before this clone's daemon starts and adds refs of its own.
+	alone := false
+	if !cut() && !p.Marked() {
+		steps.start("asking the remote whether anyone here uses " + brand.Product + " yet")
+		alone = nobodyHere(ctx, p.GitDir)
+	}
+
 	// Consent comes before the daemon: the daemon refuses to run in a clone that hasn't joined.
 	steps.stop()
 	if cut() {
@@ -325,6 +331,10 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		cancel()
 		steps.stop()
 	}
+	if alone {
+		last := len(r.Tell) - 1
+		r.Tell = append(r.Tell[:last], firstHere, r.Tell[last])
+	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
 		last := len(r.Tell) - 1
@@ -337,6 +347,28 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("joined, but not everything worked; see above")
 	}
 	return r, nil
+}
+
+// firstHere is what a join tells the user in a repo whose AGENTS.md and CLAUDE.md don't mention
+// Murmur and whose remote has no refs/murmur/* yet. It names init as the user's to run: init pushes
+// to the default branch, which needs their OK (docs/agents/setup.md).
+const firstHere = "Nobody else uses " + brand.Product + " in this repo yet, and its AGENTS.md and CLAUDE.md don't mention it, " +
+	"so teammates' agents won't know to join. To invite them, the user can run `" + brand.Command + " init`, " +
+	"which adds a short section to both files and pushes it to the default branch."
+
+// nobodyHere reports whether the remote of the clone with this git dir has no bus refs, which
+// means nobody has used Murmur in the repo. It is one ls-remote, the round trip a daemon makes
+// every few seconds. A remote that can't be asked in time says nothing either way: false.
+func nobodyHere(ctx context.Context, gitDir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	g := gitx.Git{Dir: gitDir}
+	remote, err := bus.RemoteFor(ctx, g)
+	if err != nil {
+		return false
+	}
+	refs, err := (&bus.Repo{Git: g, Remote: remote}).ListRemote(ctx)
+	return err == nil && len(refs) == 0
 }
 
 // How long a join may take in all, and how long one step runs before the join says it is still on

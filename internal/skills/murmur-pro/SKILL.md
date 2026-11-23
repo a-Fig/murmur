@@ -1,6 +1,6 @@
 ---
 name: murmur-pro
-description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. Coordinating with other agents over several Murmur messages - waiting for a reply without polling, claiming an area, settling an interface, handoffs, quiet sessions, broadcasts, and stopping reply loops. Not needed for a single message.
+description: Only in a repo where you have Murmur's tools. Coordinating with other agents over several Murmur messages - waiting for a reply without polling, claiming an area, settling an interface, handoffs, quiet sessions, broadcasts, and stopping reply loops. Not needed for a single message.
 ---
 
 <!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->

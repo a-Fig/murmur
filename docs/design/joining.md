@@ -37,7 +37,16 @@ in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 
 ## What `mur join` writes
 
-It refuses in a repo without the marker. Everything it writes is outside the repo's tracked files:
+Until #830 (2026-11-22) it refused in a repo without the marker, so a user who said "try it, but
+don't commit anything" couldn't join. Tyler's direction: the section only invites teammates'
+agents, and the user's consent in the clone is what turns Murmur on. In a repo without the marker,
+join makes one `ls-remote` of `refs/murmur/*` before it starts the daemon, which would add refs of
+its own. With none there, nobody has used Murmur in the repo, and join's report says so, adding that
+teammates' agents won't know to join until the user runs `mur init` (`firstHere` in
+`internal/join/join.go`). It names init as the user's to run, since init pushes to the default
+branch. A remote that can't be asked within 15 s gives no note, and fails nothing.
+
+Everything it writes is outside the repo's tracked files:
 
 | What | Where | Per |
 |---|---|---|
@@ -60,7 +69,7 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
   follow it only when the user has made the session the manager in words. A SKILL.md of the same name without the skills'
   marker comment is the user's own and is left alone. They cost every session of those agents their
   descriptions' worth of context in any repo, so each description says it applies only where the
-  repo has the Murmur section. The folders are from each agent's documentation, not tried in a
+  session has Murmur's tools (until #830, where the repo had the Murmur section). The folders are from each agent's documentation, not tried in a
   session (2026-11-08). OpenCode also reads `~/.claude/skills`, so beside Claude Code it sees each
   skill twice.
 - **Edited, never replaced.** A client that isn't installed is skipped. Other servers, settings and
@@ -126,14 +135,14 @@ reads the record of this machine's clones (`internal/clones`).
 
 ## The server stays passive where it isn't invited
 
-The user-scope entry starts `mur mcp` in every repo the user opens. The server is on only while the
-repo says it uses Murmur (this working tree's `AGENTS.md` or `CLAUDE.md` has the marker, or the
-clone's remote-tracking default branch does, so a worktree on a branch made before `init` pushed
-isn't left out, #119) and this user has joined in this clone, checked every 2 seconds (the
-remote-tracking branch, which needs git, at most every 20). Off, it advertises a tools capability
+The user-scope entry starts `mur mcp` in every repo the user opens. The server is on only while
+this user has joined in this clone (`Place.Joined`, the consent file), checked every 2 seconds.
+Until #830 (2026-11-22) it also needed the marker, in this working tree or on the clone's
+remote-tracking default branch; now the marker plays no part, so a clone joined in a repo without
+the section is on, and one whose section someone removes stays on. Off, it advertises a tools capability
 with no tools, contacts no daemon, and answers a stray call with why it is off. A join turns it on
 through `tools/list_changed`, and a leave turns it off. MCP instructions are fixed at initialize, so
-a server that started off never has them; the pages the section links to carry that guidance.
+a server that started off never has them; the pages in `docs/agents/` carry that guidance.
 
 Nothing relies on the server alone, and each check sits where its harm would be:
 
@@ -150,9 +159,9 @@ Nothing relies on the server alone, and each check sits where its harm would be:
   past its own check can still launch a daemon, which exits at its consent check before it opens any
   state.
 
-A repo without the marker, or one the user hasn't joined, gets no daemon, no `refs/murmur/*` and
-nothing published. A clone whose user joined but whose current branch lacks the marker keeps its
-daemon and gets no tools there.
+A clone the user hasn't joined, with the marker or without, gets no daemon, no `refs/murmur/*` and
+nothing published. The hooks need no check of their own: they only talk to a running daemon, and
+the daemon runs only with the consent.
 
 ## Every account T3 runs
 

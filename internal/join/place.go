@@ -2,7 +2,7 @@
 // per-user setup that goes with it (registering the MCP server with Claude Code and Codex, and the
 // notice hook for this repo only). Nothing here is committed, and nothing starts without consent:
 // the MCP server is registered for the user in every repo they open, so what keeps it from
-// publishing their presence into repos that didn't invite it is Place.Active.
+// publishing their presence into repos they didn't join is Place.Joined.
 package join
 
 import (
@@ -42,10 +42,12 @@ func Locate(ctx context.Context, dir string) (Place, error) {
 
 func (p Place) consentPath() string { return filepath.Join(client.StateDir(p.GitDir), consentFile) }
 
-// Marked reports whether this working tree says the repo uses Murmur.
+// Marked reports whether this working tree says the repo uses Murmur, which invites teammates'
+// agents to join. It turns nothing on: consent alone does (Tyler, 2026-11-22, #830).
 func (p Place) Marked() bool { return setup.Marked(p.Top) }
 
-// Joined reports whether the user joined Murmur in this clone.
+// Joined reports whether the user joined Murmur in this clone, which is what lets Murmur run for
+// every working tree of it. It is read from a file alone, so it is cheap to ask again and again.
 func (p Place) Joined() bool {
 	if p.GitDir == "" {
 		return false // no clone: the path below would be relative to wherever the process is
@@ -57,10 +59,6 @@ func (p Place) Joined() bool {
 // Joined reports whether the user joined Murmur in the clone with this git common dir. The daemon
 // asks it, having no working tree of its own.
 func Joined(gitDir string) bool { return Place{GitDir: gitDir}.Joined() }
-
-// Active reports whether Murmur may run for this working tree: the repo invites it, and this user
-// accepted. Both are checked from files alone, so it is cheap to ask again and again.
-func (p Place) Active() bool { return p.Joined() && p.Marked() }
 
 // RecordConsent notes that the user joined; it reports whether that was news. An existing record
 // is left as it is, so joining again changes nothing.
