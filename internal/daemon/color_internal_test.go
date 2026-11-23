@@ -121,7 +121,6 @@ func TestBackFromInvisibleTheColourWaitsForAFreshSync(t *testing.T) {
 	t.Parallel()
 	d := colorRig(t, time.Hour)
 	d.peers = map[string]*peer{}
-	d.hidden.Store(true)
 	d.setMode("online", "invisible", time.Time{})
 	began := time.Now().Add(-time.Second) // a sync under way as the device comes back
 	d.setMode("invisible", "online", time.Now())
