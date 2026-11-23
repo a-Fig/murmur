@@ -96,7 +96,7 @@ Started by other programs:
 
 Help:
   mur help [COMMAND]            every command, or one command's help
-  mur version                   mur's version, and whether a newer one is out
+  mur version                   mur's version, and a newer one if its daemon has seen it
 
 Every command takes -C DIR to act on the repository at DIR.
 `)
