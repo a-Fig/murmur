@@ -55,21 +55,25 @@ while IFS=$'\t' read -r job secs step name; do
   echo
   echo "== $name: the job took ${secs}s, its go test step ${step}s"
   # A log line is the job, the step, and a time stamp before the text.
-  if ! gh run view --repo "$repo" --job "$job" --log >"$work/raw" 2>/dev/null; then
+  if ! gh run view --repo "$repo" --job "$job" --log >"$work/raw" 2>/dev/null </dev/null; then
     echo "   (its log couldn't be read)"
     continue
   fi
   cut -f3- "$work/raw" | sed -E 's/^[0-9T:.-]+Z //' | tr -d '\r' >"$work/log"
 
-  # The daemon package's own lines: go's verdict for it, and the tests' count of git.
+  # The daemon package's own lines: go's verdict for it, and the tests' count of git, with what
+  # the git took in all: each subcommand's count times its mean, added up.
   awk '
+    function secs(d) { if (d ~ /ms$/) return d / 1000; if (d ~ /[^a-z0-9.]s$/) return d / 1000000; return d + 0 }
+    function total() { if (git) printf "   git in all: %d started, %.0fs\n", git, took; git = took = 0 }
     /^(ok|FAIL)[ \t]+[^ \t]+\/internal\/daemon[ \t]/ { print "   go: " $0 }
-    /^git in a test run of / { print "   " $0; n = 30; next }
-    n > 0 && /^[ \t]+[a-z-]+[ \t]/ { print "   " $0; n--; next }
-    { n = 0 }' "$work/log"
+    /^git in a test run of / { total(); print "   " $0; n = 1; next }
+    n && /^[ \t]+[a-z-]+[ \t]+[0-9]+[ \t]+mean / { print "   " $0; git += $2; took += $2 * secs($4); next }
+    { n = 0 }
+    END { total() }' "$work/log"
 
   gh api "repos/$repo/check-runs/$job/annotations?per_page=100" \
-    --jq '.[] | select(.title == "Test retried") | "   retried: " + .message' || true
+    --jq '.[] | select(.title == "Test retried") | "   retried: " + .message' </dev/null || true
 
   # Top-level tests of the daemon package, with their own time: those before its verdict line. Its
   # first verdict only: a second is the retry of the tests that failed, which would count twice.

@@ -76,20 +76,25 @@ retried in that run.
 
 What it shows:
 
-- **The time is git's, and a git costs about 56 times as much on Windows as on Linux.** The same
-  tests took 904 s of test time on Linux, 3,531 s on macOS and 12,130 s on Windows. The tests
-  started 78,688 git on Linux, which ran for 452 s in all (6 ms each); 109,922 on macOS, for
-  9,926 s (90 ms each); and 111,631 on Windows, for 35,996 s (322 ms each). Git's seconds pass the
-  tests' on macOS and Windows because a test's daemons run several git at once. The slower
-  machines also start more git for the same tests, since the daemons poll for longer.
+- **On macOS and Windows the time is git's, and a git costs about 56 times as much on Windows as
+  on Linux.** The same tests, but for five that are one OS's alone, took 904 s of test time on
+  Linux, 3,531 s on macOS and 12,130 s on Windows. The tests started 78,688 git on Linux, which
+  ran for 452 s in all (6 ms each); 109,922 on macOS, for 9,926 s (90 ms each); and 111,631 on
+  Windows, for 35,996 s (322 ms each). Git's seconds pass the tests' on macOS and Windows because
+  a test's daemons run several git at once; on Linux they are half the tests'. The slower machines
+  also start more git for the same tests. The excess is in the writes (`push`, `commit-tree` and
+  `update-ref` are 1.6 to 1.9 times Linux's on Windows) and not in `ls-remote`, which is no more;
+  this run doesn't say why.
 - **By subcommand, on Windows:** `push` 12,157 s (16,815 of them), `ls-remote` 5,917 s (18,202),
   `fetch` 5,539 s (9,931), `update-ref` 4,725 s (25,090), `commit-tree` 3,574 s (16,265),
   `for-each-ref` 1,883 s (11,089). Those six are 94% of git's time there. So the helpers to look
   at are the ones behind a write to the bus (`commit-tree`, `push`, `update-ref`) and a poll
   (`ls-remote`, `fetch`, `for-each-ref`), not any one test.
-- **No group of tests stands out.** By test file, the largest share of Windows test time is
-  `switch_test.go` at 7.0% (23 tests), then `files_test.go` 5.2%, `person_test.go` 5.0%,
-  `names_more_test.go` 4.9% and `names_test.go` 4.2%; the top sixteen files are 57%.
+- **No test file has more than 7% of the time.** The largest share of Windows test time is
+  `switch_test.go` at 7.0%, with 23 of the 664 tests, so twice its share by count; then
+  `files_test.go` 5.2%, `person_test.go` 5.0%, `names_more_test.go` 4.9% and `names_test.go` 4.2%.
+  The top sixteen of 139 files are 57%. These shares aren't printed by the script: they are the
+  per-job lists, with `slowest` at 1000, added up by the file each test is defined in.
 - **The slowest single tests,** all on Windows: `TestDamagedRegistryFreesNoName` 123 s,
   `TestGarbageRegistryTip` 113 s, `TestSendByNameAcrossDevices` 96 s,
   `TestMessageForEveryoneReachesAThreadOnce` 95 s,
@@ -97,7 +102,8 @@ What it shows:
   `TestASendDoesNotWaitForASyncsSlowFetch`, 43 s, which waits on purpose.
 
 A change meant to make the tests cheaper can cite, from the same script on its own run: the git
-started and their summed time per job, the test time per job, and a named test's time. On a
+started and their time in all per job (the count times the mean, added over the subcommands), the
+test time per job, and a named test's time. On a
 laptop, `MURMUR_GIT_STATS=<file> go test -v -count=1 -run '<tests>' ./internal/daemon` writes the
 same count of git to the file and prints the same per-test times, for a few tests at a time.
 
