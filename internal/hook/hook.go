@@ -291,12 +291,12 @@ func ownRecord(agent, native, t3Thread string, recs []here.Session) (here.Sessio
 	if threadMatches == 1 {
 		return threadRec, true
 	}
-	// Each agy client process runs one conversation and starts its own MCP server, as a Cursor
-	// process does outside T3 (a server takes Cursor's conversation from the hook a moment after it
-	// runs: cursor.go). Only accept the sole record for that PID with neither ID known and the
-	// agent's label. The label rules out a parent Claude Code or Codex whose record was the nearest
-	// one.
-	if (agent == Antigravity || agent == Cursor) && len(recs) == 1 {
+	// Each agy or kiro-cli V3 client process runs one conversation and starts its own MCP server,
+	// as a Cursor process does outside T3 (a server takes Cursor's conversation from the hook a
+	// moment after it runs: cursor.go). Only accept the sole record for that PID with neither ID
+	// known and the agent's label. The label rules out a parent Claude Code or Codex whose record
+	// was the nearest one.
+	if (agent == Antigravity || agent == Cursor || agent == Kiro) && len(recs) == 1 {
 		r := recs[0]
 		if r.Native == "" && r.T3Thread == "" && (r.Agent == agent || strings.HasPrefix(r.Agent, agent+" ")) {
 			return r, true
@@ -323,13 +323,14 @@ const (
 	Antigravity = "antigravity"
 	Muse        = "muse"
 	Cursor      = "cursor"
+	Kiro        = "kiro"
 )
 
 // KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode,
-// antigravity, muse or cursor.
+// antigravity, muse, cursor or kiro.
 func KnownAgent(agent string) bool {
 	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse ||
-		agent == Cursor
+		agent == Cursor || agent == Kiro
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
@@ -410,8 +411,9 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
-	// does. Antigravity receives its notices in PreInvocation.
-	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool)
+	// does. Antigravity receives its notices in PreInvocation. Kiro 3.4.0 discards PostToolUse
+	// command stdout/stderr, so skip fetching notices on PostToolUse there to avoid losing messages.
+	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool) && (agent != Kiro || in.Event != postTool)
 	if !wantNotices && op == "" {
 		return
 	}
@@ -482,6 +484,8 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		inbox = view.AntigravityInboxTool
 	case Cursor:
 		inbox = view.CursorInboxTool
+	case Kiro:
+		inbox = view.KiroInboxTool
 	}
 	text := view.HookWithInbox(resp.Read, resp.Messages, resp.Unread, inbox)
 	if text == "" {
@@ -493,6 +497,14 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	if agent == Cursor {
 		json.NewEncoder(stdout).Encode(cursorAnswer{AdditionalContext: text})
+		return
+	}
+	if agent == Kiro {
+		// Kiro 3.4.0 injects raw stdout on UserPromptSubmit / SessionStart directly into the turn.
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		io.WriteString(stdout, text)
 		return
 	}
 	var out output
@@ -550,9 +562,86 @@ func identify(agent string, in input) proto.Request {
 	if agent == "" {
 		r.ClientPID = claudePID()
 	} else {
-		r.Agent, r.Ancestors = agent, proc.Ancestors(os.Getppid(), maxAncestors)
+		anc := proc.Ancestors(os.Getppid(), maxAncestors)
+		if agent == Kiro {
+			anc = kiroHookAncestors(anc, func(pid int) (string, string, bool) {
+				exe, err := proc.Exe(pid)
+				return exe, procComm(pid), err == nil
+			})
+		}
+		r.Agent, r.Ancestors = agent, anc
 	}
 	return r
+}
+
+// kiroHookAncestors scopes a Kiro hook's ancestor list to the hook's own Kiro client process so a
+// nested kiro-cli started from an outer Kiro session's shell can never reach the outer Kiro's
+// client PID (#910). Walking outward through any immediate hook shells:
+//   - If node sits directly under kiro-cli, only that node PID is returned.
+//   - If kiro-cli appears without node below it, stop at that kiro-cli (pids[:i+1]).
+//   - On any other non-shell process (e.g. a renamed inner launcher), stop at pids[:i+1] so
+//     nothing above it can match an outer Kiro session.
+//   - On an unidentified PID, stop at pids[:i+1] (or pids[:2] if the immediate parent at i==0
+//     couldn't be read, so an unreadable hook shell can still reach its direct client at pids[1]
+//     without ever reaching an outer Kiro client at depth >= 3).
+func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok bool)) []int {
+	nameOf := func(pid int) (string, bool) {
+		exe, comm, ok := exeAt(pid)
+		if ok {
+			if n := exeBaseName(exe); n != "" {
+				return n, true
+			}
+		}
+		if comm != "" {
+			return comm, true
+		}
+		return "", false
+	}
+	for i, pid := range pids {
+		name, known := nameOf(pid)
+		if !known {
+			if i == 0 && len(pids) >= 2 {
+				return pids[:2]
+			}
+			return pids[:i+1]
+		}
+		if name == "node" && i+1 < len(pids) {
+			if next, ok := nameOf(pids[i+1]); ok && next == "kiro-cli" {
+				return []int{pid}
+			}
+		}
+		if name == "kiro-cli" {
+			return pids[:i+1]
+		}
+		if !isHookShell(name) {
+			return pids[:i+1]
+		}
+	}
+	return pids
+}
+
+func isHookShell(name string) bool {
+	switch name {
+	case "cmd", "sh", "bash", "zsh", "dash", "ash", "ksh", "fish", "pwsh", "powershell":
+		return true
+	}
+	return false
+}
+
+func exeBaseName(exe string) string {
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	if i := strings.LastIndexAny(exe, `/\`); i >= 0 {
+		exe = exe[i+1:]
+	}
+	return strings.TrimSuffix(strings.ToLower(exe), ".exe")
+}
+
+func procComm(pid int) string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // maxAncestors bounds how far up identify looks: the agent is the hook's grandparent where it runs

@@ -110,7 +110,7 @@ For agents that can't open the links in the repo's section:
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
   mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
-                                muse's, opencode's or pi's; reads the payload on stdin
+                                kiro's, muse's, opencode's or pi's; reads the payload on stdin
   mur hook --event EVENT antigravity
                                 Antigravity's hook, for EVENT; reads the payload on stdin
   mur daemon [--git-dir DIR]    the daemon, in the foreground

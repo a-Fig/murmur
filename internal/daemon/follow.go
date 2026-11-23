@@ -676,9 +676,32 @@ func (d *Daemon) queuedAtNamedLocked(to, name string) string {
 // session of that process. An ID the MCP server learns overrides one taken from a hook. Caller
 // holds mu.
 func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
+	sessions := d.sortedSessionsLocked()
+	// For Kiro, every hook runs directly under its own Kiro client process. When ancestors are
+	// present, restrict both ID and process matching to the nearest matching Kiro client PID so
+	// an inner Kiro session never binds to or reads an outer Kiro session's inbox (#910).
+	kiroPID := 0
+	if req.Agent == "kiro" && len(req.Ancestors) > 0 {
+		bestDepth := len(req.Ancestors)
+		for _, s := range sessions {
+			if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) || s.clientPID == 0 {
+				continue
+			}
+			if depth := slices.Index(req.Ancestors, s.clientPID); depth >= 0 && depth < bestDepth {
+				bestDepth = depth
+				kiroPID = s.clientPID
+			}
+		}
+		if kiroPID == 0 {
+			return nil
+		}
+	}
 	var byID, byProcess []*session
-	for _, s := range d.sortedSessionsLocked() {
+	for _, s := range sessions {
 		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
+			continue
+		}
+		if kiroPID != 0 && s.clientPID != kiroPID {
 			continue
 		}
 		if s.route.Native != "" && s.hookNative != s.route.Native {
@@ -728,7 +751,7 @@ var toolOps = map[string]bool{proto.OpWho: true, proto.OpLookup: true, proto.OpS
 // hook in OpenCode 2 and, outside T3, OpenCode 1 (#431, #446): join writes no plugin for an
 // OpenCode whose version it can't learn, and OpenCode 1's plugin does nothing in T3, so a session
 // there would be told to run join again, which changes nothing for it.
-var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity", "muse", "cursor"}
+var hookedAgents = []string{"claude-code", "codex", "grok", "pi", "antigravity", "muse", "cursor", "kiro"}
 
 // hookOffLocked says Murmur's hook doesn't run for session s (#225): its agent is one join installs
 // the hook in, it called one of Murmur's tools more than hookGrace ago, and no hook of it has

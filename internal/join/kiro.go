@@ -12,6 +12,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/jsonedit"
+	"github.com/a-Fig/murmur/internal/skills"
 )
 
 // Kiro (#906), AWS's coding agent CLI (`kiro-cli`, V3 KAS engine `@kiro/agent`). Read in Kiro CLI
@@ -50,12 +51,22 @@ var kiroAllowPattern = brand.MCPServer + "/*"
 // whether Kiro's permissions.json overrides our allow rule.
 var kiroMurmurTools = []string{"who", "lookup", "status", "tags", "send", "inbox", "mute"}
 
-// kiroPathsInTemp reports whether Kiro's settings directory and the files join/uninstall edit under
-// dir resolve inside the temporary folder (protecting scratch homes against nested symlinks or
-// junctions pointing at the user's real ~/.kiro/settings, #995).
+// kiroPathsInTemp reports whether Kiro's settings, hooks, and skills directories and the files
+// join/uninstall edit under dir resolve inside the temporary folder (protecting scratch homes
+// against nested symlinks or junctions pointing at the user's real ~/.kiro, #995).
 func kiroPathsInTemp(dir string) bool {
 	settings := filepath.Join(dir, "settings")
-	for _, p := range []string{settings, filepath.Join(settings, "mcp.json"), filepath.Join(settings, "permissions.json")} {
+	hooks := filepath.Join(dir, "hooks")
+	skillsRoot := filepath.Join(dir, "skills")
+	paths := []string{
+		settings, filepath.Join(settings, "mcp.json"), filepath.Join(settings, "permissions.json"),
+		hooks, filepath.Join(hooks, kiroHookFile),
+		skillsRoot,
+	}
+	for _, s := range skills.All() {
+		paths = append(paths, filepath.Join(skillsRoot, s.Name), filepath.Join(skillsRoot, s.Name, "SKILL.md"))
+	}
+	for _, p := range paths {
 		if !inTemp(p, false) {
 			return false
 		}
@@ -131,20 +142,27 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 	if changed {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+mcpPath+")")
 	}
-	allowed, permPath, err := allowKiroTools(h.Dir)
+	hookDid, hookErr := e.installKiroHook(h)
+	did = append(did, hookDid...)
+	allowed, permPath, permErr := allowKiroTools(h.Dir)
 	if allowed {
-		if err != nil {
+		if permErr != nil {
 			did = append(did, h.Label+": allowed "+brand.Product+"'s other tools ("+permPath+")")
 		} else {
 			did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+permPath+")")
 		}
 	}
-	if err != nil {
+	if hookErr != nil {
+		// Return hook errors directly rather than joining with an approvalNote, which join.go
+		// would downgrade from a Problem to a Note via errors.As.
+		return did, fresh, hookErr
+	}
+	if permErr != nil {
 		var note approvalNote
-		if errors.As(err, &note) {
+		if errors.As(permErr, &note) {
 			return did, fresh, note
 		}
-		return did, fresh, approvalNote(fmt.Sprintf("couldn't add %q to %s (%v), so %s's tools will ask before each call.", kiroAllowPattern, permPath, err, brand.Product))
+		return did, fresh, approvalNote(fmt.Sprintf("couldn't add %q to %s (%v), so %s's tools will ask before each call.", kiroAllowPattern, permPath, permErr, brand.Product))
 	}
 	return did, fresh, nil
 }
@@ -468,6 +486,12 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 			}
 		}
 	}
+	if hookDid, hookNotes, herr := removeKiroHook(h); herr != nil {
+		problems = append(problems, herr)
+	} else {
+		did = append(did, hookDid...)
+		notes = append(notes, hookNotes...)
+	}
 	return did, notes, errors.Join(problems...)
 }
 
@@ -479,6 +503,9 @@ func kiroRemoval(_ Env, h agentHome) string {
 		if _, found, _ := jsonedit.GetIn(string(b), []string{"mcpServers", brand.MCPServer}); found {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+mcpPath)
 		}
+	}
+	if step := kiroHookRemoval(h); step != "" {
+		steps = append(steps, step)
 	}
 	if _, yerr := os.Stat(filepath.Join(h.Dir, "settings", "permissions.yaml")); errors.Is(yerr, os.ErrNotExist) {
 		permPath := filepath.Join(h.Dir, "settings", "permissions.json")

@@ -21,7 +21,7 @@ import (
 // too, so beside them it sees each skill twice, as OpenCode does.
 func skillsDir(a agent, h agentHome) string {
 	switch a.driver {
-	case "claudeAgent", "codex", "opencode", "pi", "cursor":
+	case "claudeAgent", "codex", "opencode", "pi", "cursor", "kiro":
 		if h.Dir != "" {
 			return filepath.Join(h.Dir, "skills")
 		}

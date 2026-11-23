@@ -603,6 +603,7 @@ const (
 	// CursorInboxTool names the tool as Cursor's model calls it: through Cursor's own MCP tool,
 	// by server and tool name (CallMcpToolParams in cursor-agent 2026.11.22-e9042b2).
 	CursorInboxTool = `the ` + brand.MCPServer + ` MCP server's "inbox" tool`
+	KiroInboxTool   = "mcp_" + brand.MCPServer + "_inbox"
 )
 
 // HookWithInbox renders the hook's text with the calling agent's spelling of the inbox tool.

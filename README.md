@@ -87,7 +87,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
-`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity and Cursor.
+`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity, Cursor and Kiro (beta).
 Two help agents decide when to use Murmur and coordinate over several messages. The third,
 `murmur-manager`, is for an agent you ask to manage the others: your general engineering manager,
 or GEM. Their source is in [`internal/skills`](internal/skills).
@@ -103,8 +103,8 @@ or GEM. Their source is in [`internal/skills`](internal/skills).
 | Grok (beta)             | a terminal            | inbox     | notice after its next tool call        |
 | Antigravity (beta)      | T3 Code               | turn      | notice after its next tool call        |
 | Antigravity (beta)      | a terminal            | inbox     | notice after its next tool call        |
-| Kiro (beta)             | T3 Code               | turn      | waits for the turn to end, then a turn |
-| Kiro (beta)             | a terminal            | inbox     | inbox                                  |
+| Kiro (beta)             | T3 Code               | turn      | given at the end of the turn           |
+| Kiro (beta)             | a terminal            | inbox     | given at the end of the turn           |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (beta)       | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
