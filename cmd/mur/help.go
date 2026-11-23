@@ -68,9 +68,9 @@ func withTools(text string) string {
 		name, summary = max(name, len(t.Name)), max(summary, len(t.Summary))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "For agents with %s's tools, which they use instead (Claude Code names them mcp__%s__who and so on).\n",
+	fmt.Fprintf(&b, "For agents with %s's tools, used instead of those commands (Claude Code: mcp__%s__who and so on).\n",
 		brand.Product, brand.MCPServer)
-	fmt.Fprintf(&b, "\"also\" marks a tool that has a command too. %s help TOOL gives a tool's full description:\n", brand.Command)
+	fmt.Fprintf(&b, "\"also\" marks a tool with a command too. %s help TOOL gives a tool's full description:\n", brand.Command)
 	for _, t := range tools {
 		line := fmt.Sprintf("  %-*s  %s", name, t.Name, t.Summary)
 		if entryIn(text, t.Name) != "" {
