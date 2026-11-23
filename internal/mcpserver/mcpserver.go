@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -30,6 +32,7 @@ import (
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/scrub"
 	"github.com/a-Fig/murmur/internal/t3"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
@@ -871,11 +874,11 @@ func mutates(op string) bool {
 //
 // If the lookup failed, or the daemon couldn't read the thread (#980), the session looks again and
 // tells the daemon again, once, which gives a thread whose row T3 wrote late its classification;
-// every call that comes meanwhile waits for that one retry. Whatever it finds, the calls then go
-// on: they fail open, as a Claude Code session in T3 does (#945). A delegate's message going out is
-// awkward, not harmful (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop
-// T3's sessions from sending. Later calls don't look again; the seek goes on doing that in the
-// background.
+// every call that comes meanwhile waits for that one retry. Each registration gets its own: after
+// a reconnect, the first such call may look once more (#1000). Whatever it finds, the calls then go
+// on: they fail open, as a Claude Code session in T3 does (#945). A delegate's message going out is awkward, not harmful
+// (Tyler, 2026-11-22, #993), and a T3 database Murmur can't read mustn't stop T3's sessions from
+// sending. Later calls don't look again; the seek goes on doing that in the background.
 func (l *link) classifyFirst(ctx context.Context) error {
 	l.mu.Lock()
 	looked, native := l.looked, l.native
@@ -1161,33 +1164,125 @@ func text(s string) *mcp.CallToolResult {
 // oneLine cuts a subject or a status to what the daemon keeps of it (bus.OneLine at 120). The
 // daemon reads a request's line only up to a cap, before its token is checked, so a subject far
 // longer than it keeps could otherwise make a send of a full body too long to be read at all.
-func oneLine(s string) string { return bus.OneLine(s, 120) }
+func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
+
+// statusLine is the status a session sets, cut to the line the daemon keeps (oneLine), after it
+// is checked for secrets as written: only the cleaned line goes to the daemon, and dropping a
+// zero-width space can join a key to the next word, which the daemon's check of the cleaned line
+// then misses (#1048), as for a subject (subjectAndBody).
+func statusLine(doing string) (string, error) {
+	if err := scrub.Check(doing); err != nil {
+		return "", err
+	}
+	return oneLine(doing), nil
+}
 
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
 // to one line of 120 characters, so a send with no body and a longer subject, or one of several
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
-// subjectFor makes it a subject and body. A send with a body is as it was: its subject is cut.
-// A body is blank as the daemon judges one, after the invisible characters it drops.
-func subjectAndBody(subject, body string) (string, string) {
-	if strings.TrimSpace(bus.Text(body, len(body))) != "" || oneLine(subject) == strings.TrimSpace(subject) {
-		return oneLine(subject), body
+// subjectFor makes it a subject and body. A send with a body would lose the rest of such a subject
+// the same way (#1049), so what subjectFor leaves of the subject goes at the top of the body, where
+// a turn shows it and hides a subject that only repeats it (view.RepeatsSubject). A subject whose
+// lines joined fit in one loses nothing and is joined, as before. Only if the body would go over
+// the daemon's cap is the subject cut as before, rather than a send that went out refused. A body
+// is blank as the daemon judges one, after the invisible characters it drops, and only if the
+// daemon would take it: one over its cap is the agent's to hear about (#1037).
+//
+// The subject is checked for secrets here as the agent wrote it, as only its cleaned line goes to
+// the daemon, which checks that. The daemon checks a body both ways, as dropping a zero-width space
+// can join a key to the next word, so that AKIA…EXAMPLE<U+200B>note ends in no word boundary: as a
+// subject, a key so written went out (#1044). subjectFor checks the first line it makes one of, and
+// what it leaves goes in the body, which the daemon checks as written.
+func subjectAndBody(subject, body string) (string, string, error) {
+	blank := len(body) <= bus.MaxBody && strings.TrimSpace(bus.Text(body, math.MaxInt)) == ""
+	cut := func() (string, string, error) {
+		if err := scrub.Check(subject); err != nil {
+			return "", "", err
+		}
+		return oneLine(subject), body, nil
 	}
-	return subjectFor(subject)
+	if oneLine(subject) == strings.TrimSpace(subject) {
+		return cut()
+	}
+	if blank {
+		return subjectFor(subject)
+	}
+	if utf8.RuneCountInString(bus.OneLine(subject, math.MaxInt)) <= maxSubject {
+		return cut() // its lines joined lose nothing
+	}
+	s, rest, err := subjectFor(subject)
+	if err != nil && !errors.Is(err, errTooLong) {
+		return "", "", err
+	}
+	if err != nil || s == "" {
+		return cut()
+	}
+	if rest == "" {
+		return s, body, nil
+	}
+	if joined := rest + "\n\n" + body; len(joined) <= bus.MaxBody {
+		return s, joined, nil
+	}
+	return cut()
 }
+
+// errTooLong is subjectFor's refusal of a text whose body would be over the daemon's cap. The
+// daemon's own would name a body the agent never gave (#1037).
+var errTooLong = fmt.Errorf("not sent: the message is over %d KB, and the bus keeps everything forever; split it into several messages", bus.MaxBody>>10)
 
 // subjectFor makes the subject of a message an agent wrote as one text, and the body that goes
 // with it: `mur send TO TEXT`, and a send tool call whose subject is the whole text (subjectAndBody).
 // It splits the text as the page splits a person's (web.SplitText): a first line that fits is the
 // subject and the rest is the body; otherwise the opening words are the subject and the body has
-// the whole text. A first line of only the invisible characters the daemon drops keeps the whole
-// text, as one cut subject. Every agent's send that needs a subject made gets it here, so making it
-// another way, such as with a small model (#1023), is a change to this function alone.
-func subjectFor(text string) (subject, body string) {
-	first, rest := web.SplitText(text)
-	if oneLine(first) == "" {
-		return oneLine(text), strings.TrimSpace(text)
+// the whole text. The first line is the first with something the daemon keeps, and it fits or not
+// as the daemon keeps it, without the invisible characters it drops, which take no room (#1037).
+// The body is the text as written, not as cleaned: the daemon checks it for secrets both ways, as
+// dropping a zero-width space can join a key to the next word. A first line that ends in "…" and
+// starts the rest, as a cut one would, keeps the whole text in the body, as a turn shows the body
+// alone then (view.RepeatsSubject). Every agent's send that needs a subject made gets it here, so
+// making it another way, such as with a small model (#1023), is a change to this function alone.
+func subjectFor(text string) (subject, body string, err error) {
+	whole := strings.TrimSpace(text)
+	first, rest := "", text
+	for rest != "" && oneLine(first) == "" {
+		first, rest = cutLine(rest)
 	}
-	return oneLine(first), rest
+	if err := scrub.Check(first); err != nil {
+		return "", "", err // as subjectAndBody does
+	}
+	// Cleaned as the daemon stores it, a malformed byte as U+FFFD, so RepeatsSubject below sees
+	// the subject a turn will.
+	if subject = bus.OneLine(bus.Text(first, math.MaxInt), math.MaxInt); utf8.RuneCountInString(subject) <= maxSubject {
+		body = strings.TrimSpace(rest)
+	} else {
+		subject, _ = web.SplitText(subject) // the opening words, cut where a word ends
+		body = whole
+	}
+	if view.RepeatsSubject(subject, strings.TrimSpace(bus.Text(body, math.MaxInt))) {
+		body = whole
+	}
+	if len(body) > bus.MaxBody {
+		return "", "", errTooLong
+	}
+	return subject, body, nil
+}
+
+// maxSubject is the longest a subject is: oneLine's cut.
+const maxSubject = 120
+
+// cutLine cuts s at its first line break, of any kind bus.Text reads as one.
+func cutLine(s string) (line, rest string) {
+	i := strings.IndexFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\v' || r == '\f' || r == 0x85 || r == 0x2028 || r == 0x2029
+	})
+	if i < 0 {
+		return s, ""
+	}
+	_, n := utf8.DecodeRuneInString(s[i:])
+	if strings.HasPrefix(s[i:], "\r\n") {
+		n = 2
+	}
+	return s[:i], s[i+n:]
 }
 
 // fullPath makes a path a send names a full one, from this server's working directory, which is
@@ -1287,7 +1382,11 @@ func (s *server) tools(srv *mcp.Server) {
 		"Update it when you switch tasks. Until you set one, your conversation's title is what they see; " +
 		"an empty status brings the title back."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, any, error) {
-			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: oneLine(in.Doing)})
+			doing, err := statusLine(in.Doing)
+			if err != nil {
+				return result(nil, proto.Response{}, err)
+			}
+			resp, err := s.callFrom(ctx, req, proto.Request{Op: proto.OpStatus, Doing: doing})
 			return result(view.Note, resp, err)
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "tags", Description: "Add or remove your own tags: short labels others see in who and lookup, " +
@@ -1323,7 +1422,13 @@ func (s *server) tools(srv *mcp.Server) {
 			to := recipients(in.To)
 			files := fullPaths([]string(in.Files))
 			tell := strings.TrimSpace(in.TellMe)
-			subject, body := subjectAndBody(in.Subject, in.Body)
+			subject, body, err := subjectAndBody(in.Subject, in.Body)
+			if errors.Is(err, errTooLong) {
+				err = fmt.Errorf("%w, or put the text in a file and send that with files", err)
+			}
+			if err != nil {
+				return result(nil, proto.Response{}, err)
+			}
 			if len(to) > 1 {
 				return s.sendEach(ctx, req, to, subject, body, tell, files)
 			}
@@ -1383,7 +1488,7 @@ type link struct {
 	readThread string
 	// retry is closed once the session has looked for the thread of native again, and told the
 	// daemon, after the first look failed to get it classified; nil until a call starts that (see
-	// classifyFirst).
+	// classifyFirst), and again for a new native ID or a new registration with the daemon.
 	retry chan struct{}
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
@@ -1817,6 +1922,12 @@ func (l *link) run(ctx context.Context) {
 		backoff, inUse = time.Second, 0
 		l.mu.Lock()
 		l.noteReadLocked(h.Route, resp)
+		// A retry belongs to one registration (#1000). One used before this hello was told to a
+		// daemon that has gone, or found the link down and told none, so if this reply says the
+		// daemon couldn't read the thread, the first changing call after it looks again. It is
+		// cleared here, before the link is up, and not when the connection ends: a call that got
+		// past the wait just before the drop may yet use one up while the link is down.
+		l.retry = nil
 		l.hello.Reconnect = true // any later hello is a reconnection
 		if _, id := bus.SplitAddr(resp.Self); h.ByThread && id != "" {
 			// The daemon may give the thread the address its name has had since before #642

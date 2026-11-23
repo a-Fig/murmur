@@ -85,6 +85,44 @@ func TestAPickedColourIsSeenByTeammatesAndCantBeTaken(t *testing.T) {
 	}
 }
 
+// A device that goes invisible takes its presence off the remote too, so its colour looks free. A
+// colour a teammate picked meanwhile stays the teammate's when the device is back online: the
+// device gives its pick up, where its earlier pick used to take the colour back (#1084).
+func TestAColourPickedWhileItsDeviceWasInvisibleStaysPicked(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
+	pa, pb, pc := a.page(), b.page(), c.page()
+	idA, idB := a.self(), b.self()
+	if code, _, body := pa.pickColor(3); code != http.StatusOK {
+		t.Fatalf("a picking: %d %s", code, body)
+	}
+	eventually(t, "b to see a's pick", func() bool { d, _ := pb.colorOn(idA); return d.Picked && d.Color == 2 })
+
+	pa.mode("invisible")
+	eventually(t, "b to see a gone", func() bool { _, ok := pb.colorOn(idA); return !ok })
+	if code, _, body := pb.pickColor(3); code != http.StatusOK {
+		t.Fatalf("b picking the colour a left: %d %s", code, body)
+	}
+	eventually(t, "c to see b's pick", func() bool { d, _ := pc.colorOn(idB); return d.Picked && d.Color == 2 })
+
+	pa.mode("online")
+	eventually(t, "a to give the colour up to b", func() bool {
+		acct := pa.state().Account
+		return acct.Color == 0 && acct.ColorLost != ""
+	})
+	for name, p := range map[string]*page{"a": pa, "b": pb, "c": pc} {
+		eventually(t, name+"'s page to show b with it", func() bool {
+			ad, okA := p.colorOn(idA)
+			bd, _ := p.colorOn(idB)
+			return okA && !ad.Picked && bd.Picked && bd.Color == 2
+		})
+	}
+	if acct := pb.state().Account; acct.Color != 3 || acct.ColorLost != "" {
+		t.Errorf("b's own pick after a came back: %+v, want it kept", acct)
+	}
+}
+
 // A daemon that stops takes its presence off the remote, so its colour looks free. A pick that
 // outlasts a restart is the device's again; one someone else picked meanwhile is given up, not
 // taken back, and its person is told who has it (#573).

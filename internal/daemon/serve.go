@@ -589,7 +589,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return r
 	}
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
-		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
+		return fail(proto.NotRegistered)
 	}
 	from := bus.Addr(d.device, sess)
 	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags || req.Op == proto.OpMute {
@@ -616,8 +616,10 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return resp
 
 	case proto.OpStatus:
+		// Checked as kept and as sent, as a body is (see OpSend): dropping a zero-width space can join
+		// a key to the next word (#1048).
 		doing := bus.OneLine(req.Doing, 120)
-		if err := scrub.Check(doing); err != nil {
+		if err := scrub.Check(doing, req.Doing); err != nil {
 			return fail(err.Error())
 		}
 		d.mu.Lock()

@@ -3,8 +3,12 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/view"
 	"io"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -128,7 +132,7 @@ func TestCommandRequests(t *testing.T) {
 		// The old form, TO SUBJECT BODY, still means what it did.
 		{"send", []string{"a,b", "s", "b"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "s", Body: "b"}, false},
 		{"send", []string{"a", "s", "-"}, "the body\n", proto.Request{Op: proto.OpSend, To: "a", Subject: "s", Body: "the body\n"}, false},
-		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: oneLine(long), Body: "the body"}, false},
+		{"send", []string{"a", long, "the body"}, "", proto.Request{Op: proto.OpSend, To: "a", Subject: mustSubject(long), Body: strings.TrimSpace(long) + "\n\nthe body"}, false},
 	} {
 		got, err := commandRequest(c.name, c.args, strings.NewReader(c.stdin), io.Discard)
 		if (err != nil) != c.bad {
@@ -184,22 +188,160 @@ func TestSubjectAndBodyEdges(t *testing.T) {
 	for _, c := range []struct{ subject, body, wantSubject, wantBody string }{
 		{"first\r\nsecond", "", "first", "second"},
 		{"short", "  ", "short", "  "},
-		{"\u200b\nreal text", "", "real text", "\u200b\nreal text"},
+		{"\u200b\nreal text", "", "real text", ""}, // the daemon drops the invisible line, so nothing is left for the body
 		{"fits\n" + long, "", "fits", long},
 		{"a  b", "", "a b", ""},
 	} {
-		s, b := subjectAndBody(c.subject, c.body)
-		if s != c.wantSubject || b != c.wantBody {
+		s, b, err := subjectAndBody(c.subject, c.body)
+		if err != nil || s != c.wantSubject || b != c.wantBody {
 			t.Errorf("subjectAndBody(%q, %q) = %q, %q; want %q, %q", c.subject, c.body, s, b, c.wantSubject, c.wantBody)
 		}
 	}
-	if s, b := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > 120 {
+	if s, b, _ := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > 120 {
 		t.Errorf("invisible body: %q, %q", s, b)
 	}
 	// A body past the daemon's cap whose text starts late is still a body: judged whole, not cut.
 	late := strings.Repeat("\n", 40<<10) + "important"
-	if _, b := subjectAndBody(long, late); b != late {
+	if _, b, _ := subjectAndBody(long, late); b != late {
 		t.Errorf("a long body that starts with blank lines was replaced")
+	}
+}
+
+// Sol's edge cases in splitting a send (#1037), each of which went wrong on main.
+func TestSubjectAndBodySolsEdges(t *testing.T) {
+	zw := "\u200b"
+	// 1. A body over the daemon's cap is the agent's, blank or not: the daemon refuses it, as it did
+	// before #1022, rather than the subject's second line going out in its place.
+	spaces := strings.Repeat(" ", bus.MaxBody+1)
+	if s, b, err := subjectAndBody("first\nsecond", spaces); err != nil || s != "first second" || b != spaces {
+		t.Errorf("an oversized blank body: %q, %d bytes, %v", s, len(b), err)
+	}
+	// 2. Invisible characters take no room in the subject, and a text of nothing but them makes no
+	// subject, which the daemon refuses as empty.
+	if s, _, err := subjectAndBody(strings.Repeat(zw, 120)+"ready", ""); err != nil || s != "ready" {
+		t.Errorf("a subject after 120 invisible characters: %q, %v", s, err)
+	}
+	if s, b, err := subjectAndBody(strings.Repeat(zw, 121), ""); err != nil || s != "" || b != "" {
+		t.Errorf("121 invisible characters: %q, %q, %v", s, b, err)
+	}
+	// 3. A one-text send too long for a body is refused here, by what the agent gave.
+	huge := strings.Repeat("x", bus.MaxBody+1024)
+	if _, _, err := subjectAndBody(huge, ""); err == nil || !strings.Contains(err.Error(), "message is over 32 KB") || strings.Contains(err.Error(), "body") {
+		t.Errorf("a 33 KB subject and no body: %v", err)
+	}
+	if _, err := commandRequest("send", []string{"a", huge}, strings.NewReader(""), io.Discard); err == nil || !strings.Contains(err.Error(), "message is over 32 KB") {
+		t.Errorf("mur send TO with 33 KB of text: %v", err)
+	}
+	// 4. A body of malformed UTF-8 is a body: cleaned, its replacement character is longer than the
+	// byte it stands for.
+	if s, b, err := subjectAndBody("first\nsecond", "\xff\x78"); err != nil || s != "first second" || b != "\xff\x78" {
+		t.Errorf("a malformed body: %q, %q, %v", s, b, err)
+	}
+	// 5. A first line that a turn would take for a cut subject (view.RepeatsSubject) keeps the whole
+	// text in the body, so the line isn't hidden.
+	text := "Wait…\nWaitlist rollout starts at noon"
+	s, b, err := subjectAndBody(text, "")
+	if err != nil || s != "Wait…" || b != text {
+		t.Errorf("a first line ending in …: %q, %q, %v", s, b, err)
+	}
+	if view.RepeatsSubject(s, b) && !strings.Contains(b, "Wait…") {
+		t.Errorf("the first line is hidden and not in the body")
+	}
+}
+
+// mustSubject is the subject subjectFor makes of text.
+func mustSubject(text string) string {
+	s, _, _ := subjectFor(text)
+	return s
+}
+
+// A send with a body keeps all of a subject too long for one line: what the subject can't hold
+// goes at the top of the body, and a turn shows the body alone when the subject only repeats its
+// start (#1049, seen on 2026-11-22 as "…rather than ope..." and the rest gone). A subject that
+// fits, one whose lines joined fit, and a body the joined text would push over the daemon's cap,
+// are as before.
+func TestSendWithABodyKeepsALongSubject(t *testing.T) {
+	long := "Re: PR for a theme setting: my user has me on Figma only right now, so I'm passing your request to them rather than opening one myself"
+	s, b, err := subjectAndBody(long, "No PR from me.")
+	if err != nil || utf8.RuneCountInString(s) > maxSubject || b != long+"\n\nNo PR from me." {
+		t.Fatalf("a long subject with a body: %q, %q, %v", s, b, err)
+	}
+	if !view.RepeatsSubject(s, b) {
+		t.Errorf("a turn would print the cut subject %q and then the body that repeats it", s)
+	}
+
+	if s, b, err := subjectAndBody("Title\nmore of the subject", "the body"); err != nil || s != "Title more of the subject" || b != "the body" {
+		t.Errorf("a short subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	twoLong := "Title\n" + long
+	if s, b, err := subjectAndBody(twoLong, "the body"); err != nil || s != "Title" || b != long+"\n\nthe body" {
+		t.Errorf("a long subject of two lines with a body: %q, %q, %v", s, b, err)
+	}
+	// Runs of spaces in the subject don't stop a turn from seeing the body repeats it.
+	spaced := strings.Replace(long, ". ", ".  ", -1) + ".  And  more  words  here."
+	if s, b, _ := subjectAndBody(spaced, "x"); !view.RepeatsSubject(s, strings.TrimSpace(b)) {
+		t.Errorf("a subject with double spaces: %q is not seen as repeating %q", s, b)
+	}
+	if s, b, err := subjectAndBody("fits", "the body"); err != nil || s != "fits" || b != "the body" {
+		t.Errorf("a subject that fits: %q, %q, %v", s, b, err)
+	}
+	full := strings.Repeat("b", bus.MaxBody-10)
+	if s, b, err := subjectAndBody(long, full); err != nil || b != full || utf8.RuneCountInString(s) != maxSubject {
+		t.Errorf("a body near the cap: %d runes, %d bytes, %v", utf8.RuneCountInString(s), len(b), err)
+	}
+}
+
+// A one-text send's body is the text as written, not as the daemon cleans it: the daemon checks
+// both for secrets, and a key a zero-width space splits from the next word is found only in the
+// raw one (Opus review of bb531e85). And `mur send` judges a text of malformed bytes by all of it.
+func TestOneTextBodyIsRaw(t *testing.T) {
+	text := "hi\nAKIA" + "IOSFODNN7EXAMPLE\u200bnote"
+	if s, b, err := subjectFor(text); err != nil || s != "hi" || b != "AKIA"+"IOSFODNN7EXAMPLE\u200bnote" {
+		t.Errorf("subjectFor(%q) = %q, %q, %v", text, s, b, err)
+	}
+	if s, b, err := subjectFor("\u200b\r\nfirst\rsecond"); err != nil || s != "first" || b != "second" {
+		t.Errorf("a CR line break and an invisible line: %q, %q, %v", s, b, err)
+	}
+	// A first line with a malformed byte is judged as the daemon stores it, so a turn that hides it
+	// as a cut subject has it in the body.
+	if s, b, err := subjectFor("w \xff...\nw \xff…"); err != nil || s != "w \uFFFD..." || b != "w \xff...\nw \xff…" {
+		t.Errorf("a malformed first line ending in ...: %q, %q, %v", s, b, err)
+	}
+	if got, err := commandRequest("send", []string{"a", "\xff\x78"}, strings.NewReader(""), io.Discard); err != nil || got.Subject == "" {
+		t.Errorf("mur send of malformed bytes: %+v, %v", got, err)
+	}
+}
+
+// A send with a real body and a subject whose lines joined fit is as it was, and no visible text
+// of a one-text send is lost.
+func TestSubjectAndBodyKeepsEverything(t *testing.T) {
+	if s, b, err := subjectAndBody("Wait…\nmore", "the body"); err != nil || s != "Wait… more" || b != "the body" {
+		t.Errorf("a send with a body: %q, %q, %v", s, b, err)
+	}
+	for _, text := range []string{
+		"one line",
+		"first\nsecond\nthird",
+		strings.Repeat("word ", 60) + "end",
+		"Wait…\nWaitlist rollout starts at noon",
+		"\u200b\u200b head\u200b line\nbody " + strings.Repeat("\u200b", 200) + "text",
+		"Done...\nDone and dusted",
+	} {
+		s, b, err := subjectFor(text)
+		if err != nil || utf8.RuneCountInString(s) > 120 {
+			t.Errorf("subjectFor(%q): %q, %v", text, s, err)
+			continue
+		}
+		clean := strings.Fields(bus.Text(text, len(text)))
+		got := strings.Fields(bus.Text(b, len(b)*3))
+		if !view.RepeatsSubject(s, strings.TrimSpace(bus.Text(b, len(b)*3))) {
+			got = append(strings.Fields(strings.TrimSuffix(strings.TrimSuffix(s, "…"), "...")), got...)
+		}
+		if strings.Join(got, " ") != strings.Join(clean, " ") && !strings.HasSuffix(s, "…") {
+			t.Errorf("subjectFor(%q) lost text: %q + %q", text, s, b)
+		}
+		if strings.HasSuffix(s, "…") && view.RepeatsSubject(s, strings.TrimSpace(bus.Text(b, len(b)*3))) && strings.Join(got, " ") != strings.Join(clean, " ") {
+			t.Errorf("subjectFor(%q): a cut subject without the whole text in the body: %q", text, b)
+		}
 	}
 }
 
@@ -218,5 +360,56 @@ func TestAgentsInChain(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%q: %d agents, want %d", c.chain, got, c.want)
 		}
+	}
+}
+
+// A send to several names, whose session Codex's server takes over at an ID of its own partway,
+// still reaches them all: the send the daemon refuses as not registered goes again, once, as the
+// session a new hello finds, and the ones before it don't (#953).
+func TestACommandSendGoesOnAfterItsThreadIsTakenOver(t *testing.T) {
+	const codex = "c0dec0"
+	var mu sync.Mutex
+	taken := false
+	f := &fakeDaemon{
+		helloReply: func(proto.Hello) (string, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if taken {
+				return "", codex // the thread's session is the server's now
+			}
+			return "", ""
+		},
+		sendReply: func(req proto.Request) proto.Response {
+			mu.Lock()
+			defer mu.Unlock()
+			if req.To == "brave-heron" {
+				taken = true // the server registered between the first send and this one
+			}
+			if taken && req.Session != codex {
+				return proto.Response{Error: proto.NotRegistered, Refused: proto.RefusedSend}
+			}
+			return proto.Response{OK: true, Self: "dev/" + req.Session,
+				Messages: []proto.MessageView{{ID: "m-" + req.To, To: "dev/" + req.To, ToName: req.To, Subject: req.Subject}}}
+		},
+	}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "send", []string{"quiet-otter,brave-heron,calm-finch", "hello all"}, nil, &out, io.Discard); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	var got []string
+	for _, r := range f.sends() {
+		got = append(got, r.To+" as "+r.Session)
+	}
+	first := threadID("thread-913")
+	want := []string{"quiet-otter as " + first, "brave-heron as " + first, "brave-heron as " + codex, "calm-finch as " + codex}
+	if !slices.Equal(got, want) {
+		t.Errorf("sends %q, want %q", got, want)
+	}
+	if n := f.helloCount(); n != 2 {
+		t.Errorf("%d hellos, want 2", n)
+	}
+	if strings.Contains(out.String(), "registered") {
+		t.Errorf("the send reported a refusal:\n%s", out.String())
 	}
 }

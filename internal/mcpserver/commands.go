@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -84,7 +85,8 @@ func commandRequest(name string, args []string, stdin io.Reader, stderr io.Write
 		}
 		return proto.Request{Op: proto.OpInbox}, nil
 	case "status":
-		return proto.Request{Op: proto.OpStatus, Doing: oneLine(strings.Join(args, " "))}, nil
+		doing, err := statusLine(strings.Join(args, " "))
+		return proto.Request{Op: proto.OpStatus, Doing: doing}, err
 	case "send":
 		return sendRequest(args, stdin, stderr)
 	}
@@ -135,26 +137,26 @@ func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Reques
 	switch {
 	case given && (len(words) == 1 || len(words) == 2):
 		body := ""
+		var err error
 		if len(words) == 2 {
-			var err error
 			if body, err = sendText(words[1], stdin); err != nil {
 				return proto.Request{}, err
 			}
 		}
 		req := proto.Request{Op: proto.OpSend, To: words[0]}
-		req.Subject, req.Body = subjectAndBody(subject, body)
-		return req, nil
+		req.Subject, req.Body, err = subjectAndBody(subject, body)
+		return req, err
 	case !given && len(words) == 2:
 		text, err := sendText(words[1], stdin)
 		if err != nil {
 			return proto.Request{}, err
 		}
-		if strings.TrimSpace(bus.Text(text, len(text))) == "" {
+		if strings.TrimSpace(bus.Text(text, math.MaxInt)) == "" { // judged whole: a malformed byte cleans to 3 (#1037)
 			return proto.Request{}, errors.New("nothing to send: the message is empty")
 		}
 		req := proto.Request{Op: proto.OpSend, To: words[0]}
-		req.Subject, req.Body = subjectFor(text)
-		return req, nil
+		req.Subject, req.Body, err = subjectFor(text)
+		return req, err
 	case !given && len(words) == 3:
 		body, err := sendText(words[2], stdin)
 		if err != nil {
@@ -163,8 +165,8 @@ func sendRequest(args []string, stdin io.Reader, stderr io.Writer) (proto.Reques
 		fmt.Fprintf(stderr, "%[1]s send TO SUBJECT BODY is the old form, and still works. "+
 			"The new one takes the message as one text: %[1]s send TO TEXT, or %[1]s send TO --subject SUBJECT TEXT.\n", brand.Command)
 		req := proto.Request{Op: proto.OpSend, To: words[0]}
-		req.Subject, req.Body = subjectAndBody(words[1], body)
-		return req, nil
+		req.Subject, req.Body, err = subjectAndBody(words[1], body)
+		return req, err
 	}
 	return proto.Request{}, fmt.Errorf("usage: %[1]s send TO TEXT, or %[1]s send TO --subject SUBJECT [TEXT], with TEXT in quotes; - as TEXT reads it from standard input", brand.Command)
 }
@@ -186,6 +188,13 @@ func sendText(word string, stdin io.Reader) (string, error) {
 // commandSession registers the session of the T3 thread the command runs in, and returns how to
 // make a request as it. The hello's connection closes as soon as it is answered: the daemon holds
 // the session (proto.Hello.Command).
+//
+// The thread's own MCP server can register between the hello and a request, at an ID of its own,
+// as Codex's does, and the daemon then lets the command's session go (#953). A request the daemon
+// refuses as not registered (proto.NotRegistered) is made again, once, after a new hello, which
+// finds the thread's session as it is then. That refusal comes before the request does anything,
+// so the second try can't send a message twice. A request that fails any other way, a lost
+// connection included, isn't made again: it may have done what it asked.
 func commandSession(ctx context.Context) (func(proto.Request) (proto.Response, error), error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -223,20 +232,35 @@ func commandSession(ctx context.Context) (func(proto.Request) (proto.Response, e
 	h := proto.Hello{ID: threadID(thread), Agent: "agent in T3", Cwd: cwd, ByThread: true, Command: true,
 		Route: proto.Route{T3CLI: cli, T3Home: home, T3Thread: thread}}
 	c := &client.Client{GitDir: place.GitDir, Spawn: true, MaySpawn: place.Active}
-	hctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	conn, resp, err := c.Hello(hctx, h)
-	cancel()
+	hello := func() (string, error) {
+		hctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		conn, resp, err := c.Hello(hctx, h)
+		cancel()
+		if err != nil {
+			return "", fmt.Errorf("not registered with the %s daemon: %w", brand.Product, err)
+		}
+		conn.Close()
+		if _, id := bus.SplitAddr(resp.Self); id != "" {
+			return id, nil
+		}
+		return h.ID, nil
+	}
+	id, err := hello()
 	if err != nil {
-		return nil, fmt.Errorf("not registered with the %s daemon: %w", brand.Product, err)
+		return nil, err
 	}
-	conn.Close()
-	_, id := bus.SplitAddr(resp.Self)
-	if id == "" {
-		id = h.ID
-	}
+	retried := false
 	return func(req proto.Request) (proto.Response, error) {
 		req.Session = id
 		resp, err := c.Do(ctx, req)
+		if err == nil && resp.Error == proto.NotRegistered && !retried {
+			retried = true // once a command: a session that won't stay registered is for the daemon to explain
+			if id, err = hello(); err != nil {
+				return resp, err
+			}
+			req.Session = id
+			resp, err = c.Do(ctx, req)
+		}
 		if err != nil {
 			return resp, fmt.Errorf("can't reach the %s daemon: %w", brand.Product, err)
 		}

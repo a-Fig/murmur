@@ -101,6 +101,12 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 			http.NotFound(w, r) // no directory listings
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, ".js") {
+			// Set the module MIME type directly instead of relying on the host's registry: on
+			// Windows, HKCR\.js can map to text/plain, and with nosniff the browser refuses every
+			// module (#1073).
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		}
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	}))

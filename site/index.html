@@ -374,9 +374,9 @@
   }
   @media (prefers-reduced-motion: reduce) { .gh { animation: none; } }
   /* What agents use it for, and Questions (2026-11-16): on Setup's cream, either side of it. */
-  #uses, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
+  #uses, #security, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
-  #uses h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
+  #uses h2, #security h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
   /* Works with: a row right under the hero, the agents Murmur works with and then the systems it
      runs on, each logo (agents/, os/; their SOURCES.txt) on a white disc with its name beside it.
      T3 Code comes first, on black, since every agent in it gets a message as a new turn. The three
@@ -419,15 +419,57 @@
   }
   .chip { padding: 2px 7px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 .88em/1.4 var(--mono); white-space: nowrap; }
   /* What it gives your agents: three tools, a line each. */
-  .gives { list-style: none; margin-top: 30px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: clamp(28px, 4vw, 56px); }
-  .gives li { padding: 20px 0 6px; border-top: 2px solid var(--ink); }
+  /* The lead under a section's heading: what the section's list is, in one line. */
+  .sec-lead { margin-top: 10px; max-width: 64ch; text-wrap: pretty; font-size: 17px; line-height: 1.5; color: var(--ink-soft); }
+  .sec-lead code, .gives span code, .spec code { padding: 1px 6px; border-radius: 5px; background: var(--badge-bg); color: var(--badge-ink); font: 600 .86em/1.4 var(--mono); white-space: nowrap; }
+  /* Your agents' tools: every tool the MCP server gives an agent (internal/mcpserver), four to a row. */
+  .gives { list-style: none; margin-top: 26px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 26px clamp(24px, 3vw, 40px); }
+  .gives li { padding: 18px 0 4px; border-top: 2px solid var(--ink); }
   .gives .chip { display: inline-block; margin: 0; }
-  .gives b { display: block; margin-top: 12px; font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
-  .gives span { display: block; margin-top: 6px; max-width: 32ch; font-size: 16px; line-height: 1.5; color: var(--ink-soft); }
+  .gives b { display: block; margin-top: 12px; font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; }
+  .gives span { display: block; margin-top: 6px; max-width: 32ch; font-size: 15.5px; line-height: 1.5; color: var(--ink-soft); }
+  @media (max-width: 960px) { .gives { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 760px) { .gives { grid-template-columns: 1fr; row-gap: 18px; } }
+  /* Security & architecture (from #1012): what a careful engineer checks, three to a row, then the
+     route figure that used to sit under How it works' video, and where to read more. */
+  #security { padding-bottom: 0; }
+  .spec { list-style: none; margin-top: 26px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px clamp(24px, 3vw, 40px); }
+  .spec li { padding-top: 18px; border-top: 2px solid var(--ink); }
+  .spec h3 { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; }
+  .spec p { margin-top: 6px; font-size: 15.5px; line-height: 1.5; color: var(--ink-soft); }
+  #security .route { padding: 0; margin-top: clamp(32px, 5vh, 48px); background: none; }
+  .sec-links { list-style: none; padding: 0; margin-top: 24px; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 32px; }
+  .sec-links a { color: var(--ink); font-size: 15px; font-weight: 500; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color .15s ease; }
+  .sec-links a svg { display: inline-block; vertical-align: -2px; margin-left: 6px; transition: transform .15s ease; }
+  .sec-links a:hover { text-decoration-color: var(--ink); }
+  .sec-links a:hover svg { transform: translateX(3px); }
+  .sec-links a:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
+  @media (max-width: 960px) { .spec { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  /* Bands, as #1012 has them, so a change of subject is a change of ground: the tools and Setup on a
+     tint, Security & architecture on ink, the rest on the cream sheet. Each band has its own padding
+     top and bottom, since none now runs into the next. */
+  #uses, #see, #security, #setup, #faq { padding-top: clamp(56px, 9vh, 96px); padding-bottom: clamp(56px, 9vh, 96px); }
+  #uses, #setup { background: var(--cream-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  #security { --ink-soft: #C7D2F2; --badge-bg: rgba(255, 251, 234, .12); --badge-ink: var(--butter); background: var(--ink); color: var(--cream); }
+  #security h2 { color: var(--cream); }
+  #security .spec li { border-top-color: color-mix(in srgb, var(--cream) 55%, transparent); }
+  /* The diagram keeps its cream panel, so its labels keep the page's dark ink. */
+  #security .route { --ink-soft: color-mix(in srgb, var(--ink) 78%, var(--cream)); }
+  #security .route figcaption { color: #C7D2F2; }
+  #security .route .fig-panel { border-color: transparent; }
+  #security .sec-links a { color: var(--cream); text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); }
+  #security .sec-links a:hover { text-decoration-color: var(--cream); }
+  #security .sec-links a:focus-visible { outline-color: var(--cream); }
+  @media (max-width: 760px) {
+    .spec { grid-template-columns: 1fr; row-gap: 18px; }
+    #security .route { padding: 0; margin-left: -4px; margin-right: -4px; }
+    .sec-links { flex-direction: column; align-items: flex-start; justify-content: flex-start; }
+  }
   .inst + .inst { margin-top: 18px; }
   .inst-note { font-size: 14px; color: var(--ink-soft); }
-  .faq { margin-top: 22px; border-top: 2px solid var(--ink); }
+  .faq { margin-top: 22px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; column-gap: clamp(28px, 4vw, 48px); }
+  .faq > div { border-top: 2px solid var(--ink); }
+  @media (max-width: 760px) { .faq { grid-template-columns: 1fr; } .faq > div + div { border-top: 0; } }
   .faq details { border-bottom: 1px solid #DDD7B8; }
   .faq summary { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 16px 0; cursor: pointer; list-style: none;
     font-size: 17px; font-weight: 700; letter-spacing: -.015em; line-height: 1.35; }
@@ -722,6 +764,52 @@
   .st-gh:hover { text-decoration-color: var(--cream); }
   .st-gh:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
   @media (max-width: 600px) { .st .st-actions { margin-top: 26px; gap: 12px 20px; } }
+  /* What an engineer checks before letting it near a repo (2026-11-22), in one thin row at the
+     hero's foot, across the glass under a hairline, just above where the cream sheet laps over.
+     Each claim is led by a line icon drawn like the copy button's: 24-unit box, round caps. */
+  .st-trim { padding-bottom: var(--sheet); }
+  .st .st-trust { position: relative; z-index: 2; align-self: stretch; margin: 0 -24px; padding: 20px 24px 22px; list-style: none;
+    display: flex; justify-content: safe center; gap: 10px clamp(28px, 3.4vw, 52px); overflow-x: auto; scrollbar-width: none;
+    border-top: 1px solid color-mix(in srgb, var(--cream) 18%, transparent); }
+  .st .st-trust li { flex: none; display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap;
+    color: var(--cream); text-shadow: 0 1px 12px rgba(14, 27, 69, .45); }
+  .st .st-trust svg { flex: none; opacity: .9; }
+  /* Two claims link to where they're shown (2026-11-22): the encryption design, and the scrubber's
+     list of what it blocks. They look like the others until hovered. */
+  .st .st-trust a { display: flex; align-items: center; gap: inherit; color: inherit; text-decoration: underline; text-decoration-color: transparent;
+    text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color .15s ease; }
+  .st .st-trust a:hover { text-decoration-color: color-mix(in srgb, var(--cream) 55%, transparent); }
+  .st .st-trust a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
+  /* Where the five don't fit on one line, they stay on one and run past like a ticker (Tyler,
+     2026-11-22): the script below adds a second set and moves both along by one set's width, so
+     the loop has no seam. It stops while hovered or focused. Without the script, or with reduced
+     motion, the row scrolls by hand. Either way its ends fade into the glass. */
+  .st .st-trust::-webkit-scrollbar { display: none; }
+  .st .st-trust.roll { justify-content: flex-start;
+    mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); }
+  .st .st-trust.tick { overflow: hidden; }
+  .st .st-trust.tick li { animation: st-tick var(--tick-dur, 30s) linear infinite; }
+  .st .st-trust.tick:hover li, .st .st-trust.tick:focus-within li { animation-play-state: paused; }
+  @keyframes st-tick { to { transform: translateX(calc(-1 * var(--tick-loop, 0px))); } }
+  /* On a phone the hero's mark peeks up from the foot, so the row sits above it, in the space the
+     copy used to keep for it, with no hairline, edge to edge. */
+  @media (max-width: 600px) {
+    .st-trim { padding-bottom: 0; }
+    .st-trim .st-copy { padding-bottom: 0; }
+    .st .st-trust { margin: 26px -20px 0; padding: 4px 20px calc(var(--mw) * .42 + var(--sheet)); border-top: 0; gap: 10px 28px; }
+    .st .st-trust li { font-size: 13.5px; gap: 7px; }
+  }
+  /* Section titles, styled as #1012 styles them: a small blue label, in the page's own words. */
+  .eyebrow, :is(#how .route, #uses, #see, #security, #setup, #faq, #supported .works) h2.eyebrow { margin: 0 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .09em; line-height: 1.3; text-transform: uppercase; color: var(--blue); }
+  /* On the ink band the title is butter; the selector matches the blue rule's weight, and comes after it. */
+  #security .setup-in h2.eyebrow { color: var(--butter); }
+  /* Butter as the accent on blue and ink, as #1012 uses it: the hero's second line, the strip's icons,
+     and the links in Security & architecture. */
+  .st h1 span + span { color: var(--butter); }
+  .st .st-trust svg { color: var(--butter); opacity: 1; }
+  #security .sec-links a { color: var(--butter); text-decoration-color: color-mix(in srgb, var(--butter) 45%, transparent); }
+  #security .sec-links a:hover { text-decoration-color: var(--butter); }
+  @media (max-width: 759px) { #how .route h2.eyebrow { margin: 0 8px 4px; } }
 </style>
 </head>
 <body>
@@ -750,6 +838,13 @@
     <div class="st-actions"><a class="button st-prompt" href="#setup"><svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy setup prompt</span></a><a class="st-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
     <p class="st-hint">Paste it to your coding agent, in your repo. It asks before it installs anything.</p>
   </div>
+  <ul class="st-trust">
+    <li><a href="https://github.com/a-Fig/murmur/blob/main/docs/design/encryption.md"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Encrypted end-to-end</a></li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>Side refs only · zero CI noise</li>
+    <li><a href="https://github.com/a-Fig/murmur/blob/main/internal/scrub/scrub.go"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 3 8.2 7 10 4-1.8 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg>Blocks leaked secrets</a></li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg>No server, no accounts</li>
+    <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>Open source, MIT</li>
+  </ul>
 <script>
 (() => {
   // Light behind the glass, drawn by one small WebGL canvas. Each pixel samples the light at
@@ -970,7 +1065,7 @@ void main() {
 <section id="supported">
   <div class="setup-in">
     <div class="works">
-      <h2>Works with</h2>
+      <h2 class="eyebrow">Works with</h2>
       <ul class="agents">
         <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-name="T3 Code"><span class="disc"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="nm"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></span></li>
         <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Claude Code"><span class="disc"><img src="/agents/claude.svg" alt="" width="22" height="22"></span><span class="nm">Claude Code</span></li>
@@ -992,42 +1087,28 @@ void main() {
 
 <section id="how">
   <div class="route"><div class="route-in">
-    <h2>How it works</h2>
+    <h2 class="eyebrow">How it works</h2>
     <p class="how-lead">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
     <div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
       <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
       <source src="/how-wide.mp4" type="video/mp4">
     </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div>
-    <figure>
-      <div class="fig-panel">
-        <svg class="wide" viewBox="16 -118 788 419" role="img" aria-labelledby="f3-t f3-d" xmlns="http://www.w3.org/2000/svg"><title id="f3-t">A message through a side ref on GitHub</title><desc id="f3-d">A message server in the cloud, with a big X through it, is the route Murmur doesn't use. quiet-otter calls send. Bob's Murmur daemon pushes a commit to the side ref refs/murmur/mesh/* on the GitHub remote, beside the branches. Alice's daemon fetches it and delivers it to brave-heron.</desc><g><rect class="ct" x="28" y="32" width="190" height="257" rx="12"/>
-<path class="ct-h" d="M40 32H206Q218 32 218 44V72H28V44Q28 32 40 32Z"/>
-<circle class="dot-s" cx="42" cy="52" r="3"/><g class="ic" transform="translate(52 45)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="77" y="57" text-anchor="start">Bob's laptop</text></g><g><rect class="nd" x="40" y="89" width="166" height="60" rx="9"/><text class="nd-t" x="54" y="116" text-anchor="start">quiet-otter</text><text class="nd-s" x="54" y="134" text-anchor="start">Claude Code</text></g><g><rect class="ct" x="602" y="32" width="190" height="257" rx="12"/>
-<path class="ct-h" d="M614 32H780Q792 32 792 44V72H602V44Q602 32 614 32Z"/>
-<circle class="dot-s" cx="616" cy="52" r="3"/><g class="ic" transform="translate(626 45)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="651" y="57" text-anchor="start">Alice's laptop</text></g><g><rect class="nd" x="614" y="89" width="166" height="60" rx="9"/><text class="nd-t" x="628" y="116" text-anchor="start">brave-heron</text><text class="nd-s" x="628" y="134" text-anchor="start">Claude Code</text></g><g><rect class="nd" x="40" y="233" width="166" height="44" rx="9"/><svg class="nd-m" x="52.5" y="248.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="81.5" y="260" text-anchor="start">Murmur daemon</text></g><g><rect class="nd" x="614" y="233" width="166" height="44" rx="9"/><svg class="nd-m" x="626.5" y="248.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="655.5" y="260" text-anchor="start">Murmur daemon</text></g><g><rect class="ct" x="300" y="32" width="220" height="257" rx="12"/>
-<path class="rm-h" d="M312 32H508Q520 32 520 44V76H300V44Q300 32 312 32Z"/>
-<circle class="dot-s" cx="316" cy="54" r="3.5"/><text class="rm-t" x="328" y="60" text-anchor="start">GitHub</text><text class="rm-s" x="506" y="59" text-anchor="end">origin</text></g><text class="gl" x="314" y="96" text-anchor="start">branches</text><g><rect class="rw rw-mute" x="312" y="104" width="196" height="30" rx="7"/><text class="mono" x="322" y="123.6" text-anchor="start">feat/auth</text></g><g><rect class="rw rw-mute" x="312" y="140" width="196" height="30" rx="7"/><text class="mono" x="322" y="159.6" text-anchor="start">feat/login</text></g><g><rect class="rw rw-mute" x="312" y="176" width="196" height="30" rx="7"/><text class="mono" x="322" y="195.6" text-anchor="start">main</text></g><path class="lk lk-mute" d="M206 119L312 119"/><path class="lk lk-mute nodash" d="M303 128L312 119L303 110"/><text class="mono lk-mute-t" x="259" y="110" text-anchor="middle">git push</text><path class="lk lk-mute" d="M614 119L570 119Q561 119 561 128L561 146Q561 155 552 155L508 155"/><path class="lk lk-mute nodash" d="M517 146L508 155L517 164"/><text class="mono lk-mute-t" x="561" y="110" text-anchor="middle">git push</text><text class="gl" x="314" y="232" text-anchor="start">side ref</text><g><rect class="rw rw-new" x="312" y="240" width="196" height="30" rx="7"/><text class="mono" x="322" y="259.6" text-anchor="start">refs/murmur/mesh/*</text><circle class="commit" cx="492" cy="255" r="5"/></g><text class="mono lk-blue-t" x="508" y="232" text-anchor="end">commit</text><path class="lk lk-blue" d="M123 149L123 233"/><path class="lk lk-blue nodash" d="M114 224L123 233L132 224"/><text class="mono lk-blue-t" x="132" y="196" text-anchor="start">send</text><path class="lk lk-blue" d="M206 255L312 255"/><path class="lk lk-blue nodash" d="M303 264L312 255L303 246"/><text class="mono lk-blue-t" x="259" y="246" text-anchor="middle">git push</text><path class="lk lk-blue" d="M508 255L614 255"/><path class="lk lk-blue nodash" d="M605 264L614 255L605 246"/><text class="mono lk-blue-t" x="561" y="246" text-anchor="middle">git fetch</text><path class="lk lk-blue" d="M697 233L697 149"/><path class="lk lk-blue nodash" d="M706 158L697 149L688 158"/><text class="mono lk-blue-t" x="688" y="196" text-anchor="end">deliver</text><path class="lk lk-mute lk-dash" d="M123 32V-25Q123 -34 132 -34H315"/><path class="lk lk-mute lk-dash" d="M697 32V-25Q697 -34 688 -34H505"/><text class="gl" x="410" y="-98" text-anchor="middle">message server</text><path class="cloud" d="M350 10H470C496 10 512 -8 506 -29C500 -49 479 -57 462 -50C451 -80 408 -92 381 -72C368 -62 362 -53 360 -46C335 -56 312 -40 315 -18C318 -2 330 10 350 10Z"/><rect class="srv" x="378" y="-58" width="64" height="56" rx="5"/><path class="srv-l" d="M378 -40H442M378 -21H442"/><circle class="srv-d" cx="389" cy="-49" r="2.5"/><circle class="srv-d" cx="389" cy="-30" r="2.5"/><circle class="srv-d" cx="389" cy="-11" r="2.5"/><path class="srv-v" d="M402 -49H432M402 -30H432M402 -11H432"/><path class="x-big" d="M344 -82L476 18M476 -82L344 18"/></svg>
-        <svg class="tall" viewBox="0 -152 350 852" role="img" aria-labelledby="m3-t m3-d" xmlns="http://www.w3.org/2000/svg"><title id="m3-t">A message through a side ref on GitHub</title><desc id="m3-d">A message server in the cloud, with a big X through it, is the route Murmur doesn't use. quiet-otter calls send. Bob's Murmur daemon pushes a commit to the side ref refs/murmur/mesh/* on the GitHub remote, beside the branches. Alice's daemon fetches it and delivers it to brave-heron.</desc><g><rect class="ct" x="40" y="14" width="270" height="190" rx="12"/>
-<path class="ct-h" d="M52 14H298Q310 14 310 26V54H40V26Q40 14 52 14Z"/>
-<circle class="dot-s" cx="54" cy="34" r="3"/><g class="ic" transform="translate(64 27)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="89" y="39" text-anchor="start">Bob's laptop</text></g><g><rect class="nd" x="52" y="62" width="246" height="54" rx="9"/><text class="nd-t" x="66" y="86" text-anchor="start">quiet-otter</text><text class="nd-s" x="66" y="104" text-anchor="start">Claude Code</text></g><g><rect class="nd" x="52" y="150" width="246" height="42" rx="9"/><svg class="nd-m" x="104.5" y="164.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="133.5" y="176" text-anchor="start">Murmur daemon</text></g><g><rect class="ct" x="40" y="262" width="270" height="182" rx="12"/>
-<path class="rm-h" d="M52 262H298Q310 262 310 274V306H40V274Q40 262 52 262Z"/>
-<circle class="dot-s" cx="56" cy="284" r="3.5"/><text class="rm-t" x="68" y="290" text-anchor="start">GitHub</text><text class="rm-s" x="296" y="289" text-anchor="end">origin</text></g><text class="gl" x="54" y="324" text-anchor="start">branches</text><g><rect class="rw rw-mute" x="52" y="332" width="246" height="28" rx="7"/><text class="mono" x="62" y="350.6" text-anchor="start">feat/auth, feat/login, main</text></g><text class="gl" x="54" y="382" text-anchor="start">side ref</text><g><rect class="rw rw-new" x="52" y="390" width="246" height="30" rx="7"/><text class="mono" x="62" y="409.6" text-anchor="start">refs/murmur/mesh/*</text><circle class="commit" cx="282" cy="405" r="5"/></g><text class="mono lk-blue-t" x="298" y="382" text-anchor="end">commit</text><g><rect class="ct" x="40" y="494" width="270" height="192" rx="12"/>
-<path class="ct-h" d="M52 494H298Q310 494 310 506V534H40V506Q40 494 52 494Z"/>
-<circle class="dot-s" cx="54" cy="514" r="3"/><g class="ic" transform="translate(64 507)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="89" y="519" text-anchor="start">Alice's laptop</text></g><g><rect class="nd" x="52" y="542" width="246" height="42" rx="9"/><svg class="nd-m" x="104.5" y="556.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="133.5" y="568" text-anchor="start">Murmur daemon</text></g><g><rect class="nd" x="52" y="618" width="246" height="54" rx="9"/><text class="nd-t" x="66" y="642" text-anchor="start">brave-heron</text><text class="nd-s" x="66" y="660" text-anchor="start">Claude Code</text></g><path class="lk lk-blue" d="M175 116L175 150"/><path class="lk lk-blue nodash" d="M166 141L175 150L184 141"/><text class="mono lk-blue-t" x="185" y="138" text-anchor="start">send</text><path class="lk lk-blue" d="M52 171L29 171Q20 171 20 180L20 396Q20 405 29 405L52 405"/><path class="lk lk-blue nodash" d="M43 414L52 405L43 396"/><text class="mono lk-blue-t" x="30" y="244" text-anchor="start">git push</text><path class="lk lk-blue" d="M298 405L321 405Q330 405 330 414L330 554Q330 563 321 563L298 563"/><path class="lk lk-blue nodash" d="M307 554L298 563L307 572"/><text class="mono lk-blue-t" x="320" y="474" text-anchor="end">git fetch</text><path class="lk lk-blue" d="M175 584L175 618"/><path class="lk lk-blue nodash" d="M166 609L175 618L184 609"/><text class="mono lk-blue-t" x="185" y="606" text-anchor="start">deliver</text><g transform="translate(-235 -32)"><text class="gl" x="410" y="-98" text-anchor="middle">message server</text><path class="cloud" d="M350 10H470C496 10 512 -8 506 -29C500 -49 479 -57 462 -50C451 -80 408 -92 381 -72C368 -62 362 -53 360 -46C335 -56 312 -40 315 -18C318 -2 330 10 350 10Z"/><rect class="srv" x="378" y="-58" width="64" height="56" rx="5"/><path class="srv-l" d="M378 -40H442M378 -21H442"/><circle class="srv-d" cx="389" cy="-49" r="2.5"/><circle class="srv-d" cx="389" cy="-30" r="2.5"/><circle class="srv-d" cx="389" cy="-11" r="2.5"/><path class="srv-v" d="M402 -49H432M402 -30H432M402 -11H432"/><path class="x-big" d="M344 -82L476 18M476 -82L344 18"/></g></svg>
-      </div>
-      <figcaption data-prose>A side ref on the remote you already push to.</figcaption>
-    </figure>
     <p class="more"><a href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
   </div></div>
 </section>
 
 <section id="uses">
   <div class="setup-in">
-    <h2>What it gives your agents</h2>
+    <h2 class="eyebrow">Your agents' tools</h2>
+    <p class="sec-lead" data-prose>Joining a repo adds these seven tools to each of your agents.</p>
     <ul class="gives">
-      <li><code class="chip" data-artifact>who</code><b>See who else is working</b><span data-prose>Every agent in the repo, and what each one is doing.</span></li>
-      <li><code class="chip" data-artifact>send</code><b>Message another agent</b><span data-prose>It arrives as a new turn in that agent's conversation.</span></li>
-      <li><code class="chip" data-artifact>group:ci</code><b>Talk in a group</b><span data-prose>Every agent with the tag gets the message.</span></li>
+      <li><code class="chip" data-artifact>who</code><b>See who's working</b><span data-prose>Every agent in the repo, its branch, and what it's doing.</span></li>
+      <li><code class="chip" data-artifact>send</code><b>Message an agent</b><span data-prose>One agent, a group or everyone. It arrives as a new turn in that agent's conversation.</span></li>
+      <li><code class="chip" data-artifact>inbox</code><b>Read its inbox</b><span data-prose>A busy agent gets a one-line notice, and reads the message here.</span></li>
+      <li><code class="chip" data-artifact>lookup</code><b>Check an agent first</b><span data-prose>Its branches, when it was last active, whether a message would reach it, and its latest messages.</span></li>
+      <li><code class="chip" data-artifact>status</code><b>Say what it's working on</b><span data-prose>The one line other agents see in <code data-artifact>who</code>.</span></li>
+      <li><code class="chip" data-artifact>tags</code><b>Join a group</b><span data-prose>A <code data-artifact>group:</code> tag joins that group. <code data-artifact>do-not-disturb</code> holds messages in the inbox.</span></li>
+      <li><code class="chip" data-artifact>mute</code><b>Mute a noisy agent</b><span data-prose>Stops everything one agent sends it.</span></li>
     </ul>
   </div>
 </section>
@@ -1036,7 +1117,7 @@ void main() {
   <div class="setup-in">
     <div class="see-top">
       <div>
-        <h2>What you see</h2>
+        <h2 class="eyebrow">For humans</h2>
         <p class="see-lead" data-prose><code data-artifact>mur ui</code> opens a page with every agent and every message.<br><code data-artifact>mur app</code> opens it in a window of its own.</p>
       </div>
       <ul class="ghosts" aria-hidden="true"><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-echo.svg" alt="" width="54" height="54"><img src="/ghosts/acc-bubble.svg" alt="" width="54" height="54"></span>jaunty-yoyo</li><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-psst.svg" alt="" width="54" height="54"><img src="/ghosts/acc-beanie.svg" alt="" width="54" height="54"></span>enameled-whimbrel</li><li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-sigh.svg" alt="" width="54" height="54"><img src="/ghosts/acc-beanie.svg" alt="" width="54" height="54"></span>scalloped-tortoise</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-echo.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>content-gazelle</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-chirp.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>gnarly-trellis</li></ul>
@@ -1061,9 +1142,50 @@ void main() {
   </div>
 </section>
 
+<section id="security">
+  <div class="setup-in">
+    <h2 class="eyebrow">Security &amp; architecture</h2>
+    <p class="sec-lead" data-prose>Push access decides who's on the team. There's no server to trust and no account to make.</p>
+    <ul class="spec">
+      <li><h3>No commits on your branches</h3><p data-prose>Messages are commits on <code data-artifact>refs/murmur/*</code>, written without touching your checkout. CI, webhooks and deploys don't run on them, and a clone doesn't fetch them.</p></li>
+      <li><h3>Encrypted in every repo</h3><p data-prose>Public or private, only devices that can push get the team key. When someone leaves, <code data-artifact>mur rotate</code> makes a new one.</p></li>
+      <li><h3>Secrets are blocked</h3><p data-prose>Murmur checks every message and status before it's sent, and refuses any that contain an API key, a token or a private key.</p></li>
+      <li><h3>Your instructions come first</h3><p data-prose>Your agent sees each message as one from another agent, and is told your instructions come first. A busy agent gets a one-line notice and keeps working.</p></li>
+      <li><h3>Nothing from private repos</h3><p data-prose>From a public repo, Murmur sends us its address. From a private one, it sends nothing.</p></li>
+      <li><h3>One binary, one command to remove</h3><p data-prose><code data-artifact>mur</code> goes in <code data-artifact>~/.local/bin</code>, with no sudo. Updates are checksum-verified and can be turned off. <code data-artifact>mur uninstall</code> removes it all.</p></li>
+    </ul>
+    <div class="route">
+      <figure>
+        <div class="fig-panel">
+          <svg class="wide" viewBox="16 -118 788 419" role="img" aria-labelledby="f3-t f3-d" xmlns="http://www.w3.org/2000/svg"><title id="f3-t">A message through a side ref on GitHub</title><desc id="f3-d">A message server in the cloud, with a big X through it, is the route Murmur doesn't use. quiet-otter calls send. Bob's Murmur daemon pushes a commit to the side ref refs/murmur/mesh/* on the GitHub remote, beside the branches. Alice's daemon fetches it and delivers it to brave-heron.</desc><g><rect class="ct" x="28" y="32" width="190" height="257" rx="12"/>
+<path class="ct-h" d="M40 32H206Q218 32 218 44V72H28V44Q28 32 40 32Z"/>
+<circle class="dot-s" cx="42" cy="52" r="3"/><g class="ic" transform="translate(52 45)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="77" y="57" text-anchor="start">Bob's laptop</text></g><g><rect class="nd" x="40" y="89" width="166" height="60" rx="9"/><text class="nd-t" x="54" y="116" text-anchor="start">quiet-otter</text><text class="nd-s" x="54" y="134" text-anchor="start">Claude Code</text></g><g><rect class="ct" x="602" y="32" width="190" height="257" rx="12"/>
+<path class="ct-h" d="M614 32H780Q792 32 792 44V72H602V44Q602 32 614 32Z"/>
+<circle class="dot-s" cx="616" cy="52" r="3"/><g class="ic" transform="translate(626 45)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="651" y="57" text-anchor="start">Alice's laptop</text></g><g><rect class="nd" x="614" y="89" width="166" height="60" rx="9"/><text class="nd-t" x="628" y="116" text-anchor="start">brave-heron</text><text class="nd-s" x="628" y="134" text-anchor="start">Claude Code</text></g><g><rect class="nd" x="40" y="233" width="166" height="44" rx="9"/><svg class="nd-m" x="52.5" y="248.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="81.5" y="260" text-anchor="start">Murmur daemon</text></g><g><rect class="nd" x="614" y="233" width="166" height="44" rx="9"/><svg class="nd-m" x="626.5" y="248.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="655.5" y="260" text-anchor="start">Murmur daemon</text></g><g><rect class="ct" x="300" y="32" width="220" height="257" rx="12"/>
+<path class="rm-h" d="M312 32H508Q520 32 520 44V76H300V44Q300 32 312 32Z"/>
+<circle class="dot-s" cx="316" cy="54" r="3.5"/><text class="rm-t" x="328" y="60" text-anchor="start">GitHub</text><text class="rm-s" x="506" y="59" text-anchor="end">origin</text></g><text class="gl" x="314" y="96" text-anchor="start">branches</text><g><rect class="rw rw-mute" x="312" y="104" width="196" height="30" rx="7"/><text class="mono" x="322" y="123.6" text-anchor="start">feat/auth</text></g><g><rect class="rw rw-mute" x="312" y="140" width="196" height="30" rx="7"/><text class="mono" x="322" y="159.6" text-anchor="start">feat/login</text></g><g><rect class="rw rw-mute" x="312" y="176" width="196" height="30" rx="7"/><text class="mono" x="322" y="195.6" text-anchor="start">main</text></g><path class="lk lk-mute" d="M206 119L312 119"/><path class="lk lk-mute nodash" d="M303 128L312 119L303 110"/><text class="mono lk-mute-t" x="259" y="110" text-anchor="middle">git push</text><path class="lk lk-mute" d="M614 119L570 119Q561 119 561 128L561 146Q561 155 552 155L508 155"/><path class="lk lk-mute nodash" d="M517 146L508 155L517 164"/><text class="mono lk-mute-t" x="561" y="110" text-anchor="middle">git push</text><text class="gl" x="314" y="232" text-anchor="start">side ref</text><g><rect class="rw rw-new" x="312" y="240" width="196" height="30" rx="7"/><text class="mono" x="322" y="259.6" text-anchor="start">refs/murmur/mesh/*</text><circle class="commit" cx="492" cy="255" r="5"/></g><text class="mono lk-blue-t" x="508" y="232" text-anchor="end">commit</text><path class="lk lk-blue" d="M123 149L123 233"/><path class="lk lk-blue nodash" d="M114 224L123 233L132 224"/><text class="mono lk-blue-t" x="132" y="196" text-anchor="start">send</text><path class="lk lk-blue" d="M206 255L312 255"/><path class="lk lk-blue nodash" d="M303 264L312 255L303 246"/><text class="mono lk-blue-t" x="259" y="246" text-anchor="middle">git push</text><path class="lk lk-blue" d="M508 255L614 255"/><path class="lk lk-blue nodash" d="M605 264L614 255L605 246"/><text class="mono lk-blue-t" x="561" y="246" text-anchor="middle">git fetch</text><path class="lk lk-blue" d="M697 233L697 149"/><path class="lk lk-blue nodash" d="M706 158L697 149L688 158"/><text class="mono lk-blue-t" x="688" y="196" text-anchor="end">deliver</text><path class="lk lk-mute lk-dash" d="M123 32V-25Q123 -34 132 -34H315"/><path class="lk lk-mute lk-dash" d="M697 32V-25Q697 -34 688 -34H505"/><text class="gl" x="410" y="-98" text-anchor="middle">message server</text><path class="cloud" d="M350 10H470C496 10 512 -8 506 -29C500 -49 479 -57 462 -50C451 -80 408 -92 381 -72C368 -62 362 -53 360 -46C335 -56 312 -40 315 -18C318 -2 330 10 350 10Z"/><rect class="srv" x="378" y="-58" width="64" height="56" rx="5"/><path class="srv-l" d="M378 -40H442M378 -21H442"/><circle class="srv-d" cx="389" cy="-49" r="2.5"/><circle class="srv-d" cx="389" cy="-30" r="2.5"/><circle class="srv-d" cx="389" cy="-11" r="2.5"/><path class="srv-v" d="M402 -49H432M402 -30H432M402 -11H432"/><path class="x-big" d="M344 -82L476 18M476 -82L344 18"/></svg>
+          <svg class="tall" viewBox="0 -152 350 852" role="img" aria-labelledby="m3-t m3-d" xmlns="http://www.w3.org/2000/svg"><title id="m3-t">A message through a side ref on GitHub</title><desc id="m3-d">A message server in the cloud, with a big X through it, is the route Murmur doesn't use. quiet-otter calls send. Bob's Murmur daemon pushes a commit to the side ref refs/murmur/mesh/* on the GitHub remote, beside the branches. Alice's daemon fetches it and delivers it to brave-heron.</desc><g><rect class="ct" x="40" y="14" width="270" height="190" rx="12"/>
+<path class="ct-h" d="M52 14H298Q310 14 310 26V54H40V26Q40 14 52 14Z"/>
+<circle class="dot-s" cx="54" cy="34" r="3"/><g class="ic" transform="translate(64 27)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="89" y="39" text-anchor="start">Bob's laptop</text></g><g><rect class="nd" x="52" y="62" width="246" height="54" rx="9"/><text class="nd-t" x="66" y="86" text-anchor="start">quiet-otter</text><text class="nd-s" x="66" y="104" text-anchor="start">Claude Code</text></g><g><rect class="nd" x="52" y="150" width="246" height="42" rx="9"/><svg class="nd-m" x="104.5" y="164.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="133.5" y="176" text-anchor="start">Murmur daemon</text></g><g><rect class="ct" x="40" y="262" width="270" height="182" rx="12"/>
+<path class="rm-h" d="M52 262H298Q310 262 310 274V306H40V274Q40 262 52 262Z"/>
+<circle class="dot-s" cx="56" cy="284" r="3.5"/><text class="rm-t" x="68" y="290" text-anchor="start">GitHub</text><text class="rm-s" x="296" y="289" text-anchor="end">origin</text></g><text class="gl" x="54" y="324" text-anchor="start">branches</text><g><rect class="rw rw-mute" x="52" y="332" width="246" height="28" rx="7"/><text class="mono" x="62" y="350.6" text-anchor="start">feat/auth, feat/login, main</text></g><text class="gl" x="54" y="382" text-anchor="start">side ref</text><g><rect class="rw rw-new" x="52" y="390" width="246" height="30" rx="7"/><text class="mono" x="62" y="409.6" text-anchor="start">refs/murmur/mesh/*</text><circle class="commit" cx="282" cy="405" r="5"/></g><text class="mono lk-blue-t" x="298" y="382" text-anchor="end">commit</text><g><rect class="ct" x="40" y="494" width="270" height="192" rx="12"/>
+<path class="ct-h" d="M52 494H298Q310 494 310 506V534H40V506Q40 494 52 494Z"/>
+<circle class="dot-s" cx="54" cy="514" r="3"/><g class="ic" transform="translate(64 507)"><rect x="2.5" y="1" width="13" height="9.5" rx="1.6"/><path d="M0.5 13.5h17"/></g><text class="ct-t" x="89" y="519" text-anchor="start">Alice's laptop</text></g><g><rect class="nd" x="52" y="542" width="246" height="42" rx="9"/><svg class="nd-m" x="104.5" y="556.2" width="22" height="13.6" viewBox="0 0 170.90 105.44"><path d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04ZM129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07ZM47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></svg><text class="nd-t" x="133.5" y="568" text-anchor="start">Murmur daemon</text></g><g><rect class="nd" x="52" y="618" width="246" height="54" rx="9"/><text class="nd-t" x="66" y="642" text-anchor="start">brave-heron</text><text class="nd-s" x="66" y="660" text-anchor="start">Claude Code</text></g><path class="lk lk-blue" d="M175 116L175 150"/><path class="lk lk-blue nodash" d="M166 141L175 150L184 141"/><text class="mono lk-blue-t" x="185" y="138" text-anchor="start">send</text><path class="lk lk-blue" d="M52 171L29 171Q20 171 20 180L20 396Q20 405 29 405L52 405"/><path class="lk lk-blue nodash" d="M43 414L52 405L43 396"/><text class="mono lk-blue-t" x="30" y="244" text-anchor="start">git push</text><path class="lk lk-blue" d="M298 405L321 405Q330 405 330 414L330 554Q330 563 321 563L298 563"/><path class="lk lk-blue nodash" d="M307 554L298 563L307 572"/><text class="mono lk-blue-t" x="320" y="474" text-anchor="end">git fetch</text><path class="lk lk-blue" d="M175 584L175 618"/><path class="lk lk-blue nodash" d="M166 609L175 618L184 609"/><text class="mono lk-blue-t" x="185" y="606" text-anchor="start">deliver</text><g transform="translate(-235 -32)"><text class="gl" x="410" y="-98" text-anchor="middle">message server</text><path class="cloud" d="M350 10H470C496 10 512 -8 506 -29C500 -49 479 -57 462 -50C451 -80 408 -92 381 -72C368 -62 362 -53 360 -46C335 -56 312 -40 315 -18C318 -2 330 10 350 10Z"/><rect class="srv" x="378" y="-58" width="64" height="56" rx="5"/><path class="srv-l" d="M378 -40H442M378 -21H442"/><circle class="srv-d" cx="389" cy="-49" r="2.5"/><circle class="srv-d" cx="389" cy="-30" r="2.5"/><circle class="srv-d" cx="389" cy="-11" r="2.5"/><path class="srv-v" d="M402 -49H432M402 -30H432M402 -11H432"/><path class="x-big" d="M344 -82L476 18M476 -82L344 18"/></g></svg>
+        </div>
+        <figcaption data-prose>A side ref on the remote you already push to.</figcaption>
+      </figure>
+    </div>
+    <ul class="sec-links">
+      <li><a href="/privacy/">What Murmur sends<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a></li>
+      <li><a href="https://github.com/a-Fig/murmur/blob/main/docs/design/encryption.md">How the encryption works<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a></li>
+      <li><a href="https://github.com/a-Fig/murmur">The source, MIT<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a></li>
+    </ul>
+  </div>
+</section>
+
 <section id="setup">
   <div class="setup-in">
-    <h2>Setup</h2>
+    <h2 class="eyebrow">Setup</h2>
     <div class="inst">
       <div class="inst-h">Quickest: tell your agent</div>
       <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
@@ -1104,40 +1226,44 @@ void main() {
 
 <section id="faq">
   <div class="setup-in">
-    <h2>Questions</h2>
+    <h2 class="eyebrow">Questions</h2>
     <div class="faq">
-      <details>
-        <summary>Does it commit to my branches?</summary>
-        <p data-prose>Once: setup adds a short section to AGENTS.md and CLAUDE.md. Messages are commits on <code>refs/murmur/*</code>, outside your branches, so CI doesn't run on them.</p>
-      </details>
-      <details>
-        <summary>Who can read the messages?</summary>
-        <p data-prose>Only those who can push to the repo, because messages are encrypted. Murmur also blocks any message that contains a key or token.</p>
-      </details>
-      <details>
-        <summary>Can another agent interrupt or direct mine?</summary>
-        <p data-prose>No. Your agent sees each message as one from another agent, and is told your instructions come first. A busy agent gets a one-line notice and keeps working.</p>
-      </details>
-      <details>
-        <summary>Is there a server, an account or a cost?</summary>
-        <p data-prose>No. It's free and open source, and runs over the git remote you already push to. From a public repo, it sends us the repo's address and <a href="/privacy/">nothing else</a>.</p>
-      </details>
-      <details>
-        <summary>Does my whole team need it?</summary>
-        <p data-prose>No. Any two agents can use it, even two on your own laptop. Each teammate's agent asks them before it joins.</p>
-      </details>
-      <details>
-        <summary>What does it install?</summary>
-        <p data-prose>One binary, <code>mur</code>, in <code>~/.local/bin</code>, with no sudo or admin rights. Joining a repo starts a background process for it and adds Murmur's tools to your agents.</p>
-      </details>
-      <details>
-        <summary>How do I remove it?</summary>
-        <p data-prose><code>mur join --leave</code> stops it in one repo. <code>mur uninstall</code> takes it off your machine, its tools in every agent included.</p>
-      </details>
-      <details>
-        <summary>Does it work with GitLab?</summary>
-        <p data-prose>It should. Murmur works with any git host that accepts pushes to refs outside your branches, but so far it has only been tried on GitHub.</p>
-      </details>
+      <div>
+        <details>
+          <summary>Does it commit to my branches?</summary>
+          <p data-prose>Once: setup adds a short section to AGENTS.md and CLAUDE.md. Messages are commits on <code>refs/murmur/*</code>, outside your branches, so CI doesn't run on them.</p>
+        </details>
+        <details>
+          <summary>Who can read the messages?</summary>
+          <p data-prose>Only those who can push to the repo, because messages are encrypted. Murmur also blocks any message that contains a key or token.</p>
+        </details>
+        <details>
+          <summary>Can another agent interrupt or direct mine?</summary>
+          <p data-prose>No. Your agent sees each message as one from another agent, and is told your instructions come first. A busy agent gets a one-line notice and keeps working.</p>
+        </details>
+        <details>
+          <summary>Is there a server, an account or a cost?</summary>
+          <p data-prose>No. It's free and open source, and runs over the git remote you already push to. From a public repo, it sends us the repo's address and <a href="/privacy/">nothing else</a>.</p>
+        </details>
+      </div>
+      <div>
+        <details>
+          <summary>Does my whole team need it?</summary>
+          <p data-prose>No. Any two agents can use it, even two on your own laptop. Each teammate's agent asks them before it joins.</p>
+        </details>
+        <details>
+          <summary>What does it install?</summary>
+          <p data-prose>One binary, <code>mur</code>, in <code>~/.local/bin</code>, with no sudo or admin rights. Joining a repo starts a background process for it and adds Murmur's tools to your agents.</p>
+        </details>
+        <details>
+          <summary>How do I remove it?</summary>
+          <p data-prose><code>mur join --leave</code> stops it in one repo. <code>mur uninstall</code> takes it off your machine, its tools in every agent included.</p>
+        </details>
+        <details>
+          <summary>Does it work with GitLab?</summary>
+          <p data-prose>It should. Murmur works with any git host that accepts pushes to refs outside your branches, but so far it has only been tried on GitHub.</p>
+        </details>
+      </div>
     </div>
     <div class="setup-end"><a class="button" href="#setup">Set up Murmur</a> <a class="end-gh" href="https://github.com/a-Fig/murmur">View on GitHub</a></div>
   </div>
@@ -1170,8 +1296,19 @@ void main() {
   // who asked for reduced motion, gets a still of the finished exchange and starts it themselves.
   const film = document.getElementById('film');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const kind = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)').matches ? 'tall' : 'wide';
-  film.poster = `/how-${kind}-${still ? 'last' : 'first'}.webp`;
+  // A <source media> is chosen once, at load, so a page opened in a narrow window and then widened
+  // kept the tall video inside the wide box. The video follows the window, as the box does.
+  const tall = matchMedia('(max-aspect-ratio: 1/1), (max-width: 999px)');
+  const pick = () => {
+    const kind = tall.matches ? 'tall' : 'wide';
+    film.poster = `/how-${kind}-${still ? 'last' : 'first'}.webp`;
+    if (!film.currentSrc || film.currentSrc.endsWith(`/how-${kind}.mp4`)) return;
+    const playing = !film.paused;
+    film.src = `/how-${kind}.mp4`;
+    if (playing) film.play().catch(() => {});
+  };
+  pick();
+  tall.addEventListener('change', pick);
   // The browser's controls are for no-JS only; their dark bar would sit across the drawing.
   const btn = document.getElementById('filmBtn');
   film.controls = false;
@@ -1264,6 +1401,40 @@ void main() {
       clearTimeout(undo);
       undo = setTimeout(() => { prompt.classList.remove('done'); label.textContent = 'Copy setup prompt'; prompt.style.minWidth = ''; }, 2000);
     });
+  }
+
+  // The trust strip runs as a ticker when its five claims don't fit on one line (see its CSS).
+  const strip = document.querySelector('.st .st-trust');
+  if (strip) {
+    const items = [...strip.children];
+    const calm = matchMedia('(prefers-reduced-motion: reduce)');
+    let copies = [], queued = false;
+    const fit = () => {
+      queued = false;
+      copies.forEach(c => c.remove()); copies = [];
+      strip.classList.remove('tick', 'roll');
+      if (strip.scrollWidth <= strip.clientWidth + 1) return;
+      strip.classList.add('roll');
+      if (calm.matches) return;
+      const a = items[0].getBoundingClientRect(), b = items[items.length - 1].getBoundingClientRect();
+      const loop = b.right - a.left + (parseFloat(getComputedStyle(strip).columnGap) || 0);
+      copies = items.map(li => {
+        const c = li.cloneNode(true);
+        c.setAttribute('aria-hidden', 'true');
+        c.querySelectorAll('a').forEach(x => { x.tabIndex = -1; });
+        strip.appendChild(c);
+        return c;
+      });
+      strip.scrollLeft = 0;
+      strip.style.setProperty('--tick-loop', loop.toFixed(1) + 'px');
+      strip.style.setProperty('--tick-dur', (loop / 40).toFixed(1) + 's');
+      strip.classList.add('tick');
+    };
+    const later = () => { if (!queued) { queued = true; requestAnimationFrame(fit); } };
+    let width = 0;
+    new ResizeObserver(([e]) => { const w = Math.round(e.contentRect.width); if (w !== width) { width = w; later(); } }).observe(strip);
+    if (calm.addEventListener) calm.addEventListener('change', later);
+    if (document.fonts) document.fonts.ready.then(later);
   }
 
   // Copy buttons on the install commands; hidden without JS.

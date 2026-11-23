@@ -30,8 +30,9 @@ func rateOptions() Options {
 	return opt
 }
 
-func rateDaemon() *Daemon {
-	d := &Daemon{opt: rateOptions(), sessions: map[string]*session{}, device: "here-0001",
+func rateDaemon(t *testing.T) *Daemon {
+	t.Helper()
+	d := &Daemon{opt: rateOptions(), dir: t.TempDir(), sessions: map[string]*session{}, device: "here-0001",
 		log: log.New(io.Discard, "", 0), st: state{Inbox: map[string][]*inMsg{}, Stopped: map[string]time.Time{}}}
 	d.sessions["bbbbbb"] = &session{id: "bbbbbb"}
 	return d
@@ -40,7 +41,7 @@ func rateDaemon() *Daemon {
 // With a session open and nothing said, the wait doubles from Poll to PollCap and stays there.
 func TestPollEveryBacksOffToTheCap(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	calm := d.opt.Poll
 	var got []time.Duration
 	for range 5 {
@@ -64,7 +65,7 @@ func TestPollEveryBacksOffToTheCap(t *testing.T) {
 // What moves a conversation sets the poll to Poll for FastFor, and the wait doubles again after.
 func TestPollEveryIsFastAroundAConversation(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	d.mu.Lock()
 	d.noteConversationLocked()
 	d.mu.Unlock()
@@ -82,7 +83,7 @@ func TestPollEveryIsFastAroundAConversation(t *testing.T) {
 // Quiet mode is as it was: QuietPoll, whatever was said lately.
 func TestPollEveryQuietIsUnchanged(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	delete(d.sessions, "bbbbbb")
 	d.mu.Lock()
 	d.noteConversationLocked()
@@ -105,7 +106,7 @@ func TestWhatMovesAConversation(t *testing.T) {
 		defer d.mu.Unlock()
 		return !d.convAt.IsZero()
 	}
-	d := rateDaemon()
+	d := rateDaemon(t)
 	d.queueLocked(msg("elsewhere-0001/bbbbbb"), modeNormal)
 	d.queueLocked(msg("here-0001/"+proto.CLISession), modeNormal)
 	if moved(d) {
@@ -116,7 +117,7 @@ func TestWhatMovesAConversation(t *testing.T) {
 		t.Errorf("a message received for a session here did not move the conversation")
 	}
 
-	d = rateDaemon()
+	d = rateDaemon(t)
 	d.mu.Lock()
 	d.newSessionLocked(&proto.Hello{ID: "cccccc"}, "claude-code", "", "cccccc")
 	d.mu.Unlock()
@@ -427,7 +428,7 @@ func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
 // conversation too, as one received does.
 func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	d.opt.StoppedInbox = time.Hour
 	d.st.SessionNames = map[string]string{"aaaaaa": "quiet-otter"}
 	d.st.Stopped["aaaaaa"] = time.Now().Add(-time.Minute)

@@ -547,6 +547,12 @@ func TestMessagesNoticesInbox(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "AKIAIOSFODNN7EXAMPLE​note"}); !strings.Contains(r.Error, "not sent") {
 		t.Fatalf("secret joined to the next word in a subject not blocked: %+v", r)
 	}
+	// A status is checked as sent too (#1048), and so is what of it is past the line kept.
+	for _, doing := range []string{"AKIAIOSFODNN7EXAMPLE\u200bnote", strings.Repeat("x ", 55) + "AKIAIOSFODNN7EXAMPLE"} {
+		if r := a.do(proto.Request{Op: proto.OpStatus, Session: "aaaaaa", Doing: doing}); r.OK || !strings.Contains(r.Error, "an AWS access key") {
+			t.Fatalf("secret in a status %q not blocked: %+v", doing, r)
+		}
+	}
 }
 
 func TestHistoryIsNotReplayed(t *testing.T) {
