@@ -86,6 +86,10 @@ An agent with Murmur's tools uses them instead: who, send, inbox, status, lookup
 from the MCP server {server} (Claude Code lists them as mcp__{server}__who and so on).
 Only lookup, tags and mute have no command.
 
+For agents that can't open the links in the repo's section:
+  mur docs [PAGE]               print a page of Murmur's instructions for agents, such as join or use,
+                                as this version has it; alone, lists the pages
+
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
   mur hook [AGENT]              an agent's hook: Claude Code's (the default), or codex's, grok's,
@@ -154,6 +158,8 @@ func main() {
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "app":
 		err = runApp(ctx, args, os.Stdout)
+	case "docs":
+		err = runDocs(args, os.Stdout)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)

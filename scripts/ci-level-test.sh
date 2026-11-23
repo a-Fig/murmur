@@ -57,6 +57,7 @@ want go internal/web/static/assets/style.css internal/web/web.go
 want go internal/daemon/daemon.go cmd/mur/main.go
 want go README.md
 want go docs/agents/use.md
+want go docs/agents/pages.go
 want go internal/skills/murmur/SKILL.md
 want go cmd/mur/testdata/page.md
 want go docs/agents/pictures/turn.png

@@ -18,7 +18,10 @@ in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
   version of about twenty): the repo uses Murmur, and two links into `docs/agents/` by raw GitHub
   address, which work without login. `join.md` is for an agent without the tools (ask the user, say
   what joining does, install, run `mur join`); `use.md` is for one with them. A test holds the links
-  to files that exist. An older `init` put an `.mcp.json` entry and a hook in
+  to files that exist. An agent whose sandbox blocks its web fetch can't open them, so mur carries
+  the pages too: `mur docs join` prints one as the installed version has it (#831).
+  `docs/agents/pages.go` embeds the files themselves, so no copy can drift. The section still gives
+  the links (Tyler, 2026-11-16). With no network at all, installing and joining fail anyway. An older `init` put an `.mcp.json` entry and a hook in
   `.claude/settings.json`; `init` now removes Murmur's own entries from those. Committing installs
   nothing on a teammate's machine.
 - **`init` pushes its commit to the default branch** (Tyler, 2026-11-01, #119). Run in a T3
