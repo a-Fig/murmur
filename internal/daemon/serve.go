@@ -589,7 +589,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		return r
 	}
 	if !registered && req.Op != proto.OpNotices && req.Op != proto.OpTurnEnd && req.Op != proto.OpPing {
-		return fail("this session isn't registered with the daemon (it may have just restarted); try again in a few seconds")
+		return fail(proto.NotRegistered)
 	}
 	from := bus.Addr(d.device, sess)
 	if req.Op == proto.OpStatus || req.Op == proto.OpSend || req.Op == proto.OpTags || req.Op == proto.OpMute {
