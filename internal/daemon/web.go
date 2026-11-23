@@ -152,6 +152,9 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	if d.opt.Repos != nil {
 		page.WithRepos(d.opt.Repos)
 	}
+	if d.opt.Updates != nil {
+		page.WithUpdates(d.opt.Updates)
+	}
 	d.page.Store(page)
 	// Any local user can connect, and a connection Go keeps open costs the daemon a file descriptor:
 	// one that sends a request and then sits idle would be kept for good, and enough of them would

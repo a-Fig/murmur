@@ -101,3 +101,17 @@ func TestStarAskedIsKept(t *testing.T) {
 		t.Fatalf("starAsked should outlast other changes: served %+v, saved %+v", p, saved)
 	}
 }
+
+// Night, the v3 design's dark version, is a theme the page can save, and the desktop window opens
+// dark for it before the page loads.
+func TestNightIsADarkTheme(t *testing.T) {
+	if !validTheme("night") {
+		t.Fatal("night should be a theme the page can save")
+	}
+	if !DarkFrame("night") {
+		t.Fatal("the desktop window should open dark for Night")
+	}
+	if validTheme("midnight") {
+		t.Fatal("an unknown theme should be refused")
+	}
+}

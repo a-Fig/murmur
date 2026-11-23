@@ -157,9 +157,14 @@ func TestCodexEditReadsQuotedHeadersWithComments(t *testing.T) {
 		t.Errorf("changed=%v:\n%s\nwant:\n%s", changed, got, want)
 	}
 	// A comment after a value that is already right isn't a difference.
-	commented := "[mcp_servers.murmur]\ncommand = \"/opt/mur\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n"
+	commented := "[mcp_servers.murmur]\ncommand = \"/opt/mur\" # mine\nargs = [\"mcp\", \"--agent\", \"codex\"] # mine [x\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"] # [y\ndefault_tools_approval_mode = \"approve\"\n"
 	if out, changed := edit(t, commented); changed {
 		t.Errorf("rewrote a value that was right:\n%s", out)
+	}
+	// An existing one-line args list with a bracket inside a quoted argument is still replaced in place (#983).
+	bracketArg := "[mcp_servers.murmur]\ncommand = \"/opt/mur\"\nargs = [\"mcp\", \"--x=[\"]\nenv_vars = [\"T3CODE_CLI_PATH\", \"CODEX_HOME\", \"T3CODE_HOME\"]\ndefault_tools_approval_mode = \"approve\"\n"
+	if got, changed := edit(t, bracketArg); !changed || got != tomlTable {
+		t.Errorf("args with bracket in string: changed=%v:\n%s", changed, got)
 	}
 }
 

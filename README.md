@@ -126,11 +126,15 @@ used one of Murmur's tools. An agent Murmur has no tools for, such as Kiro in T3
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
+| `mur updates [off\|on\|nightly\|back]` | How Murmur updates itself on this machine: off, stable releases (on, the default), or prereleases and nightlies too. `back` goes back to the latest stable release from a prerelease, until a newer release is out. Alone, it says what applies in this repo. Settings in `mur ui` has the same choices. |
 | `mur stop`             | Stops this clone's daemon. |
 | `mur rotate [--force]` | Makes a new team key if a collaborator has left the repo (listed with `gh`), so they can't read what is written from then on. `--force` always does. Remove every other way they can push first (deploy keys they added, team access, Apps), or the new key reaches them too. |
 | `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
 
 Every command takes `-C <dir>` to act on another repository.
+
+An agent that can't open the pages the repo's section links to can print them instead:
+`mur docs join`, `mur docs use`, or `mur docs` for the list.
 
 ## How it works
 
@@ -171,10 +175,10 @@ people use Murmur; the address is already public, so there is nothing to turn of
 [privacy page](https://murmur.afig.dev/privacy/) lists what it counts from those public repos.
 
 **Murmur updates itself.** The daemon checks GitHub's releases hourly, and installs a newer `mur`
-after verifying its checksum. To turn that off:
+after verifying its checksum. To turn that off, on this machine:
 
 ```sh
-git config --global murmur.update false
+mur updates off
 ```
 
 [`docs/agents/join.md`](docs/agents/join.md#what-murmurafigdev-receives-and-why) says exactly what

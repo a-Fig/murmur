@@ -35,6 +35,11 @@ type request struct {
 	GitDir string `json:"gitDir,omitempty"`
 }
 
+// FollowEvery is how often the window checks that its daemon is still where the page is, starting
+// it again if it has gone (see follow, in window.go). `mur stop` says so when the window shows its
+// clone (#639).
+const FollowEvery = 10 * time.Second
+
 // maxRequest is as much of a request as is read: a key and a repo's path.
 const maxRequest = 8 << 10
 

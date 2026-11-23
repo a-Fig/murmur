@@ -316,9 +316,12 @@ func TestTokenRequired(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s without token: %d, want 200", path, resp.StatusCode)
 		}
-		if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
-			t.Errorf("GET %s: content type %q, want a JavaScript one", path, ct)
+		if ct := resp.Header.Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+			t.Errorf("GET %s: content type %q, want %q", path, ct, "text/javascript; charset=utf-8")
 		}
+	}
+	if resp := h.do("GET", "/assets/missing.js", host, "", ""); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /assets/missing.js: %d, want 404", resp.StatusCode)
 	}
 	if resp := h.do("GET", "/assets/", host, "", ""); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET /assets/: %d, want 404 (no listing)", resp.StatusCode)
@@ -667,7 +670,7 @@ func TestAppPageSaysSo(t *testing.T) {
 // restart onto an installed one (#240).
 func TestVersionAndRestart(t *testing.T) {
 	src := newFake()
-	src.state.Version = Version{Running: "0.3.0", Latest: "0.3.1", Install: "curl -fsSL https://example.test/install.sh | sh"}
+	src.state.Version = Version{Running: "0.3.0", Latest: "0.3.1", Off: true, CanInstall: true}
 	h := start(t, src, noPRs)
 	got := decode[stateResponse](t, h.ok("GET", "/api/state", ""))
 	if got.Version != src.state.Version {

@@ -72,11 +72,25 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 	d.log.Printf("mode: %s", now)
 	if now == web.ModeInvisible {
 		d.presenceGone.Store(false)
+		// Its presence goes, so its colour looks free, as a stopped daemon's does: back online, it
+		// settles the colour again, and gives it up to whoever picked it meanwhile (#1084).
+		d.mu.Lock()
+		d.colorSettled = false
+		d.mu.Unlock()
 	}
 	if was == web.ModeInvisible {
 		d.kickNames() // what waited, without its own backoff to sit out
 		d.kickMarks()
 		d.kickFiles() // for the prune of files refs that was passed over meanwhile (pruneFiles)
+	}
+	if was == web.ModeInvisible && now != web.ModeInvisible {
+		// It looks at the remote at once, and often for a while, as when a conversation moves: its
+		// colour goes back into its presence only after a sync, and until then its teammates see
+		// it in an automatic one (#1093). A wake alone doesn't end the loop's wait unless the
+		// state calls for a faster rate, so with the poll slowed that was up to PollCap away.
+		d.mu.Lock()
+		d.noteConversationLocked()
+		d.mu.Unlock()
 	}
 	if now == web.ModeOnline {
 		d.mu.Lock()

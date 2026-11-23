@@ -76,7 +76,10 @@ func TestMain(m *testing.M) {
 		// How git did over the whole run, failing or not, added to the file it names (#513). go test
 		// shows a passing package's output only with -v, so CI prints the file in a step of its own.
 		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-			fmt.Fprintf(f, "git in a test run of %s: %s\n", time.Since(started).Round(time.Second), gitStats.summary(24*time.Hour))
+			// With how many tests ran at once, on how many processors, for a run to be set beside
+			// another (scripts/daemon-test-times.sh, #1008).
+			fmt.Fprintf(f, "git in a test run of %s, %s tests at once on %d processors: %s\n", time.Since(started).Round(time.Second),
+				flag.Lookup("test.parallel").Value, runtime.GOMAXPROCS(0), gitStats.summary(24*time.Hour))
 			f.Close()
 		}
 	}

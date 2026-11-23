@@ -67,6 +67,10 @@ For humans:
   mur nickname [NAME|--clear]   call this clone's device NAME, such as your own name: teammates see it
                                 beside the device's ID; --clear takes it off; alone, says what the
                                 device is called
+  mur updates [off|on|nightly|back]
+                                how Murmur updates itself on this machine: off, stable releases (on),
+                                or prereleases and nightlies too; back goes back to the latest stable
+                                from a prerelease, until a newer release is out; alone, says what applies
   mur stop                      stop this clone's daemon
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.
@@ -81,6 +85,10 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
                                 TEXT is then the body
   mur inbox                     read and clear the messages that came as notices
   mur status [TEXT]             set the line others see in who for what you are working on
+
+For agents that can't open the links in the repo's section:
+  mur docs [PAGE]               print a page of Murmur's instructions for agents, such as join or use,
+                                as this version has it; alone, lists the pages
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
@@ -134,6 +142,8 @@ func main() {
 		err = runJoin(ctx, args, os.Stdout)
 	case "nickname":
 		err = runNickname(ctx, args, os.Stdout)
+	case "updates":
+		err = runUpdates(ctx, args, os.Stdout)
 	case "stop":
 		err = runStop(ctx, args, os.Stdout)
 	case "rotate":
@@ -146,6 +156,8 @@ func main() {
 		err = runUI(ctx, args, os.Stdout, browse)
 	case "app":
 		err = runApp(ctx, args, os.Stdout)
+	case "docs":
+		err = runDocs(args, os.Stdout)
 	case "version", "--version":
 		fmt.Println(brand.Command, version)
 		noteNewer(ctx, os.Stderr)
@@ -300,6 +312,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 	log.SetOutput(out)
 	logger := log.New(out, "", log.LstdFlags)
 	releases := newReleaseWatch(version, *gitDir)
+	updates := &updateSetting{running: version, gitDir: *gitDir, check: make(chan struct{}, 1), install: make(chan string, 1), releases: releases}
 	inherited := page
 	page = nil // Run takes it
 	// The record of this machine's clones, for the page's repo picker (#348). Without it the page
@@ -320,9 +333,11 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		Clones: record, Repos: repos, ThemePath: themePath,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report, Check: updates.check, Install: updates.install}, restart)
+			releases.stop()
 		},
 		Version: releases.page,
+		Updates: updates,
 		Report: func(ctx context.Context) {
 			publicrepo.Run(ctx, publicrepo.Options{Version: version, GitDir: *gitDir, Log: logger})
 		}})
@@ -638,5 +653,42 @@ func runStop(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	}
 	fmt.Fprintln(out, "Stopped the daemon.")
+	if appShows(gitDir) {
+		// The window starts its clone's daemon again within desktop.FollowEvery (#639): someone who
+		// stopped it on purpose would otherwise see it come back with no word why.
+		fmt.Fprintf(out, "%s's app has this repo open, so it starts the daemon again within %d seconds.\n",
+			brand.Product, int(desktop.FollowEvery/time.Second))
+	}
 	return nil
+}
+
+// appShows says the app's window is open on the clone at gitDir: its record names a live window,
+// the clone it last showed (last.json) is this one, and the clone hasn't left, as the window starts
+// no daemon for one that has. Neither file is made if it isn't there. last.json can lag the window
+// by up to desktop.FollowEvery: a move from the page's repo menu is recorded at the window's next
+// check, and a window just opened records its clone once that clone's daemon has started.
+func appShows(gitDir string) bool {
+	if !join.Joined(gitDir) {
+		return false
+	}
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		return false
+	}
+	dir := filepath.Join(cfg, brand.Name, "app")
+	shown := lastClone(dir)
+	if shown == "" || !sameDir(shown, gitDir) {
+		return false
+	}
+	return desktop.WindowOpen(filepath.Join(dir, "window.json"))
+}
+
+// sameDir says a and b are one directory, however each is written.
+func sameDir(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	return err == nil && os.SameFile(fa, fb)
 }

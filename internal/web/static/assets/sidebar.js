@@ -13,9 +13,10 @@ import {
   allConversations, sideSessionBody,
 } from "./sessions.js";
 import { tagsOf, shownSessions, tagsGroup, tagButton } from "./tags.js";
-import { avatar, deviceColor, copyText, modeNote } from "./messages.js";
+import { avatar, deviceColor, modeNote } from "./messages.js";
 import { startChat, askForName } from "./picker.js";
 import { settingsRow } from "./settings.js";
+import { updatesRow } from "./updates.js";
 
 export {
   setDrawer, pickSession, connBadge, sidebar, humanTag, restartStuck, updateInfo, versionSection,
@@ -355,8 +356,9 @@ function updateInfo() {
   }
   if (v.ready) return { kind: "ready", text: "Restart to update", title: NAME + to + " is installed. Restart its daemon onto it now.", act: restartNow };
   if (!v.latest) return null;
+  if (v.installing || ui.installing) return { kind: "busy", text: "Installing " + v.latest, title: NAME + " is installing it, as asked." };
   if (v.auto) return { kind: "auto", text: "Updating to " + v.latest, title: NAME + " installs it on its own." };
-  return { kind: "manual", text: v.latest + " is out", title: "Updates are off or failing here. Settings has the command that installs it.", act: () => go("settings") };
+  return { kind: "manual", text: v.latest + " is out", title: (v.off ? "Updates are off here." : "The last update failed here.") + " Settings can install it.", act: () => go("settings") };
 }
 
 function updateIcon(info) {
@@ -401,6 +403,29 @@ async function restartNow() {
   poll();
 }
 
+// Update now (#1045): the daemon installs the release the row shows, once, with updates off here or
+// failing. It answers at once; the state's polls bring the install's progress and its outcome.
+async function installNow() {
+  const v = ui.state?.version;
+  if (!v?.latest || ui.installing) return;
+  ui.installing = true;
+  delete ui.rowErrors.version;
+  render();
+  try {
+    await api("/api/updates/install", { method: "POST", body: JSON.stringify({ version: v.latest }) });
+    if (ui.state?.version === v) ui.state.version = { ...v, installing: true, installError: "", canInstall: false };
+  } catch (e) {
+    if (e instanceof AuthError) {
+      ui.installing = false;
+      return deny(e.token);
+    }
+    ui.rowErrors.version = "Couldn't install " + v.latest + ": " + e.message;
+  }
+  ui.installing = false;
+  render();
+  poll();
+}
+
 // Settings' Version section: this version, and what is known of a newer one.
 function versionSection() {
   const v = ui.state?.version;
@@ -412,27 +437,19 @@ function versionSection() {
   } else if (v.ready) {
     description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
     control = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+  } else if (v.latest && (v.installing || ui.installing)) {
+    description = "Installing " + v.latest + ".";
   } else if (v.latest && v.auto) {
     description = v.latest + " is out, and installing on its own.";
   } else if (v.latest) {
-    description = v.latest + " is out. Updates are off or failing here; this installs it:";
+    description = v.latest + (v.off ? " is out. Updates are off here." : " is out. The last update failed here.");
+    if (v.installError) description += " Couldn't install it: " + v.installError + ".";
+    if (v.canInstall) {
+      control = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
+    }
   }
   const row = settingsRow("version", NAME + " " + v.running, description, control);
-  if (v.latest && !v.auto && !v.ready && !ui.restarting && v.install) {
-    row.append(
-      h(
-        "div",
-        { class: "install-line" },
-        h("code", null, v.install),
-        h(
-          "button",
-          { class: "btn btn-ghost btn-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => copyText(v.install) },
-          icon("copy"),
-        ),
-      ),
-    );
-  }
-  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row));
+  return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row, updatesRow()));
 }
 
 // The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking

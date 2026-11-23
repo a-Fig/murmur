@@ -20,6 +20,7 @@ import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } fro
 import { askForName } from "./picker.js";
 import { minuteEdits, cancelMinutes } from "./settings.js";
 import { askForStarAfter } from "./star.js";
+import { loadUpdates } from "./updates.js";
 
 export {
   deliver, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
@@ -419,7 +420,7 @@ async function start() {
   await takeKey();
   const token = takeToken();
   if (token !== ui.token) {
-    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, conversation: null, chatListTop: 0, draftTo: null, draftGroup: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
+    Object.assign(ui, { token, conn: "connecting", state: null, messages: [], cursor: "", settings: null, updates: null, conversation: null, chatListTop: 0, draftTo: null, draftGroup: null, restored: null, outbox: [], setup: null, picker: null, newMark: null, armed: null, repoMenu: null });
     // Recent's feed is the old daemon's repo's too, and its cursor means nothing to the new one (#485).
     Object.assign(ui, { acts: [], actCursor: "", github: [], recentWho: "" });
     ui.actIds = new Set();
@@ -450,6 +451,7 @@ async function start() {
   render();
   if (!ui.token) return;
   loadSettings(); // the wake-up settings say which of this device's sessions show red
+  if (ui.view === "settings") loadUpdates();
   poll();
 }
 
