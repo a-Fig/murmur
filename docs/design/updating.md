@@ -51,12 +51,15 @@ updater need one manual install to get it.
   they are off here or the last attempt failed, About offers "Update now". It asks the daemon's
   updater for one check that installs even while updates are off (`Options.Install`), through the
   same verified download, rename and restart as an automatic update, and leaves the setting as it
-  was. The page sends the version it showed, and the daemon refuses if that is no longer the
-  release it would install, so a release out since isn't installed unseen. The request returns at
-  once; the row says "Installing X", then "X is installed" with Restart now, or why it failed.
+  was. The page sends the version it showed, and the updater installs only that one: if GitHub
+  now has another (a newer release, or a stable one where a nightly was shown before the channel
+  changed), it installs nothing and the row shows the release it found instead (Opus review). The
+  request returns at once; the row says "Installing X", then "X is installed" with Restart now, or
+  why it failed.
   - *Not offered* while updates are on and working (they install it within the hour, or at once
-    after a change), while an update waits for its restart, or once this daemon's updater has
-    stopped (a binary it can't replace), since nothing would act on it.
+    after a change), while an update waits for its restart, once this daemon's updater has
+    stopped (a binary it can't replace), since nothing would act on it, or while
+    `MURMUR_NO_UPDATE` is set on the daemon, which may mean something else manages the binary.
   - *With updates off*, the updater makes no request, so the page knows of a newer release only
     from a check this clone's daemon made before they were turned off (`latest.json`). A clone that
     has always had them off isn't told of releases, and gets no button.

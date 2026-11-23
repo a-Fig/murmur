@@ -445,22 +445,22 @@ func TestInstallWhileOff(t *testing.T) {
 	if _, err := Set(ctx, noEnv, gitDir, "1.2.3", ChoiceOff); err != nil {
 		t.Fatal(err)
 	}
-	run := func(srv *httptest.Server) (string, []Status, bool) {
+	run := func(srv *httptest.Server, getenv func(string) string) (string, []Status, bool) {
 		path := filepath.Join(t.TempDir(), "mur")
 		os.WriteFile(path, []byte("old"), 0o755)
-		install := make(chan struct{}, 1)
+		install := make(chan string, 1)
 		reports := make(chan Status, 10)
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		restarted := make(chan struct{})
 		go func() {
 			Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
-				Getenv: noEnv, Every: time.Hour, Install: install, Report: func(s Status) { reports <- s }}, func() { close(restarted) })
+				Getenv: getenv, Every: time.Hour, Install: install, Report: func(s Status) { reports <- s }}, func() { close(restarted) })
 			close(reports)
 		}()
 		var got []Status
 		got = append(got, <-reports) // the first check: off, so nothing
-		install <- struct{}{}
+		install <- "1.2.4"
 		got = append(got, <-reports)
 		did := false
 		select {
@@ -473,7 +473,7 @@ func TestInstallWhileOff(t *testing.T) {
 		return strings.TrimPrefix(string(b), "binary v"), got, did
 	}
 
-	bin, reports, restarted := run(releases(t, "v1.2.4", nil))
+	bin, reports, restarted := run(releases(t, "v1.2.4", nil), noEnv)
 	if reports[0].Off != true || reports[0].Asked || reports[0].Latest != "" {
 		t.Errorf("the check before: %+v", reports[0])
 	}
@@ -494,8 +494,27 @@ func TestInstallWhileOff(t *testing.T) {
 		}
 		inner.ServeHTTP(w, r)
 	})
-	bin, reports, restarted = run(bad)
+	bin, reports, restarted = run(bad, noEnv)
 	if r := reports[1]; r.Installed || !r.Asked || !r.Failed || !r.Off || !strings.Contains(r.Error, "checksum") || bin != "old" || restarted {
 		t.Errorf("a bad download: binary %q, report %+v, restarted %v", bin, r, restarted)
+	}
+
+	// A newer release than the one asked for is out: it isn't installed unseen, and the answer
+	// names it.
+	bin, reports, restarted = run(releases(t, "v1.2.5", nil), noEnv)
+	if r := reports[1]; r.Installed || !r.Failed || r.Latest != "1.2.5" || !strings.Contains(r.Error, "1.2.5 is the release to install now, not 1.2.4") || bin != "old" || restarted {
+		t.Errorf("a newer release than asked for: binary %q, report %+v, restarted %v", bin, r, restarted)
+	}
+
+	// MURMUR_NO_UPDATE on the daemon still refuses it.
+	env := func(k string) string {
+		if k == "MURMUR_NO_UPDATE" {
+			return "1"
+		}
+		return ""
+	}
+	bin, reports, restarted = run(releases(t, "v1.2.4", nil), env)
+	if r := reports[1]; r.Installed || !r.Asked || !r.Failed || !strings.Contains(r.Error, "MURMUR_NO_UPDATE") || bin != "old" || restarted {
+		t.Errorf("with MURMUR_NO_UPDATE: binary %q, report %+v, restarted %v", bin, r, restarted)
 	}
 }

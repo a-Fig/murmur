@@ -119,6 +119,10 @@ func last(vals []configValue, scope string) configValue {
 	return configValue{}
 }
 
+// EnvOff says MURMUR_NO_UPDATE turns updates off for this process, which nothing on the page
+// overrides: it may mean something else manages the binary.
+func EnvOff(getenv func(string) string) bool { return envOff(getenv) }
+
 func envOff(getenv func(string) string) bool {
 	v := strings.TrimSpace(getenv(noUpdate))
 	return v != "" && v != "0" && !strings.EqualFold(v, "false")

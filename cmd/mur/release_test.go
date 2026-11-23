@@ -116,12 +116,16 @@ func TestGoingBackWaits(t *testing.T) {
 // Update now (#1045) is offered when updates won't install a newer release on their own, installs
 // once through the updater, and the page follows it until the updater answers.
 func TestUpdateNow(t *testing.T) {
+	t.Setenv("MURMUR_NO_UPDATE", "")
 	ctx := context.Background()
 	w := newReleaseWatch("0.3.0", t.TempDir())
-	u := &updateSetting{running: "0.3.0", gitDir: w.gitDir, check: make(chan struct{}, 1), install: make(chan struct{}, 1), releases: w}
+	u := &updateSetting{running: "0.3.0", gitDir: w.gitDir, check: make(chan struct{}, 1), install: make(chan string, 1), releases: w}
 	asked := func() bool {
 		select {
-		case <-u.install:
+		case v := <-u.install:
+			if v != "0.3.1" {
+				t.Errorf("the updater was asked for %q", v)
+			}
 			return true
 		default:
 			return false
@@ -174,6 +178,12 @@ func TestUpdateNow(t *testing.T) {
 	if v := w.page(); v.Installing || v.InstallError != "release checksum mismatch" || !v.CanInstall {
 		t.Errorf("after a failed install: %+v", v)
 	}
+	// Once another release is the one shown, that error isn't about it.
+	w.report(update.Status{Latest: "0.3.2", Off: true})
+	if v := w.page(); v.InstallError != "" || v.Latest != "0.3.2" {
+		t.Errorf("an error about 0.3.1 shown with 0.3.2: %+v", v)
+	}
+	w.report(update.Status{Latest: "0.3.1", Off: true})
 	// Again, and it installed: waiting for the restart, with nothing more to offer.
 	if err := u.InstallNow(ctx, "0.3.1"); err != nil || !asked() {
 		t.Fatalf("Update now again: %v", err)
@@ -189,12 +199,32 @@ func TestUpdateNow(t *testing.T) {
 		t.Errorf("with an update installed: %v", err)
 	}
 
-	// An updater that has stopped can't install, so it isn't offered.
+	// An updater that stops with an install asked for ends it, and then isn't asked again.
 	s := newReleaseWatch("0.3.0", t.TempDir())
-	s.report(update.Status{Latest: "0.3.1", Off: true})
-	s.stopped.Store(true)
-	if v := s.page(); v.CanInstall {
-		t.Errorf("offered with the updater stopped: %+v", v)
+	su := &updateSetting{running: "0.3.0", gitDir: s.gitDir, check: make(chan struct{}, 1), install: make(chan string, 1), releases: s}
+	s.report(update.Status{Latest: "0.3.1", Failed: true})
+	if err := su.InstallNow(ctx, "0.3.1"); err != nil {
+		t.Fatal(err)
+	}
+	s.stop()
+	if v := s.page(); v.CanInstall || v.Installing || !strings.Contains(v.InstallError, "stopped") {
+		t.Errorf("after the updater stopped: %+v", v)
+	}
+	<-su.install
+	if err := su.InstallNow(ctx, "0.3.1"); err == nil || !strings.Contains(err.Error(), "stopped") || len(su.install) != 0 {
+		t.Errorf("asked of a stopped updater: %v", err)
+	}
+
+	// MURMUR_NO_UPDATE on the daemon isn't overridden from the page.
+	t.Setenv("MURMUR_NO_UPDATE", "1")
+	e := newReleaseWatch("0.3.0", t.TempDir())
+	eu := &updateSetting{running: "0.3.0", gitDir: e.gitDir, check: make(chan struct{}, 1), install: make(chan string, 1), releases: e}
+	e.report(update.Status{Latest: "0.3.1", Off: true})
+	if v := e.page(); v.CanInstall {
+		t.Errorf("offered with MURMUR_NO_UPDATE: %+v", v)
+	}
+	if err := eu.InstallNow(ctx, "0.3.1"); err == nil || len(eu.install) != 0 {
+		t.Errorf("installed with MURMUR_NO_UPDATE: %v", err)
 	}
 }
 

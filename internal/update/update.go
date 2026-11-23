@@ -41,10 +41,11 @@ type Options struct {
 	// Check asks for a check soon, as when a person changes the update setting: at once, or
 	// checkGap after the last one. Nil: only the hourly ones.
 	Check <-chan struct{}
-	// Install asks for one install of the latest release, as a person's "Update now" does: a check
-	// like Check's that installs even while updates are off here. It doesn't turn updates on; the
-	// checks after it are as before. Nil: none is asked for.
-	Install <-chan struct{}
+	// Install asks for one install of the release it names, as a person's "Update now" does: a
+	// check like Check's that installs even while updates are off in git config. It installs only
+	// that release, the one the person saw: if the check finds another, it fails and says which.
+	// It doesn't turn updates on, and MURMUR_NO_UPDATE still refuses it. Nil: none is asked for.
+	Install <-chan string
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -139,7 +140,7 @@ func Run(ctx context.Context, o Options, restart func()) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	var checked time.Time
-	asked := false // a person asked for an install (Install), which the next check makes
+	asked := "" // the release a person asked to install (Install), which the next check does
 	for {
 		select {
 		case <-ctx.Done():
@@ -147,19 +148,23 @@ func Run(ctx context.Context, o Options, restart func()) {
 		case <-o.Check:
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
-		case <-o.Install:
-			asked = true
+		case asked = <-o.Install:
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
 		case <-timer.C:
 		}
 		checked = time.Now()
-		now := asked
-		asked = false
-		if off := Off(ctx, o.Getenv, o.GitDir); off && !now {
-			report(Status{Off: true})
+		want, now := asked, asked != ""
+		asked = ""
+		if off := Off(ctx, o.Getenv, o.GitDir); off && (!now || envOff(o.Getenv)) {
+			s := Status{Off: true, Asked: now}
+			if now {
+				// The environment's opt-out may mean the binary is managed by something else.
+				s.Failed, s.Error = true, noUpdate+" is set for this daemon"
+			}
+			report(s)
 		} else {
-			done, latest, err := attempt(ctx, o, original)
+			done, latest, err := install(ctx, o, original, want)
 			if done {
 				report(Status{Latest: latest, Installed: true, Asked: now})
 				restart()
@@ -243,6 +248,11 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 // attempt installs the latest release if it is newer than this one. latest is that release's
 // version, once the check has read it.
 func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, latest string, err error) {
+	return install(ctx, o, original, "")
+}
+
+// install is attempt, and if want isn't "", installs only that release: a person asked for it.
+func install(ctx context.Context, o Options, original os.FileInfo, want string) (done bool, latest string, err error) {
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
@@ -271,10 +281,16 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 		return false, latest, err
 	}
 	if rel == nil {
+		if want != "" {
+			return false, "", fmt.Errorf("%s isn't a release to install now", want)
+		}
 		return false, "", nil
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
+	if want != "" && !same(want, rel.Tag) {
+		return false, latest, fmt.Errorf("%s is the release to install now, not %s", latest, want)
+	}
 	if !back && !newer(rel.Tag, o.Version) {
 		return false, latest, nil
 	}
