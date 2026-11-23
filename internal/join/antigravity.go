@@ -273,17 +273,49 @@ func cmdHookCommand(exe, args, winFallback, unixFallback string) string {
 		if short := shortPath(exe); bareSafe(short) {
 			return short + args
 		}
-		if winFallback != "" {
+		quoted := cmdQuotePath(exe)
+		if winFallback != "" && strings.HasPrefix(quoted, `"`) {
 			// cmd /c strips the first and last quote when the command starts with one and contains
 			// more quotes (like the JSON fallback), so wrap the whole command in an outer pair.
-			return `""` + exe + `"` + args + `"`
+			return `"` + quoted + args + `"`
 		}
-		return `"` + exe + `"` + args
+		return quoted + args
 	}
 	if unixFallback != "" {
 		args += " || " + unixFallback
 	}
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'" + args
+}
+
+// cmdQuotePath quotes a Windows executable path for cmd.exe so spaces, metacharacters, and %VAR%
+// stay literal. Paths without % use plain double quotes. When % is present, each % sits outside
+// quotes as ^% and any leading bareSafe prefix (such as C:\ or \\) stays unquoted so the command
+// never starts with " and avoids cmd /c's first-and-last-quote stripping across both cmd /c
+// (Antigravity) and Node's cmd /d /s /c "..." (Kiro).
+func cmdQuotePath(p string) string {
+	if !strings.Contains(p, "%") {
+		return `"` + p + `"`
+	}
+	parts := strings.Split(p, "%")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		if i == 0 {
+			j := 0
+			for j < len(part) && bareSafe(part[j:j+1]) {
+				j++
+			}
+			if j > 0 {
+				if j < len(part) {
+					parts[i] = part[:j] + `"` + part[j:] + `"`
+				}
+				continue
+			}
+		}
+		parts[i] = `"` + part + `"`
+	}
+	return strings.Join(parts, "^%")
 }
 
 // antigravityRemoval tells how to remove the server, hook and tool approval by hand.

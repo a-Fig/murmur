@@ -676,6 +676,7 @@ func (d *Daemon) queuedAtNamedLocked(to, name string) string {
 // holds mu.
 func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	var byID, byProcess []*session
+	bestDepth := len(req.Ancestors)
 	for _, s := range d.sortedSessionsLocked() {
 		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
 			continue
@@ -686,8 +687,15 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 		switch {
 		case s.route.Native == req.ClaudeSession || s.route.Native == "" && s.hookNative == req.ClaudeSession:
 			byID = append(byID, s)
-		case s.clientPID != 0 && slices.Contains(req.Ancestors, s.clientPID):
-			byProcess = append(byProcess, s)
+		case s.clientPID != 0:
+			if depth := slices.Index(req.Ancestors, s.clientPID); depth >= 0 {
+				if depth < bestDepth {
+					bestDepth = depth
+					byProcess = []*session{s}
+				} else if depth == bestDepth {
+					byProcess = append(byProcess, s)
+				}
+			}
 		}
 	}
 	if len(byID) > 0 {

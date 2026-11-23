@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -512,9 +513,52 @@ func identify(agent string, in input) proto.Request {
 	if agent == "" {
 		r.ClientPID = claudePID()
 	} else {
-		r.Agent, r.Ancestors = agent, proc.Ancestors(os.Getppid(), maxAncestors)
+		anc := proc.Ancestors(os.Getppid(), maxAncestors)
+		if agent == Kiro {
+			anc = kiroHookAncestors(anc, func(pid int) (string, string, bool) {
+				exe, err := proc.Exe(pid)
+				return exe, procComm(pid), err == nil
+			})
+		}
+		r.Agent, r.Ancestors = agent, anc
 	}
 	return r
+}
+
+// kiroHookAncestors scopes a Kiro hook's ancestor list to the Kiro client process that spawned it,
+// so a nested kiro-cli started from an outer Kiro session's shell never includes the outer Kiro's
+// node (acp-server.js) process and cannot attach to or read the outer session's messages (#910).
+// When the nearest node sits directly under kiro-cli, only that node PID is returned; if kiro-cli
+// appears without node below it, the walk stops at that kiro-cli.
+func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok bool)) []int {
+	isNamed := func(pid int, want string) bool {
+		exe, comm, ok := exeAt(pid)
+		if comm == want {
+			return true
+		}
+		if !ok {
+			return false
+		}
+		name := strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSuffix(exe, " (deleted)"))), ".exe")
+		return name == want
+	}
+	for i, pid := range pids {
+		if isNamed(pid, "node") && i+1 < len(pids) && isNamed(pids[i+1], "kiro-cli") {
+			return []int{pid}
+		}
+		if isNamed(pid, "kiro-cli") {
+			return pids[:i+1]
+		}
+	}
+	return pids
+}
+
+func procComm(pid int) string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // maxAncestors bounds how far up identify looks: the agent is the hook's grandparent where it runs

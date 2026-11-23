@@ -444,34 +444,145 @@ func TestResolveLinksPreservesDriveRootedPath(t *testing.T) {
 	}
 }
 
-// A foreign hooks/murmur.json is left alone on both join (as a real Problem, not downgraded to an
-// approvalNote even when permissions.yaml is present) and uninstall (with a note), and is omitted
-// from manual removal instructions.
+// A foreign or customized hooks/murmur.json is left alone on both join (as a real Problem, not
+// downgraded to an approvalNote even when permissions.yaml is present) and uninstall (with a note),
+// and is omitted from manual removal instructions.
 func TestKiroForeignHookFileLeftAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unrelated hook",
+			body: `{"version": "v1", "hooks": [{"name": "mine", "trigger": "Stop", "action": {"type": "command", "command": "echo hi"}}]}` + "\n",
+		},
+		{
+			name: "custom single murmur-* hook on another trigger",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-audit", "trigger": "PreToolUse", "action": {"type": "command", "command": "my-wrapper hook kiro"}}]}` + "\n",
+		},
+		{
+			name: "two hooks with unexpected trigger",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "PreToolUse", "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}}]}` + "\n",
+		},
+		{
+			name: "extra user field",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "enabled": false, "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}}]}` + "\n",
+		},
+		{
+			name: "trailing json token",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}}]} {}` + "\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := newSandbox(t, false)
+			withAgents(sb)
+			mustMakeDir(t, sb.KiroHome)
+			h := sb.defaultHome(agents[agentIndex("kiro")])
+			hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
+			yamlPath := filepath.Join(sb.KiroHome, "settings", "permissions.yaml")
+			write(t, hookPath, tc.body)
+			write(t, yamlPath, "rules: []\n")
+
+			_, _, err := sb.registerKiroAt(h)
+			var note approvalNote
+			if err == nil || errors.As(err, &note) || !strings.Contains(err.Error(), hookPath) {
+				t.Fatalf("expected non-approvalNote error for foreign hook, got %v", err)
+			}
+			if read(t, hookPath) != tc.body {
+				t.Error("overwrote foreign hooks/murmur.json")
+			}
+			if rem := kiroRemoval(sb.Env, h); strings.Contains(rem, hookPath) {
+				t.Errorf("kiroRemoval named foreign hook file: %q", rem)
+			}
+			_, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
+			if err != nil || read(t, hookPath) != tc.body || !strings.Contains(strings.Join(notes, "\n"), hookPath) {
+				t.Errorf("unregister with foreign hook: err=%v notes=%q body=%q", err, notes, read(t, hookPath))
+			}
+		})
+	}
+}
+
+// Uninstall and manual removal leave a symlinked hooks/murmur.json alone (even when its target has
+// Murmur's hook content), matching removeOwned's policy for user-owned links.
+func TestKiroRemoveHookLeavesSymlinkAlone(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
 	mustMakeDir(t, sb.KiroHome)
 	h := sb.defaultHome(agents[agentIndex("kiro")])
-	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
-	yamlPath := filepath.Join(sb.KiroHome, "settings", "permissions.yaml")
-	foreign := `{"version": "v1", "hooks": [{"name": "mine", "trigger": "Stop", "action": {"type": "command", "command": "echo hi"}}]}` + "\n"
-	write(t, hookPath, foreign)
-	write(t, yamlPath, "rules: []\n")
 
-	_, _, err := sb.registerKiroAt(h)
-	var note approvalNote
-	if err == nil || errors.As(err, &note) || !strings.Contains(err.Error(), hookPath) {
-		t.Fatalf("expected non-approvalNote error for foreign hook, got %v", err)
+	target := filepath.Join(sb.root, "user-owned-murmur.json")
+	want, err := kiroHooks(kiroHookCommand(sb.Exe))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if read(t, hookPath) != foreign {
-		t.Error("overwrote foreign hooks/murmur.json")
-	}
+	write(t, target, string(want))
+	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
+	mustMakeDir(t, filepath.Dir(hookPath))
+	linkOrSkip(t, target, hookPath)
+
 	if rem := kiroRemoval(sb.Env, h); strings.Contains(rem, hookPath) {
-		t.Errorf("kiroRemoval named foreign hook file: %q", rem)
+		t.Errorf("kiroRemoval named symlinked hook file: %q", rem)
 	}
-	_, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
-	if err != nil || read(t, hookPath) != foreign || !strings.Contains(strings.Join(notes, "\n"), hookPath) {
-		t.Errorf("unregister with foreign hook: err=%v notes=%q body=%q", err, notes, read(t, hookPath))
+	did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
+	if err != nil || len(did) != 0 {
+		t.Fatalf("unregister symlink hook: did=%q notes=%q err=%v", did, notes, err)
+	}
+	if _, lerr := os.Lstat(hookPath); lerr != nil {
+		t.Errorf("removed symlinked hook file: %v", lerr)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), hookPath) {
+		t.Errorf("expected note leaving symlinked hook alone, got %q", notes)
+	}
+}
+
+// cmdQuotePath quotes Windows paths for cmd.exe so spaces, metacharacters, and %VAR% stay literal
+// without expanding environment variables.
+func TestCmdQuotePathEscapesPercent(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`C:\with space\mur.exe`, `"C:\with space\mur.exe"`},
+		{`C:\tools\%USERNAME%\mur.exe`, `C:\tools\^%"USERNAME"^%"\mur.exe"`},
+		{`C:\my tools & (1)\%USERNAME%\mur.exe`, `C:\my" tools & (1)\"^%"USERNAME"^%"\mur.exe"`},
+	} {
+		if got := cmdQuotePath(tc.in); got != tc.want {
+			t.Errorf("cmdQuotePath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// Execute a real command through the platform shell when a folder literally contains %USERNAME%
+	// (with spaces and `&`), verifying %USERNAME% is not expanded by cmd.exe or sh.
+	dir := filepath.Join(t.TempDir(), "my tools & (1)", "%USERNAME%")
+	mustMakeDir(t, dir)
+	script, body := filepath.Join(dir, "mur"), "#!/bin/sh\nprintf 'ok:%s\\n' \"$*\"\n"
+	if os.PathSeparator == '\\' {
+		script, body = filepath.Join(dir, "mur.cmd"), "@echo ok:%*\r\n"
+	}
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmdLine := kiroHookCommand(script)
+	out, err := antigravityShellCmd(cmdLine).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "ok:hook kiro" {
+		t.Fatalf("kiroHookCommand(%q) -> %q printed %q, err=%v", script, cmdLine, out, err)
+	}
+	if os.PathSeparator == '\\' {
+		// Also test the quoted path directly (bypassing shortPath when 8.3 names exist on Windows),
+		// both as cmd /d /c (Antigravity) and with Antigravity's PreToolUse JSON fallback.
+		quoted := cmdQuotePath(script) + " hook kiro"
+		out, err = antigravityShellCmd(quoted).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "ok:hook kiro" {
+			t.Fatalf("cmdQuotePath(%q) -> %q printed %q, err=%v", script, quoted, out, err)
+		}
+		withFallback := cmdQuotePath(script) + ` hook --event PreToolUse antigravity || echo {"decision":"allow"}`
+		out, err = antigravityShellCmd(withFallback).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "ok:hook --event PreToolUse antigravity" {
+			t.Fatalf("fallback %q printed %q, err=%v", withFallback, out, err)
+		}
+		// Missing binary with %USERNAME% still falls back cleanly.
+		missingFallback := cmdQuotePath(script+".missing") + ` hook --event PreToolUse antigravity || echo {"decision":"allow"}`
+		out, err = antigravityShellCmd(missingFallback).Output()
+		if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
+			t.Fatalf("missing fallback %q printed %q, err=%v", missingFallback, out, err)
+		}
 	}
 }
 

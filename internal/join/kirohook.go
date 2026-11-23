@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,15 +82,26 @@ func kiroHooks(command string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// isKiroHookFile says b is a hooks/murmur.json file written by join (so join/uninstall never
-// overwrite or delete a user's unrelated file of the same name).
+// isKiroHookFile says b is a hooks/murmur.json file with the exact shape join writes (strictly
+// two hooks: murmur-prompt on UserPromptSubmit and murmur-stop on Stop, running `... hook kiro`,
+// with no extra user fields), so join/uninstall never overwrite or delete a customized file.
 func isKiroHookFile(b []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
 	var doc kiroHookDoc
-	if json.Unmarshal(b, &doc) != nil || doc.Version != "v1" || len(doc.Hooks) == 0 {
+	if dec.Decode(&doc) != nil || dec.Decode(&struct{}{}) != io.EOF {
 		return false
 	}
-	for _, h := range doc.Hooks {
-		if !strings.HasPrefix(h.Name, brand.MCPServer+"-") || h.Action.Type != "command" ||
+	if doc.Version != "v1" || len(doc.Hooks) != 2 {
+		return false
+	}
+	want := []struct{ name, trigger string }{
+		{brand.MCPServer + "-prompt", "UserPromptSubmit"},
+		{brand.MCPServer + "-stop", "Stop"},
+	}
+	for i, w := range want {
+		h := doc.Hooks[i]
+		if h.Name != w.name || h.Trigger != w.trigger || h.Action.Type != "command" ||
 			!strings.HasSuffix(strings.TrimSpace(h.Action.Command), " hook kiro") {
 			return false
 		}
@@ -120,28 +132,29 @@ func (e Env) installKiroHook(h agentHome) (did []string, err error) {
 	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
 }
 
-// removeKiroHook removes join's hook file from Kiro home h, leaving a foreign file alone with a note.
+// removeKiroHook removes join's hook file from Kiro home h via removeOwned, leaving a symlink or
+// foreign file alone with a note.
 func removeKiroHook(h agentHome) (did, notes []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
-	have, rerr := os.ReadFile(path)
-	if errors.Is(rerr, os.ErrNotExist) {
-		return nil, nil, nil
+	removed, note, err := removeOwned(path, isKiroHookFile)
+	if err != nil {
+		return nil, nil, err
 	}
-	if rerr != nil {
-		return nil, nil, fmt.Errorf("%s: %w", path, rerr)
+	if note != "" {
+		return nil, []string{h.Label + ": " + note}, nil
 	}
-	if !isKiroHookFile(have) {
-		return nil, []string{h.Label + ": left " + path + " alone: it doesn't look like " + brand.Product + "'s hook"}, nil
+	if removed {
+		return []string{h.Label + ": removed " + brand.Product + "'s hook (" + path + ")"}, nil, nil
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return []string{h.Label + ": removed " + brand.Product + "'s hook (" + path + ")"}, nil, nil
+	return nil, nil, nil
 }
 
 // kiroHookRemoval says how to remove join's hook file by hand, "" if none is present.
 func kiroHookRemoval(h agentHome) string {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
+	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
 	if have, err := os.ReadFile(path); err == nil && isKiroHookFile(have) {
 		return "delete " + path
 	}

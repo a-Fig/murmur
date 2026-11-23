@@ -148,6 +148,8 @@ func TestHookOff(t *testing.T) {
 		{"pi in T3", long, false, true},
 		{"muse", long, false, true},
 		{"muse in T3", long, false, true},
+		{"kiro", long, false, true},
+		{"kiro in T3", long, false, true},
 		{"codex", long, true, false},
 		{"codex", time.Now(), false, false},  // in its grace
 		{"codex", time.Time{}, false, false}, // no tool call: maybe nothing to tell
@@ -230,4 +232,76 @@ func ids(ss []*session) []string {
 		out = append(out, s.id)
 	}
 	return out
+}
+
+// Nested Kiro sessions (#910): an outer Kiro session (clientPID 700) launches an inner Kiro
+// session (clientPID 900) in the same clone. Even if raw ancestry includes both client PIDs, the
+// nearest matching ancestor wins so the inner hook binds the inner session rather than failing as
+// ambiguous; and when the inner MCP server has not registered yet, the hook's scoped ancestry
+// ([900], without the outer Kiro's 700) must not attach to or read the outer session's messages.
+func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
+	t.Run("nearest ancestor wins when both sessions are registered", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		inner := d.newSessionLocked(&proto.Hello{ID: "inner1", ClientPID: 900}, "kiro", "", "inner1")
+		inner.clientPID = 900
+
+		got := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-inner",
+			Ancestors:     []int{950, 900, 850, 700},
+		})
+		if len(got) != 1 || got[0] != inner || inner.hookNative != "kiro-inner" {
+			t.Fatalf("inner hook got %v, inner.hookNative=%q", ids(got), inner.hookNative)
+		}
+		if outer.hookNative != "" || outer.hookSeen || outer.hooked {
+			t.Fatalf("inner hook touched outer: hookNative=%q hookSeen=%v hooked=%v", outer.hookNative, outer.hookSeen, outer.hooked)
+		}
+		// Outer hook binds outer independently.
+		gotOuter := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-outer",
+			Ancestors:     []int{700},
+		})
+		if len(gotOuter) != 1 || gotOuter[0] != outer || outer.hookNative != "kiro-outer" {
+			t.Fatalf("outer hook got %v, outer.hookNative=%q", ids(gotOuter), outer.hookNative)
+		}
+	})
+
+	t.Run("unregistered inner session does not bind or read outer session", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		d.st.Inbox[outer.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
+			Arrived: time.Now(),
+		}}
+		d.mu.Unlock()
+
+		// Scoped ancestry from kiroHookAncestors contains only the inner node PID (900), not 700.
+		resp := d.turnEnd(proto.Request{
+			Op:            proto.OpTurnEnd,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-inner",
+			Ancestors:     []int{900},
+			Continues:     true,
+		})
+		if len(resp.Read) != 0 {
+			t.Fatalf("inner hook leaked outer's messages: %+v", resp.Read)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if outer.hookNative != "" || outer.hookSeen || outer.hooked {
+			t.Fatalf("inner hook attached to outer: hookNative=%q hookSeen=%v hooked=%v", outer.hookNative, outer.hookSeen, outer.hooked)
+		}
+		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
+			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+	})
 }
