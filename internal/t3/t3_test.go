@@ -22,23 +22,25 @@ import (
 // The tests of Send run the test binary again as the `t3` command: it records what it was given,
 // then does what MURMUR_TEST_FAKE_T3_MODE says.
 const (
-	fakeEnv                = "MURMUR_TEST_FAKE_T3"
-	fakeModeEnv            = "MURMUR_TEST_FAKE_T3_MODE"
-	fakeGrandchildPIDEnv   = "MURMUR_TEST_FAKE_T3_GRANDCHILD_PID"
-	fakeGrandchildLockEnv  = "MURMUR_TEST_FAKE_T3_GRANDCHILD_LOCK"
-	fakeGrandchildReadyEnv = "MURMUR_TEST_FAKE_T3_GRANDCHILD_READY"
-	fakeGrandchildStopEnv  = "MURMUR_TEST_FAKE_T3_GRANDCHILD_STOP"
+	fakeEnv                   = "MURMUR_TEST_FAKE_T3"
+	fakeModeEnv               = "MURMUR_TEST_FAKE_T3_MODE"
+	fakeGrandchildSpawningEnv = "MURMUR_TEST_FAKE_T3_GRANDCHILD_SPAWNING"
+	fakeGrandchildPIDEnv      = "MURMUR_TEST_FAKE_T3_GRANDCHILD_PID"
+	fakeGrandchildLockEnv     = "MURMUR_TEST_FAKE_T3_GRANDCHILD_LOCK"
+	fakeGrandchildReadyEnv    = "MURMUR_TEST_FAKE_T3_GRANDCHILD_READY"
+	fakeGrandchildAliveEnv    = "MURMUR_TEST_FAKE_T3_GRANDCHILD_ALIVE"
 )
 
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeModeEnv) == "grandchild-sleep" {
 		lockPath := os.Getenv(fakeGrandchildLockEnv)
 		readyPath := os.Getenv(fakeGrandchildReadyEnv)
-		stopPath := os.Getenv(fakeGrandchildStopEnv)
-		if lockPath == "" || readyPath == "" || stopPath == "" {
+		alivePath := os.Getenv(fakeGrandchildAliveEnv)
+		if lockPath == "" || readyPath == "" || alivePath == "" {
 			os.Exit(6)
 		}
-		if _, err := os.Stat(stopPath); err == nil {
+		// Exit immediately if the test already tore down (including if TempDir was removed).
+		if _, err := os.Stat(alivePath); err != nil {
 			os.Exit(0)
 		}
 		// Hold lockPath until the OS reaps this process so tests can prove the grandchild is still
@@ -49,14 +51,16 @@ func TestMain(m *testing.M) {
 		}
 		tmp := readyPath + ".tmp"
 		if err := os.WriteFile(tmp, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			runtime.KeepAlive(held)
 			os.Exit(8)
 		}
 		if err := os.Rename(tmp, readyPath); err != nil {
+			runtime.KeepAlive(held)
 			os.Exit(9)
 		}
 		deadline := time.Now().Add(20 * time.Second)
 		for time.Now().Before(deadline) {
-			if _, err := os.Stat(stopPath); err == nil {
+			if _, err := os.Stat(alivePath); err != nil {
 				break
 			}
 			time.Sleep(15 * time.Millisecond)
@@ -77,6 +81,11 @@ func TestMain(m *testing.M) {
 			exe, err := os.Executable()
 			if err != nil {
 				os.Exit(4)
+			}
+			if sp := os.Getenv(fakeGrandchildSpawningEnv); sp != "" {
+				if err := os.WriteFile(sp, []byte("1"), 0o600); err != nil {
+					os.Exit(4)
+				}
 			}
 			c := exec.Command(exe)
 			c.Env = withEnv(os.Environ(), fakeModeEnv, "grandchild-sleep")
@@ -274,27 +283,48 @@ func fakeGrandchild(t *testing.T, mode string) (exe, readyPath, lockPath string)
 	t.Helper()
 	exe, _ = fake(t, mode)
 	dir := t.TempDir()
+	spawningPath := filepath.Join(dir, "grandchild.spawning")
 	pidPath := filepath.Join(dir, "grandchild.pid")
 	lockPath = filepath.Join(dir, "grandchild.lock")
 	readyPath = filepath.Join(dir, "grandchild.ready")
-	stopPath := filepath.Join(dir, "grandchild.stop")
+	alivePath := filepath.Join(dir, "grandchild.alive")
+	if err := os.WriteFile(alivePath, []byte("alive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeGrandchildSpawningEnv, spawningPath)
 	t.Setenv(fakeGrandchildPIDEnv, pidPath)
 	t.Setenv(fakeGrandchildLockEnv, lockPath)
 	t.Setenv(fakeGrandchildReadyEnv, readyPath)
-	t.Setenv(fakeGrandchildStopEnv, stopPath)
+	t.Setenv(fakeGrandchildAliveEnv, alivePath)
 	t.Cleanup(func() {
-		_ = os.WriteFile(stopPath, []byte("stop"), 0o600)
-		// Check readyPath first, then pidPath (written by spawnGrandchild immediately after Start)
-		// so a grandchild that was still starting when Send timed out is still terminated.
-		var pid int
-		for _, p := range []string{readyPath, pidPath} {
-			if b, err := os.ReadFile(p); err == nil {
-				if v, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && v > 1 {
-					pid = v
-					break
+		readPID := func() int {
+			for _, p := range []string{readyPath, pidPath} {
+				if b, err := os.ReadFile(p); err == nil {
+					if v, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && v > 1 {
+						return v
+					}
+				}
+			}
+			return 0
+		}
+		pid := readPID()
+		// If spawnGrandchild was killed between c.Start() and pidPath publication, let the
+		// starting grandchild publish readyPath while alivePath still exists so cleanup can
+		// confirm it exited before TempDir disappears.
+		if pid == 0 {
+			if _, err := os.Stat(spawningPath); err == nil {
+				publishDeadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(publishDeadline) {
+					if pid = readPID(); pid > 1 {
+						break
+					}
+					time.Sleep(15 * time.Millisecond)
 				}
 			}
 		}
+		// Removing alivePath signals the grandchild to exit immediately (and remains absent even
+		// after TempDir cleanup so a delayed grandchild can never sleep past teardown).
+		_ = os.Remove(alivePath)
 		if pid > 1 {
 			want := filepath.Clean(exe)
 			isSelf := func(got string) bool {
@@ -309,8 +339,7 @@ func fakeGrandchild(t *testing.T, mode string) (exe, readyPath, lockPath string)
 			}
 		}
 		// Give the lock probe its own budget to confirm the grandchild has exited and released its
-		// lock (covers pidfd-less Linux sandboxes and race-detector exit delays before TempDir
-		// removes stopPath).
+		// lock (covers pidfd-less Linux sandboxes and race-detector exit delays).
 		lockDeadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(lockDeadline) {
 			held, err := proc.Lock(lockPath)
