@@ -63,10 +63,11 @@ type Client struct {
 	// and protocol is the number it gave.
 	older    bool
 	protocol int
-	// kept says why an older daemon is kept rather than replaced: the daemon a replacement would
-	// start is no newer (#1197). Once set it stays, so the daemon isn't stopped again at every
-	// reconnect.
-	kept string
+	// kept says why an older daemon is kept rather than replaced (#1197): a replacement came up
+	// older. Once set it stays, so the daemon isn't stopped again at every reconnect. notOwn says
+	// why the last connect didn't try one: the binary installed isn't this one. It is asked again
+	// at each connect, since it is cheap, and a moment mid-swap can't then hold for good.
+	kept, notOwn string
 	// legacy says that daemon is from before proof (proto.ProofProtocol): it can't prove itself,
 	// and is trusted only while it holds the clone's lock.
 	legacy bool
@@ -165,6 +166,7 @@ func Replace(ctx context.Context, gitDir string) (*Client, error) {
 // server that outlived an update or a return to stable, or a replacement already came up older.
 // Stopping it would only start the same version again, and stop it again at every reconnect.
 func (c *Client) connect(ctx context.Context) error {
+	replaced := false
 	if c.found(ctx) {
 		if !c.Outdated() || !c.mayStart() || !c.mayReplace() {
 			return nil
@@ -172,6 +174,7 @@ func (c *Client) connect(ctx context.Context) error {
 		if err := c.replace(ctx); err != nil {
 			return err
 		}
+		replaced = true
 	} else if !c.mayStart() {
 		return ErrNoDaemon
 	}
@@ -192,11 +195,13 @@ func (c *Client) connect(ctx context.Context) error {
 		if c.found(ctx) {
 			// The old daemon has let go (replace waited for that), so an older one found now is
 			// what the start brought up: the binary installed is older than this one. It is
-			// worked with, and not replaced again.
+			// worked with, and not replaced again. Where no daemon was found to begin with, an
+			// older one found now may be one whose ping was just slow, which the start found
+			// holding the lock: it is worked with, and replacing it is tried at the next connect.
 			c.mu.Lock()
 			older, protocol := c.older, c.protocol
 			c.mu.Unlock()
-			if older {
+			if older && replaced {
 				c.keep(fmt.Sprintf("the daemon started for this clone speaks protocol %d, older than this %s's %d: the %s installed is an older version than this one", protocol, brand.Command, proto.Protocol, brand.Command))
 			}
 			return nil
@@ -215,11 +220,14 @@ func (c *Client) mayReplace() bool {
 	if kept != "" {
 		return false
 	}
+	notOwn := ""
 	if !launchesOwn() {
-		c.keep(fmt.Sprintf("this clone's daemon speaks protocol %d, older than this %s's %d, and the %s installed is another binary than this one, which would start that older version again", protocol, brand.Command, proto.Protocol, brand.Command))
-		return false
+		notOwn = fmt.Sprintf("this clone's daemon speaks protocol %d, older than this %s's %d, and the %s installed isn't this binary, so a daemon started from it may be no newer", protocol, brand.Command, proto.Protocol, brand.Command)
 	}
-	return true
+	c.mu.Lock()
+	c.notOwn = notOwn
+	c.mu.Unlock()
+	return notOwn == ""
 }
 
 func (c *Client) keep(why string) {
@@ -239,18 +247,26 @@ func (c *Client) Kept() string {
 	if !c.older {
 		return ""
 	}
-	return c.kept
+	if c.kept != "" {
+		return c.kept
+	}
+	return c.notOwn
 }
 
 // ownBinary is the file this process was started from, read as the package loads, before an
-// update or a return to stable can put another at its path; nil if it couldn't be read.
-var ownBinary = func() os.FileInfo {
+// update or a return to stable can put another at its path; nil if it couldn't be read. Every mur
+// process reads it, hooks included, so on Windows it is read through a handle that lets the file
+// be renamed over meanwhile (fileIdentity): os.Open's would fail an update's swap at that moment.
+var ownBinary = func() *fileID {
 	exe, err := launchPath()
 	if err != nil {
 		return nil
 	}
-	fi, _ := identity(exe)
-	return fi
+	id, err := fileIdentity(exe)
+	if err != nil {
+		return nil
+	}
+	return &id
 }()
 
 // launchesOwn says the file start would run is still the binary this process came from. Where
@@ -264,19 +280,8 @@ var launchesOwn = func() bool {
 	if err != nil {
 		return false
 	}
-	fi, err := identity(exe)
-	return err == nil && os.SameFile(ownBinary, fi)
-}
-
-// identity opens path and stats the open file, as update.Identity does: os.Stat on Windows may
-// load the file's ID only when SameFile asks, from whatever is at the path by then.
-func identity(path string) (os.FileInfo, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return f.Stat()
+	id, err := fileIdentity(exe)
+	return err == nil && sameFile(*ownBinary, id)
 }
 
 func (c *Client) mayStart() bool {

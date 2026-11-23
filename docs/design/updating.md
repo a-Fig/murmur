@@ -121,7 +121,9 @@ information in the request; a network failure waits quietly for the next hour. A
     `prerelease`: gone back to, v0.5.3 installed the same nightly again, which went back again. So
     on the nightly channel Back also makes the global `murmur.channel` `prerelease-held`, which
     those releases read as stable and later ones as nightly; the updater writes `prerelease` again
-    once the hold is off. While such a release runs, the machine waits for the next stable release,
+    once the hold is off. It holds the channel again just before it installs the release gone back
+    to, as it may read `prerelease` by then: on v0.5.3 that is the only way to nightlies, and it
+    takes the nightly gone back from, which then goes back once more and stays. While such a release runs, the machine waits for the next stable release,
     not the next nightly. A repo's own `murmur.channel prerelease` isn't changed, so in that repo
     the old release still takes the nightly.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,

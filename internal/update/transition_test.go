@@ -202,3 +202,35 @@ func TestStableDuringANightlyDownload(t *testing.T) {
 		})
 	}
 }
+
+// A person on v0.5.3 after going back sees the stable channel, and its only way to nightlies is
+// `murmur.channel prerelease`. v0.5.3 then takes the nightly gone back from, which goes back
+// again: once, since the going back holds the channel again before it installs, and v0.5.3 stays
+// (Opus review of #1197). The same holds if another clone's updater put "prerelease" back as Back
+// wrote the hold.
+func TestBackHoldsTheChannelAgainAsItInstalls(t *testing.T) {
+	path := global(t)
+	gitDir := repo(t)
+	ctx := context.Background()
+	const bad = "0.5.4-nightly.20261123"
+	if _, err := Set(ctx, noEnv, gitDir, bad, ChoiceNightly); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Back(ctx, noEnv, gitDir, bad); err != nil {
+		t.Fatal(err)
+	}
+	srv := releases(t, "v0.5.3", []rel{{"v" + bad, true}, {"v0.5.3", false}})
+	if got := installed(t, srv, gitDir, bad); got != "0.5.3" {
+		t.Fatalf("going back installed %q", got)
+	}
+	gitConfig(t, "--file", path, "murmur.channel", "prerelease")
+	if got := v053Installs(t, srv, srv.URL, gitDir); got != bad {
+		t.Fatalf("v0.5.3 on prerelease installed %q", got)
+	}
+	if got := installed(t, srv, gitDir, bad); got != "0.5.3" {
+		t.Fatalf("the nightly again went back to %q", got)
+	}
+	if got := v053Installs(t, srv, srv.URL, gitDir); got != "" {
+		t.Fatalf("v0.5.3 installed %s a second time", got)
+	}
+}

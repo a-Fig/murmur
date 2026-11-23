@@ -293,6 +293,9 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 
 // install is attempt, and if want isn't "", installs only that release: a person asked for it.
 func install(ctx context.Context, o Options, original os.FileInfo, want string) (done bool, latest string, err error) {
+	if o.Getenv == nil {
+		o.Getenv = os.Getenv
+	}
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
@@ -378,6 +381,11 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	}
 	if !back && prerelease(rel.Tag) && !Prerelease(ctx, o.GitDir) {
 		return false, latest, fmt.Errorf("%w: updates moved to stable releases while %s downloaded", errNotAsked, latest)
+	}
+	if back {
+		if err = holdChannel(ctx, o.GitDir); err != nil {
+			return false, latest, err
+		}
 	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err

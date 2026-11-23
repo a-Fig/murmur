@@ -284,16 +284,27 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 	if _, err := g.Run(ctx, "", "config", "--global", skipKey, strings.TrimPrefix(running, "v")); err != nil {
 		return s, err
 	}
-	if strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "global").value, "prerelease") {
-		if _, err := g.Run(ctx, "", "config", "--global", "--replace-all", channelKey, heldNightly); err != nil {
-			return s, err
-		}
+	if err := holdChannel(ctx, gitDir); err != nil {
+		return s, err
 	}
 	s = Read(ctx, getenv, gitDir, running)
 	if !same(s.Skip, running) {
 		return s, fmt.Errorf("another git config file still sets %s", skipKey)
 	}
 	return s, nil
+}
+
+// holdChannel makes a global murmur.channel of "prerelease" heldNightly, which v0.5.3 and older read
+// as stable (#1197). Back calls it, and so does the updater just before it installs the stable
+// release gone back to, since by then the channel may read "prerelease" again: v0.5.3's only way to
+// take nightlies, which a person on it may use, or another clone's updater taking the hold for
+// one that had come off as Back wrote it.
+func holdChannel(ctx context.Context, gitDir string) error {
+	if !strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "global").value, "prerelease") {
+		return nil
+	}
+	_, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--global", "--replace-all", channelKey, heldNightly)
+	return err
 }
 
 // skipped is the release this machine went back to stable from, while it still holds updates back:
