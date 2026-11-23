@@ -90,14 +90,20 @@ func TestMain(m *testing.M) {
 // (#1036, 2026-11-22). CI's runners have 4 processors or fewer, so nothing changes there.
 const maxParallel = 6
 
-// parallelGiven says the run named -parallel itself, which capParallel leaves alone.
-var parallelGiven bool
+// parallelGiven says the run named -parallel itself, which capParallel leaves alone; parallelWant is
+// how many run at once otherwise, by the processors there were as the run began (-cpu changes them
+// for each pass after that).
+var (
+	parallelGiven bool
+	parallelWant  int
+)
 
 // capParallel holds the parallel tests to maxParallel at once. It parses the flags, as m.Run would,
 // to tell whether -parallel was given.
 func capParallel() {
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) { parallelGiven = parallelGiven || f.Name == "test.parallel" })
+	parallelWant = min(maxParallel, runtime.GOMAXPROCS(0))
 	if !parallelGiven && runtime.GOMAXPROCS(0) > maxParallel {
 		flag.Set("test.parallel", strconv.Itoa(maxParallel))
 	}
@@ -113,8 +119,8 @@ func TestTheParallelTestsAreHeldToAFew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := min(maxParallel, runtime.GOMAXPROCS(0)); got != want {
-		t.Errorf("%d tests run in parallel, want %d on %d processors", got, want, runtime.GOMAXPROCS(0))
+	if got != parallelWant {
+		t.Errorf("%d tests run in parallel, want %d", got, parallelWant)
 	}
 }
 
