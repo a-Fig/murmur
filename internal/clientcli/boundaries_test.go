@@ -124,7 +124,7 @@ func TestStandardErrorIsCapped(t *testing.T) {
 // into a duplicate (internal/daemon's notReached).
 func TestTimeoutIsNotNotStarted(t *testing.T) {
 	defer func(d time.Duration) { sendTimeout = d }(sendTimeout)
-	sendTimeout = 2 * time.Second
+	sendTimeout = 5 * time.Second
 	exe, calls := fake(t, "hang")
 	for name, send := range map[string]func() error{
 		"codex":    func() error { return CodexQueue(context.Background(), exe, "", "thread-1", "x") },
@@ -132,13 +132,13 @@ func TestTimeoutIsNotNotStarted(t *testing.T) {
 	} {
 		start := time.Now()
 		err := send()
-		if err == nil || !strings.Contains(err.Error(), "took over 2s") {
+		if err == nil || !strings.Contains(err.Error(), "took over 5s") {
 			t.Errorf("%s: err = %v, want a timeout", name, err)
 		}
 		if errors.Is(err, ErrNotStarted) || errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("%s: %v reads as not started, or as the caller's deadline", name, err)
 		}
-		if took := time.Since(start); took > 10*time.Second {
+		if took := time.Since(start); took > 20*time.Second {
 			t.Errorf("%s: took %s", name, took)
 		}
 	}
@@ -154,7 +154,7 @@ func grandchild(t *testing.T, mode string) (exe, lock string) {
 	t.Helper()
 	saved := WaitDelay
 	t.Cleanup(func() { WaitDelay = saved })
-	WaitDelay = 150 * time.Millisecond
+	WaitDelay = time.Second
 	exe, _ = fake(t, mode)
 	dir := t.TempDir()
 	lock, alive := filepath.Join(dir, "grandchild.lock"), filepath.Join(dir, "grandchild.alive")

@@ -94,6 +94,7 @@ func startGrandchild() {
 	c := exec.Command(exe)
 	c.Env = withEnv(os.Environ(), fakeModeEnv, "grandchild")
 	c.Stderr = os.Stderr
+	hideWindow(c) // its parent has no console, so Windows would open one for it
 	if err := c.Start(); err != nil {
 		os.Exit(4)
 	}

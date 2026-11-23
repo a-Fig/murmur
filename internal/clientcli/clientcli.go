@@ -197,8 +197,8 @@ func hasNUL(ss ...string) bool {
 }
 
 // withEnv is env with any entry for key replaced by key=val. Names are matched without regard to
-// case, as Windows matches them: an inherited codex_home left beside CODEX_HOME could be the one
-// the command reads.
+// case, as Windows matches them. exec already keeps only the last of two entries Windows would
+// read as one, so this changes nothing there today; it keeps the one entry from resting on that.
 func withEnv(env []string, key, val string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, kv := range env {
