@@ -28,7 +28,7 @@ func DarkFrame(theme string) bool {
 
 func validTheme(theme string) bool {
 	switch theme {
-	case "", "dark", "dim", "light", "murmur", "sky":
+	case "", "dark", "dim", "light", "murmur", "sky", "night":
 		return true
 	}
 	return false

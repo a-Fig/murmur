@@ -72,6 +72,7 @@ func (d *Daemon) pollEvery(calm time.Duration) pollRate {
 // noteConversationLocked records that a conversation moved: the poll goes to Poll for FastFor,
 // starting now, and a loop that was waiting longer looks at once. Presence heartbeats and status
 // changes don't come here: they arrive all the time from active teammates and predict no reply.
+// A device coming back from invisible does (setMode): it has a sync's worth to catch up on.
 // Caller holds mu.
 func (d *Daemon) noteConversationLocked() {
 	d.convAt = time.Now()
@@ -168,6 +169,8 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
+	// Before the remote is listed: what this sync reads is no older (settleColorLocked).
+	began := time.Now()
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
 		return err
@@ -317,7 +320,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		}
 	}
 	d.lastPollOK = polled
-	d.settleColorLocked()
+	d.settleColorLocked(began)
 	d.kickTeam() // a device to grant the team keys to, or a team ref still empty
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
@@ -1494,7 +1497,8 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
 	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
-	for attempt := 0; ; attempt++ {
+	reconciled := false
+	for {
 		d.dropSwitchedOff(ctx)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1521,9 +1525,10 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 			d.ownLanded(ctx, ref, sha, e.Type == bus.Message)
 			return nil
 		}
-		if !errors.Is(err, bus.ErrRejected) || attempt > 0 {
+		if !errors.Is(err, bus.ErrRejected) || reconciled {
 			return err
 		}
+		reconciled = true
 		rejected := err
 		tip, err := d.repo.RemoteRef(ctx, ref)
 		if err != nil {
@@ -1989,6 +1994,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
+	d.colorAwayLocked()
+	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
@@ -2083,6 +2090,15 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.known[ref] = sha
+	// When it was built, not when it landed: a push begun before a machine slept can land after
+	// it wakes, with what the device knew a week before. Such a one carried the pick, so the next
+	// is built at once, without it, where it would have waited for the heartbeat.
+	d.presenceLanded = built
+	if was := d.colorSettled; was {
+		if d.colorAwayLocked(); !d.colorSettled && d.st.Color != 0 {
+			d.kickPresence() // once: the next build finds it unsettled already
+		}
+	}
 	d.mu.Unlock()
 	return nil
 }

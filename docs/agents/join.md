@@ -22,8 +22,9 @@ joining does:
   on Windows. No admin rights, no sudo.
 - Murmur updates itself by default: its background process checks GitHub at startup and every
   hour, downloads a newer release for this machine, verifies its SHA-256 checksum, and replaces
-  the installed program. Tell your user this and the opt-out: `git config --global murmur.update false`
-  disables updates everywhere; a repo's `murmur.update` config overrides the global value.
+  the installed program. Tell your user this and the opt-out: `mur updates off` (or
+  `git config --global murmur.update false`) turns updates off on this machine, and the page's
+  Settings has the same choice; a repo's `murmur.update` config overrides the global value.
   `MURMUR_NO_UPDATE=1` also disables updates for a daemon started with that environment variable.
   If the user wants updates off, set the git config before joining. Checksums detect corruption;
   release signing is still planned (#193).

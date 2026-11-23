@@ -48,6 +48,7 @@ type Options struct {
 	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed, give or take a fifth; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
+	ColorHold  time.Duration // presence unchanged this long lets the device's picked colour go; a week (color.go)
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
@@ -176,6 +177,8 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Updates, if set, lets the page show and change how this machine updates itself (#1045).
+	Updates web.Updates
 	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
 	// daemon adds its clone there as it starts, so a clone that joined before the record existed
 	// is on it too. Tests leave it unset.
@@ -710,8 +713,13 @@ type Daemon struct {
 	// a daemon Run didn't start, which has no first sync to wait for.
 	firstSync chan struct{}
 	// colorSettled says a full sync has checked this device's picked colour against its peers',
-	// so its presence may carry it (color.go).
-	colorSettled bool
+	// so its presence may carry it (color.go). presenceLanded is when the last presence of this
+	// device's to reach the remote was built, and colorAwayAt when it was last found to have been
+	// away so long that its colour must be settled again (colorAwayLocked), or came back from
+	// invisible (setMode).
+	colorSettled   bool
+	presenceLanded time.Time
+	colorAwayAt    time.Time
 }
 
 type session struct {

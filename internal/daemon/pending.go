@@ -191,8 +191,11 @@ func (d *Daemon) retryPending() {
 		// sends (#1073). Share that reserved budget with give-up below so a failed lookup never
 		// adds a second pendingLook past a queued send's 90 s wait on writeMu; if a lease push runs
 		// and ends unsure, give-up gets whatever remains of PendingPush + pushLook to check whether
-		// that lease push landed.
-		lookBudget = 0
+		// that lease push landed. A look that fails, or leaves sends unchecked, leaves give-up what it
+		// didn't use of pendingLook: with none, a look that failed in a second on a dropped
+		// connection had the sends given up unasked, and called not sent when the remote had them
+		// (#1092).
+		lookStart, leased := time.Now(), false
 		lctx, lcancel := context.WithTimeout(d.bgCtx, pendingLook)
 		defer lcancel()
 		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil {
@@ -209,6 +212,7 @@ func (d *Daemon) retryPending() {
 						d.ownLanded(ctx, ref, sha, false)
 						return
 					}
+					leased = true
 					if d.opt.PendingPush <= pendingLook {
 						lookBudget = pendingLook
 					} else {
@@ -216,6 +220,9 @@ func (d *Daemon) retryPending() {
 					}
 				}
 			}
+		}
+		if !leased {
+			lookBudget = max(0, pendingLook-time.Since(lookStart))
 		}
 	}
 	// A clone that left, or a device gone invisible, pushes nothing more, and its sends are given up
