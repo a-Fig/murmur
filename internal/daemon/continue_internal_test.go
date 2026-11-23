@@ -13,6 +13,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // A Stop's continuation that no other hook shows went on stops counting as at work after
@@ -306,5 +307,74 @@ func TestWithNoWayInMessagesStayNotices(t *testing.T) {
 	}
 	if n := strings.Count(out.String(), "has no way to take a message as a turn"); n != 1 {
 		t.Errorf("the log says it %d times, want once:\n%s", n, out.String())
+	}
+}
+
+// Outside T3 with no messaging socket, the Stop hook is the one way in: what came during the turn
+// is given at its end, where before it waited in the inbox.
+//
+// Kept from the two-device test it replaces: a session with no route that has finished a turn is
+// told of a message during its next, and given it whole at that turn's Stop. A fake is enough, for
+// TestTheFirstStopGivesWhatWasToldBeforeIt's reasons; this is the same after a first Stop has been
+// seen. The two devices took 36 s on a Windows runner (main's run 45190341796).
+func TestTheStopHookIsAWayInWithoutASocket(t *testing.T) {
+	t.Parallel()
+	d := stopRig(t)
+	d.mu.Lock()
+	d.sessions["bbbbbb"].route = proto.Route{}
+	d.mu.Unlock()
+
+	hookNotices(t, d)
+	stopHook(t, d)
+	hookNotices(t, d)
+	arrive(d, "only way in")
+	if got := subjects(hookNotices(t, d).Messages); len(got) != 1 {
+		t.Fatalf("the hook told of %v", got)
+	}
+	if got := subjects(stopHook(t, d).Read); len(got) != 1 || got[0] != "only way in" {
+		t.Fatalf("the Stop gave %v", got)
+	}
+}
+
+// A message the agent read with inbox during the turn isn't given again at its end, and the page's
+// never-wake setting keeps the rest in the inbox, as it keeps them from being turns.
+//
+// Kept from the two-device test it replaces: a Stop gives nothing of a message read with inbox
+// mid-turn, and under never it gives nothing and the message stays in the inbox. A fake is enough,
+// as the inbox and the setting are this device's own; the setting is saved as the page saves it
+// (SetSettings). That a Stop gives what the hook told of, with no such setting, is
+// TestTheStopHookKeepsTheTurnGoing's. The two devices took 20 s on a Windows runner (main's run
+// 45190341796).
+func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
+	t.Parallel()
+	d := stopRig(t)
+	hookNotices(t, d)
+	stopHook(t, d)
+	hookNotices(t, d)
+	arrive(d, "read mid-turn")
+	if got := subjects(hookNotices(t, d).Messages); len(got) != 1 {
+		t.Fatalf("the hook told of %v", got)
+	}
+	if r := d.handle(context.Background(), proto.Request{Op: proto.OpInbox, Session: "bbbbbb"}); r.Error != "" || len(r.Messages) != 1 {
+		t.Fatalf("inbox: %v (%s)", subjects(r.Messages), r.Error)
+	}
+	if got := subjects(stopHook(t, d).Read); len(got) != 0 {
+		t.Fatalf("the Stop gave %v, read already", got)
+	}
+
+	saveSettings(t, d, web.Settings{Wake: web.Wake{When: web.WakeNever}})
+	hookNotices(t, d)
+	arrive(d, "never wake")
+	if got := subjects(hookNotices(t, d).Messages); len(got) != 1 {
+		t.Fatalf("under never the hook told of %v", got)
+	}
+	if got := subjects(stopHook(t, d).Read); len(got) != 0 {
+		t.Fatalf("the Stop gave %v under never", got)
+	}
+	d.mu.Lock()
+	kept := len(d.st.Inbox["bbbbbb"])
+	d.mu.Unlock()
+	if kept != 1 {
+		t.Errorf("the inbox under never holds %d; want the message kept", kept)
 	}
 }
