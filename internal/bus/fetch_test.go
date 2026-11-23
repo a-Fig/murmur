@@ -317,3 +317,72 @@ func TestAWriteWaitingToSetRefsEndsWithItsContext(t *testing.T) {
 		t.Fatal("the write was still waiting 10 s after its context ended")
 	}
 }
+
+// With a git kept between reads, a Fetch asks it what the fetch wrote and starts no for-each-ref,
+// which was a process for every fetch (#1008). What it returns, the bus refs it sets, the refs of
+// its own it leaves to Tidy, and what a fetch that failed leaves are as they are without one.
+func TestFetchAsksTheKeptGitWhatItWrote(t *testing.T) {
+	for _, kept := range []bool{false, true} {
+		name := map[bool]string{false: "a git for each read", true: "a git kept between reads"}[kept]
+		t.Run(name, func(t *testing.T) {
+			f := newFetchRig(t)
+			if kept {
+				f.r.KeepReader()
+				t.Cleanup(f.r.Close)
+			}
+			listed := 0
+			was := gitx.Observe
+			gitx.Observe = func(sub string, _ time.Time, _ time.Duration) {
+				if sub == "for-each-ref" {
+					listed++
+				}
+			}
+			t.Cleanup(func() { gitx.Observe = was })
+			ctx := f.ctx
+			mesh, names := brand.RefRoot+"mesh/device-1a2b3c4d", brand.NamesRef
+
+			first, second := f.push(mesh, "first"), f.push(names, "names")
+			tips, err := f.r.Fetch(ctx, []string{mesh, names})
+			if err != nil || tips[mesh] != first || tips[names] != second || len(tips) != 2 {
+				t.Fatalf("the fetch brought %v, %v; want %s and %s", tips, err, first, second)
+			}
+			if f.at(mesh) != first || f.at(names) != second {
+				t.Errorf("the bus refs are at %s and %s, want %s and %s", f.at(mesh), f.at(names), first, second)
+			}
+			// A ref that moves is read at what the fetch brought, a name no earlier fetch used.
+			third := f.push(mesh, "third")
+			if tips, err := f.r.Fetch(ctx, []string{mesh}); err != nil || tips[mesh] != third || f.at(mesh) != third {
+				t.Errorf("after the ref moved the fetch brought %v, %v, and the ref is at %s; want %s", tips, err, f.at(mesh), third)
+			}
+			if want := map[bool]int{false: 2, true: 0}[kept]; listed != want {
+				t.Errorf("%d for-each-ref started by two fetches, want %d", listed, want)
+			}
+			if f.left() == "" {
+				t.Error("the fetches left none of their own refs for Tidy")
+			}
+			if err := f.r.Tidy(ctx, false); err != nil {
+				t.Fatal(err)
+			}
+			if own := f.left(); own != "" {
+				t.Errorf("Tidy left %s: the fetches hadn't noted what they wrote", own)
+			}
+
+			// A fetch that fails, one of its refs not being on the remote, brings nothing, sets
+			// nothing, and leaves nothing Tidy can't find.
+			fourth := f.push(mesh, "fourth")
+			gone := brand.RefRoot + "mesh/device-00000000"
+			if tips, err := f.r.Fetch(ctx, []string{mesh, gone}); err == nil {
+				t.Errorf("a fetch of a ref that isn't there brought %v", tips)
+			}
+			if f.at(mesh) != third {
+				t.Errorf("a fetch that failed moved the bus ref to %s (the remote's is %s), want it left at %s", f.at(mesh), fourth, third)
+			}
+			if err := f.r.Tidy(ctx, false); err != nil {
+				t.Fatal(err)
+			}
+			if own := f.left(); own != "" {
+				t.Errorf("after a fetch that failed, Tidy left %s", own)
+			}
+		})
+	}
+}
