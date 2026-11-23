@@ -73,6 +73,7 @@ const ui = {
   fileNote: null, // why a file wasn't attached: { key, text, turnOn }, key the conversation's; turnOn, what to do once sending is turned on
   viewer: null, // the picture that is open: { file, name, size, from }, from the key of what opened it
   repoMenu: null, // the repo picker, open: { x, top, repos, opening, err } (#348)
+  repos: null, // the repos the picker last listed, for the count on its button (#1112)
   drawer: false, // on a phone, whether the sidebar's drawer is open
 };
 
