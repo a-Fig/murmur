@@ -16,6 +16,7 @@ const THEMES = [
   ["light", "Light"],
   ["murmur", "Murmur"],
   ["sky", "Sky"],
+  ["night", "Night"],
 ];
 const initialTheme = document.documentElement.dataset.theme;
 const legacyKeys = { theme: ":theme", onlyMine: ":only-mine", tagsFolded: ":tags-folded" };

@@ -372,6 +372,60 @@
   background: linear-gradient(155deg, #fffdf4 10%, #f7fbff 55%, #e9f3ff);
 }
 
+/* Night is the Figma v3 design's dark version: near-black navy panes, white text, the v3 blue for
+ * what is picked or pressed and a person's own messages, and light blue for quieter text. */
+:root[data-theme="night"] {
+  --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --background: #0b1321;
+  --foreground: #fff;
+  --card: #111926;
+  --popover: #111926;
+  --primary: #1767b0; /* white on it is 5.6:1 (WCAG 1.4.3) */
+  --primary-foreground: #fff;
+  --secondary: #111926;
+  --secondary-foreground: #fff;
+  --muted: #111926;
+  --muted-foreground: #a8b8cf; /* 9:1 on the page, 6:1 on a picked row */
+  --secondary-label: #a8b8cf;
+  --placeholder: #a8b8cf;
+  --message-surface: #1767b0;
+  --accent: rgb(255 255 255 / 5%);
+  --accent-foreground: #fff;
+  --border: #243047;
+  --input: #2c3a55;
+  --ring: #258ee3;
+  --info: #258ee3;
+  --info-foreground: #9ccbf3;
+  --pr-draft: #9ccbf3;
+  --row-hover: rgb(255 255 255 / 4%);
+  --row-selected: #243047;
+  --composer: #111926;
+  --composer-edge: #243047;
+  --scrim: rgb(7 12 21 / 64%);
+  --list: #0b1321;
+  --dot-off: color-mix(in oklab, #9ccbf3 70%, transparent);
+  --surface-grain: none;
+}
+[data-theme="night"] [data-app-sidebar] {
+  --sidebar: #070c15;
+  --sidebar-foreground: #fff;
+  --sidebar-muted-foreground: #9ccbf3;
+  --sidebar-icon: #9ccbf3;
+  --sidebar-row-hover: rgb(255 255 255 / 5%);
+  --sidebar-row-active: #1767b0;
+  --sidebar-row-selected: #1767b0;
+  --sidebar-border: #18212f;
+  --sidebar-edge: transparent;
+  --secondary-label: #9ccbf3;
+}
+[data-theme="night"] .chat-pane {
+  background: linear-gradient(155deg, #0b1321 20%, #0d1a2e 65%, #10223d);
+}
+/* The new-messages line is text, and the v3 blue is 3.2:1 on the page: light blue instead. */
+[data-theme="night"] .chat-new {
+  color: var(--info-foreground);
+}
+
 /* Base. */
 *,
 ::before,

@@ -133,6 +133,12 @@ Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 desig
 A pale blue sidebar and conversation list frame a cream-to-sky thread, with butter for
 a person's own messages. The panes keep the desktop page's spacing and hierarchy.
 
+Night is the Figma v3 design's dark version, also in Rubik: near-black navy panes (`#0B1321`,
+the sidebar `#070C15`), white text, a blue-grey (`#A8B8CF`) for quieter text, light blue
+(`#9CCBF3`) for the sidebar's, and the v3 blue (`#1767B0`) for what is picked or pressed and for a
+person's own messages. White on that blue is 5.6:1; as text on the page it is only 3.2:1, so the
+one place the page writes text in it, the new-messages line, uses the light blue instead.
+
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
 drawn in three layers: a round tile in its device's colour, one of 16 ghosts (`ghost-*.svg` in
