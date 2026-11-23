@@ -106,7 +106,7 @@ function flashbang() {
 }
 
 function setTheme(t) {
-  if (t === "light" && (theme === "dark" || theme === "dim")) flashbang();
+  if (t === "light" && (theme === "dark" || theme === "dim" || theme === "night")) flashbang();
   theme = t;
   document.documentElement.dataset.theme = t;
   savePreference("theme", t);

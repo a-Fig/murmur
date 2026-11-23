@@ -380,7 +380,7 @@
   --foreground: #fff;
   --card: #111926;
   --popover: #111926;
-  --primary: #1767b0; /* white on it is 5.6:1 (WCAG 1.4.3) */
+  --primary: #1767b0; /* white on it is 5.8:1 (WCAG 1.4.3) */
   --primary-foreground: #fff;
   --secondary: #111926;
   --secondary-foreground: #fff;
@@ -412,8 +412,8 @@
   --sidebar-muted-foreground: #9ccbf3;
   --sidebar-icon: #9ccbf3;
   --sidebar-row-hover: rgb(255 255 255 / 5%);
-  --sidebar-row-active: #1767b0;
-  --sidebar-row-selected: #1767b0;
+  --sidebar-row-active: #174a85; /* white 8.9:1, the light blue 5.2:1 on it */
+  --sidebar-row-selected: #174a85;
   --sidebar-border: #18212f;
   --sidebar-edge: transparent;
   --secondary-label: #9ccbf3;
@@ -421,8 +421,9 @@
 [data-theme="night"] .chat-pane {
   background: linear-gradient(155deg, #0b1321 20%, #0d1a2e 65%, #10223d);
 }
-/* The new-messages line is text, and the v3 blue is 3.2:1 on the page: light blue instead. */
-[data-theme="night"] .chat-new {
+/* Text the page writes in --primary (the new-messages line, a copied button): the v3 blue is 3.2:1 on
+ * the page, so light blue instead. */
+[data-theme="night"] :is(.chat-new, .btn-ghost.copied) {
   color: var(--info-foreground);
 }
 
