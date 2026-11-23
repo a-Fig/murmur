@@ -363,7 +363,7 @@ func TestJoinNeedsTheRepoSetUp(t *testing.T) {
 	git(t, b.clone, "commit", "-q", "-m", "the Murmur section")
 	git(t, b.clone, "push", "-q", "origin", "HEAD:refs/heads/main")
 	refused("the section on main, no refs")
-	if out, _ := b.run(b.clone, "join"); !strings.Contains(out, "a mur older than 0.5.4 set it up, and running `mur init` again adds what join needs") {
+	if out, _ := b.run(b.clone, "join"); !strings.Contains(out, "it was added without the ref join looks for (by a mur older than 0.5.4, or with --no-push); running `mur init` again adds the ref") {
 		t.Errorf("join didn't say what to do about a section from an older init:\n%s", out)
 	}
 

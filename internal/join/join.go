@@ -374,10 +374,12 @@ func setUp(ctx context.Context, gitDir string) error {
 		return fmt.Errorf("couldn't reach %s to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again",
 			remote, brand.Product, remote, brand.Command)
 	case len(refs) == 0:
-		// A repo whose section an older init pushed, before init made the refs, lands here too, and
+		// A repo whose section was pushed without the refs (by an older init, or a --no-push one) lands
+		// here too, and
 		// join doesn't read the files to tell: the sentence covers it.
 		return fmt.Errorf("this repo isn't set up for %[1]s: %[4]s has no %[5]s* refs. `%[2]s init` sets it up, after the user agrees (%[3]s). "+
-			"If AGENTS.md or CLAUDE.md already has the %[1]s section, a %[2]s older than 0.5.4 set it up, and running `%[2]s init` again adds what join needs",
+			"If AGENTS.md or CLAUDE.md already has the %[1]s section, it was added without the ref join looks for "+
+			"(by a %[2]s older than 0.5.4, or with --no-push); running `%[2]s init` again adds the ref",
 			brand.Product, brand.Command, brand.SetupDoc, remote, brand.RefRoot)
 	}
 	return nil
