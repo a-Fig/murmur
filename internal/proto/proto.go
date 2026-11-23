@@ -375,10 +375,13 @@ type Hello struct {
 	// From is the client's own ID for the conversation the session was in before this one, where
 	// the client moved it to another in the same process: Pi's previous session file after /new,
 	// /resume or /fork, which Murmur's extension gives the server (#1145). The daemon may register
-	// the server at the address of the session it left, which follows it. A Pi server takes the
-	// session ID the reply's Self names, with or without From: after a move, the daemon gives a
-	// server on either file the ID it recorded for that file.
+	// the server at the address of the session it left, which follows it.
 	From string `json:"from,omitempty"`
+	// TakesSelf says the server goes by the session ID the reply's Self names, with or without
+	// From: after a Pi move, the daemon gives a server on either file the ID it recorded for that
+	// file (#1145). A server from before it, still running after an update, keeps its own ID, so
+	// the daemon gives it no other.
+	TakesSelf bool `json:"takesSelf,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route
 }

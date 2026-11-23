@@ -421,7 +421,7 @@ func (l *link) run(ctx context.Context) {
 		// past the wait just before the drop may yet use one up while the link is down.
 		l.retry = nil
 		l.hello.Reconnect = true // any later hello is a reconnection
-		if _, id := bus.SplitAddr(resp.Self); (h.ByThread || h.Agent == "pi" || h.Agent == "pi in T3") && id != "" {
+		if _, id := bus.SplitAddr(resp.Self); (h.ByThread || h.TakesSelf) && id != "" {
 			// The daemon may give the thread the address its name has had since before #642
 			// (see Hello.ByThread), and a Pi session the address of the session that moved to
 			// its file, or of the one it left (Hello.From, #1145).

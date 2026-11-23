@@ -22,7 +22,7 @@ import (
 func (d *device) piHello(file, from string, pid int) (string, net.Conn, error) {
 	d.t.Helper()
 	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: proto.NativeID(file), Agent: "pi",
-		ClientPID: pid, From: from, Route: proto.Route{Native: file}})
+		ClientPID: pid, From: from, TakesSelf: true, Route: proto.Route{Native: file}})
 	if err != nil {
 		return "", nil, err
 	}
@@ -251,15 +251,16 @@ func TestAPiSessionFollowsAResume(t *testing.T) {
 	}
 }
 
-// A /resume to a file whose own session is still in its grace, its Pi gone, carries that
-// conversation on in the session that moved: what it had unread is the moved session's at once.
-// Before, it stayed in the grace inbox until the grace ran out.
+// A /resume to a file whose own session's Pi has gone, its session in its grace, carries that
+// conversation on in the session that moved: once the grace runs out, what it had unread is the
+// moved session's, which holds the file's name now, as after a Claude Code /resume.
 func TestAPiResumeTakesWhatTheFilesSessionHadUnread(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
-	b := newTimedDevice(t, remote, time.Hour, time.Hour)
+	b := newTimedDevice(t, remote, 3*time.Second, time.Hour)
 	b.session("aaaaaa", "")
 	addrC, connC := b.piStart(piFileC, "", procQ)
+	b.named(addrC)
 	if r := b.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: addrC, Subject: "for c"}); r.Error != "" {
 		t.Fatalf("send: %+v", r)
 	}
@@ -274,6 +275,72 @@ func TestAPiResumeTakesWhatTheFilesSessionHadUnread(t *testing.T) {
 	}
 	if got := inboxOf(b, idOf(old)); len(got) != 1 || got[0] != "for c" {
 		t.Fatalf("the session's inbox: %v", got)
+	}
+}
+
+// A /resume to a file another Pi has open leaves that Pi's session as it was, live or in its grace
+// while its server restarts: its unread messages stay its own, and its server, started again,
+// registers at its own address. Before, the file was recorded as the moved session's, so that
+// server was refused as in use, and in its grace its unread messages went to the moved session.
+func TestAPiResumeOfAFileAnotherPiHasLeavesThatPiAlone(t *testing.T) {
+	for _, grace := range []bool{false, true} {
+		what := "live"
+		if grace {
+			what = "in its grace"
+		}
+		t.Run(what, func(t *testing.T) {
+			t.Parallel()
+			remote := newRemote(t)
+			b := newTimedDevice(t, remote, time.Hour, time.Hour)
+			b.session("aaaaaa", "")
+			addrQ, connQ := b.piStart(piFileC, "", procQ)
+			if r := b.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: addrQ, Subject: "for q"}); r.Error != "" {
+				t.Fatalf("send: %+v", r)
+			}
+			eventually(t, "the message to be queued", func() bool { return logHas(b, "for q") })
+			if grace {
+				connQ.Close()
+				b.dropped(addrQ)
+			}
+
+			old, conn := b.piStart(piFileA, "", procP)
+			conn.Close()
+			if got, _ := b.piAgain(piFileC, piFileA, procP); got != old { // P's /resume of C
+				t.Fatalf("after /resume the session is at %s, not %s", got, old)
+			}
+			if !grace {
+				connQ.Close()
+			}
+			if got, _ := b.piAgain(piFileC, "", procQ); got != addrQ { // Q's server starts again
+				t.Fatalf("Q's server, started again, is at %s, not %s", got, addrQ)
+			}
+			if got := inboxOf(b, idOf(addrQ)); len(got) != 1 || got[0] != "for q" {
+				t.Fatalf("Q's inbox: %v", got)
+			}
+		})
+	}
+}
+
+// A server from before #1145, which goes by the ID it asked for whatever the reply says, is given
+// that ID, though the daemon has recorded another for its file: else the two would disagree on
+// which session it is.
+func TestAnOlderPiServerRegistersAtTheIDItAskedFor(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	old, conn := b.piStart(piFileA, "", procP)
+	conn.Close()
+	_, conn = b.piAgain(piFileB, piFileA, procP) // /new: piFileB is recorded as old's
+	conn.Close()
+	b.dropped(old)
+	c, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: proto.NativeID(piFileB), Agent: "pi",
+		ClientPID: procQ, Route: proto.Route{Native: piFileB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	if idOf(resp.Self) != proto.NativeID(piFileB) {
+		t.Fatalf("an older server was registered at %s, not the %s it asked for", resp.Self, proto.NativeID(piFileB))
 	}
 }
 

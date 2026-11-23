@@ -66,7 +66,7 @@ func TestAMovedPiServerTakesTheAddressOfTheSessionItLeft(t *testing.T) {
 	t.Setenv("T3CODE_CLI_PATH", "")
 	t.Setenv("MURMUR_PI_SESSION_FILE", "/s/b.jsonl")
 	t.Setenv("MURMUR_PI_PREVIOUS_SESSION_FILE", "/s/a.jsonl")
-	if h := helloFor("pi", "/work"); h.From != "/s/a.jsonl" || h.Native != "/s/b.jsonl" || h.ID != nativeID("/s/b.jsonl") {
+	if h := helloFor("pi", "/work"); h.From != "/s/a.jsonl" || !h.TakesSelf || h.Native != "/s/b.jsonl" || h.ID != nativeID("/s/b.jsonl") {
 		t.Fatalf("pi: %+v", h)
 	}
 	if h := helloFor("muse", "/work"); h.From != "" {

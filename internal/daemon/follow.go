@@ -311,42 +311,67 @@ func isPi(agent string) bool { return strings.TrimSuffix(agent, " in T3") == "pi
 // that ID, so the two are recorded (notePiMoveLocked): a server on either file registers at the
 // recorded ID. So a /reload, which starts the server again without a From, or Pi started again on
 // the file, finds the session that moved there, and a Pi on the file it left is a session of its
-// own, never handed what the moved one had. Only a server's first registration: one coming back
-// (Reconnect) has its ID already. The server takes the ID the reply's Self names. Caller holds mu.
+// own, never handed what the moved one had. A recorded session live in another Pi process is that
+// process's, and the hello keeps its own ID, as two Pis on one file did before.
+//
+// Only a server's first registration, as one coming back (Reconnect) has its ID already, and only
+// a server that goes by the ID the reply's Self names (TakesSelf): one from before #1145 would
+// register at the ID it asked for whatever the reply said, and then be another session. Caller
+// holds mu.
 func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
-	if !isPi(h.Agent) || h.Native == "" || h.ClaudeSession != "" || h.Reconnect {
+	if !isPi(h.Agent) || !h.TakesSelf || h.Native == "" || h.ClaudeSession != "" || h.Reconnect {
 		return h.ID, false
 	}
-	if h.From != "" && h.From != h.Native && h.ClientPID != 0 {
+	ofProcess := func(file string) *session {
 		for _, s := range d.sortedSessionsLocked() {
-			if s.route.Native == h.From && s.claudeSession == "" && s.clientPID == h.ClientPID && s.hold == nil {
-				return s.id, true
+			if s.route.Native == file && s.claudeSession == "" && s.clientPID == h.ClientPID && s.hold == nil {
+				return s
 			}
+		}
+		return nil
+	}
+	if h.From != "" && h.From != h.Native && h.ClientPID != 0 {
+		if s := ofProcess(h.From); s != nil {
+			return s.id, true
+		}
+	}
+	// A server of the same process on the same file, back after /reload, is the session there,
+	// whatever was recorded: the file may not be the session's in PiFiles, as another Pi had it open
+	// when the session moved to it (notePiMoveLocked).
+	if h.ClientPID != 0 {
+		if s := ofProcess(h.Native); s != nil {
+			return s.id, false
 		}
 	}
 	// Only for the ID the server made from its file: one that took another, after its own was in
 	// use for too long, keeps that.
-	if f, ok := d.st.PiFiles[h.Native]; ok && h.ID == proto.NativeID(h.Native) {
-		if time.Since(f.At) > 24*time.Hour {
-			d.st.PiFiles[h.Native] = piFile{ID: f.ID, At: time.Now().UTC().Truncate(time.Hour)}
-			d.saveLocked()
-		}
-		return f.ID, false
+	f, ok := d.st.PiFiles[h.Native]
+	if !ok || h.ID != proto.NativeID(h.Native) {
+		return h.ID, false
 	}
-	return h.ID, false
+	if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID {
+		return h.ID, false
+	}
+	if time.Since(f.At) > 24*time.Hour {
+		d.st.PiFiles[h.Native] = piFile{ID: f.ID, At: time.Now().UTC().Truncate(time.Hour)}
+		d.saveLocked()
+	}
+	return f.ID, false
 }
 
 // notePiMoveLocked records that Pi session s has moved to the file it is on from the file from
-// (piIDLocked), and gives s what a session left behind on that file in its grace had unread: a
-// /resume to a file whose own session's server has gone carries that conversation on here, as a
-// Codex thread that moves between programs does (yieldThreadLocked). The file left gets an ID of
-// its own, new, unless another file's move gave it one already. Caller holds mu.
+// (piIDLocked). The file left gets an ID of its own, new, unless another file's move gave it one
+// already. The file s is on now is recorded as s's only if no session of another Pi process is on
+// it, live or in its grace: that Pi has the file open too (a /resume of a file another Pi has, or
+// one restarting its server), its server would be given s's ID at its next start, and its unread
+// messages stay its own. A session left on the file whose Pi has gone hands its unread messages
+// to s as its grace ends, as s now holds the file's name (adoptLocked), as after a Claude Code
+// /resume. Caller holds mu.
 func (d *Daemon) notePiMoveLocked(s *session, from string) {
 	if d.st.PiFiles == nil {
 		d.st.PiFiles = map[string]piFile{}
 	}
 	now := time.Now().UTC().Truncate(time.Hour)
-	d.st.PiFiles[s.route.Native] = piFile{ID: s.id, At: now}
 	if f, ok := d.st.PiFiles[from]; !ok || f.ID == s.id {
 		id := bus.RandHex(6)
 		for _, stopped := d.st.Stopped[id]; d.sessions[id] != nil || stopped; _, stopped = d.st.Stopped[id] {
@@ -354,10 +379,12 @@ func (d *Daemon) notePiMoveLocked(s *session, from string) {
 		}
 		d.st.PiFiles[from] = piFile{ID: id, At: now}
 	}
-	for _, o := range d.sortedSessionsLocked() {
-		if o != s && !o.dropped.IsZero() && o.route.Native == s.route.Native && o.claudeSession == "" {
-			d.takeInboxLocked(s, o.id)
-		}
+	shared := false
+	for _, o := range d.sessions {
+		shared = shared || o != s && o.route.Native == s.route.Native && o.claudeSession == "" && o.clientPID != s.clientPID
+	}
+	if !shared {
+		d.st.PiFiles[s.route.Native] = piFile{ID: s.id, At: now}
 	}
 	d.saveLocked()
 }
