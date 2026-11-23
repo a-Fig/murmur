@@ -72,6 +72,7 @@ func (d *Daemon) pollEvery(calm time.Duration) pollRate {
 // noteConversationLocked records that a conversation moved: the poll goes to Poll for FastFor,
 // starting now, and a loop that was waiting longer looks at once. Presence heartbeats and status
 // changes don't come here: they arrive all the time from active teammates and predict no reply.
+// A device coming back from invisible does (setMode): it has a sync's worth to catch up on.
 // Caller holds mu.
 func (d *Daemon) noteConversationLocked() {
 	d.convAt = time.Now()
