@@ -101,6 +101,27 @@ func TestAMovedPiServerTakesTheAddressOfTheSessionItLeft(t *testing.T) {
 	}
 }
 
+// A server that both made its ID from a T3 thread and says the conversation it left gives both up
+// together once its address stays in use: one round of retries, about 7 s, not two.
+func TestAServerGivesUpTheThreadAndTheFileLeftTogether(t *testing.T) {
+	fastSeek(t)
+	f := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.ByThread || h.From != "" {
+			return "session ID " + h.ID + " is in use", ""
+		}
+		return "", ""
+	}}
+	h := proto.Hello{ID: threadID("thread-1"), Agent: "pi in T3", ByThread: true, From: "/s/a.jsonl",
+		Route: proto.Route{T3CLI: "/t3/bin/t3", T3Thread: "thread-1", Native: "/s/b.jsonl"}}
+	startedLink(t, f, &finder{}, h)
+	if n := f.helloCount(); n != 4 {
+		t.Errorf("registered after %d hellos, not 3 refused and 1 taken", n)
+	}
+	if h := f.lastHello(); h.ByThread || h.From != "" || h.ID != nativeID("/s/b.jsonl") {
+		t.Errorf("registered with %+v", h)
+	}
+}
+
 func openCodeCall(session string) *mcp.CallToolRequest {
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "who"}}
 	if session != "" {

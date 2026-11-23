@@ -127,6 +127,16 @@ const (
 	RefusedSend = "send"
 )
 
+// NativeID is the session ID an MCP server makes from native, its client's own ID for the
+// conversation (Hello.Native): the same each time, so a server that restarts within the
+// conversation takes its session back, and hashed, since Muse's and OpenCode's IDs begin with the
+// time they were made, so that two of them often share their first six characters. The daemon
+// makes it too, to know which Pi file a session ID is made from (#1145).
+func NativeID(native string) string {
+	sum := sha256.Sum256([]byte(native))
+	return hex.EncodeToString(sum[:3])
+}
+
 // Proof is what the daemon whose token is token, listening at addr, answers to a ping carrying
 // nonce: an HMAC of the address and the nonce, keyed by the token. Only that daemon and the clients
 // that read its daemon.json have the token, and the client's nonce is fresh, so a reply that carries
@@ -365,8 +375,9 @@ type Hello struct {
 	// From is the client's own ID for the conversation the session was in before this one, where
 	// the client moved it to another in the same process: Pi's previous session file after /new,
 	// /resume or /fork, which Murmur's extension gives the server (#1145). The daemon may register
-	// the server at the address of the session it left, which follows it, and the server takes the
-	// session ID the reply's Self names, as for ByThread.
+	// the server at the address of the session it left, which follows it. A Pi server takes the
+	// session ID the reply's Self names, with or without From: after a move, the daemon gives a
+	// server on either file the ID it recorded for that file.
 	From string `json:"from,omitempty"`
 	// Route says how to hand a message over to the session as a turn.
 	Route

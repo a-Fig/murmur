@@ -263,17 +263,25 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
   so its name, follow the new file, as a Claude Code session's do after a hook. Its address, inbox
   and place on the bus stay, so a message to the old name still reaches it
   ("A name a session has left", above), and `who` shows it once. A `/resume` back to a file that
-  had a name takes that name, as in Claude Code.
+  had a name takes that name, as in Claude Code. If that file's own session is in its grace, its
+  Pi gone, the moved session also takes what it had unread at once, rather than when the grace
+  runs out.
+  - *Which ID each file has.* After a move, the session's ID is no longer the one its file makes,
+    and the file it left still makes that ID. So the daemon records both in its state file
+    (`PiFiles`): the new file has the session's ID, and the file it left gets a new one. A server
+    on either file registers at the recorded ID, with or without `From`. So a `/reload`, which
+    starts the server again with no `From`, or Pi started again on the file, finds the session that
+    moved there, with what it had unread. Another Pi on the file left is a session of its own at
+    once, and is never handed what the moved session had. An entry goes 30 days after its last
+    use, once no session runs or is kept at either ID.
   - *Order.* Pi closes the old server as it starts the new one. A hello that comes before the
     daemon has seen the old connection close is refused as in use and tried again. After three
     refusals, about 7 s, the server gives up the move and registers at its file's own ID, as
     before.
   - *Not covered.* A move the daemon didn't see while the old session was still registered, because
-    the daemon restarted or the grace ran out in between, makes a new session, as before. A file
-    the session left, opened later in another Pi process (`pi --session`), is a session of that
-    process at the file's own address; it takes the file's name, and a message to that name at the
-    old address is forwarded to it ("A name held by another session", above).
-    Not run with a real Pi: the extension's part was tried with a stand-in for Pi's API.
+    the daemon restarted or the grace ran out in between, makes a new session, as before. Two Pi
+    processes on one file are two sessions, the later at an ID of its own after about 7 s, as
+    before. Not run with a real Pi: the extension's part was tried with a stand-in for Pi's API.
 - **Two live processes can hold one ID.** Claude Code lets a session be resumed twice at once.
 
 ## One address per T3 thread

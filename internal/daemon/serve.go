@@ -245,10 +245,8 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		return
 	}
 	h.ID = d.threadIDLocked(h)
-	moved := false // to another conversation of its client (#1145)
-	if id := d.fromIDLocked(h); id != h.ID {
-		h.ID, moved = id, true
-	}
+	var moved bool // to another conversation of its client (#1145)
+	h.ID, moved = d.piIDLocked(h)
 	s := d.sessions[h.ID]
 	// A held session is taken over by its thread's server, or, with no thread named yet, only if it
 	// is still a server's (a command in that server's grace): a command's own session would be a
@@ -360,6 +358,7 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 			d.setNameLocked(s, d.nameForKeyLocked(s, key))
 		}
 		if moved {
+			d.notePiMoveLocked(s, h.From)
 			d.noteFollowedLocked(s, "Pi", from)
 		}
 		s.dropped = time.Time{}

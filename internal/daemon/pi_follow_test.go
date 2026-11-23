@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
 )
@@ -16,12 +17,12 @@ import (
 // The session follows, as a Claude Code one does on /clear: it keeps its address and inbox, its
 // name follows the new file, and a message to the old name reaches it.
 
-// piHello registers a Pi server of process pid for file, which left from ("" for none). It returns
-// the reply's address, and the error, unchecked.
-func (d *device) piHello(id, file, from string, pid int) (string, net.Conn, error) {
+// piHello registers a Pi server of process pid for file, which left from ("" for none), at the ID
+// the server makes from the file. It returns the reply's address, and the error, unchecked.
+func (d *device) piHello(file, from string, pid int) (string, net.Conn, error) {
 	d.t.Helper()
-	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "pi", ClientPID: pid, From: from,
-		Route: proto.Route{Native: file}})
+	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: proto.NativeID(file), Agent: "pi",
+		ClientPID: pid, From: from, Route: proto.Route{Native: file}})
 	if err != nil {
 		return "", nil, err
 	}
@@ -29,17 +30,43 @@ func (d *device) piHello(id, file, from string, pid int) (string, net.Conn, erro
 	return resp.Self, conn, nil
 }
 
-// piMoved is piHello for the server Pi starts after a move: it tries again while the daemon hasn't
-// yet seen the old server's connection close, as the server does.
-func (d *device) piMoved(id, file, from string, pid int) string {
+// piStart is piHello, failing the test on an error.
+func (d *device) piStart(file, from string, pid int) (string, net.Conn) {
+	d.t.Helper()
+	addr, conn, err := d.piHello(file, from, pid)
+	if err != nil {
+		d.t.Fatalf("hello for %s: %v", file, err)
+	}
+	return addr, conn
+}
+
+// piAgain is piHello for a server Pi starts again: it tries again while the daemon hasn't yet seen
+// the old server's connection close, as the server does.
+func (d *device) piAgain(file, from string, pid int) (string, net.Conn) {
 	d.t.Helper()
 	var addr string
-	eventually(d.t, "the moved session to register", func() bool {
-		a, _, err := d.piHello(id, file, from, pid)
-		addr = a
+	var conn net.Conn
+	eventually(d.t, "the server to register again", func() bool {
+		a, c, err := d.piHello(file, from, pid)
+		addr, conn = a, c
 		return err == nil
 	})
-	return addr
+	return addr, conn
+}
+
+// idOf is the session ID in addr.
+func idOf(addr string) string {
+	_, id := bus.SplitAddr(addr)
+	return id
+}
+
+// dropped waits for d to have the session at addr in its grace.
+func (d *device) dropped(addr string) {
+	d.t.Helper()
+	eventually(d.t, "the session in its grace", func() bool {
+		l := d.do(proto.Request{Op: proto.OpLookup, Name: addr}).Lookup
+		return l != nil && l.Dropped
+	})
 }
 
 // whoNames is every name a's who shows, with the address it shows it at.
@@ -53,6 +80,12 @@ func whoNames(a *device) map[string]string {
 	return got
 }
 
+const (
+	piFileA = "/s/2026-11-23_a.jsonl"
+	piFileB = "/s/2026-11-23_b.jsonl"
+	piFileC = "/s/2026-11-20_c.jsonl"
+)
+
 // After /new or /fork the session is at its old address under a new name, a send to the old name
 // from another device reaches it and says what it is called now, and who shows the old name
 // nowhere. Before, the new file was a new session, and the old one, its server gone, kept what was
@@ -64,24 +97,20 @@ func TestAPiSessionFollowsNewAndFork(t *testing.T) {
 	} {
 		t.Run(c.move, func(t *testing.T) {
 			t.Parallel()
-			const fileA = "/s/2026-11-23_a.jsonl"
 			remote := newRemote(t)
 			a, b := newDevice(t, remote), newDevice(t, remote)
 			a.session("aaaaaa", "claude-sender")
-			old, conn, err := b.piHello("0a0a0a", fileA, "", procP)
-			if err != nil {
-				t.Fatal(err)
-			}
+			old, conn := b.piStart(piFileA, "", procP)
 			nameA := b.named(old)
 			a.nameIs(old, nameA)
 
 			// Pi closes the old server as the new one starts: while the daemon still has it live,
 			// the new one waits.
-			if _, _, err := b.piHello("0b0b0b", c.file, fileA, procP); err == nil || !strings.Contains(err.Error(), "in use") {
+			if _, _, err := b.piHello(c.file, piFileA, procP); err == nil || !strings.Contains(err.Error(), "in use") {
 				t.Fatalf("a hello while the old server is live: %v", err)
 			}
 			conn.Close()
-			if got := b.piMoved("0b0b0b", c.file, fileA, procP); got != old {
+			if got, _ := b.piAgain(c.file, piFileA, procP); got != old {
 				t.Fatalf("after %s the session is at %s, not %s", c.move, got, old)
 			}
 			nameB := b.nameHeld(old, nameA)
@@ -94,8 +123,81 @@ func TestAPiSessionFollowsNewAndFork(t *testing.T) {
 			if r.Error != "" || !strings.Contains(r.Note, nameB) {
 				t.Fatalf("send to the old name: %+v", r)
 			}
-			if got := inboxOf(b, "0a0a0a"); len(got) != 1 || got[0] != "to the old name" {
+			if got := inboxOf(b, idOf(old)); len(got) != 1 || got[0] != "to the old name" {
 				t.Fatalf("the session's inbox: %v", got)
+			}
+		})
+	}
+}
+
+// After a move, a /reload starts the server again on the new file with no From, and so does Pi
+// started again on it: either is the session that moved there, at its address, with what it had
+// unread. Before, the file's own ID was a new session's, and the unread message stayed behind.
+func TestAPiSessionKeepsItsAddressAcrossAReloadAfterAMove(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "")
+	old, conn := b.piStart(piFileA, "", procP)
+	conn.Close()
+	_, conn = b.piAgain(piFileB, piFileA, procP) // /new
+	if r := b.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: old, Subject: "before the reload"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "before the reload") })
+
+	conn.Close()
+	if got, conn := b.piAgain(piFileB, "", procP); got != old { // /reload
+		t.Fatalf("after /reload the session is at %s, not %s", got, old)
+	} else {
+		conn.Close()
+	}
+	if got, _ := b.piAgain(piFileB, "", procQ); got != old { // Pi started again on the file
+		t.Fatalf("Pi started again on the file is at %s, not %s", got, old)
+	}
+	if got := inboxOf(b, idOf(old)); len(got) != 1 || got[0] != "before the reload" {
+		t.Fatalf("the session's inbox: %v", got)
+	}
+}
+
+// Another Pi on the file a session left is a conversation of its own, whether the session that
+// left is live or in its grace: it registers at once, at an address of its own, and is never handed
+// what the session that left had. Before, the file made the ID the session that left still had:
+// live, the hello was refused for about 7 s, and in its grace it was taken over, inbox and all.
+func TestAnotherPiOnTheFileASessionLeftIsASessionOfItsOwn(t *testing.T) {
+	for _, grace := range []bool{false, true} {
+		what := "live"
+		if grace {
+			what = "in its grace"
+		}
+		t.Run(what, func(t *testing.T) {
+			t.Parallel()
+			remote := newRemote(t)
+			b := newDevice(t, remote)
+			b.session("aaaaaa", "")
+			moved, conn := b.piStart(piFileA, "", procP)
+			conn.Close()
+			_, conn = b.piAgain(piFileB, piFileA, procP) // /new
+			if r := b.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: moved, Subject: "for b"}); r.Error != "" {
+				t.Fatalf("send: %+v", r)
+			}
+			eventually(t, "the message to be queued", func() bool { return logHas(b, "for b") })
+			if grace {
+				conn.Close()
+				b.dropped(moved)
+			}
+
+			other, _, err := b.piHello(piFileA, "", procQ)
+			if err != nil || other == "" || other == moved {
+				t.Fatalf("another Pi on the file left: %s, %v", other, err)
+			}
+			if got := b.do(proto.Request{Op: proto.OpInbox, Session: idOf(other)}).Messages; len(got) != 0 {
+				t.Fatalf("the other Pi was handed %v", viewSubjects(got))
+			}
+			if !grace {
+				if got := inboxOf(b, idOf(moved)); len(got) != 1 || got[0] != "for b" {
+					t.Fatalf("the moved session's inbox: %v", got)
+				}
 			}
 		})
 	}
@@ -105,7 +207,7 @@ func TestAPiSessionFollowsNewAndFork(t *testing.T) {
 // as a Claude Code session does on a /resume back, and still keeps its address: a message to
 // either name reaches it.
 func TestAPiSessionFollowsAResume(t *testing.T) {
-	const earlier = "0c0c0c"
+	earlier := proto.NativeID(piFileC)
 	t.Cleanup(daemon.SetGraceBegins(func(id string) <-chan struct{} {
 		if id != earlier {
 			return nil // the session that moves keeps its grace until it is taken over
@@ -114,30 +216,23 @@ func TestAPiSessionFollowsAResume(t *testing.T) {
 		close(over)
 		return over
 	}))
-	const fileA, fileC = "/s/2026-11-23_a.jsonl", "/s/2026-11-20_c.jsonl"
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	b := newTimedDevice(t, remote, time.Hour, time.Hour)
 	a.session("aaaaaa", "claude-sender")
 
 	// File C was a conversation of its own, in an earlier Pi, and has stopped.
-	addrC, connC, err := b.piHello(earlier, fileC, "", procQ)
-	if err != nil {
-		t.Fatal(err)
-	}
+	addrC, connC := b.piStart(piFileC, "", procQ)
 	nameC := b.named(addrC)
 	connC.Close()
 	eventually(t, "the earlier session to stop", func() bool { return busLines(b, addrC, "stopped") == 1 })
 
-	old, conn, err := b.piHello("0a0a0a", fileA, "", procP)
-	if err != nil {
-		t.Fatal(err)
-	}
+	old, conn := b.piStart(piFileA, "", procP)
 	nameA := b.named(old)
 	a.nameIs(old, nameA)
 	conn.Close()
 
-	if got := b.piMoved(earlier, fileC, fileA, procP); got != old {
+	if got, _ := b.piAgain(piFileC, piFileA, procP); got != old {
 		t.Fatalf("after /resume the session is at %s, not %s", got, old)
 	}
 	b.nameIs(old, nameC)
@@ -151,28 +246,47 @@ func TestAPiSessionFollowsAResume(t *testing.T) {
 			t.Fatalf("send to %s: %+v", to, r)
 		}
 	}
-	if got := inboxWant(b, "0a0a0a", 2); len(got) != 2 {
+	if got := inboxWant(b, idOf(old), 2); len(got) != 2 {
 		t.Fatalf("the session's inbox: %v", got)
 	}
 }
 
-// Another Pi process on the file a session left is a conversation of its own: a hello naming that
-// file as its From, from another process, isn't given the session's address.
-func TestAPiSessionOfAnotherProcessDoesNotTakeTheFileItLeft(t *testing.T) {
+// A /resume to a file whose own session is still in its grace, its Pi gone, carries that
+// conversation on in the session that moved: what it had unread is the moved session's at once.
+// Before, it stayed in the grace inbox until the grace ran out.
+func TestAPiResumeTakesWhatTheFilesSessionHadUnread(t *testing.T) {
 	t.Parallel()
-	const fileA = "/s/2026-11-23_a.jsonl"
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, time.Hour, time.Hour)
+	b.session("aaaaaa", "")
+	addrC, connC := b.piStart(piFileC, "", procQ)
+	if r := b.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: addrC, Subject: "for c"}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "the message to be queued", func() bool { return logHas(b, "for c") })
+	connC.Close()
+	b.dropped(addrC)
+
+	old, conn := b.piStart(piFileA, "", procP)
+	conn.Close()
+	if got, _ := b.piAgain(piFileC, piFileA, procP); got != old {
+		t.Fatalf("after /resume the session is at %s, not %s", got, old)
+	}
+	if got := inboxOf(b, idOf(old)); len(got) != 1 || got[0] != "for c" {
+		t.Fatalf("the session's inbox: %v", got)
+	}
+}
+
+// A hello that names a file another Pi process's session left is no move of that session: the
+// session in its grace stays where it is, and the hello is a session of its own.
+func TestAPiOfAnotherProcessDoesNotFollowASessionItDidNotHave(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	b := newDevice(t, remote)
-	old, conn, err := b.piHello("0a0a0a", fileA, "", procP)
-	if err != nil {
-		t.Fatal(err)
-	}
+	old, conn := b.piStart(piFileA, "", procP)
 	conn.Close()
-	eventually(t, "the session in its grace", func() bool {
-		d := b.do(proto.Request{Op: proto.OpLookup, Name: old}).Lookup
-		return d != nil && d.Dropped
-	})
-	if got, _, err := b.piHello("0d0d0d", "/s/2026-11-23_d.jsonl", fileA, procQ); err != nil || got == old {
+	b.dropped(old)
+	if got, _, err := b.piHello(piFileB, piFileA, procQ); err != nil || got == old {
 		t.Fatalf("another process's hello: %s, %v", got, err)
 	}
 }
