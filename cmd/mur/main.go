@@ -89,7 +89,7 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
   mur status [TEXT]             set the line others see in who for what you are working on
   mur lookup NAME [--messages N]
                                 everything known about a session, as the lookup tool does, with its
-                                latest N messages (10 if not given)
+                                latest N messages (10 if not given, at most 50)
 
 {tools}
 
