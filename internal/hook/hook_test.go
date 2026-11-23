@@ -751,6 +751,10 @@ func TestTheHookTellsTheDaemonOfAnIssueFiled(t *testing.T) {
 		"toolName": "run_terminal_command", "toolInput": map[string]any{"command": "gh issue close 12"},
 		"toolResult": map[string]any{"type": "Bash"}, "tool_response": map[string]any{"type": "Bash", "output_for_prompt": "✓ Closed issue a-Fig/murmur#12 (x)"}})
 	hook.RunFor(hook.Grok, bytes.NewReader(grok), &bytes.Buffer{})
+	grokResultOnly, _ := json.Marshal(map[string]any{"sessionId": "grok-2", "hook_event_name": "PostToolUse", "cwd": repo,
+		"toolName": "run_terminal_command", "toolInput": map[string]any{"command": "gh issue close 13"},
+		"toolResult": map[string]any{"type": "Bash", "output_for_prompt": "✓ Closed issue a-Fig/murmur#13 (y)"}})
+	hook.RunFor(hook.Grok, bytes.NewReader(grokResultOnly), &bytes.Buffer{})
 	// A prompt has no tool call, whatever its payload says.
 	prompt, _ := json.Marshal(map[string]any{"session_id": "claude-x", "hook_event_name": "UserPromptSubmit", "cwd": repo,
 		"tool_name": "Bash", "tool_input": map[string]any{"command": "gh issue create"},
@@ -766,6 +770,7 @@ func TestTheHookTellsTheDaemonOfAnIssueFiled(t *testing.T) {
 	want := map[string][]proto.Issue{
 		"claude-x ":   {{Repo: "a-Fig/murmur", Number: 37}},
 		"grok-1 grok": {{Repo: "a-Fig/murmur", Number: 12, Closed: true}},
+		"grok-2 grok": {{Repo: "a-Fig/murmur", Number: 13, Closed: true}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the notices requests reported %+v, want %+v", got, want)
