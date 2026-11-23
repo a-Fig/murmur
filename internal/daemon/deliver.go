@@ -972,7 +972,7 @@ func (d *Daemon) batchLocked(id string, first *inMsg, via string, wake pageSetti
 }
 
 // handOver passes the message to the session's client, once. It is tried a second time, after PushRetry, only
-// if the first attempt never reached the way in (notReached): `t3 thread send` takes no key that
+// if the first attempt never reached the way in and might the next time (worthAnotherTry): `t3 thread send` takes no key that
 // would make a repeat harmless, and the socket answers nothing, so a call that failed after it
 // started may have handed the message over, and a second one would make a second turn of it. A message
 // whose handoff failed that way is left to the hook's notice, which the agent still gets, and stays

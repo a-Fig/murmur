@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -82,15 +83,40 @@ func TestThePickerRecordsASlugItHadToAskFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := map[string]Clone{
+		filepath.Clean(self): {GitDir: filepath.Clean(self), Name: "murmur", Slug: "a-Fig/murmur"},
+		filepath.Clean(old):  {GitDir: filepath.Clean(old), Name: "old", Slug: "group/sub/old"},
+	}
+	if len(recorded) != len(want) {
+		t.Errorf("the record has %d clones, want %d: %+v", len(recorded), len(want), recorded)
+	}
 	for _, c := range recorded {
-		if c.Name == "old" && c.Slug != "group/sub/old" {
-			t.Errorf("after a listing the record has %+v, want its slug kept", c)
-		}
-		if c.Name == "old" && c.GitDir != filepath.Clean(old) {
-			t.Errorf("the record's git dir changed to %q", c.GitDir)
+		if c != want[c.GitDir] {
+			t.Errorf("after a listing the record has %+v, want %+v", c, want[c.GitDir])
 		}
 	}
-	if len(recorded) != 2 {
-		t.Errorf("the record has %d clones, want 2: %+v", len(recorded), recorded)
+
+	// A clone that has left by the time git answers isn't put back with a slug.
+	left := clone("left", "https://github.com/a-Fig/left.git")
+	if err := Add(dir, Clone{GitDir: left, Name: "left"}); err != nil {
+		t.Fatal(err)
+	}
+	// Joined when the list reads the record, and not when it is asked again before the write.
+	var asked atomic.Int32
+	gone := func(gitDir string) bool {
+		return filepath.Clean(gitDir) != filepath.Clean(left) || asked.Add(1) == 1
+	}
+	all := Picker{Dir: dir, Self: self, Joined: gone}
+	if _, err := all.List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	every, err := List(dir, joined)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range every {
+		if c.Name == "left" && c.Slug != "" {
+			t.Errorf("a clone that left was written to the record again: %+v", c)
+		}
 	}
 }
