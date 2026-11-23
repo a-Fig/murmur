@@ -110,8 +110,9 @@ Everything it writes is outside the repo's tracked files:
 
 - **Cursor's and Kiro's entries** (#1199, 2026-11-23). Where the user already has a `murmur` server
   in `mcp.json`, join sets its `command` and `args` and keeps their other fields (an `env`, say), as
-  Codex's join does; uninstall takes out the same two, and the entry with them if nothing else is
-  left, else says what it kept. An allow rule is a line among the user's own that Cursor and Kiro
+  Codex's join does; uninstall takes the whole entry out, as Codex's does with its table (one left
+  with only the user's fields would be a server with no command), and says which of their fields went
+  with it. An allow rule is a line among the user's own that Cursor and Kiro
   rewrite, so nothing in it says who added it: join records each rule it adds in `.murmur-join.json`
   beside that permissions file, and uninstall removes only a recorded one. A rule that was there
   before join, or that an older mur added without a record, stays, with a note. Join and uninstall in

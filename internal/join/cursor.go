@@ -305,16 +305,16 @@ func (e Env) unregisterCursorAt(_ context.Context, hs []agentHome) (did, notes [
 	if text, rerr := readConfig(path); rerr != nil {
 		errs = append(errs, rerr)
 	} else if text != "" {
-		out, changed, kept, err := removeMCPServer(text)
+		out, changed, dropped, err := removeMCPServer(text)
 		switch {
 		case err != nil:
 			errs = append(errs, fmt.Errorf("%s: %w", path, err))
 		case changed:
 			if err := writeJSONConfig(path, out, 0o644); err != nil {
 				errs = append(errs, err)
-			} else if len(kept) > 0 {
-				did = append(did, h.Label+": removed the command of the "+brand.MCPServer+" MCP server ("+path+")")
-				notes = append(notes, keptServerNote(h.Label, path, kept))
+			} else if len(dropped) > 0 {
+				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+path+")")
+				notes = append(notes, droppedFieldsNote(h.Label, path, dropped))
 			} else {
 				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+path+")")
 			}

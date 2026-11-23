@@ -442,16 +442,16 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 	if text, rerr := readConfig(mcpPath); rerr != nil {
 		problems = append(problems, rerr)
 	} else if text != "" {
-		out, changed, kept, uerr := removeMCPServer(text)
+		out, changed, dropped, uerr := removeMCPServer(text)
 		switch {
 		case uerr != nil:
 			problems = append(problems, fmt.Errorf("%s: %w", mcpPath, uerr))
 		case changed:
 			if werr := writeJSONConfig(mcpPath, out, 0o644); werr != nil {
 				problems = append(problems, werr)
-			} else if len(kept) > 0 {
-				did = append(did, h.Label+": removed the command of the "+brand.MCPServer+" MCP server ("+mcpPath+")")
-				notes = append(notes, keptServerNote(h.Label, mcpPath, kept))
+			} else if len(dropped) > 0 {
+				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+mcpPath+")")
+				notes = append(notes, droppedFieldsNote(h.Label, mcpPath, dropped))
 			} else {
 				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+mcpPath+")")
 			}

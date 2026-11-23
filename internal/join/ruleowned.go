@@ -40,8 +40,8 @@ func readRuleRecord(configFile string) (ruleRecord, error) {
 	if err != nil {
 		return rec, err
 	}
-	if err := json.Unmarshal(b, &rec); err != nil {
-		return ruleRecord{}, fmt.Errorf("%s: %w", ruleRecordPath(configFile), err)
+	if json.Unmarshal(b, &rec) != nil {
+		return ruleRecord{}, nil // a record that doesn't parse says nothing: its rules stay as they are
 	}
 	return rec, nil
 }

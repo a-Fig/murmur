@@ -52,18 +52,16 @@ func TestCursorJoinKeepsTheUsersFieldsOnItsServer(t *testing.T) {
 		t.Errorf("second join: fresh=%v err=%v", fresh, err)
 	}
 
-	// Uninstall takes out the command and args join wrote. The env was the user's: it stays, and
-	// uninstall says so.
+	// Uninstall takes the entry out whole, as Codex's does, and says its env went with it.
 	_, notes, err := sb.unregisterCursorAt(context.Background(), []agentHome{h})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry = serverEntry(t, path)
-	if _, has := entry["command"]; has || envOf(entry)["MUR_DEBUG"] != "1" {
-		t.Errorf("after uninstall, the entry is %v, want only the user's env", entry)
+	if entry = serverEntry(t, path); entry != nil {
+		t.Errorf("after uninstall, the entry is %v, want none", entry)
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), "env") {
-		t.Errorf("uninstall doesn't say it kept the env: %q", notes)
+		t.Errorf("uninstall doesn't say the env went: %q", notes)
 	}
 	if !strings.Contains(read(t, path), `"docs"`) {
 		t.Errorf("the user's other server is gone:\n%s", read(t, path))
@@ -135,12 +133,11 @@ func TestKiroJoinKeepsTheUsersFieldsOnItsServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry = serverEntry(t, path)
-	if _, has := entry["command"]; has || envOf(entry)["MUR_DEBUG"] != "1" {
-		t.Errorf("after uninstall, the entry is %v, want only the user's env", entry)
+	if entry = serverEntry(t, path); entry != nil {
+		t.Errorf("after uninstall, the entry is %v, want none", entry)
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), "env") {
-		t.Errorf("uninstall doesn't say it kept the env: %q", notes)
+		t.Errorf("uninstall doesn't say the env went: %q", notes)
 	}
 }
 
@@ -269,5 +266,20 @@ func TestCursorScratchJunctionAtAFileNameIsOutside(t *testing.T) {
 				t.Errorf("cursor homes = %q, want filtered out", got)
 			}
 		})
+	}
+}
+
+// A record that doesn't parse says nothing: uninstall still finishes, and a rule in the file stays.
+func TestACorruptRuleRecordDoesntStopUninstall(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := withCursor(t, sb)
+	write(t, ruleRecordPath(sb.CursorConfig), "{not json")
+	if _, _, err := sb.unregisterCursorAt(context.Background(), []agentHome{h}); err != nil {
+		t.Errorf("uninstall with a corrupt record: %v", err)
+	}
+	write(t, sb.CursorConfig, `{"version": 1, "permissions": {"allow": ["Mcp(murmur:*)"]}}`)
+	_, notes, err := sb.unregisterCursorAt(context.Background(), []agentHome{h})
+	if err != nil || !strings.Contains(read(t, sb.CursorConfig), "Mcp(murmur:*)") || len(notes) == 0 {
+		t.Errorf("err=%v notes=%q\n%s", err, notes, read(t, sb.CursorConfig))
 	}
 }
