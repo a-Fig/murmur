@@ -48,6 +48,7 @@ type Options struct {
 	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed, give or take a fifth; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
+	ColorHold  time.Duration // presence unchanged this long lets the device's picked colour go; a week (color.go)
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration

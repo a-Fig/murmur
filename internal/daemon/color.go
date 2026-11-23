@@ -24,16 +24,44 @@ import (
 // presence, and then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come
 // back each time the holder's daemon went idle, and two devices would swap colours day by day.
 
+// colorHold is how long a device's pick holds its colour after its presence last changed. A daemon
+// that was killed, or a clone that was abandoned, leaves its presence on the remote for good, and
+// its colour could never be picked again (#581). Staleness itself, minutes, doesn't let a colour
+// go: it is each reader's own clock, and two pages a few minutes apart would show different
+// colours for a device that only slept. A week is long enough that the pages disagree only about
+// a device that has been gone that long, and for the moment it takes each to pass the week.
+const colorHold = 7 * 24 * time.Hour
+
+// colorGoneLocked says p's presence went unchanged so long that its pick no longer holds its
+// colour, as of this daemon's last successful sync, as staleLocked judges. Caller holds mu.
+func (d *Daemon) colorGoneLocked(p *peer) bool {
+	return !d.lastPollOK.IsZero() && d.lastPollOK.Sub(p.lastChange) > cmp.Or(d.opt.ColorHold, colorHold)
+}
+
 // colorsLocked is every device's colour, this one's included, by the devices in presence. A
-// device whose presence is stale still holds its colour: staleness is each reader's own clock,
-// and the colours must come out the same everywhere. Caller holds mu.
+// device whose presence is stale still holds its colour, until it has been gone for colorHold:
+// then it is shown as though it had picked none. Caller holds mu.
 func (d *Daemon) colorsLocked() map[string]bus.DeviceColor {
 	color, at := d.shownColorLocked() // as the peers see it
 	picks := []bus.ColorPick{{Device: d.device, Color: color, At: at}}
 	for id, p := range d.peers {
-		picks = append(picks, bus.ColorPick{Device: id, Color: p.pres.Color, At: p.pres.ColorAt})
+		pick := bus.ColorPick{Device: id}
+		if !d.colorGoneLocked(p) {
+			pick.Color, pick.At = p.pres.Color, p.pres.ColorAt
+		}
+		picks = append(picks, pick)
 	}
 	return bus.DeviceColors(picks)
+}
+
+// colorAwayLocked takes this device's pick out of its presence until the next full sync has
+// settled it again, if its last presence, signed at last, is older than colorHold: its teammates
+// let the colour go meanwhile, and one may have picked it. A daemon that restarts starts unsettled;
+// this is for one that slept through the week, as on a laptop closed that long. Caller holds mu.
+func (d *Daemon) colorAwayLocked(last time.Time) {
+	if d.colorSettled && !last.IsZero() && time.Since(last) > cmp.Or(d.opt.ColorHold, colorHold) {
+		d.colorSettled = false
+	}
 }
 
 // shownColorLocked is the pick this device's presence carries: none until its first full sync
@@ -53,8 +81,8 @@ func (d *Daemon) settleColorLocked() {
 	if d.st.Color != 0 {
 		for _, id := range sortedKeys(d.peers) {
 			p := d.peers[id].pres
-			if p.Color != d.st.Color {
-				continue
+			if p.Color != d.st.Color || d.colorGoneLocked(d.peers[id]) {
+				continue // another colour, or a device gone so long its pick holds none
 			}
 			if !d.colorSettled || p.ColorAt.Before(d.st.ColorAt) || p.ColorAt.Equal(d.st.ColorAt) && id < d.device {
 				d.st.Color, d.st.ColorAt, d.st.ColorLostTo = 0, time.Time{}, d.deviceCalledLocked(id)
