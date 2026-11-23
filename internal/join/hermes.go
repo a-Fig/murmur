@@ -358,7 +358,7 @@ func (e Env) unregisterHermesAt(_ context.Context, hs []agentHome) (did, notes [
 	h := hs[0]
 	dir := hermesPluginDir(h.Dir)
 	if hermesKept(dir) {
-		return nil, []string{h.Label + ": left " + dir + " alone, and on in plugins.enabled: it isn't the plugin " + brand.Product + " writes"}, nil
+		return nil, []string{h.Label + ": left " + dir + " alone: it isn't the plugin " + brand.Product + " writes"}, nil
 	}
 	ours := func(b []byte) bool { return bytes.HasPrefix(b, []byte(hermesMarker)) }
 	var problems []error
