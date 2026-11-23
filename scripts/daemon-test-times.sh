@@ -18,8 +18,13 @@
 #   - the slowest tests. Those come from go test -v, which the jobs have run with since
 #     2026-11-22; a run from before then lists none.
 # Then the slowest tests over every job. A test's time is its own, without the time it waited for
-# its turn to run in parallel.
+# its turn to run in parallel. A test that was retried is listed by its first run.
+#
+# test-linux's figures don't sit beside the shards': it runs every package at once (./...), so
+# other packages' tests share its processors with the daemon's, and it runs the whole package where
+# a shard runs a part.
 set -euo pipefail
+export LC_ALL=C # a point for the decimal, whatever the machine's locale
 run=${1:-}
 top=${2:-15}
 repo=${GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
@@ -56,34 +61,40 @@ while IFS=$'\t' read -r job secs step name; do
   fi
   cut -f3- "$work/raw" | sed -E 's/^[0-9T:.-]+Z //' | tr -d '\r' >"$work/log"
 
-  # The daemon package's own lines: go prints a package's tests, then its verdict.
+  # The daemon package's own lines: go's verdict for it, and the tests' count of git.
   awk '
     /^(ok|FAIL)[ \t]+[^ \t]+\/internal\/daemon[ \t]/ { print "   go: " $0 }
-    /^git in a test run of / { print "   " $0; n = 12; next }
+    /^git in a test run of / { print "   " $0; n = 30; next }
     n > 0 && /^[ \t]+[a-z-]+[ \t]/ { print "   " $0; n--; next }
     { n = 0 }' "$work/log"
 
   gh api "repos/$repo/check-runs/$job/annotations?per_page=100" \
     --jq '.[] | select(.title == "Test retried") | "   retried: " + .message' || true
 
-  # Top-level tests of the daemon package, with their own time: those before its verdict line.
+  # Top-level tests of the daemon package, with their own time: those before its verdict line. Its
+  # first verdict only: a second is the retry of the tests that failed, which would count twice.
   awk -v name="$name" '
     /^--- (PASS|FAIL): Test/ { t = $4; gsub(/[()s]/, "", t); held[$3] = t; next }
     /^(ok|FAIL)[ \t]+[^ \t]+/ {
-      if ($2 ~ /\/internal\/daemon$/) for (k in held) printf "%s\t%s\t%s\n", held[k], k, name
+      if ($2 ~ /\/internal\/daemon$/ && !seen++) for (k in held) printf "%s\t%s\t%s\n", held[k], k, name
       delete held
     }' "$work/log" | sort -rn >"$work/tests"
   if [ -s "$work/tests" ]; then
-    echo "   $(grep -c . "$work/tests") tests, $(awk '{ s += $1 } END { printf "%.0f", s }' "$work/tests")s of test time; the slowest:"
-    head -n "$top" "$work/tests" | awk -F'\t' '{ printf "   %8.2fs  %s\n", $1, $2 }'
+    awk -F'\t' -v n="$top" '
+      { s += $1; if (NR <= n) line[NR] = sprintf("   %8.2fs  %s", $1, $2) }
+      END {
+        printf "   %d tests, %.0fs of test time; the slowest:\n", NR, s
+        for (i = 1; i <= n && i <= NR; i++) print line[i]
+      }' "$work/tests"
     cat "$work/tests" >>"$work/all"
   else
-    echo "   (no per-test times in its log: it ran without go test -v)"
+    echo "   (no per-test times in its log)"
   fi
 done <"$work/jobs"
 
-if [ -s "${work}/all" ]; then
+if [ -s "$work/all" ]; then
   echo
   echo "== The slowest tests over the run"
-  sort -rn "$work/all" | head -n "$top" | awk -F'\t' '{ printf "   %8.2fs  %s  (%s)\n", $1, $2, $3 }'
+  # awk reads to the end: head would close the pipe on sort, which fails the script under pipefail.
+  sort -rn "$work/all" | awk -F'\t' -v n="$top" 'NR <= n { printf "   %8.2fs  %s  (%s)\n", $1, $2, $3 }'
 fi
