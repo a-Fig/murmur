@@ -769,9 +769,9 @@
      Each claim is led by a line icon drawn like the copy button's: 24-unit box, round caps. */
   .st-trim { padding-bottom: var(--sheet); }
   .st .st-trust { position: relative; z-index: 2; align-self: stretch; margin: 0 -24px; padding: 20px 24px 22px; list-style: none;
-    display: flex; flex-wrap: wrap; justify-content: center; gap: 10px clamp(28px, 3.4vw, 52px);
+    display: flex; justify-content: safe center; gap: 10px clamp(28px, 3.4vw, 52px); overflow-x: auto; scrollbar-width: none;
     border-top: 1px solid color-mix(in srgb, var(--cream) 18%, transparent); }
-  .st .st-trust li { display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap;
+  .st .st-trust li { flex: none; display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap;
     color: var(--cream); text-shadow: 0 1px 12px rgba(14, 27, 69, .45); }
   .st .st-trust svg { flex: none; opacity: .9; }
   /* Two claims link to where they're shown (2026-11-22): the encryption design, and the scrubber's
@@ -780,13 +780,23 @@
     text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color .15s ease; }
   .st .st-trust a:hover { text-decoration-color: color-mix(in srgb, var(--cream) 55%, transparent); }
   .st .st-trust a:focus-visible { outline: 2px solid var(--cream); outline-offset: 4px; border-radius: 4px; }
+  /* Where the five don't fit on one line, they stay on one and run past like a ticker (Tyler,
+     2026-11-22): the script below adds a second set and moves both along by one set's width, so
+     the loop has no seam. It stops while hovered or focused. Without the script, or with reduced
+     motion, the row scrolls by hand. Either way its ends fade into the glass. */
+  .st .st-trust::-webkit-scrollbar { display: none; }
+  .st .st-trust.roll { justify-content: flex-start;
+    mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); }
+  .st .st-trust.tick { overflow: hidden; }
+  .st .st-trust.tick li { animation: st-tick var(--tick-dur, 30s) linear infinite; }
+  .st .st-trust.tick:hover li, .st .st-trust.tick:focus-within li { animation-play-state: paused; }
+  @keyframes st-tick { to { transform: translateX(calc(-1 * var(--tick-loop, 0px))); } }
   /* On a phone the hero's mark peeks up from the foot, so the row sits above it, in the space the
-     copy used to keep for it, with no hairline, one claim to a line: wrapped, the five broke
-     unevenly. */
+     copy used to keep for it, with no hairline, edge to edge. */
   @media (max-width: 600px) {
     .st-trim { padding-bottom: 0; }
     .st-trim .st-copy { padding-bottom: 0; }
-    .st .st-trust { margin: 30px 0 0; padding: 0 0 calc(var(--mw) * .42 + var(--sheet)); border-top: 0; flex-direction: column; align-items: center; gap: 10px; }
+    .st .st-trust { margin: 26px -20px 0; padding: 4px 20px calc(var(--mw) * .42 + var(--sheet)); border-top: 0; gap: 10px 28px; }
     .st .st-trust li { font-size: 13.5px; gap: 7px; }
   }
   /* Section titles, styled as #1012 styles them: a small blue label, in the page's own words. */
@@ -1391,6 +1401,40 @@ void main() {
       clearTimeout(undo);
       undo = setTimeout(() => { prompt.classList.remove('done'); label.textContent = 'Copy setup prompt'; prompt.style.minWidth = ''; }, 2000);
     });
+  }
+
+  // The trust strip runs as a ticker when its five claims don't fit on one line (see its CSS).
+  const strip = document.querySelector('.st .st-trust');
+  if (strip) {
+    const items = [...strip.children];
+    const calm = matchMedia('(prefers-reduced-motion: reduce)');
+    let copies = [], queued = false;
+    const fit = () => {
+      queued = false;
+      copies.forEach(c => c.remove()); copies = [];
+      strip.classList.remove('tick', 'roll');
+      if (strip.scrollWidth <= strip.clientWidth + 1) return;
+      strip.classList.add('roll');
+      if (calm.matches) return;
+      const a = items[0].getBoundingClientRect(), b = items[items.length - 1].getBoundingClientRect();
+      const loop = b.right - a.left + (parseFloat(getComputedStyle(strip).columnGap) || 0);
+      copies = items.map(li => {
+        const c = li.cloneNode(true);
+        c.setAttribute('aria-hidden', 'true');
+        c.querySelectorAll('a').forEach(x => { x.tabIndex = -1; });
+        strip.appendChild(c);
+        return c;
+      });
+      strip.scrollLeft = 0;
+      strip.style.setProperty('--tick-loop', loop.toFixed(1) + 'px');
+      strip.style.setProperty('--tick-dur', (loop / 40).toFixed(1) + 's');
+      strip.classList.add('tick');
+    };
+    const later = () => { if (!queued) { queued = true; requestAnimationFrame(fit); } };
+    let width = 0;
+    new ResizeObserver(([e]) => { const w = Math.round(e.contentRect.width); if (w !== width) { width = w; later(); } }).observe(strip);
+    if (calm.addEventListener) calm.addEventListener('change', later);
+    if (document.fonts) document.fonts.ready.then(later);
   }
 
   // Copy buttons on the install commands; hidden without JS.
