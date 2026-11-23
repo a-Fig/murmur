@@ -487,3 +487,31 @@ func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
 		t.Errorf("taking a kept inbox did not move the conversation")
 	}
 }
+
+// With no session live and no page in sight, the poll is quiet, and coming back from invisible
+// still ends its wait, once: the colour waits for that sync (#1165). A failure's backoff isn't
+// ended by it.
+func TestBackFromInvisibleAQuietPollLooksAtOnce(t *testing.T) {
+	t.Parallel()
+	d := rateDaemon(t)
+	d.sessions = map[string]*session{}
+	d.pollWake = make(chan struct{}, 1)
+	quiet := d.pollEvery(d.opt.Poll)
+	if !quiet.quiet {
+		t.Fatalf("the rig's poll isn't quiet: %+v", quiet)
+	}
+	d.setMode("online", "invisible", time.Now())
+	d.setMode("invisible", "online", time.Now())
+	if !d.wakeEndsWait(quiet.calm, quiet, false) {
+		t.Errorf("coming back from invisible didn't end a quiet poll's wait")
+	}
+	if d.wakeEndsWait(quiet.calm, quiet, false) {
+		t.Errorf("a second wake ended the quiet poll's wait too")
+	}
+	d.setMode("online", "invisible", time.Now())
+	d.setMode("invisible", "online", time.Now())
+	slow := pollRate{every: maxPollBackoff, calm: d.opt.Poll}
+	if d.wakeEndsWait(slow.calm, slow, true) {
+		t.Errorf("coming back from invisible ended a failure's backoff")
+	}
+}

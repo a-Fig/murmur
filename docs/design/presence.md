@@ -138,7 +138,7 @@ person can pick one on Settings.
   and its Settings says who has it.
 - **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free, and
   so does a device that goes invisible (#1084). A returning daemon, or a device back online,
-  leaves its pick out of presence until it has synced with every live presence open, then gives
+  leaves its pick out of presence until it has synced with every live presence fetched and open, then gives
   the pick up if a peer took it. Keeping a lost pick to reclaim later made two devices swap
   colours each time one went idle (found in review, #577).
 - **Stale devices keep their colours**, since staleness is each reader's own clock, and two pages
@@ -149,7 +149,9 @@ person can pick one on Settings.
   gives the pick up to whoever took it, as any returning device does; a daemon that never stopped,
   and slept through the week or couldn't push for it, holds its pick out of presence until it has
   synced. The week is by each reader's wall clock, so pages can disagree about a gone device's
-  colour for as long as their clocks differ.
+  colour for as long as their clocks differ. A presence a reader fetches only after sleeping
+  through the week is judged by its commit's time too, so the reader doesn't date it from its own
+  waking and hold the colour for another week (#1165).
 - **Auto** is the colour the ID hashes to, or the next one nobody picked.
 - **No protocol bump.** An older device ignores the fields and shows in its automatic colour, and
   the pick is a page call to the page's own daemon.

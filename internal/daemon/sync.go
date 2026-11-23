@@ -154,8 +154,11 @@ func (d *Daemon) pollNext(wait, calm time.Duration, failed bool) (pollRate, time
 // page or a conversation's move came. If the loop was running at a slower rate than that calls
 // for, it looks now and from here on at the faster; if not, it is as quick as it gets. A failure's
 // backoff is not ended by it either, unless the loop was quiet: a session that comes then is the
-// reason to look now.
+// reason to look now. A device back from invisible ends any wait but a failure's (lookNow).
 func (d *Daemon) wakeEndsWait(calm time.Duration, rate pollRate, failing bool) bool {
+	if d.lookNow.Swap(false) && !failing {
+		return true
+	}
 	return !(d.pollEvery(calm).every >= rate.every || failing && !rate.quiet)
 }
 
@@ -169,7 +172,9 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
-	// Before the remote is listed: what this sync reads is no older (settleColorLocked).
+	// Before the remote is listed: what this sync reads is no older (settleColorLocked), and it is
+	// the one a device back from invisible wanted (lookNow).
+	d.lookNow.Store(false)
 	began := time.Now()
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
@@ -2130,7 +2135,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 // presenceFetchedLocked notes that a fetch of ref was tried, if it is this device's own presence:
 // the fetch may have set the clone's copy to what the remote had, which may be junk pushed over
 // the presence, so the next presence writes the copy again (publishPresence). It is called for a
-// fetch that failed too, which may have written the ref before it did (#1130). Caller holds mu.
+// fetch that failed too, which may have written the ref before it did (#1130), and for a copy
+// found broken and removed (repairRefs). Caller holds mu.
 func (d *Daemon) presenceFetchedLocked(ref string) {
 	if ref == d.presenceRef() {
 		d.presenceFetches++

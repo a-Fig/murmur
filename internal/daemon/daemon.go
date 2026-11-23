@@ -680,6 +680,10 @@ type Daemon struct {
 	agentsSendOff, agentsReceiveOff atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
+	// lookNow says a sync begun from here on is wanted at once, whatever the poll's rate: the
+	// device came back from invisible (setMode), and its colour waits for that sync. A sync that
+	// begins clears it (pollOnce), and so does the wake that ends pollLoop's wait (wakeEndsWait).
+	lookNow atomic.Bool
 
 	kick       chan struct{}
 	pollWake   chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
@@ -1618,7 +1622,9 @@ func clearBrokenRefs(gitDir string, l *log.Logger) (removed []string) {
 
 // repairRefs removes the bus refs clearBrokenRefs finds, and forgets what was fetched into them,
 // so the next sync fetches each again even if the remote's hasn't moved. It says whether it
-// removed any. Takes mu.
+// removed any. The clone's copy of this device's own presence is written again by the next
+// presence, as after a fetch: with the remote's presence gone, while the device is invisible,
+// no fetch would bring it back, and loadIdentity needs it (#1165). Takes mu.
 func (d *Daemon) repairRefs() bool {
 	removed := clearBrokenRefs(d.opt.GitDir, d.log)
 	if len(removed) == 0 {
@@ -1627,6 +1633,7 @@ func (d *Daemon) repairRefs() bool {
 	d.mu.Lock()
 	for _, ref := range removed {
 		delete(d.known, ref)
+		d.presenceFetchedLocked(ref)
 	}
 	d.mu.Unlock()
 	return true

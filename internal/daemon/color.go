@@ -38,8 +38,17 @@ const colorHold = 7 * 24 * time.Hour
 // colour, as of this daemon's last successful sync. It is judged as staleLocked judges, but by the
 // wall clock (Round strips the other reading): the time a machine spent asleep counts toward a
 // week, where it must not toward staleness's minutes. Caller holds mu.
+//
+// A presence this daemon reads only after a long sleep of its own is dated from now, though its
+// writer may have gone quiet a week before (updatePeer): one read whose writer's clock put it over
+// colorHold ago, with nothing newer listed, holds no colour either. Otherwise the waking reader
+// would show it holding its colour for another week, against teammates who let it go (#1165).
 func (d *Daemon) colorGoneLocked(p *peer) bool {
-	return !d.lastPollOK.IsZero() && d.lastPollOK.Round(0).Sub(p.lastChange.Round(0)) > cmp.Or(d.opt.ColorHold, colorHold)
+	if d.lastPollOK.IsZero() {
+		return false
+	}
+	hold, now := cmp.Or(d.opt.ColorHold, colorHold), d.lastPollOK.Round(0)
+	return now.Sub(p.lastChange.Round(0)) > hold || p.sha == p.listed && !p.written.IsZero() && now.Sub(p.written) > hold
 }
 
 // colorsLocked is every device's colour, this one's included, by the devices in presence. A
@@ -107,8 +116,11 @@ func (d *Daemon) settleColorLocked(began time.Time) {
 	for _, p := range d.peers {
 		// A live holder could be hiding in it: settled once every live presence can be read. A
 		// stale one may never open (written before its device read a team key), and whether to
-		// hold this device's own pick back is this device's call, so its clock may judge.
-		if p.locked && !d.staleLocked(p) {
+		// hold this device's own pick back is this device's call, so its clock may judge. A
+		// presence listed but not fetched (sawPresence) could hide one too: a teammate who picked
+		// the colour while this device was away, whose newest presence this sync failed to fetch,
+		// would lose the pick to this device's older one (#1165).
+		if (p.locked || p.sha != p.listed) && !d.staleLocked(p) {
 			return
 		}
 	}
