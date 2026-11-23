@@ -171,11 +171,30 @@ func helperAncestorsMain(args []string) {
 		_, _ = os.Stdout.Write(b)
 		os.Exit(0)
 	case "spawn":
+		// Put this process in a kill-on-close job before launching leaf so an outer test timeout
+		// killing spawn cannot leave leaf running. Keep the handle open until process exit.
+		job, err := windows.CreateJobObject(nil, nil)
+		if err != nil {
+			os.Exit(8)
+		}
+		info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+		info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+		if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+			os.Exit(8)
+		}
+		if err := windows.AssignProcessToJobObject(job, windows.CurrentProcess()); err != nil {
+			os.Exit(8)
+		}
 		exe, err := os.Executable()
 		if err != nil {
 			os.Exit(4)
 		}
-		out, err := exec.Command(exe, helperAncestors, "leaf").Output()
+		leafCtx, leafCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer leafCancel()
+		leafCmd := exec.CommandContext(leafCtx, exe, helperAncestors, "leaf")
+		leafCmd.WaitDelay = 2 * time.Second
+		out, err := leafCmd.Output()
 		if err != nil {
 			os.Exit(5)
 		}
@@ -204,7 +223,9 @@ func TestAncestorsChildReachesRealParentAndGrandparent(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, exe, helperAncestors, "spawn").Output()
+	cmd := exec.CommandContext(ctx, exe, helperAncestors, "spawn")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("helperAncestors: %v", err)
 	}
@@ -231,8 +252,12 @@ func TestWindowsOutOfRangePIDDoesNotTruncate(t *testing.T) {
 	if _, err := Exe(huge); !errors.Is(err, ErrGone) {
 		t.Errorf("Exe(%d) = %v, want ErrGone", huge, err)
 	}
-	if err := End(huge, func(string) bool { return true }); !errors.Is(err, ErrGone) {
-		t.Errorf("End(%d) = %v, want ErrGone", huge, err)
+	matched := false
+	if err := End(huge, func(string) bool {
+		matched = true
+		return false
+	}); !errors.Is(err, ErrGone) || matched {
+		t.Errorf("End(%d) = %v (matched=%v), want ErrGone without inspecting any process", huge, err, matched)
 	}
 	if got := Ancestors(huge, 4); len(got) != 1 || got[0] != huge {
 		t.Errorf("Ancestors(%d, 4) = %v, want [%d]", huge, got, huge)
