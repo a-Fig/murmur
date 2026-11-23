@@ -10,3 +10,5 @@ opencode.svg     packages/provider-opencode/src/client.ts (light theme)
 pi.svg           packages/provider-pi/src/client.ts (light theme)
 muse.svg         packages/provider-muse/src/client.ts
 grok.svg         packages/provider-grok/src/client.ts (light theme)
+cursor.svg       packages/provider-cursor/src/client.ts (light theme)
+kiro.svg         packages/provider-kiro/src/client.ts
