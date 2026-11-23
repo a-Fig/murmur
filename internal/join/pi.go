@@ -44,8 +44,9 @@ import (
 //     call: the daemon snapshots the branches there and at the call's end (PostToolUse), and
 //     credits the session with the commits between, as for Claude Code (#868). Both carry the call's
 //     ID (toolCallId), which pairs them. Only shell calls are bracketed, as in a Pi a commit comes
-//     from one; a commit an MCP tool makes isn't credited. A call another extension blocks after
-//     this one gets no tool_result, and its start waits out the daemon's expiry;
+//     from one; a commit an MCP tool makes isn't credited. A call that never runs (another
+//     extension blocks it after this one, or Escape aborts it first) gets no tool_result, and its
+//     start waits out the daemon's expiry;
 //   - agent_before_settle, the last point at which Pi lets an extension add entries and continue,
 //     is Stop: what the hook gives back keeps the work going, as a custom_message entry and
 //     continue: true. After an error, which ends Pi's run whatever it asks, and after an abort
@@ -212,7 +213,7 @@ export default function (pi: any) {
     const response = { content: event?.content ?? [], isError: event?.isError === true };
     const c: any = { tool_name: name, tool_input: event?.input ?? {}, tool_response: response };
     if (shell(name) && event?.toolCallId) c.tool_use_id = String(event.toolCallId);
-    // Too big to pass, a shell call still gives its ID: its start was sent, and the end closes it.
+    // Too big to pass, a shell call still gives its ID, which closes the bracket its start opened.
     const idOnly = shell(name) && c.tool_use_id ? { tool_name: name, tool_use_id: c.tool_use_id } : {};
     try {
       return Buffer.byteLength(JSON.stringify(c)) < 512 * 1024 ? c : idOnly;
@@ -328,7 +329,8 @@ export default function (pi: any) {
       const name = String(event?.toolName ?? "");
       if (!shell(name) || !event?.toolCallId) return;
       await turnOn();
-      await hook("PreToolUse", ctx, { tool_name: name, tool_input: event?.input ?? {}, tool_use_id: String(event.toolCallId) });
+      // Only the call's name and ID: the start never needs the command, which may be too big to pass.
+      await hook("PreToolUse", ctx, { tool_name: name, tool_use_id: String(event.toolCallId) });
     } catch {}
   });
   pi.on("tool_result", async (event: any, ctx: any) => {

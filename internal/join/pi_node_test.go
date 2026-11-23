@@ -179,7 +179,7 @@ func TestPiExtensionStaysOutOfASubagent(t *testing.T) {
 
 // piCallHarness loads the extension in a joined clone, with node standing in for mur: the
 // extension runs `<node> hook --agent pi` in the clone, which runs the clone's file named hook,
-// and that file keeps each payload it is given. The harness then reports four tool calls as Pi
+// and that file keeps each payload it is given. The harness then reports tool calls as Pi
 // would and prints what the hook was given of each.
 const piCallHarness = `
 import fs from "node:fs";
@@ -255,7 +255,7 @@ func TestPiExtensionGivesTheHookAShellCall(t *testing.T) {
 	}
 	got := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")), "\n")
 	want := []string{
-		`PreToolUse {"name":"bash","input":{"command":"gh issue create -t x"},"id":"call_7"}`,
+		`PreToolUse {"name":"bash","id":"call_7"}`,
 		`PostToolUse {"name":"bash","input":{"command":"gh issue create -t x"},"response":{"content":[{"type":"text","text":"https://github.com/a-Fig/murmur/issues/7\n"}],"isError":false},"id":"call_7"}`,
 		`PostToolUse {}`,
 		`PostToolUse {"name":"mcp__github__issue_write","input":{"method":"update","issue_number":7,"state":"closed"},"response":{"content":[{"type":"text","text":"{\"message\":\"Not Found\",\"url\":\"https://github.com/a-Fig/murmur/issues/7\"}"}],"isError":true}}`,
