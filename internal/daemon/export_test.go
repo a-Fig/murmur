@@ -43,9 +43,9 @@ func SetGraceBegins(f func(id string) <-chan struct{}) func() {
 }
 
 // SetCommandHold sets how long a command's session is held with its thread idle (commandIdle), and
-// how often that is looked at (holdCheck), and returns what puts both back (#913).
+// how often that is looked at (holdCheck), and returns what puts both back (#913). Either may run
+// while a daemon is still up: both are atomic.
 func SetCommandHold(idle, check time.Duration) func() {
-	wasIdle, wasCheck := commandIdle, holdCheck
-	commandIdle, holdCheck = idle, check
-	return func() { commandIdle, holdCheck = wasIdle, wasCheck }
+	wasIdle, wasCheck := commandIdle.Swap(int64(idle)), holdCheck.Swap(int64(check))
+	return func() { commandIdle.Store(wasIdle); holdCheck.Store(wasCheck) }
 }

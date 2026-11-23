@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,11 +26,18 @@ import (
 
 // commandIdle is how long a command's session is held with its thread idle: about as long as T3
 // keeps an idle thread's provider running, and so its MCP server and session (docs/design/handoff.md,
-// "A thread that is idle"). A variable, for tests.
-var commandIdle = 30 * time.Minute
+// "A thread that is idle"). Atomic, for tests: one sets it while a daemon's holds read it (#1189).
+var commandIdle = durationVar(30 * time.Minute)
 
-// holdCheck is how often a held session's thread is looked at. A variable, for tests.
-var holdCheck = time.Minute
+// holdCheck is how often a held session's thread is looked at. Atomic, as commandIdle is.
+var holdCheck = durationVar(time.Minute)
+
+// durationVar is d, in nanoseconds, in a variable read and set atomically.
+func durationVar(d time.Duration) *atomic.Int64 {
+	v := new(atomic.Int64)
+	v.Store(int64(d))
+	return v
+}
 
 // commandHold is a held session's hold. end is closed when it is let go; taken says another hello
 // took the session over, which then carries it on, and not that it ended. A hold let go otherwise
@@ -107,13 +115,13 @@ func (d *Daemon) holdOverLocked(s *session, now time.Time) bool {
 	if busy {
 		return false
 	}
-	return now.Sub(later(since, s.started, s.lastActive)) > commandIdle
+	return now.Sub(later(since, s.started, s.lastActive)) > time.Duration(commandIdle.Load())
 }
 
 // waitHold holds session s until its hold h ends, and reports whether s ends with it: false when
 // another hello took s over.
 func (d *Daemon) waitHold(ctx context.Context, s *session, h *commandHold) bool {
-	tick := time.NewTicker(holdCheck)
+	tick := time.NewTicker(time.Duration(holdCheck.Load()))
 	defer tick.Stop()
 	for {
 		select {
