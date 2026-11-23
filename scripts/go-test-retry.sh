@@ -96,7 +96,7 @@ pairs=$(awk '
   /^(FAIL|ok)[ \t]+[^ \t]+/ { for (i = 0; i < n; i++) print $2, names[i]; n = 0 }' "$out" | sort -u)
 # The checks above leave every failed test under a package's verdict; if one day they don't, the
 # tests are still named.
-[ -n "$pairs" ] || pairs=$(printf '%s\n' "$failed" | sed 's/^/(package unknown) /')
+[ -n "$pairs" ] || pairs=$(printf '%s\n' "$failed" | sed 's/^/unknown-package /')
 where=${RUNNER_OS:-this machine}
 if [ -n "${SHARD:-}" ]; then where="$where, shard $SHARD"; fi
 printf '%s\n' "$pairs" | while read -r pkg t; do
