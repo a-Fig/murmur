@@ -1627,6 +1627,10 @@ func (d *Daemon) repairRefs() bool {
 	d.mu.Lock()
 	for _, ref := range removed {
 		delete(d.known, ref)
+		// The clone's copy of this device's presence is gone with it. The daemon will know its
+		// next presence as soon as it is pushed, so no sync fetches the ref back; the presence has
+		// to write the copy, as after a fetch (publishPresence).
+		d.presenceFetchedLocked(ref)
 	}
 	d.mu.Unlock()
 	return true

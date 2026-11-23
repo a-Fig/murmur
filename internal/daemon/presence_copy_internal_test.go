@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -115,5 +117,40 @@ func TestTheClonesCopyOfItsPresenceIsWrittenOnceARun(t *testing.T) {
 	d.endSlowFetch(d.meshRef(), "", "", nil)
 	if fifth := publish(); local() != fourth || fifth == fourth {
 		t.Errorf("after a slow fetch of another ref the clone's copy is %s, want it left at %s", local(), fourth)
+	}
+}
+
+// A copy that repairRefs finds unreadable and removes is written again by the next presence. The
+// daemon knows that presence already, so no sync fetches the ref back, and without this the copy
+// stayed missing for the rest of the run: a clone that then lost its keys and state.json kept its
+// ID with new keys, which its teammates refuse (loadIdentity).
+func TestARepairedCopyOfThePresenceIsWrittenAgain(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{}, false)
+	ctx := context.Background()
+	ref := d.presenceRef()
+	if err := d.publishPresence(ctx); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(d.opt.GitDir, filepath.FromSlash(ref))
+	if err := os.WriteFile(file, make([]byte, 41), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !d.repairRefs() {
+		t.Fatalf("repairRefs left %s, full of null bytes", file)
+	}
+	if err := d.publishPresence(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tip, err := d.repo.RemoteRef(ctx, ref)
+	if err != nil || tip == "" {
+		t.Fatalf("the remote's presence after a publish: %q, %v", tip, err)
+	}
+	refs, err := d.repo.LocalRefs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := refs[ref]; got != tip {
+		t.Errorf("after a repair and the next presence the clone's copy is %q, want %s", got, tip)
 	}
 }

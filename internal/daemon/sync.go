@@ -2130,7 +2130,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 // presenceFetchedLocked notes that a fetch of ref was tried, if it is this device's own presence:
 // the fetch may have set the clone's copy to what the remote had, which may be junk pushed over
 // the presence, so the next presence writes the copy again (publishPresence). It is called for a
-// fetch that failed too, which may have written the ref before it did (#1130). Caller holds mu.
+// fetch that failed too, which may have written the ref before it did (#1130), and by repairRefs
+// for a copy it removed (#1165). Caller holds mu.
 func (d *Daemon) presenceFetchedLocked(ref string) {
 	if ref == d.presenceRef() {
 		d.presenceFetches++
