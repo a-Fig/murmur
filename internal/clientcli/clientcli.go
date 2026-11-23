@@ -36,7 +36,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/proc"
@@ -54,6 +56,19 @@ var ErrTooLong = errors.New("the message is too long for a command line")
 // SendTimeout bounds one command. Each took about a second and a half here (2026-11-11).
 const SendTimeout = 30 * time.Second
 
+// WaitDelay is how long run waits, after the command has exited or been killed, for whatever it
+// started that still holds standard error: `opencode api` starts the shared server when none is
+// running, and a handoff that never came back would hold its session's messages behind it for good.
+// sendTimeout and WaitDelay are variables so tests needn't wait them out.
+var (
+	sendTimeout = SendTimeout
+	WaitDelay   = 5 * time.Second
+)
+
+// maxStderr is how much of the command's standard error run keeps: firstLine reads only the first
+// line that isn't blank, and a client that printed a lot would otherwise grow the daemon with it.
+const maxStderr = 8 << 10
+
 // startLimit is how long the command may take to start (proc.StartWithin).
 const startLimit = 30 * time.Second
 
@@ -63,12 +78,15 @@ const startLimit = 30 * time.Second
 // It returns once Codex has queued the message, not when a turn has run. The error says what Codex
 // printed, in a line, unless that line quotes the start of the text.
 func CodexQueue(ctx context.Context, exe, home, thread, text string) error {
-	if exe == "" || thread == "" || strings.HasPrefix(thread, "-") {
+	if exe == "" || !validID(thread) {
 		return errors.New("no Codex command or thread to queue for")
+	}
+	if hasNUL(exe, home, text) {
+		return errors.New("codex queue: a NUL byte in the command, the Codex home or the text")
 	}
 	var env []string
 	if home != "" {
-		env = []string{"CODEX_HOME=" + home}
+		env = []string{"CODEX_HOME", home}
 	}
 	return run(ctx, "codex queue", exe, []string{"queue", "--thread", thread, "--message=" + text}, env, text)
 }
@@ -80,8 +98,11 @@ func CodexQueue(ctx context.Context, exe, home, thread, text string) error {
 // It returns once the server has taken the message, not when a turn has run. The error is the
 // HTTP status the command printed.
 func OpenCodePrompt(ctx context.Context, exe, state, session, text string) error {
-	if exe == "" || !strings.HasPrefix(session, "ses") {
+	if exe == "" || len(session) <= len("ses") || !strings.HasPrefix(session, "ses") || !validID(session) {
 		return errors.New("no OpenCode command or session to send to")
+	}
+	if hasNUL(exe, state, text) {
+		return errors.New("opencode api: a NUL byte in the command, the state directory or the text")
 	}
 	var body bytes.Buffer
 	enc := json.NewEncoder(&body)
@@ -91,30 +112,32 @@ func OpenCodePrompt(ctx context.Context, exe, state, session, text string) error
 	}
 	var env []string
 	if state != "" {
-		env = []string{"XDG_STATE_HOME=" + state}
+		env = []string{"XDG_STATE_HOME", state}
 	}
 	return run(ctx, "opencode api", exe,
 		[]string{"api", "session.prompt", "--param", "sessionID=" + session, "-d", strings.TrimSpace(body.String())}, env, text)
 }
 
-// run runs exe with args, and env added to this process's environment. name is what errors call
-// the command, and text what they must not hold.
+// run runs exe with args, in this process's environment with env's pairs (name, value) set over
+// it. name is what errors call the command, and text what they must not hold.
 func run(parent context.Context, name, exe string, args, env []string, text string) error {
 	if !fits(exe, args) {
 		return fmt.Errorf("%s: %w", name, ErrTooLong)
 	}
-	ctx, cancel := context.WithTimeout(parent, SendTimeout)
+	timeout := sendTimeout
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, args...)
-	cmd.Env = append(os.Environ(), env...)
+	vars := os.Environ()
+	for i := 0; i+1 < len(env); i += 2 {
+		vars = withEnv(vars, env[i], env[i+1])
+	}
+	cmd.Env = vars
 	// Standard output is left unread: OpenCode prints the server's answer there, which holds the
 	// text. Standard error is where both commands say what went wrong.
-	var errOut bytes.Buffer
-	cmd.Stderr = &errOut
-	// Without a WaitDelay, Wait also waits for whatever the command started that still holds
-	// standard error: `opencode api` starts the shared server when none is running, and a handoff
-	// that never came back would hold its session's messages behind it for good.
-	cmd.WaitDelay = 5 * time.Second
+	errOut := &cappedBuffer{max: maxStderr}
+	cmd.Stderr = errOut
+	cmd.WaitDelay = WaitDelay
 	hideWindow(cmd)
 	if err := proc.StartWithin(cmd, startLimit, cancel); err != nil {
 		if errors.Is(err, proc.ErrStartHung) {
@@ -127,12 +150,16 @@ func run(parent context.Context, name, exe string, args, env []string, text stri
 		}
 		return fmt.Errorf("%s: %w: %v", name, ErrNotStarted, err)
 	}
-	if err := cmd.Wait(); err != nil && !errors.Is(err, exec.ErrWaitDelay) { // that one: it exited cleanly, and something it started kept the pipe
+	if err := cmd.Wait(); err != nil {
+		// No error from here on wraps ErrNotStarted: the command ran, so the client may have the
+		// message, and the daemon mustn't try again into a duplicate.
 		switch {
+		case errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success():
+			return nil // it exited 0, and something it started kept the pipe past WaitDelay
 		case parent.Err() != nil:
 			return fmt.Errorf("%s: %w", name, parent.Err())
 		case ctx.Err() != nil:
-			return fmt.Errorf("%s took over %s", name, SendTimeout)
+			return fmt.Errorf("%s took over %s", name, timeout)
 		}
 		if line := firstLine(errOut.String(), text); line != "" {
 			return fmt.Errorf("%s: %v: %s", name, err, line)
@@ -140,6 +167,86 @@ func run(parent context.Context, name, exe string, args, env []string, text stri
 		return fmt.Errorf("%s: %v", name, err)
 	}
 	return nil
+}
+
+// validID says id can go on the command line as a thread's or a session's: not empty, not read as
+// a flag, and with no space, control character or NUL in it. Codex's thread IDs are UUIDs and
+// OpenCode's session IDs "ses_" and letters and digits, so none of this turns a real one away.
+func validID(id string) bool {
+	if id == "" || strings.HasPrefix(id, "-") || !utf8.ValidString(id) {
+		return false
+	}
+	for _, r := range id {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasNUL says one of ss holds a NUL byte, which no command line or environment can carry. exec
+// would refuse it as a start that failed, ErrNotStarted, and the daemon would try it again for
+// nothing.
+func hasNUL(ss ...string) bool {
+	for _, s := range ss {
+		if strings.IndexByte(s, 0) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// withEnv is env with any entry for key replaced by key=val. Names are matched without regard to
+// case, as Windows matches them: an inherited codex_home left beside CODEX_HOME could be the one
+// the command reads.
+func withEnv(env []string, key, val string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.EqualFold(k, key) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, key+"="+val)
+}
+
+// cappedBuffer keeps the first max bytes written to it and drops the rest without an error: an
+// error would fail the command's own writes to standard error, or have Wait report one.
+type cappedBuffer struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if rem := c.max - c.buf.Len(); len(p) > rem {
+		c.buf.Write(p[:max(rem, 0)])
+		c.truncated = true
+	} else {
+		c.buf.Write(p)
+	}
+	return len(p), nil
+}
+
+// String is what was kept, less a character the cut split in two.
+func (c *cappedBuffer) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b := c.buf.Bytes()
+	if c.truncated {
+		for i := len(b) - 1; i >= 0 && len(b)-i <= utf8.UTFMax; i-- {
+			if utf8.RuneStart(b[i]) {
+				if !utf8.FullRune(b[i:]) {
+					b = b[:i]
+				}
+				break
+			}
+		}
+	}
+	return string(b)
 }
 
 // firstLine is the first line of what the command printed that isn't blank, kept short, and "" if

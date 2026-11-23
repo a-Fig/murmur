@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -24,6 +25,10 @@ func TestOnlyAnAttemptThatMightWorkIsMadeAgain(t *testing.T) {
 		{"a client's command didn't start", fmt.Errorf("codex: %w", clientcli.ErrNotStarted), false, true},
 		{"a thread ID t3 would read as an option", fmt.Errorf("t3 thread send: %w: invalid thread ID", t3.ErrRefused), false, false},
 		{"t3 ran and failed", errors.New("t3 thread send: exit status 1"), true, false},
+		// A client's command that ran past clientcli's timeout, or was cancelled, may have handed
+		// the message over: sending it again could make a duplicate.
+		{"a client's command timed out", errors.New("codex queue took over 30s"), true, false},
+		{"a client's command was cancelled", fmt.Errorf("opencode api: %w", context.Canceled), true, false},
 	} {
 		if got := !notReached(tc.err); got != tc.reached {
 			t.Errorf("%s: may have reached the client is %v, want %v", tc.name, got, tc.reached)

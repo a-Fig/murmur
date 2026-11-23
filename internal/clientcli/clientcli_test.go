@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // The tests run the test binary again as `codex` or `opencode`: it records what it was given, then
@@ -18,9 +21,32 @@ import (
 const (
 	fakeEnv     = "MURMUR_TEST_FAKE_CLIENT"
 	fakeModeEnv = "MURMUR_TEST_FAKE_CLIENT_MODE"
+	// The grandchild modes start one more copy that holds standard error open after the stand-in
+	// exits, as the OpenCode server `opencode api` starts would. It holds the lock file until it
+	// exits, and exits once the alive file is gone.
+	fakeLockEnv  = "MURMUR_TEST_FAKE_CLIENT_LOCK"
+	fakeAliveEnv = "MURMUR_TEST_FAKE_CLIENT_ALIVE"
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv(fakeModeEnv) == "grandchild" {
+		// Its parent probes the same lock while it waits, so a probe can hold it for a moment.
+		held, err := proc.Lock(os.Getenv(fakeLockEnv))
+		for end := time.Now().Add(5 * time.Second); errors.Is(err, proc.ErrLocked) && time.Now().Before(end); {
+			time.Sleep(5 * time.Millisecond)
+			held, err = proc.Lock(os.Getenv(fakeLockEnv))
+		}
+		if err != nil {
+			os.Exit(7)
+		}
+		for end := time.Now().Add(20 * time.Second); time.Now().Before(end); time.Sleep(15 * time.Millisecond) {
+			if _, err := os.Stat(os.Getenv(fakeAliveEnv)); err != nil {
+				break
+			}
+		}
+		held.Close()
+		os.Exit(0)
+	}
 	if path := os.Getenv(fakeEnv); path != "" {
 		line, _ := json.Marshal(call{Args: os.Args[1:], Home: os.Getenv("CODEX_HOME"), State: os.Getenv("XDG_STATE_HOME")})
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -39,10 +65,48 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		case "hang":
 			time.Sleep(time.Minute)
+		case "noisy":
+			os.Stderr.WriteString("\n  HTTP 500 first line  \n")
+			chunk := strings.Repeat("x", 64<<10)
+			for range 32 { // 2 MiB
+				os.Stderr.WriteString(chunk)
+			}
+			os.Exit(1)
+		case "grandchild-exit0", "grandchild-fail":
+			startGrandchild()
+			if os.Getenv(fakeModeEnv) == "grandchild-fail" {
+				os.Stderr.WriteString("Error: thread is locked\n")
+				os.Exit(1)
+			}
 		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// startGrandchild starts the grandchild with this stand-in's standard error, and returns once it
+// holds its lock.
+func startGrandchild() {
+	exe, err := os.Executable()
+	if err != nil {
+		os.Exit(4)
+	}
+	c := exec.Command(exe)
+	c.Env = withEnv(os.Environ(), fakeModeEnv, "grandchild")
+	c.Stderr = os.Stderr
+	if err := c.Start(); err != nil {
+		os.Exit(4)
+	}
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		held, err := proc.Lock(os.Getenv(fakeLockEnv))
+		if errors.Is(err, proc.ErrLocked) {
+			return // the grandchild has it
+		} else if err != nil {
+			os.Exit(6)
+		}
+		held.Close()
+	}
+	os.Exit(5)
 }
 
 type call struct {
@@ -118,6 +182,7 @@ func TestCodexQueueGivesTheThreadAndTheText(t *testing.T) {
 
 func TestCodexQueuePassesTheCodexHome(t *testing.T) {
 	exe, calls := fake(t, "")
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "another session's home"))
 	home := filepath.Join(t.TempDir(), "codex home")
 	if err := CodexQueue(context.Background(), exe, home, "thread-1", "x"); err != nil {
 		t.Fatal(err)
