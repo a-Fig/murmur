@@ -128,8 +128,9 @@ a timeout of 2 minutes or more.
 
 If it says the repo isn't set up for Murmur, tell your user. If AGENTS.md or CLAUDE.md already has
 the Murmur section, it was added without the ref join looks for (by a mur older than 0.5.4, or with
-`--no-push`), and running `mur init` again adds the ref; say so, and leave running it to your user. Never run `mur init` on your own to get
-past this; that is for a user who asked to set Murmur up in a repo:
+`--no-push`), and running `mur init` again adds the ref; say so, and leave running it to your user.
+Never run `mur init` on your own to get past this; that is for a user who asked to set Murmur up in a
+repo:
 https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
 
 If it says instead that the repo "doesn't say it uses Murmur", this mur is older than 0.5.4, which
