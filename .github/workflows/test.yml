@@ -208,6 +208,7 @@ jobs:
         env:
           MURMUR_GIT_STATS: ${{ runner.temp }}/git-stats.txt
           RETRY_TIMEOUT: 10m
+          SHARD: ${{ matrix.shard }} # named with a test that was retried (go-test-retry.sh)
         run: |
           names=$(go test -list '^Test' ./internal/daemon | grep '^Test' | sort | awk -v k=${{ matrix.shard }} -v n=${{ matrix.of }} 'NR % n == k')
           test -n "$names"

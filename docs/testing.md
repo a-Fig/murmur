@@ -116,6 +116,13 @@ shows. A build failure, a data race, a test binary that panics, exits early or r
 a failed example, and more than five failures at once are not retried. What the retry does hide is
 a test that fails only beside another: alone, it passes.
 
+One run's page shows only that run's retries. `scripts/retried-tests.sh [runs]` reads the
+annotations of main's last runs (20 unless told otherwise) through `gh` and counts them by test, so
+one that keeps needing the retry stands out (#1011): on 2026-11-23 it showed
+`TestFilesASendRefuses` retried in 6 of main's last 12 runs. Since that day an annotation names
+the test's package, the runner's OS and the daemon shard as well as the test. A retry still
+never fails a run.
+
 `internal/daemon` is most of the Windows time: on 2026-11-12 it took 2,975 s of a 50-minute budget
 (the rest of the suite together about 8 minutes), and runs from #489, #500 and #501 died at the
 `-timeout 50m` with no test hung (#496). So `test-windows` runs every other package, and
