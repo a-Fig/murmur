@@ -722,6 +722,7 @@ func (d *Daemon) readSendFiles(sender fileSender, paths []string) ([]sendFile, e
 	}
 	s := d.openSendRoots(sender)
 	defer s.Close()
+	var total int64
 	for _, path := range paths {
 		f, err := s.openSend(path)
 		switch {
@@ -741,6 +742,12 @@ func (d *Daemon) readSendFiles(sender fileSender, paths []string) ([]sendFile, e
 			f.Close()
 			return nil, fmt.Errorf("%s is %s, and a file can be at most %d MB", path, proto.Size(info.Size()), bus.MaxFile>>20)
 		}
+		// Before the file is read: files that come to too much together are refused for that, and
+		// the rest of them needn't be read to say so.
+		if total += info.Size(); total > bus.MaxFilesTotal {
+			f.Close()
+			return nil, errFilesTotal()
+		}
 		b, err := io.ReadAll(io.LimitReader(f, bus.MaxFile+1)) // it may have grown since the look
 		f.Close()
 		if err != nil {
@@ -751,8 +758,17 @@ func (d *Daemon) readSendFiles(sender fileSender, paths []string) ([]sendFile, e
 	return files, nil
 }
 
+// errFilesTotal is the refusal of files that come to more together than a message carries.
+func errFilesTotal() error {
+	return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
+}
+
 // checkSendFiles holds the files of a send to the limits, and checks each for secrets as a body is
 // (textsOf).
+//
+// The limits come first, for every file, since they cost nothing, and the check for secrets reads
+// every byte: files 30 MB together were checked 20 MB deep before they were refused for their size,
+// which took a busy machine past a send's 30 s in the tests (#1075).
 func checkSendFiles(files []sendFile) error {
 	if len(files) > bus.MaxFiles {
 		return fmt.Errorf("a message carries at most %d files, and this has %d", bus.MaxFiles, len(files))
@@ -763,8 +779,10 @@ func checkSendFiles(files []sendFile) error {
 			return fmt.Errorf("%s is %s, and a file can be at most %d MB", f.name, proto.Size(int64(len(f.data))), bus.MaxFile>>20)
 		}
 		if total += int64(len(f.data)); total > bus.MaxFilesTotal {
-			return fmt.Errorf("a message's files can come to at most %d MB together", bus.MaxFilesTotal>>20)
+			return errFilesTotal()
 		}
+	}
+	for _, f := range files {
 		if err := scrub.Check(textsOf(f.data)...); err != nil {
 			return fmt.Errorf("%s: %v", f.name, err)
 		}
