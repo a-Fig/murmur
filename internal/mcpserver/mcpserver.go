@@ -704,9 +704,30 @@ func (s *server) activate(ctx context.Context) {
 		return
 	}
 	l := s.newLink(lctx, c, helloFor(s.opt.Agent, s.cwd))
+	if s.opt.Agent == "cursor" && s.hereDir != "" && l.native == "" {
+		dir, self := s.hereDir, s.self
+		l.named = func() (string, bool) { return namedOnly(dir, self) }
+	}
 	s.link = l
 	s.tools(s.srv)
 	s.goBG(func() { l.run(lctx) })
+}
+
+// namedOnly is the conversation Cursor's hook named for the client of the server whose record is
+// self (here.NamedFor), only while that client runs one server of Cursor's: in T3 Code one process
+// runs every Cursor thread, and a name left for it may be any of theirs, so shared says no name
+// will come.
+func namedOnly(dir string, self here.Session) (native string, shared bool) {
+	n := 0
+	for _, r := range here.Of(dir, []int{self.ClientPID}) {
+		if r.Agent == self.Agent {
+			n++
+		}
+	}
+	if n > 1 {
+		return "", true
+	}
+	return here.NamedFor(dir, self), false
 }
 
 // newLink makes the link for a registration, which runs in ctx. Its goroutines are background work
@@ -1490,6 +1511,10 @@ type link struct {
 	// daemon, after the first look failed to get it classified; nil until a call starts that (see
 	// classifyFirst).
 	retry chan struct{}
+	// named is the conversation Cursor's hook named for this session's client, "" until it has
+	// (here.Named, #921), and shared where the client runs other servers of Cursor's too, and so no
+	// name will come; nil for every other agent.
+	named func() (native string, shared bool)
 	// childMu holds a subagent's calls while the first tells the daemon it is a child.
 	childMu sync.Mutex
 	// routeMu keeps the routes told to the daemon in order: each is read while it is held, and sent
@@ -1826,6 +1851,59 @@ func (l *link) wait(ctx context.Context, timeout time.Duration) (string, error) 
 // tool call's _meta (see holdFirstHello). A variable, for tests.
 var codexFirstCallWait = time.Second
 
+// cursorNameWait is how long a Cursor session's server holds its first hello for the hook to name
+// the conversation (holdForName), and cursorNamePoll how often it looks. A new chat's sessionStart
+// names it as Cursor starts; a resumed chat has no sessionStart, and is named by its first prompt.
+// Variables, for tests.
+var cursorNameWait, cursorNamePoll = 2 * time.Minute, 100 * time.Millisecond
+
+// holdForName keeps a Cursor session from registering until its hook has named the conversation
+// (here.Named), for up to cursorNameWait, and then registers it by that name's ID, as Muse's and
+// Grok's servers register by the ID in their environment: the same conversation, resumed in
+// another process, is the same session, with its name and its unread messages. Cursor gives its
+// MCP servers no ID of its own (cursor.go in internal/hook). A session not named by then registers
+// under an ID of its own, and the daemon still pairs it with its hook through the process
+// (agentHookSessionsLocked). Held, the session isn't on the mesh: before a resumed chat's first
+// prompt, or where the hook doesn't run. One of several in its process (T3 Code's) doesn't wait.
+func (l *link) holdForName(ctx context.Context) {
+	if l.named == nil {
+		return
+	}
+	deadline := time.Now().Add(cursorNameWait)
+	for {
+		native, shared := l.named()
+		if native != "" {
+			l.takeName(native, true)
+			return
+		}
+		if shared {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(cursorNamePoll):
+		}
+	}
+}
+
+// takeName takes the conversation's ID the hook named, for the hello's Native, and for its ID where
+// the session hasn't registered yet (first). Once registered, a session keeps its ID.
+func (l *link) takeName(native string, first bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.native != "" {
+		return
+	}
+	l.native, l.hello.Native = native, native
+	if first && !l.hello.ByThread {
+		l.hello.ID = nativeID(native)
+	}
+}
+
 // nativeSeenLocked is nativeSeen, made if it isn't yet. Caller holds mu.
 func (l *link) nativeSeenLocked() chan struct{} {
 	if l.nativeSeen == nil {
@@ -1865,6 +1943,7 @@ func (l *link) run(ctx context.Context) {
 	l.lookupThread(ctx, 3*time.Second)
 	l.startSeek(ctx)
 	l.holdFirstHello(ctx)
+	l.holdForName(ctx)
 	for ctx.Err() == nil {
 		// The user can leave while this runs, and leaving stops the daemon: the next thing this
 		// loop would do is start another. So ask before every hello, not once.
@@ -1876,6 +1955,11 @@ func (l *link) run(ctx context.Context) {
 			case <-time.After(backoff):
 			}
 			continue
+		}
+		if l.named != nil {
+			if native, _ := l.named(); native != "" {
+				l.takeName(native, false) // named after the hold: the ID stays, the daemon learns the conversation
+			}
 		}
 		l.mu.Lock()
 		h := l.hello

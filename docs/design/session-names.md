@@ -214,6 +214,7 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
 | Claude Code | session ID | compaction, every kind of resume, a killed process resumed | `/clear`, `--fork-session`, `/branch`, switching with `/resume` | A hook's `session_id` on stdin, always current |
 | T3 Code | thread ID | everything, for good | a fork, which is a new thread | `T3CODE_THREAD_ID`, for Claude Code; else T3's database ([handoff](handoff.md)) |
 | Codex | `threadId` | compaction, every kind of resume | `/new`, `/clear`, a fork | `_meta.threadId` on every MCP `tools/call`, and a hook's `session_id` |
+| Cursor | chat ID (`conversation_id`) | `agent --resume <id>`, `agent resume` | a new chat | A hook's `conversation_id`, and `CURSOR_CONVERSATION_ID` in its shell commands; none in an MCP server's environment, so the hook names it to the server ([Cursor](clients.md#cursor)) |
 
 - **Claude Code's MCP servers can't be trusted with the ID.** `CLAUDE_CODE_SESSION_ID` is set once
   per MCP server process and never updates, so it goes stale after `/clear`, `/branch` or switching

@@ -193,3 +193,50 @@ func TestOfIsTheNearestProcessesLiveServers(t *testing.T) {
 		t.Errorf("Of removed a record: %d left", len(entries))
 	}
 }
+
+// A hook names its conversation for the server of its agent's process (#921): the server reads it
+// back, a server of a later process that took the PID doesn't, and the name goes once that process
+// has exited. Naming it again as it is writes nothing.
+func TestNamed(t *testing.T) {
+	dir := t.TempDir()
+	self := Session{ServerPID: os.Getpid(), ClientPID: os.Getpid(), ClientStarted: "t0", Agent: "cursor"}
+	if got := NamedFor(dir, self); got != "" {
+		t.Errorf("before any name: %q", got)
+	}
+	if err := Name(dir, self, "chat-1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := NamedFor(dir, self); got != "chat-1" {
+		t.Errorf("named %q", got)
+	}
+	later := self
+	later.ClientStarted = "t1"
+	if got := NamedFor(dir, later); got != "" {
+		t.Errorf("a later process with the PID: %q", got)
+	}
+	fi, _ := os.Stat(namedPath(dir, self.ClientPID))
+	if err := Name(dir, self, "chat-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.Stat(namedPath(dir, self.ClientPID)); !again.ModTime().Equal(fi.ModTime()) {
+		t.Error("naming it again rewrote the file")
+	}
+
+	gone := exec.Command(os.Args[0], "-test.run=^$")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	dead := Session{ClientPID: gone.Process.Pid}
+	if err := Name(dir, dead, "chat-2", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sessions(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(namedPath(dir, dead.ClientPID)); !os.IsNotExist(err) {
+		t.Errorf("a dead process's name stayed: %v", err)
+	}
+	if got := NamedFor(dir, self); got != "chat-1" {
+		t.Errorf("a live process's name went: %q", got)
+	}
+}

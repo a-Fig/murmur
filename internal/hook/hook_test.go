@@ -659,7 +659,7 @@ func TestHookForAnUnknownAgentDoesNothing(t *testing.T) {
 	requests := fakeDaemon(t, filepath.Join(repo, ".git"), okToAll)
 	payload, _ := json.Marshal(map[string]string{"session_id": "x", "hook_event_name": "PostToolUse", "cwd": repo})
 	var out bytes.Buffer
-	hook.RunFor("cursor", bytes.NewReader(payload), &out)
+	hook.RunFor("kiro", bytes.NewReader(payload), &out)
 	if out.Len() != 0 || len(requests()) != 0 {
 		t.Errorf("printed %q, asked %+v", out.String(), requests())
 	}

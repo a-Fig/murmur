@@ -121,6 +121,11 @@ func Sessions(dir string) ([]Session, error) {
 			if readJSON(path, &m) == nil && !alive(m.ClientPID) {
 				os.Remove(path)
 			}
+		case strings.HasPrefix(name, "named-"):
+			var n Named
+			if readJSON(path, &n) == nil && !alive(n.ClientPID) {
+				os.Remove(path)
+			}
 		}
 	}
 	return out, nil
@@ -200,6 +205,41 @@ func Asked(dir string, self Session) (Move, bool) {
 		return Move{}, false
 	}
 	return m, true
+}
+
+// Named is a hook's word for which conversation the agent process ClientPID runs, for a server that
+// can't learn it otherwise: Cursor gives its conversation's ID to hooks and shell commands, and none
+// to the MCP servers it starts (#921). The server takes its ID from it, so the session keeps its
+// name when the conversation is resumed in a new process.
+type Named struct {
+	ClientPID     int       `json:"clientPid"`
+	ClientStarted string    `json:"clientStarted,omitempty"` // as the server published it
+	Native        string    `json:"native"`
+	At            time.Time `json:"at"`
+}
+
+func namedPath(dir string, clientPID int) string {
+	return filepath.Join(dir, "named-"+strconv.Itoa(clientPID)+".json")
+}
+
+// Name leaves, for the server whose record is s, the ID of the conversation its client runs. It
+// writes nothing where the file says so already.
+func Name(dir string, s Session, native string, now time.Time) error {
+	var old Named
+	if readJSON(namedPath(dir, s.ClientPID), &old) == nil && old.ClientStarted == s.ClientStarted && old.Native == native {
+		return nil
+	}
+	return writeJSON(namedPath(dir, s.ClientPID), Named{ClientPID: s.ClientPID, ClientStarted: s.ClientStarted, Native: native, At: now})
+}
+
+// NamedFor is the conversation a hook named for the client of the server whose record is self, ""
+// if none did. A file left for an earlier process that had the PID is passed over.
+func NamedFor(dir string, self Session) string {
+	var n Named
+	if readJSON(namedPath(dir, self.ClientPID), &n) != nil || n.ClientPID != self.ClientPID || n.ClientStarted != self.ClientStarted {
+		return ""
+	}
+	return n.Native
 }
 
 // Ancestors are the command's ancestors, its parent first.
