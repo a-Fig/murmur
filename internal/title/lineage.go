@@ -1,6 +1,7 @@
 package title
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -55,21 +56,36 @@ func CodexLineage(ctx context.Context, dir, id string) (Lineage, error) {
 }
 
 // subagentSource reads threads.source: whether it is a subagent's, and the thread that spawned
-// it. A subagent's is {"subagent": ...}, where the value is a word ("review") or an object
-// ({"thread_spawn": {"parent_thread_id": ...}}, {"other": "guardian"}); anything else, a plain
-// word included, is a thread a person's client started.
+// it. A subagent's is {"subagent": ...}, where the value is a non-empty word ("review") or an
+// object ({"thread_spawn": {"parent_thread_id": ...}}, {"other": "guardian"}); anything else
+// (a plain word, null, bool, number, array, or empty string) is not treated as a subagent.
 func subagentSource(source string) (subagent bool, parent string) {
 	var s struct {
 		Subagent json.RawMessage `json:"subagent"`
 	}
-	if json.Unmarshal([]byte(source), &s) != nil || len(s.Subagent) == 0 || string(s.Subagent) == "null" {
+	if json.Unmarshal([]byte(source), &s) != nil {
 		return false, ""
 	}
-	var how struct {
-		Spawn struct {
-			Parent string `json:"parent_thread_id"`
-		} `json:"thread_spawn"`
+	raw := bytes.TrimSpace(s.Subagent)
+	if len(raw) == 0 {
+		return false, ""
 	}
-	_ = json.Unmarshal(s.Subagent, &how) // a word, which is no object, names no parent
-	return true, how.Spawn.Parent
+	switch raw[0] {
+	case '"':
+		var kind string
+		if json.Unmarshal(raw, &kind) != nil || kind == "" {
+			return false, ""
+		}
+		return true, ""
+	case '{':
+		var how struct {
+			Spawn struct {
+				Parent string `json:"parent_thread_id"`
+			} `json:"thread_spawn"`
+		}
+		_ = json.Unmarshal(raw, &how)
+		return true, how.Spawn.Parent
+	default:
+		return false, ""
+	}
 }
