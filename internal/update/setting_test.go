@@ -518,3 +518,51 @@ func TestInstallWhileOff(t *testing.T) {
 		t.Errorf("with MURMUR_NO_UPDATE: binary %q, report %+v, restarted %v", bin, r, restarted)
 	}
 }
+
+// With updates on, Update now that finds a newer release than the one asked for isn't a failed
+// update, and the next check, checkGap later rather than an hour, installs the newer one.
+func TestInstallFindsANewerReleaseWithUpdatesOn(t *testing.T) {
+	was := checkGap
+	checkGap = 50 * time.Millisecond
+	t.Cleanup(func() { checkGap = was })
+	global(t)
+	gitDir := repo(t)
+	srv := releases(t, "v1.2.5", nil)
+	inner := srv.Config.Handler
+	var latestCalls atomic.Int32
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/latest" && latestCalls.Add(1) == 1 {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable) // the first check fails
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	path := filepath.Join(t.TempDir(), "mur")
+	os.WriteFile(path, []byte("old"), 0o755)
+	install := make(chan string, 1)
+	reports := make(chan Status, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	restarted := make(chan struct{})
+	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
+		Getenv: noEnv, Every: time.Hour, Install: install, Report: func(s Status) { reports <- s }}, func() { close(restarted) })
+	if r := <-reports; !r.Failed {
+		t.Fatalf("the first check: %+v", r)
+	}
+	install <- "1.2.4" // the release the page showed, from before 1.2.5
+	if r := <-reports; !r.Asked || r.Failed || r.Installed || r.Latest != "1.2.5" {
+		t.Fatalf("Update now: %+v", r)
+	}
+	select {
+	case r := <-reports:
+		if !r.Installed || r.Asked || r.Latest != "1.2.5" {
+			t.Fatalf("the next check: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the newer release waited for the hourly check")
+	}
+	<-restarted
+	if b, _ := os.ReadFile(path); string(b) != "binary v1.2.5" {
+		t.Errorf("installed %q", b)
+	}
+}

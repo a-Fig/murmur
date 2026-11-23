@@ -54,9 +54,9 @@ updater need one manual install to get it.
   was. The page sends the version it showed, and the updater installs only that one: if GitHub
   now has another (a newer release, or a stable one where a nightly was shown before the channel
   changed), it installs nothing and the row shows the release it found instead, or no "X is out" if
-  that one isn't newer than the one running (Opus review). With updates on, the next check, 10 s
-  later, installs it on its own. The request returns at once; the row says "Installing X", then "X is installed" with Restart now, or
-  why it failed.
+  that one isn't newer than the one running (Opus review). With updates on, a newer one installs
+  on its own at the next check, 10 s later. The request returns at once; the row says "Installing
+  X", then "X is installed" with Restart now, or why it failed.
   - *Not offered* while updates are on and working (they install it within the hour, or at once
     after a change), while an update waits for its restart, once this daemon's updater has
     stopped (a binary it can't replace), since nothing would act on it, or while
