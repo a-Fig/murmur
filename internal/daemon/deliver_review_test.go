@@ -38,18 +38,20 @@ func TestMessagesKeptOverARestartAreHandedOverWhenTheDaemonIsBack(t *testing.T) 
 
 // The hook doesn't tell a session of the messages queued behind the one being handed over: they are
 // turns too, and told by a notice they would never be handed over.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestHookLeavesMessagesWaitingForAHandoffAlone(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Sleep, "1500ms")
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "first", "one")
-	a.send("aaaaaa", bob, "second", "two")
+	b.send("aaaaaa", bob, "first", "one")
+	b.send("aaaaaa", bob, "second", "two")
 	eventually(t, "the first handoff to start", func() bool { return len(calls()) == 1 })
 	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
 	if got := b.hook("claude-bob", 0); len(got) != 0 {
@@ -220,26 +222,27 @@ func TestReplacementOfAThreadTakesWhatTheOldSessionHadUnread(t *testing.T) {
 // what came after it waits until it has been handed over, tried again or not, so the turns arrive in
 // the order the messages did. The first message waits for its retry because the first attempt could
 // not start `t3`, which is not there yet.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestReplacementHandsOverInOrderWhatWasOnItsWay(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
-	a := newDevice(t, remote)
 	b := newDeviceWith(t, remote, func(d *device) {
 		d.grace, d.keep, d.pushRetry, d.logTo = 20*time.Second, time.Hour, 3*time.Second, &out
 	})
-	alice, _ := a.session("aaaaaa", "")
+	b.session("aaaaaa", "") // the sender, on the same device
 	route := proto.Route{T3CLI: exe, T3Thread: "thread-bob"}
 	old, conn := b.sessionRoute("bbbbbb", "claude-1", route)
-	eventually(t, "presence", func() bool { return a.seesSession(old) && b.seesSession(alice) })
 
-	a.send("aaaaaa", old, "first", "one")
+	b.send("aaaaaa", old, "first", "one")
 	eventually(t, "the first handoff to fail before it started", func() bool {
 		return strings.Contains(out.String(), "nothing was sent")
 	})
 	install() // the retry, 3 s on, finds it
-	a.send("aaaaaa", old, "second", "two")
+	b.send("aaaaaa", old, "second", "two")
 	eventually(t, "the second message to reach b", func() bool { return logHas(b, "second") })
 	conn.Close()                       // dropped, in its grace, with the first on its way, waiting for its retry
 	time.Sleep(500 * time.Millisecond) // the daemon has seen it go
