@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,15 +54,25 @@ func helloOpen(t *testing.T, f *fakeDaemon, i int) {
 	}
 }
 
-// gitFiles is every path under the clone's git directory.
-func gitFiles(t *testing.T, gitDir string) []string {
+// fileState is a path's size and modification time.
+type fileState struct {
+	size int64
+	mod  time.Time
+}
+
+// filesUnder is the state of every path under dir, dir included.
+func filesUnder(t *testing.T, dir string) map[string]fileState {
 	t.Helper()
-	var out []string
-	err := filepath.WalkDir(gitDir, func(path string, _ os.DirEntry, err error) error {
+	out := map[string]fileState{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		out = append(out, path)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		out[path] = fileState{info.Size(), info.ModTime()}
 		return nil
 	})
 	if err != nil {
@@ -71,12 +81,45 @@ func gitFiles(t *testing.T, gitDir string) []string {
 	return out
 }
 
-// In a repo this user hasn't joined, the server doesn't so much as connect to a daemon that is
-// running there, and leaves the clone as it found it: no Murmur refs, no file added.
+// sameFiles reports each path whose state differs between before and after, or that only one has.
+func sameFiles(t *testing.T, before, after map[string]fileState) {
+	t.Helper()
+	for path, b := range before {
+		if a, ok := after[path]; !ok {
+			t.Errorf("%s was removed", path)
+		} else if a.size != b.size || !a.mod.Equal(b.mod) {
+			t.Errorf("%s changed: %+v, then %+v", path, b, a)
+		}
+	}
+	for path := range after {
+		if _, ok := before[path]; !ok {
+			t.Errorf("%s was added", path)
+		}
+	}
+}
+
+// In a repo this user hasn't joined, the server reaches nothing and changes nothing. It doesn't so
+// much as connect to a daemon that is running there, or to the repo's remote, and leaves the clone,
+// its git directory and its work tree, as it found them, with no Murmur refs.
 func TestPassiveOpensNoConnectionAndWritesNothing(t *testing.T) {
 	f := &fakeDaemon{}
 	p := repo(t, true, f)
-	before := gitFiles(t, p.GitDir)
+	// A remote that leaves a mark wherever git reaches it: the ext transport runs a command in place
+	// of a connection ("% " is a space in its URL). Git for Windows' sh would get the marker as a
+	// Windows path, which it can't take as written, so this part runs elsewhere only.
+	marker := filepath.Join(t.TempDir(), "remote-was-reached")
+	ext := runtime.GOOS != "windows"
+	if ext {
+		for _, args := range [][]string{
+			{"config", "protocol.ext.allow", "always"},
+			{"remote", "add", "origin", "ext::sh -c touch% " + marker},
+		} {
+			if out, err := exec.Command("git", append([]string{"-C", p.Top}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %q: %v\n%s", args, err, out)
+			}
+		}
+	}
+	before := filesUnder(t, p.Top) // the git directory is inside the work tree, as git init made it
 	cs, _ := open(t, p.Top, 25*time.Millisecond)
 	settle()
 	if names := toolNamesOf(t, cs); len(names) != 0 {
@@ -85,6 +128,7 @@ func TestPassiveOpensNoConnectionAndWritesNothing(t *testing.T) {
 	if n := f.accepted.Load(); n != 0 {
 		t.Errorf("the server made %d connections to the daemon where Murmur is off", n)
 	}
+	sameFiles(t, before, filesUnder(t, p.Top))
 	out, err := exec.Command("git", "-C", p.Top, "for-each-ref", "refs/murmur").CombinedOutput()
 	if err != nil {
 		t.Fatalf("git for-each-ref: %v\n%s", err, out)
@@ -92,8 +136,16 @@ func TestPassiveOpensNoConnectionAndWritesNothing(t *testing.T) {
 	if len(strings.TrimSpace(string(out))) != 0 {
 		t.Errorf("Murmur refs in a repo the user hasn't joined:\n%s", out)
 	}
-	if after := gitFiles(t, p.GitDir); !slices.Equal(before, after) {
-		t.Errorf("the clone's git directory changed: before %q, after %q", before, after)
+	if !ext {
+		return
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the server reached the repo's remote where Murmur is off")
+	}
+	// The mark is one git does leave: reaching the remote once makes it.
+	exec.Command("git", "-C", p.Top, "ls-remote", "origin").Run()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the remote's mark isn't made even by git ls-remote, so the check above shows nothing: %v", err)
 	}
 }
 
