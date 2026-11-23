@@ -87,6 +87,8 @@ type fakeDaemon struct {
 	// helloReply, if set, may answer a hello in the daemon's place: an error to refuse it, or the
 	// session ID the daemon gives it. "", "" answers as the daemon usually does.
 	helloReply func(proto.Hello) (refusal, id string)
+	// accepted counts every connection made to the daemon, pings included.
+	accepted atomic.Int32
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -129,6 +131,7 @@ func (f *fakeDaemon) serveAt(t *testing.T, gitDir string) string {
 			if err != nil {
 				return
 			}
+			f.accepted.Add(1)
 			go f.handle(conn)
 		}
 	}()

@@ -194,7 +194,8 @@ guidance.
 Nothing relies on the server alone, and each check sits where its harm would be:
 
 - The server asks again before each registration, before starting a daemon and before forwarding a
-  tool call, since its 2-second look can lag a leave.
+  tool call, since its 2-second look can lag a leave. The top of `internal/mcpserver/activation.go`
+  lists each place it asks.
 - The daemon is per clone, so it needs only the consent. It checks at start, after its first sync,
   on every request but `stop` and `ping` (which reveal nothing, and are how a leave finds it),
   before each push of its own, before each handoff of a message as a turn (the one thing it does to
