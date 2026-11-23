@@ -264,6 +264,9 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 	}
 	foreignPath := filepath.Join(sb.root, "foreign.json")
 	write(t, foreignPath, `{"version":"v1","hooks":[]}`)
+	if err := createOwnedFile(foreignPath, []byte("new"), 0o644); err == nil || read(t, foreignPath) != `{"version":"v1","hooks":[]}` {
+		t.Errorf("createOwnedFile overwrote existing file: err=%v body=%q", err, read(t, foreignPath))
+	}
 	if err := writeOwnedFile(foreignPath, []byte("new"), 0o644, isKiroHookFile); err == nil || read(t, foreignPath) != `{"version":"v1","hooks":[]}` {
 		t.Errorf("writeOwnedFile overwrote foreign file: err=%v body=%q", err, read(t, foreignPath))
 	}
