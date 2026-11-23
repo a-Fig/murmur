@@ -292,6 +292,11 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
+	// A person may have gone back to stable from this version while the release downloaded: that
+	// choice wins over a release picked before it, and the next check, which Back asks for, goes back.
+	if !back && same(skipped(ctx, o.GitDir, o.Version), o.Version) {
+		return false, latest, nil
+	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}

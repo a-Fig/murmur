@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,5 +75,51 @@ func TestReleaseWatchOffAndGoingBack(t *testing.T) {
 	w.report(update.Status{Latest: "0.3.0", Installed: true})
 	if v := w.page(); v.Latest != "0.3.0" || v.Off {
 		t.Errorf("gone back to stable: %+v", v)
+	}
+}
+
+// Going back to stable isn't offered, and is refused, while an update waits for its restart or
+// the updater has stopped; a build that can't go back at all says why, not "restart first".
+func TestGoingBackWaits(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+	t.Setenv("MURMUR_NO_UPDATE", "")
+	_, clone := cloneOf(t, t.TempDir())
+	gitDir := filepath.Join(clone, ".git")
+	ctx := context.Background()
+	const nightly = "0.3.1-nightly.20261121"
+	w := newReleaseWatch(nightly, gitDir)
+	u := &updateSetting{running: nightly, gitDir: gitDir, check: make(chan struct{}, 1), releases: w}
+	if s, _ := u.UpdateSetting(ctx); !s.CanGoBack {
+		t.Fatal("not offered from a nightly")
+	}
+	w.report(update.Status{Latest: "0.3.1-nightly.20261122", Installed: true})
+	if s, _ := u.UpdateSetting(ctx); s.CanGoBack {
+		t.Error("offered with an update waiting for its restart")
+	}
+	if _, err := u.BackToStable(ctx); err == nil || !strings.Contains(err.Error(), "restart onto it") {
+		t.Errorf("with an update waiting: %v", err)
+	}
+	w.report(update.Status{})
+	u.stopped.Store(true)
+	if _, err := u.BackToStable(ctx); err == nil || !strings.Contains(err.Error(), "updater has stopped") {
+		t.Errorf("with the updater stopped: %v", err)
+	}
+	dev := &updateSetting{running: "0.1.0-dev", gitDir: gitDir, check: make(chan struct{}, 1), releases: newReleaseWatch("0.1.0-dev", gitDir)}
+	dev.stopped.Store(true)
+	if _, err := dev.BackToStable(ctx); err == nil || !strings.Contains(err.Error(), "development build") {
+		t.Errorf("a build from source: %v", err)
+	}
+	u.stopped.Store(false)
+	if s, err := u.BackToStable(ctx); err != nil || s.CanGoBack || s.Hold == "" {
+		t.Fatalf("going back: %+v, %v", s, err)
+	}
+	select {
+	case <-u.check:
+	default:
+		t.Error("going back asked for no check")
 	}
 }

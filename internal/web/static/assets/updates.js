@@ -38,7 +38,7 @@ async function updatesCall(path, init, prev) {
       if (prev) ui.updates = prev;
     }
   }
-  ui.updatesBusy = false;
+  if (seq === updatesSeq) ui.updatesBusy = false; // an older request's answer doesn't free the choices
   render();
 }
 
@@ -73,7 +73,7 @@ function updatesRow() {
         "button",
         {
           class: "btn btn-outline btn-xs",
-          title: "Install the latest stable release in place of this one, and hold updates until a newer release than this one is out",
+          title: "Install the latest stable release in place of this one. Later prereleases install only once one is newer than this one; stable releases still come",
           "data-key": "updates-back",
           disabled: ui.updatesBusy,
           onclick: backToStable,

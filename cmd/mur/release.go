@@ -131,8 +131,12 @@ func (u *updateSetting) SetUpdates(ctx context.Context, choice string) (web.Upda
 }
 
 func (u *updateSetting) BackToStable(ctx context.Context) (web.UpdateSetting, error) {
-	if err := u.waiting(); err != nil {
-		return u.web(update.Read(ctx, os.Getenv, u.gitDir, u.running)), err
+	// Back says why it can't (a stable release, a build from source, updates off); waiting says why
+	// it can't now.
+	if s := update.Read(ctx, os.Getenv, u.gitDir, u.running); s.CanGoBack {
+		if err := u.waiting(); err != nil {
+			return u.web(s), err
+		}
 	}
 	s, err := update.Back(ctx, os.Getenv, u.gitDir, u.running)
 	if err == nil {

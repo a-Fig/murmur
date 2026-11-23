@@ -57,6 +57,8 @@ func TestReadSetting(t *testing.T) {
 		{name: "nothing set", choice: "on", applies: "on"},
 		{name: "off", global: [][2]string{{"murmur.update", "false"}}, choice: "off", applies: "off"},
 		{name: "off as git spells a bool", global: [][2]string{{"murmur.update", "no"}}, choice: "off", applies: "off"},
+		{name: "an empty value is false to git", global: [][2]string{{"murmur.update", ""}}, choice: "off", applies: "off"},
+		{name: "00 is false to git", global: [][2]string{{"murmur.update", "00"}}, choice: "off", applies: "off"},
 		{name: "a value git can't read as a bool, last", global: [][2]string{{"murmur.update", "false"}}, local: [][2]string{{"murmur.update", "maybe"}}, choice: "off", applies: "on",
 			why: "On here: this repo's git config sets murmur.update."},
 		{name: "a value git can't read as a bool, first", global: [][2]string{{"murmur.update", "maybe"}}, local: [][2]string{{"murmur.update", "false"}}, choice: "on", applies: "off",
@@ -398,5 +400,35 @@ func TestCheckSoonAfterAChange(t *testing.T) {
 	check <- struct{}{}
 	if third := <-times; third.Sub(asked) > 5*time.Second {
 		t.Fatalf("a check asked for past the gap took %s", third.Sub(asked))
+	}
+}
+
+// A person who goes back to stable while a release downloads gets stable: the release picked
+// before the click isn't installed over it, and the hold stays.
+func TestBackDuringADownload(t *testing.T) {
+	path := global(t)
+	gitDir := repo(t)
+	const running = "1.2.5-nightly.20261101"
+	gitConfig(t, "--file", path, "murmur.channel", "prerelease")
+	list := []rel{{"v1.2.5-nightly.20261102", true}, {"v1.2.4", false}}
+	srv := releases(t, "v1.2.4", list)
+	inner := srv.Config.Handler
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/binary/") {
+			if _, err := Back(r.Context(), noEnv, gitDir, running); err != nil {
+				t.Error(err)
+			}
+		}
+		inner.ServeHTTP(w, r)
+	})
+	if got := installed(t, srv, gitDir, running); got != "" {
+		t.Fatalf("installed %q over the click", got)
+	}
+	out, _ := exec.Command("git", "config", "--file", path, "--get", "murmur.updateSkip").Output()
+	if strings.TrimSpace(string(out)) != running {
+		t.Fatalf("hold %q", out)
+	}
+	if got := installed(t, srv, gitDir, running); got != "1.2.4" {
+		t.Fatalf("the next check installed %q", got)
 	}
 }

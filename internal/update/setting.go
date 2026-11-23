@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -56,11 +57,23 @@ func ValidChoice(c string) bool {
 type configValue struct{ scope, value string }
 
 // configValues is every value of key in the order git reads them, so the last one is the one
-// that applies; none if it isn't set.
+// that applies; none if it isn't set, or git can't read it.
 func configValues(ctx context.Context, gitDir, key string) []configValue {
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--show-scope", "--get-all", key)
+	vals, _ := configValuesErr(ctx, gitDir, key)
+	return vals
+}
+
+// configValuesErr is configValues with git's options (a --type) and its error, nil when the key
+// isn't set.
+func configValuesErr(ctx context.Context, gitDir, key string, opts ...string) ([]configValue, error) {
+	args := append(append([]string{"config", "--show-scope"}, opts...), "--get-all", key)
+	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", args...)
 	if err != nil {
-		return nil
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return nil, nil // not set
+		}
+		return nil, err
 	}
 	var vals []configValue
 	for line := range strings.Lines(out) {
@@ -69,20 +82,25 @@ func configValues(ctx context.Context, gitDir, key string) []configValue {
 			vals = append(vals, configValue{scope, strings.TrimSpace(value)})
 		}
 	}
-	return vals
+	return vals, nil
 }
 
 // updateValues is murmur.update's values as git reads a bool: "true", "false", or "" for one it
-// can't read. Off has always taken an unreadable last value for updates on. Each is read on its
-// own, as --type=bool would fail the lot over one bad value in any scope.
+// can't read. Off has always taken an unreadable last value for updates on. git reads them all
+// (it alone tells `update =`, false, from a bare `update`, true); only when one value fails it
+// and so the lot, are they read one by one here.
 func updateValues(ctx context.Context, gitDir string) []configValue {
+	if vals, err := configValuesErr(ctx, gitDir, updateKey, "--type=bool"); err == nil {
+		return vals
+	}
 	vals := configValues(ctx, gitDir, updateKey)
 	for i := range vals {
 		v := strings.ToLower(vals[i].value)
+		n, nerr := strconv.ParseInt(v, 0, 64)
 		switch {
-		case v == "false" || v == "no" || v == "off" || v == "0":
+		case v == "false" || v == "no" || v == "off" || nerr == nil && n == 0:
 			vals[i].value = "false"
-		case v == "" || v == "true" || v == "yes" || v == "on" || digits(v):
+		case v == "" || v == "true" || v == "yes" || v == "on" || nerr == nil:
 			vals[i].value = "true"
 		default:
 			vals[i].value = ""
