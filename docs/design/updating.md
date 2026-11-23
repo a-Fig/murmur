@@ -49,6 +49,14 @@ updater need one manual install to get it.
   release from the updater, else from the `latest.json` a daemon in this clone recorded, and never
   asks GitHub itself; `mur version` hears of newer releases the same way, and prints the install
   command. Settings shows no commands (Tyler, 2026-11-22).
+- **About's version row** (#1114, Tyler, 2026-11-23, from the v3 design of #1018) says where this
+  stands: `mur <version>` with the daemon's protocol and when it last learned of a release ("Checked
+  5 minutes ago") under it, and on the right a dot with "Up to date", or a warning dot with "X
+  available" and, when it applies, Update now or Restart now. The protocol and the time are the
+  daemon's `GET /api/health` (`Daemon.Protocol`, `UpdateChecked`), read when Settings opens and every
+  half minute; the time is that of the `latest.json` above, so no time is shown until a check has
+  found a release. The row says nothing of the choice, which the Updates row below it shows, and
+  only what is happening to the newer release.
 - **Update now** (#1045, Tyler, 2026-11-22). When "X is out" and updates won't install it, because
   they are off here or the last attempt failed, About offers "Update now". It asks the daemon's
   updater for one check that installs even while updates are off (`Options.Install`), through the
@@ -58,7 +66,7 @@ updater need one manual install to get it.
   changed), it installs nothing and the row shows the release it found instead, or no "X is out" if
   that one isn't newer than the one running (Opus review). With updates on, a newer one installs
   on its own at the next check, 10 s later. The request returns at once; the row says "Installing
-  X", then "X is installed" with Restart now, or why it failed.
+  it", then "Installed" with Restart now, or why it failed.
   - *Not offered* while updates are on and working (they install it within the hour, or at once
     after a change), while an update waits for its restart, once this daemon's updater has
     stopped (a binary it can't replace), since nothing would act on it, or while
