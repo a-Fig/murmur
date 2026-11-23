@@ -2,6 +2,7 @@ package join
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,9 +34,13 @@ import (
 var kiroHookFile = brand.MCPServer + ".json"
 
 // kiroHookDescription marks the hook entries as written by join (Kiro's v1 standalone hook schema
-// carries description directly on each hook entry), so hooks/murmur.json is self-identifying even
-// when written by a renamed Murmur binary without coupling ownership to settings/mcp.json.
-var kiroHookDescription = "Managed by " + brand.Product + " (" + brand.Command + " join)"
+// carries description directly on each hook entry) and binds the marker to a digest of command, so
+// hooks/murmur.json is self-identifying even for a renamed Murmur binary while still detecting a
+// user who edits the command in place.
+func kiroHookDescription(command string) string {
+	sum := sha256.Sum256([]byte(command))
+	return fmt.Sprintf("Managed by %s (%s join, %x)", brand.Product, brand.Command, sum[:6])
+}
 
 type kiroHookDoc struct {
 	Version string          `json:"version"`
@@ -61,19 +66,20 @@ func kiroHookCommand(exe string) string { return cmdHookCommand(exe, " hook kiro
 
 // kiroHooks is the JSON content of join's ~/.kiro/hooks/murmur.json running command.
 func kiroHooks(command string) ([]byte, error) {
+	desc := kiroHookDescription(command)
 	doc := kiroHookDoc{
 		Version: "v1",
 		Hooks: []kiroHookEntry{
 			{
 				Name:        brand.MCPServer + "-prompt",
-				Description: kiroHookDescription,
+				Description: desc,
 				Trigger:     "UserPromptSubmit",
 				Action:      kiroHookAction{Type: "command", Command: command},
 				Timeout:     codexHookTimeout,
 			},
 			{
 				Name:        brand.MCPServer + "-stop",
-				Description: kiroHookDescription,
+				Description: desc,
 				Trigger:     "Stop",
 				Action:      kiroHookAction{Type: "command", Command: command},
 				Timeout:     codexHookTimeout,
@@ -146,15 +152,16 @@ func parseKiroHookCommand(cmd string) (string, bool) {
 
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
 // entry (such as a live or dangling symlink) or a customized file is left alone with an error,
-// matching removeOwned's ownership rules. It writes via writeOwnedFile (which renames directly at
-// path without resolving a leaf symlink) so a concurrently introduced symlink target is never
-// overwritten.
+// matching removeOwned's ownership rules. New files are created exclusively (O_CREATE|O_EXCL) so
+// they never replace a concurrently created file or symlink; existing owned files are updated
+// atomically via writeOwnedFile without resolving a leaf symlink.
 func (e Env) installKiroHook(h agentHome) (did []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
 	if err != nil {
 		return nil, err
 	}
+	existed := false
 	if fi, lerr := os.Lstat(path); lerr == nil {
 		if !fi.Mode().IsRegular() {
 			return nil, fmt.Errorf("%s already exists and isn't a regular file (a link, say), so it was left alone", path)
@@ -169,18 +176,44 @@ func (e Env) installKiroHook(h agentHome) (did []string, err error) {
 		if !isKiroHookFile(have) {
 			return nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
 		}
+		existed = true
 	} else if !errors.Is(lerr, os.ErrNotExist) {
 		return nil, fmt.Errorf("%s: %w", path, lerr)
 	}
-	if err := writeOwnedFile(path, want, 0o644); err != nil {
+	if !existed {
+		if err := createOwnedFile(path, want, 0o644); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+	} else if err := writeOwnedFile(path, want, 0o644, isKiroHookFile); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
 }
 
-// writeOwnedFile atomically replaces path without following or replacing a symlink at path itself
-// (unlike writeAtomic, which intentionally writes through user config symlinks).
-func writeOwnedFile(path string, data []byte, perm os.FileMode) error {
+// createOwnedFile creates a new file at path using O_CREATE|O_EXCL so it never follows or
+// replaces a file or symlink created concurrently at path.
+func createOwnedFile(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+	}
+	return err
+}
+
+// writeOwnedFile atomically replaces an existing owned regular file at path without following or
+// replacing a symlink at path itself (unlike writeAtomic, which writes through user config
+// symlinks). It re-verifies ownership immediately before renaming.
+func writeOwnedFile(path string, data []byte, perm os.FileMode, ours func([]byte) bool) error {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s isn't a regular file (a link, say), so it was left alone", path)
@@ -205,7 +238,17 @@ func writeOwnedFile(path string, data []byte, perm os.FileMode) error {
 		err = os.Chmod(tmp, perm)
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		if fi, lerr := os.Lstat(path); lerr != nil {
+			err = lerr
+		} else if !fi.Mode().IsRegular() {
+			err = fmt.Errorf("%s isn't a regular file (a link, say), so it was left alone", path)
+		} else if cur, rerr := os.ReadFile(path); rerr != nil {
+			err = rerr
+		} else if !ours(cur) {
+			err = fmt.Errorf("%s changed and doesn't look like %s's hook, so it was left alone", path, brand.Product)
+		} else {
+			err = os.Rename(tmp, path)
+		}
 	}
 	if err != nil {
 		os.Remove(tmp)

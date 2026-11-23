@@ -179,7 +179,7 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 3 {
 		t.Fatalf("dev register: did=%q err=%v", did, err)
 	}
-	if !strings.Contains(read(t, hookPath), "mur-dev") || !strings.Contains(read(t, hookPath), kiroHookDescription) {
+	if !strings.Contains(read(t, hookPath), "mur-dev") || !strings.Contains(read(t, hookPath), kiroHookDescription(kiroHookCommand(devExe))) {
 		t.Fatalf("expected mur-dev and description marker in hook file:\n%s", read(t, hookPath))
 	}
 
@@ -247,16 +247,25 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Fatalf("std register after partial preview failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
 	}
 
-	// writeOwnedFile refuses to overwrite or replace a symlink directly.
+	// writeOwnedFile refuses to overwrite a symlink or a foreign regular file, and createOwnedFile
+	// refuses to overwrite an existing symlink or file.
 	linkTarget := filepath.Join(sb.root, "target.json")
 	write(t, linkTarget, "keep")
 	linkPath := filepath.Join(sb.root, "link.json")
 	linkOrSkip(t, linkTarget, linkPath)
-	if err := writeOwnedFile(linkPath, []byte("new"), 0o644); err == nil {
+	if err := writeOwnedFile(linkPath, []byte("new"), 0o644, isKiroHookFile); err == nil {
 		t.Fatal("writeOwnedFile overwrote or replaced a symlink")
 	}
+	if err := createOwnedFile(linkPath, []byte("new"), 0o644); err == nil {
+		t.Fatal("createOwnedFile overwrote or replaced a symlink")
+	}
 	if !isLink(linkPath) || read(t, linkTarget) != "keep" {
-		t.Errorf("writeOwnedFile disturbed symlink or target: isLink=%v target=%q", isLink(linkPath), read(t, linkTarget))
+		t.Errorf("owned writers disturbed symlink or target: isLink=%v target=%q", isLink(linkPath), read(t, linkTarget))
+	}
+	foreignPath := filepath.Join(sb.root, "foreign.json")
+	write(t, foreignPath, `{"version":"v1","hooks":[]}`)
+	if err := writeOwnedFile(foreignPath, []byte("new"), 0o644, isKiroHookFile); err == nil || read(t, foreignPath) != `{"version":"v1","hooks":[]}` {
+		t.Errorf("writeOwnedFile overwrote foreign file: err=%v body=%q", err, read(t, foreignPath))
 	}
 }
 
@@ -580,6 +589,10 @@ func TestKiroForeignHookFileLeftAlone(t *testing.T) {
 		{
 			name: "customized timeout omitted",
 			body: strings.Replace(mustKiroHooks(t, "mur hook kiro"), ",\n      \"timeout\": 30", "", 1),
+		},
+		{
+			name: "customized command keeping original murmur description digest",
+			body: strings.ReplaceAll(mustKiroHooks(t, `'/usr/local/bin/mur' hook kiro`), `'/usr/local/bin/mur' hook kiro`, `'/usr/local/bin/my-wrapper' hook kiro`),
 		},
 		{
 			name: "wrapper binary without murmur description",
