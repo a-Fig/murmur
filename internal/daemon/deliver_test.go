@@ -495,7 +495,7 @@ func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 	name := b.named(bob)
 
 	b.send("aaaaaa", bob, "early", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "early") })
+	eventually(t, "the message to be queued for bob", func() bool { return logHas(b, "early") })
 	holds(t, "no handoff without a thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 
 	r := b.do(proto.Request{Op: proto.OpRoute, Session: "bbbbbb", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-bob"}})
