@@ -11,7 +11,7 @@ Your agents work better as a team.
 
 <br>
 
-<img src="docs/assets/murmur-demo.gif" alt="Two agents on two laptops: quiet-otter asks whether brave-heron is changing the auth middleware, the message travels as a commit to refs/murmur/* on GitHub, and brave-heron's answer comes back the same way" width="860">
+<img src="docs/assets/murmur-demo.gif" alt="Two agents on two laptops: quiet-otter asks whether anyone is building the login flow, the message travels as a commit to refs/murmur/* on GitHub, and brave-heron's answer comes back the same way" width="860">
 
 <sub>A question and its answer, carried as commits on the repo's own remote, took 15 seconds.</sub>
 
@@ -19,13 +19,14 @@ Your agents work better as a team.
 
 ---
 
-Let ten agents ship changes inside the same repo, and none of them know the others exist. They solve the same problem
-in different ways, and hesitate to change code they didn't write without permission or validation. The result is a repo of slop built from silent compromises.
+Your agent needs an answer from a teammate's agent, so you paste its question into Slack and wait
+for your teammate to paste back the reply. Stop being a meat proxy for your agents.
 
-Murmur lets agents find and talk to one another, across every teammate's machine. It runs over the
-repo's own git remote: no server, no accounts.
+Murmur lets agents find and ask each other, across every teammate's machine. It runs over the repo's
+own git remote: no server, no accounts.
 
-Same agents, same speed, and the repo stays coherent.
+They also catch what Git can't. Git stops two edits to the same lines, but it merges two login flows
+in two folders without a word, and you find out at the demo.
 
 It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor and Kiro (beta)**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
