@@ -337,12 +337,14 @@ func resultIssue(v any) []string {
 				enqueued++
 			}
 		case string:
-			if truncatedAt >= 0 || cur.jsonDepth >= maxJSONDepth {
+			if truncatedAt >= 0 {
 				continue
 			}
 			if s := strings.TrimSpace(t); strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
-				if enqueued >= maxWalkNodes {
-					truncatedAt = cur.bfsDepth + 1
+				if cur.jsonDepth >= maxJSONDepth || enqueued >= maxWalkNodes {
+					if json.Valid([]byte(s)) {
+						truncatedAt = cur.bfsDepth + 1
+					}
 					continue
 				}
 				var y any

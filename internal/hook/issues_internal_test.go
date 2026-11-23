@@ -347,7 +347,8 @@ func TestHookPayloadAndIssueHardeningGuards(t *testing.T) {
 			}
 		}
 
-		// Depth 2 (double-wrapped JSON string) is decoded; depth 3 is capped.
+		// Depth 2 (double-wrapped JSON string) is decoded; depth 3 is capped and suppresses
+		// matches at or past the skipped inner object's BFS depth (6).
 		inner, _ := json.Marshal(map[string]any{"url": "https://github.com/a-Fig/murmur/issues/22"})
 		d1, _ := json.Marshal(map[string]any{"text": string(inner)})
 		d2, _ := json.Marshal(map[string]any{"text": string(d1)})
@@ -356,6 +357,19 @@ func TestHookPayloadAndIssueHardeningGuards(t *testing.T) {
 		}
 		if m := resultIssue(map[string]any{"content": string(d2)}); m != nil {
 			t.Errorf("depth 3 JSON string = %v, want nil (capped)", m)
+		}
+		if m := resultIssue(map[string]any{
+			"a": string(d2),
+			"b": map[string]any{"l1": map[string]any{"l2": map[string]any{"l3": map[string]any{"l4": map[string]any{"l5": map[string]any{"url": "https://github.com/a-Fig/murmur/issues/99"}}}}}},
+		}); m != nil {
+			t.Errorf("depth-capped JSON string before same/deeper sibling = %v, want nil", m)
+		}
+
+		// Non-JSON text starting with '[' or '{' at exact maxWalkNodes must not discard an already-queued valid match.
+		fill := make([]any, maxWalkNodes-3) // root + fill + log + len(fill) == maxWalkNodes
+		fill[0] = map[string]any{"url": "https://github.com/a-Fig/murmur/issues/66"}
+		if m := resultIssue([]any{fill, "[INFO] non-json log line"}); m == nil || m[3] != "66" {
+			t.Errorf("non-JSON bracketed string at maxWalkNodes = %v, want 66", m)
 		}
 
 		// Wide slice beyond maxWalkNodes reports truncation immediately and suppresses shell issue attribution.
