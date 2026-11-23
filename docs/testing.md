@@ -111,7 +111,7 @@ Some tests stood up two or three devices and a remote to check a decision that r
 daemon's state: what a Stop hook gives, whether a person's message explains them. Those can build
 a `Daemon` by hand in an `_internal_test.go` file and call the handler or the `...Locked` method
 straight, as `threadsDaemon`, `tagsDaemon` and `stopRig` do, with no git and in milliseconds. On
-2026-11-23 (#1010) four of the baseline's slowest went that way: 268 s of Windows test time, and
+2026-11-23 (#1010) four slow ones went that way: 268 s of Windows test time, and
 about 1,770 git and 59 s on a laptop, became four tests of under 0.1 s with no git. Each says in its
 comment what it keeps, why that needs no git, and which test still runs the path end to end. A
 test whose point is the bus (ref writes, the registry, presence across devices, a restart against

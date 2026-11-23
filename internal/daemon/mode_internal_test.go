@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"io"
 	"log"
 	"testing"
@@ -69,8 +70,9 @@ func TestGoingOnlineReleasesWhatAnOwnDoNotDisturbHeld(t *testing.T) {
 //
 // Kept from the two-device test it replaces (#1010): the Stop answered while invisible gives
 // nothing and ends the turn, and the next message is the next turn for T3. A fake is enough, as
-// that is the hook's request and the handoff's choice, both read from state here: mode is set as
-// the page sets it (setMode), and the message queued as a sync queues one. Invisible's effect on
+// that is the hook's request, through handle, where an invisible device's answers are chosen
+// (#786's bug was there), and the handoff's choice, both read from state: mode is set as the page
+// sets it (setMode), and the message queued as a sync queues one. Invisible's effect on
 // the bus and on teammates is TestInvisibleTakesTheDeviceOffAndBringsItBack's, with two devices.
 // The test this replaces started about 230 git, 8 s on a laptop and 65 s on a Windows runner
 // (#1088's baseline).
@@ -78,7 +80,7 @@ func TestATurnEndedWhileInvisibleLeavesTheSessionIdle(t *testing.T) {
 	t.Parallel()
 	d := stopRig(t)
 	hookNotices(t, d)
-	if r := d.turnEnd(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob"}); r.Error != "" {
+	if r := d.handle(context.Background(), proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob"}); r.Error != "" {
 		t.Fatal(r.Error) // a turn that ended, so the daemon knows its Stop hook runs
 	}
 	hookNotices(t, d) // a prompt: the session is at work

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -66,15 +67,14 @@ func TestALapseLeavesATurnInT3ToTheDatabase(t *testing.T) {
 }
 
 // stopRig is a device with one session, bob: Claude Code in T3 thread thread-bob, whose hook speaks
-// for it as claude-bob. Its hook's requests go straight to notices and turnEnd, and a message is
-// queued as a sync queues one (queueInboxLocked): no remote, no git, no t3. That is all the Stop
+// for it as claude-bob. Its hook's requests go through handle, as the hook's socket hands them on,
+// and a message is queued as a sync queues one (queueInboxLocked): no remote, no git, no t3. That is all the Stop
 // hook's decisions read, so tests of what a Stop gives, and whether a turn's end leaves the
 // session idle, need no more; TestTheStopHookKeepsTheTurnGoing and its neighbours in
 // busy_continue_test.go keep the whole path, from one device's send to the other's hook and T3.
 func stopRig(t *testing.T) *Daemon {
 	t.Helper()
 	d := threadsDaemon(t)
-	d.started = time.Now().Add(-time.Hour) // past the catch-up window
 	d.st.Inbox = map[string][]*inMsg{}
 	d.opt.ContinueHold = 2 * time.Minute
 	d.introduced, d.pushing, d.pushWarned = map[string]map[string]bool{}, map[string]bool{}, map[string]bool{}
@@ -97,7 +97,7 @@ func arrive(d *Daemon, subject string) {
 // keep the turn going.
 func hookNotices(t *testing.T, d *Daemon) proto.Response {
 	t.Helper()
-	r := d.notices(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true})
+	r := d.handle(context.Background(), proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true})
 	if r.Error != "" {
 		t.Fatalf("notices: %s", r.Error)
 	}
@@ -106,7 +106,7 @@ func hookNotices(t *testing.T, d *Daemon) proto.Response {
 
 func stopHook(t *testing.T, d *Daemon) proto.Response {
 	t.Helper()
-	r := d.turnEnd(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob", Continues: true})
+	r := d.handle(context.Background(), proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-bob", Continues: true})
 	if r.Error != "" {
 		t.Fatalf("turnend: %s", r.Error)
 	}
