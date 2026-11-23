@@ -15,6 +15,17 @@ import (
 // `t3 thread send` takes no key that would make a repeat harmless, so a handoff that failed after
 // `t3` started may have put the message in the thread, and trying again would make a second turn of
 // it. Only an attempt that cannot have reached T3 is made twice (#63).
+//
+// The sender in these tests is a session on the same device as bob (#1010). What they check comes
+// after the message is in bob's inbox: the attempt's mark, the retry, the fallback to the notice,
+// each with a real daemon, a real `t3` stand-in and the real state file. A message from the same
+// device goes onto the device's ref and is queued from there by the same sync that queues another
+// device's, so one device is enough, and a second only added its git and the wait for the two to
+// see each other: about two thirds of the git these tests started. The test of a restart keeps
+// its second device: a daemon that starts again reads what other devices sent while it was down,
+// and that this doesn't hand the message over again is part of what it checks.
+// TestMessageForAT3SessionIsHandedOverAsATurn keeps a message from another device going in as a
+// turn.
 
 // lateT3 is a `t3` that isn't there yet: exe names a command that doesn't exist, until install puts
 // the stand-in in its place. A handoff to it fails before anything starts.
@@ -32,12 +43,11 @@ func TestAHandoffThatMayHaveLandedIsNotRepeated(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1") // the stand-in records the call, which is T3 having it, and then fails
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.pushRetry = 300 * time.Millisecond })
-	alice, _ := a.session("aaaaaa", "")
+	b := newDeviceWith(t, remote, func(d *device) { d.pushRetry = 300 * time.Millisecond })
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "might have landed", "body")
+	b.send("aaaaaa", bob, "might have landed", "body")
 	eventually(t, "the attempt", func() bool { return len(calls()) == 1 })
 	holds(t, "no second call after the retry wait", 2*time.Second, func() bool { return len(calls()) == 1 })
 	var notices []string
@@ -114,14 +124,13 @@ func TestAMessageIsHandedOverOnlyOnceItsMarkCanBeSaved(t *testing.T) {
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 	state := filepath.Join(b.gitDir, brand.StateDir, "state.json")
 	blockSaves(t, state)
 
-	a.send("aaaaaa", bob, "marked later", "body")
+	b.send("aaaaaa", bob, "marked later", "body")
 	eventually(t, "the refusal", func() bool { return strings.Contains(out.String(), "can't be saved") })
 	holds(t, "no call to t3 while saves fail", time.Second, func() bool { return len(calls()) == 0 })
 	unblockSaves(t, state) // the disk has room again
@@ -136,13 +145,11 @@ func TestAHandoffThatNeverStartedIsTriedOnceMore(t *testing.T) {
 	remote := newRemote(t)
 	exe, install, calls := lateT3(t)
 	var out syncBuf
-	a := newDevice(t, remote)
 	b := newDeviceWith(t, remote, func(d *device) { d.logTo, d.pushRetry = &out, 2*time.Second })
-	alice, _ := a.session("aaaaaa", "")
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "second try", "body")
+	b.send("aaaaaa", bob, "second try", "body")
 	eventually(t, "the first attempt to fail before it started", func() bool {
 		return strings.Contains(out.String(), "nothing was sent")
 	})
@@ -163,13 +170,11 @@ func TestAHandoffThatNeverStartsFallsBackToTheNotice(t *testing.T) {
 	remote := newRemote(t)
 	exe, _, calls := lateT3(t)
 	var out syncBuf
-	a := newDevice(t, remote)
 	b := newDeviceWith(t, remote, func(d *device) { d.logTo, d.pushRetry = &out, 300*time.Millisecond })
-	alice, _ := a.session("aaaaaa", "")
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "no t3", "body")
+	b.send("aaaaaa", bob, "no t3", "body")
 	eventually(t, "the failure", func() bool { return strings.Contains(out.String(), "as a turn through T3 failed") })
 	if n := strings.Count(out.String(), "nothing was sent"); n != 1 {
 		t.Errorf("the retry was logged %d times, want once:\n%s", n, out.String())
