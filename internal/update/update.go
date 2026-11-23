@@ -173,11 +173,18 @@ func Run(ctx context.Context, o Options, restart func()) {
 			if ctx.Err() != nil {
 				return
 			}
-			s := Status{Latest: latest, Off: off, Failed: err != nil, Asked: now}
+			// Another release than the one asked for isn't a failed update: with updates on, the
+			// next check installs it, and soon.
+			other := errors.Is(err, errNotAsked)
+			s := Status{Latest: latest, Off: off, Failed: err != nil && !other, Asked: now}
 			if err != nil && now {
 				s.Error = err.Error()
 			}
 			report(s)
+			if other && !off {
+				timer.Reset(checkGap)
+				continue
+			}
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
 				return
@@ -245,6 +252,9 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// errNotAsked says the release a person asked to install isn't the one the check found.
+var errNotAsked = errors.New("another release is out")
+
 // attempt installs the latest release if it is newer than this one. latest is that release's
 // version, once the check has read it.
 func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, latest string, err error) {
@@ -289,7 +299,7 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
 	if want != "" && !same(want, rel.Tag) {
-		return false, latest, fmt.Errorf("%s is the release to install now, not %s", latest, want)
+		return false, latest, fmt.Errorf("%w: %s is the release to install now, not %s", errNotAsked, latest, want)
 	}
 	if !back && !newer(rel.Tag, o.Version) {
 		return false, latest, nil

@@ -502,7 +502,7 @@ func TestInstallWhileOff(t *testing.T) {
 	// A newer release than the one asked for is out: it isn't installed unseen, and the answer
 	// names it.
 	bin, reports, restarted = run(releases(t, "v1.2.5", nil), noEnv)
-	if r := reports[1]; r.Installed || !r.Failed || r.Latest != "1.2.5" || !strings.Contains(r.Error, "1.2.5 is the release to install now, not 1.2.4") || bin != "old" || restarted {
+	if r := reports[1]; r.Installed || !r.Asked || r.Failed || r.Latest != "1.2.5" || !strings.Contains(r.Error, "1.2.5 is the release to install now, not 1.2.4") || bin != "old" || restarted {
 		t.Errorf("a newer release than asked for: binary %q, report %+v, restarted %v", bin, r, restarted)
 	}
 

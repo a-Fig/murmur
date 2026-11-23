@@ -196,9 +196,9 @@ func (u *updateSetting) BackToStable(ctx context.Context) (web.UpdateSetting, er
 	return u.web(s), err
 }
 
-// InstallNow is the page's Update now (#1045): the updater installs the latest release once,
-// even with updates off here, and the page follows it in Version. version is the release the page
-// showed, which must still be the one the updater would install.
+// InstallNow is the page's Update now (#1045): the updater installs version, the release the page
+// showed, once, even with updates off here, and the page follows it in Version. It is checked here
+// against what this daemon last knew; the updater installs nothing if GitHub now has another.
 func (u *updateSetting) InstallNow(ctx context.Context, version string) error {
 	v := u.releases.page()
 	switch {

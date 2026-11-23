@@ -443,7 +443,7 @@ function versionSection() {
     description = v.latest + " is out, and installing on its own.";
   } else if (v.latest) {
     description = v.latest + (v.off ? " is out. Updates are off here." : " is out. The last update failed here.");
-    if (v.installError) description += " Couldn't install it: " + v.installError;
+    if (v.installError) description += " Couldn't install it: " + v.installError + ".";
     if (v.canInstall) {
       control = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
     }
