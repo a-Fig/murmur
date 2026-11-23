@@ -285,16 +285,19 @@ func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
 		}}
 		d.mu.Unlock()
 
-		// Scoped ancestry from kiroHookAncestors contains only the inner node PID (900), not 700.
-		resp := d.turnEnd(proto.Request{
-			Op:            proto.OpTurnEnd,
-			Agent:         "kiro",
-			ClaudeSession: "kiro-inner",
-			Ancestors:     []int{900},
-			Continues:     true,
-		})
-		if len(resp.Read) != 0 {
-			t.Fatalf("inner hook leaked outer's messages: %+v", resp.Read)
+		// Scoped ancestry from kiroHookAncestors (whether exact [900] or fallback [950, 900] when
+		// inner/outer lookups fail or maxAncestors truncates) never includes outer's PID (700).
+		for _, anc := range [][]int{{900}, {950, 900}} {
+			resp := d.turnEnd(proto.Request{
+				Op:            proto.OpTurnEnd,
+				Agent:         "kiro",
+				ClaudeSession: "kiro-inner",
+				Ancestors:     anc,
+				Continues:     true,
+			})
+			if len(resp.Read) != 0 {
+				t.Fatalf("anc=%v: inner hook leaked outer's messages: %+v", anc, resp.Read)
+			}
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()

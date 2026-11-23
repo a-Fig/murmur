@@ -521,15 +521,16 @@ func identify(agent string, in input) proto.Request {
 	return r
 }
 
-// kiroHookAncestors scopes a Kiro hook's ancestor list to the Kiro client process that spawned it,
-// so a nested kiro-cli started from an outer Kiro session's shell never includes the outer Kiro's
-// node (acp-server.js) process and cannot attach to or read the outer session's messages (#910).
-// Walking outward from the hook's parent shell:
+// kiroHookAncestors scopes a Kiro hook's ancestor list to the hook's own Kiro client process so a
+// nested kiro-cli started from an outer Kiro session's shell can never reach the outer Kiro's
+// client PID (#910). Walking outward through any immediate hook shells:
 //   - If node sits directly under kiro-cli, only that node PID is returned.
-//   - If kiro-cli appears without node below it, the walk stops at that kiro-cli.
-//   - If an earlier PID cannot be identified or is not a shell (e.g. an unrecognized or renamed
-//     inner launcher), never skip past it to claim an outer Kiro boundary: keep the inner PIDs and
-//     trim before any outer Kiro boundary further up the chain.
+//   - If kiro-cli appears without node below it, stop at that kiro-cli (pids[:i+1]).
+//   - On any other non-shell process (e.g. a renamed inner launcher), stop at pids[:i+1] so
+//     nothing above it can match an outer Kiro session.
+//   - On an unidentified PID, stop at pids[:i+1] (or pids[:2] if the immediate parent at i==0
+//     couldn't be read, so an unreadable hook shell can still reach its direct client at pids[1]
+//     without ever reaching an outer Kiro client at depth >= 3).
 func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok bool)) []int {
 	nameOf := func(pid int) (string, bool) {
 		exe, comm, ok := exeAt(pid)
@@ -546,14 +547,13 @@ func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok boo
 	for i, pid := range pids {
 		name, known := nameOf(pid)
 		if !known {
-			return trimBeforeKiro(pids, i, nameOf)
+			if i == 0 && len(pids) >= 2 {
+				return pids[:2]
+			}
+			return pids[:i+1]
 		}
 		if name == "node" && i+1 < len(pids) {
-			next, nextKnown := nameOf(pids[i+1])
-			if !nextKnown {
-				return trimBeforeKiro(pids, i+1, nameOf)
-			}
-			if next == "kiro-cli" {
+			if next, ok := nameOf(pids[i+1]); ok && next == "kiro-cli" {
 				return []int{pid}
 			}
 		}
@@ -561,25 +561,7 @@ func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok boo
 			return pids[:i+1]
 		}
 		if !isHookShell(name) {
-			return trimBeforeKiro(pids, i+1, nameOf)
-		}
-	}
-	return pids
-}
-
-func trimBeforeKiro(pids []int, from int, nameOf func(int) (string, bool)) []int {
-	for j := from; j < len(pids); j++ {
-		name, known := nameOf(pids[j])
-		if !known {
-			continue
-		}
-		if name == "kiro-cli" {
-			return pids[:j]
-		}
-		if name == "node" && j+1 < len(pids) {
-			if next, ok := nameOf(pids[j+1]); ok && next == "kiro-cli" {
-				return pids[:j]
-			}
+			return pids[:i+1]
 		}
 	}
 	return pids
