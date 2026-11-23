@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,32 +81,23 @@ func kiroHooks(command string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// isKiroHookFile says b is a hooks/murmur.json file with the exact shape join writes (strictly
-// two hooks: murmur-prompt on UserPromptSubmit and murmur-stop on Stop, both running the same
-// Murmur `hook kiro` command with join's default timeout and no extra user fields), so join and
-// uninstall never overwrite or delete a customized file.
+// isKiroHookFile says b is byte-for-byte (ignoring UTF-8 BOM and CRLF) a hooks/murmur.json file
+// produced by kiroHooks for a valid Murmur `hook kiro` command. Comparing against kiroHooks's
+// canonical rendering rejects any user edit — including case-folded or duplicate JSON keys,
+// changed timeouts, extra fields, or customized commands — so join and uninstall never overwrite
+// or delete a customized file.
 func isKiroHookFile(b []byte) bool {
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
+	norm := bytes.ReplaceAll(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), []byte("\r\n"), []byte("\n"))
 	var doc kiroHookDoc
-	if dec.Decode(&doc) != nil || dec.Decode(&struct{}{}) != io.EOF {
+	if json.Unmarshal(norm, &doc) != nil || len(doc.Hooks) != 2 {
 		return false
 	}
-	if doc.Version != "v1" || len(doc.Hooks) != 2 {
+	cmd := doc.Hooks[0].Action.Command
+	if !isKiroHookCommand(cmd) {
 		return false
 	}
-	want := []struct{ name, trigger string }{
-		{brand.MCPServer + "-prompt", "UserPromptSubmit"},
-		{brand.MCPServer + "-stop", "Stop"},
-	}
-	for i, w := range want {
-		h := doc.Hooks[i]
-		if h.Name != w.name || h.Trigger != w.trigger || h.Timeout != codexHookTimeout ||
-			h.Action.Type != "command" || !isKiroHookCommand(h.Action.Command) {
-			return false
-		}
-	}
-	return doc.Hooks[0].Action.Command == doc.Hooks[1].Action.Command
+	want, err := kiroHooks(cmd)
+	return err == nil && bytes.Equal(norm, want)
 }
 
 // isKiroHookCommand says cmd has one of the exact `<mur> hook kiro` shapes kiroHookCommand writes

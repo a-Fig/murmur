@@ -99,18 +99,18 @@ func TestKiroHookEvents(t *testing.T) {
 	}
 }
 
-// Kiro's hook falls back to KIRO_SESSION_ID if stdin omits session_id, and finds a standalone
-// Kiro session's moved clone (`mur join -C`) through its single here.Session record.
-func TestKiroHookEnvFallbackAndMovedClone(t *testing.T) {
+// Kiro's hook finds a standalone Kiro session's moved clone (`mur join -C`) through its single
+// here.Session record.
+func TestKiroHookMovedClone(t *testing.T) {
 	joined := newRepo(t)
 	outside := t.TempDir()
 	got := fakeDaemon(t, filepath.Join(joined, ".git"), func(r proto.Request) string {
 		return `{"ok":true}`
 	})
 	publish(t, here.Session{ServerPID: os.Getpid(), ClientPID: os.Getppid(), GitDir: filepath.Join(joined, ".git"), Agent: "kiro", On: true})
-	t.Setenv("KIRO_SESSION_ID", "sess_from_env")
 
 	payload, _ := json.Marshal(map[string]any{
+		"session_id":      "sess_moved_clone",
 		"hook_event_name": "Stop",
 		"cwd":             outside,
 	})
@@ -118,7 +118,7 @@ func TestKiroHookEnvFallbackAndMovedClone(t *testing.T) {
 		t.Errorf("idle Stop printed %q", out)
 	}
 	ends := ops(got(), proto.OpTurnEnd)
-	if len(ends) != 1 || ends[0].ClaudeSession != "sess_from_env" {
-		t.Errorf("OpTurnEnd = %+v, want sess_from_env in joined clone", ends)
+	if len(ends) != 1 || ends[0].ClaudeSession != "sess_moved_clone" {
+		t.Errorf("OpTurnEnd = %+v, want sess_moved_clone in joined clone", ends)
 	}
 }

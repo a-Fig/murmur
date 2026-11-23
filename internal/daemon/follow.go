@@ -675,13 +675,32 @@ func (d *Daemon) queuedAtNamedLocked(to, name string) string {
 // session of that process. An ID the MCP server learns overrides one taken from a hook. Caller
 // holds mu.
 func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
+	sessions := d.sortedSessionsLocked()
+	// For Kiro, every hook runs directly under its own Kiro client process. When ancestors are
+	// present, restrict both ID and process matching to the nearest matching Kiro client PID so
+	// an inner Kiro session never binds to or reads an outer Kiro session's inbox (#910).
+	kiroPID := 0
+	if req.Agent == "kiro" && len(req.Ancestors) > 0 {
+		bestDepth := len(req.Ancestors)
+		for _, s := range sessions {
+			if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) || s.clientPID == 0 {
+				continue
+			}
+			if depth := slices.Index(req.Ancestors, s.clientPID); depth >= 0 && depth < bestDepth {
+				bestDepth = depth
+				kiroPID = s.clientPID
+			}
+		}
+		if kiroPID == 0 {
+			return nil
+		}
+	}
 	var byID, byProcess []*session
-	bestDepth := len(req.Ancestors)
-	for _, s := range d.sortedSessionsLocked() {
+	for _, s := range sessions {
 		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
 			continue
 		}
-		if req.Agent == "kiro" && s.clientPID != 0 && len(req.Ancestors) > 0 && !slices.Contains(req.Ancestors, s.clientPID) {
+		if kiroPID != 0 && s.clientPID != kiroPID {
 			continue
 		}
 		if s.route.Native != "" && s.hookNative != s.route.Native {
@@ -690,15 +709,8 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 		switch {
 		case s.route.Native == req.ClaudeSession || s.route.Native == "" && s.hookNative == req.ClaudeSession:
 			byID = append(byID, s)
-		case s.clientPID != 0:
-			if depth := slices.Index(req.Ancestors, s.clientPID); depth >= 0 {
-				if depth < bestDepth {
-					bestDepth = depth
-					byProcess = []*session{s}
-				} else if depth == bestDepth {
-					byProcess = append(byProcess, s)
-				}
-			}
+		case s.clientPID != 0 && slices.Contains(req.Ancestors, s.clientPID):
+			byProcess = append(byProcess, s)
 		}
 	}
 	if len(byID) > 0 {

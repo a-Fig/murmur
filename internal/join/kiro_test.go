@@ -493,6 +493,10 @@ func TestKiroForeignHookFileLeftAlone(t *testing.T) {
 			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "enabled": false, "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
 		},
 		{
+			name: "duplicate case-folded timeout key",
+			body: "{\n  \"version\": \"v1\",\n  \"hooks\": [\n    {\n      \"name\": \"murmur-prompt\",\n      \"trigger\": \"UserPromptSubmit\",\n      \"action\": {\n        \"type\": \"command\",\n        \"command\": \"mur hook kiro\"\n      },\n      \"timeout\": 60,\n      \"Timeout\": 30\n    },\n    {\n      \"name\": \"murmur-stop\",\n      \"trigger\": \"Stop\",\n      \"action\": {\n        \"type\": \"command\",\n        \"command\": \"mur hook kiro\"\n      },\n      \"timeout\": 30\n    }\n  ]\n}\n",
+		},
+		{
 			name: "trailing json token",
 			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]} {}` + "\n",
 		},

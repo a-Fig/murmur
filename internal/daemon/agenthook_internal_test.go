@@ -335,4 +335,58 @@ func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
 			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
 		}
 	})
+
+	t.Run("unbounded ancestry with inherited outer ID still prefers nearer inner Kiro client", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		outer.hookNative = "kiro-outer"
+		inner := d.newSessionLocked(&proto.Hello{ID: "inner1", ClientPID: 900}, "kiro", "", "inner1")
+		inner.clientPID = 900
+		d.st.Inbox[outer.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
+			Arrived: time.Now(),
+		}}
+		d.mu.Unlock()
+
+		resp := d.turnEnd(proto.Request{
+			Op:            proto.OpTurnEnd,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-outer",
+			Ancestors:     []int{950, 900, 850, 700},
+			Continues:     true,
+		})
+		if len(resp.Read) != 0 {
+			t.Fatalf("inner hook leaked outer's messages: %+v", resp.Read)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
+			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+	})
+
+	t.Run("nested non-Kiro agents keep existing ambiguous process matching", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "codex in T3", "", "outer1")
+		outer.clientPID = 700
+		inner := d.newSessionLocked(&proto.Hello{ID: "inner1", ClientPID: 900}, "codex", "", "inner1")
+		inner.clientPID = 900
+
+		got := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "codex",
+			ClaudeSession: "thread-new",
+			Ancestors:     []int{950, 900, 850, 700},
+		})
+		if len(got) != 0 || outer.hookNative != "" || inner.hookNative != "" {
+			t.Fatalf("nested codex hook should stay ambiguous, got %v (outer=%q inner=%q)", ids(got), outer.hookNative, inner.hookNative)
+		}
+		if !outer.hookSeen || !inner.hookSeen {
+			t.Fatalf("expected both codex sessions marked hookSeen: outer=%v inner=%v", outer.hookSeen, inner.hookSeen)
+		}
+	})
 }
