@@ -286,12 +286,16 @@ func TestUpdaterObeysEachChoice(t *testing.T) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		restarted := false
 		Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
-			Getenv: noEnv, Every: time.Hour, Report: func(s Status) { reports = append(reports, s); cancel() }}, func() { restarted = true })
+			Getenv: noEnv, Every: time.Hour, Report: func(s Status) {
+				if reports = append(reports, s); s.Latest != "" || s.Installed {
+					cancel() // the check's own report; with updates off, one saying so comes first
+				}
+			}}, func() { restarted = true })
 		cancel()
 		b, _ := os.ReadFile(path)
 		got := strings.TrimPrefix(string(b), "binary v")
 		if c.want == "" {
-			if restarted || string(b) != "old" || len(reports) != 1 || !reports[0].Off || reports[0].Latest != "1.2.4" {
+			if restarted || string(b) != "old" || len(reports) != 2 || !reports[0].Off || reports[0].Latest != "" || !reports[1].Off || reports[1].Latest != "1.2.4" {
 				t.Errorf("off: installed %q, reports %+v", b, reports)
 			}
 			continue
@@ -460,6 +464,9 @@ func TestInstallWhileOff(t *testing.T) {
 			close(reports)
 		}()
 		var got []Status
+		if getenv("MURMUR_NO_UPDATE") == "" {
+			<-reports // updates are off, reported before the first check
+		}
 		got = append(got, <-reports) // the first check: off, so it only learns what is out
 		install <- "1.2.4"
 		got = append(got, <-reports)
@@ -551,7 +558,7 @@ func TestOffChecksButNeverInstalls(t *testing.T) {
 			defer cancel()
 			Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
 				Getenv: getenv, Every: 10 * time.Millisecond, Report: func(s Status) {
-					if reports = append(reports, s); len(reports) == 3 {
+					if reports = append(reports, s); len(reports) == 4 {
 						cancel()
 					}
 				}}, func() { t.Errorf("%s, off: the daemon restarted onto an update", choice) })
@@ -564,7 +571,11 @@ func TestOffChecksButNeverInstalls(t *testing.T) {
 			return reports
 		}
 		want := map[string]string{ChoiceOn: "1.2.4", ChoiceNightly: "1.2.5-nightly.20261108"}[choice]
-		for _, r := range run(noEnv) {
+		reports := run(noEnv)
+		if r := reports[0]; !r.Off || r.Latest != "" {
+			t.Errorf("%s, off: the report before the first check: %+v", choice, r)
+		}
+		for _, r := range reports[1:] {
 			if !r.Off || r.Installed || r.Failed || r.Latest != want {
 				t.Errorf("%s, off: report %+v, want Off with Latest %s", choice, r, want)
 			}
@@ -618,7 +629,11 @@ func TestOffIsReportedBeforeItsCheck(t *testing.T) {
 	release := make(chan struct{})
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) > 1 {
-			<-release // the Off check waits on GitHub
+			select { // the Off check waits on GitHub
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
 		}
 		inner.ServeHTTP(w, r)
 	})
@@ -646,8 +661,13 @@ func TestOffIsReportedBeforeItsCheck(t *testing.T) {
 		t.Fatal("Off waited for its check to be reported")
 	}
 	close(release)
-	if r := <-reports; !r.Off || r.Latest != "1.2.3" {
-		t.Fatalf("the Off check: %+v", r)
+	select {
+	case r := <-reports:
+		if !r.Off || r.Latest != "1.2.3" {
+			t.Fatalf("the Off check: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the Off check never reported")
 	}
 }
 
