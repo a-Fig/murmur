@@ -257,36 +257,55 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Error("failed mcp.json write stranded a newly created renamed-binary hook")
 	}
 
-	// Windows 8.3 short-path ownership matching after the original long directory is gone.
-	shortHook, err := kiroHooks(`C:\PROGRA~1\MYAPP~1\mur-dev.exe hook kiro`)
-	if err != nil {
-		t.Fatal(err)
+	// Concurrent edit guard on undo: if hooks/murmur.json changes before undo runs, undo refuses
+	// to overwrite the concurrent edit and returns an error.
+	if _, undo, err := sb.installKiroHook(h, ""); err != nil || undo == nil {
+		t.Fatalf("installKiroHook: undo=%v err=%v", undo != nil, err)
+	} else {
+		const concurrent = `{"version":"v1","hooks":[]}` + "\n"
+		write(t, hookPath, concurrent)
+		if uerr := undo(); uerr == nil || !strings.Contains(uerr.Error(), "concurrently") {
+			t.Errorf("undo over concurrent edit = %v, want concurrency error", uerr)
+		}
+		if read(t, hookPath) != concurrent {
+			t.Error("undo overwrote concurrent edit")
+		}
+		if err := os.Remove(hookPath); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !isKiroHookFileFor(shortHook, `C:\Program Files\My App\mur-dev.exe`) {
-		t.Error("isKiroHookFileFor missed 8.3 short directory path for renamed binary")
-	}
-	shortNameHook, err := kiroHooks(`C:\PROGRA~1\MYAPP~1\MURMUR~1.EXE hook kiro`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !isKiroHookFileFor(shortNameHook, `C:\Program Files\My App\murmur-dev.exe`) {
-		t.Error("isKiroHookFileFor missed 8.3 short filename for renamed binary")
-	}
-	if isKiroHookFileFor(shortNameHook, `C:\Program Files\My App\other-tool.exe`) {
-		t.Error("isKiroHookFileFor falsely matched unrelated binary against 8.3 short filename")
-	}
-	// Different directory with tilde must NOT match (same depth or different depth).
+
+	// Ambiguous 8.3 short-path prefixes (where the path does not exist or points to a different
+	// directory/file) must NOT be claimed as owned.
 	for _, otherCmd := range []string{
+		`C:\MYAPPL~1\mur-dev.exe hook kiro`,
 		`C:\OTHER~1\mur-dev.exe hook kiro`,
-		`C:\OTHER~1\MYAPP~1\mur-dev.exe hook kiro`,
 		`C:\dir\tool.x~1 hook kiro`,
 	} {
 		hDoc, err := kiroHooks(otherCmd)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if isKiroHookFileFor(hDoc, `C:\Program Files\My App\mur-dev.exe`, `C:\dir\other.x~1`) {
-			t.Errorf("isKiroHookFileFor falsely matched %q", otherCmd)
+		if isKiroHookFileFor(hDoc, `C:\My Application Tools\mur-dev.exe`, `C:\dir\other.x~1`) {
+			t.Errorf("isKiroHookFileFor falsely matched ambiguous %q", otherCmd)
+		}
+	}
+	// Existing file identity (e.g. a real Windows 8.3 alias or same file on disk) DOES match.
+	realDir := filepath.Join(sb.root, "My Application Tools")
+	otherDir := filepath.Join(sb.root, "My Application Backup")
+	realExe := filepath.Join(realDir, exeName("mur-dev"))
+	otherExe := filepath.Join(otherDir, exeName("mur-dev"))
+	write(t, realExe, "x")
+	write(t, otherExe, "y")
+	if !sameKiroExe(realExe, realExe) || sameKiroExe(otherExe, realExe) {
+		t.Errorf("sameKiroExe identity check failed for %q vs %q", otherExe, realExe)
+	}
+	if short := shortPath(realExe); short != "" && short != realExe {
+		if !sameKiroExe(short, realExe) {
+			t.Errorf("sameKiroExe missed existing 8.3 alias %q for %q", short, realExe)
+		}
+		if sameKiroExe(short, otherExe) {
+			t.Errorf("sameKiroExe falsely matched 8.3 alias %q against %q", short, otherExe)
 		}
 	}
 }

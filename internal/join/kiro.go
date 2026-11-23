@@ -147,7 +147,9 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 		if undoHook != nil && !isMurBinary(e.Exe) {
 			// Don't leave a newly written renamed-binary hook stranded without a matching mcp.json
 			// entry, which would prevent a later standard `mur` join or uninstall from recognizing it.
-			undoHook()
+			if uerr := undoHook(); uerr != nil {
+				return did, false, fmt.Errorf("%s: %w, so the server wasn't added (and couldn't roll back %s: %v)", mcpPath, err, filepath.Join(h.Dir, "hooks", kiroHookFile), uerr)
+			}
 			did = nil
 		}
 		return did, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)

@@ -182,95 +182,24 @@ func parseKiroHookCommand(cmd string) (string, bool) {
 	return exe, true
 }
 
-// sameKiroExe says hookExe matches a registered executable path regExe, including when hookExe
-// was written as a Windows 8.3 short path whose original directory has since been moved or deleted.
-// Both paths must share the same Windows drive and segment count, and every segment must either
-// match case-insensitively or be a valid Windows 8.3 short form of the corresponding long segment.
+// sameKiroExe says hookExe and regExe refer to the same executable: either the same normalized
+// path, or both exist on disk and refer to the same file (handling e.g. Windows 8.3 short paths
+// without guessing from ambiguous prefixes when the path is gone).
 func sameKiroExe(hookExe, regExe string) bool {
 	if samePath(hookExe, regExe) {
 		return true
 	}
-	volA, volB := winDrive(hookExe), winDrive(regExe)
-	if volA == "" || volA != volB {
-		return false
-	}
-	hParts := splitWinPath(hookExe[2:])
-	rParts := splitWinPath(regExe[2:])
-	if len(hParts) == 0 || len(hParts) != len(rParts) {
-		return false
-	}
-	for i := range hParts {
-		if strings.EqualFold(hParts[i], rParts[i]) {
-			continue
-		}
-		if !isShortFormOf(hParts[i], rParts[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func splitWinPath(p string) []string {
-	return strings.FieldsFunc(p, func(r rune) bool { return r == '\\' || r == '/' })
-}
-
-// isShortFormOf says shortSeg is a valid Windows 8.3 short name (<prefix>~<digits>[.<ext>])
-// derived from longSeg.
-func isShortFormOf(shortSeg, longSeg string) bool {
-	sStem, sExt := splitExt(strings.ToLower(shortSeg))
-	lStem, lExt := splitExt(strings.ToLower(longSeg))
-	tilde := strings.IndexByte(sStem, '~')
-	if tilde <= 0 || len(sStem) > 8 || len(sExt) > 3 {
-		return false
-	}
-	prefix, digits := sStem[:tilde], sStem[tilde+1:]
-	if digits == "" {
-		return false
-	}
-	for _, r := range digits {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	cleanExt := clean83(lExt)
-	if len(cleanExt) > 3 {
-		cleanExt = cleanExt[:3]
-	}
-	if sExt != cleanExt {
-		return false
-	}
-	return strings.HasPrefix(clean83(lStem), prefix)
-}
-
-func clean83(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || strings.ContainsRune("-_", r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func winDrive(p string) string {
-	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) {
-		return strings.ToLower(p[:1])
-	}
-	return ""
-}
-
-func splitExt(name string) (stem, ext string) {
-	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
-		return name[:dot], name[dot+1:]
-	}
-	return name, ""
+	fiA, errA := os.Stat(hookExe)
+	fiB, errB := os.Stat(regExe)
+	return errA == nil && errB == nil && os.SameFile(fiA, fiB)
 }
 
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
 // entry (such as a live or dangling symlink) or a customized file is left alone with an error,
 // matching removeOwned's ownership rules. When it writes or updates the file, undo restores the
-// previous state if a later step (such as updating settings/mcp.json) fails.
-func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, undo func(), err error) {
+// previous state if a later step (such as updating settings/mcp.json) fails, refusing to overwrite
+// a concurrent modification.
+func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, undo func() error, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
 	if err != nil {
@@ -299,12 +228,25 @@ func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, undo fu
 	if err := writeAtomic(path, want, 0o644); err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	undo = func() {
-		if hadPrev {
-			_ = writeAtomic(path, prevBytes, 0o644)
-		} else {
-			_ = os.Remove(path)
+	undo = func() error {
+		fi, lerr := os.Lstat(path)
+		if lerr != nil {
+			return lerr
 		}
+		if !fi.Mode().IsRegular() {
+			return errors.New("file was replaced by a non-regular entry")
+		}
+		cur, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		if !bytes.Equal(cur, want) {
+			return errors.New("file was modified concurrently")
+		}
+		if hadPrev {
+			return writeAtomic(path, prevBytes, 0o644)
+		}
+		return os.Remove(path)
 	}
 	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, undo, nil
 }
