@@ -148,12 +148,14 @@ picked sidebar row and a person's own messages: white on it is 5.8:1. As text on
 blue is 3.2:1, so the new-messages line and a copied button use light blue (`#9CCBF3`) instead.
 The layout needs the page 768px or wider; narrower, Night keeps the colours on the usual layout.
 
-Day (2026-11-23) is the v3 design's light version (#1018's light frame), in Rubik, on the usual
-panes: a butter page (`#FFF6C2`), a cream sidebar (`#FFFDF4`) with butter (`#FFEF8C`) for the
-picked row, navy text (`#05224D`, quieter `#3A4F73`) and a cream thread with a soft blue glow. The
-v3 blue marks what is pressed and a person's own messages. The frame draws its bubbles in
-blue/500, where cream is 3.4:1, so Day uses `#1767B0`, Night's blue, where cream is 5.7:1. It sits
-beside Sky, an earlier take on the same light palette with a blue sidebar and butter bubbles.
+Day (2026-11-23) is the v3 design's light version (#1018's light frame), drawn as Night is: Rubik,
+and on screens 768px or wider the same floating layout, here white glass cards (white at 74%, with
+white edges and the frame's soft shadow) on a butter page (`#FFF6C2`) under blurred sky and butter
+glows, as the frame's four blobs are. The sidebar is cream (`#FFFDF4`) with butter (`#FFEF8C`) for
+the picked row, text navy (`#05224D`, quieter `#3A4F73`, 7:1 or more). The v3 blue marks what is
+pressed and a person's own messages. The frame draws its bubbles in blue/500, where cream is 3.4:1,
+so Day uses `#1767B0`, Night's blue, where cream is 5.7:1. Sky, an earlier take on the same light
+palette, keeps the usual panes, a blue sidebar and butter bubbles.
 
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
