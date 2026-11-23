@@ -90,5 +90,39 @@ exit status 1
 FAIL	github.com/x/a	1.2s
 FAIL
 EOF
+
+# What a retry leaves to be seen: an annotation and a summary line for each test, with its package,
+# the runner's OS and the shard (#1011).
+cat >"$T/out" <<'EOF'
+--- FAIL: TestA (1.00s)
+    a_test.go:1: timed out waiting for a name
+FAIL
+exit status 1
+FAIL	github.com/x/a	1.2s
+ok  	github.com/x/b	0.2s
+--- FAIL: TestC (1.00s)
+FAIL
+exit status 1
+FAIL	github.com/x/c	1.2s
+FAIL
+EOF
+: >"$T/log"
+: >"$T/summary"
+PATH="$T:$PATH" STUB_LOG="$T/log" STUB_OUT="$T/out" STUB_EXIT=1 RUNNER_OS=Windows SHARD=2 GITHUB_JOB=test-daemon GITHUB_STEP_SUMMARY="$T/summary" \
+  bash "$repo/scripts/go-test-retry.sh" -race ./... >"$T/res" 2>&1
+want_notes='::warning title=Test retried::github.com/x/a TestA failed, then passed on a second try (Windows, shard 2)
+::warning title=Test retried::github.com/x/c TestC failed, then passed on a second try (Windows, shard 2)'
+want_summary='### Tests retried (test-daemon, Windows, shard 2)
+
+- `TestA` in `github.com/x/a`: passed on a second try
+- `TestC` in `github.com/x/c`: passed on a second try'
+if [ "$(grep '^::warning' "$T/res")" = "$want_notes" ] && [ "$(cat "$T/summary")" = "$want_summary" ]; then
+  echo "ok   a retried test is named with its package, OS and shard"
+else
+  echo "FAIL a retried test is named with its package, OS and shard:"
+  grep '^::warning' "$T/res"
+  cat "$T/summary"
+  fails=$((fails + 1))
+fi
 rm -rf "$T"
 exit "$fails"

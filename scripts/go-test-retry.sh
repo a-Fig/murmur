@@ -3,8 +3,10 @@
 #
 # Some daemon tests give up a wait on a slow CI runner, a different one each run (#513), and a run
 # lost to one costs a rerun by hand. So a test that fails is run again, alone, and the job passes if
-# it passes then. What was retried is printed, annotated on the run and written to its summary, so a
-# test that needs the retry often is seen.
+# it passes then. What was retried is printed, annotated on the run and written to its summary, with
+# its package, the runner's OS and the shard (SHARD, if the job sets it), so a test that needs the
+# retry often is seen: scripts/retried-tests.sh counts those annotations over main's recent runs
+# (#1011).
 #
 # Only a test that failed by name is retried, and only when its binary ran to its end. A build that
 # fails, a data race, a test binary that hangs, panics or exits early, a failed example or fuzz
@@ -88,14 +90,20 @@ status=$?
 
 verdict="passed on a second try"
 if [ "$status" != 0 ]; then verdict="was retried, and the retry of these tests failed"; fi
-for t in $failed; do
-  echo "::warning title=Test retried::$t failed, then $verdict"
+# Each failed test with its package: a package's failed tests come before its verdict line.
+pairs=$(awk '
+  /^--- FAIL: Test/ { names[n++] = $3 }
+  /^(FAIL|ok)[ \t]+[^ \t]+/ { for (i = 0; i < n; i++) print $2, names[i]; n = 0 }' "$out" | sort -u)
+where=${RUNNER_OS:-this machine}
+if [ -n "${SHARD:-}" ]; then where="$where, shard $SHARD"; fi
+printf '%s\n' "$pairs" | while read -r pkg t; do
+  echo "::warning title=Test retried::$pkg $t failed, then $verdict ($where)"
 done
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
-    echo "### Tests retried (${GITHUB_JOB:-job})"
+    echo "### Tests retried (${GITHUB_JOB:-job}, $where)"
     echo
-    for t in $failed; do echo "- \`$t\`: $verdict"; done
+    printf '%s\n' "$pairs" | while read -r pkg t; do echo "- \`$t\` in \`$pkg\`: $verdict"; done
   } >>"$GITHUB_STEP_SUMMARY"
 fi
 exit "$status"
