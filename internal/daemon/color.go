@@ -104,11 +104,15 @@ func (d *Daemon) settleColorLocked(began time.Time) {
 			}
 		}
 	}
-	for _, p := range d.peers {
-		// A live holder could be hiding in it: settled once every live presence can be read. A
-		// stale one may never open (written before its device read a team key), and whether to
-		// hold this device's own pick back is this device's call, so its clock may judge.
-		if p.locked && !d.staleLocked(p) {
+	for id, p := range d.peers {
+		// A live holder could be hiding in it: settled once every live presence can be read, and
+		// has been. A newest presence whose fetch failed (sha behind listed, sawPresence) is read
+		// at a later sync; one fetched and found unreadable, or refused as not its device's, never
+		// will be, and doesn't wait. A stale one may never open (written before its device read a
+		// team key), and whether to hold this device's own pick back is this device's call, so its
+		// clock may judge.
+		unread := p.sha != p.listed && d.refusedSHA[id] != p.listed
+		if (p.locked || unread) && !d.staleLocked(p) {
 			return
 		}
 	}

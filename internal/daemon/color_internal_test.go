@@ -152,3 +152,50 @@ func TestADaemonAwayAWeekKeepsAColourNobodyTook(t *testing.T) {
 		t.Errorf("after the sync the presence carries colour %d (lost to %q), want its pick, 3", color, d.st.ColorLostTo)
 	}
 }
+
+// A device whose colour waits to be settled doesn't settle it past a live peer whose newest
+// presence the sync couldn't fetch: that presence may carry the colour, picked while this device
+// was away, and the pick put back would take it from the peer (#1165).
+func TestTheColourWaitsForEveryLivePresenceToBeRead(t *testing.T) {
+	t.Parallel()
+	d := colorRig(t, time.Hour)
+	d.opt.StaleAfter = time.Hour
+	d.peers = map[string]*peer{}
+	d.colorSettled = false                    // just started, or back from invisible
+	d.sawPresence("live-0001", "aaaa", false) // listed, its fetch failed
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.settleColorLocked(time.Now().Add(-time.Second))
+	if d.colorSettled {
+		t.Fatal("a sync that couldn't fetch a live peer's presence settled this device's colour")
+	}
+	// The next sync fetches it: the peer picked the colour while this device was away.
+	now := time.Now()
+	d.peers["live-0001"] = &peer{sha: "aaaa", listed: "aaaa", lastChange: now,
+		pres: bus.Presence{V: bus.Version, Device: "live-0001", Color: 3, ColorAt: now.Add(-time.Minute).UTC()}}
+	d.settleColorLocked(now)
+	if d.st.Color != 0 || d.st.ColorLostTo == "" || !d.colorSettled {
+		t.Errorf("after the sync that read it: colour %d, lost to %q, settled %v; want the pick given up", d.st.Color, d.st.ColorLostTo, d.colorSettled)
+	}
+
+	// A presence that was fetched and found unreadable never will be read, so it doesn't hold the
+	// colour back.
+	d.st.Color, d.st.ColorAt, d.st.ColorLostTo = 3, now.Add(-time.Hour).UTC(), ""
+	d.colorSettled = false
+	d.peers = map[string]*peer{}
+	d.mu.Unlock()
+	d.sawPresence("junk-0001", "bbbb", true)
+	d.mu.Lock()
+	d.settleColorLocked(time.Now())
+	if color, _ := d.shownColorLocked(); color != 3 {
+		t.Errorf("beside a presence found unreadable, the presence carries colour %d, want its pick, 3", color)
+	}
+	// Nor does one refused as not its device's, fetched after a fetch of it failed.
+	d.colorSettled = false
+	d.peers = map[string]*peer{"forged-0001": {sha: "aaaa", listed: "cccc", lastChange: time.Now()}}
+	d.refusedSHA = map[string]string{"forged-0001": "cccc"}
+	d.settleColorLocked(time.Now())
+	if color, _ := d.shownColorLocked(); color != 3 {
+		t.Errorf("beside a presence refused, the presence carries colour %d, want its pick, 3", color)
+	}
+}

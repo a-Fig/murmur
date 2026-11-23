@@ -138,7 +138,8 @@ person can pick one on Settings.
   and its Settings says who has it.
 - **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free, and
   so does a device that goes invisible (#1084). A returning daemon, or a device back online,
-  leaves its pick out of presence until it has synced with every live presence open, then gives
+  leaves its pick out of presence until it has synced with every live presence read and open (a
+  newest presence whose fetch failed waits for the next sync, #1165), then gives
   the pick up if a peer took it. Keeping a lost pick to reclaim later made two devices swap
   colours each time one went idle (found in review, #577).
 - **Stale devices keep their colours**, since staleness is each reader's own clock, and two pages
