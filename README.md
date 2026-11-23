@@ -181,6 +181,9 @@ after verifying its checksum. To turn that off, on this machine:
 mur updates off
 ```
 
+It still checks, so Settings in `mur ui` can show a new release, but nothing installs until you
+click Update now. `MURMUR_NO_UPDATE=1` on the daemon stops the checks too.
+
 [`docs/agents/join.md`](docs/agents/join.md#what-murmurafigdev-receives-and-why) says exactly what
 is sent and how.
 

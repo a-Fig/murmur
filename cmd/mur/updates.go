@@ -49,7 +49,7 @@ func runUpdates(ctx context.Context, args []string, out io.Writer) error {
 func describeUpdates(s update.Setting, changed bool) string {
 	var b strings.Builder
 	b.WriteString(map[string]string{
-		update.ChoiceOff:     "Updates are off on this machine.",
+		update.ChoiceOff:     "Updates are off on this machine: new releases install only when you click Update now in " + brand.Command + " ui's Settings.",
 		update.ChoiceOn:      "Updates are on: stable releases install on their own.",
 		update.ChoiceNightly: "Updates are on, nightly: prereleases and nightlies install too.",
 	}[s.Choice] + "\n")
