@@ -343,6 +343,9 @@ func TestJoinInACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 // files don't mention it.
 const firstHereNote = "Nobody else uses Murmur in this repo yet"
 
+// inviteNote is how join tells the user to invite teammates' agents, in a repo whose files don't.
+const inviteNote = "They can run `mur init` to invite those agents"
+
 // A repo whose AGENTS.md and CLAUDE.md don't mention Murmur can be joined: the section only invites
 // teammates' agents, and the user's yes turns Murmur on (Tyler, 2026-11-22, #830). The session's
 // server gets its tools, and join says the user is the first here, with init as theirs to run.
@@ -353,7 +356,7 @@ func TestJoinWithoutTheSection(t *testing.T) {
 		t.Fatalf("tools before joining: %q", names)
 	}
 	out := b.mustRun(b.clone, "join")
-	if !strings.Contains(out, firstHereNote) || !strings.Contains(out, "the user can run `mur init`") {
+	if !strings.Contains(out, firstHereNote) || !strings.Contains(out, inviteNote) {
 		t.Errorf("join didn't say the user is the first here:\n%s", out)
 	}
 	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
@@ -379,23 +382,27 @@ func TestAJoinedCloneStaysOnWithoutTheSection(t *testing.T) {
 	eventually(t, "the tools to appear", func() bool { return offersTools(tools(t, cs)) })
 }
 
-// The first-here note is only for a repo nobody has used Murmur in, as its remote's refs/murmur/*
-// tell, and whose files don't invite teammates' agents yet.
+// The invitation is for a repo whose files don't invite teammates' agents yet, and the first-here
+// part only for one nobody has used Murmur in, as its remote's refs/murmur/* tell.
 func TestJoinSaysTheUserIsFirstOnlyWhenTheyAre(t *testing.T) {
 	// Someone used Murmur here before: a ref is on the remote, here the one a public repo's first
-	// clone pushes (internal/publicrepo).
+	// clone pushes (internal/publicrepo). Teammates' agents still won't know to join.
 	b := newBox(t)
 	tip := strings.TrimSpace(git(t, b.remote, "rev-parse", "refs/heads/main"))
 	git(t, b.remote, "update-ref", "refs/murmur/reported", tip)
-	if out := b.mustRun(b.clone, "join"); strings.Contains(out, firstHereNote) {
+	out := b.mustRun(b.clone, "join")
+	if strings.Contains(out, firstHereNote) {
 		t.Errorf("join said the user is the first, with a bus ref on the remote:\n%s", out)
+	}
+	if !strings.Contains(out, "This repo's AGENTS.md and CLAUDE.md don't mention Murmur") || !strings.Contains(out, inviteNote) {
+		t.Errorf("join didn't say how to invite teammates' agents, with a bus ref and no section:\n%s", out)
 	}
 
 	// The section invites teammates' agents already.
 	b = newBox(t)
 	b.mustRun(b.clone, "init")
-	if out := b.mustRun(b.clone, "join"); strings.Contains(out, firstHereNote) {
-		t.Errorf("join said the user is the first, in a repo with the section:\n%s", out)
+	if out := b.mustRun(b.clone, "join"); strings.Contains(out, firstHereNote) || strings.Contains(out, inviteNote) {
+		t.Errorf("join said the user is the first, or how to invite, in a repo with the section:\n%s", out)
 	}
 }
 

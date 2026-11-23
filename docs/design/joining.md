@@ -40,11 +40,15 @@ in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 Until #830 (2026-11-22) it refused in a repo without the marker, so a user who said "try it, but
 don't commit anything" couldn't join. Tyler's direction: the section only invites teammates'
 agents, and the user's consent in the clone is what turns Murmur on. In a repo without the marker,
-join makes one `ls-remote` of `refs/murmur/*` before it starts the daemon, which would add refs of
-its own. With none there, nobody has used Murmur in the repo, and join's report says so, adding that
-teammates' agents won't know to join until the user runs `mur init` (`firstHere` in
-`internal/join/join.go`). It names init as the user's to run, since init pushes to the default
-branch. A remote that can't be asked within 15 s gives no note, and fails nothing.
+join's report says teammates' agents won't know to join until the user runs `mur init`
+(`inviteNote` in `internal/join/join.go`). It names init as the user's to run, since init pushes to
+the default branch. Join also makes one `ls-remote` of `refs/murmur/*` before it starts the daemon,
+which would add refs of its own. With none there, nobody has used Murmur in the repo, and the note
+says so too. A remote that can't be asked within 15 s leaves that part out, and fails nothing. The
+`ls-remote` runs with no controlling terminal (`gitx.Git.NoTerminal`, a new session on Unix):
+`GIT_TERMINAL_PROMPT=0` doesn't stop ssh asking for a key's passphrase on `/dev/tty`, and an ssh
+left asking after the limit ended git would hold the user's terminal. A new session leaves the
+user's `core.sshCommand` and `GIT_SSH_COMMAND` alone, which forcing `BatchMode` would not.
 
 Everything it writes is outside the repo's tracked files:
 
@@ -133,7 +137,7 @@ reads the record of this machine's clones (`internal/clones`).
   before the record existed and whose daemon hasn't started since isn't on the record; its server
   entry is gone anyway, so nothing runs there.
 
-## The server stays passive where it isn't invited
+## The server stays passive where it isn't joined
 
 The user-scope entry starts `mur mcp` in every repo the user opens. The server is on only while
 this user has joined in this clone (`Place.Joined`, the consent file), checked every 2 seconds.

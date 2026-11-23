@@ -264,8 +264,8 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// A repo whose files don't mention Murmur can be joined all the same: the section only invites
 	// teammates' agents, and the user's yes is what turns Murmur on (Tyler, 2026-11-22, #830). The
 	// remote is asked before this clone's daemon starts and adds refs of its own.
-	alone := false
-	if !cut() && !p.Marked() {
+	uninvited, alone := !p.Marked(), false
+	if !cut() && uninvited {
 		steps.start("asking the remote whether anyone here uses " + brand.Product + " yet")
 		alone = nobodyHere(ctx, p.GitDir)
 	}
@@ -331,9 +331,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		cancel()
 		steps.stop()
 	}
-	if alone {
+	if uninvited {
 		last := len(r.Tell) - 1
-		r.Tell = append(r.Tell[:last], firstHere, r.Tell[last])
+		r.Tell = append(r.Tell[:last], inviteNote(alone), r.Tell[last])
 	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
@@ -349,20 +349,32 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// firstHere is what a join tells the user in a repo whose AGENTS.md and CLAUDE.md don't mention
-// Murmur and whose remote has no refs/murmur/* yet. It names init as the user's to run: init pushes
-// to the default branch, which needs their OK (docs/agents/setup.md).
-const firstHere = "Nobody else uses " + brand.Product + " in this repo yet, and its AGENTS.md and CLAUDE.md don't mention it, " +
-	"so teammates' agents won't know to join. To invite them, the user can run `" + brand.Command + " init`, " +
-	"which adds a short section to both files and pushes it to the default branch."
+// inviteNote is what a join tells the user in a repo whose AGENTS.md and CLAUDE.md don't mention
+// Murmur: teammates' agents won't know to join until the section is there. With alone, the
+// remote has no refs/murmur/* yet, so it also says nobody else uses Murmur here. It names init as
+// the user's to run: init pushes to the default branch, which needs their OK
+// (docs/agents/setup.md).
+func inviteNote(alone bool) string {
+	note := "This repo's AGENTS.md and CLAUDE.md don't mention " + brand.Product + ", so teammates' agents won't know to join. "
+	if alone {
+		note = "Nobody else uses " + brand.Product + " in this repo yet, and its AGENTS.md and CLAUDE.md don't mention it, " +
+			"so teammates' agents won't know to join. "
+	}
+	return note + "They can run `" + brand.Command + " init` to invite those agents: " +
+		"it adds a short section to both files and pushes it to the default branch."
+}
 
 // nobodyHere reports whether the remote of the clone with this git dir has no bus refs, which
 // means nobody has used Murmur in the repo. It is one ls-remote, the round trip a daemon makes
 // every few seconds. A remote that can't be asked in time says nothing either way: false.
+//
+// Join runs in the user's terminal, so the ls-remote runs with none (gitx.Git.NoTerminal): an ssh
+// key with a passphrase and no agent would otherwise ask for it there, and could still be asking
+// after the 15 s limit ended git.
 func nobodyHere(ctx context.Context, gitDir string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	g := gitx.Git{Dir: gitDir}
+	g := gitx.Git{Dir: gitDir, NoTerminal: true}
 	remote, err := bus.RemoteFor(ctx, g)
 	if err != nil {
 		return false
