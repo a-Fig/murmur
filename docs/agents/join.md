@@ -148,8 +148,10 @@ What `mur join` prints says which case this is, and how to get the tools if they
 - Pi in T3 Code: open a new thread.
 - Antigravity: the tools come within seconds if Murmur was already registered. If not, or if they
   haven't come after a minute, open a new thread in T3 Code, or restart `agy` in a terminal.
+- Kiro: it watches its config and loads the tools from the next turn. If they haven't appeared,
+  open a new thread in T3 Code, or restart `kiro-cli` in a terminal.
 - Muse Code or Grok: start a new session (in T3 Code, a new thread).
-- Any other agent in a T3 Code thread (Kiro, fx, one from the ACP registry): Murmur has no tools
+- Any other agent in a T3 Code thread (fx, one from the ACP registry): Murmur has no tools
   for it, but `mur who` and `mur send` work in the thread's shell now. use.md's "Without the tools" section says how.
 
 Don't say the tools are there until they show up in your list of tools. Once they do, read how to

@@ -469,4 +469,7 @@ func TestOthersAdvice(t *testing.T) {
 	if got := othersAdvice([]string{"Pi", "Muse Code"}); !strings.Contains(got, "In a Pi session already open, type /reload") || strings.Contains(got, "Pi, Muse Code load") {
 		t.Errorf("advice for Pi: %s", got)
 	}
+	if got := othersAdvice([]string{"OpenCode", "Kiro", "Muse Code"}); !strings.Contains(got, "OpenCode and Kiro sessions get its tools within seconds") || !strings.Contains(got, "Muse Code loads") {
+		t.Errorf("advice for Kiro: %s", got)
+	}
 }

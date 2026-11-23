@@ -123,11 +123,11 @@ func TestAdviceForKiro(t *testing.T) {
 		fresh bool
 		want  string
 	}{
-		{"first join in T3", map[string]string{"KIRO_SESSION_ID": "sess_1", "T3CODE_THREAD_ID": "thread-1"}, true, "To load its tools, open a new thread in this project"},
-		{"first join in a terminal", map[string]string{"KIRO_SESSION_ID": "sess_1"}, true, "To load its tools, restart `kiro-cli` in this repo"},
+		{"first join in T3", map[string]string{"KIRO_SESSION_ID": "sess_1", "T3CODE_THREAD_ID": "thread-1"}, true, "Its tools should appear on your next turn; if they don't, open a new thread in this project"},
+		{"first join in a terminal", map[string]string{"KIRO_SESSION_ID": "sess_1"}, true, "Its tools should appear on your next turn; if they don't, restart `kiro-cli` in this repo"},
 		{"already registered in T3", map[string]string{"KIRO_SESSION_ID": "sess_1", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, false, "after a minute, open a new thread in this project"},
 		{"already registered in a terminal", map[string]string{"KIRO_SESSION_ID": "sess_1"}, false, "after a minute, restart `kiro-cli` in this repo"},
-		{"handed off from Antigravity (#909)", map[string]string{"KIRO_SESSION_ID": "sess_1", "ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "conv-1", "T3CODE_THREAD_ID": "thread-1"}, true, "To load its tools, open a new thread in this project"},
+		{"handed off from Antigravity (#909)", map[string]string{"KIRO_SESSION_ID": "sess_1", "ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "conv-1", "T3CODE_THREAD_ID": "thread-1"}, true, "Its tools should appear on your next turn; if they don't, open a new thread in this project"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := envWith(c.vars)

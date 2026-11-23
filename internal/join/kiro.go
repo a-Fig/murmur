@@ -23,24 +23,44 @@ import (
 //     T3 Code has no per-instance homePath setting for Kiro and shares the user's directory (unless
 //     an instance sets KIRO_HOME in its environment).
 //   - MCP servers are mcpServers.<name> in <dir>/settings/mcp.json (JSONC via comment-json), with
-//     command and args. Kiro's MCPConfigManager watches that file and its MCPConnection handles
-//     notifications/tools/list_changed. Stdio MCP servers inherit process.env (minus bash function
-//     exports), so inside T3 Code `mur mcp --agent kiro` inherits T3CODE_THREAD_ID, T3CODE_CLI_PATH
-//     and T3CODE_HOME directly.
+//     command and args. Kiro's MCPConfigManager watches that file (hot-reloading added servers
+//     between turns) and its MCPConnection handles notifications/tools/list_changed. Stdio MCP
+//     servers inherit process.env (minus bash function exports), so inside T3 Code
+//     `mur mcp --agent kiro` inherits T3CODE_THREAD_ID, T3CODE_CLI_PATH and T3CODE_HOME directly.
 //   - Tool approval: V3 accepts `autoApprove` in mcp.json schema-wise but treats it as an unused
 //     field. Instead, V3 enforces policy rules from <dir>/settings/permissions.yaml if present, else
 //     <dir>/settings/permissions.json (plain JSON, requiring a top-level "rules" array). Each MCP
 //     tool call checks capability "mcp" against resource path "<serverName>/<toolName>", so a rule
 //     with capability "mcp", match ["murmur/*"], effect "allow" allows all of Murmur's tools without
 //     prompting in Supervised or standalone CLI sessions. (In T3 Full Access mode, autopilot is on.)
-//     Because Kiro ignores permissions.json whenever permissions.yaml exists, join writes to
-//     permissions.json only when permissions.yaml is absent and otherwise leaves a note.
+//     Kiro's policy schema has no predicate to bind a rule to a server's executable path, so in a
+//     trusted workspace a project .kiro/settings/mcp.json server also named "murmur" inherits this
+//     allow rule (the same model as Claude Code, Grok and Antigravity). Because Kiro ignores
+//     permissions.json whenever permissions.yaml exists, join and uninstall both leave
+//     permissions.json alone when permissions.yaml is present.
 
 var kiroArgs = []string{"mcp", "--agent", "kiro"}
 
 // kiroAllowPattern matches every tool on Murmur's MCP server against Kiro's "<server>/<tool>"
 // policy resource path.
 var kiroAllowPattern = brand.MCPServer + "/*"
+
+// kiroSampleTool is a representative "<server>/<tool>" resource path used to check whether an
+// existing deny/ask policy rule in Kiro's permissions.json overrides an allow rule for Murmur.
+var kiroSampleTool = brand.MCPServer + "/who"
+
+// kiroPathsInTemp reports whether Kiro's settings directory and the files join/uninstall edit under
+// dir resolve inside the temporary folder (protecting scratch homes against nested symlinks or
+// junctions pointing at the user's real ~/.kiro/settings, #995).
+func kiroPathsInTemp(dir string) bool {
+	settings := filepath.Join(dir, "settings")
+	for _, p := range []string{settings, filepath.Join(settings, "mcp.json"), filepath.Join(settings, "permissions.json")} {
+		if !inTemp(p, false) {
+			return false
+		}
+	}
+	return true
+}
 
 // kiroHomeDir is Kiro's user configuration directory, following V3's resolveUserConfigDir:
 // $KIRO_HOME if it is an absolute, non-root path that doesn't equal or contain home; else ~/.kiro.
@@ -128,15 +148,12 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 // unless settings/permissions.yaml is present (which Kiro reads instead of permissions.json).
 func allowKiroTools(dir string) (changed bool, path string, err error) {
 	yamlPath := filepath.Join(dir, "settings", "permissions.yaml")
-	if b, rerr := os.ReadFile(yamlPath); rerr == nil {
-		if strings.Contains(string(b), kiroAllowPattern) {
-			return false, yamlPath, nil
-		}
+	if _, rerr := os.Stat(yamlPath); rerr == nil {
 		return false, yamlPath, approvalNote(fmt.Sprintf(
-			"%s is present (Kiro reads it instead of permissions.json), so %s didn't add the allow rule; add a rules entry with capability: mcp, match: [%q], effect: allow there, or %s's tools will ask before each call.",
-			yamlPath, brand.Command, kiroAllowPattern, brand.Product))
+			"%s is present (Kiro reads it instead of permissions.json), so %s left it alone; unless it already allows %q, add a rules entry with capability: mcp, match: [%q], effect: allow there, or %s's tools will ask before each call.",
+			yamlPath, brand.Command, kiroAllowPattern, kiroAllowPattern, brand.Product))
 	} else if !errors.Is(rerr, os.ErrNotExist) {
-		return false, yamlPath, approvalNote(fmt.Sprintf("couldn't read %s (%v), so %s didn't add the allow rule.", yamlPath, rerr, brand.Command))
+		return false, yamlPath, approvalNote(fmt.Sprintf("couldn't check %s (%v), so %s didn't add the allow rule.", yamlPath, rerr, brand.Command))
 	}
 
 	jsonPath := filepath.Join(dir, "settings", "permissions.json")
@@ -159,6 +176,12 @@ func allowKiroTools(dir string) (changed bool, path string, err error) {
 		if rules, ok = v.([]any); !ok {
 			return false, jsonPath, errors.New(`"rules" isn't a list`)
 		}
+		// In Kiro's Cedar policy engine, deny and ask (compiled as forbid) take precedence over allow.
+		if blocker := kiroRulesBlockMurmur(rules); blocker != "" {
+			return false, jsonPath, approvalNote(fmt.Sprintf(
+				"%s already has a %q rule covering %s's MCP tools, which takes precedence over allow in Kiro; %s didn't add an allow rule, so %s's tools may still be denied or ask before each call.",
+				jsonPath, blocker, brand.Product, brand.Command, brand.Product))
+		}
 		if kiroRulesAllowMurmur(rules) {
 			return false, jsonPath, nil
 		}
@@ -173,6 +196,94 @@ func allowKiroTools(dir string) (changed bool, path string, err error) {
 		return false, jsonPath, err
 	}
 	return true, jsonPath, writeJSONConfig(jsonPath, string(b), 0o644)
+}
+
+// kiroRulesBlockMurmur reports the strongest overriding effect ("deny", else "ask") in rules that
+// matches Murmur's MCP tools, or "" if none does.
+func kiroRulesBlockMurmur(rules []any) string {
+	blocker := ""
+	for _, r := range rules {
+		o, ok := r.(*jsonedit.Object)
+		if !ok {
+			continue
+		}
+		capVal, _ := o.Get("capability")
+		effVal, _ := o.Get("effect")
+		if capVal != "mcp" && capVal != "all" {
+			continue
+		}
+		if effVal != "deny" && effVal != "ask" {
+			continue
+		}
+		if !kiroRuleMatchesTool(o, kiroSampleTool) {
+			continue
+		}
+		if effVal == "deny" {
+			return "deny"
+		}
+		blocker = "ask"
+	}
+	return blocker
+}
+
+// kiroRuleMatchesTool reports whether Kiro policy rule o matches resource path tool, following
+// Kiro's Cedar like-matching semantics (omitted/empty match is unconditional; ** collapses to *;
+// any matching exclude suppresses the rule).
+func kiroRuleMatchesTool(o *jsonedit.Object, tool string) bool {
+	if v, ok := o.Get("exclude"); ok {
+		if list, ok := v.([]any); ok {
+			for _, item := range list {
+				if pat, ok := item.(string); ok && kiroLikeMatch(pat, tool) {
+					return false
+				}
+			}
+		}
+	}
+	m, hasMatch := o.Get("match")
+	if !hasMatch {
+		return true
+	}
+	list, ok := m.([]any)
+	if !ok {
+		return false
+	}
+	if len(list) == 0 {
+		return true
+	}
+	for _, item := range list {
+		if pat, ok := item.(string); ok && kiroLikeMatch(pat, tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// kiroLikeMatch matches Cedar's `like` wildcard pattern (* matches any string; ** collapses to *).
+func kiroLikeMatch(pattern, s string) bool {
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return s == pattern
+	}
+	if !strings.HasPrefix(s, parts[0]) {
+		return false
+	}
+	s = s[len(parts[0]):]
+	last := parts[len(parts)-1]
+	if !strings.HasSuffix(s, last) {
+		return false
+	}
+	s = s[:len(s)-len(last)]
+	for _, mid := range parts[1 : len(parts)-1] {
+		if mid == "" {
+			continue
+		}
+		i := strings.Index(s, mid)
+		if i < 0 {
+			return false
+		}
+		s = s[i+len(mid):]
+	}
+	return true
 }
 
 // kiroRulesAllowMurmur reports whether rules already has an allow rule covering Murmur's MCP tools.
@@ -269,7 +380,9 @@ func removeKiroAllow(text string) (out string, changed bool, err error) {
 	return string(b), true, nil
 }
 
-// unregisterKiroAt takes Murmur's server and tool allow rule out of Kiro home hs[0].
+// unregisterKiroAt takes Murmur's server and tool allow rule out of Kiro home hs[0]. When
+// settings/permissions.yaml is present, settings/permissions.json is shadowed (and skipped by
+// join), so uninstall leaves permissions.json alone too.
 func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
 	var problems []error
@@ -289,19 +402,21 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 			}
 		}
 	}
-	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
-	if text, rerr := readConfig(permPath); rerr != nil {
-		problems = append(problems, rerr)
-	} else if text != "" {
-		out, changed, uerr := removeKiroAllow(text)
-		switch {
-		case uerr != nil:
-			problems = append(problems, fmt.Errorf("%s: %w", permPath, uerr))
-		case changed:
-			if werr := writeJSONConfig(permPath, out, 0o644); werr != nil {
-				problems = append(problems, werr)
-			} else {
-				did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+permPath+")")
+	if _, yerr := os.Stat(filepath.Join(h.Dir, "settings", "permissions.yaml")); errors.Is(yerr, os.ErrNotExist) {
+		permPath := filepath.Join(h.Dir, "settings", "permissions.json")
+		if text, rerr := readConfig(permPath); rerr != nil {
+			problems = append(problems, rerr)
+		} else if text != "" {
+			out, changed, uerr := removeKiroAllow(text)
+			switch {
+			case uerr != nil:
+				problems = append(problems, fmt.Errorf("%s: %w", permPath, uerr))
+			case changed:
+				if werr := writeJSONConfig(permPath, out, 0o644); werr != nil {
+					problems = append(problems, werr)
+				} else {
+					did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+permPath+")")
+				}
 			}
 		}
 	}
@@ -317,10 +432,12 @@ func kiroRemoval(_ Env, h agentHome) string {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+mcpPath)
 		}
 	}
-	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
-	if text, err := readConfig(permPath); err == nil && text != "" {
-		if _, found, _ := removeKiroAllow(text); found {
-			steps = append(steps, "delete the \""+kiroAllowPattern+"\" allow rule from rules in "+permPath)
+	if _, yerr := os.Stat(filepath.Join(h.Dir, "settings", "permissions.yaml")); errors.Is(yerr, os.ErrNotExist) {
+		permPath := filepath.Join(h.Dir, "settings", "permissions.json")
+		if text, err := readConfig(permPath); err == nil && text != "" {
+			if _, found, _ := removeKiroAllow(text); found {
+				steps = append(steps, "remove \""+kiroAllowPattern+"\" from the MCP allow rule in "+permPath)
+			}
 		}
 	}
 	return strings.Join(steps, "; ")

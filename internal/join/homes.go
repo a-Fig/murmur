@@ -111,6 +111,16 @@ func (e Env) t3Home(a agent, in t3Instance) (agentHome, bool) {
 		h.Dir, h.T3Own = antigravityHomeOf(e.T3Settings, in.ID), true
 		return h, h.Dir != ""
 	}
+	if a.driver == "kiro" {
+		// Kiro's T3 provider has no config.homePath; it uses KIRO_HOME from its environment
+		// (subject to Kiro V3's resolveUserConfigDir validation), else ~/.kiro.
+		if dir := kiroHomeDir(func(k string) string { return expandHome(in.Env[k], e.Home) }, e.Home); dir != "" {
+			h.Dir = dir
+			return h, true
+		}
+		h.Dir = e.defaultHome(a).Dir
+		return h, h.Dir != ""
+	}
 	dir := in.homeOf(a.t3Var, e.Home)
 	switch {
 	case dir != "" && a.sub != "":

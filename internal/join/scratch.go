@@ -182,7 +182,7 @@ func (e Env) keepToScratch(byAgent [][]agentHome, readT3, skippedT3 bool, cmd st
 	}
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
-			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) {
+			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) && (a.driver != "kiro" || kiroPathsInTemp(h.Dir)) {
 				continue
 			}
 			left = append(left, h.Label+" in "+h.Dir+" (from "+e.homeFrom(a, h, readT3)+")")

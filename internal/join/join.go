@@ -506,17 +506,24 @@ func sayIfSlow(w io.Writer, d time.Duration, line string) func() {
 }
 
 // othersAdvice is what to tell about the agents other than Claude Code and Codex that Murmur was
-// just added to, by what each was seen to do (2026-11-01): OpenCode watches its config, Muse reads
-// its servers when a session starts, as does Antigravity (1.5.13, 2026-11-20). Pi reads them then
-// and on /reload in its terminal (2026-11-17, #864). Grok documents loading them at startup.
+// just added to, by what each was seen to do (2026-11-01): OpenCode and Kiro watch their config,
+// Muse reads its servers when a session starts, as does Antigravity (1.5.13, 2026-11-20). Pi reads
+// them then and on /reload in its terminal (2026-11-17, #864). Grok documents loading them at
+// startup.
 func othersAdvice(labels []string) string {
 	s := brand.Product + " was just added to " + strings.Join(labels, ", ") + "."
-	if slices.Contains(labels, "OpenCode") {
-		s += " OpenCode sessions get its tools within seconds, from their next turn."
+	var watched []string
+	for _, l := range labels {
+		if l == "OpenCode" || l == "Kiro" {
+			watched = append(watched, l)
+		}
+	}
+	if len(watched) > 0 {
+		s += " " + strings.Join(watched, " and ") + " sessions get its tools within seconds, from their next turn."
 	}
 	var restart []string
 	for _, l := range labels {
-		if l != "OpenCode" && l != "Pi" {
+		if l != "OpenCode" && l != "Kiro" && l != "Pi" {
 			restart = append(restart, l)
 		}
 	}
@@ -595,7 +602,7 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, proble
 			restart = "open a new thread in this project"
 		}
 		if kiroFresh {
-			out = append(out, brand.Product+" was just added to Kiro. To load its tools, "+restart+".")
+			out = append(out, brand.Product+" was just added to Kiro. Its tools should appear on your next turn; if they don't, "+restart+".")
 		} else {
 			out = append(out, brand.Product+" is on for this repo. Kiro should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
 		}
