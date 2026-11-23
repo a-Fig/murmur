@@ -40,7 +40,7 @@ func TestAPageMessageIsReadOnce(t *testing.T) {
 		}
 		stem := strings.TrimSuffix(m.Subject, "…")
 		body := strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
-		want := "Message from ada [human] via " + brand.Product + ":\n\n" + body + "\n\nReply with " + brand.Product + "'s `send` to ada if a reply is needed.\n"
+		want := "Message from ada [human] via " + brand.Product + ":\n\n" + quote(body) + "\nReply with " + brand.Product + "'s `send` to ada if a reply is needed.\n"
 		if got := Turn(m); got != want {
 			t.Errorf("%s: the turn:\n%s\nwant:\n%s", name, got, want)
 		}
@@ -67,9 +67,9 @@ func TestARealSubjectIsKept(t *testing.T) {
 	}
 	for _, c := range cases {
 		m := proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", FromAgent: "Codex", To: "x", Introduced: true, Subject: c.subject, Body: c.body}
-		want := "Message from quiet-otter via " + brand.Product + ":\n\n" + c.subject + "\n"
+		want := "Message from quiet-otter via " + brand.Product + ":\n\n" + quote(c.subject)
 		if c.body != "" {
-			want += "\n" + c.body + "\n"
+			want += "\n" + quote(c.body)
 		}
 		want += "\nReply with " + brand.Product + "'s `send` to quiet-otter if a reply is needed.\n"
 		if got := Turn(m); got != want {
@@ -86,7 +86,7 @@ func TestARealSubjectIsKept(t *testing.T) {
 // its body either way; there the rule is for people's messages.)
 func TestAThreeDotCutIsLeftOut(t *testing.T) {
 	m := proto.MessageView{From: "dev-0001/abc123", FromName: "quiet-otter", To: "x", Introduced: true, Subject: "Could you look at...", Body: "Could you look at the release build?"}
-	if got := Turn(m); strings.Contains(got, "Could you look at...") || !strings.Contains(got, ":\n\nCould you look at the release build?\n") {
+	if got := Turn(m); strings.Contains(got, "Could you look at...") || !strings.Contains(got, ":\n\n> Could you look at the release build?\n") {
 		t.Errorf("the turn:\n%s", got)
 	}
 	if got := Inbox(proto.Response{Messages: []proto.MessageView{m}}); strings.Contains(got, "Subject:") {

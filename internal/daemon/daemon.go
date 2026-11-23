@@ -1049,6 +1049,12 @@ type state struct {
 	// registering again after a daemon restart with the thread it still knows, doesn't take the
 	// thread's name back.
 	ThreadLeft map[string]string `json:"threadLeft,omitempty"`
+	// PiFiles is, by Pi session file, the session ID a server on that file registers at, where it
+	// isn't the ID the server makes from the file (piIDLocked, #1145). A session that moves to a
+	// file keeps its own ID there, and the file it left gets an ID of its own, so that a Pi on that
+	// file is never taken for the session that left it. Forgotten sessionNameKeep after its last
+	// use (pruneSessionNamesLocked).
+	PiFiles map[string]piFile `json:"piFiles,omitempty"`
 	// NamedFromCLI is each T3 thread's name key that took its name from the command line's Claude
 	// session (shareNameLocked, #643). The registry has such a name at the command-line session's
 	// address, which a thread's session doesn't take for its own (threadIDLocked): the command line

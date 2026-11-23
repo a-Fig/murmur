@@ -190,9 +190,9 @@ func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
 		Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "test"}, {ID: "cccccc", Name: "calm-finch", Agent: "test"}}}}
 	d.mu.Unlock()
 	for _, step := range []struct{ from, subject, want string }{
-		{alice, "one", "Message from quiet-otter (test, on Ada L's machine) via " + brand.Product + ":\n\none\n"},
-		{alice, "two", "Message from quiet-otter via " + brand.Product + ":\n\ntwo\n"},
-		{carol, "three", "Message from calm-finch (test, on Ada L's machine) via " + brand.Product + ":\n\nthree\n"},
+		{alice, "one", "Message from quiet-otter (test, on Ada L's machine) via " + brand.Product + ":\n\n> one\n"},
+		{alice, "two", "Message from quiet-otter via " + brand.Product + ":\n\n> two\n"},
+		{carol, "three", "Message from calm-finch (test, on Ada L's machine) via " + brand.Product + ":\n\n> three\n"},
 	} {
 		wake := d.wakeSnapshot()
 		d.mu.Lock()

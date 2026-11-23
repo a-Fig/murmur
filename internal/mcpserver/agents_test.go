@@ -58,6 +58,70 @@ func TestPiHelloCarriesTheExtensionsSocket(t *testing.T) {
 	}
 }
 
+// After Pi moves its session to another file (/new, /resume, /fork), the server says the file the
+// session left, and goes by the address the daemon gives it, that of the session it left, from
+// then on (#1145). While that address stays in use, it gives the file up after a few tries and is
+// a session of its own, at the ID made from its file, as before.
+func TestAMovedPiServerTakesTheAddressOfTheSessionItLeft(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "")
+	t.Setenv("MURMUR_PI_SESSION_FILE", "/s/b.jsonl")
+	t.Setenv("MURMUR_PI_PREVIOUS_SESSION_FILE", "/s/a.jsonl")
+	if h := helloFor("pi", "/work"); h.From != "/s/a.jsonl" || !h.TakesSelf || h.Native != "/s/b.jsonl" || h.ID != nativeID("/s/b.jsonl") {
+		t.Fatalf("pi: %+v", h)
+	}
+	if h := helloFor("muse", "/work"); h.From != "" {
+		t.Errorf("muse took Pi's file: %+v", h)
+	}
+
+	f := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.From != "" {
+			return "", "0a0a0a"
+		}
+		return "", ""
+	}}
+	l := startedLink(t, f, nil, helloFor("pi", "/work"))
+	if id, _ := l.wait(context.Background(), time.Second); id != "0a0a0a" {
+		t.Fatalf("registered as %s, not the address the daemon gave", id)
+	}
+	f.dropConnections()
+	waitFor(t, "a reconnection", func() bool { return f.helloCount() == 2 })
+	if h := f.lastHello(); h.ID != "0a0a0a" || !h.Reconnect {
+		t.Errorf("the reconnection: %+v", h)
+	}
+
+	g := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.From != "" {
+			return "session ID 0a0a0a is in use", ""
+		}
+		return "", ""
+	}}
+	startedLink(t, g, nil, helloFor("pi", "/work"))
+	if h := g.lastHello(); h.ID != nativeID("/s/b.jsonl") || h.From != "" {
+		t.Errorf("past the address in use, registered with %+v", h)
+	}
+}
+
+// A server that both made its ID from a T3 thread and says the conversation it left gives both up
+// together once its address stays in use: one round of retries, about 7 s, not two.
+func TestAServerGivesUpTheThreadAndTheFileLeftTogether(t *testing.T) {
+	fastSeek(t)
+	f := &fakeDaemon{helloReply: func(h proto.Hello) (string, string) {
+		if h.ByThread || h.From != "" {
+			return "session ID " + h.ID + " is in use", ""
+		}
+		return "", ""
+	}}
+	h := proto.Hello{ID: threadID("thread-1"), Agent: "pi in T3", ByThread: true, From: "/s/a.jsonl",
+		Route: proto.Route{T3CLI: "/t3/bin/t3", T3Thread: "thread-1", Native: "/s/b.jsonl"}}
+	startedLink(t, f, &finder{}, h)
+	if n := f.helloCount(); n != 4 {
+		t.Errorf("registered after %d hellos, not 3 refused and 1 taken", n)
+	}
+	if h := f.lastHello(); h.ByThread || h.From != "" || h.ID != nativeID("/s/b.jsonl") {
+		t.Errorf("registered with %+v", h)
+	}
+}
+
 func openCodeCall(session string) *mcp.CallToolRequest {
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "who"}}
 	if session != "" {

@@ -6,7 +6,8 @@ A release is a pushed tag. `.github/workflows/release.yml` builds `mur` for macO
 
 ## Cutting one
 
-From a commit on `main` whose checks passed, and which a Codex (Sol) agent has reviewed whole for
+From a commit on `main` whose checks passed, macOS's included (below), and which a Codex (Sol)
+agent has reviewed whole for
 bugs, security holes and anything else that shouldn't ship. That review is Tyler's rule
 (2026-11-08): a release reaches every installed daemon within the hour (self-update), so a PR's
 review isn't enough on its own; it never sees how the merged PRs fit together. Each finding is
@@ -70,17 +71,29 @@ tag created with `GITHUB_TOKEN` starts no workflow, and then deletes all but the
 nightly releases and tags. A nightly tag with no published release (a failed build) doesn't count
 as out, so the next night tags its commit again; pruning removes the dead tag later. A rerun the
 same day finds the date's tag taken: delete it by hand first. Running the workflow with `dry_run`
-prints what it would tag and delete. Nightlies get no pre-release review (Cutting one, above): they
-reach only daemons on the prerelease channel.
+prints what it would tag and delete. Nightlies get no pre-release review (Cutting one, above) and
+no macOS tests, which a push to `main` doesn't run (#1179): they reach only daemons on the
+prerelease channel.
 
 ## Cutting a release through the channel
 
 1. Tag a release candidate from `main`: `git tag v0.3.0-rc.1 && git push origin v0.3.0-rc.1`. The
-   prerelease channel takes it within the hour.
+   prerelease channel takes it within the hour. The tag's push also starts `test.yml` with every
+   job, the macOS ones included, which run on nothing else but a run by hand (Tyler's rule,
+   2026-11-23, #1179). The candidate is published whether that run passes or not.
 2. Fix what turns up on `main` and tag `-rc.2`, and so on. Nightlies are still numbered from the
    last stable release (`v0.2.4-nightly.*` after `v0.2.3`) and sort below the candidate, so the
    channel stays on the candidate until the next one.
-3. Once a candidate has run for a while without trouble, tag the same commit `v0.3.0`.
+3. Once a candidate has run for a while without trouble, and its `test` run passed, macOS jobs
+   and all, tag the same commit `v0.3.0`. `gh run list --workflow test.yml --branch v0.3.0-rc.1`
+   finds that run. Nothing checks this for you: `release.yml` publishes any tag it is given. A
+   stable tag on a commit no candidate had needs a green run by hand first:
+   `gh workflow run test.yml --ref <branch>`. So does an rc tagged on a commit from before
+   2026-11-23 (a hotfix off an older release, say): GitHub reads the workflow at the tagged
+   commit, and test.yml ran on no tag then. The cost of testing macOS here rather than on every
+   pull request is that a break on macOS alone is found at the rc, perhaps days after it merged,
+   beside everything else merged since; a macOS failure there is fixed on `main` and a new rc
+   tagged.
 
 ## Installing from a release
 

@@ -266,3 +266,68 @@ func TestPiExtensionGivesTheHookAShellCall(t *testing.T) {
 		t.Errorf("the hook was given:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// piMoveHarness loads the extension and starts its session as Pi does for each reason Pi has, with
+// the file Pi names as the one left, and prints the file the MCP server was told the session left.
+const piMoveHarness = `
+import { pathToFileURL } from "node:url";
+const [ext, repo] = process.argv.slice(2);
+const { default: load } = await import(pathToFileURL(ext).href);
+const handlers = {}, regs = [];
+load({ registerMcpServer: (_name, cfg) => regs.push(cfg), on: (event, h) => (handlers[event] = h), sendMessage: () => {} });
+const start = async (reason, file, previousSessionFile) => {
+  await handlers.session_start({ type: "session_start", reason, previousSessionFile }, { cwd: repo, sessionManager: { getSessionFile: () => file } });
+  console.log(reason + ": " + JSON.stringify(regs.at(-1).env.MURMUR_PI_PREVIOUS_SESSION_FILE));
+  handlers.session_shutdown();
+};
+await start("startup", "/s/a.jsonl");
+await start("new", "/s/b.jsonl", "/s/a.jsonl");
+await start("resume", "/s/a.jsonl", "/s/b.jsonl");
+await start("fork", "/s/c.jsonl", "/s/a.jsonl");
+await start("reload", "/s/c.jsonl");
+`
+
+// When Pi moves the session to another file (/new, /resume, /fork), the extension gives the MCP
+// server the file it left, which is how the daemon keeps the session at its address and reaches
+// it at its old name (#1145). At Pi's start, and at /reload, there is none.
+func TestPiExtensionTellsTheServerTheFileItLeft(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node")
+	}
+	out, err := exec.Command(node, "--version").Output()
+	m := regexp.MustCompile(`^v(\d+)\.(\d+)`).FindStringSubmatch(string(out))
+	if err != nil || m == nil {
+		t.Skip("node's version unknown")
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	if major < 22 || major == 22 && minor < 6 {
+		t.Skipf("node %s.%s can't run TypeScript", m[1], m[2])
+	}
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo") // not joined: the server is registered all the same
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ext := filepath.Join(dir, "murmur.mts")
+	harness := filepath.Join(dir, "harness.mjs")
+	if err := os.WriteFile(ext, []byte(piExtension("/bin/false")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harness, []byte(piMoveHarness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := exec.Command(node, "--experimental-strip-types", "--no-warnings", harness, ext, repo).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the harness: %v\n%s", err, b)
+	}
+	want := `startup: ""
+new: "/s/a.jsonl"
+resume: "/s/b.jsonl"
+fork: "/s/a.jsonl"
+reload: ""`
+	if got := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")); got != want {
+		t.Errorf("the server was told:\n%s\nwant:\n%s", got, want)
+	}
+}

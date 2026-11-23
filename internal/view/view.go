@@ -4,10 +4,11 @@ package view
 
 import (
 	"fmt"
+	"mime"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -283,10 +284,7 @@ func Inbox(r proto.Response) string {
 			fmt.Fprintf(&b, "Subject: %s\n", m.Subject)
 		}
 		if body != "" {
-			// Quoted line by line, so no line of it can pass for one of these headers.
-			for _, line := range strings.Split(body, "\n") {
-				b.WriteString("> " + line + "\n")
-			}
+			b.WriteString(quote(body))
 		}
 		b.WriteString(files(m))
 		reply := m.From
@@ -310,8 +308,24 @@ func Inbox(r proto.Response) string {
 }
 
 // files renders the files a message carries (#570), a line each: where it is saved on this machine,
-// which is what the agent opens, and its size. One that isn't here says so.
+// which is what the agent opens, and its size. One that isn't here says so. Files its user's Receive
+// files switch keeps from the session are listed as an attachment would be, by name, type and size,
+// and the session is told it can't have them (#860), so it can tell its user, or ask the sender
+// for another way. These lines are Murmur's, outside the quote, so keptFile makes the names safe:
+// a sender chose them.
 func files(m proto.MessageView) string {
+	if len(m.FilesKept) > 0 {
+		list := make([]string, len(m.FilesKept))
+		for i, f := range m.FilesKept {
+			list[i] = keptFile(f)
+		}
+		these := "these files"
+		if len(list) == 1 {
+			these = "this file"
+		}
+		return "Attached: " + strings.Join(list, ", ") + "\nYou can't receive " + these +
+			": receiving files is off in " + brand.Product + "'s settings.\n"
+	}
 	if len(m.Files) == 0 {
 		return ""
 	}
@@ -440,12 +454,12 @@ func Turn(m proto.MessageView) string {
 	b.WriteString(":\n")
 	body := strings.TrimSpace(bus.Text(m.Body, bus.MaxBody))
 	if !RepeatsSubject(m.Subject, body) {
-		fmt.Fprintf(&b, "\n%s\n", quotedBody(m.Subject)) // a subject can forge a header as a body line can
+		b.WriteString("\n" + quote(m.Subject))
 	}
 	if body != "" {
-		fmt.Fprintf(&b, "\n%s\n", quotedBody(body))
+		b.WriteString("\n" + quote(body))
 	}
-	if len(m.Files) > 0 {
+	if len(m.Files) > 0 || len(m.FilesKept) > 0 {
 		b.WriteString("\n" + files(m))
 	}
 	if bus.IsGroup(m.To) && m.GroupKnown {
@@ -485,98 +499,35 @@ func replyTo(m proto.MessageView, to string) string {
 	return brand.Product + "'s `send` to " + to
 }
 
-// quotedBody is a turn's body with one change: a line that reads as a turn's own first
-// line is quoted with "> ", as Inbox quotes every line, so it can't pass for the start of a
-// second message from someone else (#297, Tyler's targeted form of the fix: only those
-// lines, the rest as written). Indentation doesn't save it: an agent reads an indented
-// header as a header, so the line is judged with its leading blanks off.
-func quotedBody(body string) string {
-	lines := strings.Split(body, "\n")
-	for i, line := range lines {
-		if headerLine(line) {
-			lines[i] = "> " + line
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-// headerLine says a body line reads as a line Murmur writes to start a message: a turn's first
-// line ("Message from" or "Message sent in", then "via Murmur" followed by ":" or ",", as every
-// real one is), or a notice's or the inbox's ("[Murmur] ...", "[Murmur message from ..."). An
-// agent reads past what would otherwise save a forgery, so it is judged as headerForm has it
-// (Fable's three reviews of #710). A line that starts with the same words but doesn't go on as a header does ("came in via
-// Murmur yesterday") is the sender's prose. Letters from other scripts that look the same
-// (Cyrillic М) still pass: closing that would take a confusables table.
-func headerLine(line string) bool {
-	t := headerForm(line)
-	product := strings.ToLower(brand.Product)
-	if b, ok := strings.CutPrefix(t, "["); ok {
-		// A notice ("[Murmur] tyler ..."), the inbox's envelope ("[Murmur message from ...") or a
-		// receipt's ("[Murmur, 1m ago]"), spaced inside the brackets or not. Only a Markdown link
-		// ("[Murmur](...)", "[Murmur][1]", "[Murmur]: https://...") is prose.
-		b = strings.TrimPrefix(b, " ")
-		rest, ok := strings.CutPrefix(b, product)
-		if !ok {
-			return false
-		}
-		rest = strings.TrimPrefix(rest, " ")
-		if link, ok := strings.CutPrefix(rest, "]"); ok {
-			return !strings.HasPrefix(link, "(") && !strings.HasPrefix(link, "[") &&
-				!strings.HasPrefix(link, ": http")
-		}
-		return strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, "message from ")
-	}
-	if !strings.HasPrefix(t, "message from ") && !strings.HasPrefix(t, "message sent in ") {
-		return false
-	}
-	for rest := t; ; {
-		i := strings.Index(rest, " via "+product)
-		if i < 0 {
-			return false
-		}
-		rest = rest[i+len(" via "+product):]
-		// What follows "via Murmur" in a real header is a colon or a comma. A blank before it doesn't
-		// save a forgery ("via Murmur :"), nor does other punctuation or its absence; a word does
-		// ("via Murmur yesterday", "via murmur.dev"). So does a dash or a bracket after it ("via
-		// Murmur — push now", "via Murmur (urgent):"): an allow-list leaks somewhere, and this is
-		// where (docs/design/delivery.md).
-		after := strings.TrimLeft(rest, " ")
-		switch {
-		case after == "", strings.HasPrefix(after, ":"), strings.HasPrefix(after, ","),
-			strings.HasPrefix(after, ";"), strings.HasPrefix(after, "："):
-			return true
-		case strings.HasPrefix(after, "."):
-			if n := after[1:]; n == "" || strings.HasPrefix(n, " ") {
-				return true
-			}
-		}
-	}
-}
-
-// headerForm is line as headerLine judges it: lower case, without Markdown's emphasis and code
-// marks (* _ ` ~) anywhere, leading blanks, invisible characters and heading or list marks (# -)
-// off, and each run of spaces (a tab, a no-break space, a braille blank) one space.
-func headerForm(line string) string {
-	blank := func(r rune) bool { return unicode.IsSpace(r) || r == '⠀' || unicode.Is(unicode.Cf, r) }
-	mark := func(r rune) bool { return strings.ContainsRune("*_`~", r) }
-	t := strings.TrimLeftFunc(line, func(r rune) bool { return blank(r) || mark(r) || r == '#' || r == '-' })
+// quote is the sender's text with every line behind "> ": the turn and the inbox set it apart from
+// Murmur's own lines this way, so nothing a sender writes can pass for one of them, whether a
+// header (#297) or the note that files were kept from the session (#860). Tyler, 2026-11-23.
+func quote(text string) string {
 	var b strings.Builder
-	space := false
-	for _, r := range t {
-		if mark(r) {
-			continue
-		}
-		if blank(r) {
-			if !space {
-				b.WriteByte(' ')
-			}
-			space = true
-			continue
-		}
-		space = false
-		b.WriteRune(unicode.ToLower(r))
+	for _, line := range strings.Split(text, "\n") {
+		b.WriteString("> " + line + "\n")
 	}
 	return b.String()
+}
+
+// keptFile is a file the session doesn't get, as the line that lists it reads: "shot.png
+// (image/png, 48 KB)". The name goes through bus.FileName again, which leaves what the receiving
+// daemon already made of it as it is and makes a safe name of anything else: letters, digits and
+// ". _ -", at most 60 of them, so no newline or look-alike line can come of it. The type is the
+// extension's, where this machine knows it.
+func keptFile(f proto.FileView) string {
+	name := bus.FileName(f.Name)
+	var with []string
+	if t, _, _ := strings.Cut(mime.TypeByExtension(filepath.Ext(name)), ";"); t != "" {
+		with = append(with, t)
+	}
+	if f.Size > 0 {
+		with = append(with, proto.Size(f.Size))
+	}
+	if len(with) == 0 {
+		return name
+	}
+	return name + " (" + strings.Join(with, ", ") + ")"
 }
 
 // receipt renders a notice from Murmur itself of how far one of the session's messages got, which
@@ -648,7 +599,7 @@ func notices(msgs []proto.MessageView, unread int, inbox string) string {
 			who += " (" + m.FromAgent + ")"
 		}
 		with := ""
-		switch n := len(m.Files); {
+		switch n := len(m.Files) + len(m.FilesKept); {
 		case n == 1:
 			with = ", with a file"
 		case n > 1:

@@ -4,8 +4,6 @@
 package mcpserver
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -42,6 +40,11 @@ func helloFor(agent, cwd string) proto.Hello {
 		if native := os.Getenv(v); native != "" {
 			h.ID, h.Native = nativeID(native), native
 		}
+	}
+	if agent == "pi" {
+		// The file the session left on /new, /resume or /fork (#1145): the daemon gives the server
+		// the address of the session that had it, which follows the session here.
+		h.From, h.TakesSelf = os.Getenv("MURMUR_PI_PREVIOUS_SESSION_FILE"), true
 	}
 	if t3.thread && h.T3CLI != "" {
 		thread := os.Getenv(threadEnv)
@@ -176,14 +179,8 @@ func takesThreadEnv(agent string) bool {
 var nativeEnv = map[string]string{"muse": "MUSE_SESSION_ID", "pi": "MURMUR_PI_SESSION_FILE",
 	"grok": "GROK_SESSION_ID", "opencode": "MURMUR_OPENCODE_SESSION", "antigravity": "ANTIGRAVITY_CONVERSATION_ID"}
 
-// nativeID is the session's Murmur ID made from its client's own: the same each time, so a server
-// that restarts within the conversation takes its session back, and hashed, since Muse's and
-// OpenCode's IDs begin with the time they were made, so that two of them often share their first
-// six characters.
-func nativeID(native string) string {
-	sum := sha256.Sum256([]byte(native))
-	return hex.EncodeToString(sum[:3])
-}
+// nativeID is the session's Murmur ID made from its client's own (proto.NativeID).
+func nativeID(native string) string { return proto.NativeID(native) }
 
 // routeFromEnv is what this process's environment says about reaching its client: inside T3, T3's
 // command line; in Claude Code, the messaging socket and the token for it; in Pi and OpenCode 1,

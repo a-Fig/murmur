@@ -53,7 +53,8 @@ set.
 each job that tests `internal/daemon`, the job's and the go test step's time, go's time for the
 package, how many tests ran at once on how many processors, the git the tests started by
 subcommand, the tests that were retried, and the slowest tests. With no run it takes main's last
-push run; a pull request's run has the macOS and Windows shards only at the `full` level. The
+push run; a pull request's run has the Windows shards only at the `full` level, and only an rc
+tag's run or a run by hand has macOS's (#1179). The
 per-test times come from `go test -v`, which those jobs run with since 2026-11-22 (#1008): it costs
 log lines, not time. `scripts/retried-tests.sh` counts retries over many runs.
 
@@ -136,9 +137,20 @@ to write outside the temporary folder.
 
 ## On every pull request
 
-`.github/workflows/test.yml` runs those checks on every pull request, on a push to `main`, and by
-hand. Its jobs run at once, on GitHub's own runners, which are free for a public repo and start
-fresh for every job. A pull request from a fork runs on them the same way.
+`.github/workflows/test.yml` runs those checks on every pull request, on a push to `main`, on an rc
+tag (`v*-rc.*`), and by hand. Its jobs run at once, on GitHub's own runners, which are free for a
+public repo and start fresh for every job. A pull request from a fork runs on them the same way.
+
+**macOS runs at an rc tag and by hand, not on a pull request or a push to `main`** (Tyler's rule,
+2026-11-23, #1179). GitHub's hosted macOS runners were scarce: through 2026-11-23 macOS jobs waited
+in the queue for long stretches, were cancelled as "not acquired by runner", and held up merges and
+nightlies behind Linux and Windows jobs that had already passed, until main's runs were cancelled by
+hand eight at a time. So `test-macos` and the `test-macos-daemon (N)` shards run only when `changes`
+says `macos: true`, on an rc tag's push or a run by hand, both always `full`; the nightly takes a
+commit whose Linux and Windows jobs passed. The cost: a change that breaks only on macOS merges
+green and is found at the next rc, perhaps days later, beside everything else merged since. A
+stable tag waits for a green macOS run on its rc ([releasing.md](releasing.md)). To run macOS on a
+branch before merging it: `gh workflow run test.yml --ref <branch>`.
 
 **A pull request runs only the jobs its files need** (2026-11-12, #512). The `changes` job gives
 the names of the files changed to `scripts/ci-level.sh`, which answers with one word:
@@ -148,25 +160,26 @@ the names of the files changed to `scripts/ci-level.sh`, which answers with one 
 | `none` | Markdown and images at the top of the repo, in `docs/` and in `.github/`, other than `README.md` and `docs/agents/` | nothing |
 | `site` | `site/`, and the above | `test-linux`, the site's tests alone |
 | `page` | `internal/web/static`, and the above | `test-linux`, whole |
-| `go` | `internal/`, `cmd/`, `README.md` and `docs/agents/`, and the above | every job but the daemon shards |
-| `full` | anything else; Go that differs per OS: a file named for one (`_windows.go`, `_darwin_arm64.go`, `_unix.go`, `_other.go`, ...), one with a `//go:build` line before or after the change, a change that adds or removes a `runtime.GOOS` line; `go.mod`, `go.sum`, the workflows and `scripts/` | every job |
+| `go` | `internal/`, `cmd/`, `README.md` and `docs/agents/`, and the above | every job but the daemon shards and macOS's |
+| `full` | anything else; Go that differs per OS: a file named for one (`_windows.go`, `_darwin_arm64.go`, `_unix.go`, `_other.go`, ...), one with a `//go:build` line before or after the change, a change that adds or removes a `runtime.GOOS` line; `go.mod`, `go.sum`, the workflows and `scripts/` | every job but macOS's |
 
 The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
 differently per OS.
 
-**A pull request runs `internal/daemon` on macOS and Windows only at `full`** (2026-11-19, #879).
-Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
+**A pull request runs `internal/daemon` on Windows only at `full`** (2026-11-19, #879; on macOS
+it ran only at `full` too, until macOS left pull requests altogether, above). Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
 44223188463), and two of its three macOS jobs. The account gets five macOS jobs at a time, so two
 full runs at once queued, and on 2026-11-17 three runs failed with a macOS job that waited up to
-40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and macOS and
-Windows run every other package, so what a pull request alone misses is a daemon test that fails on
-one OS only, from code that isn't marked as per-OS: an edit inside a `runtime.GOOS` branch that was
-already there, say. Counting every file that mentions `runtime.GOOS` would have caught that, but
+40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and Windows
+runs every other package, so what a pull request alone misses on Windows is a daemon test that fails
+there only, from code that isn't marked as per-OS: an edit inside a `runtime.GOOS` branch that was
+already there, say. On macOS a pull request misses every failure, per-OS files included. Counting every file that mentions `runtime.GOOS` would have caught that, but
 those include the daemon's most-changed files (`sync.go`, `files.go`, `daemon_test.go`), so most
 pull requests would be `full` again. `changes` reads what a change did against the merge's first
-parent (`CI_LEVEL_BASE`), so a deleted or renamed file is read as it was. The push to `main` runs every job, and the nightly takes only a commit whose push
-run passed, so such a failure still shows before a release, on main rather than on its pull
-request. To run every job on a branch before merging it: `gh workflow run test.yml --ref <branch>`.
+parent (`CI_LEVEL_BASE`), so a deleted or renamed file is read as it was. The push to `main` runs every job but macOS's, and the nightly takes only a commit whose push
+run passed, so such a failure on Windows still shows before a release, on main rather than on its
+pull request; on macOS it shows at the next rc (above). To run every job on a branch before merging
+it: `gh workflow run test.yml --ref <branch>`.
 
 Two other ways to cut the Windows time were measured and dropped on 2026-11-19, in runs
 44470284567 and 44470384061 on a throwaway branch: turning off Defender's real-time scanning (the
@@ -174,9 +187,10 @@ shards start about 27,500 git processes each, and a `git config` takes 140 ms th
 `-parallel`. Neither showed a gain, since the same job's time varied from 37 to 64 minutes between
 runners. Run whole on one runner, the package took 37 minutes on Windows and 22 on macOS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
 so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `changes` runs it
-before it uses their answer. A push to `main` and a run by hand are always `full`. On a pull
-request that isn't `full`, the daemon shards show as one skipped check with its name unfilled
-(`test-${{ matrix.os }}-daemon ...`): GitHub doesn't expand a matrix it skips.
+before it uses their answer. A push to `main`, an rc tag and a run by hand are always `full`. On a pull
+request that isn't `full`, the Windows daemon shards show as one skipped check with its name
+unfilled (`test-${{ matrix.os }}-daemon ...`): GitHub doesn't expand a matrix it skips. Every pull
+request shows `test-macos` and `test-macos-daemon (${{ matrix.shard }})` skipped the same way.
 
 **A test that fails is run once more** (`scripts/go-test-retry.sh`). Daemon tests give up a wait on
 a slow runner, a different one each run: three of the four full runs after #504 lost a Windows
@@ -200,6 +214,8 @@ the `test-daemon` job, whose checks are named `test-windows-daemon (N)`, runs th
 position in the sorted `go test -list` output is its shard number modulo 4. A test added later falls
 into some shard by itself. macOS does the same on two runners, `test-macos-daemon (N)`, since
 2026-11-12: the package was 1,154 s of `test-macos`'s 20 minutes, which made it the longest job.
+Its shards are a job of their own, with test-daemon's steps, since 2026-11-23: a matrix can't leave
+out some of its entries by a condition, and a skipped macOS shard must not ask for a runner.
 Linux runs the package whole, in about 6 minutes.
 
 **A test that hangs fails with its stack** (#727, 2026-11-16). It should end in Go's `-timeout`
