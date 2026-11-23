@@ -117,7 +117,7 @@ live agent and a subagent.
   head. A teammate's "it's green" may be about an earlier head, and a CI wake isn't a merge
   decision.
 - **If main changed the PR's files since its CI began,** update the branch before merging: the green
-  run never tested them together.
+  run never tested the PR with main's changes.
 - **Clear blockers yourself** when they're mechanical: a conflict with main, a CI job that never
   ran, a stack that needs retargeting. Tell the author, so you don't both do it.
 - **Tie a flaky failure to its issue**, and raise its priority when it starts failing other
