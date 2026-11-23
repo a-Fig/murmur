@@ -851,7 +851,6 @@ const (
 	catchUpWindow = 30 * time.Second
 )
 
-// peer is another device as its presence ref shows it.
 // listedPresence is a presence SHA the remote listed, and this daemon's last good sync before it
 // first did.
 type listedPresence struct {
@@ -859,6 +858,7 @@ type listedPresence struct {
 	after time.Time
 }
 
+// peer is another device as its presence ref shows it.
 type peer struct {
 	pres bus.Presence
 	sha  string // the presence last read, or found unreadable
