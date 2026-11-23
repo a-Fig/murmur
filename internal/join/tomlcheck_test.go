@@ -149,3 +149,60 @@ func TestAddTOMLListItemKeepsTheFilesForm(t *testing.T) {
 		}
 	}
 }
+
+// A valid one-line allow list with brackets inside quoted rules (or comments) is edited in place
+// and round-trips through uninstall, rather than being rejected as a multi-line array (#983).
+func TestTOMLListItemHandlesBracketsInsideStrings(t *testing.T) {
+	for name, before := range map[string]string{
+		"open bracket in rule":          "[permission]\nallow = [\"Bash(printf [)\"]\n",
+		"close bracket in literal rule": "[permission]\nallow = ['Bash(echo ])']\n",
+		"brackets and comment":          "[permission]\nallow = [\"Bash(printf [)\", 'Bash(ls)'] # [note\n",
+		"escaped quote and bracket":     "[permission]\nallow = [\"Bash(printf \\\"[\\\")\"]\n",
+		"trailing comma":                "[permission]\nallow = [\"Bash(printf [)\",]\n",
+	} {
+		out, changed, err := addTOMLListItem(before, "permission", "allow", grokAllow, "config.toml")
+		if err != nil || !changed {
+			t.Fatalf("%s: add changed=%v err=%v\n%s", name, changed, err, out)
+		}
+		if err := checkTOMLEdit(before, out); err != nil {
+			t.Fatalf("%s: checkTOMLEdit: %v\n%s", name, err, out)
+		}
+		var cfg struct{ Permission struct{ Allow []string } }
+		if _, err := toml.Decode(out, &cfg); err != nil {
+			t.Fatalf("%s: invalid TOML: %v\n%s", name, err, out)
+		}
+		if !slices.Contains(cfg.Permission.Allow, grokAllow) {
+			t.Fatalf("%s: missing %q in %q", name, grokAllow, cfg.Permission.Allow)
+		}
+		if again, changed, err := addTOMLListItem(out, "permission", "allow", grokAllow, "config.toml"); err != nil || changed || again != out {
+			t.Fatalf("%s: second add changed=%v err=%v", name, changed, err)
+		}
+		removed, changed, err := removeTOMLListItem(out, "permission", "allow", grokAllow, "config.toml")
+		if err != nil || !changed {
+			t.Fatalf("%s: remove changed=%v err=%v", name, changed, err)
+		}
+		if err := checkTOMLEdit(out, removed); err != nil {
+			t.Fatalf("%s: checkTOMLEdit after remove: %v\n%s", name, err, removed)
+		}
+		var after struct{ Permission struct{ Allow []string } }
+		if _, err := toml.Decode(removed, &after); err != nil {
+			t.Fatalf("%s: invalid TOML after remove: %v\n%s", name, err, removed)
+		}
+		if slices.Contains(after.Permission.Allow, grokAllow) || len(after.Permission.Allow) != len(cfg.Permission.Allow)-1 {
+			t.Fatalf("%s: after remove allow = %q", name, after.Permission.Allow)
+		}
+	}
+
+	// Multiline lists, triple-quoted strings, and malformed lists are still refused.
+	for name, bad := range map[string]string{
+		"multiline":     "[permission]\nallow = [\n  \"Bash(ls)\",\n]\n",
+		"triple basic":  "[permission]\nallow = [\"\"\"Bash(ls)\"\"\"]\n",
+		"triple single": "[permission]\nallow = ['''Bash(ls)''']\n",
+		"missing comma": "[permission]\nallow = [\"a\" \"b\"]\n",
+		"trailing junk": "[permission]\nallow = [\"a\"] extra\n",
+	} {
+		if out, _, err := addTOMLListItem(bad, "permission", "allow", grokAllow, "config.toml"); err == nil {
+			t.Errorf("%s: unexpectedly edited:\n%s", name, out)
+		}
+	}
+}
