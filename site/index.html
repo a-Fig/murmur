@@ -445,6 +445,21 @@
   .sec-links a:hover svg { transform: translateX(3px); }
   .sec-links a:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
   @media (max-width: 960px) { .spec { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  /* Bands, as #1012 has them, so a change of subject is a change of ground: the tools and Setup on a
+     tint, Security & architecture on ink, the rest on the cream sheet. Each band has its own padding
+     top and bottom, since none now runs into the next. */
+  #uses, #see, #security, #setup, #faq { padding-top: clamp(56px, 9vh, 96px); padding-bottom: clamp(56px, 9vh, 96px); }
+  #uses, #setup { background: var(--cream-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  #security { --ink-soft: #C7D2F2; --badge-bg: rgba(255, 251, 234, .12); --badge-ink: var(--butter); background: var(--ink); color: var(--cream); }
+  #security h2 { color: var(--cream); }
+  #security .spec li { border-top-color: color-mix(in srgb, var(--cream) 55%, transparent); }
+  /* The diagram keeps its cream panel, so its labels keep the page's dark ink. */
+  #security .route { --ink-soft: color-mix(in srgb, var(--ink) 78%, var(--cream)); }
+  #security .route figcaption { color: #C7D2F2; }
+  #security .route .fig-panel { border-color: transparent; }
+  #security .sec-links a { color: var(--cream); text-decoration-color: color-mix(in srgb, var(--cream) 45%, transparent); }
+  #security .sec-links a:hover { text-decoration-color: var(--cream); }
+  #security .sec-links a:focus-visible { outline-color: var(--cream); }
   @media (max-width: 760px) {
     .spec { grid-template-columns: 1fr; row-gap: 18px; }
     #security .route { padding: 0; margin-left: -4px; margin-right: -4px; }
