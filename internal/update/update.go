@@ -559,8 +559,9 @@ func replace(path string, data []byte, goos string, fs files) error {
 // swap, which a held file can leave with no mur.exe at all (Sol's review of #1173). Where it can't
 // link, it moves mur.exe aside under the backup's name, and for a moment that is the only copy.
 // So an installer's backup that is still a second name of the binary at path stays, and so does
-// every one while there is no binary at path: it is only ever an older binary once the swap is
-// done.
+// every one while there is no binary at path: once a swap is done its backup is an older binary.
+// One left as a link to the binary by an install that was stopped stays until the binary is next
+// replaced.
 func cleanup(path, goos string) {
 	dir := filepath.Dir(path)
 	entries, _ := os.ReadDir(dir)
@@ -595,12 +596,15 @@ func cleanup(path, goos string) {
 		os.Remove(p)
 	}
 	for _, p := range installers {
-		// Asked just before each removal, so that as little as can be happens between.
-		current, err := os.Stat(path)
+		// Asked just before each removal, so that as little as can be happens between, and by
+		// opening each file (Identity): os.Stat on Windows keeps only the path, and SameFile
+		// then opens it again later and says "not the same" of a path that has gone meanwhile,
+		// which is the moment a backup is the only copy (Opus's review of #1173).
+		current, err := Identity(path)
 		if err != nil {
 			return
 		}
-		if fi, err := os.Stat(p); err != nil || os.SameFile(current, fi) {
+		if fi, err := Identity(p); err != nil || os.SameFile(current, fi) {
 			continue
 		}
 		os.Remove(p)

@@ -440,17 +440,13 @@ func TestCleanupLeavesABackupThatIsStillTheBinary(t *testing.T) {
 	if err := os.WriteFile(path, []byte("installed"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	links := []string{path + ".old-99e92547"}
-	for _, l := range links {
-		if err := os.Link(path, l); err != nil {
-			t.Skipf("this folder's volume can't link: %v", err)
-		}
+	link := path + ".old-99e92547"
+	if err := os.Link(path, link); err != nil {
+		t.Skipf("this folder's volume can't link: %v", err)
 	}
 	cleanup(path, "windows")
-	for _, l := range links {
-		if _, err := os.Stat(l); err != nil {
-			t.Fatalf("a link to the binary itself was removed, mid-install as far as cleanup can tell: %v", err)
-		}
+	if _, err := os.Stat(link); err != nil {
+		t.Fatalf("a link to the binary itself was removed, mid-install as far as cleanup can tell: %v", err)
 	}
 
 	// The installer's rename: a new file takes the binary's name, and the links are the old one.
@@ -462,10 +458,8 @@ func TestCleanupLeavesABackupThatIsStillTheBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanup(path, "windows")
-	for _, l := range links {
-		if _, err := os.Stat(l); !os.IsNotExist(err) {
-			t.Errorf("%s is left after the swap: %v", filepath.Base(l), err)
-		}
+	if _, err := os.Stat(link); !os.IsNotExist(err) {
+		t.Errorf("%s is left after the swap: %v", filepath.Base(link), err)
 	}
 	if b, err := os.ReadFile(path); err != nil || string(b) != "the new release" {
 		t.Fatalf("the binary: %q, %v", b, err)
