@@ -74,6 +74,11 @@ func resolveFrom(base, path string, hops int) string {
 		if strings.HasPrefix(rest, sep) {
 			cur += sep
 		}
+	} else if strings.HasPrefix(path, sep) {
+		// Drive-rooted path on Windows (e.g. `\profiles\codex`): preserve the leading separator
+		// (and base's volume when resolving a link target).
+		cur = filepath.VolumeName(base) + sep
+		rest = path
 	} else {
 		cur = base
 		rest = path

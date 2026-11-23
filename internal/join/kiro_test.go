@@ -208,15 +208,16 @@ func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		body      string
-		wantNote  string
+		wantNotes []string
 		wantAllow bool
 	}{
-		{"deny all mcp", `{"rules": [{"capability": "mcp", "match": ["*"], "effect": "deny"}]}`, `"deny"`, false},
-		{"ask murmur", `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "ask"}]}`, `"ask"`, false},
-		{"deny single tool send", `{"rules": [{"capability": "mcp", "match": ["murmur/send"], "effect": "deny"}]}`, `"deny"`, true},
-		{"ask single tool mute", `{"rules": [{"capability": "mcp", "match": ["murmur/mute"], "effect": "ask"}]}`, `"ask"`, true},
-		{"deny all unconditional", `{"rules": [{"capability": "all", "effect": "deny"}]}`, `"deny"`, false},
-		{"ask excluding murmur allows adding rule", `{"rules": [{"capability": "mcp", "match": ["*"], "exclude": ["murmur/*"], "effect": "ask"}]}`, "", true},
+		{"deny all mcp", `{"rules": [{"capability": "mcp", "match": ["*"], "effect": "deny"}]}`, []string{`"deny"`}, false},
+		{"ask murmur", `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "ask"}]}`, []string{`"ask"`}, false},
+		{"deny single tool send", `{"rules": [{"capability": "mcp", "match": ["murmur/send"], "effect": "deny"}]}`, []string{`"deny" rule covering murmur/send`}, true},
+		{"ask single tool mute", `{"rules": [{"capability": "mcp", "match": ["murmur/mute"], "effect": "ask"}]}`, []string{`"ask" rule covering murmur/mute`}, true},
+		{"mixed deny send and ask mute", `{"rules": [{"capability": "mcp", "match": ["murmur/send"], "effect": "deny"}, {"capability": "mcp", "match": ["murmur/mute"], "effect": "ask"}]}`, []string{`"deny" rule covering murmur/send`, `"ask" rule covering murmur/mute`}, true},
+		{"deny all unconditional", `{"rules": [{"capability": "all", "effect": "deny"}]}`, []string{`"deny"`}, false},
+		{"ask excluding murmur allows adding rule", `{"rules": [{"capability": "mcp", "match": ["*"], "exclude": ["murmur/*"], "effect": "ask"}]}`, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sb := newSandbox(t, false)
@@ -227,10 +228,15 @@ func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 			write(t, permPath, tc.body+"\n")
 
 			did, _, err := sb.registerKiroAt(h)
-			if tc.wantNote != "" {
+			if len(tc.wantNotes) > 0 {
 				var note approvalNote
-				if !errors.As(err, &note) || !strings.Contains(string(note), tc.wantNote) {
-					t.Fatalf("did=%q err=%v, want note containing %s", did, err, tc.wantNote)
+				if !errors.As(err, &note) {
+					t.Fatalf("did=%q err=%v, want approvalNote", did, err)
+				}
+				for _, want := range tc.wantNotes {
+					if !strings.Contains(string(note), want) {
+						t.Errorf("note = %q, want substring %q", string(note), want)
+					}
 				}
 			} else if err != nil {
 				t.Fatalf("unexpected err: %v", err)
@@ -411,5 +417,15 @@ func TestKiroScratchNestedLinkOutIsOutside(t *testing.T) {
 				t.Errorf("%s: note lacks Kiro entry:\n%s", kind, note)
 			}
 		})
+	}
+}
+
+// Drive-rooted paths on Windows (e.g. `\profiles\codex\config.toml`, where filepath.IsAbs is
+// false) must keep their leading separator through resolved/resolveLinks.
+func TestResolveLinksPreservesDriveRootedPath(t *testing.T) {
+	sep := string(filepath.Separator)
+	p := sep + "profiles" + sep + "codex" + sep + "config.toml"
+	if got := resolveLinks(p); !strings.HasPrefix(got, sep) {
+		t.Errorf("resolveLinks(%q) = %q, lost leading separator", p, got)
 	}
 }
