@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
@@ -164,4 +165,45 @@ func TestAPersonIsExplainedOnlyInTheirFirstTurn(t *testing.T) {
 		t.Fatalf("bob came back as %q", got)
 	}
 	check(turn(d, ada, "third from ada"), "ada", false)
+}
+
+// Only a session's first turn from a sender says what agent the sender is and whose machine it is
+// on; later ones name it alone (#216). Another sender is introduced in its own first turn.
+//
+// Kept from the two-device test it replaces (#1010): what the first, second and another sender's
+// first turn say of who sent them, in the text T3 is handed. A fake is enough, as that text is made
+// from what the daemon holds: the sender's name, agent and owner as its device's presence gave them
+// (peers), and which senders this conversation has had a turn from. The turns are made and
+// finished as the handoff loop makes them (nextPushLocked, finishPush), but for running t3. That a
+// first turn's description crosses the bus from a real presence to a real t3 call is
+// TestMessageForAT3SessionIsHandedOverAsATurn's, and to a messaging socket
+// TestMessageForAClaudeCodeSessionGoesThroughItsMessagingSocket's. The two devices started about
+// 310 git: 10 s on a laptop and 57 s on a Windows runner (main's run 45142751635).
+func TestASenderIsDescribedOnlyInItsFirstTurn(t *testing.T) {
+	t.Parallel()
+	d := explainRig(t, t.TempDir(), "")
+	alice, carol := "a-0001/aaaaaa", "a-0001/cccccc"
+	d.mu.Lock()
+	d.peers["a-0001"] = &peer{lastChange: time.Now(), pres: bus.Presence{V: bus.Version, Device: "a-0001", Owner: "Ada L",
+		Sessions: []bus.SessionInfo{{ID: "aaaaaa", Name: "quiet-otter", Agent: "test"}, {ID: "cccccc", Name: "calm-finch", Agent: "test"}}}}
+	d.mu.Unlock()
+	for _, step := range []struct{ from, subject, want string }{
+		{alice, "one", "Message from quiet-otter (test, on Ada L's machine) via " + brand.Product + ":\n\none\n"},
+		{alice, "two", "Message from quiet-otter via " + brand.Product + ":\n\ntwo\n"},
+		{carol, "three", "Message from calm-finch (test, on Ada L's machine) via " + brand.Product + ":\n\nthree\n"},
+	} {
+		wake := d.wakeSnapshot()
+		d.mu.Lock()
+		d.queueInboxLocked("bbbbbb", bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message,
+			From: step.from, To: bus.Addr(d.device, "bbbbbb"), Subject: step.subject})
+		j := d.nextPushLocked("bbbbbb", wake)
+		d.mu.Unlock()
+		if j == nil || j.via != viaT3 || len(j.msgs) != 1 || j.msgs[0].Event.Subject != step.subject {
+			t.Fatalf("the turn for %q: %+v", step.subject, j)
+		}
+		d.finishPush(j, nil)
+		if !strings.HasPrefix(j.text, step.want) {
+			t.Errorf("the turn for %q was %q, want it to start %q", step.subject, j.text, step.want)
+		}
+	}
 }

@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,5 +190,123 @@ func TestTheFirstStopGivesWhatWasToldBeforeIt(t *testing.T) {
 	}
 	if got := subjects(stopHook(t, d).Read); len(got) != 1 || got[0] != "told in the first turn" {
 		t.Fatalf("the first Stop gave %v", got)
+	}
+}
+
+// The Stop hook describes a sender only in a conversation's first turn from it (#216). A /clear
+// keeps the session's ID but starts a conversation that has seen nothing, so it is described again
+// there; a /resume goes back to a conversation that has met it.
+//
+// Kept from the two-device test it replaces (#1010): whether each Stop's message is marked as from
+// a sender already introduced, over a /clear and a /resume that the hook reports for the session's
+// process. A fake is enough, as the mark is made from which conversation the session is in and what
+// that conversation has been given, both the daemon's own: the hook's requests go through handle
+// with the process's ID, and the session follows them as it does a real hook's (followLocked). That
+// a /clear and a /resume are followed with another device watching, names and all, is
+// TestSwitchFollowsTheHooksClaudeID's, and a Stop's messages from one device's send to the other's
+// hook TestTheStopHookKeepsTheTurnGoing's. The two devices started about 340 git: 11 s on a laptop
+// and 53 s on a Windows runner (main's run 45142751635).
+func TestTheStopHookDescribesASenderOncePerConversation(t *testing.T) {
+	t.Parallel()
+	const pid = 4242 // the Claude Code process bob's MCP server and hooks run under
+	d := stopRig(t)
+	d.mu.Lock()
+	s := d.sessions["bbbbbb"]
+	s.route = proto.Route{} // outside T3, where a conversation is Claude Code's session
+	s.clientPID, s.claudeSession = pid, "claude-a"
+	s.key = nameKey("", "claude-a", "", "bbbbbb")
+	d.mu.Unlock()
+	hook := func(req proto.Request) proto.Response {
+		t.Helper()
+		r := d.handle(context.Background(), req)
+		if r.Error != "" {
+			t.Fatalf("%s: %s", req.Op, r.Error)
+		}
+		return r
+	}
+	// given is one message, which comes while conversation claude is at work and is given at its
+	// turn's end.
+	given := func(claude, subject string) proto.MessageView {
+		t.Helper()
+		hook(proto.Request{Op: proto.OpNotices, ClaudeSession: claude, ClientPID: pid}) // a prompt: at work, and in this conversation
+		d.mu.Lock()
+		key := d.sessions["bbbbbb"].key
+		d.mu.Unlock()
+		if want := "claude:" + claude; key != want {
+			t.Fatalf("after a prompt in %s the session is in conversation %q, want %q", claude, key, want)
+		}
+		arrive(d, subject)
+		if got := subjects(hook(proto.Request{Op: proto.OpNotices, ClaudeSession: claude, ClientPID: pid}).Messages); !slices.Contains(got, subject) {
+			t.Fatalf("the hook in %s told of %v; want %s among them", claude, got, subject)
+		}
+		r := hook(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: claude, Continues: true})
+		if len(r.Read) != 1 || r.Read[0].Subject != subject {
+			t.Fatalf("the Stop in %s gave %v; want [%s]", claude, subjects(r.Read), subject)
+		}
+		return r.Read[0]
+	}
+	hook(proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-a", Whole: true})
+	hook(proto.Request{Op: proto.OpTurnEnd, ClaudeSession: "claude-a", Continues: true})
+	for _, step := range []struct {
+		claude, subject string
+		introduced      bool
+	}{
+		{"claude-a", "first in A", false},
+		{"claude-a", "second in A", true},
+		{"claude-b", "first after /clear", false},
+		{"claude-a", "after /resume", true},
+	} {
+		if got := given(step.claude, step.subject); got.Introduced != step.introduced {
+			t.Errorf("%q: Introduced is %v, want %v", step.subject, got.Introduced, step.introduced)
+		}
+	}
+}
+
+// A session that isn't in T3 and has no messaging socket can't be put a turn into, so its
+// messages are the hook's notices, as they were, and the daemon says so once.
+//
+// Kept from the two-device test it replaces (#1010): with no way in, the handoff loop's look for
+// its next turn finds none for either of two messages and logs why once, the hook tells of both,
+// and the inbox still holds both. A fake is enough, as the way in is the session's route, which the
+// daemon holds, and the look is the handoff loop's own (nextPushLocked); the messages are queued as
+// a sync queues them. That nothing reaches t3 was the old test's wait on a fake t3 that this
+// session had no route to; here it is that no job is made, which is what would have called it. A
+// message crossing the bus to a hook's notice is TestSwitchFollowsTheHooksClaudeID's, among many,
+// and a handoff that fails falling back to the notice TestFailedHandoffFallsBackToTheNotice's. The
+// two devices started about 280 git: 9 s on a laptop and 52 s on a Windows runner (main's run
+// 45142751635).
+func TestWithNoWayInMessagesStayNotices(t *testing.T) {
+	t.Parallel()
+	d := stopRig(t)
+	var out bytes.Buffer
+	d.log = log.New(&out, "", 0)
+	d.mu.Lock()
+	d.sessions["bbbbbb"].route = proto.Route{} // not in T3, and no messaging socket
+	d.mu.Unlock()
+	next := func() *pushJob {
+		wake := d.wakeSnapshot()
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.nextPushLocked("bbbbbb", wake)
+	}
+	for _, subject := range []string{"first", "second"} {
+		arrive(d, subject)
+		if j := next(); j != nil {
+			t.Fatalf("%s was to be handed over as a turn: %+v", subject, j)
+		}
+	}
+	r := d.handle(context.Background(), proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob"})
+	if got := subjects(r.Messages); r.Error != "" || !slices.Equal(got, []string{"first", "second"}) || len(r.Read) != 0 {
+		t.Fatalf("the hook told of %v and gave %v whole (%s); want both told of", got, subjects(r.Read), r.Error)
+	}
+	if j := next(); j != nil {
+		t.Fatalf("after the notices, a turn: %+v", j)
+	}
+	r = d.handle(context.Background(), proto.Request{Op: proto.OpInbox, Session: "bbbbbb"})
+	if got := subjects(r.Messages); r.Error != "" || len(got) != 2 {
+		t.Errorf("the inbox keeps what the hook announced: %q (%s)", got, r.Error)
+	}
+	if n := strings.Count(out.String(), "has no way to take a message as a turn"); n != 1 {
+		t.Errorf("the log says it %d times, want once:\n%s", n, out.String())
 	}
 }
