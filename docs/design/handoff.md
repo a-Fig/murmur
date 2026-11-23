@@ -71,6 +71,15 @@ over.
   cleared: messages for a stopped command-line session wait in its inbox rather than waking the old
   T3 thread, avoiding waking a thread whose conversation may have changed (#873). T3 registering
   again restores the route.
+- **An official status interface** (#1016, 2026-11-23). Murmur reads T3's database because T3 had
+  no other way to say whether a thread's run is going, settled or a delegate. T3 0.1.9 has one
+  now: `t3 thread show --json <thread>` prints the thread's `status`, `activeRunId`, `settled`,
+  `archived`, `parentThreadId` and `model`. It isn't used yet: it costs a process start for each
+  thread on every 5-second read, and it needs T3's server running, where the database read needs
+  neither. Nobody has checked yet whether `activeRunId` agrees with the runs table on a run T3 left
+  queued (#607). Until then, `internal/t3db/drift_test.go` shows what each reader does when T3
+  changes its tables: a read it can't make is an error, never a wrong answer, and the daemon takes
+  a failed read as saying nothing.
 
 ## Claude Code outside T3: the messaging socket
 
