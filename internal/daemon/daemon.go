@@ -860,6 +860,10 @@ type peer struct {
 	// and written doesn't (colorGoneLocked).
 	written   time.Time
 	writtenOf string
+	// colorFrom is written, but no earlier than this daemon's last good sync before it read the
+	// presence (colorDate): what colorGoneLocked dates a presence by, so that a writer's clock a
+	// week behind doesn't make a live device's colour look a week old.
+	colorFrom time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.

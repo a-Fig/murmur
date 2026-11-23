@@ -160,6 +160,7 @@ func TestAColourWaitsForAPresenceNotFetched(t *testing.T) {
 	t.Parallel()
 	d := colorRig(t, time.Hour)
 	d.peers = map[string]*peer{}
+	d.opt.StaleAfter = time.Minute // b is live: the rig's zero would make every peer stale at once
 	d.setMode("online", "invisible", time.Time{})
 	d.setMode("invisible", "online", time.Now())
 	// The sync after: b's presence is in the listing, but its fetch failed.
@@ -205,7 +206,10 @@ func TestAPresenceWrittenAWeekAgoAndReadNowLetsItsColourGo(t *testing.T) {
 			defer d.mu.Unlock()
 			d.st.Color, d.st.ColorAt = 0, time.Time{}
 			p := d.peers["dead-0001"]
-			p.sha, p.listed, p.written, p.writtenOf = "aaaa", "aaaa", time.Now().Add(-8*24*time.Hour), "aaaa"
+			written := time.Now().Add(-8 * 24 * time.Hour)
+			// This daemon's last good sync before the read was before its sleep, older still.
+			p.sha, p.listed, p.writtenOf = "aaaa", "aaaa", "aaaa"
+			p.written, p.colorFrom = written, colorDate(written, written.Add(-time.Hour))
 			if c.newer {
 				p.listed = "bbbb"
 			}
