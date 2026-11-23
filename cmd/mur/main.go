@@ -95,8 +95,8 @@ Started by other programs:
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
 Help:
-  mur help [COMMAND]            all of this, or one command's help
-  mur version                   this mur's version
+  mur help [COMMAND]            every command, or one command's help
+  mur version                   mur's version, and whether a newer one is out
 
 Every command takes -C DIR to act on the repository at DIR.
 `)
