@@ -790,6 +790,12 @@
   #supported .works h2.eyebrow { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .09em; color: var(--blue); }
   #security .eyebrow { color: var(--butter); }
   #security h2.section-h { color: var(--cream); }
+  /* Butter as the accent on blue and ink, as #1012 uses it: the hero's second line, the strip's icons,
+     and the links in Security & architecture. */
+  .st h1 span + span { color: var(--butter); }
+  .st .st-trust svg { color: var(--butter); opacity: 1; }
+  #security .sec-links a { color: var(--butter); text-decoration-color: color-mix(in srgb, var(--butter) 45%, transparent); }
+  #security .sec-links a:hover { text-decoration-color: var(--butter); }
   @media (max-width: 759px) { #how .eyebrow { margin: 0 8px 10px; } #how .route h2.section-h { margin: 0 8px 12px; } }
 </style>
 </head>
