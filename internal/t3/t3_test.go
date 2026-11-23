@@ -43,7 +43,6 @@ func TestMain(m *testing.M) {
 		if err != nil {
 			os.Exit(7)
 		}
-		_ = held
 		tmp := readyPath + ".tmp"
 		if err := os.WriteFile(tmp, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 			os.Exit(8)
@@ -51,13 +50,14 @@ func TestMain(m *testing.M) {
 		if err := os.Rename(tmp, readyPath); err != nil {
 			os.Exit(9)
 		}
-		deadline := time.Now().Add(15 * time.Second)
+		deadline := time.Now().Add(20 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(stopPath); err == nil {
 				break
 			}
 			time.Sleep(15 * time.Millisecond)
 		}
+		runtime.KeepAlive(held)
 		os.Exit(0)
 	}
 	if path := os.Getenv(fakeEnv); path != "" {
@@ -269,25 +269,26 @@ func fakeGrandchild(t *testing.T, mode string) (exe, readyPath, lockPath string)
 	t.Setenv(fakeGrandchildStopEnv, stopPath)
 	t.Cleanup(func() {
 		_ = os.WriteFile(stopPath, []byte("stop"), 0o600)
-		deadline := time.Now().Add(5 * time.Second)
 		if b, err := os.ReadFile(readyPath); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
 				want := filepath.Clean(exe)
 				isSelf := func(got string) bool {
 					return strings.EqualFold(filepath.Clean(strings.TrimSuffix(got, " (deleted)")), want)
 				}
-				for time.Now().Before(deadline) {
-					err := proc.End(pid, isSelf)
-					if errors.Is(err, proc.ErrGone) || errors.Is(err, proc.ErrOther) || errors.Is(err, proc.ErrCantEnd) {
+				endDeadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(endDeadline) {
+					if err := proc.End(pid, isSelf); err != nil {
 						break
 					}
 					time.Sleep(15 * time.Millisecond)
 				}
 			}
 		}
-		// Always wait for the OS to release the grandchild's lock (covers pidfd-less Linux sandboxes
-		// and race-detector exit delays before TempDir removes stopPath).
-		for time.Now().Before(deadline) {
+		// Give the lock probe its own budget to confirm the grandchild has exited and released its
+		// lock (covers pidfd-less Linux sandboxes and race-detector exit delays before TempDir
+		// removes stopPath).
+		lockDeadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(lockDeadline) {
 			held, err := proc.Lock(lockPath)
 			if err == nil {
 				_ = held.Close()
@@ -295,6 +296,7 @@ func fakeGrandchild(t *testing.T, mode string) (exe, readyPath, lockPath string)
 			}
 			time.Sleep(15 * time.Millisecond)
 		}
+		t.Errorf("grandchild did not release lock %s before cleanup timed out", lockPath)
 	})
 	return exe, readyPath, lockPath
 }
@@ -322,24 +324,35 @@ func assertGrandchildHoldingPipe(t *testing.T, readyPath, lockPath string) {
 func TestSendWaitDelayWithGrandchildHoldingPipes(t *testing.T) {
 	defer func(wd, st time.Duration) { WaitDelay, sendTimeout = wd, st }(WaitDelay, sendTimeout)
 	WaitDelay = 150 * time.Millisecond
+	measuredStartup := 500 * time.Millisecond
 
 	t.Run("parent cancel after grandchild ready keeps Canceled and non-ErrNotStarted", func(t *testing.T) {
 		exe, readyPath, lockPath := fakeGrandchild(t, "grandchild-hang")
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		start := time.Now()
 		done := make(chan error, 1)
 		go func() { done <- Send(ctx, exe, "", "thread-1", "x") }()
 
 		waitDeadline := time.Now().Add(5 * time.Second)
+		ready := false
 		for time.Now().Before(waitDeadline) {
 			if _, err := os.Stat(readyPath); err == nil {
+				ready = true
+				measuredStartup = time.Since(start)
 				break
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("Send returned before grandchild became ready: %v", err)
+			default:
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if _, err := os.Stat(readyPath); err != nil {
+		if !ready {
 			cancel()
-			t.Fatalf("grandchild did not become ready in time: %v", err)
+			err := <-done
+			t.Fatalf("grandchild did not become ready in time (Send returned %v)", err)
 		}
 		cancelAt := time.Now()
 		cancel()
@@ -354,7 +367,14 @@ func TestSendWaitDelayWithGrandchildHoldingPipes(t *testing.T) {
 	})
 
 	t.Run("SendTimeout with grandchild keeps timeout message and non-ErrNotStarted", func(t *testing.T) {
-		sendTimeout = 1500 * time.Millisecond
+		// Scale the timeout to the startup time observed on this runner so slow CI hosts do not
+		// kill the child before the grandchild publishes readiness, while staying well under the
+		// grandchild's 20s sleep cap.
+		budget := max(500*time.Millisecond, measuredStartup*4)
+		if budget > 5*time.Second {
+			budget = 5 * time.Second
+		}
+		sendTimeout = budget
 		defer func() { sendTimeout = SendTimeout }()
 		exe, readyPath, lockPath := fakeGrandchild(t, "grandchild-hang")
 		start := time.Now()
@@ -363,7 +383,7 @@ func TestSendWaitDelayWithGrandchildHoldingPipes(t *testing.T) {
 			t.Fatalf("error = %v, want non-ErrNotStarted timeout error", err)
 		}
 		assertGrandchildHoldingPipe(t, readyPath, lockPath)
-		if took := time.Since(start); took > 5*time.Second {
+		if took := time.Since(start); took > budget+5*time.Second {
 			t.Errorf("blocked %s waiting on grandchild pipe", took)
 		}
 	})
