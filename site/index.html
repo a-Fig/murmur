@@ -785,7 +785,8 @@
   }
   /* Section titles, styled as #1012 styles them: a small blue label, in the page's own words. */
   .eyebrow, :is(#how .route, #uses, #see, #security, #setup, #faq, #supported .works) h2.eyebrow { margin: 0 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .09em; line-height: 1.3; text-transform: uppercase; color: var(--blue); }
-  #security h2.eyebrow { color: var(--butter); }
+  /* On the ink band the title is butter; the selector matches the blue rule's weight, and comes after it. */
+  #security .setup-in h2.eyebrow { color: var(--butter); }
   /* Butter as the accent on blue and ink, as #1012 uses it: the hero's second line, the strip's icons,
      and the links in Security & architecture. */
   .st h1 span + span { color: var(--butter); }
