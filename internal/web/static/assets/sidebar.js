@@ -16,7 +16,7 @@ import { tagsOf, shownSessions, tagsGroup, tagButton } from "./tags.js";
 import { avatar, deviceColor, modeNote } from "./messages.js";
 import { startChat, askForName } from "./picker.js";
 import { settingsRow } from "./settings.js";
-import { updatesRow } from "./updates.js";
+import { updatesRow, daemonNote } from "./updates.js";
 
 export {
   setDrawer, pickSession, connBadge, sidebar, humanTag, restartStuck, updateInfo, versionSection,
@@ -426,29 +426,39 @@ async function installNow() {
   poll();
 }
 
-// Settings' Version section: this version, and what is known of a newer one.
+// Settings' About section: this version and, to its right, whether a newer one is out (#1114). Under
+// the version go the daemon's protocol and when it last checked; what the Updates row below already
+// says (its choice, and what overrides it) isn't said again here. Only what is happening to the
+// newer version is: it installing, installed and waiting for a restart, or failed.
 function versionSection() {
   const v = ui.state?.version;
   if (!v?.running) return null;
-  let description = null;
-  let control = null;
+  let detail = null;
+  let button = null;
   if (ui.restarting) {
-    description = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
+    detail = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
   } else if (v.ready) {
-    description = (v.latest || "A newer version") + " is installed and starts when the daemon restarts.";
-    control = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
+    detail = "Installed. It starts when the daemon restarts.";
+    button = h("button", { class: "btn btn-outline btn-xs", title: "Restart this device's daemon now onto the newer version already installed", "data-key": "version-restart", onclick: restartNow }, "Restart now");
   } else if (v.latest && (v.installing || ui.installing)) {
-    description = "Installing " + v.latest + ".";
+    detail = "Installing it.";
   } else if (v.latest && v.auto) {
-    description = v.latest + " is out, and installing on its own.";
+    detail = "Installing it on its own.";
   } else if (v.latest) {
-    description = v.latest + (v.off ? " is out. Updates are off here." : " is out. The last update failed here.");
-    if (v.installError) description += " Couldn't install it: " + v.installError + ".";
+    // Off is the Updates row's own choice; a failure is news.
+    detail = [v.off ? "" : "The last update failed here.", v.installError && "Couldn't install it: " + v.installError + "."].filter(Boolean).join(" ") || null;
     if (v.canInstall) {
-      control = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
+      button = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
     }
   }
-  const row = settingsRow("version", NAME + " " + v.running, description, control);
+  const status = h(
+    "span",
+    { class: "version-status", "data-key": "version-status" },
+    h("span", { class: "version-dot " + (v.latest ? "warn" : "ok"), "aria-hidden": "true" }),
+    v.latest ? v.latest + " available" : "Up to date",
+  );
+  const note = [daemonNote(), detail && h("span", { class: "version-detail" }, detail)];
+  const row = settingsRow("version", COMMAND + " " + v.running, note.some(Boolean) ? note : null, [status, button]);
   return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row, updatesRow()));
 }
 

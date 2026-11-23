@@ -2052,6 +2052,29 @@ a.g-pr:hover {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+/* About's version row (#1114): the quiet line under the version, and its status on the right. */
+.version-note,
+.version-detail {
+  display: block;
+}
+.version-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.version-dot {
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--success);
+}
+.version-dot.warn {
+  background: var(--warning);
+}
 /* Updates: going back to stable, when offered, beside the choices (#1045). */
 .updates-control {
   display: flex;
