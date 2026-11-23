@@ -88,7 +88,7 @@ try {
         $said = 'something else'
         if ($failed -like '*the one installed is unchanged*') { $said = 'unchanged' }
         if ($failed -like '*nothing was installed*') { $said = 'nothing installed' }
-        if ($failed -like '*another mur update holds*') { $said = 'locked' }
+        if ($failed -like '*could not take the update lock*') { $said = 'locked' }
         Write-Output "the swap failed, saying: $said"
         $same = (Test-Path $exe) -and ((Get-FileHash $exe).Hash -eq (Get-FileHash "$env:WINDIR\System32\waitfor.exe").Hash)
         Write-Output ("mur.exe is the old one: " + $same)

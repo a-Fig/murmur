@@ -346,8 +346,9 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if ctx.Err() != nil {
 		return false, latest, ctx.Err()
 	}
-	// Manual installers do not take our lock. Do not overwrite a reinstall that
-	// completed while the release was downloading; restart onto it instead.
+	// An install.ps1 from before #1198 takes no lock, and a binary swapped by hand takes none. Do
+	// not overwrite a reinstall that completed while the release was downloading; restart onto it
+	// instead.
 	current, err = Identity(o.Executable)
 	if err != nil {
 		return false, latest, err

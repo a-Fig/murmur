@@ -129,8 +129,9 @@
         # next install puts it back first (#1198).
         #
         # The daemon's updater takes the lock file beside mur.exe (mur.exe.update.lock, one byte
-        # locked exclusively, as internal/proc does) around its own cleanup and swap; the install
-        # holds the same lock for its whole swap, so the two never interleave (#1198).
+        # locked exclusively, as internal/proc does) for a whole update, downloads included, and
+        # around its cleanup; the install holds the same lock for its whole swap, so the two never
+        # interleave (#1198). Held longer than the wait, the update is likely a slow download.
         $lock = $null
         for ($waited = 0; -not $lock; $waited += 250) {
             try {
@@ -140,7 +141,7 @@
                 $why = "$_"
                 if ($lock) { $lock.Dispose(); $lock = $null }
                 if ($waited -ge $lockWaitMs) {
-                    throw "mur install: another mur update holds $exe.update.lock ($why); nothing was changed. Try again in a minute."
+                    throw "mur install: could not take the update lock $exe.update.lock ($why), which a mur update in progress holds; nothing was changed. Try again in a minute."
                 }
                 Start-Sleep -Milliseconds 250
             }
