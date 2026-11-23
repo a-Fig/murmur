@@ -2,7 +2,7 @@
 // queues that change tags.
 
 import { icon } from "./icons.js";
-import { h, when, ago, agoEl, plural, root } from "./dom.js";
+import { h, ago, plural, root } from "./dom.js";
 import {
   ui, devices, fromName, toName, findSession, HIDDEN, me, myName, isPerson, findPerson, personOnline,
 } from "./state.js";
@@ -201,18 +201,15 @@ function tagsLine(s) {
   );
 }
 
-// Under a session's name in its view: its device, its state, when it started, and the branches it
-// has committed to besides the one it is on (#631).
+// Under a session's name in its view (#631, #1115): its state with its dot, and its device. When it
+// started and the branches it has committed to are on the line below, with the one it is on.
 function profileLine(d, s) {
-  const started = when(s.started);
-  const others = (s.committed || []).filter((b) => b && b !== s.branch);
   return h(
     "p",
-    { class: "g-head-meta" },
-    h("span", { class: "truncate", title: "Device " + d.id }, d.self ? "This device" : d.nick || d.owner || host(d.id)),
+    { class: "g-head-status" },
+    h("span", { class: "pres pres-" + sessionState(d, s), "aria-hidden": "true" }),
     h("span", null, stateWord(d, s)),
-    started && agoEl("span", null, started, "Started "),
-    others.length > 0 && h("span", { class: "truncate", title: "Also committed to " + others.join(", ") }, "Also on " + others.join(", ")),
+    h("span", { class: "truncate", title: "Device " + d.id }, d.self ? "This device" : d.nick || d.owner || host(d.id)),
   );
 }
 
