@@ -45,6 +45,9 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// A T3 thread's shell can have T3CODE_HOME set, and a Send given no home leaves the environment as
+	// it is, so the stand-in would see the thread's own (#804). The tests start with none.
+	os.Unsetenv("T3CODE_HOME")
 	os.Exit(m.Run())
 }
 
