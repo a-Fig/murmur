@@ -648,8 +648,14 @@ func runStop(ctx context.Context, args []string, out io.Writer) error {
 }
 
 // appShows says the app's window is open on the clone at gitDir: its record names a live window,
-// and the clone it last showed (last.json) is this one. Neither is made if it isn't there.
+// the clone it last showed (last.json) is this one, and the clone hasn't left, as the window starts
+// no daemon for one that has. Neither file is made if it isn't there. last.json can lag the window
+// by up to desktop.FollowEvery: a move from the page's repo menu is recorded at the window's next
+// check, and a window just opened records its clone once that clone's daemon has started.
 func appShows(gitDir string) bool {
+	if !join.Joined(gitDir) {
+		return false
+	}
 	cfg, err := os.UserConfigDir()
 	if err != nil {
 		return false

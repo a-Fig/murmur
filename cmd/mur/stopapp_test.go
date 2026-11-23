@@ -10,6 +10,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/desktop"
+	"github.com/a-Fig/murmur/internal/join"
 )
 
 // mur stop says when the app will start the daemon again (#639): its window starts its clone's
@@ -21,6 +22,11 @@ func TestAppShowsTheStoppedClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	shown, other := t.TempDir(), t.TempDir()
+	for _, gitDir := range []string{shown, other} { // both joined, as the window starts only those
+		if _, err := (join.Place{GitDir: gitDir}).RecordConsent(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if appShows(shown) {
 		t.Error("no app at all, and the clone is shown")
 	}
@@ -44,6 +50,12 @@ func TestAppShowsTheStoppedClone(t *testing.T) {
 	}
 	if appShows(other) {
 		t.Error("another clone is shown")
+	}
+	if err := os.RemoveAll(filepath.Join(shown, brand.StateDir)); err != nil { // as a leave takes its consent
+		t.Fatal(err)
+	}
+	if appShows(shown) {
+		t.Error("a clone that left, which the window starts no daemon for, is shown")
 	}
 }
 
