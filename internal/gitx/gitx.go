@@ -26,6 +26,16 @@ type Git struct {
 	// Env is added to the environment of every command, such as a GIT_INDEX_FILE of the caller's
 	// own, so that building a tree doesn't use the index the working tree's users share.
 	Env []string
+	// NoTerminal runs each command with no controlling terminal, so nothing it starts can prompt on
+	// the user's: on Unix, in a session of its own (Setsid). GIT_TERMINAL_PROMPT=0 stops git's own
+	// prompts but not ssh's, which reads a key's passphrase from /dev/tty; a process with no
+	// terminal has no /dev/tty, so ssh fails instead of asking. This leaves the user's
+	// core.sshCommand and GIT_SSH_COMMAND as they are, which an `-o BatchMode=yes` would not.
+	// SSH_ASKPASS_REQUIRE=never also keeps ssh from opening a window to ask instead.
+	// On Windows it does nothing: there git's children already run with no console (hideWindow).
+	// For a command run from a terminal that must not wait on anyone, such as join's look at
+	// the remote (#830); the daemon runs detached already.
+	NoTerminal bool
 }
 
 // Error is a failed git command, with what it printed to stderr.
@@ -47,7 +57,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Run runs git with the given stdin and returns its stdout.
 func (g Git) Run(ctx context.Context, stdin string, args ...string) (string, error) {
-	return run(ctx, "", stdin, g.Env, append(g.dirArgs(), args...)...)
+	return run(ctx, "", stdin, g.Env, g.NoTerminal, append(g.dirArgs(), args...)...)
 }
 
 // dirArgs are the options every command run against Dir starts with: Dir itself, and a hooks
@@ -71,7 +81,7 @@ func (g Git) dirArgs() []string {
 // a repository or a session's current branch. The one write that goes through it is `mur init`
 // fast-forwarding the checkout it was run in, which a person asked for.
 func RunIn(ctx context.Context, dir string, args ...string) (string, error) {
-	return run(ctx, dir, "", nil, args...)
+	return run(ctx, dir, "", nil, false, args...)
 }
 
 // startLimit is how long git may take to start (proc.StartWithin). It takes milliseconds: under the
@@ -109,19 +119,19 @@ func subcommand(args []string) string {
 // slow (#513).
 var Observe func(subcommand string, start time.Time, took time.Duration)
 
-func run(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
+func run(ctx context.Context, dir, stdin string, env []string, noTerminal bool, args ...string) (string, error) {
 	if Observe != nil {
 		began := time.Now()
 		defer func() { Observe(subcommand(args), began, time.Since(began)) }()
 	}
-	out, err := runOnce(ctx, dir, stdin, env, args...)
+	out, err := runOnce(ctx, dir, stdin, env, noTerminal, args...)
 	if errors.Is(err, proc.ErrStartHung) && ctx.Err() == nil {
-		out, err = runOnce(ctx, dir, stdin, env, args...)
+		out, err = runOnce(ctx, dir, stdin, env, noTerminal, args...)
 	}
 	return out, err
 }
 
-func runOnce(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
+func runOnce(ctx context.Context, dir, stdin string, env []string, noTerminal bool, args ...string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -138,6 +148,9 @@ func runOnce(ctx context.Context, dir, stdin string, env []string, args ...strin
 	// The daemon runs detached, with nobody to answer a prompt: fail instead of waiting.
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), env...)
 	hideWindow(cmd)
+	if noTerminal {
+		noControllingTerminal(cmd)
+	}
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

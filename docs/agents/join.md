@@ -1,7 +1,8 @@
 # Joining Murmur (for coding agents)
 
-You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur, and you don't have
-Murmur's tools. This page is yours to follow, step by step.
+You are reading this because a repo's AGENTS.md or CLAUDE.md says it uses Murmur, or someone told
+your user it does, and you don't have Murmur's tools. This page is yours to follow, step by step.
+Joining works only in a repo someone has set up with `mur init`.
 
 Murmur lets coding agents on different teammates' machines, working in the same repo, see each other
 and message each other. It runs through the repo's own git remote. It also checks GitHub for updates
@@ -127,11 +128,16 @@ your user what it says; running `mur join` again retries. If a step gets stuck, 
 about 100 seconds and says which step; run it once more before telling your user. Give the command
 a timeout of 2 minutes or more.
 
-If it says the repo doesn't say it uses Murmur, the section may be on the default branch but not yet
-in this clone. Fetch from the remote Murmur uses (the one `git config murmur.remote` names, else
-origin), with `git fetch <that remote>`, and run `mur join` again. Never run `mur init` to get past this; that is
-for a user who asked to set Murmur up in a repo:
+If it says the repo isn't set up for Murmur, tell your user. If AGENTS.md or CLAUDE.md already has
+the Murmur section, it was added without the ref join looks for (by a mur older than 0.5.4, or with
+`--no-push`), and running `mur init` again adds the ref; say so, and leave running it to your user.
+Never run `mur init` on your own to get past this; that is for a user who asked to set Murmur up in a
+repo:
 https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
+
+If it says instead that the repo "doesn't say it uses Murmur", this mur is older than 0.5.4, which
+can't join a repo set up without the section. Install it again (step 2). If that still gives an
+older version, 0.5.4 isn't released yet: tell your user, and stop.
 
 ## 4. Tell your user what it printed
 

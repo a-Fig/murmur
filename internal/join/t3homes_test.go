@@ -558,10 +558,7 @@ func mustMakeDir(t *testing.T, dir string) {
 // remote so it can exercise the real join path from the test binary.
 func startJoinTestDaemon(t *testing.T) Place {
 	t.Helper()
-	p, _ := clone(t)
-	remote := filepath.Join(t.TempDir(), "remote.git")
-	git(t, p.Top, "init", "--bare", remote)
-	git(t, p.Top, "remote", "add", "origin", remote)
+	p, _ := clone(t) // with a remote, as the daemon needs
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	var runErr error

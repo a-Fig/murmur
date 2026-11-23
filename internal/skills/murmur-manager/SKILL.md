@@ -1,6 +1,6 @@
 ---
 name: murmur-manager
-description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. Running your user's team of parallel coding agents as their GEM (general engineering manager) - staffing issues, keeping work from colliding, holding the review bar, moving PRs to merge, giving the user short lists to OK, and driving releases. Follow it only when the user has told this session, in words, to manage, oversee, coordinate or staff the agents, to be the manager, GEM or COO, or to keep things moving or run things overnight. Load murmur and murmur-pro with it; the repo's own rules and docs cover how each step is done.
+description: Only in a repo where you have Murmur's tools. Running your user's team of parallel coding agents as their GEM (general engineering manager) - staffing issues, keeping work from colliding, holding the review bar, moving PRs to merge, giving the user short lists to OK, and driving releases. Follow it only when the user has told this session, in words, to manage, oversee, coordinate or staff the agents, to be the manager, GEM or COO, or to keep things moving or run things overnight. Load murmur and murmur-pro with it; the repo's own rules and docs cover how each step is done.
 ---
 
 <!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->

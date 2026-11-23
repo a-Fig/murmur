@@ -17,3 +17,6 @@ func hideWindow(cmd *exec.Cmd) {
 // Windows has no interrupt to send another process; a cancelled git is killed, and the daemon
 // clears the locks such a kill can leave (see daemon.clearStaleLocks).
 var interrupt func(*os.Process) error
+
+// noControllingTerminal does nothing on Windows, where hideWindow already gives git no console.
+func noControllingTerminal(*exec.Cmd) {}

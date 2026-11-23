@@ -37,7 +37,8 @@ key replaced it.
   a lease as the name registry is, so two devices can't both make the first key
   (`internal/daemon/team.go`).
   - An *epoch* publishes a team X25519 public key in the clear, its private half wrapped for its
-    writer. The first daemon to find the ref empty makes the first.
+    writer. The first daemon to find the ref empty makes the first: absent, or at the genesis commit
+    `mur init --refs-only` writes, which it builds on ([the bus refs](joining.md#the-bus-refs-set-a-repo-up)).
   - A *grant* wraps every team private key its writer holds for one device. Each device's encrypted
     presence names the newest epoch it has read and the team keys it holds, and a holder of the
     current key grants to each pinned device whose presence names the current epoch and lists fewer

@@ -43,6 +43,9 @@ type Pushed struct {
 	Checkout      string
 }
 
+// ErrNoBranch says the remote has no branch, so there is no commit for the section to go on.
+var ErrNoBranch = errors.New("the remote has no branch yet, so there is no commit to add the section to")
+
 // Push makes init's edits as a commit on the default branch of the clone's remote (the one its bus
 // is on, bus.RemoteFor) and pushes it there, never forced. The commit is built from the branch's
 // fetched tip with a temporary index, so neither the working tree nor the index changes. When the
@@ -62,6 +65,9 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 	}
 	if p.Remote, err = bus.RemoteFor(ctx, g); err != nil {
 		return p, err
+	}
+	if heads, err := g.Run(ctx, "", "ls-remote", "--heads", p.Remote); err == nil && strings.TrimSpace(heads) == "" {
+		return p, ErrNoBranch
 	}
 	if p.Branch, err = defaultBranch(ctx, g, p.Remote); err != nil {
 		return p, err
@@ -94,7 +100,7 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 		beforePush(try)
 		err = repo.Push(ctx, sha, ref, bus.FastForward, "")
 		if err == nil {
-			// The remote-tracking branch is what Marked reads in this clone's other worktrees.
+			// The remote-tracking branch is the default branch as this clone's other worktrees see it.
 			g.Run(ctx, "", "update-ref", tracking, sha)
 			setRemoteHead(ctx, g, p.Remote, tracking)
 			break
@@ -154,8 +160,9 @@ func fetchTip(ctx context.Context, g gitx.Git, remote, branch string) (string, e
 	return strings.TrimSpace(out), nil
 }
 
-// setRemoteHead points refs/remotes/<remote>/HEAD at the default branch init found, since that is
-// the ref Marked reads: one nothing set, or one left naming a branch that is no longer the default.
+// setRemoteHead points refs/remotes/<remote>/HEAD at the default branch init found: one nothing set,
+// or one left naming a branch that is no longer the default. Until #830 the MCP server read the
+// marker there; now it is only git's own record of the default branch, kept right.
 func setRemoteHead(ctx context.Context, g gitx.Git, remote, tracking string) {
 	head := "refs/remotes/" + remote + "/HEAD"
 	if cur, err := g.Run(ctx, "", "symbolic-ref", "-q", head); err != nil || strings.TrimSpace(cur) != tracking {
@@ -286,9 +293,8 @@ func (t *treeFiles) read(name string) (real string, data []byte, exists bool, er
 			return "", nil, false, err
 		}
 		if (mode == "100644" || mode == "100755" || mode == "120000") && size > maxRepoFile {
-			// Read whole, it would sit in memory, in every session's MCP server that checks the
-			// remote-tracking branch for the marker (markedAt), as readRepoFile keeps a working
-			// tree's file from doing (#947). ls-tree says its size, so the blob isn't read at all.
+			// Read whole, it would sit in memory, as readRepoFile keeps a working tree's file from
+			// doing (#947). ls-tree says its size, so the blob isn't read at all.
 			return "", nil, false, fmt.Errorf("%s is over %d MiB in %s, more than any file an agent reads", real, maxRepoFile>>20, t.tip)
 		}
 		switch mode {

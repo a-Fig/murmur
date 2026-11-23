@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/t3"
 )
@@ -186,11 +188,6 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	if err != nil {
 		return r, err
 	}
-	if !p.Marked() {
-		return r, fmt.Errorf("this repo doesn't say it uses %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section, "+
-			"here or on the default branch as this clone last fetched it. `%[2]s init` adds it and pushes it to the default branch, "+
-			"after the user agrees (%[3]s)", brand.Product, brand.Command, brand.SetupDoc)
-	}
 	// A step cut short by the deadline fails with it; the problem added at the end says so once.
 	cut := func() bool { return ctx.Err() != nil }
 	problem := func(what string, err error) {
@@ -200,6 +197,17 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	}
 	steps := stepper{w: e.Progress, now: "reading which agents this machine has"}
 	defer steps.stop()
+
+	// The repo must have been set up with `mur init`, which pushes the bus refs; the refs are the one
+	// proof, and no file or branch is read (Tyler, 2026-11-23, #830). Join is each user's yes after
+	// that, and the consent it records stands for both.
+	steps.start("asking the remote whether this repo is set up for " + brand.Product)
+	err = setUp(ctx, p.GitDir)
+	steps.stop()
+	if err != nil {
+		return r, err
+	}
+	steps.now = "reading which agents this machine has"
 
 	// Per user: the MCP server, registered once for every repo this user opens, in every
 	// configuration of each agent. Advice about the calling agent depends on its own home.
@@ -345,6 +353,43 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return r, errors.New("joined, but not everything worked; see above")
 	}
 	return r, nil
+}
+
+// setUpWait is how long join waits for the remote to list its bus refs.
+const setUpWait = 15 * time.Second
+
+// setUp says why the repo of the clone with this git dir can't be joined, or nil if its remote has
+// any refs/murmur/* ref: every `mur init` makes two, and every clone that has joined adds its own.
+// It is one ls-remote, the round trip a daemon makes every few seconds.
+//
+// Join runs in the user's terminal, so the ls-remote runs with none (gitx.Git.NoTerminal): an ssh
+// key with a passphrase and no agent would otherwise ask for it there, and could still be asking
+// after the limit ended git.
+func setUp(ctx context.Context, gitDir string) error {
+	ctx, cancel := context.WithTimeout(ctx, setUpWait)
+	defer cancel()
+	g := gitx.Git{Dir: gitDir, NoTerminal: true}
+	remote, err := bus.RemoteFor(ctx, g)
+	if err != nil {
+		return err // no remote: its own advice, to add one
+	}
+	refs, err := (&bus.Repo{Git: g, Remote: remote}).ListRemote(ctx)
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Errorf("%s didn't answer within %d s, so join couldn't see whether this repo is set up for %s; run `%s join` again",
+			remote, int(setUpWait/time.Second), brand.Product, brand.Command)
+	case err != nil:
+		return fmt.Errorf("couldn't reach %s to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again",
+			remote, brand.Product, remote, brand.Command)
+	case len(refs) == 0:
+		// A repo whose section was pushed without the refs (by an older init, or a --no-push one) lands
+		// here too, and join doesn't read the files to tell: the sentence covers it.
+		return fmt.Errorf("this repo isn't set up for %[1]s: %[4]s has no %[5]s* refs. `%[2]s init` sets it up, after the user agrees (%[3]s). "+
+			"If AGENTS.md or CLAUDE.md already has the %[1]s section, it was added without the ref join looks for "+
+			"(by a %[2]s older than 0.5.4, or with --no-push); running `%[2]s init` again adds the ref",
+			brand.Product, brand.Command, brand.SetupDoc, remote, brand.RefRoot)
+	}
+	return nil
 }
 
 // How long a join may take in all, and how long one step runs before the join says it is still on

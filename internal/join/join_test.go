@@ -288,6 +288,13 @@ func clone(t *testing.T) (Place, string) {
 	if _, err := setup.Init(context.Background(), main); err != nil {
 		t.Fatal(err)
 	}
+	// A remote with the bus refs init makes, which join looks for (#830).
+	remote := filepath.Join(dir, "remote.git")
+	git(t, dir, "init", "-q", "--bare", "--initial-branch=main", remote)
+	git(t, main, "remote", "add", "origin", remote)
+	if _, err := setup.RefsOnly(context.Background(), main); err != nil {
+		t.Fatal(err)
+	}
 	p, err := Locate(context.Background(), main)
 	if err != nil {
 		t.Fatal(err)
@@ -378,11 +385,12 @@ func TestTheNewHookStaysWhereAWorktreesFileLinksToTheHome(t *testing.T) {
 	}
 }
 
-// Whether Murmur may run is the repo's invitation and the user's consent together, read from files.
-func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
+// Whether Murmur may run is the user's consent alone, read from a file (#830): join records it only
+// in a repo whose bus refs it found. The section in AGENTS.md and CLAUDE.md plays no part.
+func TestJoinedIsTheConsentAlone(t *testing.T) {
 	p, _ := clone(t)
-	if !p.Marked() || p.Joined() || p.Active() {
-		t.Fatalf("marked=%v joined=%v active=%v before joining", p.Marked(), p.Joined(), p.Active())
+	if p.Joined() {
+		t.Fatal("joined before joining")
 	}
 	if news, err := p.RecordConsent(); err != nil || !news {
 		t.Fatalf("consent: %v, %v", news, err)
@@ -390,15 +398,15 @@ func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 	if news, _ := p.RecordConsent(); news {
 		t.Error("recording consent twice was news")
 	}
-	if !p.Joined() || !p.Active() || !Joined(p.GitDir) {
-		t.Error("not active after joining")
+	if !p.Joined() || !Joined(p.GitDir) {
+		t.Error("not joined after joining")
 	}
 
-	// A working tree without the marker (an older branch) is not one Murmur runs in, joined or not.
+	// Someone takes the section out: the clone stays on.
 	os.Remove(filepath.Join(p.Top, "AGENTS.md"))
 	os.Remove(filepath.Join(p.Top, "CLAUDE.md"))
-	if p.Marked() || p.Active() || !p.Joined() {
-		t.Errorf("without the marker: marked=%v joined=%v active=%v", p.Marked(), p.Joined(), p.Active())
+	if !p.Joined() {
+		t.Error("not joined once the section is gone")
 	}
 	if had, err := p.ForgetConsent(); err != nil || !had {
 		t.Fatalf("forget: %v, %v", had, err)
@@ -406,9 +414,12 @@ func TestActiveNeedsTheMarkerAndTheConsent(t *testing.T) {
 	if had, _ := p.ForgetConsent(); had {
 		t.Error("forgetting twice was news")
 	}
+	if p.Joined() {
+		t.Error("joined after leaving")
+	}
 
 	// No clone, no consent: nothing may be read from a path relative to wherever the process is.
-	if (Place{}).Joined() || (Place{}).Active() || Joined("") {
+	if (Place{}).Joined() || Joined("") {
 		t.Error("an empty place is joined")
 	}
 }
