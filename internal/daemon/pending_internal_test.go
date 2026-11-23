@@ -599,6 +599,68 @@ func TestRejectedRetryGivesUpPastDeadlineWhenReconcileFails(t *testing.T) {
 	}
 }
 
+// When the last retry's push is rejected and the look that follows fails at once, as on a dropped
+// connection, give-up still asks the remote in what is left of the look's time, and a send the
+// remote has is settled as landed. It was given up unasked, and a sender who sent again put it on
+// the log twice (#1092).
+func TestRejectedRetryWhoseLookFailsStillAsksAtGiveUp(t *testing.T) {
+	t.Parallel()
+	d, peer, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingPush: 200 * time.Millisecond, PendingGiveUp: 50 * time.Millisecond}, false)
+	ctx := context.Background()
+	d.sendFirst(t)
+	ref := d.meshRef()
+	cut := errors.New("the connection dropped")
+	// A send that lands, and says it didn't.
+	d.writeMu.Lock()
+	d.testPush = func(real func() error) error {
+		if err := real(); err != nil {
+			return err
+		}
+		return cut
+	}
+	d.writeMu.Unlock()
+	type settled struct {
+		landed, absent bool
+	}
+	got := make(chan settled, 1)
+	err := d.appendEventIf(ctx, message(d, "landed"), nil, func(landed, absent bool, _ error) {
+		got <- settled{landed, absent}
+	})
+	if !errors.As(err, new(pendingError)) {
+		t.Fatalf("the send ended with %v, want it pending", err)
+	}
+	// The remote's log goes on past it, from another clone, so its tip isn't a commit this one has.
+	tips, err := peer.Fetch(ctx, []string{ref})
+	if err != nil || tips[ref] == "" {
+		t.Fatalf("the peer fetching the log: %v, %v", tips, err)
+	}
+	ahead, err := peer.NewCommit(ctx, tips[ref], "the log goes on\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.Push(ctx, ahead, ref, bus.FastForward, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.testPush = func(func() error) error { return bus.ErrRejected }
+	d.testFetch = func(context.Context) error { return cut } // the look's fetch of that tip fails at once
+	d.pendFrom = time.Now().Add(-time.Second)                // past the give-up time: this retry is the last
+	d.retryPending()
+	select {
+	case s := <-got:
+		if s != (settled{landed: true}) {
+			t.Errorf("the send the remote has settled %+v, want it landed", s)
+		}
+	default:
+		t.Fatal("the send wasn't settled by the last retry")
+	}
+	if d.ownTip != ahead {
+		t.Errorf("the next write would build on %s, want the remote's tip %s", d.ownTip, ahead)
+	}
+}
+
 // When a rejected retry determines it should push over the remote tip with a lease, and that lease
 // push lands on the remote but returns an unsure error past PendingGiveUp, give-up still checks
 // the remote within the remaining retry budget and settles the send as landed (#1073).
