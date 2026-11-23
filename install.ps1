@@ -141,7 +141,7 @@
                 $why = "$_"
                 if ($lock) { $lock.Dispose(); $lock = $null }
                 if ($waited -ge $lockWaitMs) {
-                    throw "mur install: could not take the update lock $exe.update.lock ($why), which a mur update in progress holds; nothing was changed. Try again in a minute."
+                    throw "mur install: could not take the update lock $exe.update.lock ($why), which a mur update in progress may hold; nothing was changed. Try again in a minute."
                 }
                 Start-Sleep -Milliseconds 250
             }

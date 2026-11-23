@@ -28,9 +28,9 @@ information in the request; a network failure waits quietly for the next hour. A
   new `mur.exe` is in place (#1198). A lock beside the executable (`mur.exe.update.lock`) is held
   for a whole update, downloads included, and serializes clones sharing an install.
   `install.ps1` takes it too, for its whole swap: it waits ten seconds, then says so and changes
-  nothing (#1198). One from before that takes no lock, so a reinstall during the daemon's download
-  is left alone. An install the daemon can't write (a package manager's) is logged once and left
-  alone.
+  nothing (#1198). An `install.ps1` from before that takes no lock, so a reinstall during the
+  daemon's download is left alone. An install the daemon can't write (a package manager's) is
+  logged once and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another
   clone's page handed out is still good (#348), since the next daemon's page wouldn't know it. It
