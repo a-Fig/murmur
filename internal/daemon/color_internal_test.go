@@ -115,6 +115,29 @@ func TestADaemonAwayAWeekSettlesItsColourAgain(t *testing.T) {
 	}
 }
 
+// A device back from invisible has its colour settled only by a sync begun after it came back: one
+// under way may have listed the remote before a teammate picked the colour (#1084).
+func TestBackFromInvisibleTheColourWaitsForAFreshSync(t *testing.T) {
+	t.Parallel()
+	d := colorRig(t, time.Hour)
+	d.peers = map[string]*peer{}
+	d.hidden.Store(true)
+	d.setMode("online", "invisible", time.Time{})
+	began := time.Now().Add(-time.Second) // a sync under way as the device comes back
+	d.setMode("invisible", "online", time.Now())
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastPollOK = time.Now()
+	d.settleColorLocked(began)
+	if d.colorSettled {
+		t.Error("a sync begun before the device came back settled its colour")
+	}
+	d.settleColorLocked(time.Now().Add(time.Second))
+	if color, _ := d.shownColorLocked(); color != 3 {
+		t.Errorf("after a sync begun since, the presence carries colour %d, want its pick, 3", color)
+	}
+}
+
 // A daemon away a week whose colour nobody took has its pick back after the next sync.
 func TestADaemonAwayAWeekKeepsAColourNobodyTook(t *testing.T) {
 	t.Parallel()

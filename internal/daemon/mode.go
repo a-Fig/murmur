@@ -78,6 +78,13 @@ func (d *Daemon) setMode(was, now string, away time.Time) {
 		d.colorSettled = false
 		d.mu.Unlock()
 	}
+	if was == web.ModeInvisible && now != web.ModeInvisible {
+		// Its colour is settled by a sync begun from here on: one already under way may have listed
+		// the remote before a teammate picked the colour (settleColorLocked).
+		d.mu.Lock()
+		d.colorAwayAt = time.Now()
+		d.mu.Unlock()
+	}
 	if was == web.ModeInvisible {
 		d.kickNames() // what waited, without its own backoff to sit out
 		d.kickMarks()

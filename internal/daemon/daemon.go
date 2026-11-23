@@ -713,7 +713,8 @@ type Daemon struct {
 	// colorSettled says a full sync has checked this device's picked colour against its peers',
 	// so its presence may carry it (color.go). presenceLanded is when the last presence of this
 	// device's to reach the remote was built, and colorAwayAt when it was last found to have been
-	// away so long that its colour must be settled again (colorAwayLocked).
+	// away so long that its colour must be settled again (colorAwayLocked), or came back from
+	// invisible (setMode).
 	colorSettled   bool
 	presenceLanded time.Time
 	colorAwayAt    time.Time
