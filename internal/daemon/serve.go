@@ -1425,6 +1425,9 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		v.Files = d.fileViewsLocked(e)
+		if d.refuses(&d.agentRecv, e) {
+			v.FilesKept = len(e.Files)
+		}
 		if d.isTellNotice(e) {
 			v.FromName, v.FromOwner, v.Receipt = brand.Product, "", true // from Murmur itself (#276)
 		}

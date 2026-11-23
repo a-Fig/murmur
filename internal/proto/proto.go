@@ -574,6 +574,10 @@ type MessageView struct {
 	Receipt bool `json:"receipt,omitempty"`
 	// Files is the files the message carries (#570).
 	Files []FileView `json:"files,omitempty"`
+	// FilesKept is how many files the message carries that the session doesn't get, because its
+	// user turned Receive files off for agents (#860). Files is empty then, and the names stay
+	// unsaid: the switch keeps the files from the session, names and all.
+	FilesKept int `json:"filesKept,omitempty"`
 }
 
 // FileView is one file a message carries, as the session it is for is told of it: Path is where

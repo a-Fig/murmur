@@ -84,6 +84,12 @@ func TestReceiveFilesOffTakesTheTextAlone(t *testing.T) {
 	if m.Subject != "the failing page" || len(m.Files) != 0 {
 		t.Errorf("bob got %q with files %+v; want the text alone", m.Subject, m.Files)
 	}
+	// It says a file was kept from it, and why, so bob can say so (#860).
+	turn := view.Turn(m)
+	if want := "It came with a file, which you don't have: your user turned off receiving files.\n"; m.FilesKept != 1 || !strings.Contains(turn, want) {
+		t.Errorf("bob's turn, FilesKept %d, lacks %q:\n%s", m.FilesKept, want, turn)
+	}
+	t.Logf("bob's turn:\n%s", turn)
 	if got, _ := filepath.Glob(filepath.Join(b.gitDir, brand.StateDir, "files", "*")); len(got) != 0 {
 		t.Errorf("b fetched files it doesn't take: %v", got)
 	}

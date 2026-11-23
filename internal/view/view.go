@@ -310,9 +310,16 @@ func Inbox(r proto.Response) string {
 }
 
 // files renders the files a message carries (#570), a line each: where it is saved on this machine,
-// which is what the agent opens, and its size. One that isn't here says so.
+// which is what the agent opens, and its size. One that isn't here says so. Files its user's Receive
+// files switch keeps from the session are one line with their count (#860), so the agent can tell
+// its user, or ask the sender for another way.
 func files(m proto.MessageView) string {
-	if len(m.Files) == 0 {
+	switch {
+	case m.FilesKept == 1:
+		return "It came with a file, which you don't have: your user turned off receiving files.\n"
+	case m.FilesKept > 1:
+		return fmt.Sprintf("It came with %d files, which you don't have: your user turned off receiving files.\n", m.FilesKept)
+	case len(m.Files) == 0:
 		return ""
 	}
 	var b strings.Builder
@@ -445,7 +452,7 @@ func Turn(m proto.MessageView) string {
 	if body != "" {
 		fmt.Fprintf(&b, "\n%s\n", quotedBody(body))
 	}
-	if len(m.Files) > 0 {
+	if len(m.Files) > 0 || m.FilesKept > 0 {
 		b.WriteString("\n" + files(m))
 	}
 	if bus.IsGroup(m.To) && m.GroupKnown {
@@ -644,7 +651,7 @@ func notices(msgs []proto.MessageView, unread int, inbox string) string {
 			who += " (" + m.FromAgent + ")"
 		}
 		with := ""
-		switch n := len(m.Files); {
+		switch n := len(m.Files) + m.FilesKept; {
 		case n == 1:
 			with = ", with a file"
 		case n > 1:
