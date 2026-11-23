@@ -190,22 +190,28 @@ func (e Env) installKiroHook(h agentHome) (did []string, err error) {
 	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
 }
 
-// createOwnedFile creates a new file at path using O_CREATE|O_EXCL so it never follows or
-// replaces a file or symlink created concurrently at path.
+// createOwnedFile writes the complete file to a sibling temp file and publishes it at path with
+// os.Link so an interrupted write never leaves a partial hooks/murmur.json behind and publishing
+// fails atomically if a file or symlink already exists at path.
 func createOwnedFile(path string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".murmurtmp*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
 	_, err = f.Write(data)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	if err != nil {
-		os.Remove(path)
+	if err == nil {
+		err = os.Chmod(tmp, perm)
+	}
+	if err == nil {
+		err = os.Link(tmp, path)
 	}
 	return err
 }
