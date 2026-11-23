@@ -19,7 +19,7 @@ import (
 // $CODEX_HOME/skills, OpenCode ~/.config/opencode/skills. Muse Code and Grok document none.
 func skillsDir(a agent, h agentHome) string {
 	switch a.driver {
-	case "claudeAgent", "codex", "opencode", "pi":
+	case "claudeAgent", "codex", "opencode", "pi", "kiro":
 		if h.Dir != "" {
 			return filepath.Join(h.Dir, "skills")
 		}

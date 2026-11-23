@@ -261,12 +261,12 @@ func ownRecord(agent, native, t3Thread string, recs []here.Session) (here.Sessio
 	if threadMatches == 1 {
 		return threadRec, true
 	}
-	// Each agy client process runs one conversation and starts its own MCP server. Only
-	// accept the sole record for that PID with neither ID known and an Antigravity label.
+	// Each agy or kiro-cli V3 client process runs one conversation and starts its own MCP server.
+	// Only accept the sole record for that PID with neither ID known and a matching agent label.
 	// The label rules out a parent Claude Code or Codex whose record was the nearest one.
-	if agent == Antigravity && len(recs) == 1 {
+	if (agent == Antigravity || agent == Kiro) && len(recs) == 1 {
 		r := recs[0]
-		if r.Native == "" && r.T3Thread == "" && (r.Agent == Antigravity || strings.HasPrefix(r.Agent, Antigravity+" ")) {
+		if r.Native == "" && r.T3Thread == "" && (r.Agent == agent || strings.HasPrefix(r.Agent, agent+" ")) {
 			return r, true
 		}
 	}
@@ -290,12 +290,13 @@ const (
 	OpenCode    = "opencode"
 	Antigravity = "antigravity"
 	Muse        = "muse"
+	Kiro        = "kiro"
 )
 
 // KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode,
-// antigravity or muse.
+// antigravity, muse or kiro.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse || agent == Kiro
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
@@ -340,6 +341,9 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 			in.ToolName, in.ToolInput = in.ToolNameCamel, in.ToolInputCamel
 		}
 	}
+	if agent == Kiro && in.SessionID == "" {
+		in.SessionID = os.Getenv("KIRO_SESSION_ID")
+	}
 	if agent == Antigravity && !fromAntigravity(&in, event) {
 		return
 	}
@@ -368,8 +372,9 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
-	// does. Antigravity receives its notices in PreInvocation.
-	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool)
+	// does. Antigravity receives its notices in PreInvocation. Kiro 3.4.0 discards PostToolUse
+	// command stdout/stderr, so skip fetching notices on PostToolUse there to avoid losing messages.
+	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool) && (agent != Kiro || in.Event != postTool)
 	if !wantNotices && op == "" {
 		return
 	}
@@ -435,8 +440,11 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	inbox := view.InboxTool
-	if agent == Antigravity {
+	switch agent {
+	case Antigravity:
 		inbox = view.AntigravityInboxTool
+	case Kiro:
+		inbox = view.KiroInboxTool
 	}
 	text := view.HookWithInbox(resp.Read, resp.Messages, resp.Unread, inbox)
 	if text == "" {
@@ -444,6 +452,14 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	if agent == Antigravity {
 		json.NewEncoder(stdout).Encode(antigravitySteps(text))
+		return
+	}
+	if agent == Kiro {
+		// Kiro 3.4.0 injects raw stdout on UserPromptSubmit / SessionStart directly into the turn.
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		io.WriteString(stdout, text)
 		return
 	}
 	var out output

@@ -200,6 +200,8 @@ func TestSendHookOffNoteUsesTurnRoute(t *testing.T) {
 	}{
 		{"antigravity in T3", proto.Route{T3CLI: "t3"}, false},
 		{"antigravity in T3", proto.Route{T3CLI: "t3", T3Thread: "thread-1"}, true},
+		{"kiro in T3", proto.Route{T3CLI: "t3"}, false},
+		{"kiro in T3", proto.Route{T3CLI: "t3", T3Thread: "thread-1"}, true},
 		{"claude-code", proto.Route{MsgSocket: "socket"}, false},
 		{"claude-code", proto.Route{MsgSocket: "socket", MsgToken: "token"}, true},
 		{"claude-code in T3", proto.Route{T3CLI: "t3", MsgSocket: "socket", MsgToken: "token"}, false},

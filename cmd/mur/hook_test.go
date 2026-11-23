@@ -23,6 +23,8 @@ func TestHookAgent(t *testing.T) {
 		{[]string{"opencode"}, "opencode", "", true},
 		{[]string{"--agent", "opencode"}, "opencode", "", true},
 		{[]string{"muse"}, "muse", "", true}, // Muse Code has a hook since #461
+		{[]string{"kiro"}, "kiro", "", true}, // Kiro has a hook since #910
+		{[]string{"--agent", "kiro"}, "kiro", "", true},
 		{[]string{"--agent", "pi", "codex"}, "", "", false},
 		{[]string{"codex", "grok"}, "", "", false},
 		{[]string{"--agent"}, "", "", false},

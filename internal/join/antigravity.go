@@ -253,9 +253,19 @@ func antigravityHook(exe string) *jsonedit.Object {
 // on Windows and sh -c elsewhere, with the event, which its payload doesn't name, as an argument.
 func antigravityHookCommand(exe, event string) string {
 	args := " hook --event " + event + " antigravity"
+	if event == "PreToolUse" {
+		return cmdHookCommand(exe, args, `echo {"decision":"allow"}`, `printf '{"decision":"allow"}\n'`)
+	}
+	return cmdHookCommand(exe, args, "", "")
+}
+
+// cmdHookCommand formats a hook command line for agents that run command hooks via cmd.exe on
+// Windows (such as Antigravity and Node's child_process.spawn(..., {shell: true}) in Kiro) and
+// sh elsewhere. When winFallback / unixFallback are non-empty, they are appended after ` || `.
+func cmdHookCommand(exe, args, winFallback, unixFallback string) string {
 	if runtime.GOOS == "windows" {
-		if event == "PreToolUse" {
-			args += ` || echo {"decision":"allow"}`
+		if winFallback != "" {
+			args += " || " + winFallback
 		}
 		if bareSafe(exe) {
 			return exe + args
@@ -263,15 +273,15 @@ func antigravityHookCommand(exe, event string) string {
 		if short := shortPath(exe); bareSafe(short) {
 			return short + args
 		}
-		if event == "PreToolUse" {
+		if winFallback != "" {
 			// cmd /c strips the first and last quote when the command starts with one and contains
 			// more quotes (like the JSON fallback), so wrap the whole command in an outer pair.
 			return `""` + exe + `"` + args + `"`
 		}
 		return `"` + exe + `"` + args
 	}
-	if event == "PreToolUse" {
-		args += ` || printf '{"decision":"allow"}\n'`
+	if unixFallback != "" {
+		args += " || " + unixFallback
 	}
 	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'" + args
 }

@@ -90,10 +90,11 @@ func TestRegisterAndUnregisterKiro(t *testing.T) {
 
 	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
 	permPath := filepath.Join(sb.KiroHome, "settings", "permissions.json")
+	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
 	write(t, mcpPath, "{\n  // user server\n  \"mcpServers\": {\n    \"other\": {\"command\": \"o\", \"args\": []}\n  }\n}\n")
 
 	did, fresh, err := sb.registerKiroAt(h)
-	if err != nil || !fresh || len(did) != 2 {
+	if err != nil || !fresh || len(did) != 3 {
 		t.Fatalf("first register: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	mcpText := read(t, mcpPath)
@@ -101,6 +102,16 @@ func TestRegisterAndUnregisterKiro(t *testing.T) {
 		if !strings.Contains(mcpText, want) {
 			t.Errorf("mcp.json lacks %s:\n%s", want, mcpText)
 		}
+	}
+	hookText := read(t, hookPath)
+	var hookDoc kiroHookDoc
+	if err := json.Unmarshal([]byte(hookText), &hookDoc); err != nil {
+		t.Fatalf("hooks/murmur.json isn't valid JSON (%v):\n%s", err, hookText)
+	}
+	if hookDoc.Version != "v1" || len(hookDoc.Hooks) != 2 ||
+		hookDoc.Hooks[0].Trigger != "UserPromptSubmit" || hookDoc.Hooks[1].Trigger != "Stop" ||
+		hookDoc.Hooks[0].Action.Type != "command" || !strings.HasSuffix(hookDoc.Hooks[0].Action.Command, " hook kiro") {
+		t.Errorf("unexpected hooks/murmur.json: %+v", hookDoc)
 	}
 	permText := read(t, permPath)
 	if !json.Valid([]byte(permText)) {
@@ -114,26 +125,29 @@ func TestRegisterAndUnregisterKiro(t *testing.T) {
 
 	// Idempotent rerun changes nothing.
 	did, fresh, err = sb.registerKiroAt(h)
-	if err != nil || fresh || len(did) != 0 || read(t, mcpPath) != mcpText || read(t, permPath) != permText {
+	if err != nil || fresh || len(did) != 0 || read(t, mcpPath) != mcpText || read(t, permPath) != permText || read(t, hookPath) != hookText {
 		t.Errorf("second register: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 
-	// Repointing a moved binary updates command without marking fresh.
+	// Repointing a moved binary updates both mcp.json and hooks/murmur.json without marking fresh.
 	sb.Exe = filepath.Join(sb.root, "bin2", exeName("mur"))
 	did, fresh, err = sb.registerKiroAt(h)
-	if err != nil || fresh || len(did) != 1 || !strings.Contains(read(t, mcpPath), "bin2") {
-		t.Errorf("repoint register: did=%q fresh=%v err=%v\n%s", did, fresh, err, read(t, mcpPath))
+	if err != nil || fresh || len(did) != 2 || !strings.Contains(read(t, mcpPath), "bin2") || !strings.Contains(read(t, hookPath), "bin2") {
+		t.Errorf("repoint register: did=%q fresh=%v err=%v\n%s\n%s", did, fresh, err, read(t, mcpPath), read(t, hookPath))
 	}
 
-	// Manual removal describes both files and preserves merged allow rules.
-	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, mcpPath) || !strings.Contains(rem, `remove "murmur/*" from the MCP allow rule in `+permPath) {
+	// Manual removal describes mcp.json, hooks/murmur.json, and permissions.json.
+	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, mcpPath) || !strings.Contains(rem, "delete "+hookPath) || !strings.Contains(rem, `remove "murmur/*" from the MCP allow rule in `+permPath) {
 		t.Errorf("kiroRemoval = %q", rem)
 	}
 
-	// Uninstall removes both while keeping the user's other server and valid "rules": [].
+	// Uninstall removes all three while keeping the user's other server and valid "rules": [].
 	did, _, err = sb.unregisterKiroAt(context.Background(), []agentHome{h})
-	if err != nil || len(did) != 2 {
+	if err != nil || len(did) != 3 {
 		t.Fatalf("unregister: did=%q err=%v", did, err)
+	}
+	if exists(hookPath) {
+		t.Errorf("hooks/murmur.json still exists after uninstall")
 	}
 	if got := read(t, mcpPath); strings.Contains(got, `"`+brand.MCPServer+`"`) || !strings.Contains(got, `"other"`) || !strings.Contains(got, "// user server") {
 		t.Errorf("mcp.json after uninstall:\n%s", got)
@@ -178,7 +192,7 @@ func TestRegisterKiroWithPermissionsYAML(t *testing.T) {
 	write(t, yamlPath, "rules:\n  # murmur/* is denied\n  - capability: mcp\n    match:\n      - murmur/*\n    effect: deny\n")
 	did, fresh, err := sb.registerKiroAt(h)
 	var note approvalNote
-	if !errors.As(err, &note) || !fresh || len(did) != 1 {
+	if !errors.As(err, &note) || !fresh || len(did) != 2 {
 		t.Fatalf("with yaml: did=%q fresh=%v err=%v", did, fresh, err)
 	}
 	if exists(jsonPath) {
@@ -192,7 +206,7 @@ func TestRegisterKiroWithPermissionsYAML(t *testing.T) {
 		t.Errorf("kiroRemoval named shadowed permissions.json: %q", rem)
 	}
 	did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
-	if err != nil || len(did) != 1 || read(t, jsonPath) != shadow {
+	if err != nil || len(did) != 2 || read(t, jsonPath) != shadow {
 		t.Fatalf("unregister with yaml: did=%q err=%v perm=%s", did, err, read(t, jsonPath))
 	}
 	if got := strings.Join(notes, "\n"); !strings.Contains(got, jsonPath) || !strings.Contains(got, yamlPath) {
@@ -243,7 +257,7 @@ func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 			}
 			gotPerm := read(t, permPath)
 			if tc.wantAllow {
-				if len(did) != 2 || !strings.Contains(gotPerm, `"effect": "allow"`) {
+				if len(did) != 3 || !strings.Contains(gotPerm, `"effect": "allow"`) {
 					t.Fatalf("expected allow rule added: did=%q\n%s", did, gotPerm)
 				}
 				// Rerun does not duplicate the allow rule.
@@ -251,7 +265,7 @@ func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 					t.Errorf("rerun modified permissions.json: did=%q\n%s", did2, read(t, permPath))
 				}
 			} else {
-				if len(did) != 1 || gotPerm != tc.body+"\n" {
+				if len(did) != 2 || gotPerm != tc.body+"\n" {
 					t.Errorf("expected permissions.json unchanged: did=%q\n%s", did, gotPerm)
 				}
 			}
@@ -277,7 +291,7 @@ func TestRegisterKiroHandlesMalformedPermissionsJSON(t *testing.T) {
 
 			did, fresh, err := sb.registerKiroAt(h)
 			var note approvalNote
-			if !errors.As(err, &note) || !fresh || len(did) != 1 {
+			if !errors.As(err, &note) || !fresh || len(did) != 2 {
 				t.Fatalf("did=%q fresh=%v err=%v", did, fresh, err)
 			}
 			if read(t, permPath) != tc.body {
@@ -427,5 +441,82 @@ func TestResolveLinksPreservesDriveRootedPath(t *testing.T) {
 	p := sep + "profiles" + sep + "codex" + sep + "config.toml"
 	if got := resolveLinks(p); !strings.HasPrefix(got, sep) {
 		t.Errorf("resolveLinks(%q) = %q, lost leading separator", p, got)
+	}
+}
+
+// A foreign hooks/murmur.json is left alone on both join (as a real Problem, not downgraded to an
+// approvalNote even when permissions.yaml is present) and uninstall (with a note), and is omitted
+// from manual removal instructions.
+func TestKiroForeignHookFileLeftAlone(t *testing.T) {
+	sb := newSandbox(t, false)
+	withAgents(sb)
+	mustMakeDir(t, sb.KiroHome)
+	h := sb.defaultHome(agents[agentIndex("kiro")])
+	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
+	yamlPath := filepath.Join(sb.KiroHome, "settings", "permissions.yaml")
+	foreign := `{"version": "v1", "hooks": [{"name": "mine", "trigger": "Stop", "action": {"type": "command", "command": "echo hi"}}]}` + "\n"
+	write(t, hookPath, foreign)
+	write(t, yamlPath, "rules: []\n")
+
+	_, _, err := sb.registerKiroAt(h)
+	var note approvalNote
+	if err == nil || errors.As(err, &note) || !strings.Contains(err.Error(), hookPath) {
+		t.Fatalf("expected non-approvalNote error for foreign hook, got %v", err)
+	}
+	if read(t, hookPath) != foreign {
+		t.Error("overwrote foreign hooks/murmur.json")
+	}
+	if rem := kiroRemoval(sb.Env, h); strings.Contains(rem, hookPath) {
+		t.Errorf("kiroRemoval named foreign hook file: %q", rem)
+	}
+	_, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
+	if err != nil || read(t, hookPath) != foreign || !strings.Contains(strings.Join(notes, "\n"), hookPath) {
+		t.Errorf("unregister with foreign hook: err=%v notes=%q body=%q", err, notes, read(t, hookPath))
+	}
+}
+
+// A nested link at hooks/ or skills/ inside a scratch Kiro home pointing outside temp is caught
+// by keepToScratch (#995).
+func TestKiroScratchNestedHookAndSkillLinks(t *testing.T) {
+	for _, kind := range []string{"hooks-junction", "skills-junction", "hooks-file", "skills-file"} {
+		t.Run(kind, func(t *testing.T) {
+			sb := scratchSandbox(t)
+			real := filepath.Join(sb.root, "real")
+			mustMakeDir(t, real)
+			mustMakeDir(t, sb.KiroHome)
+			switch kind {
+			case "hooks-junction":
+				if _, err := exec.LookPath("cmd"); err != nil {
+					t.Skip("junctions are Windows'")
+				}
+				target := filepath.Join(real, "hooks")
+				mustMakeDir(t, target)
+				if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(sb.KiroHome, "hooks"), target).CombinedOutput(); err != nil {
+					t.Fatalf("mklink /J: %v\n%s", err, out)
+				}
+			case "skills-junction":
+				if _, err := exec.LookPath("cmd"); err != nil {
+					t.Skip("junctions are Windows'")
+				}
+				target := filepath.Join(real, "skills")
+				mustMakeDir(t, target)
+				if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(sb.KiroHome, "skills"), target).CombinedOutput(); err != nil {
+					t.Fatalf("mklink /J: %v\n%s", err, out)
+				}
+			case "hooks-file":
+				mustMakeDir(t, filepath.Join(sb.KiroHome, "hooks"))
+				linkOrSkip(t, filepath.Join(real, kiroHookFile), filepath.Join(sb.KiroHome, "hooks", kiroHookFile))
+			case "skills-file":
+				mustMakeDir(t, filepath.Join(sb.KiroHome, "skills", "murmur"))
+				linkOrSkip(t, filepath.Join(real, "SKILL.md"), filepath.Join(sb.KiroHome, "skills", "murmur", "SKILL.md"))
+			}
+			byAgent, notes := sb.homes()
+			if got := dirsOf(byAgent[agentIndex("kiro")]); len(got) != 1 || got[0] != "" {
+				t.Errorf("%s: kiro homes = %q, want filtered out", kind, got)
+			}
+			if note := strings.Join(notes, "\n"); !strings.Contains(note, "Kiro in "+sb.KiroHome) {
+				t.Errorf("%s: note lacks Kiro entry:\n%s", kind, note)
+			}
+		})
 	}
 }

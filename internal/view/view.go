@@ -600,6 +600,7 @@ func Hook(whole, msgs []proto.MessageView, unread int) string {
 const (
 	InboxTool            = "mcp__" + brand.MCPServer + "__inbox"
 	AntigravityInboxTool = `call_mcp_tool with ServerName "` + brand.MCPServer + `" and ToolName "inbox"`
+	KiroInboxTool        = "mcp_" + brand.MCPServer + "_inbox"
 )
 
 // HookWithInbox renders the hook's text with the calling agent's spelling of the inbox tool.

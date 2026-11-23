@@ -126,8 +126,10 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	for _, gone := range []string{
 		piExtensionPath(sb.PiDir),
 		filepath.Join(sb.GrokHome, "hooks", grokHookFile),
+		filepath.Join(sb.KiroHome, "hooks", kiroHookFile),
 		filepath.Join(sb.ClaudeDir, "skills", skills.All()[0].Name),
 		filepath.Join(sb.CodexHome, "skills", skills.All()[0].Name),
+		filepath.Join(sb.KiroHome, "skills", skills.All()[0].Name),
 	} {
 		if exists(gone) {
 			t.Errorf("%s is still there", gone)
