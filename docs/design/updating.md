@@ -26,7 +26,9 @@ information in the request; a network failure waits quietly for the next hour. A
   is in place: `install.ps1` takes no lock, and that is how its swap looks from outside until it
   is done. A
   lock beside the executable serializes clones sharing an install, and a manual reinstall during
-  the download is left alone. An install the daemon can't write (a package manager's) is logged
+  the download is left alone. The setting and the channel are read again just before the swap
+  (#1197): updates turned off during the download install nothing (unless a person asked for that
+  install, *Update now* below), and a prerelease isn't installed after a move to stable. An install the daemon can't write (a package manager's) is logged
   once and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another
@@ -114,6 +116,14 @@ information in the request; a network failure waits quietly for the next hour. A
   machine never stays below the latest stable one (Opus review: a hold on every release would have
   kept back a stable fix). The key is taken off once a newer version is in place, or found running.
   It isn't offered while an update waits for its restart, which would start that update instead.
+  - *Back to a release from before the hold* (#1197, Sol's pre-release review of v0.5.4). v0.5.3
+    and older don't know `murmur.updateSkip`, and take a prerelease whenever `murmur.channel` is
+    `prerelease`: gone back to, v0.5.3 installed the same nightly again, which went back again. So
+    on the nightly channel Back also makes the global `murmur.channel` `prerelease-held`, which
+    those releases read as stable and later ones as nightly; the updater writes `prerelease` again
+    once the hold is off. While such a release runs, the machine waits for the next stable release,
+    not the next nightly. A repo's own `murmur.channel prerelease` isn't changed, so in that repo
+    the old release still takes the nightly.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.

@@ -74,6 +74,9 @@ type link struct {
 	// writes the line; nil writes it to standard error.
 	routeWarned bool
 	logf        func(format string, args ...any)
+	// keptWarned says an older daemon kept rather than replaced (client.Kept) has been logged,
+	// which is done once (#1197).
+	keptWarned bool
 	// ctx is the context the link runs in, and goBG starts its goroutines as work Serve waits for:
 	// a route update can reach the daemon, and so start one. Both are nil in a link a test makes;
 	// goroutines are then plain ones.
@@ -412,6 +415,15 @@ func (l *link) run(ctx context.Context) {
 			continue
 		}
 		backoff, inUse = time.Second, 0
+		if why := l.c.Kept(); why != "" {
+			l.mu.Lock()
+			first := !l.keptWarned
+			l.keptWarned = true
+			l.mu.Unlock()
+			if first {
+				l.warn("%s, so it is kept rather than replaced; starting this session again runs the installed %s", why, brand.Command)
+			}
+		}
 		l.mu.Lock()
 		l.noteReadLocked(h.Route, resp)
 		// A retry belongs to one registration (#1000). One used before this hello was told to a

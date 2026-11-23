@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
@@ -84,8 +85,10 @@ func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 // which takes the newest published release, prerelease or stable. Any other value is the stable
 // channel. It is a key of its own because daemons from before it read murmur.update as a bool, and
 // they ignore this one, so they keep taking stable releases until one of those brings the channel.
+//
+// While a return to stable holds, the value is heldNightly, which v0.5.3 and older read as stable.
 func Prerelease(ctx context.Context, gitDir string) bool {
-	return strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "").value, "prerelease")
+	return nightly(last(configValues(ctx, gitDir, channelKey), "").value)
 }
 
 // checkGap is the least time between a check and one a changed setting asks for (Options.Check),
@@ -195,9 +198,11 @@ func Run(ctx context.Context, o Options, restart func()) {
 				return
 			}
 			// Another release than the one asked for isn't a failed update: with updates on, the
-			// next check installs it, and soon.
+			// next check installs it, and soon. Nor is updates turned off during the download.
 			other := errors.Is(err, errNotAsked)
-			s := Status{Latest: latest, Off: off, Failed: err != nil && !other, Asked: now}
+			turnedOff := errors.Is(err, errTurnedOff)
+			off = off || turnedOff
+			s := Status{Latest: latest, Off: off, Failed: err != nil && !other && !turnedOff, Asked: now}
 			if err != nil && now {
 				s.Error = err.Error()
 			}
@@ -273,8 +278,12 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// errNotAsked says the release a person asked to install isn't the one the check found.
+// errNotAsked says the release a person asked to install isn't the one the check found, or the one
+// a check picked isn't the one to install by the time it has downloaded.
 var errNotAsked = errors.New("another release is out")
+
+// errTurnedOff says updates were turned off while the release downloaded, so it wasn't installed.
+var errTurnedOff = errors.New("updates were turned off")
 
 // attempt installs the latest release if it is newer than this one. latest is that release's
 // version, once the check has read it.
@@ -360,6 +369,16 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if !back && same(skipped(ctx, o.GitDir, o.Version), o.Version) {
 		return false, latest, nil
 	}
+	// Or turned updates off, or moved to stable releases, which the check read before the download
+	// (#1197). Off doesn't stop an install a person asked for (want), which is for updates off; a
+	// prerelease after a move to stable isn't installed even then, as the person asked for it
+	// on the channel they have since left.
+	if want == "" && Off(ctx, o.Getenv, o.GitDir) {
+		return false, latest, errTurnedOff
+	}
+	if !back && prerelease(rel.Tag) && !Prerelease(ctx, o.GitDir) {
+		return false, latest, fmt.Errorf("%w: updates moved to stable releases while %s downloaded", errNotAsked, latest)
+	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
@@ -398,11 +417,21 @@ func look(ctx context.Context, o Options) (latest string, err error) {
 // global key Back writes; a repo's own is left alone.
 func clearSkip(ctx context.Context, o Options, version string) {
 	v := last(configValues(ctx, o.GitDir, skipKey), "global").value
-	if v == "" || validVersion(v) && !newer(version, v) {
+	if v != "" && validVersion(v) && !newer(version, v) {
 		return
 	}
-	if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
-		o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+	if v != "" {
+		if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
+			o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+			return
+		}
+	}
+	// With the hold off, the channel Back held reads "prerelease" again, as `mur updates nightly`
+	// writes it (#1197).
+	if strings.EqualFold(last(configValues(ctx, o.GitDir, channelKey), "global").value, heldNightly) {
+		if _, err := (gitx.Git{Dir: o.GitDir}).Run(ctx, "", "config", "--global", "--replace-all", channelKey, "prerelease"); err != nil {
+			o.Log.Printf("self-update: couldn't set %s back to prerelease: %v", channelKey, err)
+		}
 	}
 }
 
