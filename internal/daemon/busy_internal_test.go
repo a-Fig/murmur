@@ -17,10 +17,15 @@ import (
 // one device's send through the other's hook to t3, TestATurnSeenBeforeItsHandoffReturnsHoldsNothing
 // with a t3 slow to answer, and the tests of what T3's database ends and holds.
 
-// look is the handoff loop for bob, once: pushLoop's look at bob's inbox, and, if it finds a
-// message to hand over, the job its pusher takes, noted as sendTurn notes one just before it runs
-// t3. nil if it finds none. The job is on its way, as while `t3 thread send` runs, until
-// finishPush.
+// look is the handoff loop's decision for bob, once: the look pushLoop takes of bob's inbox
+// (candidateLocked), and, if that finds a message to hand over, the job its pusher takes
+// (nextPushLocked), noted as sendTurn notes one before it runs t3 (sendingLocked). nil if it finds
+// none. The job is on its way, as while `t3 thread send` runs, until finishPush.
+//
+// It is not the loop: pushLoop first ends turns that lapsed and waits out a save that failed or an
+// update, and sendTurn asks again, before it sends, whether the user still consents, the device is
+// visible, and the session may be woken and isn't at work. Nothing in these tests comes between
+// the look and the send for those to answer differently.
 func look(d *Daemon) *pushJob {
 	wake := d.wakeSnapshot()
 	d.mu.Lock()
@@ -36,8 +41,8 @@ func look(d *Daemon) *pushJob {
 	return j
 }
 
-// turn is look, with what it found handed over as the pusher hands it, but for running t3: the
-// turn's text, "" if there was nothing to hand over.
+// turn is look, with what it found finished as the pusher finishes a handoff that worked
+// (finishPush), t3 not having been run: the turn's text, "" if there was nothing to hand over.
 func turn(d *Daemon) string {
 	j := look(d)
 	if j == nil {
@@ -102,41 +107,54 @@ func TestAnIdleSessionIsWokenAndAnUntoldMessageWaitsForTheTurnEnd(t *testing.T) 
 
 // Hooks that aren't the handed turn's prompt, come while the send runs, keep the hold (#677): a
 // tool call and a Stop may be of an earlier turn that T3's database had ended, and say nothing of
-// the turn the send makes, which T3 may have queued behind them. The next message waits.
+// the turn the send makes, which T3 may have queued behind them. The next message waits. A prompt
+// that is the handed turn's, and its Stop, are that turn, come and gone: the next message goes.
 //
-// Kept from the two-device test it replaces: a prompt that isn't the handed turn's, and its Stop,
-// both while the handoff is on its way, leave the session held once the handoff returns. A fake is
-// enough, as the hold is made from when the handoff returned and what the hook said meanwhile; the
-// job is taken and finished as the pusher does, with the hooks between, where the old test had a
-// t3 that slept 3 s and then watched 6 s for no second call. The same hooks with the handed turn's
-// prompt lift the hold, which TestATurnSeenBeforeItsHandoffReturnsHoldsNothing keeps with a real
-// slow t3. The two devices took 59 s on a Windows runner (main's run 45190341796).
+// Kept from the two-device test it replaces: a tool call and a Stop while the handoff is on its
+// way leave the session held once the handoff returns. Added here: so does a prompt that isn't the
+// handed turn's, and the handed turn's own prompt doesn't, which with a real t3 slow to answer is
+// TestATurnSeenBeforeItsHandoffReturnsHoldsNothing's. A fake is enough, as the hold is made from
+// when the handoff returned and what the hook said meanwhile; the job is taken and finished as
+// the pusher does, with the hooks between, where the old test had a t3 that slept 3 s and then
+// watched 6 s for no second call. The two devices took 59 s on a Windows runner (main's run
+// 45190341796).
 func TestHooksThatArentTheHandedTurnKeepTheHold(t *testing.T) {
 	t.Parallel()
-	d := stopRig(t)
-	finishedATurn(t, d)
-	arrive(d, "first")
-	j := look(d)
-	if j == nil || j.via != viaT3 {
-		t.Fatalf("the first: %+v, want a turn by T3", j)
-	}
-	finishedATurn(t, d) // a tool call and a Stop, of no turn the send made
-	// The send returns after that Stop, by a clock that can tell the two apart: Windows's moves in
-	// steps of up to 16 ms, and the hold is for a handoff later than the last turn's end.
-	time.Sleep(20 * time.Millisecond)
-	d.finishPush(j, nil)
-	arrive(d, "second")
-	if j := look(d); j != nil {
-		t.Fatalf("the second wasn't held behind the first's turn: %q", j.text)
-	}
-
-	// The handed turn's own prompt and end, and the second goes: the hold was the first's turn.
-	if r := d.handle(context.Background(), proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true, Prompt: j.text}); r.Error != "" {
-		t.Fatalf("notices: %s", r.Error)
-	}
-	turnEnded(t, d)
-	if got := turn(d); !strings.Contains(got, "second") {
-		t.Errorf("after the first's turn ended, the turn: %q", got)
+	for _, tc := range []struct {
+		name   string
+		prompt func(handed string) string // what the hook's prompt says while the send runs
+		held   bool
+	}{
+		{"a tool call and a Stop", func(string) string { return "" }, true},
+		{"another prompt and its Stop", func(string) string { return "fix the build first" }, true},
+		{"the handed turn's prompt and its Stop", func(handed string) string { return handed }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := stopRig(t)
+			finishedATurn(t, d)
+			arrive(d, "first")
+			j := look(d)
+			if j == nil || j.via != viaT3 {
+				t.Fatalf("the first: %+v, want a turn by T3", j)
+			}
+			r := d.handle(context.Background(), proto.Request{Op: proto.OpNotices, ClaudeSession: "claude-bob", Whole: true, Prompt: tc.prompt(j.text)})
+			if r.Error != "" {
+				t.Fatalf("notices: %s", r.Error)
+			}
+			turnEnded(t, d)
+			// The send returns after that Stop, by a clock that can tell the two apart: Windows's
+			// moves in steps of up to 16 ms, and the hold is for a handoff later than the last
+			// turn's end.
+			time.Sleep(20 * time.Millisecond)
+			d.finishPush(j, nil)
+			arrive(d, "second")
+			switch next := look(d); {
+			case tc.held && next != nil:
+				t.Fatalf("the second wasn't held behind the first's turn: %q", next.text)
+			case !tc.held && (next == nil || !strings.Contains(next.text, "second")):
+				t.Fatalf("the second was held after the first's turn had come and gone: %+v", next)
+			}
+		})
 	}
 }
 
