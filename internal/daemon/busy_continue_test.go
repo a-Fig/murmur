@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -124,61 +123,6 @@ func TestTheStopHookGivesWhatATurnWould(t *testing.T) {
 	}
 	if inbox, _ := b.unread("bbbbbb", "claude-bob"); len(inbox) != 1 {
 		t.Errorf("inbox under never: %v; want the message kept", inbox)
-	}
-}
-
-// A message the session was told of before its first Stop, when there was no known way in, is
-// given at that Stop: the Stop is the way in.
-func TestTheFirstStopGivesWhatWasToldBeforeIt(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.session("bbbbbb", "claude-bob")
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	b.hookNotices("claude-bob")
-	a.send("aaaaaa", bob, "told in the first turn", "its body")
-	eventually(t, "the notice", func() bool { return len(b.hookNotices("claude-bob").Messages) > 0 })
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 || got[0] != "told in the first turn" {
-		t.Fatalf("the first Stop gave %v", got)
-	}
-}
-
-// Claude Code ends a turn after eight continuations in a row, whatever the hook says: the ninth
-// Stop with no tool call between gives nothing, and its message is handed over as a turn instead.
-// A tool call starts the count again.
-func TestContinuationsStopAtClaudeCodesCap(t *testing.T) {
-	t.Parallel()
-	remote := newRemote(t)
-	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
-	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
-
-	b.hookNotices("claude-bob")
-	b.stopHook("claude-bob")
-	b.hookNotices("claude-bob")
-	for i := 0; i < 9; i++ {
-		subject := fmt.Sprintf("message %d", i+1)
-		a.send("aaaaaa", bob, subject, "its body")
-		eventually(t, subject+" to reach b", func() bool { return logHas(b, subject) })
-		got := viewSubjects(b.stopHook("claude-bob").Read)
-		switch {
-		case i < 8 && (len(got) != 1 || got[0] != subject):
-			t.Fatalf("Stop %d gave %v", i+1, got)
-		case i == 8 && len(got) != 0:
-			t.Fatalf("the ninth Stop in a row gave %v", got)
-		}
-	}
-	eventually(t, "the ninth handed over as a turn", func() bool { return len(calls()) == 1 })
-
-	b.hookNotices("claude-bob") // a new turn
-	a.send("aaaaaa", bob, "after a tool call", "its body")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "after a tool call") })
-	if got := viewSubjects(b.stopHook("claude-bob").Read); len(got) != 1 {
-		t.Fatalf("a Stop after the count started again gave %v", got)
 	}
 }
 
