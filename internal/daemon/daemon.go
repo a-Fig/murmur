@@ -1722,7 +1722,12 @@ func loadDevice(dir string) (string, error) {
 
 func validName(s string) bool { return bus.ValidName(s) }
 
-func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") }
+func (d *Daemon) statePath() string {
+	if d.dir == "" {
+		panic("daemon: statePath called with empty dir")
+	}
+	return filepath.Join(d.dir, "state.json")
+}
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},
