@@ -23,10 +23,12 @@ information in the request; a network failure waits quietly for the next hour. A
   (`mur.exe.old-1a2b3c4d`, on Windows only). One a process still runs, as an MCP server may for
   days, stays until the check after that process ends (#1171, 2026-11-23). One of the installer's
   that is still a second name of the binary in place stays too, and all of them while no binary
-  is in place: `install.ps1` takes no lock, and that is how its swap looks from outside until it
-  is done. A
-  lock beside the executable serializes clones sharing an install, and a manual reinstall during
-  the download is left alone. An install the daemon can't write (a package manager's) is logged
+  is in place: that is how an install stopped half-way looks from outside. The next `install.ps1`
+  puts the newest such backup back as `mur.exe` before anything else, and removes none until the
+  new `mur.exe` is in place (#1198). A lock beside the executable (`mur.exe.update.lock`)
+  serializes clones sharing an install, and `install.ps1` takes it too for its whole swap, waits
+  ten seconds for it and then says so (#1198). A manual reinstall holds no lock while it
+  downloads, so one during the daemon's download is left alone. An install the daemon can't write (a package manager's) is logged
   once and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another
