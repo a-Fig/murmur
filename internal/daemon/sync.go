@@ -237,10 +237,10 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	// The listing worked, so a ref whose fetch fails is that ref's trouble, or a passing one;
 	// the rest of the sync goes on without it, and it is fetched again next time.
 	failed, tips := d.fetch(ctx, changed, remote)
-	// Noted before a sync that ran out of time returns: the fetch has set the clone's copy by now.
-	// Whether or not the fetch failed: one that fails may have written the ref first, as when the
-	// git that sets it is stopped at its deadline, and a note that wasn't needed costs one
-	// update-ref at the next heartbeat.
+	// Noted before a sync that ran out of time returns: a fetch may have set the clone's copy by
+	// now. Every changed ref is noted, whether its fetch failed or wasn't tried at all: one that
+	// fails may have written the ref first, as when the git that sets it is stopped at its
+	// deadline, and a note that wasn't needed costs one update-ref at the next heartbeat.
 	d.mu.Lock()
 	for _, ref := range changed {
 		d.presenceFetchedLocked(ref)
