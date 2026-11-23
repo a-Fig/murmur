@@ -604,7 +604,8 @@
   .st h1 { font-size: clamp(34px, 4.3vw, 62px); text-shadow: 0 1px 2px rgba(14, 27, 69, .25), 0 4px 18px rgba(14, 27, 69, .3), 0 10px 60px rgba(14, 27, 69, .35); }
   .st .st-copy p { max-width: 600px; margin: 22px auto 0; font-size: 18px; line-height: 1.55; text-wrap: balance;
     color: color-mix(in srgb, #FFFBEA 92%, #225BFF); text-shadow: 0 1px 16px rgba(14, 27, 69, .45); }
-  /* The one line under the taglines (#1193): the relay every reader does by hand, which Git has no part in. */
+  /* The one line under the taglines (#1193): the relay every reader does by hand, which Git has no part in.
+     It outranks the phone rules for .st-copy p on purpose: on a phone too it reads as the lead, not the hint. */
   .st .st-copy p.st-lead { margin-top: 20px; font-size: clamp(19px, 1.55vw, 23px); font-weight: 500; letter-spacing: -.01em; color: #FFFBEA; }
   .st .button { margin-top: 30px; }
   .st .st-bubbles { position: relative; z-index: 2; display: flex; gap: 20px; justify-content: center; margin-top: 34px; }

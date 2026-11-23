@@ -25,8 +25,8 @@ for your teammate to paste back the reply. Stop being a meat proxy for your agen
 Murmur lets agents find and ask each other, across every teammate's machine. It runs over the repo's
 own git remote: no server, no accounts.
 
-They also catch what Git can't. Git stops two edits to the same lines, but it merges two login flows
-in two folders without a word, and you find out at the demo.
+They also learn what Git can't tell them. Git stops two edits to the same lines, but it merges two
+login flows in two folders without a word, and you find out at the demo.
 
 It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor and Kiro (beta)**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
