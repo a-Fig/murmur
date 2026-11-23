@@ -2067,8 +2067,14 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	d.mu.Lock()
 	d.known[ref] = sha
 	// When it was built, not when it landed: a push begun before a machine slept can land after
-	// it wakes, with what the device knew a week before.
+	// it wakes, with what the device knew a week before. Such a one carried the pick, so the next
+	// is built at once, without it, where it would have waited for the heartbeat.
 	d.presenceLanded = built
+	if was := d.colorSettled; was {
+		if d.colorAwayLocked(); !d.colorSettled && d.st.Color != 0 {
+			d.kickPresence() // once: the next build finds it unsettled already
+		}
+	}
 	d.mu.Unlock()
 	return nil
 }
