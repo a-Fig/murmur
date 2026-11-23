@@ -377,13 +377,24 @@ func TestHookPayloadAndIssueHardeningGuards(t *testing.T) {
 			t.Errorf("resultIssue past maxWalkNodes = %v, want nil", m)
 		}
 		// Wide map exceeding maxWalkNodes still checks top-level url without sorting all keys,
-		// and reports truncation in walk.
+		// reports truncation in walk, and suppresses deeper sibling URLs in resultIssue.
 		bigMap := make(map[string]any, maxWalkNodes+50)
 		for i := range maxWalkNodes + 50 {
 			bigMap[strconv.Itoa(i)] = "x"
 		}
 		if truncated := walk(bigMap, func(string) {}); !truncated {
 			t.Error("walk(bigMap): want truncated=true")
+		}
+		deeper := map[string]any{"nested": map[string]any{"url": "https://github.com/a-Fig/murmur/issues/99"}}
+		if m := resultIssue(map[string]any{"a": bigMap, "b": deeper}); m != nil {
+			t.Errorf("resultIssue(oversized map before deeper sibling) = %v, want nil", m)
+		}
+		if m := resultIssue(map[string]any{"a": deeper, "b": bigMap}); m != nil {
+			t.Errorf("resultIssue(deeper sibling before oversized map) = %v, want nil", m)
+		}
+		sameDepth := map[string]any{"html_url": "https://github.com/a-Fig/murmur/issues/34"}
+		if m := resultIssue(map[string]any{"a": bigMap, "b": sameDepth}); m == nil || m[3] != "34" {
+			t.Errorf("resultIssue(oversized map with same-depth sibling match) = %v, want 34", m)
 		}
 		bigMap["html_url"] = "https://github.com/a-Fig/murmur/issues/33"
 		if m := resultIssue(bigMap); m == nil || m[3] != "33" {

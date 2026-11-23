@@ -288,14 +288,19 @@ func mcpIssues(tool string, input, response json.RawMessage) []proto.Issue {
 // such. Nil if there is none, or the result is an error.
 func resultIssue(v any) []string {
 	type node struct {
-		v     any
-		depth int
+		v         any
+		bfsDepth  int
+		jsonDepth int
 	}
 	queue := []node{{v: v}}
 	enqueued := 1
+	truncatedAt := -1 // first BFS depth where a subtree was skipped due to maxWalkNodes
 	for head := 0; head < len(queue); head++ {
 		cur := queue[head]
 		queue[head] = node{}
+		if truncatedAt >= 0 && cur.bfsDepth >= truncatedAt {
+			return nil
+		}
 		switch t := cur.v.(type) {
 		case map[string]any:
 			if e, _ := t["isError"].(bool); e {
@@ -308,25 +313,42 @@ func resultIssue(v any) []string {
 					}
 				}
 			}
-			if rem := maxWalkNodes - enqueued; rem > 0 && len(t) <= rem {
-				for _, k := range sortedKeys(t) {
-					queue = append(queue, node{v: t[k], depth: cur.depth})
-					enqueued++
-				}
+			if truncatedAt >= 0 {
+				continue
+			}
+			if len(t) > maxWalkNodes-enqueued {
+				truncatedAt = cur.bfsDepth + 1
+				continue
+			}
+			for _, k := range sortedKeys(t) {
+				queue = append(queue, node{v: t[k], bfsDepth: cur.bfsDepth + 1, jsonDepth: cur.jsonDepth})
+				enqueued++
 			}
 		case []any:
-			for i := 0; i < len(t) && enqueued < maxWalkNodes; i++ {
-				queue = append(queue, node{v: t[i], depth: cur.depth})
+			if truncatedAt >= 0 {
+				continue
+			}
+			if len(t) > maxWalkNodes-enqueued {
+				truncatedAt = cur.bfsDepth + 1
+				continue
+			}
+			for _, y := range t {
+				queue = append(queue, node{v: y, bfsDepth: cur.bfsDepth + 1, jsonDepth: cur.jsonDepth})
 				enqueued++
 			}
 		case string:
-			if cur.depth < maxJSONDepth && enqueued < maxWalkNodes {
-				if s := strings.TrimSpace(t); strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
-					var y any
-					if json.Unmarshal([]byte(s), &y) == nil {
-						queue = append(queue, node{v: y, depth: cur.depth + 1})
-						enqueued++
-					}
+			if truncatedAt >= 0 || cur.jsonDepth >= maxJSONDepth {
+				continue
+			}
+			if s := strings.TrimSpace(t); strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
+				if enqueued >= maxWalkNodes {
+					truncatedAt = cur.bfsDepth + 1
+					continue
+				}
+				var y any
+				if json.Unmarshal([]byte(s), &y) == nil {
+					queue = append(queue, node{v: y, bfsDepth: cur.bfsDepth + 1, jsonDepth: cur.jsonDepth + 1})
+					enqueued++
 				}
 			}
 		}
