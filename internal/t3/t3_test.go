@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/proc"
 )
@@ -20,11 +22,52 @@ import (
 // The tests of Send run the test binary again as the `t3` command: it records what it was given,
 // then does what MURMUR_TEST_FAKE_T3_MODE says.
 const (
-	fakeEnv     = "MURMUR_TEST_FAKE_T3"
-	fakeModeEnv = "MURMUR_TEST_FAKE_T3_MODE"
+	fakeEnv                   = "MURMUR_TEST_FAKE_T3"
+	fakeModeEnv               = "MURMUR_TEST_FAKE_T3_MODE"
+	fakeGrandchildSpawningEnv = "MURMUR_TEST_FAKE_T3_GRANDCHILD_SPAWNING"
+	fakeGrandchildPIDEnv      = "MURMUR_TEST_FAKE_T3_GRANDCHILD_PID"
+	fakeGrandchildLockEnv     = "MURMUR_TEST_FAKE_T3_GRANDCHILD_LOCK"
+	fakeGrandchildReadyEnv    = "MURMUR_TEST_FAKE_T3_GRANDCHILD_READY"
+	fakeGrandchildAliveEnv    = "MURMUR_TEST_FAKE_T3_GRANDCHILD_ALIVE"
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv(fakeModeEnv) == "grandchild-sleep" {
+		lockPath := os.Getenv(fakeGrandchildLockEnv)
+		readyPath := os.Getenv(fakeGrandchildReadyEnv)
+		alivePath := os.Getenv(fakeGrandchildAliveEnv)
+		if lockPath == "" || readyPath == "" || alivePath == "" {
+			os.Exit(6)
+		}
+		// Exit immediately if the test already tore down (including if TempDir was removed).
+		if _, err := os.Stat(alivePath); err != nil {
+			os.Exit(0)
+		}
+		// Hold lockPath until the OS reaps this process so tests can prove the grandchild is still
+		// alive when Send returns and wait reliably for exit during cleanup.
+		held, err := proc.Lock(lockPath)
+		if err != nil {
+			os.Exit(7)
+		}
+		tmp := readyPath + ".tmp"
+		if err := os.WriteFile(tmp, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			runtime.KeepAlive(held)
+			os.Exit(8)
+		}
+		if err := os.Rename(tmp, readyPath); err != nil {
+			runtime.KeepAlive(held)
+			os.Exit(9)
+		}
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(alivePath); err != nil {
+				break
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		runtime.KeepAlive(held)
+		os.Exit(0)
+	}
 	if path := os.Getenv(fakeEnv); path != "" {
 		in, _ := io.ReadAll(os.Stdin)
 		line, _ := json.Marshal(call{Args: os.Args[1:], Stdin: string(in), Home: os.Getenv("T3CODE_HOME")})
@@ -34,14 +77,66 @@ func TestMain(m *testing.M) {
 		}
 		f.Write(append(line, '\n'))
 		f.Close()
+		spawnGrandchild := func() {
+			exe, err := os.Executable()
+			if err != nil {
+				os.Exit(4)
+			}
+			if sp := os.Getenv(fakeGrandchildSpawningEnv); sp != "" {
+				if err := os.WriteFile(sp, []byte("1"), 0o600); err != nil {
+					os.Exit(4)
+				}
+			}
+			c := exec.Command(exe)
+			c.Env = withEnv(os.Environ(), fakeModeEnv, "grandchild-sleep")
+			c.Stdout, c.Stderr = os.Stdout, os.Stderr
+			if err := c.Start(); err != nil {
+				os.Exit(4)
+			}
+			if pidPath := os.Getenv(fakeGrandchildPIDEnv); pidPath != "" {
+				tmp := pidPath + ".tmp"
+				if err := os.WriteFile(tmp, []byte(strconv.Itoa(c.Process.Pid)), 0o600); err != nil {
+					os.Exit(4)
+				}
+				if err := os.Rename(tmp, pidPath); err != nil {
+					os.Exit(4)
+				}
+			}
+			readyPath := os.Getenv(fakeGrandchildReadyEnv)
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(readyPath); err == nil {
+					return
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			os.Exit(5)
+		}
 		switch os.Getenv(fakeModeEnv) {
 		case "fail":
 			os.Stderr.WriteString("\n  thread not found: nope  \nsecond line\n")
 			os.Exit(1)
 		case "failsilently":
 			os.Exit(1)
+		case "noisy-fail":
+			os.Stderr.WriteString("\n  first real error  \n")
+			chunk := strings.Repeat("x", 64<<10)
+			for range 32 { // 2 MiB
+				_, _ = os.Stdout.WriteString(chunk)
+			}
+			os.Exit(1)
 		case "hang":
 			time.Sleep(time.Minute)
+		case "grandchild-hang":
+			spawnGrandchild()
+			time.Sleep(time.Minute)
+		case "grandchild-exit0":
+			spawnGrandchild()
+			os.Exit(0)
+		case "grandchild-fail":
+			os.Stderr.WriteString("fatal: thread locked\n")
+			spawnGrandchild()
+			os.Exit(1)
 		}
 		os.Exit(0)
 	}
@@ -123,12 +218,253 @@ func TestSendGivesTheTextOnStandardInput(t *testing.T) {
 func TestSendPassesTheDataDirectory(t *testing.T) {
 	exe, calls := fake(t, "")
 	home := filepath.Join(t.TempDir(), "t3 home")
+	t.Setenv("T3CODE_HOME", filepath.Join(t.TempDir(), "inherited-old-home"))
 	if err := Send(context.Background(), exe, home, "thread-1", "x"); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); len(c) != 1 || c[0].Home != home {
 		t.Errorf("calls: %+v, want T3CODE_HOME=%s", c, home)
 	}
+}
+
+func TestWithEnvDeduplicatesCaseInsensitively(t *testing.T) {
+	got := withEnv([]string{"PATH=/bin", "t3code_home=/old1", "T3CODE_HOME=/old2", "T3CODE_HOME_EXTRA=keep"}, "T3CODE_HOME", "/new")
+	want := "PATH=/bin|T3CODE_HOME_EXTRA=keep|T3CODE_HOME=/new"
+	if strings.Join(got, "|") != want {
+		t.Errorf("withEnv = %q, want %q", strings.Join(got, "|"), want)
+	}
+}
+
+func TestSendRejectsFlagLikeThreadID(t *testing.T) {
+	exe, calls := fake(t, "")
+	for _, bad := range []string{"-h", "--help", "-"} {
+		err := Send(context.Background(), exe, "", bad, "x")
+		if err == nil || !errors.Is(err, ErrNotStarted) {
+			t.Errorf("Send(%q) = %v, want error wrapping ErrNotStarted", bad, err)
+		}
+	}
+	if got := calls(); len(got) != 0 {
+		t.Errorf("flag-like thread IDs ran %d commands, want 0", len(got))
+	}
+}
+
+func TestSendCapsVerboseOutputAndKeepsFirstLine(t *testing.T) {
+	exe, _ := fake(t, "noisy-fail")
+	err := Send(context.Background(), exe, "", "thread-1", "SECRET payload")
+	if err == nil || errors.Is(err, ErrNotStarted) {
+		t.Fatalf("noisy-fail = %v, want non-ErrNotStarted failure", err)
+	}
+	if !strings.Contains(err.Error(), "first real error") || strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("error = %v, want first real error without secret", err)
+	}
+	cb := &cappedBuffer{max: 10}
+	if n, err := cb.Write([]byte("1234567890abcdef")); err != nil || n != 16 {
+		t.Errorf("cappedBuffer.Write = (%d, %v), want (16, nil)", n, err)
+	}
+	if cb.String() != "1234567890" {
+		t.Errorf("cappedBuffer.String = %q, want 1234567890", cb.String())
+	}
+	// Splitting a multi-byte UTF-8 rune at max must not leave invalid UTF-8 in firstLine.
+	utfCB := &cappedBuffer{max: 10}
+	_, _ = utfCB.Write([]byte("     err")) // 8 bytes
+	_, _ = utfCB.Write([]byte("🙂tail"))    // 4-byte rune split after 2 bytes
+	got := utfCB.String()
+	if !utf8.ValidString(got) || got != "     err" {
+		t.Errorf("cappedBuffer UTF-8 split = %q (valid=%v), want %q", got, utf8.ValidString(got), "     err")
+	}
+	if line := firstLine(got); !utf8.ValidString(line) || line != "err" {
+		t.Errorf("firstLine after UTF-8 cap split = %q (valid=%v), want %q", line, utf8.ValidString(line), "err")
+	}
+}
+
+// fakeGrandchild configures fake for a grandchild-spawning mode and guarantees the grandchild
+// has exited before the test finishes (otherwise Windows cannot unlink the test binary on exit).
+func fakeGrandchild(t *testing.T, mode string) (exe, readyPath, lockPath string) {
+	t.Helper()
+	exe, _ = fake(t, mode)
+	dir := t.TempDir()
+	spawningPath := filepath.Join(dir, "grandchild.spawning")
+	pidPath := filepath.Join(dir, "grandchild.pid")
+	lockPath = filepath.Join(dir, "grandchild.lock")
+	readyPath = filepath.Join(dir, "grandchild.ready")
+	alivePath := filepath.Join(dir, "grandchild.alive")
+	if err := os.WriteFile(alivePath, []byte("alive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeGrandchildSpawningEnv, spawningPath)
+	t.Setenv(fakeGrandchildPIDEnv, pidPath)
+	t.Setenv(fakeGrandchildLockEnv, lockPath)
+	t.Setenv(fakeGrandchildReadyEnv, readyPath)
+	t.Setenv(fakeGrandchildAliveEnv, alivePath)
+	t.Cleanup(func() {
+		readPID := func() int {
+			for _, p := range []string{readyPath, pidPath} {
+				if b, err := os.ReadFile(p); err == nil {
+					if v, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && v > 1 {
+						return v
+					}
+				}
+			}
+			return 0
+		}
+		pid := readPID()
+		// If spawnGrandchild was killed between c.Start() and pidPath publication, let the
+		// starting grandchild publish readyPath while alivePath still exists so cleanup can
+		// confirm it exited before TempDir disappears.
+		if pid == 0 {
+			if _, err := os.Stat(spawningPath); err == nil {
+				publishDeadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(publishDeadline) {
+					if pid = readPID(); pid > 1 {
+						break
+					}
+					time.Sleep(15 * time.Millisecond)
+				}
+			}
+		}
+		// Removing alivePath signals the grandchild to exit immediately (and remains absent even
+		// after TempDir cleanup so a delayed grandchild can never sleep past teardown).
+		_ = os.Remove(alivePath)
+		if pid > 1 {
+			want := filepath.Clean(exe)
+			isSelf := func(got string) bool {
+				return strings.EqualFold(filepath.Clean(strings.TrimSuffix(got, " (deleted)")), want)
+			}
+			endDeadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(endDeadline) {
+				if err := proc.End(pid, isSelf); err != nil {
+					break
+				}
+				time.Sleep(15 * time.Millisecond)
+			}
+		}
+		// Give the lock probe its own budget to confirm the grandchild has exited and released its
+		// lock (covers pidfd-less Linux sandboxes and race-detector exit delays).
+		lockDeadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(lockDeadline) {
+			held, err := proc.Lock(lockPath)
+			if err == nil {
+				_ = held.Close()
+				return
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		t.Errorf("grandchild did not release lock %s before cleanup timed out", lockPath)
+	})
+	return exe, readyPath, lockPath
+}
+
+// assertGrandchildHoldingPipe verifies the grandchild actually started and is still alive holding
+// its inherited pipes open after Send returned (proving WaitDelay broke the wait).
+func assertGrandchildHoldingPipe(t *testing.T, readyPath, lockPath string) {
+	t.Helper()
+	if _, err := os.Stat(readyPath); err != nil {
+		t.Fatalf("grandchild never became ready (%s): %v", readyPath, err)
+	}
+	held, err := proc.Lock(lockPath)
+	if err == nil {
+		_ = held.Close()
+		t.Fatalf("grandchild lock %s was already released when Send returned; WaitDelay was not exercised", lockPath)
+	}
+	if !errors.Is(err, proc.ErrLocked) {
+		t.Fatalf("probing grandchild lock %s: %v", lockPath, err)
+	}
+}
+
+// WaitDelay prevents a grandchild holding inherited stdout/stderr open from blocking Send past
+// cancellation, SendTimeout, or exit — while preserving non-ErrNotStarted reporting on timeouts
+// so the daemon never retries a possibly-delivered message (#1138).
+func TestSendWaitDelayWithGrandchildHoldingPipes(t *testing.T) {
+	defer func(wd, st time.Duration) { WaitDelay, sendTimeout = wd, st }(WaitDelay, sendTimeout)
+	WaitDelay = 150 * time.Millisecond
+	measuredStartup := 500 * time.Millisecond
+
+	t.Run("parent cancel after grandchild ready keeps Canceled and non-ErrNotStarted", func(t *testing.T) {
+		exe, readyPath, lockPath := fakeGrandchild(t, "grandchild-hang")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		start := time.Now()
+		done := make(chan error, 1)
+		go func() { done <- Send(ctx, exe, "", "thread-1", "x") }()
+
+		waitDeadline := time.Now().Add(5 * time.Second)
+		ready := false
+		for time.Now().Before(waitDeadline) {
+			if _, err := os.Stat(readyPath); err == nil {
+				ready = true
+				measuredStartup = time.Since(start)
+				break
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("Send returned before grandchild became ready: %v", err)
+			default:
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !ready {
+			cancel()
+			err := <-done
+			t.Fatalf("grandchild did not become ready in time (Send returned %v)", err)
+		}
+		cancelAt := time.Now()
+		cancel()
+		err := <-done
+		if !errors.Is(err, context.Canceled) || errors.Is(err, ErrNotStarted) {
+			t.Fatalf("error = %v, want context.Canceled without ErrNotStarted", err)
+		}
+		assertGrandchildHoldingPipe(t, readyPath, lockPath)
+		if took := time.Since(cancelAt); took > 5*time.Second {
+			t.Errorf("blocked %s waiting on grandchild pipe", took)
+		}
+	})
+
+	t.Run("SendTimeout with grandchild keeps timeout message and non-ErrNotStarted", func(t *testing.T) {
+		// Scale the timeout to the startup time observed on this runner so slow CI hosts do not
+		// kill the child before the grandchild publishes readiness, while staying well under the
+		// grandchild's 20s sleep cap.
+		budget := max(500*time.Millisecond, measuredStartup*4)
+		if budget > 5*time.Second {
+			budget = 5 * time.Second
+		}
+		sendTimeout = budget
+		defer func() { sendTimeout = SendTimeout }()
+		exe, readyPath, lockPath := fakeGrandchild(t, "grandchild-hang")
+		start := time.Now()
+		err := Send(context.Background(), exe, "", "thread-1", "x")
+		if err == nil || errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), "took over") {
+			t.Fatalf("error = %v, want non-ErrNotStarted timeout error", err)
+		}
+		assertGrandchildHoldingPipe(t, readyPath, lockPath)
+		if took := time.Since(start); took > budget+5*time.Second {
+			t.Errorf("blocked %s waiting on grandchild pipe", took)
+		}
+	})
+
+	t.Run("exit 0 with grandchild holding pipe succeeds promptly", func(t *testing.T) {
+		exe, readyPath, lockPath := fakeGrandchild(t, "grandchild-exit0")
+		start := time.Now()
+		if err := Send(context.Background(), exe, "", "thread-1", "x"); err != nil {
+			t.Fatalf("exit 0 with grandchild pipe: %v", err)
+		}
+		assertGrandchildHoldingPipe(t, readyPath, lockPath)
+		if took := time.Since(start); took > 5*time.Second {
+			t.Errorf("blocked %s waiting on grandchild pipe", took)
+		}
+	})
+
+	t.Run("exit 1 with grandchild holding pipe keeps error line and non-ErrNotStarted", func(t *testing.T) {
+		exe, readyPath, lockPath := fakeGrandchild(t, "grandchild-fail")
+		start := time.Now()
+		err := Send(context.Background(), exe, "", "thread-1", "x")
+		if err == nil || errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), "fatal: thread locked") {
+			t.Fatalf("error = %v, want non-ErrNotStarted fatal: thread locked", err)
+		}
+		assertGrandchildHoldingPipe(t, readyPath, lockPath)
+		if took := time.Since(start); took > 5*time.Second {
+			t.Errorf("blocked %s waiting on grandchild pipe", took)
+		}
+	})
 }
 
 // A failure says what T3 printed, its first line only, and never the message.
