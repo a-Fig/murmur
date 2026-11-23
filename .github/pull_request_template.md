@@ -1,3 +1,8 @@
+<!-- Title: type(scope): what changes, said as the behavior a user or agent sees.
+  type: fix, feat, docs, test, refactor, perf or ci.
+  scope: the part it touches, such as daemon, web, mcp, cli, join, update, site or docs. Join several with a comma: feat(web,daemon).
+  Examples: "fix(daemon): a send no longer waits past its own time limit", "feat(cli): mur help lists the MCP tools". -->
+
 Closes #
 
 ## Why
