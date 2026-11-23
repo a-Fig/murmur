@@ -18,12 +18,12 @@ import (
 //
 // The sender in these tests is a session on the same device as bob (#1010). What they check comes
 // after the message is in bob's inbox: the attempt's mark, the retry, the fallback to the notice,
-// each with a real daemon, a real `t3` stand-in and the real state file. A message from the same
-// device goes onto the device's ref and is queued from there by the same sync that queues another
-// device's, so one device is enough, and a second only added its git and the wait for the two to
-// see each other: about two thirds of the git these tests started. The test of a restart keeps
-// its second device: a daemon that starts again reads what other devices sent while it was down,
-// and that this doesn't hand the message over again is part of what it checks.
+// and what a restart finds, each with a real daemon, a real `t3` stand-in and the real state file.
+// None of that looks at which device sent the message. A message from the same device is queued
+// by the code that queues another device's (advanceMesh, queueLocked), called once its push lands
+// where another device's waits for a fetch; and a daemon that starts again reads its own ref back
+// as it reads any other device's. A second device only added its git and the wait for the two to
+// see each other: about two thirds of the git these tests started.
 // TestMessageForAT3SessionIsHandedOverAsATurn keeps a message from another device going in as a
 // turn.
 
@@ -82,12 +82,11 @@ func TestAHandoffThatMayHaveLandedIsNotRepeatedAfterARestart(t *testing.T) {
 			exe, calls := useFakeT3(t)
 			setFakeT3(t, exe, tc.setting, tc.val)
 			var out syncBuf
-			a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-			alice, _ := a.session("aaaaaa", "")
+			b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+			b.session("aaaaaa", "") // the sender, on the same device
 			bob, _ := b.sessionRoute("bbbbbb", "claude-bob", route(exe))
-			eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-			a.send("aaaaaa", bob, "might have landed", "body")
+			b.send("aaaaaa", bob, "might have landed", "body")
 			eventually(t, "the attempt", func() bool { return len(calls()) == 1 })
 			if tc.failed {
 				eventually(t, "the failure", func() bool { return strings.Contains(out.String(), "as a turn through T3 failed") })
