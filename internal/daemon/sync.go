@@ -111,7 +111,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			d.kickNames()
 		}
 		failing = err != nil
-		rate := d.pollEvery(calm)
+		rate, next := d.pollNext(wait, calm, failing)
 		if rate.quiet != quiet {
 			if rate.quiet {
 				d.log.Printf("no session is live and no page open; looking at the remote every %s, not every %s", rate.every, d.opt.Poll)
@@ -121,7 +121,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 			quiet = rate.quiet
 		}
 		calm = rate.calm
-		if next := nextPoll(wait, rate.every, failing); next != wait {
+		if next != wait {
 			wait = next
 			t.Reset(wait)
 		}
@@ -133,17 +133,29 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 				return
 			case <-t.C:
 			case <-d.pollWake:
-				// A session, a page or a conversation's move came. If the loop was running at a
-				// slower rate than that calls for, look now and from here on at the faster; if
-				// not, it is as quick as it gets. A failure's backoff is not ended by it either,
-				// unless the loop was quiet: a session that comes then is the reason to look now.
-				if d.pollEvery(calm).every >= rate.every || failing && !quiet {
+				if !d.wakeEndsWait(calm, rate, failing) {
 					continue sleep
 				}
 			}
 			break
 		}
 	}
+}
+
+// pollNext is what pollLoop decides after each poll: the rate the daemon's state calls for, given
+// calm, and the wait until the next poll, given wait, the one before, and whether this poll failed.
+func (d *Daemon) pollNext(wait, calm time.Duration, failed bool) (pollRate, time.Duration) {
+	rate := d.pollEvery(calm)
+	return rate, nextPoll(wait, rate.every, failed)
+}
+
+// wakeEndsWait says whether a wake (kickPoll) ends pollLoop's wait, chosen at rate. A session, a
+// page or a conversation's move came. If the loop was running at a slower rate than that calls
+// for, it looks now and from here on at the faster; if not, it is as quick as it gets. A failure's
+// backoff is not ended by it either, unless the loop was quiet: a session that comes then is the
+// reason to look now.
+func (d *Daemon) wakeEndsWait(calm time.Duration, rate pollRate, failing bool) bool {
+	return !(d.pollEvery(calm).every >= rate.every || failing && !rate.quiet)
 }
 
 // pollOnce lists the remote's bus refs and fetches and processes the ones that changed. The
@@ -293,13 +305,8 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	for _, ref := range logs {
 		d.advanceMesh(ctx, ref, remote[ref], listed[ref])
 	}
-	// A sync cut short is no fresh look: staleness is judged up to the last successful sync, and
-	// this one didn't read every presence it listed.
-	if err := ctx.Err(); err != nil {
+	if err := cutShort(ctx, firstErr, firstEnd.Sub(readFrom)); err != nil {
 		return err
-	}
-	if firstErr != nil {
-		return fmt.Errorf("reading the names registry and presence took over %s: %w", firstEnd.Sub(readFrom).Round(100*time.Millisecond), firstErr)
 	}
 
 	d.mu.Lock()
@@ -324,6 +331,20 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	if switched || d.mode == modeNormal && wall.Sub(d.st.LastSync) > time.Minute {
 		d.st.LastSync = wall
 		d.saveLocked()
+	}
+	return nil
+}
+
+// cutShort says why a sync whose reads are done is no fresh look, or nil if it is one. Staleness
+// is judged up to the last successful sync, and one cut short didn't read every presence it
+// listed: its time ran out (ctx), or the registry and presence ran past their own limit, firstFor,
+// and firstErr says so.
+func cutShort(ctx context.Context, firstErr error, firstFor time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if firstErr != nil {
+		return fmt.Errorf("reading the names registry and presence took over %s: %w", firstFor.Round(100*time.Millisecond), firstErr)
 	}
 	return nil
 }
