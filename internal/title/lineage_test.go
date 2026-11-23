@@ -167,6 +167,9 @@ func TestCodexLineageSchemaDriftLocksAndOddSources(t *testing.T) {
 			want   Lineage
 		}{
 			{"subagent false", `{"subagent":false}`, Lineage{}},
+			{"subagent true", `{"subagent":true}`, Lineage{}},
+			{"subagent number", `{"subagent":0}`, Lineage{}},
+			{"subagent array", `{"subagent":[]}`, Lineage{}},
 			{"subagent empty string", `{"subagent":""}`, Lineage{}},
 			{"subagent spaced null", `{"subagent":  null }`, Lineage{}},
 			{"subagent compact variant", `{"subagent":"compact"}`, Lineage{Subagent: true}},

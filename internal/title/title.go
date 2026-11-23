@@ -191,15 +191,16 @@ func codexIndex(path, id string) (string, error) {
 }
 
 // readLineBounded reads one '\n'-terminated line (or the final line before io.EOF) from r,
-// capping buffered memory at limit bytes. Lines longer than limit are drained through '\n' or
-// io.EOF and reported with tooLong=true and line=nil.
+// capping buffered memory strictly below limit bytes (matching the original len(line) < 1<<20
+// cutoff). Lines of limit bytes or longer are drained through '\n' or io.EOF and reported with
+// tooLong=true and line=nil.
 func readLineBounded(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
 	var buf []byte
 	for {
 		frag, rerr := r.ReadSlice('\n')
 		if rerr == bufio.ErrBufferFull {
 			if !tooLong {
-				if len(buf)+len(frag) > limit {
+				if len(buf)+len(frag) >= limit {
 					tooLong, buf = true, nil
 				} else {
 					buf = append(buf, frag...)
@@ -211,12 +212,12 @@ func readLineBounded(r *bufio.Reader, limit int) (line []byte, tooLong bool, err
 			return nil, true, rerr
 		}
 		if len(buf) == 0 {
-			if len(frag) > limit {
+			if len(frag) >= limit {
 				return nil, true, rerr
 			}
 			return frag, false, rerr
 		}
-		if len(buf)+len(frag) > limit {
+		if len(buf)+len(frag) >= limit {
 			return nil, true, rerr
 		}
 		return append(buf, frag...), false, rerr

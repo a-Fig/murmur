@@ -56,9 +56,9 @@ func CodexLineage(ctx context.Context, dir, id string) (Lineage, error) {
 }
 
 // subagentSource reads threads.source: whether it is a subagent's, and the thread that spawned
-// it. A subagent's is {"subagent": ...}, where the value is a word ("review") or an object
-// ({"thread_spawn": {"parent_thread_id": ...}}, {"other": "guardian"}); anything else, a plain
-// word, null, false, or empty string included, is not treated as a subagent.
+// it. A subagent's is {"subagent": ...}, where the value is a non-empty word ("review") or an
+// object ({"thread_spawn": {"parent_thread_id": ...}}, {"other": "guardian"}); anything else
+// (a plain word, null, bool, number, array, or empty string) is not treated as a subagent.
 func subagentSource(source string) (subagent bool, parent string) {
 	var s struct {
 		Subagent json.RawMessage `json:"subagent"`
@@ -67,14 +67,25 @@ func subagentSource(source string) (subagent bool, parent string) {
 		return false, ""
 	}
 	raw := bytes.TrimSpace(s.Subagent)
-	if len(raw) == 0 || string(raw) == "null" || string(raw) == "false" || string(raw) == `""` {
+	if len(raw) == 0 {
 		return false, ""
 	}
-	var how struct {
-		Spawn struct {
-			Parent string `json:"parent_thread_id"`
-		} `json:"thread_spawn"`
+	switch raw[0] {
+	case '"':
+		var kind string
+		if json.Unmarshal(raw, &kind) != nil || kind == "" {
+			return false, ""
+		}
+		return true, ""
+	case '{':
+		var how struct {
+			Spawn struct {
+				Parent string `json:"parent_thread_id"`
+			} `json:"thread_spawn"`
+		}
+		_ = json.Unmarshal(raw, &how)
+		return true, how.Spawn.Parent
+	default:
+		return false, ""
 	}
-	_ = json.Unmarshal(raw, &how) // a word, which is no object, names no parent
-	return true, how.Spawn.Parent
 }

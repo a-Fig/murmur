@@ -298,6 +298,22 @@ func TestCodexIndexBoundedLineReading(t *testing.T) {
 			t.Errorf("got %q, %v; want Long valid", got, err)
 		}
 	})
+	t.Run("exact 1 MiB boundary preserves exclusive cutoff", func(t *testing.T) {
+		makeLine := func(total int, title string) string {
+			prefix := `{"id":"t1","thread_name":"` + title + `","pad":"`
+			suffix := "\"}\n"
+			return prefix + strings.Repeat("p", total-len(prefix)-len(suffix)) + suffix
+		}
+		p := filepath.Join(t.TempDir(), "session_index.jsonl")
+		// maxIndexLine-1 bytes (including '\n') is accepted; exactly maxIndexLine bytes is skipped.
+		content := makeLine(maxIndexLine-1, "Under cap") + makeLine(maxIndexLine, "At cap")
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := codexIndex(p, "t1"); err != nil || got != "Under cap" {
+			t.Errorf("got %q, %v; want Under cap", got, err)
+		}
+	})
 	t.Run("directory returns error", func(t *testing.T) {
 		if _, err := codexIndex(t.TempDir(), "t1"); err == nil {
 			t.Error("directory session_index.jsonl gave no error")
