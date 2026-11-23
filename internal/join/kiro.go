@@ -132,15 +132,19 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+mcpPath+")")
 	}
 	allowed, permPath, err := allowKiroTools(h.Dir)
+	if allowed {
+		if err != nil {
+			did = append(did, h.Label+": allowed "+brand.Product+"'s other tools ("+permPath+")")
+		} else {
+			did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+permPath+")")
+		}
+	}
 	if err != nil {
 		var note approvalNote
 		if errors.As(err, &note) {
 			return did, fresh, note
 		}
 		return did, fresh, approvalNote(fmt.Sprintf("couldn't add %q to %s (%v), so %s's tools will ask before each call.", kiroAllowPattern, permPath, err, brand.Product))
-	}
-	if allowed {
-		did = append(did, h.Label+": allowed "+brand.Product+"'s tools, so they don't ask each time ("+permPath+")")
 	}
 	return did, fresh, nil
 }
@@ -173,18 +177,27 @@ func allowKiroTools(dir string) (changed bool, path string, err error) {
 		return false, jsonPath, err
 	}
 	var rules []any
+	var blockNote error
 	if v, ok := doc.Get("rules"); ok {
 		if rules, ok = v.([]any); !ok {
 			return false, jsonPath, errors.New(`"rules" isn't a list`)
 		}
 		// In Kiro's Cedar policy engine, deny and ask (compiled as forbid) take precedence over allow.
-		if blocker := kiroRulesBlockMurmur(rules); blocker != "" {
-			return false, jsonPath, approvalNote(fmt.Sprintf(
-				"%s already has a %q rule covering %s's MCP tools, which takes precedence over allow in Kiro; %s didn't add an allow rule, so %s's tools may still be denied or ask before each call.",
-				jsonPath, blocker, brand.Product, brand.Command, brand.Product))
+		// If every Murmur tool is already blocked, skip adding a dead allow rule; if only some tools
+		// are blocked (e.g. murmur/send), still add the allow rule for the unaffected tools while
+		// reporting the overriding rule via an approvalNote.
+		if blocker, blocked := kiroRulesBlockMurmur(rules); blocker != "" {
+			if len(blocked) == len(kiroMurmurTools) {
+				return false, jsonPath, approvalNote(fmt.Sprintf(
+					"%s already has a %q rule covering %s's MCP tools, which takes precedence over allow in Kiro; %s didn't add an allow rule, so %s's tools may still be denied or ask before each call.",
+					jsonPath, blocker, brand.Product, brand.Command, brand.Product))
+			}
+			blockNote = approvalNote(fmt.Sprintf(
+				"%s already has a %q rule covering %s, which takes precedence over allow in Kiro, so those tools may still be denied or ask before each call.",
+				jsonPath, blocker, strings.Join(blocked, ", ")))
 		}
 		if kiroRulesAllowMurmur(rules) {
-			return false, jsonPath, nil
+			return false, jsonPath, blockNote
 		}
 	}
 	rule := jsonedit.New()
@@ -196,13 +209,16 @@ func allowKiroTools(dir string) (changed bool, path string, err error) {
 	if err != nil {
 		return false, jsonPath, err
 	}
-	return true, jsonPath, writeJSONConfig(jsonPath, string(b), 0o644)
+	if err := writeJSONConfig(jsonPath, string(b), 0o644); err != nil {
+		return false, jsonPath, err
+	}
+	return true, jsonPath, blockNote
 }
 
 // kiroRulesBlockMurmur reports the strongest overriding effect ("deny", else "ask") in rules that
-// matches any of Murmur's MCP tools, or "" if none does.
-func kiroRulesBlockMurmur(rules []any) string {
-	blocker := ""
+// matches any of Murmur's MCP tools, along with the matched tool resource paths.
+func kiroRulesBlockMurmur(rules []any) (blocker string, blocked []string) {
+	seen := map[string]bool{}
 	for _, r := range rules {
 		o, ok := r.(*jsonedit.Object)
 		if !ok {
@@ -216,22 +232,25 @@ func kiroRulesBlockMurmur(rules []any) string {
 		if effVal != "deny" && effVal != "ask" {
 			continue
 		}
-		matched := false
 		for _, name := range kiroMurmurTools {
-			if kiroRuleMatchesTool(o, brand.MCPServer+"/"+name) {
-				matched = true
-				break
+			tool := brand.MCPServer + "/" + name
+			if kiroRuleMatchesTool(o, tool) {
+				if effVal == "deny" {
+					blocker = "deny"
+				} else if blocker == "" {
+					blocker = "ask"
+				}
+				seen[tool] = true
 			}
 		}
-		if !matched {
-			continue
-		}
-		if effVal == "deny" {
-			return "deny"
-		}
-		blocker = "ask"
 	}
-	return blocker
+	for _, name := range kiroMurmurTools {
+		tool := brand.MCPServer + "/" + name
+		if seen[tool] {
+			blocked = append(blocked, tool)
+		}
+	}
+	return blocker, blocked
 }
 
 // kiroRuleMatchesTool reports whether Kiro policy rule o matches resource path tool, following

@@ -200,20 +200,23 @@ func TestRegisterKiroWithPermissionsYAML(t *testing.T) {
 	}
 }
 
-// In Kiro's Cedar policy engine, deny and ask take precedence over allow. Join reports an
-// approvalNote instead of claiming tools won't prompt when a matching deny/ask rule exists.
+// In Kiro's Cedar policy engine, deny and ask take precedence over allow. Join skips adding a dead
+// allow rule when all Murmur tools are blocked; when only some tools are blocked (e.g. murmur/send),
+// join still adds the allow rule for the unaffected tools and reports the overriding rule via an
+// approvalNote.
 func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		body     string
-		wantNote string
+		name      string
+		body      string
+		wantNote  string
+		wantAllow bool
 	}{
-		{"deny all mcp", `{"rules": [{"capability": "mcp", "match": ["*"], "effect": "deny"}]}`, `"deny"`},
-		{"ask murmur", `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "ask"}]}`, `"ask"`},
-		{"deny single tool send", `{"rules": [{"capability": "mcp", "match": ["murmur/send"], "effect": "deny"}]}`, `"deny"`},
-		{"ask single tool mute", `{"rules": [{"capability": "mcp", "match": ["murmur/mute"], "effect": "ask"}]}`, `"ask"`},
-		{"deny all unconditional", `{"rules": [{"capability": "all", "effect": "deny"}]}`, `"deny"`},
-		{"ask excluding murmur allows adding rule", `{"rules": [{"capability": "mcp", "match": ["*"], "exclude": ["murmur/*"], "effect": "ask"}]}`, ""},
+		{"deny all mcp", `{"rules": [{"capability": "mcp", "match": ["*"], "effect": "deny"}]}`, `"deny"`, false},
+		{"ask murmur", `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "ask"}]}`, `"ask"`, false},
+		{"deny single tool send", `{"rules": [{"capability": "mcp", "match": ["murmur/send"], "effect": "deny"}]}`, `"deny"`, true},
+		{"ask single tool mute", `{"rules": [{"capability": "mcp", "match": ["murmur/mute"], "effect": "ask"}]}`, `"ask"`, true},
+		{"deny all unconditional", `{"rules": [{"capability": "all", "effect": "deny"}]}`, `"deny"`, false},
+		{"ask excluding murmur allows adding rule", `{"rules": [{"capability": "mcp", "match": ["*"], "exclude": ["murmur/*"], "effect": "ask"}]}`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sb := newSandbox(t, false)
@@ -226,15 +229,24 @@ func TestRegisterKiroWithBlockingJSONRule(t *testing.T) {
 			did, _, err := sb.registerKiroAt(h)
 			if tc.wantNote != "" {
 				var note approvalNote
-				if !errors.As(err, &note) || !strings.Contains(string(note), tc.wantNote) || len(did) != 1 {
+				if !errors.As(err, &note) || !strings.Contains(string(note), tc.wantNote) {
 					t.Fatalf("did=%q err=%v, want note containing %s", did, err, tc.wantNote)
 				}
-				if read(t, permPath) != tc.body+"\n" {
-					t.Errorf("permissions.json changed despite blocking rule:\n%s", read(t, permPath))
+			} else if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			gotPerm := read(t, permPath)
+			if tc.wantAllow {
+				if len(did) != 2 || !strings.Contains(gotPerm, `"effect": "allow"`) {
+					t.Fatalf("expected allow rule added: did=%q\n%s", did, gotPerm)
+				}
+				// Rerun does not duplicate the allow rule.
+				if did2, _, _ := sb.registerKiroAt(h); len(did2) != 0 || read(t, permPath) != gotPerm {
+					t.Errorf("rerun modified permissions.json: did=%q\n%s", did2, read(t, permPath))
 				}
 			} else {
-				if err != nil || len(did) != 2 || !strings.Contains(read(t, permPath), `"effect": "allow"`) {
-					t.Fatalf("excluded ask rule: did=%q err=%v\n%s", did, err, read(t, permPath))
+				if len(did) != 1 || gotPerm != tc.body+"\n" {
+					t.Errorf("expected permissions.json unchanged: did=%q\n%s", did, gotPerm)
 				}
 			}
 		})

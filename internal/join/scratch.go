@@ -83,7 +83,11 @@ func resolveFrom(base, path string, hops int) string {
 		case "", ".":
 			continue
 		case "..":
-			cur = filepath.Dir(cur)
+			if cur == "" || cur == "." || cur == ".." || strings.HasSuffix(cur, sep+"..") {
+				cur = filepath.Join(cur, "..")
+			} else {
+				cur = filepath.Dir(cur)
+			}
 			continue
 		}
 		next := filepath.Join(cur, part)
