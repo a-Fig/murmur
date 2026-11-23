@@ -1,6 +1,8 @@
 package proc
 
 import (
+	"errors"
+	"math"
 	"os"
 	"runtime"
 	"testing"
@@ -36,8 +38,33 @@ func TestExeOfThisProcess(t *testing.T) {
 
 func TestExeOfNoProcess(t *testing.T) {
 	for _, pid := range []int{0, 1, -5} {
-		if _, err := Exe(pid); err == nil {
-			t.Errorf("Exe(%d) gave no error", pid)
+		if _, err := Exe(pid); !errors.Is(err, ErrGone) {
+			t.Errorf("Exe(%d) = %v, want ErrGone", pid, err)
+		}
+	}
+	if uint64(math.MaxInt) > math.MaxUint32 {
+		if _, err := Exe(math.MaxInt); !errors.Is(err, ErrGone) && !errors.Is(err, ErrNoExe) {
+			t.Errorf("Exe(%d) = %v, want ErrGone or ErrNoExe", math.MaxInt, err)
+		}
+	}
+}
+
+func TestParseDarwinProcArgs2(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      []byte
+		want    string
+		wantErr error
+	}{
+		{"path and args", append([]byte{1, 0, 0, 0}, []byte("/usr/local/bin/t3\x00--flag\x00")...), "/usr/local/bin/t3", nil},
+		{"path without trailing NUL", append([]byte{1, 0, 0, 0}, []byte("/bin/sh")...), "/bin/sh", nil},
+		{"empty buffer", nil, "", ErrGone},
+		{"only argc", []byte{1, 0, 0, 0}, "", ErrGone},
+		{"leading NUL empty path", []byte{1, 0, 0, 0, 0, 'a'}, "", ErrGone},
+	} {
+		got, err := parseDarwinProcArgs2(tc.in)
+		if got != tc.want || !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: parseDarwinProcArgs2 = (%q, %v), want (%q, %v)", tc.name, got, err, tc.want, tc.wantErr)
 		}
 	}
 }
