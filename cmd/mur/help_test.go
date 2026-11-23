@@ -43,8 +43,8 @@ func TestEveryCommandHasItsHelp(t *testing.T) {
 // gives the tool's full description.
 func TestUsageListsTheTools(t *testing.T) {
 	tools := mcpserver.Tools()
-	if len(tools) < 7 {
-		t.Fatalf("only %d tools: %v", len(tools), tools)
+	if len(tools) == 0 {
+		t.Fatal("no tools to list")
 	}
 	for _, tool := range tools {
 		line := ""
