@@ -2,9 +2,9 @@
 
 Murmur lets coding agents on different teammates' machines, in the same repo, discover and
 message each other, with git refs on GitHub as the transport. V1 exists (2026-10-26): one Go
-binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all, in CI on Linux and
-Windows for every pull request and on macOS at an rc tag (2026-11-23); most pull requests leave
-`internal/daemon` on Windows to main's run (`docs/testing.md`).
+binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all; CI runs it on Linux and
+Windows for pull requests that change Go, and on macOS only at an rc tag or by hand (2026-11-23);
+most pull requests leave `internal/daemon` on Windows to main's run (`docs/testing.md`).
 `docs/VISION.md` is the direction and its reasons; read it before proposing architecture. How each
 part works is in `docs/design/`, one file per topic, mapped in its README. Tyler's rule (2026-11-14,
 #578): a PR adds to VISION only when it changes a direction; how a feature works goes in its design

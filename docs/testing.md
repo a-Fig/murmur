@@ -166,14 +166,14 @@ the names of the files changed to `scripts/ci-level.sh`, which answers with one 
 The page's files are built into the binary, so they need the Go tests, but CSS and JS don't behave
 differently per OS.
 
-**A pull request runs `internal/daemon` on macOS and Windows only at `full`** (2026-11-19, #879).
-Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
+**A pull request runs `internal/daemon` on Windows only at `full`** (2026-11-19, #879; on macOS
+it ran only at `full` too, until macOS left pull requests altogether, above). Those six shards were about 85% of a full run's runner time (about 90 of 106 minutes on run
 44223188463), and two of its three macOS jobs. The account gets five macOS jobs at a time, so two
 full runs at once queued, and on 2026-11-17 three runs failed with a macOS job that waited up to
-40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and macOS and
-Windows run every other package, so what a pull request alone misses is a daemon test that fails on
-one OS only, from code that isn't marked as per-OS: an edit inside a `runtime.GOOS` branch that was
-already there, say. Counting every file that mentions `runtime.GOOS` would have caught that, but
+40 minutes for a runner and was cancelled. Linux runs the package on every Go change, and Windows
+runs every other package, so what a pull request alone misses on Windows is a daemon test that fails
+there only, from code that isn't marked as per-OS: an edit inside a `runtime.GOOS` branch that was
+already there, say. On macOS a pull request misses every failure, per-OS files included. Counting every file that mentions `runtime.GOOS` would have caught that, but
 those include the daemon's most-changed files (`sync.go`, `files.go`, `daemon_test.go`), so most
 pull requests would be `full` again. `changes` reads what a change did against the merge's first
 parent (`CI_LEVEL_BASE`), so a deleted or renamed file is read as it was. The push to `main` runs every job but macOS's, and the nightly takes only a commit whose push
@@ -187,7 +187,7 @@ shards start about 27,500 git processes each, and a `git config` takes 140 ms th
 `-parallel`. Neither showed a gain, since the same job's time varied from 37 to 64 minutes between
 runners. Run whole on one runner, the package took 37 minutes on Windows and 22 on macOS. A file no rule names is `full`, and so is a list of files GitHub couldn't give,
 so a mistake runs too much. `scripts/ci-level-test.sh` checks the rules, and `changes` runs it
-before it uses their answer. A push to `main` and a run by hand are always `full`. On a pull
+before it uses their answer. A push to `main`, an rc tag and a run by hand are always `full`. On a pull
 request that isn't `full`, the Windows daemon shards show as one skipped check with its name
 unfilled (`test-${{ matrix.os }}-daemon ...`): GitHub doesn't expand a matrix it skips. Every pull
 request shows `test-macos` and `test-macos-daemon (${{ matrix.shard }})` skipped the same way.

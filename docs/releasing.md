@@ -88,7 +88,9 @@ prerelease channel.
    and all, tag the same commit `v0.3.0`. `gh run list --workflow test.yml --branch v0.3.0-rc.1`
    finds that run. Nothing checks this for you: `release.yml` publishes any tag it is given. A
    stable tag on a commit no candidate had needs a green run by hand first:
-   `gh workflow run test.yml --ref <branch>`. The cost of testing macOS here rather than on every
+   `gh workflow run test.yml --ref <branch>`. So does an rc tagged on a commit from before
+   2026-11-23 (a hotfix off an older release, say): GitHub reads the workflow at the tagged
+   commit, and test.yml ran on no tag then. The cost of testing macOS here rather than on every
    pull request is that a break on macOS alone is found at the rc, perhaps days after it merged,
    beside everything else merged since; a macOS failure there is fixed on `main` and a new rc
    tagged.

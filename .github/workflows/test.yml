@@ -3,10 +3,10 @@
 #
 # The jobs run in parallel on GitHub's own runners, which are free for a public repo and start fresh
 # for every job. `changes` picks which of them a pull request needs from the files it touches
-# (scripts/ci-level.sh); a push to `main`, an rc tag and a run by hand run them all. A pull request
-# runs internal/daemon's tests on Linux alone unless it is `full` (Go that differs per OS, go.mod and
-# go.sum, the workflows, scripts/): on Windows they are most of CI's time, and main's run still
-# finds what they catch before the nightly takes it (#879).
+# (scripts/ci-level.sh); a push to `main` runs every job but macOS's, and an rc tag and a run by
+# hand run them all. A pull request runs internal/daemon's tests on Linux alone unless it is `full`
+# (Go that differs per OS, go.mod and go.sum, the workflows, scripts/): on Windows they are most of
+# CI's time, and main's run still finds what they catch before the nightly takes it (#879).
 #
 # macOS runs only on an rc tag (v1.2.3-rc.1) and on a run by hand, never on a pull request or a push
 # to `main`: GitHub's macOS runners are scarce, and their queue held up merges and nightlies. So a
