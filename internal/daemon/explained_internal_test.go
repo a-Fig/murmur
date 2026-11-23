@@ -130,7 +130,8 @@ func TestAPersonIsExplainedOnlyInTheirFirstTurn(t *testing.T) {
 	ada, grace := "a-0001/"+bus.PersonSession, "c-0003/"+bus.PersonSession
 	people := map[string]string{ada: "ada", grace: "grace"}
 	d.mu.Lock()
-	d.st.People["ada"], d.st.People["grace"] = ada, grace
+	d.notePersonLocked("ada", ada)
+	d.notePersonLocked("grace", grace)
 	d.mu.Unlock()
 	turn := func(d *Daemon, from, subject string) string {
 		t.Helper()

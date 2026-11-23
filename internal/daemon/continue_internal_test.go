@@ -68,9 +68,9 @@ func TestALapseLeavesATurnInT3ToTheDatabase(t *testing.T) {
 
 // stopRig is a device with one session, bob: Claude Code in T3 thread thread-bob, whose hook speaks
 // for it as claude-bob. Its hook's requests go through handle, as the hook's socket hands them on,
-// and a message is queued as a sync queues one (queueInboxLocked): no remote, no git, no t3. That is all the Stop
-// hook's decisions read, so tests of what a Stop gives, and whether a turn's end leaves the
-// session idle, need no more; TestTheStopHookKeepsTheTurnGoing and its neighbours in
+// and a message is queued as a sync queues one (queueInboxLocked): no remote, no git, no t3. That
+// is all the Stop hook's decisions read, so tests of what a Stop gives, and whether a turn's end
+// leaves the session idle, need no more; TestTheStopHookKeepsTheTurnGoing and its neighbours in
 // busy_continue_test.go keep the whole path, from one device's send to the other's hook and T3.
 func stopRig(t *testing.T) *Daemon {
 	t.Helper()
