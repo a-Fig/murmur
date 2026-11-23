@@ -374,18 +374,20 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 // A failed handoff is left to the hook's notice, which still shows the message, and the log says so
 // once per session however many messages fail. It is not tried again: the failure may have come
 // after T3 took the message (see deliver_repeat_test.go).
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1")
 	var out syncBuf
-	a, b := newDevice(t, remote), newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
-	alice, _ := a.session("aaaaaa", "")
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe, T3Thread: "thread-bob"})
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "first", "body one")
+	b.send("aaaaaa", bob, "first", "body one")
 	eventually(t, "the attempt", func() bool { return len(calls()) >= 1 })
 	var notices []string
 	eventually(t, "the notice", func() bool {
@@ -395,7 +397,7 @@ func TestFailedHandoffFallsBackToTheNotice(t *testing.T) {
 	if notices[0] != "first" {
 		t.Fatalf("notices: %q", notices)
 	}
-	a.send("aaaaaa", bob, "second", "body two")
+	b.send("aaaaaa", bob, "second", "body two")
 	eventually(t, "an attempt more", func() bool { return len(calls()) >= 2 })
 	eventually(t, "the second notice", func() bool {
 		n := b.hook("claude-bob", 0)
@@ -480,18 +482,20 @@ func TestNameFollowsTheT3Thread(t *testing.T) {
 // A session that finds its thread after it registered (the MCP server reads T3's database in the
 // background) keeps its name, and from then on takes messages as turns, including one that came
 // while the thread was unknown.
+//
+// One device (#1010): the sender is a session beside bob, as nothing here turns on where a
+// message came from. deliver_repeat_test.go says why that is enough.
 func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
-	a, b := newDevice(t, remote), newDevice(t, remote)
-	alice, _ := a.session("aaaaaa", "")
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "") // the sender, on the same device
 	bob, _ := b.sessionRoute("bbbbbb", "claude-bob", proto.Route{T3CLI: exe})
 	name := b.named(bob)
-	eventually(t, "presence", func() bool { return a.seesSession(bob) && b.seesSession(alice) })
 
-	a.send("aaaaaa", bob, "early", "")
-	eventually(t, "the message to reach b", func() bool { return logHas(b, "early") })
+	b.send("aaaaaa", bob, "early", "")
+	eventually(t, "the message to be queued for bob", func() bool { return logHas(b, "early") })
 	holds(t, "no handoff without a thread", 500*time.Millisecond, func() bool { return len(calls()) == 0 })
 
 	r := b.do(proto.Request{Op: proto.OpRoute, Session: "bbbbbb", Route: &proto.Route{T3CLI: exe, T3Thread: "thread-bob"}})
@@ -500,7 +504,7 @@ func TestSessionThatFindsItsThreadLaterIsHandedItsMessages(t *testing.T) {
 	}
 	eventually(t, "the early message to be handed over", func() bool { return len(calls()) == 1 })
 	b.nameIs(bob, name)
-	a.send("aaaaaa", bob, "late", "")
+	b.send("aaaaaa", bob, "late", "")
 	eventually(t, "the late message to be handed over", func() bool { return len(calls()) == 2 })
 }
 
