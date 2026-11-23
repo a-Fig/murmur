@@ -25,7 +25,7 @@ func scratchSandbox(t *testing.T) *sandbox {
 	in := func(p string) string { return filepath.Join(sb.Home, filepath.Base(p)) }
 	sb.ClaudeDir, sb.ClaudeJSON = in(sb.ClaudeDir), filepath.Join(in(sb.ClaudeDir), ".claude.json")
 	sb.CodexHome, sb.OpenCodeDir, sb.MuseDir = in(sb.CodexHome), in(sb.OpenCodeDir), in(sb.MuseDir)
-	sb.PiDir, sb.GrokHome, sb.GeminiHome = in(sb.PiDir), in(sb.GrokHome), in(sb.GeminiHome)
+	sb.PiDir, sb.GrokHome, sb.GeminiHome, sb.KiroHome = in(sb.PiDir), in(sb.GrokHome), in(sb.GeminiHome), in(sb.KiroHome)
 	return sb
 }
 

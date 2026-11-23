@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -308,5 +309,116 @@ func TestParallelCodexSendsWaitForTheOneRetry(t *testing.T) {
 	}
 	if n := len(fd.askedAbout()); n != 2 {
 		t.Errorf("T3's database was asked %d times, want 2: the first look and one retry", n)
+	}
+}
+
+// The one retry is used up, and then the daemon restarts, and its reply to the reconnect's hello
+// says it couldn't read the thread, as a brief failure of T3's database makes it (#1000): the first
+// send after the reconnect tells the new daemon the route again, which reads it now, rather than
+// going out unclassified.
+func TestACodexSendAfterAReconnectGetsItsOwnRetry(t *testing.T) {
+	slowSeek(t)
+	var unread atomic.Bool
+	unread.Store(true)
+	f := &fakeDaemon{threadUnread: func(proto.Route) bool { return unread.Load() }}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
+	s := codexInT3(t, f, fd, 0)
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the first send: %v", err)
+	}
+	if n := len(f.routesTold()); n != 2 {
+		t.Fatalf("the daemon was told the route %d times before the first send, want 2", n)
+	}
+
+	f.dropConnections()
+	waitFor(t, "the reconnect's hello", func() bool { return f.helloCount() == 2 })
+	if _, err := s.link.wait(context.Background(), 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	unread.Store(false) // T3's database is back
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "again"}); err != nil {
+		t.Fatalf("the send after the reconnect: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	routes, sends := 0, 0
+	for _, r := range f.requests {
+		switch {
+		case r.Op == proto.OpRoute && r.Route != nil && r.Route.T3Thread == "thread-kid":
+			routes++
+		case r.Op == proto.OpSend:
+			sends++
+		}
+		if sends == 2 {
+			break
+		}
+	}
+	if routes != 3 {
+		t.Errorf("the daemon was told the route %d times before the send after the reconnect, want 3", routes)
+	}
+}
+
+// A changing call gets past the wait for the registration just before the daemon goes away, and
+// reaches classifyFirst while the link is down: its retry finds no daemon to tell. The reconnect's
+// reply then says the new daemon couldn't read the thread, and the next send still gets a retry of
+// its own, since the one used up belonged to the old registration (#1000).
+func TestARetryUsedWhileTheLinkIsDownLeavesOneForTheReconnect(t *testing.T) {
+	slowSeek(t)
+	var unread, holdHello atomic.Bool
+	unread.Store(true)
+	release := make(chan struct{})
+	f := &fakeDaemon{
+		threadUnread: func(proto.Route) bool { return unread.Load() },
+		helloReply: func(proto.Hello) (string, string) {
+			if holdHello.Load() {
+				<-release
+			}
+			return "", ""
+		},
+	}
+	fd := &finder{threads: map[string]string{"codex-kid": "thread-kid"}}
+	s := codexInT3(t, f, fd, 0)
+	l := s.link
+	// A read names the thread, and the look it starts tells the daemon, which can't read it.
+	if _, err := s.callFrom(context.Background(), codexCallIn("who", "codex-kid"), proto.Request{Op: proto.OpWho}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the first look", func() bool {
+		l.mu.Lock()
+		looked := l.looked
+		l.mu.Unlock()
+		select {
+		case <-looked:
+			return true
+		default:
+			return false
+		}
+	})
+
+	// The daemon goes away, and the reconnect's hello waits for its reply.
+	holdHello.Store(true)
+	f.dropConnections()
+	waitFor(t, "the reconnect's hello", func() bool { return f.helloCount() == 2 })
+	waitFor(t, "the link to be down", func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return !l.up
+	})
+	// The call that got past the wait before the drop: its retry has no daemon to tell.
+	if err := l.classifyFirst(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	close(release)
+	if _, err := l.wait(context.Background(), 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	unread.Store(false) // T3's database is back
+	if _, err := s.callFrom(context.Background(), codexCallIn("send", "codex-kid"), proto.Request{Op: proto.OpSend, To: "boss", Body: "hi"}); err != nil {
+		t.Fatalf("the send after the reconnect: %v", err)
+	}
+	// The first look's route, and the one the send's retry told the new daemon.
+	if n := len(f.routesTold()); n != 2 {
+		t.Errorf("the daemon was told the route %d times before the send, want 2", n)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
@@ -42,6 +43,9 @@ type Pushed struct {
 	Checkout      string
 }
 
+// ErrNoBranch says the remote has no branch, so there is no commit for the section to go on.
+var ErrNoBranch = errors.New("the remote has no branch yet, so there is no commit to add the section to")
+
 // Push makes init's edits as a commit on the default branch of the clone's remote (the one its bus
 // is on, bus.RemoteFor) and pushes it there, never forced. The commit is built from the branch's
 // fetched tip with a temporary index, so neither the working tree nor the index changes. When the
@@ -61,6 +65,9 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 	}
 	if p.Remote, err = bus.RemoteFor(ctx, g); err != nil {
 		return p, err
+	}
+	if heads, err := g.Run(ctx, "", "ls-remote", "--heads", p.Remote); err == nil && strings.TrimSpace(heads) == "" {
+		return p, ErrNoBranch
 	}
 	if p.Branch, err = defaultBranch(ctx, g, p.Remote); err != nil {
 		return p, err
@@ -93,7 +100,7 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 		beforePush(try)
 		err = repo.Push(ctx, sha, ref, bus.FastForward, "")
 		if err == nil {
-			// The remote-tracking branch is what Marked reads in this clone's other worktrees.
+			// The remote-tracking branch is the default branch as this clone's other worktrees see it.
 			g.Run(ctx, "", "update-ref", tracking, sha)
 			setRemoteHead(ctx, g, p.Remote, tracking)
 			break
@@ -153,8 +160,9 @@ func fetchTip(ctx context.Context, g gitx.Git, remote, branch string) (string, e
 	return strings.TrimSpace(out), nil
 }
 
-// setRemoteHead points refs/remotes/<remote>/HEAD at the default branch init found, since that is
-// the ref Marked reads: one nothing set, or one left naming a branch that is no longer the default.
+// setRemoteHead points refs/remotes/<remote>/HEAD at the default branch init found: one nothing set,
+// or one left naming a branch that is no longer the default. Until #830 the MCP server read the
+// marker there; now it is only git's own record of the default branch, kept right.
 func setRemoteHead(ctx context.Context, g gitx.Git, remote, tracking string) {
 	head := "refs/remotes/" + remote + "/HEAD"
 	if cur, err := g.Run(ctx, "", "symbolic-ref", "-q", head); err != nil || strings.TrimSpace(cur) != tracking {
@@ -179,6 +187,11 @@ func buildCommit(ctx context.Context, g, own gitx.Git, tip string) (sha string, 
 			return "", nil, nil, err
 		}
 		e := s.edit(b, exists)
+		if e.change && !e.remove && len(e.data) > maxRepoFile {
+			// As writeOut refuses for a working tree: a file the edit took past what read reads would
+			// count as unmarked, and the next init would stop on it (Opus review of 29cf0f5d).
+			return "", nil, nil, fmt.Errorf("%s would be over %d MiB, more than %s reads", s.name, maxRepoFile>>20, brand.Command)
+		}
 		if e.change {
 			f := t.files[real]
 			f.data, f.exists, f.changed = e.data, !e.remove, true
@@ -275,9 +288,14 @@ func (t *treeFiles) read(name string) (real string, data []byte, exists bool, er
 		if f, ok := t.files[real]; ok {
 			return real, f.data, f.exists, nil
 		}
-		mode, blob, err := t.entry(real)
+		mode, blob, size, err := t.entry(real)
 		if err != nil {
 			return "", nil, false, err
+		}
+		if (mode == "100644" || mode == "100755" || mode == "120000") && size > maxRepoFile {
+			// Read whole, it would sit in memory, as readRepoFile keeps a working tree's file from
+			// doing (#947). ls-tree says its size, so the blob isn't read at all.
+			return "", nil, false, fmt.Errorf("%s is over %d MiB in %s, more than any file an agent reads", real, maxRepoFile>>20, t.tip)
 		}
 		switch mode {
 		case "":
@@ -306,22 +324,24 @@ func (t *treeFiles) read(name string) (real string, data []byte, exists bool, er
 	}
 }
 
-// entry is the mode and object of the path in the commit, or "" for both when it has none.
-func (t *treeFiles) entry(name string) (mode, object string, err error) {
-	out, err := t.g.Run(t.ctx, "", "ls-tree", "--full-tree", "-z", t.tip, "--", name)
+// entry is the mode, object and size of the path in the commit, or "" and 0 when it has none. A
+// size ls-tree doesn't give (a submodule's commit) is 0.
+func (t *treeFiles) entry(name string) (mode, object string, size int64, err error) {
+	out, err := t.g.Run(t.ctx, "", "ls-tree", "--full-tree", "-l", "-z", t.tip, "--", name)
 	if err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 	for _, rec := range strings.Split(out, "\x00") {
 		meta, p, ok := strings.Cut(rec, "\t")
 		if !ok || p != name {
 			continue
 		}
-		if fields := strings.Fields(meta); len(fields) == 3 {
-			return fields[0], fields[2], nil
+		if fields := strings.Fields(meta); len(fields) == 4 {
+			size, _ = strconv.ParseInt(fields[3], 10, 64)
+			return fields[0], fields[2], size, nil
 		}
 	}
-	return "", "", nil
+	return "", "", 0, nil
 }
 
 // fallback pushes the commit to FallbackBranch, after the server refused it on the default branch.

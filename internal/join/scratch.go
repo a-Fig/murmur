@@ -59,16 +59,40 @@ var tempRoots = func() []string {
 // resolved is path with every link in it followed, as a write there would follow them: symbolic
 // links, Windows junctions, which EvalSymlinks leaves as written (since Go 1.23), and links whose
 // target isn't there yet. A part that doesn't exist is kept as named. "" past 40 links, a loop.
-func resolved(path string) string { return resolveIn(filepath.Clean(path), 40) }
+// Path components are walked before handling `..` so a target like `alias/../file` follows
+// `alias` before stepping up, matching OS path resolution rather than lexical cleaning.
+func resolved(path string) string { return resolveFrom("", path, 40) }
 
-func resolveIn(path string, hops int) string {
-	vol := filepath.VolumeName(path)
-	cur := vol
-	if strings.HasPrefix(path[len(vol):], string(filepath.Separator)) {
-		cur += string(filepath.Separator)
+func resolveFrom(base, path string, hops int) string {
+	path = filepath.FromSlash(path)
+	sep := string(filepath.Separator)
+	var cur, rest string
+	if filepath.IsAbs(path) {
+		vol := filepath.VolumeName(path)
+		cur = vol
+		rest = path[len(vol):]
+		if strings.HasPrefix(rest, sep) {
+			cur += sep
+		}
+	} else if strings.HasPrefix(path, sep) {
+		// Drive-rooted path on Windows (e.g. `\profiles\codex`): preserve the leading separator
+		// (and base's volume when resolving a link target).
+		cur = filepath.VolumeName(base) + sep
+		rest = path
+	} else {
+		cur = base
+		rest = path
 	}
-	for _, part := range strings.Split(path[len(vol):], string(filepath.Separator)) {
-		if part == "" {
+	for _, part := range strings.Split(rest, sep) {
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			if cur == "" || cur == "." || cur == ".." || strings.HasSuffix(cur, sep+"..") {
+				cur = filepath.Join(cur, "..")
+			} else {
+				cur = filepath.Dir(cur)
+			}
 			continue
 		}
 		next := filepath.Join(cur, part)
@@ -78,17 +102,14 @@ func resolveIn(path string, hops int) string {
 				if hops == 0 {
 					return ""
 				}
-				if !filepath.IsAbs(target) {
-					target = filepath.Join(cur, target)
-				}
-				if next = resolveIn(filepath.Clean(target), hops-1); next == "" {
+				if next = resolveFrom(cur, target, hops-1); next == "" {
 					return ""
 				}
 			}
 		}
 		cur = next
 	}
-	return cur
+	return filepath.Clean(cur)
 }
 
 // inTemp says path is in one of the temporary folders, or, unless strict, is one. A home (strict)
@@ -151,6 +172,14 @@ func (e Env) t3Vars() []string {
 // for its default home; the home's for one in the home, as the shared ~/.gemini and the defaults T3
 // runs instances in are; else T3's settings, which named it.
 func (e Env) homeFrom(a agent, h agentHome, readT3 bool) string {
+	if a.driver == "cursor" && h.JSON != "" && !inTemp(h.JSON, false) {
+		// Its cli-config.json, which these move (cursorConfigDir).
+		for _, v := range []string{"CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"} {
+			if strings.TrimSpace(e.getenv(v)) != "" {
+				return v
+			}
+		}
+	}
 	if samePath(h.Dir, e.defaultHome(a).Dir) {
 		v := a.t3Var
 		if a.driver == "antigravity" {
@@ -182,7 +211,7 @@ func (e Env) keepToScratch(byAgent [][]agentHome, readT3, skippedT3 bool, cmd st
 	}
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
-			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) {
+			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) && (a.driver != "kiro" || kiroPathsInTemp(h.Dir)) {
 				continue
 			}
 			left = append(left, h.Label+" in "+h.Dir+" (from "+e.homeFrom(a, h, readT3)+")")

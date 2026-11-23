@@ -108,6 +108,11 @@ const MaxPrompt = 4096
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
 
+// NotRegistered is the daemon's refusal of a request from a session it doesn't have live. It is
+// answered before the request does anything, so a shell command makes the request again after a
+// new hello (#953).
+const NotRegistered = "this session isn't registered with the daemon (it may have just restarted); try again in a few seconds"
+
 // What a send's refusal is about (Response.Refused).
 const (
 	// RefusedRecipient is a refusal for the recipient alone: its name isn't one, nobody has it, it

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"strconv"
 
@@ -16,6 +17,9 @@ import (
 // number, and a signal through that goes to whatever has the number by then (Sol's review of
 // #425). Without a pidfd nothing is ended.
 func end(pid int, is func(exe string) bool) error {
+	if pid > math.MaxInt32 {
+		return ErrGone
+	}
 	fd, err := unix.PidfdOpen(pid, 0)
 	if err != nil {
 		if errors.Is(err, unix.ESRCH) {

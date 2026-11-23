@@ -6,9 +6,10 @@ binary, `cmd/mur`, with its packages in `internal/`; `go test ./...` runs it all
 Windows in CI; most pull requests leave `internal/daemon` on macOS and Windows to main's run
 (`docs/testing.md`).
 `docs/VISION.md` is the direction and its reasons; read it before proposing architecture. How each
-part works is in `docs/design/`, one file per topic. Tyler's rule (2026-11-14, #578): a PR adds to
-VISION only when it changes a direction; how a feature works goes in its design file or in code
-comments. The name lives in `internal/brand`, so a rename is that file plus the module path.
+part works is in `docs/design/`, one file per topic, mapped in its README. Tyler's rule (2026-11-14,
+#578): a PR adds to VISION only when it changes a direction; how a feature works goes in its design
+file or in code comments. The name lives in `internal/brand`, so a rename is that file plus the
+module path.
 The logo files, palette and type, and the renders a palette change means redoing, are in
 `docs/brand.md`.
 

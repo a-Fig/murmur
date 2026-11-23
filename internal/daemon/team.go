@@ -22,9 +22,9 @@ import (
 // before it holds any private half. A daemon that holds the team keys grants them, every one there
 // has been, to each device whose sealed presence names the current epoch and lists fewer keys than
 // there are: nobody runs anything. A new epoch is made by the first device to find the team ref
-// empty, and by a rotation (`mur rotate`), wrapped for its writer alone; every other device gets it
-// by a grant, which takes a presence that names the epoch, and so was written and pushed after it,
-// by a device that could still push.
+// empty (absent, or at init's genesis commit), and by a rotation (`mur rotate`), wrapped for its
+// writer alone; every other device gets it by a grant, which takes a presence that names the epoch,
+// and so was written and pushed after it, by a device that could still push.
 
 // teamEpoch is an epoch as this device has read it from the team ref, in the ref's order.
 type teamEpoch struct {
@@ -245,6 +245,9 @@ func (d *Daemon) applyTeamLocked(c bus.Commit) {
 	if c.Oversize {
 		return
 	}
+	if bus.IsTeamGenesisMessage(c.Message) {
+		return // the empty state `mur init` writes, or a copy of its message: no record either way
+	}
 	state, seal := bus.OpenSeal(c.Message, brand.TeamRef)
 	if state != bus.Sealed {
 		d.log.Printf("%s: passing over %s, which isn't sealed", brand.TeamRef, short(c.SHA))
@@ -420,6 +423,7 @@ var errKeysMissing = errors.New("this device hasn't been granted every team key 
 func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, pushed bool, err error) {
 	d.teamMu.Lock()
 	defer d.teamMu.Unlock()
+	genesis := d.teamGenesisTip(ctx)
 	d.mu.Lock()
 	tip := d.st.TeamTip
 	_, listed := d.known[brand.TeamRef]
@@ -449,7 +453,11 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	if ep != nil {
 		rosterID, rosterPub = ep.ID, ep.Pub
 	}
-	if rotate || ep == nil && synced && !listed && tip == "" {
+	// The first epoch: on a team ref that isn't there, or on top of the empty state init wrote, as a
+	// fast-forward of it. Either way the push is leased on what was read, so of two devices that try
+	// at once one lands, and the other reads its epoch and makes none.
+	empty := !listed && tip == "" || genesis != "" && tip == genesis
+	if rotate || ep == nil && synced && empty {
 		// The epoch is wrapped for this device alone. Every other device gets it by a grant, once it
 		// has pushed a presence encrypted for this key: what a collaborator who has lost push access
 		// can't do.
@@ -535,6 +543,24 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	d.st.TeamTip = sha
 	d.saveLocked()
 	return epoch, true, nil
+}
+
+// teamGenesisTip is the team ref's tip when it is the empty state `mur init` writes (Repo.IsTeamGenesis:
+// a root commit on the empty tree, with the genesis message), read by this device with no epoch
+// found, and "" otherwise. teamWork makes the first epoch on top of it, as on a team ref that isn't
+// there (#830). It reads one commit, and only while there is no epoch. Caller holds teamMu.
+func (d *Daemon) teamGenesisTip(ctx context.Context) string {
+	d.mu.Lock()
+	tip, listed := d.st.TeamTip, d.known[brand.TeamRef]
+	none := d.epochLocked() == nil
+	d.mu.Unlock()
+	if !none || tip == "" || tip != listed {
+		return ""
+	}
+	if ok, err := d.repo.IsTeamGenesis(ctx, tip); err != nil || !ok {
+		return ""
+	}
+	return tip
 }
 
 // rotate makes a new epoch now, with a roster of collaborators if there is a list, and waits for it

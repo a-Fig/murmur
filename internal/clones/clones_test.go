@@ -160,3 +160,71 @@ func TestNameOf(t *testing.T) {
 		t.Error("a name with a slash")
 	}
 }
+
+func TestSlugOf(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://github.com/a-Fig/murmur.git":      "a-Fig/murmur",
+		"https://github.com/a-Fig/murmur":          "a-Fig/murmur",
+		"https://github.com/a-Fig/murmur.git/":     "a-Fig/murmur",
+		"https://me:token@github.com/a-Fig/murmur": "a-Fig/murmur",
+		"https://github.com:8443/a-Fig/murmur":     "a-Fig/murmur",
+		"git@github.com:a-Fig/murmur.git":          "a-Fig/murmur",
+		"git@github.com:a-Fig/murmur":              "a-Fig/murmur",
+		"ssh://git@github.com/a-Fig/murmur":        "a-Fig/murmur",
+		"ssh://git@github.com:22/a-Fig/murmur.git": "a-Fig/murmur",
+		// A host whose paths nest: the whole path is the repository's.
+		"https://gitlab.com/group/sub/murmur.git": "group/sub/murmur",
+		"git@gitlab.com:group/sub/deep/murmur":    "group/sub/deep/murmur",
+		// No owner in the path, or no host to own it: the name alone.
+		"https://example.com/murmur.git":  "murmur",
+		"git@example.com:murmur.git":      "murmur",
+		"/srv/murmur.git":                 "murmur",
+		"/srv/git/murmur.git":             "murmur",
+		`C:\srv\murmur.git`:               "murmur",
+		"../remote.git":                   "remote",
+		"file:///srv/git/murmur.git":      "murmur",
+		"file://localhost/srv/murmur.git": "murmur",
+		// A clone's own .git folder stands for the folder above it.
+		"/srv/murmur/.git":                     "murmur",
+		`C:\srv\murmur\.git`:                   "murmur",
+		"https://github.com/a-Fig/murmur/.git": "a-Fig/murmur",
+		"git@example.com:murmur/.git":          "murmur",
+		// An address that says nothing.
+		"":                         "",
+		"   ":                      "",
+		"https://example.com/":     "",
+		"https://example.com":      "",
+		"/":                        "",
+		"git@github.com:":          "",
+		"https://github.com/../..": "",
+	} {
+		if got := SlugOf(in); got != want {
+			t.Errorf("SlugOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// The name is always the slug's last part.
+	for _, in := range []string{"https://gitlab.com/group/sub/murmur.git", "git@github.com:a-Fig/murmur", "/srv/murmur.git", "https://example.com/"} {
+		if s, n := SlugOf(in), NameOf(in); s != n && !strings.HasSuffix(s, "/"+n) {
+			t.Errorf("SlugOf(%q) = %q doesn't end in NameOf = %q", in, s, n)
+		}
+	}
+}
+
+// A join records a clone without a slug, its daemon gives one, and a later join keeps it, as it
+// keeps the name.
+func TestTheRecordKeepsASlugAJoinHasNone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "record")
+	g := filepath.Join(t.TempDir(), ".git")
+	if err := os.MkdirAll(g, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []Clone{{GitDir: g}, {GitDir: g, Name: "murmur", Slug: "a-Fig/murmur"}, {GitDir: g}} {
+		if err := Add(dir, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := List(dir, func(string) bool { return true })
+	if err != nil || len(got) != 1 || got[0].Name != "murmur" || got[0].Slug != "a-Fig/murmur" {
+		t.Fatalf("listed %+v, %v; want murmur with the slug a-Fig/murmur", got, err)
+	}
+}

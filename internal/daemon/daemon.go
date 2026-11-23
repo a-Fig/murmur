@@ -48,6 +48,7 @@ type Options struct {
 	QuietPoll  time.Duration
 	Heartbeat  time.Duration // how often to re-push presence when nothing changed, give or take a fifth; 2 min
 	StaleAfter time.Duration // presence unchanged this long means the device is gone; 6 min
+	ColorHold  time.Duration // presence unchanged this long lets the device's picked colour go; a week (color.go)
 	// FetchLimit is how long one fetch may take within a sync: 15 s. A ref that runs past it on its
 	// own is set aside; SlowFetchLimit is how long its fetch may then take, outside the syncs: 10 min.
 	FetchLimit, SlowFetchLimit time.Duration
@@ -176,6 +177,8 @@ type Options struct {
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
 	Version func() web.Version
+	// Updates, if set, lets the page show and change how this machine updates itself (#1045).
+	Updates web.Updates
 	// Clones, if set, is the user's record of this machine's joined clones (internal/clones): the
 	// daemon adds its clone there as it starts, so a clone that joined before the record existed
 	// is on it too. Tests leave it unset.
@@ -430,9 +433,9 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
-	// repoName is the repository's name from its remote's address, which the page's repo picker
-	// shows.
-	repoName string
+	// repoName is the repository's name from its remote's address; repoSlug is its owner/name
+	// (clones.SlugOf). The page shows both.
+	repoName, repoSlug string
 	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
 	// asks it for a key.
 	page    atomic.Pointer[web.Server]
@@ -613,6 +616,11 @@ type Daemon struct {
 	// log it once a minute.
 	refused    map[string]time.Time
 	refusedSHA map[string]string // the presence last refused for each device, not read again; under mu
+	// presenceListed is, for each device, the presence SHA the remote last listed and this daemon's
+	// last good sync when it first did (colorDate's clamp): a presence read a sync or more after it
+	// was listed, its fetch having failed or been cut short, is dated from before the gap, not from
+	// the sync that read it (#1169). Under mu.
+	presenceListed map[string]listedPresence
 
 	// The team key (team.go). teamKeys is the team private keys this device holds, by TeamID;
 	// teamChanged is closed and replaced when an epoch is read. Under mu. teamMu serializes the team
@@ -677,6 +685,11 @@ type Daemon struct {
 	agentsSendOff, agentsReceiveOff atomic.Bool
 	// presenceGone says this device's presence has been deleted since it went invisible.
 	presenceGone atomic.Bool
+	// lookNow says a sync begun from here on is wanted at once, whatever the poll's rate: the
+	// device came back from invisible (setMode), and its colour waits for that sync. A sync that
+	// begins clears it (pollOnce), and so does pollLoop's next wake (wakeEndsWait), which it ends
+	// unless the poll is failing.
+	lookNow atomic.Bool
 
 	kick       chan struct{}
 	pollWake   chan struct{} // wakes pollLoop when a session or a page comes, so it looks at once
@@ -710,8 +723,18 @@ type Daemon struct {
 	// a daemon Run didn't start, which has no first sync to wait for.
 	firstSync chan struct{}
 	// colorSettled says a full sync has checked this device's picked colour against its peers',
-	// so its presence may carry it (color.go).
-	colorSettled bool
+	// so its presence may carry it (color.go). presenceLanded is when the last presence of this
+	// device's to reach the remote was built, and colorAwayAt when it was last found to have been
+	// away so long that its colour must be settled again (colorAwayLocked), or came back from
+	// invisible (setMode).
+	colorSettled   bool
+	presenceLanded time.Time
+	colorAwayAt    time.Time
+	// presenceCopied says the clone's own copy of this device's presence ref was written with a
+	// presence of this run, and no fetch has brought the ref since, so later presences needn't be
+	// written to it; presenceFetches counts those fetches (publishPresence).
+	presenceCopied  bool
+	presenceFetches uint64
 }
 
 type session struct {
@@ -828,6 +851,13 @@ const (
 	catchUpWindow = 30 * time.Second
 )
 
+// listedPresence is a presence SHA the remote listed, and this daemon's last good sync before it
+// first did.
+type listedPresence struct {
+	sha   string
+	after time.Time
+}
+
 // peer is another device as its presence ref shows it.
 type peer struct {
 	pres bus.Presence
@@ -838,8 +868,14 @@ type peer struct {
 	listed     string
 	lastChange time.Time
 	// written is the committer time of the presence read: the writer's clock when git wrote it
-	// (groupAddWhyLocked).
-	written time.Time
+	// (groupAddWhyLocked). writtenOf is that presence's SHA: sha moves on past one found unreadable,
+	// and written doesn't (colorGoneLocked).
+	written   time.Time
+	writtenOf string
+	// colorFrom is written, but no earlier than this daemon's last good sync before the presence
+	// was first listed (colorDate, presenceListed): what colorGoneLocked dates a presence by, so
+	// that a writer's clock a week behind doesn't make a live device's colour look a week old.
+	colorFrom time.Time
 	// sealed says the presence read was sealed: only such a one earns a grant of the team keys
 	// (grantsDueLocked). locked says it was encrypted for a team key this device doesn't hold yet, to
 	// read again once it does.
@@ -1208,7 +1244,7 @@ func Run(ctx context.Context, opt Options) error {
 	// answering, `mur join` that started it or another clone's page, then finds the record as this
 	// daemon leaves it, and not the join's version being replaced (#479).
 	if d.opt.Clones != "" {
-		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName, Slug: d.repoSlug}); err != nil {
 			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
 		}
 	}
@@ -1441,7 +1477,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
-	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
+	remoteURL := d.repo.Config(ctx, "remote."+d.repo.Remote+".url")
+	d.repoName, d.repoSlug = clones.NameOf(remoteURL), clones.SlugOf(remoteURL)
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
@@ -1604,7 +1641,9 @@ func clearBrokenRefs(gitDir string, l *log.Logger) (removed []string) {
 
 // repairRefs removes the bus refs clearBrokenRefs finds, and forgets what was fetched into them,
 // so the next sync fetches each again even if the remote's hasn't moved. It says whether it
-// removed any. Takes mu.
+// removed any. The clone's copy of this device's own presence is written again by the next
+// presence, as after a fetch: with the remote's presence gone, while the device is invisible,
+// no fetch would bring it back, and loadIdentity needs it (#1165). Takes mu.
 func (d *Daemon) repairRefs() bool {
 	removed := clearBrokenRefs(d.opt.GitDir, d.log)
 	if len(removed) == 0 {
@@ -1613,6 +1652,7 @@ func (d *Daemon) repairRefs() bool {
 	d.mu.Lock()
 	for _, ref := range removed {
 		delete(d.known, ref)
+		d.presenceFetchedLocked(ref)
 	}
 	d.mu.Unlock()
 	return true
@@ -1722,7 +1762,12 @@ func loadDevice(dir string) (string, error) {
 
 func validName(s string) bool { return bus.ValidName(s) }
 
-func (d *Daemon) statePath() string { return filepath.Join(d.dir, "state.json") }
+func (d *Daemon) statePath() string {
+	if d.dir == "" {
+		panic("daemon: statePath called with empty dir")
+	}
+	return filepath.Join(d.dir, "state.json")
+}
 
 func (d *Daemon) loadState() error {
 	d.st = state{Processed: map[string]string{}, Inbox: map[string][]*inMsg{}, Junked: map[string]time.Time{},

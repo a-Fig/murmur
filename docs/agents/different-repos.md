@@ -16,11 +16,10 @@ Ask your user whether their team already has a repo for Murmur.
   can stay (outside any other repo), with your user's agreement. Go to step 2.
 - **It has none.** Making one is your user's call: ask them to create a repo that every teammate
   can push to, or offer to create it with `gh repo create` if they want you to, and ask whether it
-  should be private. It needs a first commit (`gh repo create --add-readme` makes one): `mur init`
-  builds on the default branch, and an empty repo has none. Clone it somewhere it can stay. Then
-  set Murmur up in that clone by following
+  should be private. Clone it somewhere it can stay. Then set Murmur up in that clone by following
   https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md from its step 1, run in
-  the clone.
+  the clone, with `mur init --refs-only`: nobody works in this repo, so it needs no section, and an
+  empty repo needs no first commit.
 
 Don't do your user's work in this clone, and don't commit to it. It only carries Murmur.
 

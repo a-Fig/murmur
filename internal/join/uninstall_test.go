@@ -21,7 +21,7 @@ func uninstallSandbox(t *testing.T) (*sandbox, string) {
 	t.Helper()
 	sb := newSandbox(t, true)
 	withAgents(sb)
-	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "GEMINI_HOME", "PI_CODING_AGENT_DIR"} {
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "GROK_HOME", "GEMINI_HOME", "KIRO_HOME", "PI_CODING_AGENT_DIR"} {
 		t.Setenv(k, filepath.Join(sb.root, "home"))
 	}
 	record := filepath.Join(sb.root, "clones")
@@ -35,7 +35,7 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	sb, _ := uninstallSandbox(t)
 	withOpenCode(t, sb, "opencode v2.2.0")
 	ctx := context.Background()
-	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, filepath.Join(sb.GeminiHome, "antigravity")} {
+	for _, d := range []string{sb.ClaudeDir, sb.CodexHome, sb.OpenCodeDir, sb.MuseDir, sb.PiDir, sb.GrokHome, filepath.Join(sb.GeminiHome, "antigravity"), sb.KiroHome} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -46,6 +46,8 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	write(t, filepath.Join(sb.GrokHome, "config.toml"), "[permission]\nallow = [\"Bash(ls)\"]\n")
 	write(t, filepath.Join(sb.MuseDir, "settings.json"), "{\n  \"schema_version\": 1,\n  \"mcpServers\": {\"other\": {\"command\": \"o\"}}\n}\n")
 	write(t, filepath.Join(sb.OpenCodeDir, "opencode.json"), "{\n  // mine\n  \"model\": \"x/y\",\n}\n")
+	write(t, filepath.Join(sb.KiroHome, "settings", "mcp.json"), "{\n  \"mcpServers\": {\"other\": {\"command\": \"o\"}}\n}\n")
+	write(t, filepath.Join(sb.KiroHome, "settings", "permissions.json"), "{\n  \"rules\": [{\"capability\": \"shell\", \"match\": [\"git status\"], \"effect\": \"allow\"}]\n}\n")
 	for _, a := range agents {
 		h := sb.defaultHome(a)
 		if _, _, err := a.register(sb.Env, ctx, h); err != nil {
@@ -115,11 +117,19 @@ func TestUninstallRemovesWhatJoinWrote(t *testing.T) {
 	if strings.Contains(oc, brand.MCPServer) || strings.Contains(oc, "permissions") || !strings.Contains(oc, "// mine") {
 		t.Errorf("opencode.json:\n%s", oc)
 	}
+	if kiroMCP := read(t, filepath.Join(sb.KiroHome, "settings", "mcp.json")); strings.Contains(kiroMCP, brand.MCPServer) || !strings.Contains(kiroMCP, `"other"`) {
+		t.Errorf("Kiro's mcp.json:\n%s", kiroMCP)
+	}
+	if kiroPerm := read(t, filepath.Join(sb.KiroHome, "settings", "permissions.json")); strings.Contains(kiroPerm, kiroAllowPattern) || !strings.Contains(kiroPerm, `"git status"`) {
+		t.Errorf("Kiro's permissions.json:\n%s", kiroPerm)
+	}
 	for _, gone := range []string{
 		piExtensionPath(sb.PiDir),
 		filepath.Join(sb.GrokHome, "hooks", grokHookFile),
+		filepath.Join(sb.KiroHome, "hooks", kiroHookFile),
 		filepath.Join(sb.ClaudeDir, "skills", skills.All()[0].Name),
 		filepath.Join(sb.CodexHome, "skills", skills.All()[0].Name),
+		filepath.Join(sb.KiroHome, "skills", skills.All()[0].Name),
 	} {
 		if exists(gone) {
 			t.Errorf("%s is still there", gone)

@@ -179,7 +179,7 @@ func TestPiExtensionStaysOutOfASubagent(t *testing.T) {
 
 // piCallHarness loads the extension in a joined clone, with node standing in for mur: the
 // extension runs `<node> hook --agent pi` in the clone, which runs the clone's file named hook,
-// and that file keeps each payload it is given. The harness then reports four tool calls as Pi
+// and that file keeps each payload it is given. The harness then reports tool calls as Pi
 // would and prints what the hook was given of each.
 const piCallHarness = `
 import fs from "node:fs";
@@ -195,15 +195,19 @@ const handlers = {};
 load({ registerMcpServer: () => {}, on: (event, h) => (handlers[event] = h), sendMessage: () => {} });
 await handlers.session_start({}, { cwd: repo, sessionManager: { getSessionFile: () => "/s/a.jsonl" } });
 const out = [{ type: "text", text: "https://github.com/a-Fig/murmur/issues/7\n" }];
-await handlers.tool_result({ toolName: "bash", input: { command: "gh issue create -t x" }, content: out }, { cwd: repo });
-await handlers.tool_result({ toolName: "read", input: { path: "a.go" }, content: out }, { cwd: repo });
+await handlers.tool_call({ toolName: "bash", toolCallId: "call_7", input: { command: "gh issue create -t x" } }, { cwd: repo });
+await handlers.tool_call({ toolName: "read", toolCallId: "call_8", input: { path: "a.go" } }, { cwd: repo });
+await handlers.tool_call({ toolName: "mcp__github__issue_write", toolCallId: "call_9", input: {} }, { cwd: repo });
+await handlers.tool_result({ toolName: "bash", toolCallId: "call_7", input: { command: "gh issue create -t x" }, content: out }, { cwd: repo });
+await handlers.tool_result({ toolName: "read", toolCallId: "call_8", input: { path: "a.go" }, content: out }, { cwd: repo });
 const denied = [{ type: "text", text: JSON.stringify({ message: "Not Found", url: "https://github.com/a-Fig/murmur/issues/7" }) }];
 await handlers.tool_result({ toolName: "mcp__github__issue_write", input: { method: "update", issue_number: 7, state: "closed" }, content: denied, isError: true }, { cwd: repo });
 await handlers.tool_result({ toolName: "bash", input: { command: "cat big" }, content: [{ type: "text", text: "x".repeat(600 * 1024) }] }, { cwd: repo });
+await handlers.tool_result({ toolName: "bash", toolCallId: "call_10", input: { command: "cat big" }, content: [{ type: "text", text: "x".repeat(600 * 1024) }] }, { cwd: repo });
 await handlers.session_shutdown?.();
 for (const line of fs.readFileSync(path.join(repo, "calls.jsonl"), "utf8").split("\n").filter(Boolean)) {
   const p = JSON.parse(line);
-  console.log(p.hook_event_name, JSON.stringify({ name: p.tool_name, input: p.tool_input, response: p.tool_response }));
+  console.log(p.hook_event_name, JSON.stringify({ name: p.tool_name, input: p.tool_input, response: p.tool_response, id: p.tool_use_id }));
 }
 `
 
@@ -211,7 +215,10 @@ for (const line of fs.readFileSync(path.join(repo, "calls.jsonl"), "utf8").split
 // Claude Code's hook is given them, so an issue a Pi session files is credited to it (#510, #864).
 // The output carries Pi's isError, so a failed close isn't credited (TestIssuesACallFiledOrClosed).
 // Not for other tools, whose output the hook never reads, nor for a call too big for the hook,
-// which reads at most 1 MiB; their hook still runs, for the notice.
+// which reads at most 1 MiB; their hook still runs, for the notice. A shell call is also announced
+// before it runs, and carries Pi's ID for the call at both ends, so the daemon can credit the
+// commits it makes (#868); no other call is. A shell call whose output is too big still carries
+// its ID, or its start would never be closed.
 func TestPiExtensionGivesTheHookAShellCall(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -248,10 +255,12 @@ func TestPiExtensionGivesTheHookAShellCall(t *testing.T) {
 	}
 	got := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")), "\n")
 	want := []string{
-		`PostToolUse {"name":"bash","input":{"command":"gh issue create -t x"},"response":{"content":[{"type":"text","text":"https://github.com/a-Fig/murmur/issues/7\n"}],"isError":false}}`,
+		`PreToolUse {"name":"bash","id":"call_7"}`,
+		`PostToolUse {"name":"bash","input":{"command":"gh issue create -t x"},"response":{"content":[{"type":"text","text":"https://github.com/a-Fig/murmur/issues/7\n"}],"isError":false},"id":"call_7"}`,
 		`PostToolUse {}`,
 		`PostToolUse {"name":"mcp__github__issue_write","input":{"method":"update","issue_number":7,"state":"closed"},"response":{"content":[{"type":"text","text":"{\"message\":\"Not Found\",\"url\":\"https://github.com/a-Fig/murmur/issues/7\"}"}],"isError":true}}`,
 		`PostToolUse {}`,
+		`PostToolUse {"name":"bash","id":"call_10"}`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the hook was given:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

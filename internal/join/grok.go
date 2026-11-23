@@ -124,7 +124,7 @@ func addTOMLListItem(text, table, key, item, file string) (out string, changed b
 			continue
 		}
 		items, after, ok := stringListRest(val)
-		if !singleLine(val) || !ok || (after != "" && after[0] != '#') {
+		if !ok || (after != "" && after[0] != '#') {
 			return "", false, fmt.Errorf("%s has %s in [%s] in a form join doesn't edit (several lines, or not a list of strings): add %q to it by hand", file, key, table, item)
 		}
 		if slices.Contains(items, item) {

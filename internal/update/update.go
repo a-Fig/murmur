@@ -1,6 +1,8 @@
 // Package update installs checksum-verified GitHub releases, and keeps the latest release's version
-// so `mur version` can say when there is a newer one. It talks only to GitHub, and not at all while
-// updates are off. It takes stable releases only, unless the prerelease channel is chosen.
+// so `mur version` can say when there is a newer one. It talks only to GitHub. While updates are off
+// it still checks, to learn which release is out, and installs nothing unless a person asks for one
+// install (Options.Install); MURMUR_NO_UPDATE stops the checks too. It takes stable releases only,
+// unless the prerelease channel is chosen.
 package update
 
 import (
@@ -21,7 +23,6 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
@@ -38,6 +39,14 @@ type Options struct {
 	Getenv   func(string) string
 	Log      *log.Logger
 	Every    time.Duration
+	// Check asks for a check soon, as when a person changes the update setting: at once, or
+	// checkGap after the last one. Nil: only the hourly ones.
+	Check <-chan struct{}
+	// Install asks for one install of the release it names, as a person's "Update now" does: a
+	// check like Check's that installs even while updates are off in git config. It installs only
+	// that release, the one the person saw: if the check finds another, it fails and says which.
+	// It doesn't turn updates on, and MURMUR_NO_UPDATE still refuses it. Nil: none is asked for.
+	Install <-chan string
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -49,25 +58,26 @@ type Status struct {
 	// far, or a newer binary was already installed by hand.
 	Latest string
 	// Off says updates are turned off (MURMUR_NO_UPDATE, murmur.update=false), so nothing is
-	// installed without the user.
+	// installed without the user. With murmur.update false the check still reads which release is
+	// out, and Latest says; with MURMUR_NO_UPDATE it asks GitHub nothing.
 	Off bool
 	// Failed says the check or the install failed: a release newer than this one isn't coming
 	// on its own, at least until the next check.
 	Failed bool
 	// Installed says a newer binary is in place and the daemon restarts onto it when it can.
 	Installed bool
+	// Asked says the check was one Install asked for, so its outcome is the answer to a person.
+	Asked bool
+	// Error is why a check Install asked for failed, in words to show to the person who asked.
+	Error string
 }
 
 // After says release version a comes after b. Development builds ("-dev") never do.
 func After(a, b string) bool { return newer(a, b) }
 
+// Off says updates are off in the clone at gitDir: MURMUR_NO_UPDATE, or murmur.update false.
 func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
-	v := strings.TrimSpace(getenv("MURMUR_NO_UPDATE"))
-	if v != "" && v != "0" && !strings.EqualFold(v, "false") {
-		return true
-	}
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--type=bool", "--get", "murmur.update")
-	return err == nil && strings.TrimSpace(out) == "false"
+	return envOff(getenv) || last(updateValues(ctx, gitDir), "").value == "false"
 }
 
 // Prerelease says whether git config chooses the prerelease channel (`murmur.channel prerelease`),
@@ -75,9 +85,12 @@ func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 // channel. It is a key of its own because daemons from before it read murmur.update as a bool, and
 // they ignore this one, so they keep taking stable releases until one of those brings the channel.
 func Prerelease(ctx context.Context, gitDir string) bool {
-	out, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--get", "murmur.channel")
-	return err == nil && strings.EqualFold(strings.TrimSpace(out), "prerelease")
+	return strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "").value, "prerelease")
 }
+
+// checkGap is the least time between a check and one a changed setting asks for (Options.Check),
+// so that clicking through the choices can't spend GitHub's hourly allowance for this address.
+var checkGap = 10 * time.Second
 
 // Run checks immediately and hourly. Network failures wait quietly until the next check.
 // A successful install calls restart once; its caller waits for handoffs before stopping.
@@ -120,33 +133,79 @@ func Run(ctx context.Context, o Options, restart func()) {
 			return
 		}
 	}
-	cleanup(o.Executable)
+	wasOff := false // the last report's Off, so updates off show before the check ends
 	report := func(s Status) {
+		wasOff = s.Off
 		if o.Report != nil {
 			o.Report(s)
 		}
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var checked time.Time
+	asked := "" // the release a person asked to install (Install), which the next check does
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-o.Check:
+			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			continue
+		case asked = <-o.Install:
+			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			continue
 		case <-timer.C:
 		}
-		if Off(ctx, o.Getenv, o.GitDir) {
-			report(Status{Off: true})
+		checked = time.Now()
+		// At every check, not only as the daemon starts: a backup stays while a process still runs
+		// it, an MCP server for days, and went only at the next daemon start after that process
+		// ended, which an update's restart is the usual cause of (#1171).
+		cleanup(o.Executable, o.OS)
+		want, now := asked, asked != ""
+		asked = ""
+		if off := Off(ctx, o.Getenv, o.GitDir); off && envOff(o.Getenv) {
+			// The environment's opt-out may mean the binary is managed by something else, so it
+			// asks GitHub nothing, and refuses Update now.
+			s := Status{Off: true, Asked: now}
+			if now {
+				s.Failed, s.Error = true, noUpdate+" is set for this daemon"
+			}
+			report(s)
+		} else if off && !now {
+			// Off only learns which release is out, so the page can offer Update now (#1099). A
+			// failed check waits quietly for the next, as with updates on. Updates just turned off,
+			// or off as the daemon starts, are reported first, so the page doesn't say "Updating"
+			// while the check runs.
+			if !wasOff {
+				report(Status{Off: true})
+			}
+			latest, _ := look(ctx, o)
+			if ctx.Err() != nil {
+				return
+			}
+			report(Status{Latest: latest, Off: true})
 		} else {
-			done, latest, err := attempt(ctx, o, original)
+			done, latest, err := install(ctx, o, original, want)
 			if done {
-				report(Status{Latest: latest, Installed: true})
+				report(Status{Latest: latest, Installed: true, Asked: now})
 				restart()
 				return
 			}
 			if ctx.Err() != nil {
 				return
 			}
-			report(Status{Latest: latest, Failed: err != nil})
+			// Another release than the one asked for isn't a failed update: with updates on, the
+			// next check installs it, and soon.
+			other := errors.Is(err, errNotAsked)
+			s := Status{Latest: latest, Off: off, Failed: err != nil && !other, Asked: now}
+			if err != nil && now {
+				s.Error = err.Error()
+			}
+			report(s)
+			if other && !off {
+				timer.Reset(checkGap)
+				continue
+			}
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
 				return
@@ -214,9 +273,17 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// errNotAsked says the release a person asked to install isn't the one the check found.
+var errNotAsked = errors.New("another release is out")
+
 // attempt installs the latest release if it is newer than this one. latest is that release's
 // version, once the check has read it.
 func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, latest string, err error) {
+	return install(ctx, o, original, "")
+}
+
+// install is attempt, and if want isn't "", installs only that release: a person asked for it.
+func install(ctx context.Context, o Options, original os.FileInfo, want string) (done bool, latest string, err error) {
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
@@ -231,16 +298,27 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
-	rel, err := pick(ctx, o, Prerelease(ctx, o.GitDir))
+	// Going back to stable from a prerelease (Back) takes the latest stable release, older or not.
+	// After that, no prerelease installs that isn't newer than the one gone back from, on either
+	// channel. Stable releases still do, so the machine never stays below the latest of them.
+	skip := skipped(ctx, o.GitDir, o.Version)
+	clearSkip(ctx, o, o.Version)
+	rel, back, err := target(ctx, o, skip)
 	if err != nil {
 		return false, latest, err
 	}
 	if rel == nil {
+		if want != "" {
+			return false, "", fmt.Errorf("%s isn't a release to install now", want)
+		}
 		return false, "", nil
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
-	if !newer(rel.Tag, o.Version) {
+	if want != "" && !same(want, rel.Tag) {
+		return false, latest, fmt.Errorf("%w: %s is the release to install now, not %s", errNotAsked, latest, want)
+	}
+	if !back && !newer(rel.Tag, o.Version) {
 		return false, latest, nil
 	}
 	name := assetName(o.OS, o.Arch)
@@ -277,11 +355,55 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 	if !os.SameFile(original, current) {
 		return true, latest, nil
 	}
+	// A person may have gone back to stable from this version while the release downloaded: that
+	// choice wins over a release picked before it, and the next check, which Back asks for, goes back.
+	if !back && same(skipped(ctx, o.GitDir, o.Version), o.Version) {
+		return false, latest, nil
+	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
 	}
+	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
 	return true, latest, nil
+}
+
+// target is the release a check would install, nil for none, given skip, the release gone back to
+// stable from (skipped). back says this check goes back to stable, so takes rel even if it is older.
+func target(ctx context.Context, o Options, skip string) (rel *release, back bool, err error) {
+	back = skip != "" && same(skip, o.Version)
+	rel, err = pick(ctx, o, !back && Prerelease(ctx, o.GitDir))
+	if err == nil && rel != nil && skip != "" && prerelease(rel.Tag) && !newer(rel.Tag, skip) {
+		rel, err = pick(ctx, o, false) // held: the latest stable release, if it is newer
+	}
+	return rel, back, err
+}
+
+// look is a check with updates off (#1099): it learns the release a check with them on would
+// install, records it for the page and `mur version`, and returns its version. It downloads no
+// binary, takes no lock and writes no config; it can't install, by construction, since nothing it
+// calls replaces the executable.
+func look(ctx context.Context, o Options) (latest string, err error) {
+	rel, _, err := target(ctx, o, skipped(ctx, o.GitDir, o.Version))
+	if err != nil || rel == nil {
+		return "", err
+	}
+	recordLatest(o.GitDir, rel.Tag)
+	return strings.TrimPrefix(rel.Tag, "v"), nil
+}
+
+// clearSkip takes murmur.updateSkip off once version, the one running or just installed, has
+// passed it, so a later prerelease that misbehaves starts from no hold. It reads the key again
+// each time: a person may have gone back from another prerelease since the check began. It is the
+// global key Back writes; a repo's own is left alone.
+func clearSkip(ctx context.Context, o Options, version string) {
+	v := last(configValues(ctx, o.GitDir, skipKey), "global").value
+	if v == "" || validVersion(v) && !newer(version, v) {
+		return
+	}
+	if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
+		o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+	}
 }
 
 type release struct {
@@ -425,21 +547,44 @@ func replace(path string, data []byte, goos string, fs files) error {
 }
 
 // cleanup removes what an update left beside the binary at path: a staged file a kill left behind,
-// and backups no process runs any more. It takes the update lock first, so as not to take another
-// updater's staged file, and does nothing if another holds it.
-func cleanup(path string) {
+// and backups no process runs any more, the updater's and, on Windows (goos), install.ps1's.
+// Windows won't remove one a process still runs, so those stay for a later call. It takes the
+// update lock first, so as not to take another updater's staged file, and does nothing if another
+// holds it.
+//
+// The lock covers the updater's own backups: one is made and done with under it, so any found here
+// is left over. install.ps1 takes no lock, and its backup is its hard link to mur.exe from the
+// moment it makes one until it renames the new file over mur.exe. Taken in between, with nothing
+// running mur.exe to make Windows refuse, the link's loss sends the installer to its two-step
+// swap, which a held file can leave with no mur.exe at all (Sol's review of #1173). Where it can't
+// link, it moves mur.exe aside under the backup's name, and for a moment that is the only copy.
+// So an installer's backup that is still a second name of the binary at path stays, and so does
+// every one while there is no binary at path: once a swap is done its backup is an older binary.
+// One left as a link to the binary by an install that was stopped stays until the binary is next
+// replaced.
+func cleanup(path, goos string) {
 	dir := filepath.Dir(path)
 	entries, _ := os.ReadDir(dir)
-	var stale []string
+	var stale, installers []string
 	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
 		n := e.Name()
 		backup, isBackup := strings.CutPrefix(n, filepath.Base(path)+".old-")
+		switch {
 		// Backups from before #944 have no binary name in them.
-		if !e.IsDir() && (staged(n, path) || isBackup && (staged(backup, path) || numbered(backup, ".mur-update-"))) {
+		case staged(n, path) || isBackup && (staged(backup, path) || numbered(backup, ".mur-update-")):
 			stale = append(stale, filepath.Join(dir, n))
+		// install.ps1's have eight hex digits (mur.exe.old-1a2b3c4d): it removes them itself, but
+		// only when it next runs, and a machine that updates itself may never run it again
+		// (#1171). Only Windows has an install.ps1: elsewhere a file of that name is somebody's
+		// own, and removing a file there works even while it runs.
+		case isBackup && goos == "windows" && installerBackup(backup):
+			installers = append(installers, filepath.Join(dir, n))
 		}
 	}
-	if len(stale) == 0 {
+	if len(stale)+len(installers) == 0 {
 		return
 	}
 	lock, err := proc.Lock(path + ".update.lock")
@@ -448,6 +593,20 @@ func cleanup(path string) {
 	}
 	defer lock.Close()
 	for _, p := range stale {
+		os.Remove(p)
+	}
+	for _, p := range installers {
+		// Asked just before each removal, so that as little as can be happens between, and by
+		// opening each file (Identity): os.Stat on Windows keeps only the path, and SameFile
+		// then opens it again later and says "not the same" of a path that has gone meanwhile,
+		// which is the moment a backup is the only copy (Opus's review of #1173).
+		current, err := Identity(path)
+		if err != nil {
+			return
+		}
+		if fi, err := Identity(p); err != nil || os.SameFile(current, fi) {
+			continue
+		}
 		os.Remove(p)
 	}
 }
@@ -460,6 +619,12 @@ func stagedPrefix(path string) string { return ".mur-update-" + filepath.Base(pa
 // staged says name is a file an update of the binary at path staged. The number os.CreateTemp
 // puts after the prefix keeps mur's apart from mur-nightly's, whose prefix starts the same.
 func staged(name, path string) bool { return numbered(name, stagedPrefix(path)) }
+
+// installerBackup says suffix is what install.ps1 puts after ".old-" in a backup's name: the first
+// eight digits of a GUID, in lower-case hex.
+func installerBackup(suffix string) bool {
+	return len(suffix) == 8 && strings.Trim(suffix, "0123456789abcdef") == ""
+}
 
 func numbered(name, prefix string) bool {
 	n, ok := strings.CutPrefix(name, prefix)
@@ -513,13 +678,25 @@ func Checked(gitDir string) time.Time {
 	return fi.ModTime()
 }
 
-// Newer returns the latest release the clone's daemon last saw, if it is newer than version, else "".
+// Newer returns the latest release the clone's daemon last saw, if it is newer than version and
+// not a prerelease held back by a return to stable (Back), else "". It reads a file, and for a
+// prerelease asks git config what is held back.
 func Newer(gitDir, version string) string {
 	var l latest
 	if b, err := os.ReadFile(latestPath(gitDir)); err == nil {
 		json.Unmarshal(b, &l)
 	}
-	if l.Latest != "" && newer(l.Latest, version) {
+	if l.Latest == "" || !newer(l.Latest, version) {
+		return ""
+	}
+	// Only a prerelease can be held back, so only for one is git asked what is: `mur version` and
+	// the page call this, and a stable release, the usual answer, costs them no process (#1164).
+	if !prerelease(l.Latest) {
+		return l.Latest
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if skip := skipped(ctx, gitDir, version); skip == "" || newer(l.Latest, skip) {
 		return l.Latest
 	}
 	return ""

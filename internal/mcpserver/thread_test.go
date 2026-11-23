@@ -40,12 +40,12 @@ func TestTheThreadGivesTheSessionItsID(t *testing.T) {
 	}
 	// A claude run from a thread's shell has the thread's variable and an agent above it: it isn't
 	// the thread.
-	agentAbove = func() bool { return true }
-	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
 	if h := helloFor("claude-code", "/work"); h.ByThread || h.T3Thread != "" || h.ID != sessionID("a4ca6bbb-aaaa-bbbb-cccc-ddddeeeeffff") {
 		t.Errorf("under another agent: %+v", h)
 	}
-	agentAbove = func() bool { return false }
+	agentAbove = func(string) bool { return false }
 	// With no T3 command line and not started by a t3 (servingT3, as TestMain sets it), the variable
 	// is only inherited, and the session is as before.
 	t.Setenv("T3CODE_CLI_PATH", "")
@@ -89,8 +89,8 @@ func TestAntigravityTakesTheThreadFromTheEnvironment(t *testing.T) {
 
 	// An agy run from another agent's shell (claude or agy) has an agent above it: it must not
 	// take the enclosing T3 thread's identity.
-	agentAbove = func() bool { return true }
-	t.Cleanup(func() { agentAbove = func() bool { return false } })
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
 	if nested := helloFor("antigravity", "/work"); nested.ByThread || nested.T3Thread != "" || nested.ID != nativeID("conv-agy-1") {
 		t.Errorf("nested with conversation ID: %+v", nested)
 	}
@@ -98,11 +98,51 @@ func TestAntigravityTakesTheThreadFromTheEnvironment(t *testing.T) {
 	if nested := helloFor("antigravity", "/work"); nested.ByThread || nested.T3Thread != "" || nested.ID == threadID("thread-agy-1") {
 		t.Errorf("nested without conversation ID: %+v", nested)
 	}
-	agentAbove = func() bool { return false }
+	agentAbove = func(string) bool { return false }
 
 	// Outside T3 (no T3CODE_CLI_PATH and not started by servingT3), T3CODE_THREAD_ID is ignored.
 	t.Setenv("T3CODE_CLI_PATH", "")
 	if outside := helloFor("antigravity", "/work"); outside.ByThread || outside.T3Thread != "" || outside.T3CLI != "" || outside.Agent != "antigravity" {
+		t.Errorf("outside T3: %+v", outside)
+	}
+}
+
+// Kiro threads in T3 inherit T3CODE_THREAD_ID, T3CODE_CLI_PATH and T3CODE_HOME in their stdio
+// MCP servers and register by thread as "kiro in T3" (#908, #909).
+func TestKiroTakesTheThreadFromTheEnvironment(t *testing.T) {
+	t.Setenv("T3CODE_CLI_PATH", "/t3/bin/t3")
+	t.Setenv("T3CODE_HOME", "/home/u/.t3")
+	t.Setenv(threadEnv, "thread-kiro-1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "865a81aa-aaaa-bbbb-cccc-ddddeeeeffff")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/claude.sock")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok-1")
+
+	first := helloFor("kiro", "/work")
+	second := helloFor("kiro", "/work")
+	if first.ID != second.ID || first.ID != threadID("thread-kiro-1") || len(first.ID) != 6 {
+		t.Errorf("restarts registered as %s and %s, want %s", first.ID, second.ID, threadID("thread-kiro-1"))
+	}
+	if first.T3Thread != "thread-kiro-1" || !first.ByThread || first.T3CLI != "/t3/bin/t3" || first.T3Home != "/home/u/.t3" {
+		t.Errorf("route: %+v, byThread=%v", first.Route, first.ByThread)
+	}
+	if first.Agent != "kiro in T3" {
+		t.Errorf("agent = %q, want kiro in T3", first.Agent)
+	}
+	if first.ClaudeSession != "" || first.MsgSocket != "" || first.MsgToken != "" {
+		t.Errorf("took Claude Code variables: %+v", first)
+	}
+
+	// A kiro-cli started from another agent's shell must not take the enclosing T3 thread.
+	agentAbove = func(string) bool { return true }
+	t.Cleanup(func() { agentAbove = func(string) bool { return false } })
+	if nested := helloFor("kiro", "/work"); nested.ByThread || nested.T3Thread != "" || nested.ID == threadID("thread-kiro-1") {
+		t.Errorf("nested kiro: %+v", nested)
+	}
+	agentAbove = func(string) bool { return false }
+
+	// Outside T3 (no T3CODE_CLI_PATH and not started by servingT3), T3CODE_THREAD_ID is ignored.
+	t.Setenv("T3CODE_CLI_PATH", "")
+	if outside := helloFor("kiro", "/work"); outside.ByThread || outside.T3Thread != "" || outside.T3CLI != "" || outside.Agent != "kiro" {
 		t.Errorf("outside T3: %+v", outside)
 	}
 }
@@ -201,13 +241,15 @@ func TestAgentInChain(t *testing.T) {
 			filepath.Join(t3, "agy"), "t3"}, true},
 		"agy from Antigravity 1.5.13's shell, Windows": {[]string{"agy.exe", "powershell.exe",
 			filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, true},
-		"agy from a Claude thread's shell": {[]string{"agy", "bash", "claude", "node"}, true},
-		"a T3 thread's own agy, Windows":   {[]string{filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, false},
-		"a headless T3 thread's own agy":   {[]string{"agy", "t3"}, false},
-		"a T3 thread's own claude":         {[]string{"claude", "node", "T3 Code (Beta).exe"}, false},
-		"claude from a thread's shell":     {[]string{"claude", "bash", "claude", "node"}, true},
-		"an unreadable parent":             {[]string{"claude", ""}, false},
-		"the client alone":                 {[]string{"claude"}, false},
+		"agy from a Claude thread's shell":           {[]string{"agy", "bash", "claude", "node"}, true},
+		"a T3 thread's own agy, Windows":             {[]string{filepath.Join(t3, "agy.exe"), "T3 Code (Beta).exe"}, false},
+		"a headless T3 thread's own agy":             {[]string{"agy", "t3"}, false},
+		"a T3 thread's own claude":                   {[]string{"claude", "node", "T3 Code (Beta).exe"}, false},
+		"claude from a thread's shell":               {[]string{"claude", "bash", "claude", "node"}, true},
+		"an unreadable parent":                       {[]string{"claude", ""}, false},
+		"the client alone":                           {[]string{"claude"}, false},
+		"claude from a Kiro thread's shell, Windows": {[]string{"claude.exe", "powershell.exe", "node.exe", "kiro-cli.exe", "T3 Code (Beta).exe"}, true},
+		"claude from a Kiro thread's shell, Linux":   {[]string{"claude", "bash", "node", "kiro-cli", "t3"}, true},
 	} {
 		got := agentInChain(len(c.chain), func(i int) (string, string, bool) {
 			return c.chain[i], "", c.chain[i] != ""
@@ -215,6 +257,36 @@ func TestAgentInChain(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s: %v, want %v", what, got, c.want)
 		}
+	}
+}
+
+// Kiro CLI 3.4.0 spawns node (acp-server.js), which spawns mur mcp --agent kiro. Kiro's own
+// kiro-cli launcher above node must not look like an enclosing agent, while an agent above
+// kiro-cli still does, and servingT3Parent looks past kiro-cli to find headless t3.
+func TestKiroProcessChain(t *testing.T) {
+	for what, c := range map[string]struct {
+		chain []string
+		want  bool
+	}{
+		"a T3 thread's own kiro, Windows":        {[]string{"node.exe", "kiro-cli.exe", "T3 Code (Beta).exe"}, false},
+		"a headless T3 thread's own kiro, Linux": {[]string{"node", "kiro-cli", "t3"}, false},
+		"kiro from a Claude thread's shell":      {[]string{"node.exe", "kiro-cli.exe", "powershell.exe", "claude.exe", "T3 Code (Beta).exe"}, true},
+		"kiro from a Kiro thread's shell":        {[]string{"node.exe", "kiro-cli.exe", "powershell.exe", "node.exe", "kiro-cli.exe", "T3 Code (Beta).exe"}, true},
+	} {
+		got := agentInChainFor("kiro", len(c.chain), func(i int) (string, string, bool) {
+			return c.chain[i], "", c.chain[i] != ""
+		})
+		if got != c.want {
+			t.Errorf("%s: agentInChainFor = %v, want %v", what, got, c.want)
+		}
+	}
+
+	parent, ok := servingT3Parent("kiro", 3, func(i int) (string, string, bool) {
+		chain := []string{"node", "kiro-cli", "/usr/local/bin/t3"}
+		return chain[i], "", true
+	})
+	if !ok || parent != "/usr/local/bin/t3" {
+		t.Errorf("servingT3Parent(kiro) = (%q, %v), want (/usr/local/bin/t3, true)", parent, ok)
 	}
 }
 

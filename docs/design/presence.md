@@ -136,12 +136,22 @@ person can pick one on Settings.
 - **One device per picked colour.** A colour another device holds is refused. In a race, the
   earlier pick by its own clock wins, and a tie goes to the lower ID. The loser goes back to Auto,
   and its Settings says who has it.
-- **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free.
-  A returning daemon leaves its pick out of presence until it has synced with every live presence
-  open, then gives the pick up if a peer took it. Keeping a lost pick to reclaim later made two
-  devices swap colours each time one went idle (found in review, #577).
-- **Stale devices keep their colours**, since staleness is each reader's own clock: a dead device
-  holds its colour until its presence goes (#581).
+- **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free, and
+  so does a device that goes invisible (#1084). A returning daemon, or a device back online,
+  leaves its pick out of presence until it has synced with every live presence fetched and open, then gives
+  the pick up if a peer took it. Keeping a lost pick to reclaim later made two devices swap
+  colours each time one went idle (found in review, #577).
+- **Stale devices keep their colours**, since staleness is each reader's own clock, and two pages
+  minutes apart would otherwise colour a sleeping device differently. A device whose presence has
+  not changed for a week lets its colour go (#581, 2026-11-22): a daemon that was killed, or a clone
+  that was abandoned, leaves its presence behind for good, and its colour could never be picked. It
+  is then shown as though it had picked none, and anyone can pick the colour. If it comes back, it
+  gives the pick up to whoever took it, as any returning device does; a daemon that never stopped,
+  and slept through the week or couldn't push for it, holds its pick out of presence until it has
+  synced. The week is by each reader's wall clock, so pages can disagree about a gone device's
+  colour for as long as their clocks differ. A presence a reader fetches only after sleeping
+  through the week is judged by its commit's time too, so the reader doesn't date it from its own
+  waking and hold the colour for another week (#1165).
 - **Auto** is the colour the ID hashes to, or the next one nobody picked.
 - **No protocol bump.** An older device ignores the fields and shows in its automatic colour, and
   the pick is a page call to the page's own daemon.

@@ -67,8 +67,9 @@ while IFS= read -r f || [ -n "$f" ]; do
     internal/web/static/*) l=page ;;
     go.mod | go.sum | .github/workflows/* | scripts/*) l=full ;;
     internal/* | cmd/*) l=$(perOS "$f") ;;
-    # Tested Markdown: the README a setup test reads, and the agent pages that test reads too
-    # (internal/setup/setup_test.go). The skills are under internal/.
+    # The README a setup test reads, and the agent pages that test reads too
+    # (internal/setup/setup_test.go), which mur also builds in for `mur docs` (docs/agents/pages.go,
+    # #831). The skills are under internal/.
     README.md | docs/agents/*) l=go ;;
     # Docs and images, at the top of the repo, in docs/ and in .github/. The same kinds of file
     # anywhere else (a test's data under cmd/, say) are not quiet: `*` in a pattern crosses a `/`.

@@ -30,6 +30,9 @@ var _ web.Repos = Picker{}
 // runningWait is how long a clone's daemon has to accept a connection to count as running.
 const runningWait = 500 * time.Millisecond
 
+// slugWait is how long git has to say the remote of a clone recorded without a slug.
+const slugWait = 2 * time.Second
+
 // List is every clone on the record. Its daemon put this one there as it started.
 func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	list, err := List(p.Dir, p.Joined)
@@ -40,7 +43,7 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	out := make([]web.Repo, len(list))
 	var wg sync.WaitGroup
 	for i, c := range list {
-		out[i] = web.Repo{ID: c.ID(), Name: c.Label(), Path: shortPath(c.Top()), Current: c.ID() == self}
+		out[i] = web.Repo{ID: c.ID(), Name: c.Label(), Slug: c.Slug, Path: shortPath(c.Top()), Current: c.ID() == self}
 		if out[i].Current {
 			out[i].Running = true
 			continue
@@ -48,6 +51,21 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if out[i].Slug == "" { // recorded before slugs were
+				sctx, cancel := context.WithTimeout(ctx, slugWait)
+				out[i].Slug = SlugIn(sctx, c.GitDir)
+				cancel()
+				// Recorded, so the next listing has it without a git: the page lists the repos on
+				// every load, and the clone's own daemon records it only when it next starts
+				// (#1164). A remote git can't say, or one with no name in it, is asked again.
+				// Not for a clone that left while git was asked: leaving takes it off the record,
+				// and this would put it back. Asked as late as can be, which narrows that and
+				// doesn't end it; a record put back is one List passes over, as its clone has left.
+				if out[i].Slug != "" && (p.Joined == nil || p.Joined(c.GitDir)) {
+					c.Slug = out[i].Slug
+					Add(p.Dir, c) // a record that can't be written is asked for again next time
+				}
+			}
 			rctx, cancel := context.WithTimeout(ctx, runningWait)
 			defer cancel()
 			out[i].Running = client.Running(rctx, c.GitDir)

@@ -1,6 +1,6 @@
 ---
 name: murmur-pro
-description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. Coordinating with other agents over several Murmur messages - waiting for a reply without polling, claiming an area, settling an interface, handoffs, quiet sessions, broadcasts, and stopping reply loops. Not needed for a single message.
+description: Only in a repo where you have Murmur's tools. Coordinating with other agents over several Murmur messages - waiting for a reply without polling, claiming an area, settling an interface, handoffs, quiet sessions, broadcasts, and stopping reply loops. Not needed for a single message.
 ---
 
 <!-- Installed by `mur join`, which rewrites this file: edits here are lost. Source: internal/skills in a-Fig/murmur. -->
@@ -13,7 +13,7 @@ description: Only in a repo whose AGENTS.md or CLAUDE.md has a Murmur section. C
 - A message usually arrives as a turn of the recipient's conversation; in T3 Code it also wakes an
   idle thread. A session at work (in every agent but OpenCode 1 in T3 Code) gets a notice after
   its next tool call instead, and what it hasn't read when its turn ends is given to it then.
-- Otherwise it waits in `inbox`: for Grok, Antigravity and Muse Code outside T3 Code, for a message
+- Otherwise it waits in `inbox`: for Grok, Antigravity and Muse Code outside T3 Code and for Cursor, for a message
   that waited more than 15 minutes (the session was away), where the user turned waking off on
   `mur ui`, and for a session idle longer than its wake setting allows (5 minutes by default).
   `send` and `lookup` say when a session won't be woken. Every agent but OpenCode 1 in T3 Code

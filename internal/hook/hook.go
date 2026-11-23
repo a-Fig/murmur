@@ -71,6 +71,7 @@ type input struct {
 	ToolResponse   json.RawMessage `json:"tool_response"`
 	ToolNameCamel  string          `json:"toolName"`
 	ToolInputCamel json.RawMessage `json:"toolInput"`
+	ToolResult     json.RawMessage `json:"toolResult"`
 	// ToolUseID is on PreToolUse, PostToolUse and PostToolUseFailure alike, and the same for one
 	// call: it is what pairs the two ends (measured on Claude Code 2.1.312, 2026-10-29).
 	ToolUseID string `json:"tool_use_id"`
@@ -99,6 +100,15 @@ type input struct {
 	ToolCall          *antigravityToolCall `json:"toolCall"`
 	StepIdx           *int                 `json:"stepIdx"`
 	Error             string               `json:"error"`
+	toolCallCwd       string
+	// Cursor's payload (cursor.go). Status is stop's: "completed" at a turn's ordinary end.
+	// CursorVersion is on every event of Cursor's, which is how Claude Code's hook knows Cursor ran
+	// it from Claude Code's settings.
+	ConversationIDSnake string   `json:"conversation_id"`
+	Status              string   `json:"status"`
+	WorkspaceRoots      []string `json:"workspace_roots"`
+	CursorVersion       string   `json:"cursor_version"`
+	ParentToolCallID    string   `json:"parent_tool_call_id"`
 }
 
 type output struct {
@@ -159,6 +169,26 @@ func claudePID() int {
 		return 0
 	}
 	return pid
+}
+
+func normalizeGrok(in *input) {
+	if in.SessionID == "" {
+		in.SessionID = in.SessionIDCamel
+	}
+	if in.ToolName == "" {
+		in.ToolName = in.ToolNameCamel
+	}
+	if rawEmpty(in.ToolInput) {
+		in.ToolInput = in.ToolInputCamel
+	}
+	if rawEmpty(in.ToolResponse) {
+		in.ToolResponse = in.ToolResult
+	}
+}
+
+func rawEmpty(b json.RawMessage) bool {
+	s := strings.TrimSpace(string(b))
+	return s == "" || s == "null"
 }
 
 // bracketOp is the daemon op that tells it about the call this event is the start or end of, or ""
@@ -261,12 +291,14 @@ func ownRecord(agent, native, t3Thread string, recs []here.Session) (here.Sessio
 	if threadMatches == 1 {
 		return threadRec, true
 	}
-	// Each agy client process runs one conversation and starts its own MCP server. Only
-	// accept the sole record for that PID with neither ID known and an Antigravity label.
-	// The label rules out a parent Claude Code or Codex whose record was the nearest one.
-	if agent == Antigravity && len(recs) == 1 {
+	// Each agy or kiro-cli V3 client process runs one conversation and starts its own MCP server,
+	// as a Cursor process does outside T3 (a server takes Cursor's conversation from the hook a
+	// moment after it runs: cursor.go). Only accept the sole record for that PID with neither ID
+	// known and the agent's label. The label rules out a parent Claude Code or Codex whose record
+	// was the nearest one.
+	if (agent == Antigravity || agent == Cursor || agent == Kiro) && len(recs) == 1 {
 		r := recs[0]
-		if r.Native == "" && r.T3Thread == "" && (r.Agent == Antigravity || strings.HasPrefix(r.Agent, Antigravity+" ")) {
+		if r.Native == "" && r.T3Thread == "" && (r.Agent == agent || strings.HasPrefix(r.Agent, agent+" ")) {
 			return r, true
 		}
 	}
@@ -280,7 +312,7 @@ func Run(stdin io.Reader, stdout io.Writer) { RunFor("", stdin, stdout) }
 // Agents other than Claude Code that join installs the hook in, by the name their hook's command
 // line gives (`mur hook codex`). Their hooks take Claude Code's payload and answers, Grok's with
 // some fields of its own (#225) and Muse's with side sessions of its own (muse.go, #461), except
-// Antigravity's, which has its own (antigravity.go). Pi's is
+// Antigravity's and Cursor's, which have their own (antigravity.go, cursor.go). Pi's is
 // run by Murmur's own extension, which gives the session's file for its ID (#205), and OpenCode's
 // by Murmur's plugin, with OpenCode's session ID (#431).
 const (
@@ -290,12 +322,15 @@ const (
 	OpenCode    = "opencode"
 	Antigravity = "antigravity"
 	Muse        = "muse"
+	Cursor      = "cursor"
+	Kiro        = "kiro"
 )
 
 // KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode,
-// antigravity or muse.
+// antigravity, muse, cursor or kiro.
 func KnownAgent(agent string) bool {
-	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse
+	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse ||
+		agent == Cursor || agent == Kiro
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
@@ -307,10 +342,13 @@ func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
 // than take another agent's hook for Claude Code's. Claude Code's hook sends its transcript.
 func RunFor(agent string, stdin io.Reader, stdout io.Writer) { RunForEvent(agent, "", stdin, stdout) }
 
-// RunForEvent is RunFor with the event its command line names. Antigravity's hook answers every
-// event with a JSON object.
+// RunForEvent is RunFor with the event its command line names. Antigravity's and Cursor's hooks
+// answer every event with a JSON object.
 func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
-	if agent == Antigravity {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if agent == Antigravity || agent == Cursor {
 		w := &written{w: stdout}
 		stdout = w
 		defer func() {
@@ -325,7 +363,7 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		}()
 	}
 	defer func() { recover() }()
-	if !KnownAgent(agent) {
+	if !KnownAgent(agent) || stdin == nil {
 		return
 	}
 	var in input
@@ -333,14 +371,15 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	if agent == Grok {
-		if in.SessionID == "" {
-			in.SessionID = in.SessionIDCamel
-		}
-		if in.ToolName == "" {
-			in.ToolName, in.ToolInput = in.ToolNameCamel, in.ToolInputCamel
-		}
+		normalizeGrok(&in)
 	}
 	if agent == Antigravity && !fromAntigravity(&in, event) {
+		return
+	}
+	if agent == "" && in.CursorVersion != "" {
+		return // Cursor running Claude Code's hooks (cursor.go): its own hook speaks for the session
+	}
+	if agent == Cursor && !fromCursor(&in) {
 		return
 	}
 	if agent == Muse {
@@ -359,17 +398,22 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		in.Child, in.ParentNative = false, ""
 	}
 	who := identify(agent, in)
+	if agent == Cursor {
+		nameServer(in, who.Ancestors)
+	}
 	if in.Event == stop {
 		turnEnd(agent, in, who, stdout)
 		return
 	}
 	var op string
-	if agent == "" || agent == Antigravity && in.ToolName == antigravityCommand {
+	if agent == "" || agent == Pi || agent == Antigravity && in.ToolName == antigravityCommand {
+		// Pi's extension gives a tool_use_id only for a shell call, the one kind of call it brackets.
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
-	// does. Antigravity receives its notices in PreInvocation.
-	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool)
+	// does. Antigravity receives its notices in PreInvocation. Kiro 3.4.0 discards PostToolUse
+	// command stdout/stderr, so skip fetching notices on PostToolUse there to avoid losing messages.
+	wantNotices := in.Event != preTool && in.Event != postFailure && (agent != Antigravity || in.Event != postTool) && (agent != Kiro || in.Event != postTool)
 	if !wantNotices && op == "" {
 		return
 	}
@@ -391,8 +435,8 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	// own: a session moved into this clone works in another, and its commits there aren't credited.
 	callDir, callCwd := gitDir, in.Cwd
 	if op != "" {
-		if agent == Antigravity && in.ToolCall.Args.Cwd != "" {
-			callCwd = in.ToolCall.Args.Cwd
+		if agent == Antigravity && in.toolCallCwd != "" {
+			callCwd = in.toolCallCwd
 		}
 		if placed || callCwd != in.Cwd {
 			callDir, _ = findClone(ctx, callCwd)
@@ -435,8 +479,13 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	inbox := view.InboxTool
-	if agent == Antigravity {
+	switch agent {
+	case Antigravity:
 		inbox = view.AntigravityInboxTool
+	case Cursor:
+		inbox = view.CursorInboxTool
+	case Kiro:
+		inbox = view.KiroInboxTool
 	}
 	text := view.HookWithInbox(resp.Read, resp.Messages, resp.Unread, inbox)
 	if text == "" {
@@ -444,6 +493,18 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 	}
 	if agent == Antigravity {
 		json.NewEncoder(stdout).Encode(antigravitySteps(text))
+		return
+	}
+	if agent == Cursor {
+		json.NewEncoder(stdout).Encode(cursorAnswer{AdditionalContext: text})
+		return
+	}
+	if agent == Kiro {
+		// Kiro 3.4.0 injects raw stdout on UserPromptSubmit / SessionStart directly into the turn.
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		io.WriteString(stdout, text)
 		return
 	}
 	var out output
@@ -474,6 +535,10 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	if err != nil || len(resp.Read) == 0 || !who.Continues {
 		return
 	}
+	if agent == Cursor {
+		json.NewEncoder(stdout).Encode(cursorAnswer{FollowupMessage: view.Hook(resp.Read, nil, 0)})
+		return
+	}
 	decision := "block"
 	if agent == Antigravity {
 		decision = "continue" // its word for not stopping
@@ -489,16 +554,94 @@ func identify(agent string, in input) proto.Request {
 		// The session is named by its file (Pi) or its session ID (OpenCode), which its MCP server
 		// registered with too, never by a Claude Code ID or process: a Pi started from a Claude Code
 		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
-		// Claude Code's form, and no call is bracketed, so their commits aren't credited to them.
+		// Claude Code's form. Pi's extension brackets a shell call with a tool_use_id of its own; no
+		// OpenCode call is bracketed, so its commits aren't credited to it.
 		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}
 	if agent == "" {
 		r.ClientPID = claudePID()
 	} else {
-		r.Agent, r.Ancestors = agent, proc.Ancestors(os.Getppid(), maxAncestors)
+		anc := proc.Ancestors(os.Getppid(), maxAncestors)
+		if agent == Kiro {
+			anc = kiroHookAncestors(anc, func(pid int) (string, string, bool) {
+				exe, err := proc.Exe(pid)
+				return exe, procComm(pid), err == nil
+			})
+		}
+		r.Agent, r.Ancestors = agent, anc
 	}
 	return r
+}
+
+// kiroHookAncestors scopes a Kiro hook's ancestor list to the hook's own Kiro client process so a
+// nested kiro-cli started from an outer Kiro session's shell can never reach the outer Kiro's
+// client PID (#910). Walking outward through any immediate hook shells:
+//   - If node sits directly under kiro-cli, only that node PID is returned.
+//   - If kiro-cli appears without node below it, stop at that kiro-cli (pids[:i+1]).
+//   - On any other non-shell process (e.g. a renamed inner launcher), stop at pids[:i+1] so
+//     nothing above it can match an outer Kiro session.
+//   - On an unidentified PID, stop at pids[:i+1] (or pids[:2] if the immediate parent at i==0
+//     couldn't be read, so an unreadable hook shell can still reach its direct client at pids[1]
+//     without ever reaching an outer Kiro client at depth >= 3).
+func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok bool)) []int {
+	nameOf := func(pid int) (string, bool) {
+		exe, comm, ok := exeAt(pid)
+		if ok {
+			if n := exeBaseName(exe); n != "" {
+				return n, true
+			}
+		}
+		if comm != "" {
+			return comm, true
+		}
+		return "", false
+	}
+	for i, pid := range pids {
+		name, known := nameOf(pid)
+		if !known {
+			if i == 0 && len(pids) >= 2 {
+				return pids[:2]
+			}
+			return pids[:i+1]
+		}
+		if name == "node" && i+1 < len(pids) {
+			if next, ok := nameOf(pids[i+1]); ok && next == "kiro-cli" {
+				return []int{pid}
+			}
+		}
+		if name == "kiro-cli" {
+			return pids[:i+1]
+		}
+		if !isHookShell(name) {
+			return pids[:i+1]
+		}
+	}
+	return pids
+}
+
+func isHookShell(name string) bool {
+	switch name {
+	case "cmd", "sh", "bash", "zsh", "dash", "ash", "ksh", "fish", "pwsh", "powershell":
+		return true
+	}
+	return false
+}
+
+func exeBaseName(exe string) string {
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	if i := strings.LastIndexAny(exe, `/\`); i >= 0 {
+		exe = exe[i+1:]
+	}
+	return strings.TrimSuffix(strings.ToLower(exe), ".exe")
+}
+
+func procComm(pid int) string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // maxAncestors bounds how far up identify looks: the agent is the hook's grandparent where it runs

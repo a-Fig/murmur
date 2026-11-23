@@ -23,6 +23,7 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"net/http"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,7 +40,12 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
 	taken := flag.Bool("taken", false, "start with an account named maya, a name the person on maya-mbp chose first (#268)")
 	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
-	repos := flag.String("repos", "", "comma-separated repo names: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
+	updates := flag.String("updates", "on", "the machine's update setting (#1045): off, on or nightly")
+	updatesOverride := flag.Bool("updates-override", false, "act as if this repo's git config sets murmur.update false")
+	installError := flag.String("install-error", "", "Update now fails with this, as a bad download would; else it installs")
+	running := flag.String("running", "0.3.0", "the daemon's version; a prerelease, like 0.3.1-nightly.20261121, offers going back to stable")
+	repo := flag.String("repo", "", "the repo this page is a clone of, as owner/name (a-Fig/murmur) or a name alone, which a remote with no owner gives (#1126)")
+	repos := flag.String("repos", "", "comma-separated repos, each owner/name or a name alone: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || (host != "127.0.0.1" && host != "localhost") {
@@ -51,7 +57,7 @@ func main() {
 	}
 	token := randomHex(16)
 	src := newFixtures(time.Now())
-	src.version = web.Version{Running: "0.3.0", Daemon: "1", Install: "curl -fsSL https://raw.githubusercontent.com/a-Fig/murmur/main/install.sh | sh"}
+	src.version = web.Version{Running: *running, Daemon: "1"}
 	switch *upd {
 	case "none":
 	case "auto":
@@ -66,8 +72,19 @@ func main() {
 	if *taken {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
 	}
+	switch *updates {
+	case web.UpdatesOff, web.UpdatesOn, web.UpdatesNightly:
+	default:
+		log.Fatalf("-updates must be off, on or nightly")
+	}
+	if (*updates == web.UpdatesOff || *updatesOverride) && !src.version.Ready {
+		src.version.Off, src.version.Auto = true, false
+	}
+	src.version.CanInstall = canInstall(src.version)
+	src.repo, src.slug = splitRepo(*repo)
 	go src.run()
 	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
+	page.WithUpdates(&devUpdates{src: src, choice: *updates, override: *updatesOverride, installError: *installError})
 	if *repos != "" {
 		serveRepos(strings.Split(*repos, ","), ln, src, page)
 	}
@@ -79,11 +96,11 @@ func main() {
 // devRepo is one made-up clone, with a page of its own on a port of its own, as each clone's daemon
 // serves its own.
 type devRepo struct {
-	name, path string
-	addr       string
-	page       *web.Server
-	mu         sync.Mutex
-	running    bool
+	name, slug, path string
+	addr             string
+	page             *web.Server
+	mu               sync.Mutex
+	running          bool
 }
 
 // devRepos is the picker's view from one of them.
@@ -96,7 +113,7 @@ func (r devRepos) List(ctx context.Context) ([]web.Repo, error) {
 	var out []web.Repo
 	for i, d := range r.all {
 		d.mu.Lock()
-		out = append(out, web.Repo{ID: strconv.Itoa(i), Name: d.name, Path: d.path, Running: d.running, Current: i == r.self})
+		out = append(out, web.Repo{ID: strconv.Itoa(i), Name: d.name, Slug: d.slug, Path: d.path, Running: d.running, Current: i == r.self})
 		d.mu.Unlock()
 	}
 	return out, nil
@@ -131,8 +148,8 @@ func (r devRepos) Open(ctx context.Context, id string) (string, error) {
 func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web.Server) {
 	all := make([]*devRepo, len(names))
 	for i, name := range names {
-		name = strings.TrimSpace(name)
-		d := &devRepo{name: name, path: "~/code/" + name, running: i == 0 || i < len(names)-1}
+		name, slug := splitRepo(name)
+		d := &devRepo{name: name, slug: slug, path: "~/code/" + name, running: i == 0 || i < len(names)-1}
 		src := first
 		if i == 0 {
 			d.addr, d.page = ln.Addr().String(), firstPage
@@ -151,13 +168,20 @@ func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web
 			go func() { log.Fatal(srv.Serve(l)) }()
 		}
 		src.mu.Lock()
-		src.repo = name
+		src.repo, src.slug = name, slug
 		src.mu.Unlock()
 		all[i] = d
 	}
 	for i, d := range all {
 		d.page.WithRepos(devRepos{all: all, self: i})
 	}
+}
+
+// splitRepo is a repo's name and its slug from owner/name or a name alone, as the daemon has them
+// (clones.NameOf, clones.SlugOf): a name alone has no owner, so its slug is itself.
+func splitRepo(s string) (name, slug string) {
+	slug = strings.TrimSpace(s)
+	return path.Base(slug), slug
 }
 
 func randomHex(n int) string {
@@ -193,6 +217,7 @@ type fixtures struct {
 	downTill time.Time // a restart in progress: State fails until then
 	account  web.Account
 	repo     string // the repo's name, for the picker
+	slug     string // its owner/name, as the page names it
 	// receipts is how far each of the person's messages got (#26). sam-thinkpad stands for a device
 	// on an older Murmur, which sends none.
 	receipts map[string][]web.Receipt
@@ -511,7 +536,7 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	if time.Now().Before(f.downTill) {
 		return web.State{}, errors.New("restarting")
 	}
-	st := web.State{Repo: f.repo, Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
+	st := web.State{Repo: f.repo, Slug: f.slug, Device: f.self, Mutes: append([]web.Mute(nil), f.mutes...), Version: f.version, Account: f.account}
 	if len(f.receipts) > 0 {
 		st.Receipts = map[string][]web.Receipt{}
 		for id, rs := range f.receipts {
@@ -818,7 +843,7 @@ func (f *fixtures) Restart(ctx context.Context) error {
 	if !f.version.Ready {
 		return web.ErrNoUpdate
 	}
-	f.version = web.Version{Running: f.version.Latest, Install: f.version.Install, Daemon: "2"}
+	f.version = web.Version{Running: f.version.Latest, Daemon: "2"}
 	f.downTill = time.Now().Add(3 * time.Second)
 	return nil
 }

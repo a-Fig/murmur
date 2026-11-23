@@ -91,8 +91,8 @@ func TestInitWritesTheMarkerIntoBothFiles(t *testing.T) {
 			t.Errorf("the section doesn't say %q:\n%s", want, agents)
 		}
 	}
-	if !Marked(dir) {
-		t.Error("Marked doesn't see the marker init wrote")
+	if !markedTree(dir) {
+		t.Error("markedTree doesn't see the marker init wrote")
 	}
 	if changed := initRepo(t, dir); len(changed) != 0 {
 		t.Errorf("a second init changed %q", changed)
@@ -165,13 +165,13 @@ func TestTheUsePageQuotesTheTurnWordForWord(t *testing.T) {
 	}
 }
 
-// A marker in either file is enough for a repo to count as one that uses Murmur, and no marker is
-// not.
+// A marker in either file is enough for init to count the files as having the section, and no
+// marker is not.
 func TestMarkedNeedsAMarker(t *testing.T) {
-	if Marked(repo(t, map[string]string{"AGENTS.md": "# Notes\n", "CLAUDE.md": "Murmur is mentioned here\n"})) {
+	if markedTree(repo(t, map[string]string{"AGENTS.md": "# Notes\n", "CLAUDE.md": "Murmur is mentioned here\n"})) {
 		t.Error("a repo with no marker is marked")
 	}
-	if !Marked(repo(t, map[string]string{"CLAUDE.md": markStart + "\nold\n" + markEnd + "\n"})) {
+	if !markedTree(repo(t, map[string]string{"CLAUDE.md": markStart + "\nold\n" + markEnd + "\n"})) {
 		t.Error("a repo with a marker in CLAUDE.md isn't marked")
 	}
 }

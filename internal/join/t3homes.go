@@ -20,7 +20,7 @@ import (
 // which are on and which home each runs in, and the rules below are copied from it:
 //
 //   - On: off if the instance's `enabled` or its config's `enabled` is false; else whichever of the
-//     two is set; else by driver, where cursor, grok, muse, pi, opencode and antigravity default to
+//     two is set; else by driver, where cursor, grok, kiro, muse, pi, opencode and antigravity default to
 //     off and the rest (claudeAgent, codex) to on. A project can override that, which join doesn't
 //     read: it registers per user.
 //   - Home: config.homePath for claudeAgent (it is a CLAUDE_CONFIG_DIR) and codex (a CODEX_HOME),
@@ -44,7 +44,7 @@ type t3Instance struct {
 }
 
 // offByDefault are the drivers T3 leaves off unless told otherwise (DEFAULT_DISABLED_PROVIDER_DRIVERS).
-var offByDefault = map[string]bool{"cursor": true, "grok": true, "muse": true, "pi": true, "opencode": true, "antigravity": true}
+var offByDefault = map[string]bool{"cursor": true, "grok": true, "kiro": true, "muse": true, "pi": true, "opencode": true, "antigravity": true}
 
 // readT3Instances reads the provider instances from T3's settings.json at path, sorted by ID. A
 // missing file is no instances; an instance whose fields aren't what T3 writes is passed over.

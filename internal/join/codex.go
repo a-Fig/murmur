@@ -160,7 +160,7 @@ func editTOMLServer(text, exe string, spec tomlServer) (out string, changed bool
 			}
 			found[key] = true
 			items, after, ok := stringListRest(val)
-			if !singleLine(val) || !ok || (after != "" && after[0] != '#') {
+			if !ok || (after != "" && after[0] != '#') {
 				return "", false, fmt.Errorf("%s has env_vars of the %s server in a form join doesn't edit (several lines, or not a list of names): add %s to it by hand", spec.file, brand.MCPServer, joinQuoted(spec.envVars))
 			}
 			var missing []string
@@ -383,7 +383,40 @@ func singleLine(val string) bool {
 	case strings.HasPrefix(val, `"""`), strings.HasPrefix(val, `'''`):
 		return false
 	case strings.HasPrefix(val, "["):
-		return strings.Count(val, "[") == strings.Count(val, "]")
+		// Skip brackets inside quoted strings and comments so a valid one-line list such as
+		// ["Bash(printf [)"] isn't taken for a multi-line array (#983).
+		depth := 0
+		for i := 0; i < len(val); {
+			switch val[i] {
+			case '#':
+				return false
+			case '"', '\'':
+				if strings.HasPrefix(val[i:], `"""`) || strings.HasPrefix(val[i:], `'''`) {
+					return false
+				}
+				end := closingQuote(val[i:])
+				if end < 0 {
+					return false
+				}
+				i += end + 1
+			case '[':
+				depth++
+				i++
+			case ']':
+				depth--
+				if depth < 0 {
+					return false
+				}
+				if depth == 0 {
+					rest := strings.TrimSpace(val[i+1:])
+					return rest == "" || rest[0] == '#'
+				}
+				i++
+			default:
+				i++
+			}
+		}
+		return false
 	}
 	return true
 }
@@ -438,7 +471,7 @@ func stringListRest(val string) (items []string, after string, ok bool) {
 		if strings.HasPrefix(rest, "]") {
 			return out, strings.TrimSpace(rest[1:]), true
 		}
-		if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
+		if rest == "" || (rest[0] != '"' && rest[0] != '\'') || strings.HasPrefix(rest, `"""`) || strings.HasPrefix(rest, `'''`) {
 			return nil, "", false
 		}
 		var s string
@@ -470,7 +503,13 @@ func stringListRest(val string) (items []string, after string, ok bool) {
 		}
 		out = append(out, s)
 		rest = strings.TrimSpace(rest[n:])
-		rest = strings.TrimSpace(strings.TrimPrefix(rest, ","))
+		if strings.HasPrefix(rest, "]") {
+			return out, strings.TrimSpace(rest[1:]), true
+		}
+		if !strings.HasPrefix(rest, ",") {
+			return nil, "", false
+		}
+		rest = strings.TrimSpace(rest[1:])
 	}
 }
 

@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -22,17 +23,15 @@ import (
 const antigravityCommand = "run_command"
 
 type antigravityToolCall struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Args struct {
-		Cwd string `json:"Cwd"`
-	} `json:"args"`
+	ID   string          `json:"id"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args"`
 }
 
 // fromAntigravity puts what Antigravity's payload says for event in Claude Code's fields, and says
 // whether the hook acts on event.
 func fromAntigravity(in *input, event string) bool {
-	in.SessionID, in.Event, in.Prompt = in.ConversationID, "", ""
+	in.SessionID, in.Event, in.Prompt, in.toolCallCwd = in.ConversationID, "", "", ""
 	switch event {
 	case "PreInvocation":
 		in.Event = "UserPromptSubmit"
@@ -56,17 +55,31 @@ func fromAntigravity(in *input, event string) bool {
 			in.Event = postFailure
 		}
 		in.ToolName, in.ToolUseID = in.ToolCall.Name, in.ToolCall.ID
-		if cwd := in.ToolCall.Args.Cwd; in.ToolName == antigravityCommand && cwd != "" && in.Cwd != "" && !filepath.IsAbs(cwd) {
-			in.ToolCall.Args.Cwd = filepath.Join(in.Cwd, cwd)
-		}
 		if in.ToolUseID == "" && in.StepIdx != nil {
 			in.ToolUseID = fmt.Sprintf("step-%d", *in.StepIdx)
 		}
 	default:
 		return false
 	}
-	if in.Cwd == "" && len(in.WorkspacePaths) > 0 {
-		in.Cwd = in.WorkspacePaths[0]
+	if in.Cwd == "" {
+		for _, p := range in.WorkspacePaths {
+			if p != "" {
+				in.Cwd = p
+				break
+			}
+		}
+	}
+	if (event == preTool || event == postTool) && in.ToolName == antigravityCommand && len(in.ToolCall.Args) > 0 {
+		var args struct {
+			Cwd string `json:"Cwd"`
+		}
+		if json.Unmarshal(in.ToolCall.Args, &args) == nil && args.Cwd != "" {
+			cwd := args.Cwd
+			if in.Cwd != "" && !filepath.IsAbs(cwd) {
+				cwd = filepath.Join(in.Cwd, cwd)
+			}
+			in.toolCallCwd = cwd
+		}
 	}
 	return true
 }

@@ -1,10 +1,11 @@
-// Package setup is `init`: it puts the section into AGENTS.md and CLAUDE.md that says a repo uses
-// Murmur. By default (Push) it makes that change as a commit on the remote's default branch, built
-// with plumbing so that no working tree or index is touched, and pushes it there, or to a
-// murmur-init branch for a pull request when the server refuses. With --no-push (Init) it edits the
-// working tree instead, for a person to review and commit. It is the only part of Murmur that writes
-// to a repo's branches or tracked files, and it runs only when a person asks. Joining (package join)
-// is a separate, per-user step that commits nothing.
+// Package setup is `init`. RefsOnly makes the shared bus refs on the remote in their empty state,
+// which is what sets a repo up: join looks for them (#830). Push also puts the section into
+// AGENTS.md and CLAUDE.md that invites teammates' agents, as a commit on the remote's default
+// branch, built with plumbing so that no working tree or index is touched, and pushes it there, or
+// to a murmur-init branch for a pull request when the server refuses. With --no-push (Init) it
+// edits the working tree instead, for a person to review and commit, and pushes nothing. It is the
+// only part of Murmur that writes to a repo's branches or tracked files, and it runs only when a
+// person asks. Joining (package join) is a separate, per-user step that commits nothing.
 package setup
 
 import (
@@ -16,11 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/jsonedit"
 )
@@ -177,13 +175,6 @@ const (
 // markerFiles are the files init puts the marker in: Codex reads AGENTS.md, Claude Code CLAUDE.md.
 var markerFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
-// Marked reports whether the repo says it uses Murmur, as seen from the working tree at top, which
-// is what makes a repo one that Murmur may start in. The marker in either file is enough, in the
-// working tree or on the clone's remote-tracking default branch (refs/remotes/<remote>/HEAD, read
-// without the network): `mur init` puts the section on the default branch, and a worktree on a
-// branch made before that would otherwise stay unmarked until it merged the default branch.
-func Marked(top string) bool { return markedTree(top) || markedUpstream(top) }
-
 // markedTree reports whether the working tree at top has the marker in either file.
 func markedTree(top string) bool {
 	for _, name := range markerFiles {
@@ -195,15 +186,14 @@ func markedTree(top string) bool {
 }
 
 // maxRepoFile is the most readRepoFile reads. Codex reads only the first 32 KiB of an AGENTS.md by
-// default; 4 MiB is over a hundred times that, so no file an agent really reads comes near it, and
-// reading one every 2 seconds is still cheap.
+// default; 4 MiB is over a hundred times that, so no file an agent really reads comes near it.
 const maxRepoFile = 4 << 20
 
 // readRepoFile reads a file of the working tree for the marker check and for init: a regular file,
 // or a link to one (CLAUDE.md is often a link to AGENTS.md), of at most maxRepoFile. The tree holds
-// whatever a commit put there, someone else's pull request included, and every session's MCP server
-// reads the marker files every 2 seconds: a link to /dev/zero would be read until memory ran out,
-// /dev/stdin would swallow the server's own requests, and a terminal or a pipe would block it.
+// whatever a commit put there, someone else's pull request included: a link to /dev/zero would be
+// read until memory ran out, /dev/stdin would swallow init's own input, and a terminal or a pipe
+// would block it.
 func readRepoFile(path string) ([]byte, error) {
 	if fi, err := os.Stat(path); err != nil {
 		return nil, err
@@ -228,44 +218,6 @@ func readRepoFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("%s is over %d MiB, more than any file an agent reads", path, maxRepoFile>>20)
 	}
 	return b, nil
-}
-
-// upstreamRecheck is how long markedUpstream's answer for a working tree stands. The MCP server asks
-// Marked every 2 seconds, and the answer takes git processes, which on Windows cost a tenth of a
-// second or more each (#21); the remote-tracking branch moves only on a fetch anyway.
-var upstreamRecheck = 20 * time.Second
-
-var upstream = struct {
-	sync.Mutex
-	seen map[string]upstreamAnswer
-}{seen: map[string]upstreamAnswer{}}
-
-type upstreamAnswer struct {
-	at     time.Time
-	marked bool
-}
-
-// markedUpstream reports whether the remote-tracking default branch of the clone containing top
-// has the marker in either file.
-func markedUpstream(top string) bool {
-	upstream.Lock()
-	a, ok := upstream.seen[top]
-	upstream.Unlock()
-	if ok && time.Since(a.at) < upstreamRecheck {
-		return a.marked
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	marked := false
-	if g, _, err := gitIn(ctx, top); err == nil {
-		if remote, err := bus.RemoteFor(ctx, g); err == nil {
-			marked = markedAt(ctx, g, "refs/remotes/"+remote+"/HEAD")
-		}
-	}
-	upstream.Lock()
-	upstream.seen[top] = upstreamAnswer{at: time.Now(), marked: marked}
-	upstream.Unlock()
-	return marked
 }
 
 // markedAt reports whether either marker file in the commit rev has the marker. A rev that names

@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/web"
 )
 
 // recordAtListen reads the record of this machine's clones when the daemon logs where it listens,
@@ -66,7 +68,35 @@ func TestTheDaemonIsOnTheRecordOfClonesBeforeItAnswers(t *testing.T) {
 	if !at.logged || !at.answered {
 		t.Fatalf("the daemon didn't log where it listens after writing daemon.json (logged %v, daemon.json %v)", at.logged, at.answered)
 	}
-	if at.err != nil || len(at.list) != 1 || at.list[0].GitDir != filepath.Clean(d.gitDir) || at.list[0].Name != "remote" {
-		t.Errorf("the record as the daemon answered: %+v, %v; want this clone, named remote", at.list, at.err)
+	if at.err != nil || len(at.list) != 1 || at.list[0].GitDir != filepath.Clean(d.gitDir) || at.list[0].Name != "remote" || at.list[0].Slug != "remote" {
+		t.Errorf("the record as the daemon answered: %+v, %v; want this clone, named remote with no owner", at.list, at.err)
+	}
+}
+
+// The page is told the repository's owner/name (#1126) as well as its name, and the record of clones
+// keeps both, for the other clones' pickers.
+func TestThePageAndTheRecordHaveTheRepositorysOwnerAndName(t *testing.T) {
+	remote := newRemote(t)
+	const address = "git@github.com:a-Fig/murmur.git"
+	record := filepath.Join(t.TempDir(), "clones")
+	d := newDeviceWith(t, remote, func(d *device) {
+		d.clones, d.noKey = record, true
+		dir := filepath.Dir(d.gitDir)
+		// The remote is named as it is on GitHub, and git still reaches the folder it stands for.
+		git(t, dir, "config", "remote.origin.url", address)
+		git(t, dir, "config", "url."+remote+".insteadOf", address)
+	})
+	p := d.page()
+	code, body := p.call("GET", "/api/state", p.token, "")
+	var st web.State
+	if err := json.Unmarshal([]byte(body), &st); err != nil || code != 200 {
+		t.Fatalf("GET /api/state: %d %s, %v", code, body, err)
+	}
+	if st.Repo != "murmur" || st.Slug != "a-Fig/murmur" {
+		t.Errorf("the page's repo is %q and its slug %q, want murmur and a-Fig/murmur", st.Repo, st.Slug)
+	}
+	list, err := clones.List(record, func(string) bool { return true })
+	if err != nil || len(list) != 1 || list[0].Name != "murmur" || list[0].Slug != "a-Fig/murmur" {
+		t.Errorf("the record: %+v, %v; want murmur, a-Fig/murmur", list, err)
 	}
 }

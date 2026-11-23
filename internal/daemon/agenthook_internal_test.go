@@ -18,6 +18,7 @@ import (
 func agentHookDaemon(t *testing.T) *Daemon {
 	return &Daemon{dir: t.TempDir(), log: log.New(io.Discard, "", 0), device: "here-0001", started: time.Now(),
 		sessions: map[string]*session{}, threadRead: map[threadKey]time.Time{}, peers: map[string]*peer{},
+		pushedAt: map[string]time.Time{}, introduced: map[string]map[string]bool{},
 		st: state{Inbox: map[string][]*inMsg{}}, pushKick: make(chan struct{}, 1)}
 }
 
@@ -85,6 +86,41 @@ func TestAMuseHookFindsItsSessionByItsID(t *testing.T) {
 	}
 }
 
+// A Cursor session's server registers by the chat its hook named (#921), and the hook finds it by
+// that ID; one that registered before the hook named it is found by its process only when its
+// client is Cursor's command line (not a shared T3 Code or editor process), once, and keeps that
+// chat.
+func TestACursorHookFindsItsSession(t *testing.T) {
+	d := agentHookDaemon(t)
+	cli := false
+	old := cursorCLI
+	cursorCLI = func(int) bool { return cli }
+	t.Cleanup(func() { cursorCLI = old })
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	named := d.newSessionLocked(&proto.Hello{ID: "aaaaaa", ClientPID: 700}, "cursor", "", "aaaaaa")
+	named.clientPID, named.route.Native = 700, "chat-a"
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-a", Ancestors: []int{800, 700}}); len(got) != 1 || got[0] != named {
+		t.Fatalf("by its chat: %v", ids(got))
+	}
+	late := d.newSessionLocked(&proto.Hello{ID: "bbbbbb", ClientPID: 900}, "cursor", "", "bbbbbb")
+	late.clientPID = 900
+	// Outside Cursor's CLI (T3 Code or the editor), a hook never binds to a sole unnamed session
+	// by process: another thread in that process could send its hook first.
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-b", Ancestors: []int{901, 900}}); len(got) != 0 || late.hookNative != "" || !late.hookSeen {
+		t.Fatalf("outside CLI: got %v, hookNative %q, hookSeen %v", ids(got), late.hookNative, late.hookSeen)
+	}
+	cli = true
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-b", Ancestors: []int{901, 900}}); len(got) != 1 || got[0] != late || late.hookNative != "chat-b" {
+		t.Fatalf("by its process: %v, hookNative %q", ids(got), late.hookNative)
+	}
+	// Another chat in that process (a new chat in the same terminal) isn't taken for it.
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-c", Ancestors: []int{901, 900}}); len(got) != 0 {
+		t.Fatalf("another chat took %v", ids(got))
+	}
+}
+
 // Two sessions of one process with no ID yet (T3 runs every Codex thread in one app server):
 // nothing tells them apart, so the hook speaks for neither, but both have a hook that runs.
 func TestAnAgentHookOfSeveralUnknownSessionsTakesNone(t *testing.T) {
@@ -148,6 +184,9 @@ func TestHookOff(t *testing.T) {
 		{"pi in T3", long, false, true},
 		{"muse", long, false, true},
 		{"muse in T3", long, false, true},
+		{"cursor", long, false, true},
+		{"kiro", long, false, true},
+		{"kiro in T3", long, false, true},
 		{"codex", long, true, false},
 		{"codex", time.Now(), false, false},  // in its grace
 		{"codex", time.Time{}, false, false}, // no tool call: maybe nothing to tell
@@ -200,6 +239,8 @@ func TestSendHookOffNoteUsesTurnRoute(t *testing.T) {
 	}{
 		{"antigravity in T3", proto.Route{T3CLI: "t3"}, false},
 		{"antigravity in T3", proto.Route{T3CLI: "t3", T3Thread: "thread-1"}, true},
+		{"kiro in T3", proto.Route{T3CLI: "t3"}, false},
+		{"kiro in T3", proto.Route{T3CLI: "t3", T3Thread: "thread-1"}, true},
 		{"claude-code", proto.Route{MsgSocket: "socket"}, false},
 		{"claude-code", proto.Route{MsgSocket: "socket", MsgToken: "token"}, true},
 		{"claude-code in T3", proto.Route{T3CLI: "t3", MsgSocket: "socket", MsgToken: "token"}, false},
@@ -228,4 +269,183 @@ func ids(ss []*session) []string {
 		out = append(out, s.id)
 	}
 	return out
+}
+
+// Nested Kiro sessions (#910): an outer Kiro session (clientPID 700) launches an inner Kiro
+// session (clientPID 900) in the same clone. Even if raw ancestry includes both client PIDs, the
+// nearest matching ancestor wins so the inner hook binds the inner session rather than failing as
+// ambiguous; and when the inner MCP server has not registered yet, the hook's scoped ancestry
+// ([900], without the outer Kiro's 700) must not attach to or read the outer session's messages.
+func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
+	t.Run("nearest ancestor wins when both sessions are registered", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		inner := d.newSessionLocked(&proto.Hello{ID: "inner1", ClientPID: 900}, "kiro", "", "inner1")
+		inner.clientPID = 900
+
+		got := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-inner",
+			Ancestors:     []int{950, 900, 850, 700},
+		})
+		if len(got) != 1 || got[0] != inner || inner.hookNative != "kiro-inner" {
+			t.Fatalf("inner hook got %v, inner.hookNative=%q", ids(got), inner.hookNative)
+		}
+		if outer.hookNative != "" || outer.hookSeen || outer.hooked {
+			t.Fatalf("inner hook touched outer: hookNative=%q hookSeen=%v hooked=%v", outer.hookNative, outer.hookSeen, outer.hooked)
+		}
+		// Outer hook binds outer independently.
+		gotOuter := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-outer",
+			Ancestors:     []int{700},
+		})
+		if len(gotOuter) != 1 || gotOuter[0] != outer || outer.hookNative != "kiro-outer" {
+			t.Fatalf("outer hook got %v, outer.hookNative=%q", ids(gotOuter), outer.hookNative)
+		}
+	})
+
+	t.Run("unregistered inner session does not bind or read outer session", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		d.st.Inbox[outer.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
+			Arrived: time.Now(),
+		}}
+		d.mu.Unlock()
+
+		// Scoped ancestry from kiroHookAncestors (whether exact [900] or fallback [950, 900] when
+		// inner/outer lookups fail or maxAncestors truncates) never includes outer's PID (700).
+		for _, anc := range [][]int{{900}, {950, 900}} {
+			resp := d.turnEnd(proto.Request{
+				Op:            proto.OpTurnEnd,
+				Agent:         "kiro",
+				ClaudeSession: "kiro-inner",
+				Ancestors:     anc,
+				Continues:     true,
+			})
+			if len(resp.Read) != 0 {
+				t.Fatalf("anc=%v: inner hook leaked outer's messages: %+v", anc, resp.Read)
+			}
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if outer.hookNative != "" || outer.hookSeen || outer.hooked {
+			t.Fatalf("inner hook attached to outer: hookNative=%q hookSeen=%v hooked=%v", outer.hookNative, outer.hookSeen, outer.hooked)
+		}
+		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
+			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+	})
+
+	t.Run("inherited outer session ID from another Kiro process does not cross process boundary", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		outer.hookNative = "kiro-outer"
+		d.st.Inbox[outer.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
+			Arrived: time.Now(),
+		}}
+		d.mu.Unlock()
+
+		// Inner Kiro process (900) falls back to inherited KIRO_SESSION_ID ("kiro-outer"): must
+		// not match outer (700) or consume outer's unread messages.
+		resp := d.turnEnd(proto.Request{
+			Op:            proto.OpTurnEnd,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-outer",
+			Ancestors:     []int{900},
+			Continues:     true,
+		})
+		if len(resp.Read) != 0 {
+			t.Fatalf("inner hook with inherited ID leaked outer's messages: %+v", resp.Read)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
+			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+	})
+
+	t.Run("unbounded ancestry still prefers nearer inner Kiro client over outer", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		outer.hookNative = "kiro-outer"
+		inner := d.newSessionLocked(&proto.Hello{ID: "inner1", ClientPID: 900}, "kiro", "", "inner1")
+		inner.clientPID = 900
+		d.st.Inbox[outer.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
+			Arrived: time.Now(),
+		}}
+		d.st.Inbox[inner.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m2", From: "peer-0001/bbbbbb", Subject: "for inner", Body: "hello inner"},
+			Arrived: time.Now(),
+		}}
+		d.mu.Unlock()
+
+		// Even if ancestry wasn't trimmed and includes both 900 and 700, inner (900) wins, binds
+		// its own session ID, receives only its own message, and leaves outer's inbox untouched.
+		resp := d.turnEnd(proto.Request{
+			Op:            proto.OpTurnEnd,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-inner",
+			Ancestors:     []int{950, 900, 850, 700},
+			Continues:     true,
+		})
+		if len(resp.Read) != 1 || resp.Read[0].Body != "hello inner" {
+			t.Fatalf("inner hook got %+v, want inner's message", resp.Read)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if inner.hookNative != "kiro-inner" {
+			t.Fatalf("inner.hookNative = %q, want kiro-inner", inner.hookNative)
+		}
+		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
+			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+		// Subsequent hook for inner with its own ID keeps matching inner.
+		gotInner := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-inner",
+			Ancestors:     []int{950, 900, 850, 700},
+		})
+		if len(gotInner) != 1 || gotInner[0] != inner {
+			t.Fatalf("second inner hook got %v, want inner1", ids(gotInner))
+		}
+	})
+
+	t.Run("nested non-Kiro agents keep existing ambiguous process matching", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "codex in T3", "", "outer1")
+		outer.clientPID = 700
+		inner := d.newSessionLocked(&proto.Hello{ID: "inner1", ClientPID: 900}, "codex", "", "inner1")
+		inner.clientPID = 900
+
+		got := d.touchHookLocked(proto.Request{
+			Op:            proto.OpNotices,
+			Agent:         "codex",
+			ClaudeSession: "thread-new",
+			Ancestors:     []int{950, 900, 850, 700},
+		})
+		if len(got) != 0 || outer.hookNative != "" || inner.hookNative != "" {
+			t.Fatalf("nested codex hook should stay ambiguous, got %v (outer=%q inner=%q)", ids(got), outer.hookNative, inner.hookNative)
+		}
+		if !outer.hookSeen || !inner.hookSeen {
+			t.Fatalf("expected both codex sessions marked hookSeen: outer=%v inner=%v", outer.hookSeen, inner.hookSeen)
+		}
+	})
 }

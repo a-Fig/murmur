@@ -49,10 +49,10 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 	// And under an agent, perhaps: the tests of T3's thread variable say whether one is above.
-	agentAbove = func() bool { return false }
+	agentAbove = func(string) bool { return false }
 	// Nor started by a t3, which would make a client with T3's thread variable the thread: the tests
 	// of T3's headless server say when one is.
-	servingT3 = func() (string, bool) { return "", false }
+	servingT3 = func(string) (string, bool) { return "", false }
 	codexT3 = func() string { return "" }
 	// Servers publish their records here, not in the real user's config directory.
 	dir, err := os.MkdirTemp("", "murmur-sessions-")
@@ -87,6 +87,8 @@ type fakeDaemon struct {
 	// helloReply, if set, may answer a hello in the daemon's place: an error to refuse it, or the
 	// session ID the daemon gives it. "", "" answers as the daemon usually does.
 	helloReply func(proto.Hello) (refusal, id string)
+	// accepted counts every connection made to the daemon, pings included.
+	accepted atomic.Int32
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -129,6 +131,7 @@ func (f *fakeDaemon) serveAt(t *testing.T, gitDir string) string {
 			if err != nil {
 				return
 			}
+			f.accepted.Add(1)
 			go f.handle(conn)
 		}
 	}()
@@ -461,23 +464,14 @@ func spawned(p join.Place) bool {
 	return false
 }
 
-// A user-scope server starts in every repo the user opens. In one that hasn't invited Murmur, or
-// that this user hasn't joined, it lists no tools and no instructions, and never reaches a daemon:
+// A user-scope server starts in every repo the user opens. In one that this user hasn't joined,
+// with the section or without, it lists no tools and no instructions, and never reaches a daemon:
 // not to start one, and not to register with one that is already running.
 func TestPassiveWhereItIsNotInvited(t *testing.T) {
-	for name, tc := range map[string]struct{ marked, joined bool }{
-		"no marker, not joined": {false, false},
-		"marker, not joined":    {true, false},
-		"joined, no marker":     {false, true},
-	} {
+	for name, marked := range map[string]bool{"no marker, not joined": false, "marker, not joined": true} {
 		t.Run(name, func(t *testing.T) {
 			f := &fakeDaemon{}
-			p := repo(t, tc.marked, f)
-			if tc.joined {
-				if _, err := p.RecordConsent(); err != nil {
-					t.Fatal(err)
-				}
-			}
+			p := repo(t, marked, f)
 			cs, changed := open(t, p.Top, 25*time.Millisecond)
 			settle()
 			if names := toolNamesOf(t, cs); len(names) != 0 {
@@ -498,6 +492,24 @@ func TestPassiveWhereItIsNotInvited(t *testing.T) {
 			t.Errorf("tools listed outside a repo: %q", names)
 		}
 	})
+}
+
+// The consent alone turns the server on, in a repo whose files don't mention Murmur too: join
+// records it only where it found the repo's bus refs (#830).
+func TestOnWhereJoinedWithoutTheMarker(t *testing.T) {
+	f := &fakeDaemon{}
+	p := repo(t, false, f)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := open(t, p.Top, 25*time.Millisecond)
+	waitFor(t, "the session to register", func() bool { return f.helloCount() == 1 })
+	if names := toolNamesOf(t, cs); len(names) == 0 {
+		t.Error("no tools in a joined clone without the marker")
+	}
+	if cs.InitializeResult().Instructions == "" {
+		t.Error("no instructions in a joined clone without the marker")
+	}
 }
 
 // A repo with no daemon running, where Murmur is off: the server doesn't start one.
@@ -596,7 +608,7 @@ func TestLeaveBeforeTheServerNoticesStartsNoDaemon(t *testing.T) {
 
 // The server looks at the files every few seconds, and until it does, its registered session is
 // still up. A tool call in that window must not reach a daemon that is still running, or it would
-// publish for a user who has left, or whose repo no longer says it uses Murmur (Codex review, 2026-10-29).
+// publish for a user who has left (Codex review, 2026-10-29).
 func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
 	f := &fakeDaemon{}
 	p := repo(t, true, f)
@@ -626,17 +638,6 @@ func TestCallAfterLeavingNeverReachesAStillRunningDaemon(t *testing.T) {
 	}
 	if f.requestCount() != before {
 		t.Errorf("the daemon was sent %d requests after the user left", f.requestCount()-before)
-	}
-
-	// The same when the repo stops saying it uses Murmur, say on a checkout of an older branch.
-	if _, err := p.RecordConsent(); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-		os.Remove(filepath.Join(p.Top, name))
-	}
-	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "who"}); err != nil || !res.IsError || f.requestCount() != before {
-		t.Errorf("a call with the marker gone: %v %+v, %d requests", err, res, f.requestCount()-before)
 	}
 }
 

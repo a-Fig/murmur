@@ -6,7 +6,9 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/view"
 	"io"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -94,6 +96,65 @@ func TestACommandWithNoThreadOfItsOwnStops(t *testing.T) {
 	}
 }
 
+// mur lookup asks the daemon what the lookup tool does, as the thread's session, and prints how
+// the tool's answer reads (#1119).
+func TestALookupCommandAsksForTheSession(t *testing.T) {
+	f := &fakeDaemon{}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "lookup", []string{"quiet-otter", "--messages", "2"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	h := f.lastHello()
+	got := f.requestsOf(proto.OpLookup)
+	if len(got) != 1 || got[0].Session != h.ID || got[0].Name != "quiet-otter" || got[0].Limit != 2 {
+		t.Errorf("requests %+v, want one lookup of quiet-otter, 2 messages, as %s", got, h.ID)
+	}
+	if out.String() != view.Lookup(proto.Response{}) {
+		t.Errorf("printed %q", out.String())
+	}
+}
+
+// mur tags changes the thread's session's tags as the tags tool does, and prints the tool's answer
+// (#1120).
+func TestATagsCommandChangesTheSessionsTags(t *testing.T) {
+	f := &fakeDaemon{}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "tags", []string{"--add", "reviewing,group:ui", "--remove", "old"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	h := f.lastHello()
+	got := f.requestsOf(proto.OpTags)
+	if len(got) != 1 || got[0].Session != h.ID || !slices.Equal(got[0].Add, []string{"reviewing", "group:ui"}) || !slices.Equal(got[0].Remove, []string{"old"}) {
+		t.Errorf("requests %+v, want one tags request as %s", got, h.ID)
+	}
+	if out.String() != view.Tags(proto.Response{}) {
+		t.Errorf("printed %q", out.String())
+	}
+}
+
+// mur mute mutes, unmutes and lists as the thread's session, and prints the tool's answer (#1121).
+func TestAMuteCommandMutesAsTheSession(t *testing.T) {
+	f := &fakeDaemon{}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "mute", []string{"quiet-otter"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := Command(context.Background(), "mute", []string{"--unmute", "quiet-otter"}, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	h := f.lastHello()
+	got := f.requestsOf(proto.OpMute)
+	if len(got) != 2 || got[0].Session != h.ID || got[0].Name != "quiet-otter" || got[0].Unmute || !got[1].Unmute || got[1].Session != h.ID {
+		t.Errorf("requests %+v, want a mute and an unmute of quiet-otter as %s", got, h.ID)
+	}
+	if out.String() != view.Muted(proto.Response{}) {
+		t.Errorf("printed %q", out.String())
+	}
+}
+
 func TestCommandRequests(t *testing.T) {
 	long := strings.Repeat("word ", 60) + "end"
 	for _, c := range []struct {
@@ -108,6 +169,32 @@ func TestCommandRequests(t *testing.T) {
 		{"inbox", nil, "", proto.Request{Op: proto.OpInbox}, false},
 		{"inbox", []string{"x"}, "", proto.Request{}, true},
 		{"lookup", nil, "", proto.Request{}, true},
+		{"lookup", []string{"quiet-otter"}, "", proto.Request{Op: proto.OpLookup, Name: "quiet-otter"}, false},
+		{"lookup", []string{"quiet-otter", "--messages", "3"}, "", proto.Request{Op: proto.OpLookup, Name: "quiet-otter", Limit: 3}, false},
+		{"lookup", []string{"--messages=3", "dev/sess"}, "", proto.Request{Op: proto.OpLookup, Name: "dev/sess", Limit: 3}, false},
+		{"lookup", []string{"-messages", "3", "a"}, "", proto.Request{Op: proto.OpLookup, Name: "a", Limit: 3}, false},
+		{"lookup", []string{"a", "b"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages", "x"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages", "0"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--messages", "1", "--messages", "2"}, "", proto.Request{}, true},
+		{"lookup", []string{"a", "--nope"}, "", proto.Request{}, true},
+		{"tags", nil, "", proto.Request{Op: proto.OpTags}, false},
+		{"tags", []string{"--add", "reviewing"}, "", proto.Request{Op: proto.OpTags, Add: []string{"reviewing"}}, false},
+		{"tags", []string{"--add", "a,b", "--add=c", "--remove", "d"}, "", proto.Request{Op: proto.OpTags, Add: []string{"a", "b", "c"}, Remove: []string{"d"}}, false},
+		{"tags", []string{"--add", "group:ui", "--for", "quiet-otter,brisk-finch"}, "", proto.Request{Op: proto.OpTags, Add: []string{"group:ui"}, For: []string{"quiet-otter", "brisk-finch"}}, false},
+		{"tags", []string{"-add", `["a","b"]`}, "", proto.Request{Op: proto.OpTags, Add: []string{"a", "b"}}, false},
+		{"tags", []string{"reviewing"}, "", proto.Request{}, true},
+		{"tags", []string{"--add"}, "", proto.Request{}, true},
+		{"tags", []string{"--nope", "x"}, "", proto.Request{}, true},
+		{"mute", nil, "", proto.Request{Op: proto.OpMute}, false},
+		{"mute", []string{"quiet-otter"}, "", proto.Request{Op: proto.OpMute, Name: "quiet-otter"}, false},
+		{"mute", []string{"--unmute", "quiet-otter"}, "", proto.Request{Op: proto.OpMute, Name: "quiet-otter", Unmute: true}, false},
+		{"mute", []string{"quiet-otter", "-unmute"}, "", proto.Request{Op: proto.OpMute, Name: "quiet-otter", Unmute: true}, false},
+		{"mute", []string{"--unmute"}, "", proto.Request{}, true},
+		{"mute", []string{"a", "b"}, "", proto.Request{}, true},
+		{"mute", []string{"a", "--unmute=no"}, "", proto.Request{}, true},
+		{"mute", []string{"a", "--nope"}, "", proto.Request{}, true},
 		// The new form: one text, its subject made from it (#1027).
 		{"send", []string{"a"}, "", proto.Request{}, true},
 		{"send", []string{"a,b", "short"}, "", proto.Request{Op: proto.OpSend, To: "a,b", Subject: "short"}, false},
@@ -138,7 +225,7 @@ func TestCommandRequests(t *testing.T) {
 			continue
 		}
 		if !c.bad && (got.Op != c.want.Op || got.Doing != c.want.Doing || got.To != c.want.To || got.Subject != c.want.Subject ||
-			got.Body != c.want.Body || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
+			got.Body != c.want.Body || got.Unmute != c.want.Unmute || got.Name != c.want.Name || got.Limit != c.want.Limit || !slices.Equal(got.Add, c.want.Add) || !slices.Equal(got.Remove, c.want.Remove) || !slices.Equal(got.For, c.want.For) || strings.Join(got.Tags, ",") != strings.Join(c.want.Tags, ",")) {
 			t.Errorf("%s %q: %+v, want %+v", c.name, c.args, got, c.want)
 		}
 	}
@@ -351,12 +438,65 @@ func TestAgentsInChain(t *testing.T) {
 		{[]string{"bash", "claude", "t3"}, 1},
 		{[]string{"bash", "claude", "bash", "claude", "t3"}, 2},
 		{[]string{"powershell", "localharness_external", "agy_acp_server", "t3"}, 1},
-		{[]string{"powershell", "kiro-cli", "t3"}, 0},
+		{[]string{"powershell", "node", "kiro-cli", "t3"}, 1},
+		{[]string{"powershell", "node", "kiro-cli", "powershell", "claude", "t3"}, 2},
+		{[]string{"powershell", "fx-cli", "t3"}, 0},
 		{[]string{"bash", "tmux", "bash", "claude"}, 0},
 	} {
 		got := agentsInChain(len(c.chain), func(i int) (string, string, bool) { return "/usr/bin/" + c.chain[i], "", true })
 		if got != c.want {
 			t.Errorf("%q: %d agents, want %d", c.chain, got, c.want)
 		}
+	}
+}
+
+// A send to several names, whose session Codex's server takes over at an ID of its own partway,
+// still reaches them all: the send the daemon refuses as not registered goes again, once, as the
+// session a new hello finds, and the ones before it don't (#953).
+func TestACommandSendGoesOnAfterItsThreadIsTakenOver(t *testing.T) {
+	const codex = "c0dec0"
+	var mu sync.Mutex
+	taken := false
+	f := &fakeDaemon{
+		helloReply: func(proto.Hello) (string, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if taken {
+				return "", codex // the thread's session is the server's now
+			}
+			return "", ""
+		},
+		sendReply: func(req proto.Request) proto.Response {
+			mu.Lock()
+			defer mu.Unlock()
+			if req.To == "brave-heron" {
+				taken = true // the server registered between the first send and this one
+			}
+			if taken && req.Session != codex {
+				return proto.Response{Error: proto.NotRegistered, Refused: proto.RefusedSend}
+			}
+			return proto.Response{OK: true, Self: "dev/" + req.Session,
+				Messages: []proto.MessageView{{ID: "m-" + req.To, To: "dev/" + req.To, ToName: req.To, Subject: req.Subject}}}
+		},
+	}
+	commandRepo(t, f)
+	var out strings.Builder
+	if err := Command(context.Background(), "send", []string{"quiet-otter,brave-heron,calm-finch", "hello all"}, nil, &out, io.Discard); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	var got []string
+	for _, r := range f.sends() {
+		got = append(got, r.To+" as "+r.Session)
+	}
+	first := threadID("thread-913")
+	want := []string{"quiet-otter as " + first, "brave-heron as " + first, "brave-heron as " + codex, "calm-finch as " + codex}
+	if !slices.Equal(got, want) {
+		t.Errorf("sends %q, want %q", got, want)
+	}
+	if n := f.helloCount(); n != 2 {
+		t.Errorf("%d hellos, want 2", n)
+	}
+	if strings.Contains(out.String(), "registered") {
+		t.Errorf("the send reported a refusal:\n%s", out.String())
 	}
 }

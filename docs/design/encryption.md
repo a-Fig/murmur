@@ -37,7 +37,8 @@ key replaced it.
   a lease as the name registry is, so two devices can't both make the first key
   (`internal/daemon/team.go`).
   - An *epoch* publishes a team X25519 public key in the clear, its private half wrapped for its
-    writer. The first daemon to find the ref empty makes the first.
+    writer. The first daemon to find the ref empty makes the first: absent, or at the genesis commit
+    `mur init --refs-only` writes, which it builds on ([the bus refs](joining.md#the-bus-refs-set-a-repo-up)).
   - A *grant* wraps every team private key its writer holds for one device. Each device's encrypted
     presence names the newest epoch it has read and the team keys it holds, and a holder of the
     current key grants to each pinned device whose presence names the current epoch and lists fewer
@@ -100,7 +101,10 @@ key replaced it.
   file is gone and `state.json` (or, failing that, the local copy of its presence ref) shows the
   device had keys, the daemon takes a new device ID, because teammates would refuse a new key under
   the old one; the old ID goes stale and its names stay taken, and the new ID's sessions get new
-  names: the registry never moves a name between devices (#617). A session that comes back with
+  names: the registry never moves a name between devices (#617). That local copy is read only for
+  its seal, so the daemon writes it with the first presence of a run, and again after a fetch has
+  brought the ref or a broken copy was removed, not with every heartbeat (2026-11-22): any
+  presence of the device's answers the question. A session that comes back with
   its session key takes its tags, mutes and explained list to its new name ([tags](tags.md), #827). The
   person's name stays with the old device, and the page asks them for another: nothing shows the
   new device is the same person's (#834).

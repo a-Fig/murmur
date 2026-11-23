@@ -30,8 +30,9 @@ func rateOptions() Options {
 	return opt
 }
 
-func rateDaemon() *Daemon {
-	d := &Daemon{opt: rateOptions(), sessions: map[string]*session{}, device: "here-0001",
+func rateDaemon(t *testing.T) *Daemon {
+	t.Helper()
+	d := &Daemon{opt: rateOptions(), dir: t.TempDir(), sessions: map[string]*session{}, device: "here-0001",
 		log: log.New(io.Discard, "", 0), st: state{Inbox: map[string][]*inMsg{}, Stopped: map[string]time.Time{}}}
 	d.sessions["bbbbbb"] = &session{id: "bbbbbb"}
 	return d
@@ -40,7 +41,7 @@ func rateDaemon() *Daemon {
 // With a session open and nothing said, the wait doubles from Poll to PollCap and stays there.
 func TestPollEveryBacksOffToTheCap(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	calm := d.opt.Poll
 	var got []time.Duration
 	for range 5 {
@@ -64,7 +65,7 @@ func TestPollEveryBacksOffToTheCap(t *testing.T) {
 // What moves a conversation sets the poll to Poll for FastFor, and the wait doubles again after.
 func TestPollEveryIsFastAroundAConversation(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	d.mu.Lock()
 	d.noteConversationLocked()
 	d.mu.Unlock()
@@ -82,7 +83,7 @@ func TestPollEveryIsFastAroundAConversation(t *testing.T) {
 // Quiet mode is as it was: QuietPoll, whatever was said lately.
 func TestPollEveryQuietIsUnchanged(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	delete(d.sessions, "bbbbbb")
 	d.mu.Lock()
 	d.noteConversationLocked()
@@ -105,7 +106,7 @@ func TestWhatMovesAConversation(t *testing.T) {
 		defer d.mu.Unlock()
 		return !d.convAt.IsZero()
 	}
-	d := rateDaemon()
+	d := rateDaemon(t)
 	d.queueLocked(msg("elsewhere-0001/bbbbbb"), modeNormal)
 	d.queueLocked(msg("here-0001/"+proto.CLISession), modeNormal)
 	if moved(d) {
@@ -116,12 +117,56 @@ func TestWhatMovesAConversation(t *testing.T) {
 		t.Errorf("a message received for a session here did not move the conversation")
 	}
 
-	d = rateDaemon()
+	d = rateDaemon(t)
 	d.mu.Lock()
 	d.newSessionLocked(&proto.Hello{ID: "cccccc"}, "claude-code", "", "cccccc")
 	d.mu.Unlock()
 	if !moved(d) {
 		t.Errorf("a session starting did not move the conversation")
+	}
+}
+
+// A device back from invisible looks at the remote at once: its colour goes back into its presence
+// only after a sync, so a poll slowed to the cap left its teammates seeing an automatic colour for
+// that long (#1093). Going invisible, or to do not disturb from online, wakes nothing.
+func TestBackFromInvisibleThePollLooksAtOnce(t *testing.T) {
+	t.Parallel()
+	woken := func(d *Daemon) bool {
+		select {
+		case <-d.pollWake:
+			return true
+		default:
+			return false
+		}
+	}
+	moved := func(d *Daemon) bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return !d.convAt.IsZero()
+	}
+	d := rateDaemon(t)
+	d.pollWake = make(chan struct{}, 1) // as a running daemon's is
+	d.setMode("online", "dnd", time.Time{})
+	d.setMode("dnd", "invisible", time.Now())
+	if woken(d) || moved(d) {
+		t.Errorf("going to do not disturb and then invisible woke the poll")
+	}
+	d.setMode("invisible", "online", time.Now())
+	if !moved(d) || !woken(d) {
+		t.Errorf("coming back online from invisible didn't wake the poll")
+	}
+	// At the slowest rate the loop runs at with a session open, that wake ends its wait.
+	slow := pollRate{every: d.opt.PollCap, calm: d.opt.PollCap}
+	if !d.wakeEndsWait(d.opt.PollCap, slow, false) {
+		t.Errorf("the wake wouldn't end a wait at the cap")
+	}
+
+	d = rateDaemon(t)
+	d.pollWake = make(chan struct{}, 1)
+	d.setMode("online", "invisible", time.Now())
+	d.setMode("invisible", "dnd", time.Now())
+	if !moved(d) || !woken(d) {
+		t.Errorf("coming back from invisible to do not disturb didn't wake the poll")
 	}
 }
 
@@ -427,7 +472,7 @@ func TestConversationDuringAFailureKeepsTheBackoff(t *testing.T) {
 // conversation too, as one received does.
 func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
 	t.Parallel()
-	d := rateDaemon()
+	d := rateDaemon(t)
 	d.opt.StoppedInbox = time.Hour
 	d.st.SessionNames = map[string]string{"aaaaaa": "quiet-otter"}
 	d.st.Stopped["aaaaaa"] = time.Now().Add(-time.Minute)
@@ -440,5 +485,33 @@ func TestAdoptingAKeptInboxMovesTheConversation(t *testing.T) {
 	}
 	if d.convAt.IsZero() {
 		t.Errorf("taking a kept inbox did not move the conversation")
+	}
+}
+
+// With no session live and no page in sight, the poll is quiet, and coming back from invisible
+// still ends its wait, once: the colour waits for that sync (#1165). A failure's backoff isn't
+// ended by it.
+func TestBackFromInvisibleAQuietPollLooksAtOnce(t *testing.T) {
+	t.Parallel()
+	d := rateDaemon(t)
+	d.sessions = map[string]*session{}
+	d.pollWake = make(chan struct{}, 1)
+	quiet := d.pollEvery(d.opt.Poll)
+	if !quiet.quiet {
+		t.Fatalf("the rig's poll isn't quiet: %+v", quiet)
+	}
+	d.setMode("online", "invisible", time.Now())
+	d.setMode("invisible", "online", time.Now())
+	if !d.wakeEndsWait(quiet.calm, quiet, false) {
+		t.Errorf("coming back from invisible didn't end a quiet poll's wait")
+	}
+	if d.wakeEndsWait(quiet.calm, quiet, false) {
+		t.Errorf("a second wake ended the quiet poll's wait too")
+	}
+	d.setMode("online", "invisible", time.Now())
+	d.setMode("invisible", "online", time.Now())
+	slow := pollRate{every: maxPollBackoff, calm: d.opt.Poll}
+	if d.wakeEndsWait(slow.calm, slow, true) {
+		t.Errorf("coming back from invisible ended a failure's backoff")
 	}
 }
