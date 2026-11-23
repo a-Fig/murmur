@@ -399,20 +399,26 @@ func TestCleanup(t *testing.T) {
 	installers := path + ".old-99e92547"
 	others := []string{path + ".old-unrelated", filepath.Join(dir, ".mur-update-mur-nightly-789"),
 		path + ".old-.mur-update-mur-nightly-789", path + ".old-99e9254", path + ".old-99e925470", path + ".old-99e9254g", path + "-nightly.old-99e92547"}
-	for _, p := range append([]string{path, path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged, installers}, others...) {
+	for _, p := range append([]string{path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged, installers}, others...) {
 		os.WriteFile(p, nil, 0600)
 	}
+	os.WriteFile(path, []byte("the binary"), 0o755)
 	// Another updater's staged file is not stale.
 	lock, err := proc.Lock(path + ".update.lock")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanup(path)
+	cleanup(path, "windows")
 	if _, err := os.Stat(staged); err != nil {
 		t.Fatal("removed while another updater held the lock:", err)
 	}
 	lock.Close()
-	cleanup(path)
+	// Only Windows has an install.ps1: elsewhere a file with its backup's name is somebody's own.
+	cleanup(path, "linux")
+	if _, err := os.Stat(installers); err != nil {
+		t.Fatal("a file named as install.ps1 names a backup was removed where there is no install.ps1:", err)
+	}
+	cleanup(path, "windows")
 	for _, p := range []string{path + ".old-.mur-update-mur-123", path + ".old-.mur-update-321", staged, installers} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatal(p, err)
@@ -421,6 +427,65 @@ func TestCleanup(t *testing.T) {
 	for _, p := range others {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// An installer's backup that is still a second name of the binary stays (#1171, Sol's review of
+// #1173): install.ps1 takes no lock, and its backup is its hard link to mur.exe until it renames
+// the new file over mur.exe. Taken in between, the link's loss sends the installer to a swap that can leave
+// no mur.exe. Once the new binary is in place the backup is an older binary, and goes.
+func TestCleanupLeavesABackupThatIsStillTheBinary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mur.exe")
+	if err := os.WriteFile(path, []byte("installed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	links := []string{path + ".old-99e92547"}
+	for _, l := range links {
+		if err := os.Link(path, l); err != nil {
+			t.Skipf("this folder's volume can't link: %v", err)
+		}
+	}
+	cleanup(path, "windows")
+	for _, l := range links {
+		if _, err := os.Stat(l); err != nil {
+			t.Fatalf("a link to the binary itself was removed, mid-install as far as cleanup can tell: %v", err)
+		}
+	}
+
+	// The installer's rename: a new file takes the binary's name, and the links are the old one.
+	staged := path + ".new-99e92547"
+	if err := os.WriteFile(staged, []byte("the new release"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(staged, path); err != nil {
+		t.Fatal(err)
+	}
+	cleanup(path, "windows")
+	for _, l := range links {
+		if _, err := os.Stat(l); !os.IsNotExist(err) {
+			t.Errorf("%s is left after the swap: %v", filepath.Base(l), err)
+		}
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "the new release" {
+		t.Fatalf("the binary: %q, %v", b, err)
+	}
+}
+
+// With no binary at the path, as between the two steps of install.ps1's swap where it can't link,
+// its backup may be the only copy there is: none of the installer's is removed.
+func TestCleanupRemovesNoBackupWhileTheBinaryIsMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mur.exe")
+	backups := []string{path + ".old-99e92547", path + ".old-0a1b2c3d"}
+	for _, b := range backups {
+		if err := os.WriteFile(b, []byte("moved aside"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleanup(path, "windows")
+	for _, b := range backups {
+		if _, err := os.Stat(b); err != nil {
+			t.Fatalf("a backup was removed with no binary in place: %v", err)
 		}
 	}
 }
@@ -743,7 +808,7 @@ func TestBackupsAreClearedAtEveryCheck(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Run(ctx, Options{Version: "1.2.3", GitDir: t.TempDir(), Executable: path, URL: "http://127.0.0.1:1", OS: "linux", Arch: "amd64",
+		Run(ctx, Options{Version: "1.2.3", GitDir: t.TempDir(), Executable: path, URL: "http://127.0.0.1:1", OS: "windows", Arch: "amd64",
 			Getenv: func(k string) string { return map[string]string{"MURMUR_NO_UPDATE": "1"}[k] }, Every: 20 * time.Millisecond,
 			Report: func(Status) {
 				select {
