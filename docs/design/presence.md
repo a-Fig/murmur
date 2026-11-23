@@ -136,10 +136,11 @@ person can pick one on Settings.
 - **One device per picked colour.** A colour another device holds is refused. In a race, the
   earlier pick by its own clock wins, and a tie goes to the lower ID. The loser goes back to Auto,
   and its Settings says who has it.
-- **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free.
-  A returning daemon leaves its pick out of presence until it has synced with every live presence
-  open, then gives the pick up if a peer took it. Keeping a lost pick to reclaim later made two
-  devices swap colours each time one went idle (found in review, #577).
+- **Coming back.** An idle daemon takes its presence off the remote, so its colour looks free, and
+  so does a device that goes invisible (#1084). A returning daemon, or a device back online,
+  leaves its pick out of presence until it has synced with every live presence open, then gives
+  the pick up if a peer took it. Keeping a lost pick to reclaim later made two devices swap
+  colours each time one went idle (found in review, #577).
 - **Stale devices keep their colours**, since staleness is each reader's own clock: a dead device
   holds its colour until its presence goes (#581).
 - **Auto** is the colour the ID hashes to, or the next one nobody picked.
