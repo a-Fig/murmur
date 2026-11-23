@@ -83,8 +83,9 @@ func kiroHooks(command string) ([]byte, error) {
 }
 
 // isKiroHookFile says b is a hooks/murmur.json file with the exact shape join writes (strictly
-// two hooks: murmur-prompt on UserPromptSubmit and murmur-stop on Stop, running `... hook kiro`,
-// with no extra user fields), so join/uninstall never overwrite or delete a customized file.
+// two hooks: murmur-prompt on UserPromptSubmit and murmur-stop on Stop, both running the same
+// Murmur `hook kiro` command with join's default timeout and no extra user fields), so join and
+// uninstall never overwrite or delete a customized file.
 func isKiroHookFile(b []byte) bool {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -101,30 +102,64 @@ func isKiroHookFile(b []byte) bool {
 	}
 	for i, w := range want {
 		h := doc.Hooks[i]
-		if h.Name != w.name || h.Trigger != w.trigger || h.Action.Type != "command" ||
-			!strings.HasSuffix(strings.TrimSpace(h.Action.Command), " hook kiro") {
+		if h.Name != w.name || h.Trigger != w.trigger || h.Timeout != codexHookTimeout ||
+			h.Action.Type != "command" || !isKiroHookCommand(h.Action.Command) {
 			return false
 		}
 	}
-	return true
+	return doc.Hooks[0].Action.Command == doc.Hooks[1].Action.Command
 }
 
-// installKiroHook writes join's hook file in Kiro home h if missing or outdated.
+// isKiroHookCommand says cmd has one of the exact `<mur> hook kiro` shapes kiroHookCommand writes
+// (sh single-quoted, Windows bare-safe, or cmdQuotePath-quoted), with Murmur's binary as the command.
+func isKiroHookCommand(cmd string) bool {
+	rest, ok := strings.CutSuffix(cmd, " hook kiro")
+	if !ok || rest == "" {
+		return false
+	}
+	if strings.HasPrefix(rest, "'") && strings.HasSuffix(rest, "'") && len(rest) >= 2 {
+		inner := rest[1 : len(rest)-1]
+		if strings.Contains(strings.ReplaceAll(inner, `'\''`, ""), "'") {
+			return false
+		}
+		return isMurBinary(strings.ReplaceAll(inner, `'\''`, "'"))
+	}
+	if bareSafe(rest) {
+		return isMurBinary(rest)
+	}
+	parts := strings.Split(rest, "^%")
+	for i, part := range parts {
+		parts[i] = strings.ReplaceAll(part, `"`, "")
+	}
+	exe := strings.Join(parts, "%")
+	return cmdQuotePath(exe) == rest && isMurBinary(exe)
+}
+
+// installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
+// entry (such as a live or dangling symlink) or a customized file is left alone with an error,
+// matching removeOwned's ownership rules.
 func (e Env) installKiroHook(h agentHome) (did []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
 	if err != nil {
 		return nil, err
 	}
-	if have, rerr := os.ReadFile(path); rerr == nil {
+	if fi, lerr := os.Lstat(path); lerr == nil {
+		if !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s already exists and isn't a regular file (a link, say), so it was left alone", path)
+		}
+		have, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil, fmt.Errorf("%s: %w", path, rerr)
+		}
 		if bytes.Equal(have, want) {
 			return nil, nil
 		}
 		if !isKiroHookFile(have) {
 			return nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
 		}
-	} else if !errors.Is(rerr, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s: %w", path, rerr)
+	} else if !errors.Is(lerr, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", path, lerr)
 	}
 	if err := writeAtomic(path, want, 0o644); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

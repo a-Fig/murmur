@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -539,8 +538,7 @@ func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok boo
 		if !ok {
 			return false
 		}
-		name := strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSuffix(exe, " (deleted)"))), ".exe")
-		return name == want
+		return exeBaseName(exe) == want
 	}
 	for i, pid := range pids {
 		if isNamed(pid, "node") && i+1 < len(pids) && isNamed(pids[i+1], "kiro-cli") {
@@ -551,6 +549,14 @@ func kiroHookAncestors(pids []int, exeAt func(pid int) (exe, comm string, ok boo
 		}
 	}
 	return pids
+}
+
+func exeBaseName(exe string) string {
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	if i := strings.LastIndexAny(exe, `/\`); i >= 0 {
+		exe = exe[i+1:]
+	}
+	return strings.TrimSuffix(strings.ToLower(exe), ".exe")
 }
 
 func procComm(pid int) string {

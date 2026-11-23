@@ -304,4 +304,35 @@ func TestNestedKiroHooksBindOnlyTheirOwnSession(t *testing.T) {
 			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
 		}
 	})
+
+	t.Run("inherited outer session ID from another Kiro process does not cross process boundary", func(t *testing.T) {
+		d := agentHookDaemon(t)
+		d.mu.Lock()
+		outer := d.newSessionLocked(&proto.Hello{ID: "outer1", ClientPID: 700}, "kiro in T3", "", "outer1")
+		outer.clientPID = 700
+		outer.hookNative = "kiro-outer"
+		d.st.Inbox[outer.id] = []*inMsg{{
+			Event:   bus.Event{ID: "m1", From: "peer-0001/aaaaaa", Subject: "for outer", Body: "secret"},
+			Arrived: time.Now(),
+		}}
+		d.mu.Unlock()
+
+		// Inner Kiro process (900) falls back to inherited KIRO_SESSION_ID ("kiro-outer"): must
+		// not match outer (700) or consume outer's unread messages.
+		resp := d.turnEnd(proto.Request{
+			Op:            proto.OpTurnEnd,
+			Agent:         "kiro",
+			ClaudeSession: "kiro-outer",
+			Ancestors:     []int{900},
+			Continues:     true,
+		})
+		if len(resp.Read) != 0 {
+			t.Fatalf("inner hook with inherited ID leaked outer's messages: %+v", resp.Read)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if len(d.st.Inbox[outer.id]) != 1 || d.st.Inbox[outer.id][0].Noticed {
+			t.Fatalf("outer's inbox was modified: %+v", d.st.Inbox[outer.id])
+		}
+	})
 }

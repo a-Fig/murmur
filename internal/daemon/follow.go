@@ -681,6 +681,9 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 		if !s.dropped.IsZero() || !isAgent(s.agent, req.Agent) {
 			continue
 		}
+		if req.Agent == "kiro" && s.clientPID != 0 && len(req.Ancestors) > 0 && !slices.Contains(req.Ancestors, s.clientPID) {
+			continue
+		}
 		if s.route.Native != "" && s.hookNative != s.route.Native {
 			s.hookNative = "" // the session's own ID overrides one taken from a hook, which may be wrong
 		}

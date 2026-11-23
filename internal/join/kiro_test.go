@@ -462,15 +462,39 @@ func TestKiroForeignHookFileLeftAlone(t *testing.T) {
 		},
 		{
 			name: "two hooks with unexpected trigger",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "PreToolUse", "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}}]}` + "\n",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "PreToolUse", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
+		},
+		{
+			name: "customized timeout zero",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 0}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
+		},
+		{
+			name: "customized timeout omitted",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
+		},
+		{
+			name: "wrapper binary ending in hook kiro",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "my-wrapper hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "my-wrapper hook kiro"}, "timeout": 30}]}` + "\n",
+		},
+		{
+			name: "env wrapper prefix around mur",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "env FOO=1 /usr/bin/mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "env FOO=1 /usr/bin/mur hook kiro"}, "timeout": 30}]}` + "\n",
+		},
+		{
+			name: "extra flag before hook kiro",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "\"C:\\bin\\mur.exe\" --debug hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "\"C:\\bin\\mur.exe\" --debug hook kiro"}, "timeout": 30}]}` + "\n",
+		},
+		{
+			name: "mismatched commands across hooks",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "'/a/mur' hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "'/b/mur' hook kiro"}, "timeout": 30}]}` + "\n",
 		},
 		{
 			name: "extra user field",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "enabled": false, "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}}]}` + "\n",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "enabled": false, "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
 		},
 		{
 			name: "trailing json token",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}}]} {}` + "\n",
+			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]} {}` + "\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -502,36 +526,60 @@ func TestKiroForeignHookFileLeftAlone(t *testing.T) {
 	}
 }
 
-// Uninstall and manual removal leave a symlinked hooks/murmur.json alone (even when its target has
-// Murmur's hook content), matching removeOwned's policy for user-owned links.
-func TestKiroRemoveHookLeavesSymlinkAlone(t *testing.T) {
-	sb := newSandbox(t, false)
-	withAgents(sb)
-	mustMakeDir(t, sb.KiroHome)
-	h := sb.defaultHome(agents[agentIndex("kiro")])
+// Join, uninstall, and manual removal all leave a symlinked hooks/murmur.json alone (both live
+// symlinks and dangling symlinks), matching removeOwned's policy for user-owned links.
+func TestKiroSymlinkHookLeftAlone(t *testing.T) {
+	for _, dangling := range []bool{false, true} {
+		name := "live"
+		if dangling {
+			name = "dangling"
+		}
+		t.Run(name, func(t *testing.T) {
+			sb := newSandbox(t, false)
+			withAgents(sb)
+			mustMakeDir(t, sb.KiroHome)
+			h := sb.defaultHome(agents[agentIndex("kiro")])
 
-	target := filepath.Join(sb.root, "user-owned-murmur.json")
-	want, err := kiroHooks(kiroHookCommand(sb.Exe))
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, target, string(want))
-	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
-	mustMakeDir(t, filepath.Dir(hookPath))
-	linkOrSkip(t, target, hookPath)
+			target := filepath.Join(sb.root, "user-owned-murmur.json")
+			var origTarget string
+			if !dangling {
+				want, err := kiroHooks(kiroHookCommand(filepath.Join(sb.root, "old", exeName("mur"))))
+				if err != nil {
+					t.Fatal(err)
+				}
+				origTarget = string(want)
+				write(t, target, origTarget)
+			}
+			hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
+			mustMakeDir(t, filepath.Dir(hookPath))
+			linkOrSkip(t, target, hookPath)
 
-	if rem := kiroRemoval(sb.Env, h); strings.Contains(rem, hookPath) {
-		t.Errorf("kiroRemoval named symlinked hook file: %q", rem)
-	}
-	did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
-	if err != nil || len(did) != 0 {
-		t.Fatalf("unregister symlink hook: did=%q notes=%q err=%v", did, notes, err)
-	}
-	if _, lerr := os.Lstat(hookPath); lerr != nil {
-		t.Errorf("removed symlinked hook file: %v", lerr)
-	}
-	if !strings.Contains(strings.Join(notes, "\n"), hookPath) {
-		t.Errorf("expected note leaving symlinked hook alone, got %q", notes)
+			// Join must refuse to write through the symlink (and must not create a missing target).
+			if _, _, err := sb.registerKiroAt(h); err == nil || !strings.Contains(err.Error(), hookPath) {
+				t.Fatalf("register through %s symlink: err=%v, want error naming %s", name, err, hookPath)
+			}
+			if dangling && exists(target) {
+				t.Error("join created target through dangling symlink")
+			}
+			if !dangling && read(t, target) != origTarget {
+				t.Error("join overwrote target through live symlink")
+			}
+
+			// Manual removal omits the link; uninstall preserves it with a note.
+			if rem := kiroRemoval(sb.Env, h); strings.Contains(rem, hookPath) {
+				t.Errorf("kiroRemoval named %s symlinked hook file: %q", name, rem)
+			}
+			did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h})
+			if err != nil {
+				t.Fatalf("unregister %s symlink hook: did=%q notes=%q err=%v", name, did, notes, err)
+			}
+			if _, lerr := os.Lstat(hookPath); lerr != nil {
+				t.Errorf("removed %s symlinked hook file: %v", name, lerr)
+			}
+			if !strings.Contains(strings.Join(notes, "\n"), hookPath) {
+				t.Errorf("expected note leaving %s symlinked hook alone, got %q", name, notes)
+			}
+		})
 	}
 }
 
@@ -546,10 +594,14 @@ func TestCmdQuotePathEscapesPercent(t *testing.T) {
 		if got := cmdQuotePath(tc.in); got != tc.want {
 			t.Errorf("cmdQuotePath(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+		if !isKiroHookCommand(tc.want + " hook kiro") {
+			t.Errorf("isKiroHookCommand rejected %q", tc.want+" hook kiro")
+		}
 	}
 
-	// Execute a real command through the platform shell when a folder literally contains %USERNAME%
-	// (with spaces and `&`), verifying %USERNAME% is not expanded by cmd.exe or sh.
+	// Execute a real command through both Kiro's shell (Node's cmd /d /s /c "..." on Windows, sh
+	// elsewhere) and Antigravity's shell (cmd /d /c on Windows) when a folder literally contains
+	// %USERNAME% with spaces and `&`, verifying %USERNAME% is not expanded.
 	dir := filepath.Join(t.TempDir(), "my tools & (1)", "%USERNAME%")
 	mustMakeDir(t, dir)
 	script, body := filepath.Join(dir, "mur"), "#!/bin/sh\nprintf 'ok:%s\\n' \"$*\"\n"
@@ -560,28 +612,71 @@ func TestCmdQuotePathEscapesPercent(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmdLine := kiroHookCommand(script)
-	out, err := antigravityShellCmd(cmdLine).Output()
-	if err != nil || strings.TrimSpace(string(out)) != "ok:hook kiro" {
-		t.Fatalf("kiroHookCommand(%q) -> %q printed %q, err=%v", script, cmdLine, out, err)
+	for _, run := range []struct {
+		name string
+		fn   func(string) *exec.Cmd
+	}{
+		{"kiro-shell", kiroShellCmd},
+		{"antigravity-shell", antigravityShellCmd},
+	} {
+		out, err := run.fn(cmdLine).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "ok:hook kiro" {
+			t.Fatalf("%s kiroHookCommand(%q) -> %q printed %q, err=%v", run.name, script, cmdLine, out, err)
+		}
 	}
 	if os.PathSeparator == '\\' {
 		// Also test the quoted path directly (bypassing shortPath when 8.3 names exist on Windows),
-		// both as cmd /d /c (Antigravity) and with Antigravity's PreToolUse JSON fallback.
+		// with both a .cmd script and a copied native .exe under Kiro's cmd /d /s /c "..." and
+		// Antigravity's cmd /d /c (including PreToolUse's JSON fallback).
 		quoted := cmdQuotePath(script) + " hook kiro"
-		out, err = antigravityShellCmd(quoted).Output()
-		if err != nil || strings.TrimSpace(string(out)) != "ok:hook kiro" {
-			t.Fatalf("cmdQuotePath(%q) -> %q printed %q, err=%v", script, quoted, out, err)
+		for _, run := range []struct {
+			name string
+			fn   func(string) *exec.Cmd
+		}{
+			{"kiro-shell", kiroShellCmd},
+			{"antigravity-shell", antigravityShellCmd},
+		} {
+			out, err := run.fn(quoted).Output()
+			if err != nil || strings.TrimSpace(string(out)) != "ok:hook kiro" {
+				t.Fatalf("%s cmdQuotePath(%q) -> %q printed %q, err=%v", run.name, script, quoted, out, err)
+			}
 		}
 		withFallback := cmdQuotePath(script) + ` hook --event PreToolUse antigravity || echo {"decision":"allow"}`
-		out, err = antigravityShellCmd(withFallback).Output()
+		out, err := antigravityShellCmd(withFallback).Output()
 		if err != nil || strings.TrimSpace(string(out)) != "ok:hook --event PreToolUse antigravity" {
 			t.Fatalf("fallback %q printed %q, err=%v", withFallback, out, err)
 		}
-		// Missing binary with %USERNAME% still falls back cleanly.
 		missingFallback := cmdQuotePath(script+".missing") + ` hook --event PreToolUse antigravity || echo {"decision":"allow"}`
 		out, err = antigravityShellCmd(missingFallback).Output()
 		if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
 			t.Fatalf("missing fallback %q printed %q, err=%v", missingFallback, out, err)
+		}
+
+		// Native .exe under Kiro's Node launch path (cmd /d /s /c "...") in both a %USERNAME%
+		// directory and a space/& directory without %.
+		whereBin, err := exec.LookPath("where.exe")
+		if err != nil {
+			t.Fatalf("where.exe not found: %v", err)
+		}
+		exeBytes, err := os.ReadFile(whereBin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sub := range []string{dir, filepath.Join(t.TempDir(), "my tools & (1)")} {
+			mustMakeDir(t, sub)
+			exeCopy := filepath.Join(sub, "mur.exe")
+			if err := os.WriteFile(exeCopy, exeBytes, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, cmd := range []string{
+				cmdHookCommand(exeCopy, " cmd.exe", "", ""),
+				cmdQuotePath(exeCopy) + " cmd.exe",
+			} {
+				out, err := kiroShellCmd(cmd).Output()
+				if err != nil || !strings.Contains(strings.ToLower(string(out)), "cmd.exe") {
+					t.Fatalf("kiroShellCmd native exe (%q) printed %q, err=%v", cmd, out, err)
+				}
+			}
 		}
 	}
 }
