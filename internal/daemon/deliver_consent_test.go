@@ -41,7 +41,7 @@ func TestNoTurnIsHandedOverForAUserWhoHasLeft(t *testing.T) {
 	a.send("aaaaaa", bob, "after joining again", "")
 	eventually(t, "both messages", func() bool { return len(calls()) >= 2 })
 	for i, want := range []string{"while gone", "after joining again"} {
-		if got := calls()[i].Stdin; !strings.Contains(got, "via "+brand.Product+":\n\n"+want+"\n") {
+		if got := calls()[i].Stdin; !strings.Contains(got, "via "+brand.Product+":\n\n> "+want+"\n") {
 			t.Errorf("handoff %d was %q, want %q", i, got, want)
 		}
 	}

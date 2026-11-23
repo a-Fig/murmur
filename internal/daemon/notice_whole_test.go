@@ -37,7 +37,7 @@ func TestAMessageWithNoBodyIsReadWhenTheHookShowsIt(t *testing.T) {
 			got, viewSubjects(r.Messages), r.Unread)
 	}
 	text := view.Hook(r.Read, r.Messages, r.Unread)
-	if !strings.Contains(text, "Message from "+aliceName) || !strings.Contains(text, "\n\nwait for me\n") || strings.Contains(text, "unread") {
+	if !strings.Contains(text, "Message from "+aliceName) || !strings.Contains(text, "\n\n> wait for me\n") || strings.Contains(text, "unread") {
 		t.Errorf("the hook's text:\n%s", text)
 	}
 	if inbox, notices := b.unread("bbbbbb", "claude-bob"); len(inbox) != 0 || len(notices) != 0 {

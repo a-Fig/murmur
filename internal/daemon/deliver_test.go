@@ -322,7 +322,7 @@ func TestMessageForAT3SessionIsHandedOverAsATurn(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Message from " + aliceName + " (test",
-		"via " + brand.Product + ":\n\nauth middleware?\n\n" + body + "\n",
+		"via " + brand.Product + ":\n\n> auth middleware?\n\n> Are you changing it?\n> I say \"yes\" — and 100% über-sure.\n> \n>   indented\n",
 		"Reply with " + brand.Product + "'s `send` to " + aliceName + " if a reply is needed.",
 	} {
 		if !strings.Contains(c.Stdin, want) {
@@ -360,7 +360,7 @@ func TestMessagesForOneSessionAreHandedOverInOrder(t *testing.T) {
 	eventually(t, "three handoffs", func() bool { return len(calls()) >= 3 })
 	holds(t, "three handoffs, no more", time.Second, func() bool { return len(calls()) == 3 })
 	for i, c := range calls() {
-		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n"+want[i]+"\n") {
+		if !strings.Contains(c.Stdin, "via "+brand.Product+":\n\n> "+want[i]+"\n") {
 			t.Errorf("handoff %d was %q, want %q", i, c.Stdin, want[i])
 		}
 		if first, named := "Message from "+aliceName+" (test", "Message from "+aliceName+" via "; i == 0 && !strings.HasPrefix(c.Stdin, first) {
