@@ -114,16 +114,41 @@
         Write-Host 'Checksum OK.'
 
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
-        # Windows won't overwrite or delete a running exe (mur's daemon keeps one running), but it will
-        # rename one. So the old file is moved aside, the new one put in its place, and the old one
-        # deleted if nothing holds it; otherwise the next install deletes it.
+        # swap:start (internal/update/install_windows_test.go runs the lines from here to swap:end)
+        #
+        # The new file is renamed over mur.exe in one step, so an install stopped at any moment leaves
+        # a whole mur.exe there, old or new (#959). Windows won't rename over a running exe (mur's
+        # daemon keeps one running) unless the exe has a second name, so it is first hard-linked to
+        # mur.exe.old-*, as the daemon's own updater does (#944). That name goes once nothing runs
+        # it: now, or at the next install. The new file is copied beside mur.exe first, since a rename
+        # is one step only within a folder.
         Get-ChildItem -Path $dir -Filter 'mur.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path $dir -Filter 'mur.exe.new-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        $suffix = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+        $new = "$exe.new-$suffix"
+        Copy-Item -Path (Join-Path $tmp $asset) -Destination $new
         if (Test-Path $exe) {
-            $old = "$exe.old-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
-            Move-Item -Force -Path $exe -Destination $old
+            $old = "$exe.old-$suffix"
+            # A volume that can't link (FAT) leaves $old unmade; the rename below then works only if
+            # nothing runs mur.exe.
+            try { New-Item -ItemType HardLink -Path $old -Target $exe | Out-Null } catch { }
         }
-        Move-Item -Force -Path (Join-Path $tmp $asset) -Destination $exe
+        $swapped = $false
+        try {
+            # MoveFileEx with MOVEFILE_REPLACE_EXISTING (1): the one-step rename. PowerShell 5.1 has no
+            # other name for it.
+            Add-Type -Namespace MurInstall -Name Win32 -MemberDefinition '[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool MoveFileEx(string from, string to, int flags);'
+            $swapped = [MurInstall.Win32]::MoveFileEx($new, $exe, 1)
+        } catch { }
+        if (-not $swapped) {
+            # Where that can't be done (a running mur.exe on a volume without links, or a PowerShell
+            # that may not load the call), the old way, which a stop between its two steps can leave
+            # without a mur.exe: the old file is moved aside, and the new one put in its place.
+            if ((Test-Path $exe) -and -not (Test-Path $old)) { Move-Item -Force -Path $exe -Destination $old }
+            Move-Item -Force -Path $new -Destination $exe
+        }
         if ($old) { Remove-Item -Force -Path $old -ErrorAction SilentlyContinue }
+        # swap:end
     } finally {
         Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
     }
