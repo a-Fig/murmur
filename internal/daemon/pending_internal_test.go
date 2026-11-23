@@ -451,11 +451,12 @@ func TestDropSwitchedOffRespectsCallersContext(t *testing.T) {
 
 // When retryPending's push is rejected just as its push timeout expires, settling pending sends
 // against the remote tip still uses its own pendingLook timeout so landed sends aren't falsely
-// reported as refused (#1073).
+// reported as refused (#1073). PendingGiveUp is an hour so settlement can only happen on the
+// rejected retry itself, not through giveUpPending.
 func TestRejectedRetrySettlesLandedSendWithOwnTimeout(t *testing.T) {
 	t.Parallel()
 	const pushTime = 200 * time.Millisecond
-	d, _, _ := rateRig(t, Options{PendingRetry: 20 * time.Millisecond, PendingPush: pushTime, PendingGiveUp: 2 * time.Second}, false)
+	d, _, _ := rateRig(t, Options{PendingRetry: 20 * time.Millisecond, PendingPush: pushTime, PendingGiveUp: time.Hour}, false)
 	ctx := context.Background()
 	d.sendFirst(t)
 	type settled struct {
@@ -464,6 +465,7 @@ func TestRejectedRetrySettlesLandedSendWithOwnTimeout(t *testing.T) {
 	cut := errors.New("the connection dropped")
 	ref := d.meshRef()
 	var n atomic.Int32
+	var advanceErr atomic.Value
 	d.writeMu.Lock()
 	d.testPush = func(real func() error) error {
 		switch n.Add(1) {
@@ -480,10 +482,18 @@ func TestRejectedRetrySettlesLandedSendWithOwnTimeout(t *testing.T) {
 		// Advance remote tip on top of the landed first send so the retry is rejected,
 		// and sleep past pushTime so retryPending's push ctx is already expired on ErrRejected.
 		tip, rerr := d.repo.RemoteRef(ctx, ref)
-		if rerr == nil && tip != "" {
-			if c, cerr := d.repo.NewCommit(ctx, tip, "remote advance\n"); cerr == nil {
-				_ = d.repo.Push(ctx, c, ref, bus.FastForward, "")
-			}
+		if rerr != nil || tip == "" {
+			advanceErr.Store(fmt.Errorf("RemoteRef: %q %w", tip, rerr))
+			return bus.ErrRejected
+		}
+		c, cerr := d.repo.NewCommit(ctx, tip, "remote advance\n")
+		if cerr != nil {
+			advanceErr.Store(fmt.Errorf("NewCommit: %w", cerr))
+			return bus.ErrRejected
+		}
+		if perr := d.repo.Push(ctx, c, ref, bus.FastForward, ""); perr != nil {
+			advanceErr.Store(fmt.Errorf("Push: %w", perr))
+			return bus.ErrRejected
 		}
 		time.Sleep(pushTime + 80*time.Millisecond)
 		return bus.ErrRejected
@@ -518,5 +528,35 @@ func TestRejectedRetrySettlesLandedSendWithOwnTimeout(t *testing.T) {
 		case <-time.After(30 * time.Second):
 			t.Fatalf("%s was never settled", c.name)
 		}
+	}
+	if v := advanceErr.Load(); v != nil {
+		t.Fatalf("advancing remote tip failed: %v", v)
+	}
+	if calls := n.Load(); calls != 3 {
+		t.Errorf("testPush called %d times, want 3 (settled on first rejected retry)", calls)
+	}
+}
+
+// When reconciling a rejected push is canceled during IsAncestor, settlePendingOn leaves unchecked
+// sends pending rather than reporting them refused (#1073).
+func TestSettlePendingOnKeepsUncheckedOnCanceledContext(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingGiveUp: time.Hour}, false)
+	tip := d.sendFirst(t)
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.pendBase = tip
+	settled := false
+	d.pendSends = []pendingSend{{
+		sha:    tip,
+		settle: func(bool, bool, error) { settled = true },
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if d.settlePendingOn(ctx, tip, bus.ErrRejected, false) {
+		t.Fatal("settlePendingOn returned true on a canceled context")
+	}
+	if settled || len(d.pendSends) != 1 {
+		t.Errorf("settled=%v len=%d, want unchecked send preserved", settled, len(d.pendSends))
 	}
 }

@@ -145,15 +145,16 @@ func (d *Daemon) pendingLoop() {
 // gives them up once they have been tried for PendingGiveUp, or can't be pushed at all. Caller
 // holds writeMu.
 func (d *Daemon) retryPending() {
-	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). A retry
-	// that may end past the give-up time is the last: its push leaves pendingLook of that time for
-	// asking the remote, and only it gives the sends up for their age. A last retry that ends before
-	// the give-up time, as one whose push hung from 110 s to 165 s does, leaves them to the next: a
-	// retry with a whole minute's push would have ended past the time and given them up there, so
-	// the give-up can come one retry later than it did, about two minutes at the most.
+	// One push's time in all, as a send waiting on writeMu meanwhile has 90 s (serve.go). Every
+	// retry reserves pendingLook of PendingPush (when PendingPush > pendingLook) for asking the
+	// remote, whether reconciling a rejected push or checking at give-up. A retry that may end past
+	// the give-up time is the last, and only it gives the sends up for their age. A last retry that
+	// ends before the give-up time, as one whose push hung from 110 s to 165 s does, leaves them to
+	// the next: a retry with a whole minute's push would have ended past the time and given them up
+	// there, so the give-up can come one retry later than it did, about two minutes at the most.
 	start, limit := time.Now(), d.opt.PendingPush
 	last := time.Since(d.pendFrom)+limit+pushLook >= d.opt.PendingGiveUp
-	if left := limit - pendingLook; last && left > 0 {
+	if left := limit - pendingLook; left > 0 {
 		limit = left
 	}
 	// room says the remote can still be asked within the push's time. A test's short push time
@@ -184,15 +185,17 @@ func (d *Daemon) retryPending() {
 	if errors.Is(err, bus.ErrRejected) {
 		// The remote's tip isn't under this one: an older copy of the log, or junk, to push over,
 		// as appendEventIf does; or a log that went on without the pending sends. Give this look
-		// its own time (pendingLook), not what is left of the push's: if the push was rejected just
-		// before its limit, an expired ctx during IsAncestor would settle landed sends as refused (#1073).
+		// its own time (pendingLook, reserved above), not what is left of the push's: if the push
+		// was rejected just before its limit, an expired ctx during IsAncestor would miss landed
+		// sends (#1073).
 		lctx, lcancel := context.WithTimeout(d.bgCtx, pendingLook)
 		defer lcancel()
 		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil {
 			if over, oerr := d.overRemoteTip(lctx, ref, tip); oerr == nil {
 				if !over {
-					d.settlePendingOn(lctx, tip, err)
-					d.ownTip = tip
+					if d.settlePendingOn(lctx, tip, err, false) {
+						d.ownTip = tip
+					}
 					return
 				}
 				if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
@@ -217,20 +220,53 @@ func (d *Daemon) retryPending() {
 
 // settlePendingOn settles the pending sends by tip, the remote's tip of this device's log, which
 // the next write builds on: those under it landed, and the rest are given up, as nothing will push
-// them. Caller holds writeMu and has fetched tip.
-func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error) {
+// them. When giveUp is false (reconciling a rejected push, not giving up for good), an IsAncestor
+// error settles only the confirmed landed prefix and leaves unchecked sends pending, returning
+// false so the caller doesn't advance ownTip over them (#1073). Caller holds writeMu and has
+// fetched tip.
+func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error, giveUp bool) bool {
 	if len(d.pendSends) == 0 {
-		return
+		return true
+	}
+	if giveUp {
+		pending := d.pendSends
+		d.pendSends = nil
+		for _, p := range pending {
+			if ok, aerr := d.repo.IsAncestor(ctx, p.sha, tip); aerr == nil && ok {
+				p.settle(true, false, nil)
+			} else {
+				p.settle(false, aerr == nil, err)
+			}
+		}
+		return true
+	}
+	landed := -1
+	for k, p := range d.pendSends {
+		ok, aerr := d.repo.IsAncestor(ctx, p.sha, tip)
+		if aerr != nil {
+			if landed >= 0 {
+				done := d.pendSends[:landed+1]
+				d.pendBase, d.pendSends = d.pendSends[landed].sha, slices.Clone(d.pendSends[landed+1:])
+				for _, s := range done {
+					s.settle(true, false, nil)
+				}
+			}
+			return false
+		}
+		if ok {
+			landed = k
+		}
 	}
 	pending := d.pendSends
 	d.pendSends = nil
-	for _, p := range pending {
-		if ok, aerr := d.repo.IsAncestor(ctx, p.sha, tip); aerr == nil && ok {
+	for k, p := range pending {
+		if k <= landed {
 			p.settle(true, false, nil)
 		} else {
-			p.settle(false, aerr == nil, err)
+			p.settle(false, true, err)
 		}
 	}
+	return true
 }
 
 // giveUpPending gives up the pending sends, after err. With look, the remote is asked first, and
@@ -267,7 +303,7 @@ func (d *Daemon) giveUpPending(err error, look bool) {
 				d.pendSends, d.ownTip = nil, ""
 				return
 			}
-			d.settlePendingOn(lctx, tip, err)
+			d.settlePendingOn(lctx, tip, err, true)
 			d.ownTip = tip
 			return
 		}
