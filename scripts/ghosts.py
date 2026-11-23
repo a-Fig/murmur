@@ -3,9 +3,9 @@
 A session's avatar is three layers: a round tile the page paints, a ghost, and an accessory
 or none: 16 x 16 = 256 faces. The ghosts carry no tile, so it can take the session's device
 colour (#571) or any tone, and their bodies are light tints that read on all twelve device
-hues. Every body shares one head and one pair of eye positions, so each accessory fits every
-ghost. The script also writes docs/ghosts.html, a sheet of every combination. The page picks
-from GHOSTS and GHOST_ACCESSORIES in messages.js, which list these names in this order.
+hues. Each ghost has its own silhouette and pose, with a shared eye line and head size so the
+accessories fit. The script also writes docs/ghosts.html, a sheet of every combination.
+The page picks from GHOSTS and GHOST_ACCESSORIES in messages.js, which follow this order.
 
 Usage: python scripts/ghosts.py
 """
@@ -28,139 +28,209 @@ ROSE = "#E27D93"
 MINT = "#4FAE8C"
 PINK = "#F2A0B0"  # tongues and blush
 
-# Body tints: the brand's light steps, and two more at the same lightness.
-BUTTER_300 = "#FEF6C4"
-BLUE_100 = "#DCE6FF"
-MINT_100 = "#DDF3E8"
-ROSE_100 = "#FCE1E6"
-
-# The head every body shares: a dome of radius 19 centred on (32, 28), top at y 9, sides at x 13 and 51.
-HEAD = "M13 46V28C13 17.5 21.5 9 32 9C42.5 9 51 17.5 51 28"
-
-BODIES = {
-    # Three round scallops, the first ghost's shape.
-    "classic": HEAD + "V46C50.2 53.2 39.1 53.2 38.33 46C37.5 53.2 26.5 53.2 25.67 46C24.9 53.2 13.8 53.2 13 46Z",
-    # Four smaller scallops.
-    "frilly": HEAD + "V46C50.4 51.4 42.1 51.4 41.5 46C40.9 51.4 32.6 51.4 32 46"
-    "C31.4 51.4 23.1 51.4 22.5 46C21.9 51.4 13.6 51.4 13 46Z",
-    # A tail that flicks out to the right, as if mid-swoop.
-    "swoosh": HEAD + "V38C51 45 54 50 58 52C52.5 55.5 45 54.5 41 50C37 54 29.5 55 23.5 51.5C17.5 48 13 44 13 38Z",
-    # The classic shape with one arm up in a wave.
-    "waving": HEAD + "V46C50.2 53.2 39.1 53.2 38.33 46C37.5 53.2 26.5 53.2 25.67 46C24.9 53.2 13.8 53.2 13 46Z",
-}
-ARMS = {
-    "waving": '<path d="M14.5 36C10 34 7 30 6.6 26C6.3 23.6 8.8 22.6 10.2 24.4C11.8 26.6 13.6 29 16 30.4Z" fill="{body}"/>'
-    '<path d="M49.5 34.5C53.5 36.5 55.5 39.5 55.8 42.3C56 44.3 54 45 52.7 43.7C51.4 42.3 50 40.8 48.5 40Z" fill="{body}"/>',
-}
-
-EL, ER, EY = 25.5, 38.5, 28  # eye centres
+# Each ghost has its own silhouette and pose. Keep the eyes near the shared centers and
+# the top of the head near y=9 so the existing hats, glasses and headset still fit.
+EL, ER, EY = 25.5, 38.5, 28
 
 
-def eye(x, f, rx=3, ry=3.9, dx=0):
-    return f'<ellipse cx="{x + dx}" cy="{EY}" rx="{rx}" ry="{ry}" fill="{f}"/>'
+def fill(d, color=INK):
+    return f'<path d="{d}" fill="{color}"/>'
 
 
-def eyes(f, **kw):
-    return eye(EL, f, **kw) + eye(ER, f, **kw)
+def line(d, color=INK, width=2):
+    return f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round"/>'
 
 
-def arc(x, f, up):
-    # A closed eye: up is a happy ^, down a content or sleepy U.
-    d = -2.9 if up else 2.9
-    y = EY + (1.2 if up else -0.4)
-    return f'<path d="M{x - 2.9} {y}Q{x} {y + d} {x + 2.9} {y}" stroke="{f}" stroke-width="1.8" stroke-linecap="round" fill="none"/>'
+def oval(x, y, rx, ry, color=INK):
+    return f'<ellipse cx="{x}" cy="{y}" rx="{rx}" ry="{ry}" fill="{color}"/>'
 
 
-def mouth(d, f, w=1.7):
-    return f'<path d="{d}" stroke="{f}" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+def eyes(rx=2.8, ry=3.8):
+    return oval(EL, EY, rx, ry) + oval(ER, EY, rx, ry)
 
 
-# The mark's eyes (docs/assets/brand/mark.svg), cut from the designer's paths: the right
-# agent's slant like a quotation mark, the left agent's are leaning ovals.
+def cheeks(color=PINK):
+    return oval(19.5, 34.5, 2.8, 1.6, color) + oval(44.5, 34.5, 2.8, 1.6, color)
+
+
+# The two eye shapes in the Murmur mark.
 QUOTE_EYE = (
     "M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42"
     "C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07Z"
 )
-OVAL_EYE = "M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83Z"
+OVAL_EYE = (
+    "M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66"
+    "C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83Z"
+)
 
 
-def mark_eyes(path, cx, cy, s, f):
+def mark_eyes(path, cx, cy, scale):
     return "".join(
-        f'<path d="{path}" fill="{f}" transform="translate({x} {EY}) scale({s}) translate({-cx} {-cy})"/>' for x in (EL, ER)
-    )
-
-
-def star(x, f):
-    pts = []
-    for i in range(10):
-        r = 4.4 if i % 2 == 0 else 1.9
-        a = math.pi / 2 + i * math.pi / 5
-        pts.append(f"{x + r * math.cos(a):.2f} {EY - r * math.sin(a):.2f}")
-    return f'<path d="M{"L".join(pts)}Z" fill="{BUTTER}" stroke="{f}" stroke-width="1.1" stroke-linejoin="round"/>'
-
-
-def sparkle(f):
-    return eyes(f, rx=3.4, ry=4.3) + "".join(
-        f'<circle cx="{x + 1.1}" cy="{EY - 1.5}" r="1.15" fill="#fff"/><circle cx="{x - 1}" cy="{EY + 1.6}" r=".55" fill="#fff"/>'
+        f'<path d="{path}" fill="{INK}" transform="translate({x} {EY}) scale({scale}) translate({-cx} {-cy})"/>'
         for x in (EL, ER)
     )
 
 
-def smug(f, body):
-    lids = "".join(
-        f'<rect x="{x - 4}" y="{EY - 5}" width="8" height="4.6" fill="{body}"/>'
-        f'<path d="M{x - 3.4} {EY - 0.4}H{x + 3.4}" stroke="{f}" stroke-width="1.7" stroke-linecap="round"/>'
-        for x in (EL, ER)
-    )
-    return eyes(f, dx=0.8) + lids + mouth("M29 36.2Q33.5 37.6 36.5 34.6", f)
+def star(x, y, r, color=INK):
+    d = "M0 -1Q.16 -.16 1 0Q.16 .16 0 1Q-.16 .16 -1 0Q-.16 -.16 0 -1Z"
+    return f'<path d="{d}" fill="{color}" transform="translate({x} {y}) scale({r})"/>'
 
 
-def blush():
-    return f'<ellipse cx="19.8" cy="34" rx="3" ry="2" fill="{PINK}" opacity=".85"/><ellipse cx="44.2" cy="34" rx="3" ry="2" fill="{PINK}" opacity=".85"/>'
-
-
-FACES = {
-    "quote": lambda f, b: mark_eyes(QUOTE_EYE, 127, 55.2, 0.66, f),
-    "oval": lambda f, b: mark_eyes(OVAL_EYE, 46, 38.7, 0.52, f) + mouth("M29.6 35.6Q32 37.4 34.4 35.6", f),
-    "sleepy": lambda f, b: arc(EL, f, False) + arc(ER, f, False) + f'<ellipse cx="32" cy="36" rx="1.3" ry="1" fill="{f}"/>',
-    "side": lambda f, b: eyes(f, rx=2.6, ry=3.6, dx=2)
-    + "".join(f'<path d="M{x - 1.5} {EY - 5.6}L{x + 3.6} {EY - 4.6}" stroke="{f}" stroke-width="1.5" stroke-linecap="round"/>' for x in (EL, ER))
-    + mouth("M32.5 36H36", f),
-    "open": lambda f, b: arc(EL, f, True) + arc(ER, f, True)
-    + f'<path d="M27.6 33.6H36.4C36.4 37.8 34.4 39.6 32 39.6C29.6 39.6 27.6 37.8 27.6 33.6Z" fill="{f}"/>'
-    f'<path d="M29.4 38.2C30.6 36.8 33.4 36.8 34.6 38.2C33.9 39.1 33 39.6 32 39.6C31 39.6 30.1 39.1 29.4 38.2Z" fill="{PINK}"/>',
-    "blep": lambda f, b: arc(EL, f, True) + arc(ER, f, True) + mouth("M28 34.4Q32 37.4 36 34.4", f)
-    + f'<path d="M30.8 35.9H35V38.4C35 40 33.9 41 32.9 41C31.9 41 30.8 40 30.8 38.4Z" fill="{PINK}"/>',
-    "smug": smug,
-    "sparkle": lambda f, b: sparkle(f) + mouth("M29.8 35.6Q32 37.2 34.2 35.6", f),
-    "happy": lambda f, b: arc(EL, f, True) + arc(ER, f, True) + blush() + mouth("M29.4 34.8Q32 37.8 34.6 34.8", f),
-    "shy": lambda f, b: eyes(f, rx=2.2, ry=2.8) + blush() + mouth("M29.2 35.4Q30.6 37 32 35.4Q33.4 37 34.8 35.4", f, 1.5),
-    "content": lambda f, b: arc(EL, f, False) + arc(ER, f, False) + mouth("M28.6 34.6Q32 38 35.4 34.6", f),
-    "wink": lambda f, b: eye(EL, f) + arc(ER, f, True) + mouth("M29 35Q32 37.8 35 35", f),
-    "oh": lambda f, b: eyes(f) + f'<ellipse cx="32" cy="36.8" rx="2.1" ry="2.6" fill="{f}"/>',
-    "stars": lambda f, b: star(EL, f) + star(ER, f) + mouth("M28.8 35.4Q32 38.4 35.2 35.4", f),
-    "plain": lambda f, b: eyes(f),
-}
-
-# The ghosts, named for the ways people talk quietly. (body, shape, face)
+# Body, shadow, silhouette, then the details painted on top.
 GHOSTS = {
-    "murmur": (CREAM, "classic", "quote"),
-    "hush": (CREAM, "classic", "sleepy"),
-    "whisper": (BLUE_100, "swoosh", "side"),
-    "mumble": (BUTTER_300, "frilly", "oval"),
-    "chatter": (CREAM, "waving", "open"),
-    "babble": (MINT_100, "frilly", "blep"),
-    "rumor": (CREAM, "swoosh", "smug"),
-    "echo": (BLUE_100, "classic", "sparkle"),
-    "chirp": (BUTTER, "waving", "happy"),
-    "coo": (ROSE_100, "frilly", "shy"),
-    "hum": (BUTTER, "swoosh", "content"),
-    "psst": (CREAM, "classic", "wink"),
-    "sigh": (CREAM, "frilly", "oh"),
-    "jabber": (BUTTER_300, "waving", "stars"),
-    "natter": (MINT_100, "classic", "plain"),
-    "buzz": (ROSE_100, "waving", "quote"),
+    "murmur": (
+        CREAM, "#DCD9EF",
+        "M12 43V28C12 17 20 9 31 9C43 9 51 17 51 29V38Q51 45 56 48"
+        "Q50 54 41 49Q35 57 28 50Q22 55 17 49Q12 50 12 43Z",
+        mark_eyes(QUOTE_EYE, 127, 55.2, .7) + line("M29 36Q32 39 35 36")
+        + line("M19 41Q20 43 23 44M43 42Q45 44 48 44", "#ABA7D1", 1.8),
+    ),
+    "hush": (
+        "#E8E5FF", "#B6A9E5",
+        "M12 35V28C12 16 20 9 32 9C44 9 52 17 52 30V40Q54 51 47 53"
+        "Q42 55 35 52Q25 58 17 52Q8 53 9 45Q9 41 12 35Z",
+        line("M22 28q3.5 4.5 7 0M35 28q3.5 4.5 7 0") + oval(32, 35, 1.7, 1.5)
+        + fill("M10 43Q14 36 23 40Q35 47 51 41Q54 51 47 53Q42 55 35 52Q25 58 17 52Q9 53 10 43Z", "#AC9BDA")
+        + line("M11 43Q14 36 23 40Q35 47 51 41", "#645191", 1.8)
+        + star(23, 46, 2.5, CREAM) + star(36, 49, 2.1, CREAM),
+    ),
+    "whisper": (
+        "#DEF0FF", "#A9C7F0",
+        "M13 38V29C13 17 21 9 32 9C43 9 51 17 51 29Q50 40 55 43"
+        "Q59 45 57 48Q50 53 40 49Q30 56 20 50Q13 47 13 38Z",
+        oval(27, 28, 2.4, 3.5) + oval(40, 28, 2.4, 3.5)
+        + line("M23 23l5-1M37 22l5 1", INK, 1.5)
+        + line("M31 36h7")
+        + fill("M43 46Q36 44 35 39l-.5-7q.1-3 2.7-2.8q2 .1 2.4 2.7l.9 5q3.6-.5 5 2.4q1.6 3.6-2.5 6.7Z", "#F6FAFF")
+        + line("M43 46Q36 44 35 39l-.5-7q.1-3 2.7-2.8q2 .1 2.4 2.7l.9 5q3.6-.5 5 2.4", "#506796", 1.7),
+    ),
+    "mumble": (
+        "#FFF3C6", "#E7CA82",
+        "M13 28C13 17 20 9 31 9C43 9 50 16 51 28L54 47Q54 54 46 53"
+        "Q42 57 36 53Q31 57 25 53Q19 56 15 52Q8 52 10 46Z",
+        mark_eyes(OVAL_EYE, 46, 38.7, .52) + cheeks()
+        + fill("M11 37Q31 42 53 37L54 43Q46 48 29 46l-5 9-4-4-5 2 3-9-8-2Z", "#E97D75")
+        + line("M11 37Q31 42 53 37L54 43Q46 48 29 46l-5 9-4-4-5 2 3-9-8-2Z", "#814551", 1.5)
+        + line("M19 44l9 2M44 40q-1 2-.5 4", "#FFD4BA", 1.8),
+    ),
+    "chatter": (
+        "#FFE1C6", "#F3AA95",
+        "M14 28C14 17 21 9 32 9C43 9 50 17 50 28Q52 26 54 20Q56 16 59 19"
+        "Q63 25 56 34l-4 4Q55 46 49 51Q44 55 38 50Q32 57 25 51Q16 54 13 46l-2-8"
+        "Q3 34 4 26Q4 21 7 22Q10 22 10 26Q11 28 14 28Z",
+        line("M22 28q3.5-6 7 0m6 0q3.5-6 7 0") + cheeks("#F28D87")
+        + fill("M25 33Q32 35 39 33Q40 42 32 42Q25 42 25 33Z")
+        + fill("M27.5 40Q32 36 36.5 40Q32 44 27.5 40Z", PINK),
+    ),
+    "babble": (
+        "#D9F8E6", "#92D1B7",
+        "M14 27C14 16 22 9 32 9C43 9 51 17 51 28Q51 34 55 39Q60 48 50 52"
+        "Q43 57 37 51Q32 58 25 53Q15 58 12 49Q4 46 9 39Q13 34 14 27Z",
+        eyes(3.3, 4.2) + oval(26.5, 26.5, 1, 1.1, CREAM) + oval(39.5, 26.5, 1, 1.1, CREAM)
+        + line("M27 34.5Q32 39 37 34.5") + fill("M31 36h5v2.5q-2 5-5 1Z", "#EC829E")
+        + oval(21, 44, 3.5, 3.5, "#74BCAC") + oval(26, 49, 2.1, 2.1, "#74BCAC")
+        + oval(47, 43, 5.2, 5.2, "#74BCAC") + line("M44.5 42q.5-2.5 3-2.5", "#F0FFF6", 1.4),
+    ),
+    "rumor": (
+        "#F1DDF9", "#C5A1DE",
+        "M13 28C13 17 20 9 31 9C43 9 51 17 51 28l1 9Q54 44 57 45"
+        "Q53 53 45 51Q39 57 30 53Q17 57 11 50Q7 46 10 38Z",
+        fill("M21 27h9q-1 6-4 6t-5-6Zm13 0h9q-1 6-4 6t-5-6Z")
+        + line("M29 37q4 2 7-2")
+        + fill("M10 38Q19 40 29 46Q40 44 52 37Q54 44 57 45Q53 53 45 51Q39 57 30 53Q17 57 11 50Q7 46 10 38Z", "#564177")
+        + line("M10 38Q19 40 29 46Q40 44 52 37", "#9474B4", 2)
+        + oval(29, 47, 2.5, 2.5, BUTTER),
+    ),
+    "echo": (
+        "#DCE9FF", "#9CB9EF",
+        "M13 29C13 17 21 9 32 9C43 9 50 17 50 28V35Q52 43 58 40"
+        "Q59 47 50 49Q48 55 40 53Q34 58 27 53Q18 56 12 48Q8 42 13 29Z",
+        eyes(3.4, 4.2) + star(26.4, 26.8, 2.2, CREAM) + star(39.4, 26.8, 2.2, CREAM)
+        + line("M29 35q3 4 6 0")
+        + line("M16 41q7 9 16 4q7 5 13 1M19 47q5 5 12 3q5 4 11 1", "#5D83CD", 2),
+    ),
+    "chirp": (
+        "#FFF0A0", "#E9BC58",
+        "M14 29C14 17 21 9 32 9C43 9 50 17 50 28Q54 27 58 23"
+        "Q61 24 58 32Q56 37 51 39Q55 48 49 50l-6-1q-4 8-10 3q-6 6-12-1Q12 52 12 45l-1-7Q5 37 6 29q1-3 4-1Z",
+        line("M22 29q3.5-5 7 0m6 0q3.5-5 7 0") + cheeks("#F5B38F")
+        + fill("M27 34q5-3 10 0l-5 6Z", "#A95A3E")
+        + line("M13 38l5 4m33-3-5 5M26 47q3 2 6-.5q3 2.5 6 .5", "#BA752E", 1.8),
+    ),
+    "coo": (
+        "#FFE1E9", "#E7A0B9",
+        "M13 29C13 17 20 9 32 9C43 9 51 17 51 29l1 7q7 5 4 11q-3 5-10 4"
+        "q-6 7-14 2q-7 5-14-1q-9 0-11-6q-2-5 5-10Z",
+        eyes(2.5, 3.2) + cheeks() + line("M29 35q3 3 6 0")
+        + fill("M32 44C25 36 18 44 24 50l8 6l8-6c6-6-1-14-8-6Z", "#CB416A")
+        + line("M24 46q-2-3 2-4", "#FFDDE9", 1.5)
+        + line("M14 42q1 5 8 6m28-6q-1 5-8 6", "#A45D7A", 2),
+    ),
+    "hum": (
+        "#E5F6C9", "#ACCC8D",
+        "M13 28C13 17 21 9 32 9C44 9 52 17 52 29v8Q53 45 58 48"
+        "Q51 55 42 51Q39 58 30 53Q23 56 19 51Q9 52 9 44Z",
+        line("M22 26q3.5 6 7 0m6 0q3.5 6 7 0") + line("M29.5 34.5q2.5 3.5 5 0")
+        + fill("M26 48v-7l13-3v9q-.4 2.7-4 2.7q-3 0-2.6-2q.2-2.3 4.2-2.4v-3.4l-8.3 1.9v6q-.7 2.7-4.1 2.7q-2.9 0-2.5-2q.3-2.3 4.3-2.5Z", "#49795D"),
+    ),
+    "psst": (
+        "#DDF5F1", "#90CFC8",
+        "M13 28C13 17 21 9 32 9C43 9 51 17 51 29l2 8Q59 45 53 50"
+        "Q48 56 37 50Q31 57 23 52Q12 55 6 46Q13 43 13 36Z",
+        oval(EL, EY, 3, 4) + line("M35 28q3.5-5 7 0") + line("M28 35q3 5 8 1")
+        + fill("M37 40l12-2 1.5 9-12 2Z", CREAM)
+        + line("M37 40l12-2 1.5 9-12 2Z M38 41l6 3 4-4", "#507B84", 1.5)
+        + line("M17 39q3 5 9 6", "#6DAAA4", 2),
+    ),
+    "sigh": (
+        "#E5F2FF", "#A5C7E9",
+        "M13 29C13 17 21 9 31 9C43 9 51 17 51 28Q51 38 56 42"
+        "Q57 49 48 49Q46 55 38 51Q35 59 26 55Q16 59 12 51Q4 49 7 43Q12 38 13 29Z",
+        line("M21 27q4 5 8 1m6 0q4 4 8-1") + oval(33, 36, 2.8, 3.4)
+        + line("M35 43q7-4 13 0q3 2 6 0m-24 6q6-3 11 0", "#628DC1", 2)
+        + oval(56, 35, 3, 2, "#D0E8FC"),
+    ),
+    "jabber": (
+        "#FCE3F1", "#E7A5CD",
+        "M13 29C13 17 21 9 32 9C43 9 51 17 51 28L59 34L53 39"
+        "Q56 50 47 53Q41 57 34 51Q29 57 23 52Q13 54 11 45L5 38L12 35Z",
+        star(EL, EY, 5) + star(ER, EY, 5)
+        + fill("M25 36Q32 32 39 36Q38 45 32 45Q26 45 25 36Z")
+        + fill("M27.5 42Q32 38 36.5 42Q32 47 27.5 42Z", PINK)
+        + line("M13 39l6 4m32-4-6 4", "#AD568C", 2),
+    ),
+    "natter": (
+        "#E9F7DE", "#B1D4AA",
+        "M13 28C13 17 21 9 32 9C43 9 51 17 51 28Q54 36 55 43"
+        "Q57 53 48 53Q43 53 39 50Q31 58 24 53Q17 57 11 51Q6 48 9 40Z",
+        eyes(2.8, 3.5) + line("M27 35q2 4 5 2q3 2 5-2")
+        + oval(18, 33, 1, 1, "#A47166") + oval(21, 34.5, 1, 1, "#A47166")
+        + oval(46, 33, 1, 1, "#A47166") + oval(43, 34.5, 1, 1, "#A47166")
+        + line("M15 39q1 7 12 8q3-5 6-3m16-5q-1 7-12 8q-3-5-6-3", "#57866F", 2),
+    ),
+    "buzz": (
+        "#FFEDA0", "#EABB58",
+        "M13 29C13 17 21 9 32 9C44 9 51 17 51 28Q57 25 59 29"
+        "Q61 36 53 38l3 9-9-1-4 8-8-4-7 6-6-6-9 3-2-10Q3 41 5 35Q7 30 13 31Z",
+        mark_eyes(QUOTE_EYE, 127, 55.2, .7) + line("M30 34l2 3 4-2")
+        + line("M15 43q18 3 34-4m-28 10q14 0 26-5", "#98603C", 2.8),
+    ),
 }
+
+
+def ghost(name):
+    body, shade, d, details = GHOSTS[name]
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\n'
+        f'  <defs><clipPath id="body"><path d="{d}"/></clipPath></defs>\n'
+        f'  {oval(32, 58, 14, 2, "#00000026")}\n'
+        f'  <g clip-path="url(#body)">{fill(d, shade)}'
+        f'<path d="{d}" fill="{body}" transform="translate(-1.5 -3.5)"/></g>\n'
+        f'  <path d="{d}" fill="none" stroke="{INK}" stroke-width="1.65" stroke-linejoin="round"/>\n'
+        f'  {details}\n'
+        '</svg>\n'
+    )
+
 
 # The page's twelve device hues (#571, style.css), which the sheet uses for tiles.
 DEVICE_HUES = [
@@ -168,23 +238,6 @@ DEVICE_HUES = [
     "oklch(0.57 0.075 145)", "oklch(0.62 0.075 180)", "oklch(0.57 0.07 210)", "oklch(0.6 0.075 238)",
     "oklch(0.56 0.09 290)", "oklch(0.6 0.09 318)", "oklch(0.55 0.09 348)", "oklch(0.5 0.05 60)",
 ]
-
-
-def ghost(name):
-    body, shape, face = GHOSTS[name]
-    d = BODIES[shape]
-    arms = ARMS.get(shape, "").format(body=body)
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-        f'<defs><clipPath id="g"><path d="{d}"/></clipPath></defs>'
-        '<ellipse cx="33" cy="57.5" rx="13.5" ry="2" fill="#000" opacity=".16"/>'
-        f'{arms}<path d="{d}" fill="{body}"/>'
-        # Shade: the body, minus itself nudged up and left, leaves a crescent on the right
-        # and along the scallops that follows any shape.
-        f'<g clip-path="url(#g)"><rect width="64" height="64" fill="{INK}" opacity=".09"/>'
-        f'<path d="{d}" fill="{body}" transform="translate(-4 -1.6)"/></g>'
-        f"{FACES[face](INK, body)}</svg>\n"
-    )
 
 
 def petals(cx, cy, r, n, fill, rot=0):
