@@ -44,7 +44,7 @@ var version = "0.1.0-dev"
 
 // usage spells the names as they are, so its columns line up; the replacer keeps it in step with
 // package brand ("Murmur" first, so the "mur" inside it isn't taken for the command).
-var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command).Replace(
+var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command, "{server}", brand.MCPServer).Replace(
 	`Murmur: coding agents on teammates' machines, in the same repo, finding each other.
 
 Setup:
@@ -83,7 +83,8 @@ For agents with no Murmur tools, in a T3 Code thread's shell:
   mur status [TEXT]             set the line others see in who for what you are working on
 
 An agent with Murmur's tools uses them instead: who, send, inbox, status, lookup, tags and mute,
-which its client lists as mcp__murmur__who and so on. lookup, tags and mute are tools only.
+from the MCP server {server} (Claude Code lists them as mcp__{server}__who and so on).
+Only lookup, tags and mute have no command.
 
 Started by other programs:
   mur mcp [--agent NAME]        stdio MCP server, one per agent session
@@ -93,7 +94,11 @@ Started by other programs:
                                 Antigravity's hook, for EVENT; reads the payload on stdin
   mur daemon [--git-dir DIR]    the daemon, in the foreground
 
-Every command takes -C DIR to act on the repository at DIR. mur help COMMAND shows one command.
+Help:
+  mur help [COMMAND]            all of this, or one command's help
+  mur version                   this mur's version
+
+Every command takes -C DIR to act on the repository at DIR.
 `)
 
 func main() {

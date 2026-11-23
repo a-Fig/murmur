@@ -61,6 +61,6 @@ func toolOnly(name string) string {
 	if commandHelp(name) != "" || !slices.Contains(mcpserver.ToolNames(), name) {
 		return ""
 	}
-	return fmt.Sprintf("%s isn't a command: it is one of %s's MCP tools. An agent with the tools calls it as mcp__%s__%s.",
-		name, brand.Product, brand.Name, name)
+	return fmt.Sprintf("%s is one of %s's MCP tools, not a command. %s help lists the commands.",
+		name, brand.Product, brand.Command)
 }
