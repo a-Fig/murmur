@@ -86,8 +86,8 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 
 `mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity and Cursor.
 Two help agents decide when to use Murmur and coordinate over several messages. The third,
-`murmur-manager`, is for an agent you ask to manage your team as COO. Their source is in
-[`internal/skills`](internal/skills).
+`murmur-manager`, is for an agent you ask to manage the others: your general engineering manager,
+or GEM. Their source is in [`internal/skills`](internal/skills).
 
 ## Supported agents
 

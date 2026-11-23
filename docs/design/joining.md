@@ -57,9 +57,10 @@ It refuses in a repo without the marker. Everything it writes is outside the rep
 
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
   how to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a
-  team of agents as its user's COO (#548); a model may load it on its own, so it opens by saying to
-  follow it only when the user has made the session the manager in words. A SKILL.md of the same name without the skills'
-  marker comment is the user's own and is left alone. They cost every session of those agents their
+  team of agents as its user's GEM, general engineering manager (#548, #779); a model may load it
+  on its own, so it opens by saying to follow it only when the user has made the session the
+  manager in words. A SKILL.md of the same name without the skills' marker comment is the user's
+  own and is left alone. They cost every session of those agents their
   descriptions' worth of context in any repo, so each description says it applies only where the
   repo has the Murmur section. The folders are from each agent's documentation, not tried in a
   session (2026-11-08). OpenCode also reads `~/.claude/skills`, so beside Claude Code it sees each
