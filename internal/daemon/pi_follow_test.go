@@ -2,11 +2,15 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/proto"
@@ -375,5 +379,158 @@ func TestASecondPiServerOnTheSameFileKeepsTheIDItTook(t *testing.T) {
 	t.Cleanup(func() { c.Close() })
 	if resp.Self == first || idOf(resp.Self) != "f0f0f0" {
 		t.Fatalf("the second server is at %s, not at f0f0f0 (the first is at %s)", resp.Self, first)
+	}
+}
+
+// dropStateKeys removes the named top-level JSON fields from d's state.json while d is stopped,
+// simulating a downgrade to a daemon that drops unknown fields or a full prune past 30 days.
+func (d *device) dropStateKeys(keys ...string) {
+	d.t.Helper()
+	path := filepath.Join(d.gitDir, brand.StateDir, "state.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		d.t.Fatalf("read state.json: %v", err)
+	}
+	var st map[string]json.RawMessage
+	if err := json.Unmarshal(b, &st); err != nil {
+		d.t.Fatalf("unmarshal state.json: %v", err)
+	}
+	for _, k := range keys {
+		delete(st, k)
+	}
+	out, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		d.t.Fatalf("marshal state.json: %v", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		d.t.Fatalf("write state.json: %v", err)
+	}
+}
+
+// #1187: When PiFiles is lost — after a downgrade to a daemon before #1145 or a 30-day prune — a
+// Pi opened on the file a moved session left makes that moved session's ID from the file again.
+// It must get a fresh ID instead of taking over the moved session's grace or kept inbox.
+func TestAPiOnALeftFileDoesNotTakeOverAfterPiFilesIsLost(t *testing.T) {
+	for _, grace := range []bool{false, true} {
+		what := "stopped with inbox kept"
+		if grace {
+			what = "in its grace"
+		}
+		t.Run(what, func(t *testing.T) {
+			t.Parallel()
+			remote := newRemote(t)
+			b := newTimedDevice(t, remote, time.Hour, time.Hour)
+			b.session("aaaaaa", "")
+			moved, conn := b.piStart(piFileA, "", procP)
+			nameA := b.named(moved)
+			conn.Close()
+			_, conn = b.piAgain(piFileB, piFileA, procP) // /new
+			nameB := b.nameHeld(moved, nameA)
+			if r := b.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: moved, Subject: "for b"}); r.Error != "" {
+				t.Fatalf("send: %+v", r)
+			}
+			eventually(t, "the message to be queued", func() bool { return logHas(b, "for b") })
+
+			// Simulate a downgrade to a daemon before #1145 dropping piFiles from state.json.
+			conn.Close()
+			b.stop()
+			b.dropStateKeys("piFiles")
+			b.start()
+			if grace {
+				// The still-running Pi server on piFileB reconnects with its learned ID, then drops
+				// into its grace while piFiles is still missing.
+				c, _, err := b.c.Hello(context.Background(), proto.Hello{ID: idOf(moved), Agent: "pi",
+					ClientPID: procP, Reconnect: true, TakesSelf: true, Route: proto.Route{Native: piFileB}})
+				if err != nil {
+					t.Fatalf("reconnect moved session: %v", err)
+				}
+				c.Close()
+				b.dropped(moved)
+			}
+
+			other, connOther, err := b.piHello(piFileA, "", procQ)
+			if err != nil || other == "" || other == moved {
+				t.Fatalf("Pi on the left file after piFiles loss: %s, %v (moved was %s)", other, err, moved)
+			}
+			b.nameIs(other, nameA)
+			if got := b.do(proto.Request{Op: proto.OpInbox, Session: idOf(other)}).Messages; len(got) != 0 {
+				t.Fatalf("Pi on the left file stole %v", viewSubjects(got))
+			}
+
+			// The fresh ID is recorded in PiFiles so reloading or reopening piFileA keeps it.
+			connOther.Close()
+			b.dropped(other)
+			if again, _ := b.piAgain(piFileA, "", procQ+1); again != other {
+				t.Fatalf("reopening piFileA gave %s, not %s", again, other)
+			}
+
+			// Opening piFileB still gets conversation B's name and unread message.
+			if grace {
+				c, _, err := b.c.Hello(context.Background(), proto.Hello{ID: idOf(moved), Agent: "pi",
+					ClientPID: procP, Reconnect: true, TakesSelf: true, Route: proto.Route{Native: piFileB}})
+				if err != nil {
+					t.Fatalf("reconnect piFileB: %v", err)
+				}
+				t.Cleanup(func() { c.Close() })
+				if got := inboxOf(b, idOf(moved)); len(got) != 1 || got[0] != "for b" {
+					t.Fatalf("piFileB's inbox after grace takeover: %v", got)
+				}
+			} else {
+				addrB, _ := b.piStart(piFileB, "", procQ+2)
+				b.nameIs(addrB, nameB)
+				if got := inboxOf(b, idOf(addrB)); len(got) != 1 || got[0] != "for b" {
+					t.Fatalf("piFileB's adopted inbox: %v", got)
+				}
+			}
+		})
+	}
+}
+
+// #1187: Even long after a moved session has stopped and PiFiles has been pruned, the registry
+// still lists the moved conversation's name at the old address (Used). Opening Pi on the left file
+// must take a fresh ID so messages to the moved conversation's name do not reach the left file
+// with a "called something else now" note.
+func TestAPiOnALeftFileDoesNotReceiveMovedNameAfterFullPrune(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a, b := newDevice(t, remote), newDevice(t, remote)
+	a.session("aaaaaa", "claude-sender")
+
+	moved, conn := b.piStart(piFileA, "", procP)
+	nameA := b.named(moved)
+	a.nameIs(moved, nameA)
+	conn.Close()
+	_, conn = b.piAgain(piFileB, piFileA, procP) // /new
+	nameB := b.nameHeld(moved, nameA)
+	a.nameIs(moved, nameB)
+
+	// Simulate 30 quiet days: moved is no longer stopped/kept and PiFiles has been pruned, while
+	// NameKeys, Used, SessionNames and NameHolders remain.
+	conn.Close()
+	b.stop()
+	b.dropStateKeys("piFiles", "stopped", "downed", "inbox", "registered")
+	b.start()
+
+	other, _, err := b.piHello(piFileA, "", procQ)
+	if err != nil || other == "" || other == moved {
+		t.Fatalf("Pi on the left file after full prune: %s, %v (moved was %s)", other, err, moved)
+	}
+	b.nameIs(other, nameA)
+	a.nameIs(other, nameA)
+
+	r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameB, Subject: "for moved b"})
+	if r.Error != "" {
+		t.Fatalf("send to %s: %+v", nameB, r)
+	}
+	if strings.Contains(r.Note, nameA) {
+		t.Fatalf("send to %s misdirected to %s: %+v", nameB, nameA, r)
+	}
+	// Send a follow-up to nameA and wait for it; once it lands, the earlier send to nameB has been
+	// processed too, and must not be in other's inbox.
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: nameA, Subject: "for a"}); r.Error != "" {
+		t.Fatalf("send to %s: %+v", nameA, r)
+	}
+	if got := inboxOf(b, idOf(other)); len(got) != 1 || got[0] != "for a" {
+		t.Fatalf("piFileA's inbox: %v, want only [for a]", got)
 	}
 }

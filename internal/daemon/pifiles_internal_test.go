@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"log"
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -50,4 +52,149 @@ func TestAPiFilesRecordIsForgottenOnceNeitherIDIsInUse(t *testing.T) {
 	if !d.pruneSessionNamesLocked(now) || len(d.st.PiFiles) != 1 {
 		t.Errorf("with nothing at either ID, left: %v", d.st.PiFiles)
 	}
+}
+
+// #1187: When PiFiles has no entry for a file (or its recorded session is live in another Pi),
+// piIDLocked gives the hello a fresh ID whenever the file's own derived ID is already held by
+// another conversation's session, stopped name, registry name, or PiFiles record, while leaving
+// untouched files (including a Pi session in its grace on the same file or in T3) at their ID.
+func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
+	t.Parallel()
+	const (
+		dev   = "here-0001"
+		file1 = "/s/f1.jsonl"
+		file2 = "/s/f2.jsonl"
+	)
+	id1 := proto.NativeID(file1)
+	addr1 := bus.Addr(dev, id1)
+	hello := func(file string, pid int) *proto.Hello {
+		return &proto.Hello{ID: proto.NativeID(file), Agent: "pi", ClientPID: pid, TakesSelf: true,
+			Route: proto.Route{Native: file}}
+	}
+	newD := func(sessions map[string]*session, st state) *Daemon {
+		if sessions == nil {
+			sessions = map[string]*session{}
+		}
+		return &Daemon{device: dev, dir: t.TempDir(), log: log.Default(), sessions: sessions, st: st}
+	}
+
+	t.Run("session on another file even if unnamed", func(t *testing.T) {
+		d := newD(map[string]*session{
+			id1: {id: id1, dropped: time.Now(), route: proto.Route{Native: file2}},
+		}, state{})
+		d.mu.Lock()
+		got, moved := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if moved || got == id1 || got == "" {
+			t.Fatalf("got (%q, %v), want fresh ID != %q", got, moved, id1)
+		}
+		if d.st.PiFiles[file1].ID != got {
+			t.Fatalf("PiFiles[%s] = %q, want %q", file1, d.st.PiFiles[file1].ID, got)
+		}
+	})
+
+	t.Run("stopped session whose last name differs (e.g. after resume)", func(t *testing.T) {
+		d := newD(nil, state{
+			NameKeys:     map[string]string{nameKey("", "", file1, id1): "calm-otter"},
+			SessionNames: map[string]string{id1: "brisk-finch"},
+			Used:         map[string]string{"calm-otter": addr1, "brisk-finch": bus.Addr(dev, "other1")},
+		})
+		d.mu.Lock()
+		got, _ := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if got == id1 || got == "" {
+			t.Fatalf("got %q, want fresh ID != %q", got, id1)
+		}
+	})
+
+	t.Run("registry name in Used even after SessionNames was pruned", func(t *testing.T) {
+		d := newD(nil, state{
+			NameKeys: map[string]string{nameKey("", "", file1, id1): "calm-otter"},
+			Used:     map[string]string{"calm-otter": addr1, "brisk-finch": addr1},
+		})
+		d.mu.Lock()
+		got, _ := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if got == id1 || got == "" {
+			t.Fatalf("got %q, want fresh ID != %q", got, id1)
+		}
+	})
+
+	t.Run("another file in PiFiles still points to id1", func(t *testing.T) {
+		d := newD(nil, state{
+			PiFiles: map[string]piFile{file2: {ID: id1, At: time.Now()}},
+		})
+		d.mu.Lock()
+		got, _ := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if got == id1 || got == "" {
+			t.Fatalf("got %q, want fresh ID != %q", got, id1)
+		}
+	})
+
+	t.Run("recorded PiFiles session live in another Pi does not fall back to moved ID", func(t *testing.T) {
+		d := newD(map[string]*session{
+			"live01": {id: "live01", clientPID: 100, route: proto.Route{Native: file1}},
+		}, state{
+			PiFiles:      map[string]piFile{file1: {ID: "live01", At: time.Now()}},
+			NameKeys:     map[string]string{nameKey("", "", file1, id1): "calm-otter"},
+			SessionNames: map[string]string{id1: "brisk-finch"},
+			Used:         map[string]string{"calm-otter": addr1, "brisk-finch": addr1},
+		})
+		d.mu.Lock()
+		got, _ := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if got == id1 || got == "live01" || got == "" {
+			t.Fatalf("got %q, want fresh ID != %q and != live01", got, id1)
+		}
+		if d.st.PiFiles[file1].ID != "live01" {
+			t.Fatalf("PiFiles[%s] overwritten to %q, want live01", file1, d.st.PiFiles[file1].ID)
+		}
+	})
+
+	t.Run("unmoved file keeps its derived ID", func(t *testing.T) {
+		d := newD(nil, state{
+			NameKeys:     map[string]string{nameKey("", "", file1, id1): "calm-otter"},
+			SessionNames: map[string]string{id1: "calm-otter"},
+			Used:         map[string]string{"calm-otter": addr1},
+		})
+		d.mu.Lock()
+		got, _ := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if got != id1 {
+			t.Fatalf("got %q, want %q", got, id1)
+		}
+	})
+
+	t.Run("same file in its grace keeps its derived ID", func(t *testing.T) {
+		d := newD(map[string]*session{
+			id1: {id: id1, clientPID: 100, dropped: time.Now(), route: proto.Route{Native: file1}},
+		}, state{
+			NameKeys: map[string]string{nameKey("", "", file1, id1): "calm-otter"},
+			Used:     map[string]string{"calm-otter": addr1, "brisk-finch": addr1},
+		})
+		d.mu.Lock()
+		got, _ := d.piIDLocked(hello(file1, 200))
+		d.mu.Unlock()
+		if got != id1 {
+			t.Fatalf("got %q, want %q", got, id1)
+		}
+	})
+
+	t.Run("Pi in T3 restarting without thread keeps its derived ID", func(t *testing.T) {
+		d := newD(nil, state{
+			NameKeys:     map[string]string{"t3:th-1": "calm-otter"},
+			SessionNames: map[string]string{id1: "calm-otter"},
+			Used:         map[string]string{"calm-otter": addr1},
+			T3Routes:     map[string]t3Route{id1: {CLI: "t3", Thread: "th-1"}},
+		})
+		h := &proto.Hello{ID: id1, Agent: "pi in T3", ClientPID: 200, TakesSelf: true,
+			Route: proto.Route{Native: file1, T3CLI: "t3"}}
+		d.mu.Lock()
+		got, _ := d.piIDLocked(h)
+		d.mu.Unlock()
+		if got != id1 {
+			t.Fatalf("got %q, want %q", got, id1)
+		}
+	})
 }
