@@ -160,23 +160,27 @@ func TestRegisterAndUnregisterKiro(t *testing.T) {
 	}
 }
 
-// A hook written by a renamed Murmur binary (e.g. mur-dev.exe) is still recognized and replaced
-// when standard mur joins later, and cleanly removed by either mur or mur-dev on uninstall.
+// A hook written by a renamed Murmur binary (e.g. mur-dev.exe) is self-identifying via
+// kiroHookDescription, so it is cleanly replaced when standard mur or another renamed binary
+// joins later — even across partial MCP or hook write failures — and removed on uninstall even
+// without settings/mcp.json.
 func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 	sb := newSandbox(t, false)
 	withAgents(sb)
 	mustMakeDir(t, sb.KiroHome)
 	h := sb.defaultHome(agents[agentIndex("kiro")])
 	hookPath := filepath.Join(sb.KiroHome, "hooks", kiroHookFile)
+	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
 
 	devExe := filepath.Join(sb.root, "dev", exeName("mur-dev"))
+	previewExe := filepath.Join(sb.root, "preview", exeName("mur-preview"))
 	stdExe := sb.Exe
 	sb.Exe = devExe
 	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 3 {
 		t.Fatalf("dev register: did=%q err=%v", did, err)
 	}
-	if !strings.Contains(read(t, hookPath), "mur-dev") {
-		t.Fatalf("expected mur-dev in hook file:\n%s", read(t, hookPath))
+	if !strings.Contains(read(t, hookPath), "mur-dev") || !strings.Contains(read(t, hookPath), kiroHookDescription) {
+		t.Fatalf("expected mur-dev and description marker in hook file:\n%s", read(t, hookPath))
 	}
 
 	// Standard mur sees the dev hook in manual removal and replaces it on join.
@@ -188,137 +192,71 @@ func TestKiroRenamedBinaryHookReplacedAndRemoved(t *testing.T) {
 		t.Fatalf("std register over dev hook: did=%q err=%v\n%s", did, err, read(t, hookPath))
 	}
 
-	// Reinstall with mur-dev, then uninstall with standard mur: hook must be removed.
+	// Reinstall with mur-dev, then uninstall with standard mur even after mcp.json is gone or
+	// points elsewhere: self-identifying hook must still be removed cleanly.
 	sb.Exe = devExe
 	if _, _, err := sb.registerKiroAt(h); err != nil {
 		t.Fatalf("re-register dev: %v", err)
 	}
+	if err := os.Remove(mcpPath); err != nil {
+		t.Fatal(err)
+	}
 	sb.Exe = stdExe
-	if did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h}); err != nil || len(did) != 3 || len(notes) != 0 || exists(hookPath) {
-		t.Fatalf("std uninstall of dev hook: did=%q notes=%q err=%v exists=%v", did, notes, err, exists(hookPath))
+	if did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h}); err != nil || len(did) != 2 || len(notes) != 0 || exists(hookPath) {
+		t.Fatalf("std uninstall of dev hook without mcp.json: did=%q notes=%q err=%v exists=%v", did, notes, err, exists(hookPath))
 	}
 
-	// Reinstall with mur-dev and uninstall with mur-dev (even if mcp.json was already deleted).
+	// Switching between two renamed binaries (mur-dev -> mur-preview) when either mcp.json or
+	// hooks/murmur.json fails never strands the hook from later standard mur join or uninstall.
 	sb.Exe = devExe
 	if _, _, err := sb.registerKiroAt(h); err != nil {
 		t.Fatalf("re-register dev 2: %v", err)
 	}
-	if err := os.Remove(filepath.Join(sb.KiroHome, "settings", "mcp.json")); err != nil {
+	// Failure 1: mcp.json is malformed during mur-preview join -> hook still points to mur-dev
+	// and standard mur uninstall still removes it.
+	write(t, mcpPath, "{malformed")
+	sb.Exe = previewExe
+	if _, _, err := sb.registerKiroAt(h); err == nil {
+		t.Fatal("expected preview register failure on malformed mcp.json")
+	}
+	sb.Exe = stdExe
+	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, "delete "+hookPath) {
+		t.Errorf("kiroRemoval after failed mcp update = %q", rem)
+	}
+	// Restore valid mcp.json, then block hooks/murmur.json during mur-preview join (Failure 2):
+	// mcp.json updates to mur-preview while hook stays mur-dev; once unblocked, standard mur
+	// still recognizes and replaces the mur-dev hook.
+	if err := os.Remove(mcpPath); err != nil {
 		t.Fatal(err)
-	}
-	if did, notes, err := sb.unregisterKiroAt(context.Background(), []agentHome{h}); err != nil || len(did) != 2 || len(notes) != 0 || exists(hookPath) {
-		t.Fatalf("dev uninstall without mcp.json: did=%q notes=%q err=%v exists=%v", did, notes, err, exists(hookPath))
-	}
-
-	// Retry after a transient hook-write failure (hooks/murmur.json blocked by a directory or
-	// lock): mcp.json must preserve mur-dev so a subsequent retry with standard mur still
-	// recognizes and replaces the hook.
-	sb.Exe = devExe
-	if _, _, err := sb.registerKiroAt(h); err != nil {
-		t.Fatalf("re-register dev 3: %v", err)
 	}
 	origHook := read(t, hookPath)
-	// Simulate a transient write failure by temporarily replacing hooks/murmur.json with a
-	// directory (making installKiroHook fail), then restoring the mur-dev hook file.
 	if err := os.Remove(hookPath); err != nil {
 		t.Fatal(err)
 	}
 	mustMakeDir(t, hookPath)
-	sb.Exe = stdExe
-	if _, _, err := sb.registerKiroAt(h); err == nil {
-		t.Fatal("expected register failure while hookPath is blocked")
-	}
-	if got := kiroRegisteredExe(h); got != devExe {
-		t.Fatalf("mcp.json lost renamed binary on failed hook update: got %q, want %q", got, devExe)
-	}
-	if err := os.Remove(hookPath); err != nil {
-		t.Fatal(err)
-	}
-	write(t, hookPath, origHook)
-	if rem := kiroRemoval(sb.Env, h); !strings.Contains(rem, "delete "+hookPath) {
-		t.Errorf("kiroRemoval after failed hook update = %q", rem)
-	}
-	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 2 || strings.Contains(read(t, hookPath), "mur-dev") {
-		t.Fatalf("retry register after transient hook failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
-	}
-
-	// Switching between two renamed binaries (mur-dev -> mur-preview) also preserves mur-dev in
-	// mcp.json if the hook write fails, so a retry after the failure clears still succeeds.
-	sb.Exe = devExe
-	if _, _, err := sb.registerKiroAt(h); err != nil {
-		t.Fatalf("re-register dev 4: %v", err)
-	}
-	origHook = read(t, hookPath)
-	if err := os.Remove(hookPath); err != nil {
-		t.Fatal(err)
-	}
-	mustMakeDir(t, hookPath)
-	previewExe := filepath.Join(sb.root, "preview", exeName("mur-preview"))
 	sb.Exe = previewExe
 	if _, _, err := sb.registerKiroAt(h); err == nil {
 		t.Fatal("expected preview register failure while hookPath is blocked")
 	}
-	if got := kiroRegisteredExe(h); got != devExe {
-		t.Fatalf("mcp.json lost mur-dev on failed preview hook update: got %q, want %q", got, devExe)
-	}
 	if err := os.Remove(hookPath); err != nil {
 		t.Fatal(err)
 	}
 	write(t, hookPath, origHook)
-	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 2 || !strings.Contains(read(t, hookPath), "mur-preview") {
-		t.Fatalf("retry preview register: did=%q err=%v\n%s", did, err, read(t, hookPath))
+	sb.Exe = stdExe
+	if did, _, err := sb.registerKiroAt(h); err != nil || len(did) != 2 || strings.Contains(read(t, hookPath), "mur-dev") {
+		t.Fatalf("std register after partial preview failure: did=%q err=%v\n%s", did, err, read(t, hookPath))
 	}
 
-	// Reverse failure: if updating settings/mcp.json fails (malformed JSON) during a fresh
-	// renamed-binary join, mcp.json is checked before writing the hook so no hook is stranded.
-	mcpPath := filepath.Join(sb.KiroHome, "settings", "mcp.json")
-	if err := os.Remove(hookPath); err != nil {
-		t.Fatal(err)
+	// writeOwnedFile refuses to overwrite or replace a symlink directly.
+	linkTarget := filepath.Join(sb.root, "target.json")
+	write(t, linkTarget, "keep")
+	linkPath := filepath.Join(sb.root, "link.json")
+	linkOrSkip(t, linkTarget, linkPath)
+	if err := writeOwnedFile(linkPath, []byte("new"), 0o644); err == nil {
+		t.Fatal("writeOwnedFile overwrote or replaced a symlink")
 	}
-	write(t, mcpPath, "{malformed")
-	sb.Exe = devExe
-	if _, _, err := sb.registerKiroAt(h); err == nil {
-		t.Fatal("expected register failure on malformed mcp.json")
-	}
-	if exists(hookPath) {
-		t.Error("failed mcp.json write stranded a newly created renamed-binary hook")
-	}
-
-	// Ambiguous 8.3 short-path prefixes, case-differing nonexistent paths (properly quoted so they
-	// reach sameKiroExe), and uncleaned `link/../` paths must NOT be claimed without matching
-	// filesystem identity.
-	for _, otherCmd := range []string{
-		`C:\MYAPPL~1\mur-dev.exe hook kiro`,
-		`C:\OTHER~1\mur-dev.exe hook kiro`,
-		`"C:\My Application Tools\MUR-DEV.EXE" hook kiro`,
-		`C:\dir\tool.x~1 hook kiro`,
-		`'/opt/murmur/link/../mur-dev' hook kiro`,
-	} {
-		hDoc, err := kiroHooks(otherCmd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if isKiroHookFileFor(hDoc, `C:\My Application Tools\mur-dev.exe`, `C:\dir\other.x~1`, `/opt/murmur/mur-dev`) {
-			t.Errorf("isKiroHookFileFor falsely matched ambiguous %q", otherCmd)
-		}
-	}
-	// Existing file identity (e.g. a real Windows 8.3 alias or same file on disk) DOES match.
-	realDir := filepath.Join(sb.root, "My Application Tools")
-	otherDir := filepath.Join(sb.root, "My Application Backup")
-	realExe := filepath.Join(realDir, exeName("mur-dev"))
-	otherExe := filepath.Join(otherDir, exeName("mur-dev"))
-	write(t, realExe, "x")
-	write(t, otherExe, "y")
-	if !sameKiroExe(realExe, realExe) || sameKiroExe(otherExe, realExe) {
-		t.Errorf("sameKiroExe identity check failed for %q vs %q", otherExe, realExe)
-	}
-	if short := shortPath(realExe); short != "" && short != realExe {
-		if !sameKiroExe(short, realExe) {
-			t.Errorf("sameKiroExe missed existing 8.3 alias %q for %q", short, realExe)
-		}
-		if sameKiroExe(short, otherExe) {
-			t.Errorf("sameKiroExe falsely matched 8.3 alias %q against %q", short, otherExe)
-		}
+	if !isLink(linkPath) || read(t, linkTarget) != "keep" {
+		t.Errorf("writeOwnedFile disturbed symlink or target: isLink=%v target=%q", isLink(linkPath), read(t, linkTarget))
 	}
 }
 
@@ -609,6 +547,15 @@ func TestResolveLinksPreservesDriveRootedPath(t *testing.T) {
 // A foreign or customized hooks/murmur.json is left alone on both join (as a real Problem, not
 // downgraded to an approvalNote even when permissions.yaml is present) and uninstall (with a note),
 // and is omitted from manual removal instructions.
+func mustKiroHooks(t *testing.T, cmd string) string {
+	t.Helper()
+	b, err := kiroHooks(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func TestKiroForeignHookFileLeftAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -628,39 +575,39 @@ func TestKiroForeignHookFileLeftAlone(t *testing.T) {
 		},
 		{
 			name: "customized timeout zero",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 0}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
+			body: strings.Replace(mustKiroHooks(t, "mur hook kiro"), `"timeout": 30`, `"timeout": 0`, 1),
 		},
 		{
 			name: "customized timeout omitted",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
+			body: strings.Replace(mustKiroHooks(t, "mur hook kiro"), ",\n      \"timeout\": 30", "", 1),
 		},
 		{
-			name: "wrapper binary ending in hook kiro",
+			name: "wrapper binary without murmur description",
 			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "my-wrapper hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "my-wrapper hook kiro"}, "timeout": 30}]}` + "\n",
 		},
 		{
 			name: "env wrapper prefix around mur",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "env FOO=1 /usr/bin/mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "env FOO=1 /usr/bin/mur hook kiro"}, "timeout": 30}]}` + "\n",
+			body: mustKiroHooks(t, "env FOO=1 /usr/bin/mur hook kiro"),
 		},
 		{
 			name: "extra flag before hook kiro",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "\"C:\\bin\\mur.exe\" --debug hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "\"C:\\bin\\mur.exe\" --debug hook kiro"}, "timeout": 30}]}` + "\n",
+			body: mustKiroHooks(t, `"C:\bin\mur.exe" --debug hook kiro`),
 		},
 		{
 			name: "mismatched commands across hooks",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "'/a/mur' hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "'/b/mur' hook kiro"}, "timeout": 30}]}` + "\n",
+			body: strings.Replace(mustKiroHooks(t, `'/a/mur' hook kiro`), `'/a/mur'`, `'/b/mur'`, 1),
 		},
 		{
 			name: "extra user field",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "enabled": false, "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]}` + "\n",
+			body: strings.Replace(mustKiroHooks(t, "mur hook kiro"), `"trigger": "UserPromptSubmit",`, `"trigger": "UserPromptSubmit", "enabled": false,`, 1),
 		},
 		{
 			name: "duplicate case-folded timeout key",
-			body: "{\n  \"version\": \"v1\",\n  \"hooks\": [\n    {\n      \"name\": \"murmur-prompt\",\n      \"trigger\": \"UserPromptSubmit\",\n      \"action\": {\n        \"type\": \"command\",\n        \"command\": \"mur hook kiro\"\n      },\n      \"timeout\": 60,\n      \"Timeout\": 30\n    },\n    {\n      \"name\": \"murmur-stop\",\n      \"trigger\": \"Stop\",\n      \"action\": {\n        \"type\": \"command\",\n        \"command\": \"mur hook kiro\"\n      },\n      \"timeout\": 30\n    }\n  ]\n}\n",
+			body: strings.Replace(mustKiroHooks(t, "mur hook kiro"), `"timeout": 30`, "\"timeout\": 60,\n      \"Timeout\": 30", 1),
 		},
 		{
 			name: "trailing json token",
-			body: `{"version": "v1", "hooks": [{"name": "murmur-prompt", "trigger": "UserPromptSubmit", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}, {"name": "murmur-stop", "trigger": "Stop", "action": {"type": "command", "command": "mur hook kiro"}, "timeout": 30}]} {}` + "\n",
+			body: mustKiroHooks(t, "mur hook kiro") + "{}\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

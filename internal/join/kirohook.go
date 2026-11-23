@@ -10,12 +10,11 @@ import (
 	"strings"
 
 	"github.com/a-Fig/murmur/internal/brand"
-	"github.com/a-Fig/murmur/internal/jsonedit"
 )
 
 // Kiro's hook (#910). Kiro CLI 3.4.0 (V3 KAS @kiro/agent, read 2026-11-22) loads every *.json file
 // in <userConfigDir>/hooks/ (~/.kiro/hooks/) matching the v1 standalone hook schema:
-// {"version": "v1", "hooks": [{"name", "trigger", "action": {"type": "command", "command"}, "timeout"}]}.
+// {"version": "v1", "hooks": [{"name", "description", "trigger", "action": {"type": "command", "command"}, "timeout"}]}.
 // It watches that directory for changes and executes command actions with
 // child_process.spawn(command, {shell: true}) (cmd.exe on Windows, sh elsewhere), passing JSON on
 // stdin with session_id, hook_event_name, cwd (and prompt on UserPromptSubmit).
@@ -33,16 +32,22 @@ import (
 // kiroHookFile is join's standalone hook file in Kiro's hooks/ directory.
 var kiroHookFile = brand.MCPServer + ".json"
 
+// kiroHookDescription marks the hook entries as written by join (Kiro's v1 standalone hook schema
+// carries description directly on each hook entry), so hooks/murmur.json is self-identifying even
+// when written by a renamed Murmur binary without coupling ownership to settings/mcp.json.
+var kiroHookDescription = "Managed by " + brand.Product + " (" + brand.Command + " join)"
+
 type kiroHookDoc struct {
 	Version string          `json:"version"`
 	Hooks   []kiroHookEntry `json:"hooks"`
 }
 
 type kiroHookEntry struct {
-	Name    string         `json:"name"`
-	Trigger string         `json:"trigger"`
-	Action  kiroHookAction `json:"action"`
-	Timeout int            `json:"timeout,omitempty"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Trigger     string         `json:"trigger"`
+	Action      kiroHookAction `json:"action"`
+	Timeout     int            `json:"timeout,omitempty"`
 }
 
 type kiroHookAction struct {
@@ -51,8 +56,7 @@ type kiroHookAction struct {
 }
 
 // kiroHookCommand formats the command line Kiro runs via cmd.exe on Windows and sh elsewhere.
-// It preserves exe verbatim (without 8.3 shortPath substitution) so hooks/murmur.json always
-// records the same path as settings/mcp.json even if the install directory is later moved.
+// It preserves exe verbatim (without 8.3 shortPath substitution).
 func kiroHookCommand(exe string) string { return cmdHookCommand(exe, " hook kiro", "", "", false) }
 
 // kiroHooks is the JSON content of join's ~/.kiro/hooks/murmur.json running command.
@@ -61,16 +65,18 @@ func kiroHooks(command string) ([]byte, error) {
 		Version: "v1",
 		Hooks: []kiroHookEntry{
 			{
-				Name:    brand.MCPServer + "-prompt",
-				Trigger: "UserPromptSubmit",
-				Action:  kiroHookAction{Type: "command", Command: command},
-				Timeout: codexHookTimeout,
+				Name:        brand.MCPServer + "-prompt",
+				Description: kiroHookDescription,
+				Trigger:     "UserPromptSubmit",
+				Action:      kiroHookAction{Type: "command", Command: command},
+				Timeout:     codexHookTimeout,
 			},
 			{
-				Name:    brand.MCPServer + "-stop",
-				Trigger: "Stop",
-				Action:  kiroHookAction{Type: "command", Command: command},
-				Timeout: codexHookTimeout,
+				Name:        brand.MCPServer + "-stop",
+				Description: kiroHookDescription,
+				Trigger:     "Stop",
+				Action:      kiroHookAction{Type: "command", Command: command},
+				Timeout:     codexHookTimeout,
 			},
 		},
 	}
@@ -84,65 +90,19 @@ func kiroHooks(command string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// kiroRegisteredExe returns the command registered for Murmur's MCP server in h's settings/mcp.json
-// when its args match kiroArgs (`["mcp", "--agent", "kiro"]`), or "" otherwise. This lets join and
-// uninstall still recognize hooks/murmur.json when it was written by a renamed Murmur binary
-// (such as mur-dev.exe) without loosening ownership for unrelated wrapper commands.
-func kiroRegisteredExe(h agentHome) string {
-	text, err := readConfig(filepath.Join(h.Dir, "settings", "mcp.json"))
-	if err != nil || text == "" {
-		return ""
-	}
-	raw, found, err := jsonedit.GetIn(text, []string{"mcpServers", brand.MCPServer})
-	if err != nil || !found {
-		return ""
-	}
-	o, err := jsonedit.Parse([]byte(raw))
-	if err != nil {
-		return ""
-	}
-	cmdVal, _ := o.Get("command")
-	cmd, _ := cmdVal.(string)
-	argsVal, _ := o.Get("args")
-	args, _ := argsVal.([]any)
-	if cmd == "" || len(args) != len(kiroArgs) {
-		return ""
-	}
-	for i, want := range kiroArgs {
-		if s, ok := args[i].(string); !ok || s != want {
-			return ""
-		}
-	}
-	return cmd
-}
-
-// isKiroHookFileFor says b is byte-for-byte (ignoring UTF-8 BOM and CRLF) a hooks/murmur.json file
-// produced by kiroHooks for a valid Murmur `hook kiro` command or one of extraExes (the running
-// binary or the binary previously registered in settings/mcp.json). Comparing against kiroHooks's
-// canonical rendering rejects any user edit — including case-folded or duplicate JSON keys,
-// changed timeouts, extra fields, or customized commands — so join and uninstall never overwrite
-// or delete a customized file.
-func isKiroHookFileFor(b []byte, extraExes ...string) bool {
+// isKiroHookFile says b is byte-for-byte (ignoring UTF-8 BOM and CRLF) a hooks/murmur.json file
+// produced by kiroHooks for a canonical `<exe> hook kiro` command. Comparing against kiroHooks's
+// canonical rendering (which embeds kiroHookDescription on both hooks) identifies files join wrote
+// — even from a renamed binary such as mur-dev — while rejecting any user file or customization
+// (changed timeout, extra fields, case-folded/duplicate JSON keys, or wrapper commands).
+func isKiroHookFile(b []byte) bool {
 	norm := bytes.ReplaceAll(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), []byte("\r\n"), []byte("\n"))
 	var doc kiroHookDoc
 	if json.Unmarshal(norm, &doc) != nil || len(doc.Hooks) != 2 {
 		return false
 	}
 	cmd := doc.Hooks[0].Action.Command
-	hookExe, ok := parseKiroHookCommand(cmd)
-	if !ok {
-		return false
-	}
-	owned := isMurBinary(hookExe)
-	if !owned {
-		for _, exe := range extraExes {
-			if exe != "" && (cmd == kiroHookCommand(exe) || sameKiroExe(hookExe, exe)) {
-				owned = true
-				break
-			}
-		}
-	}
-	if !owned {
+	if _, ok := parseKiroHookCommand(cmd); !ok {
 		return false
 	}
 	want, err := kiroHooks(cmd)
@@ -184,24 +144,12 @@ func parseKiroHookCommand(cmd string) (string, bool) {
 	return exe, true
 }
 
-// sameKiroExe says hookExe and regExe refer to the same executable: either the exact same path
-// string (without cleaning `..` segments that could traverse a symlink), or both exist on disk
-// and refer to the same file via os.SameFile.
-func sameKiroExe(hookExe, regExe string) bool {
-	if hookExe == regExe {
-		return true
-	}
-	fiA, errA := os.Stat(hookExe)
-	fiB, errB := os.Stat(regExe)
-	return errA == nil && errB == nil && os.SameFile(fiA, fiB)
-}
-
 // installKiroHook writes join's hook file in Kiro home h if missing or outdated. A non-regular
 // entry (such as a live or dangling symlink) or a customized file is left alone with an error,
 // matching removeOwned's ownership rules. It writes via writeOwnedFile (which renames directly at
 // path without resolving a leaf symlink) so a concurrently introduced symlink target is never
 // overwritten.
-func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err error) {
+func (e Env) installKiroHook(h agentHome) (did []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	want, err := kiroHooks(kiroHookCommand(e.Exe))
 	if err != nil {
@@ -218,7 +166,7 @@ func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err err
 		if bytes.Equal(have, want) {
 			return nil, nil
 		}
-		if !isKiroHookFileFor(have, e.Exe, prevExe) {
+		if !isKiroHookFile(have) {
 			return nil, fmt.Errorf("%s already exists and doesn't look like %s's hook, so it was left alone", path, brand.Product)
 		}
 	} else if !errors.Is(lerr, os.ErrNotExist) {
@@ -230,12 +178,15 @@ func (e Env) installKiroHook(h agentHome, prevExe string) (did []string, err err
 	return []string{h.Label + ": added " + brand.Product + "'s hook, in every project (" + path + ")"}, nil
 }
 
-// writeOwnedFile atomically replaces path without following a symlink at path itself (unlike
-// writeAtomic, which intentionally writes through user config symlinks).
+// writeOwnedFile atomically replaces path without following or replacing a symlink at path itself
+// (unlike writeAtomic, which intentionally writes through user config symlinks).
 func writeOwnedFile(path string, data []byte, perm os.FileMode) error {
-	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+	if fi, err := os.Lstat(path); err == nil {
+		if !fi.Mode().IsRegular() {
+			return fmt.Errorf("%s isn't a regular file (a link, say), so it was left alone", path)
+		}
 		perm = fi.Mode().Perm()
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -264,11 +215,9 @@ func writeOwnedFile(path string, data []byte, perm os.FileMode) error {
 
 // removeKiroHook removes join's hook file from Kiro home h via removeOwned, leaving a symlink or
 // foreign file alone with a note.
-func removeKiroHook(h agentHome, extraExes ...string) (did, notes []string, err error) {
+func removeKiroHook(h agentHome) (did, notes []string, err error) {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
-	removed, note, err := removeOwned(path, func(b []byte) bool {
-		return isKiroHookFileFor(b, extraExes...)
-	})
+	removed, note, err := removeOwned(path, isKiroHookFile)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -282,12 +231,12 @@ func removeKiroHook(h agentHome, extraExes ...string) (did, notes []string, err 
 }
 
 // kiroHookRemoval says how to remove join's hook file by hand, "" if none is present.
-func kiroHookRemoval(h agentHome, extraExes ...string) string {
+func kiroHookRemoval(h agentHome) string {
 	path := filepath.Join(h.Dir, "hooks", kiroHookFile)
 	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
 		return ""
 	}
-	if have, err := os.ReadFile(path); err == nil && isKiroHookFileFor(have, extraExes...) {
+	if have, err := os.ReadFile(path); err == nil && isKiroHookFile(have) {
 		return "delete " + path
 	}
 	return ""
