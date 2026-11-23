@@ -1353,13 +1353,6 @@ type (
 	}
 )
 
-// toolNames are the tools tools lists, for taking them away again.
-var toolNames = []string{"who", "lookup", "status", "tags", "send", "inbox", "mute"}
-
-// ToolNames are the tools this server offers, by the name an agent's client puts after
-// mcp__murmur__. `mur help` names them, as some are commands too and some aren't (#832).
-func ToolNames() []string { return slices.Clone(toolNames) }
-
 func (s *server) tools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "who", Description: "Show the agents working in this repo across the team: each device and " +
 		"session, its name, agent and branch, when it was last active and what it is doing, and which one is you. " +
