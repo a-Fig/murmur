@@ -364,7 +364,8 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	var op string
-	if agent == "" || agent == Antigravity && in.ToolName == antigravityCommand {
+	if agent == "" || agent == Pi || agent == Antigravity && in.ToolName == antigravityCommand {
+		// Pi's extension gives a tool_use_id only for a shell call, the one kind of call it brackets.
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
@@ -489,7 +490,8 @@ func identify(agent string, in input) proto.Request {
 		// The session is named by its file (Pi) or its session ID (OpenCode), which its MCP server
 		// registered with too, never by a Claude Code ID or process: a Pi started from a Claude Code
 		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
-		// Claude Code's form, and no call is bracketed, so their commits aren't credited to them.
+		// Claude Code's form. Pi's extension brackets a shell call with a tool_use_id of its own; no
+		// OpenCode call is bracketed, so its commits aren't credited to it.
 		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}

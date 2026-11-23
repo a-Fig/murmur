@@ -508,8 +508,8 @@ func TestStopKeepsTheTurnGoingWithItsMessages(t *testing.T) {
 
 // Pi's extension runs the hook with the session's file for its ID (#205): the requests name the
 // session by it, never by a Claude Code ID or process, even where Pi inherited Claude Code's
-// CLAUDE_PID, and bracket no call. What the hook prints is Claude Code's form, which the extension
-// reads.
+// CLAUDE_PID. A call is bracketed when the extension gives its ID (a shell call, #868), and only
+// then. What the hook prints is Claude Code's form, which the extension reads.
 func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
 	t.Setenv("CLAUDE_PID", "4242")
 	repo := newRepo(t)
@@ -520,14 +520,20 @@ func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
 		return `{"ok":true}`
 	})
 	const file = "/home/u/.pi/agent/sessions/a.jsonl"
-	pi := func(event string) string {
-		payload, _ := json.Marshal(map[string]string{"session_id": file, "hook_event_name": event, "cwd": repo,
-			"tool_name": "bash", "tool_use_id": "call_1", "transcript_path": file})
+	pi := func(event string, extra map[string]string) string {
+		m := map[string]string{"session_id": file, "hook_event_name": event, "cwd": repo, "tool_name": "bash", "transcript_path": file}
+		for k, v := range extra {
+			m[k] = v
+		}
+		payload, _ := json.Marshal(m)
 		var out bytes.Buffer
 		hook.RunFor("pi", bytes.NewReader(payload), &out)
 		return out.String()
 	}
-	out := pi("PostToolUse")
+	if out := pi("PreToolUse", map[string]string{"tool_use_id": "call_1"}); out != "" {
+		t.Errorf("PreToolUse printed %q", out)
+	}
+	out := pi("PostToolUse", map[string]string{"tool_use_id": "call_1"})
 	var got struct {
 		HookSpecificOutput struct {
 			AdditionalContext string `json:"additionalContext"`
@@ -536,23 +542,35 @@ func TestPiHookNamesItsSessionByItsFile(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil || !strings.Contains(got.HookSpecificOutput.AdditionalContext, `"hi"`) {
 		t.Fatalf("PostToolUse printed %q: %v", out, err)
 	}
-	pi("Stop")
+	// A call whose ID the extension doesn't give isn't bracketed.
+	pi("PostToolUse", nil)
+	pi("Stop", nil)
 	var reqs []proto.Request
 	for _, r := range requests() {
 		if r.Op != proto.OpPing {
 			reqs = append(reqs, r)
 		}
 	}
-	if len(reqs) != 2 || reqs[0].Op != proto.OpNotices || reqs[1].Op != proto.OpTurnEnd {
+	// The end of a call and its notices are asked for at once, so their order isn't fixed.
+	ops := map[string]int{}
+	for _, r := range reqs {
+		ops[r.Op]++
+	}
+	if len(reqs) != 5 || ops[proto.OpToolStart] != 1 || ops[proto.OpToolEnd] != 1 || ops[proto.OpNotices] != 2 || ops[proto.OpTurnEnd] != 1 {
 		t.Fatalf("requests: %+v", reqs)
 	}
 	for _, r := range reqs {
 		if r.Native != file || r.ClaudeSession != "" || r.ClientPID != 0 || r.Transcript != "" {
 			t.Errorf("%s named its session %q, Claude %q, pid %d, transcript %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Transcript)
 		}
-	}
-	if !reqs[1].Continues {
-		t.Error("Pi's Stop doesn't say it can keep the work going")
+		if r.Op == proto.OpToolStart || r.Op == proto.OpToolEnd {
+			if r.ToolUseID != "call_1" || r.Cwd != repo {
+				t.Errorf("%s: call %q in %q, want call_1 in %s", r.Op, r.ToolUseID, r.Cwd, repo)
+			}
+		}
+		if r.Op == proto.OpTurnEnd && !r.Continues {
+			t.Error("Pi's Stop doesn't say it can keep the work going")
+		}
 	}
 }
 
