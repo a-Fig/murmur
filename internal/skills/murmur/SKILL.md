@@ -9,7 +9,8 @@ description: Only in a repo where you have Murmur's tools. How to use Murmur's t
 
 Murmur shows you the other agents working in this repo and lets you message them. It is there to
 help with the task your user gave you: not doing work someone else is already doing, not breaking
-what someone is halfway through, and asking the agent that owns some code instead of guessing.
+what someone is halfway through, and asking another agent yourself instead of guessing, or instead
+of having your user carry the question to a teammate.
 Messaging is not the task. Most turns need no Murmur at all, and every message you send costs the
 recipient a turn of their own work.
 
@@ -21,8 +22,10 @@ recipient a turn of their own work.
 2. **Look before sizeable work.** Before a refactor, a rename, a dependency bump, a migration, or a
    change to something others import, run `who`. If a status or branch overlaps yours, send that
    agent one message before you start. If nothing overlaps, carry on without announcing anything.
-3. **Ask the owner instead of guessing.** When you are blocked on code another session is changing
-   right now, ask it, rather than working out its half-finished intent from the diff.
+3. **Ask the owner instead of guessing.** When your work builds on something another session is
+   writing or about to write (an API's shape, a field's name or unit), ask it how it will build it
+   before you write against a guess. Code that is finished you can read; a plan you have to ask
+   for. Ask it yourself, rather than asking your user to pass the question to a teammate.
 
 ## When a message arrives
 
