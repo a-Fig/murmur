@@ -73,7 +73,11 @@ func (d *Daemon) snapshotLimit() time.Duration {
 func bracketKey(req proto.Request) string {
 	// A Pi session has no Claude ID: its file is its own, and its tool calls' IDs come from a
 	// model, which two sessions can share.
-	return req.ClaudeSession + "/" + req.Native + "/" + req.ToolUseID
+	key := req.ClaudeSession + "/" + req.ToolUseID
+	if req.Native != "" {
+		key = req.Native + "|" + key
+	}
+	return key
 }
 
 // sameClone says whether gitDir, the common dir the hook found for its working directory, is this
