@@ -184,7 +184,7 @@
   --secondary-label: #a3a6b0;
 }
 
-:root:is([data-theme="light"], [data-theme="sky"]) {
+:root:is([data-theme="light"], [data-theme="sky"], [data-theme="day"]) {
   color-scheme: light;
   --background: oklch(99.2% 0 0);
   --foreground: oklch(21% 0.006 285.885);
@@ -223,7 +223,7 @@
   --edge: color-mix(in oklab, var(--foreground) 55%, transparent);
   --dot-off: var(--muted-foreground);
 }
-:is([data-theme="light"], [data-theme="sky"]) [data-app-sidebar] {
+:is([data-theme="light"], [data-theme="sky"], [data-theme="day"]) [data-app-sidebar] {
   --sidebar: oklch(98.5% 0 0);
   --sidebar-foreground: oklch(21% 0.006 285.885);
   --sidebar-muted-foreground: oklch(48% 0.016 285.938);
@@ -529,6 +529,177 @@
   color: #fff;
 }
 [data-theme="night"] .chat-list .g-head-text h2 {
+  font-size: 1.25rem;
+}
+
+/* Day is the Figma v3 design's light version (#1018's light frame), drawn as Night is: navy text on
+ * white glass over a butter page, a cream sidebar, butter for the picked sidebar row, and the v3 blue
+ * for what is pressed and a person's own messages. The colours of states are Light's, a step darker,
+ * as on Murmur's cream. */
+:root[data-theme="day"] {
+  --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --background: #fffcef; /* the v3 card, white at 74% over the butter page */
+  --foreground: #05224d;
+  --card: #fff;
+  --popover: #fffdf4;
+  --primary: #1767b0; /* cream on it is 5.7:1, and as text it is 5.7:1 on the cards (WCAG 1.4.3) */
+  --primary-foreground: #fffdf4;
+  --secondary: #fbf5de;
+  --secondary-foreground: #05224d;
+  --muted: #fbf5de;
+  --muted-foreground: #3a4f73; /* 8:1 on the cards, 7:1 on a picked row */
+  --secondary-label: #3a4f73;
+  --placeholder: #3a4f73;
+  --message-surface: #1767b0;
+  --accent: rgb(5 34 77 / 6%);
+  --accent-foreground: #05224d;
+  --destructive-foreground: oklch(48% 0.2 27.518);
+  --border: rgb(5 34 77 / 12%);
+  --input: rgb(5 34 77 / 22%);
+  --ring: #258ee3;
+  --info: #258ee3;
+  --info-foreground: #1767b0;
+  --success: oklch(57% 0.145 163.225);
+  --success-foreground: oklch(44% 0.118 165.612);
+  --warning: oklch(53% 0.163 48.998);
+  --warning-foreground: oklch(45% 0.163 48.998);
+  --pr-open: oklch(47% 0.118 165.612);
+  --pr-draft: #3a4f73;
+  --pr-merged: oklch(47% 0.22 304);
+  --row-hover: rgb(5 34 77 / 4%);
+  --row-selected: #fff6c2;
+  --composer: #fff;
+  --composer-edge: rgb(5 34 77 / 12%);
+  --scrollbar-thumb: rgb(5 34 77 / 16%);
+  --scrollbar-thumb-hover: rgb(5 34 77 / 26%);
+  --scrim: rgb(5 34 77 / 28%);
+  --list: #fffcef;
+  --dot-off: color-mix(in oklab, #3a4f73 80%, transparent);
+  --surface-grain: none;
+}
+[data-theme="day"] [data-app-sidebar] {
+  --sidebar: #fffdf4;
+  --sidebar-foreground: #05224d;
+  --sidebar-muted-foreground: #3a4f73;
+  --sidebar-icon: #05224d;
+  --sidebar-row-hover: rgb(5 34 77 / 5%);
+  --sidebar-row-active: #ffef8c; /* the v3 butter: navy 13:1, quieter navy 7:1 */
+  --sidebar-row-selected: #ffef8c;
+  --sidebar-border: rgb(5 34 77 / 8%);
+  --sidebar-edge: transparent;
+  --secondary-label: #3a4f73;
+}
+/* On a picked sidebar row the v3 design sets all its text in navy. */
+[data-theme="day"] :is(.menu-button, .side-session)[aria-current="page"] :is(.menu-count, .side-session-doing),
+[data-theme="day"] .settled-row.current .settled-when {
+  color: #05224d;
+}
+[data-theme="day"] .menu-button {
+  color: var(--sidebar-foreground);
+}
+
+/* Day's layout is Night's, as the v3 design draws it in light: a butter page under blurred sky and
+ * butter glows (the frame's four blobs), and the conversation list and the conversation (or a page)
+ * as white glass cards floating on it. Phones keep the usual sheets. */
+@media (min-width: 768px) {
+  :root[data-theme="day"] {
+    font-size: 17px;
+  }
+  [data-theme="day"] .app {
+    background:
+      radial-gradient(50% 62% at 95% -6%, rgb(156 203 243 / 70%), transparent 72%),
+      radial-gradient(48% 58% at 30% 112%, rgb(156 203 243 / 55%), transparent 72%),
+      radial-gradient(40% 60% at 2% 55%, rgb(255 239 140 / 80%), transparent 72%),
+      radial-gradient(42% 52% at 88% 100%, rgb(255 239 140 / 85%), transparent 72%),
+      #fff6c2;
+  }
+  [data-theme="day"] [data-app-sidebar] {
+    border-right: 0;
+  }
+  [data-theme="day"] .chat {
+    gap: 1rem;
+    padding: 0.8125rem 0.8125rem 0.8125rem 1rem;
+    grid-template-columns: 21.25rem minmax(0, 1fr);
+  }
+  [data-theme="day"] :is(.chat-list, .chat-pane),
+  [data-theme="day"] .main:not(:has(.content-chat)) {
+    border: 1px solid rgb(255 255 255 / 90%);
+    border-radius: 1.5rem;
+    background: rgb(255 255 255 / 74%);
+    box-shadow: 3px 4px 21px -8px rgb(0 0 0 / 25%);
+    backdrop-filter: blur(24px);
+  }
+  [data-theme="day"] .chat-list {
+    --dot-ring: #fffcef;
+    padding: 0.5rem 0.75rem 1rem;
+    background: rgb(255 255 255 / 66%);
+  }
+  [data-theme="day"] .chat-pane {
+    overflow: hidden;
+  }
+  [data-theme="day"] .main:not(:has(.content-chat)) {
+    margin: 0.8125rem 0.8125rem 0.8125rem 1rem;
+    overflow: hidden;
+  }
+  [data-theme="day"] .chat-head {
+    height: 4.5rem;
+    min-height: 4.5rem;
+    padding-inline: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+}
+[data-theme="day"] .g-search {
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  background: #fffdf4;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+[data-theme="day"] .segmented {
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background: rgb(5 34 77 / 6%);
+}
+[data-theme="day"] .segmented button {
+  height: 1.75rem;
+  border-radius: 0.5rem;
+}
+[data-theme="day"] .segmented button:is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"]) {
+  background: #1767b0;
+  color: #fffdf4;
+  box-shadow: none;
+}
+[data-theme="day"] .segmented button:is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"]) .g-tab-n {
+  color: #fffdf4;
+}
+[data-theme="day"] .chat-row {
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem;
+}
+[data-theme="day"] :is(.menu-button, .side-session) {
+  border-radius: 0.625rem;
+}
+[data-theme="day"] .pane-foot-card,
+[data-theme="day"] .composer {
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+[data-theme="day"] .chat-bubble {
+  border-radius: 1.125rem;
+  color: #fffdf4;
+}
+/* Text the page writes in --primary (the new-messages line, a copied button) keeps the v3 blue: on the
+ * cards it is 5.7:1. */
+[data-theme="day"] :is(.chat-new, .btn-ghost.copied) {
+  color: var(--info-foreground);
+}
+[data-theme="day"] .group-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: #05224d;
+}
+[data-theme="day"] .chat-list .g-head-text h2 {
   font-size: 1.25rem;
 }
 
@@ -1185,6 +1356,9 @@ a.g-pr:hover {
 }
 [data-theme="sky"] .brand-mark {
   content: url("/assets/lockup-navy.svg");
+}
+[data-theme="day"] .brand-mark {
+  content: url("/assets/lockup-blue.svg");
 }
 .brand {
   font-size: 0.875rem;
