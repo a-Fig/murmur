@@ -20,9 +20,10 @@ import (
 // A pick that loses is given up, not kept: the device goes back to Auto, and its person is told
 // who has the colour (st.ColorLostTo). It loses a race by the rule, and it loses on coming back
 // to a colour picked while it was away: a daemon that stops for being idle takes its presence off
-// the remote, so its colour looked free. Until its first full sync it leaves its pick out of its
-// presence, and then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come
-// back each time the holder's daemon went idle, and two devices would swap colours day by day.
+// the remote, so its colour looked free, and so does a device that goes invisible. Until its first
+// full sync, or its first after it is back online, it leaves its pick out of its presence, and
+// then gives it up if a peer has picked it meanwhile. Kept, a lost pick would come back each time
+// the holder's daemon went idle, and two devices would swap colours day by day.
 
 // colorHold is how long a device's pick holds its colour after its presence last changed. A daemon
 // that was killed, or a clone that was abandoned, leaves its presence on the remote for good, and
@@ -74,7 +75,8 @@ func (d *Daemon) colorAwayLocked() {
 }
 
 // shownColorLocked is the pick this device's presence carries: none until its first full sync
-// has settled it. Caller holds mu.
+// has settled it, and none while it is invisible or just back. The page shows this device's own
+// faces by it too, so they are in an automatic colour meanwhile. Caller holds mu.
 func (d *Daemon) shownColorLocked() (int, time.Time) {
 	if !d.colorSettled {
 		return 0, time.Time{}
@@ -110,9 +112,11 @@ func (d *Daemon) settleColorLocked(began time.Time) {
 			return
 		}
 	}
-	// A sync that began before this device found it had been away may have listed the remote
-	// before then, and knows nothing of a pick made meanwhile: the next one settles.
-	if !d.colorSettled && (d.colorAwayAt.IsZero() || began.After(d.colorAwayAt)) {
+	// Not while the device is invisible: it has no presence for the pick to go in, and a teammate
+	// may pick the colour before it is back (#1084). And a sync that began before this device found
+	// it had been away may have listed the remote before then, and knows nothing of a pick made
+	// meanwhile: the next one settles.
+	if !d.colorSettled && !d.hidden.Load() && (d.colorAwayAt.IsZero() || began.After(d.colorAwayAt)) {
 		d.colorSettled = true
 		if d.st.Color != 0 {
 			d.kickPresence()
