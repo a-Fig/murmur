@@ -85,17 +85,47 @@ func TestADaemonAwayAWeekSettlesItsColourAgain(t *testing.T) {
 	d := colorRig(t, time.Hour)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.colorAwayLocked(time.Now().Add(-time.Hour))
+	d.presenceLanded = time.Now().Add(-time.Hour).Round(0)
+	d.colorAwayLocked()
 	if color, _ := d.shownColorLocked(); color != 3 {
-		t.Errorf("after an hour away the presence carries colour %d, want 3", color)
+		t.Errorf("an hour after its last presence landed, the next carries colour %d, want 3", color)
 	}
-	d.colorAwayLocked(time.Now().Add(-8 * 24 * time.Hour))
+	d.presenceLanded = time.Now().Add(-8 * 24 * time.Hour).Round(0)
+	polled := time.Now().Add(-time.Second) // a sync that read its peers before the daemon found it had been away
+	d.colorAwayLocked()
 	if color, _ := d.shownColorLocked(); color != 0 {
-		t.Errorf("after eight days away the presence carries colour %d, want none until a sync", color)
+		t.Errorf("eight days after its last presence landed, the next carries colour %d, want none until a sync", color)
 	}
-	// The peer picked it meanwhile, and is live: this device gives it up, as on a restart.
+	// That sync knows nothing of a pick made meanwhile, so it doesn't settle the colour.
+	held := d.peers
+	d.peers = map[string]*peer{}
+	d.lastPollOK = polled
+	d.settleColorLocked()
+	if d.colorSettled {
+		t.Error("a sync begun before the daemon found it had been away settled its colour")
+	}
+	// A later sync finds the peer picked it meanwhile, and is live: this device gives it up, as on
+	// a restart.
+	d.peers = held
+	d.lastPollOK = time.Now()
 	d.settleColorLocked()
 	if d.st.Color != 0 || d.st.ColorLostTo == "" || !d.colorSettled {
 		t.Errorf("after the sync: colour %d, lost to %q, settled %v; want the pick given up", d.st.Color, d.st.ColorLostTo, d.colorSettled)
+	}
+}
+
+// A daemon away a week whose colour nobody took has its pick back after the next sync.
+func TestADaemonAwayAWeekKeepsAColourNobodyTook(t *testing.T) {
+	t.Parallel()
+	d := colorRig(t, time.Hour)
+	d.peers = map[string]*peer{}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.presenceLanded = time.Now().Add(-8 * 24 * time.Hour).Round(0)
+	d.colorAwayLocked()
+	d.lastPollOK = time.Now()
+	d.settleColorLocked()
+	if color, _ := d.shownColorLocked(); color != 3 || d.st.ColorLostTo != "" {
+		t.Errorf("after the sync the presence carries colour %d (lost to %q), want its pick, 3", color, d.st.ColorLostTo)
 	}
 }

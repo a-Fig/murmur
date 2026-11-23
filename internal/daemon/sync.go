@@ -1968,7 +1968,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 			s.branch = b
 		}
 	}
-	d.colorAwayLocked(d.st.PresenceAt) // before the next presence is signed, and the time moved on
+	d.colorAwayLocked()
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
@@ -2063,6 +2063,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.known[ref] = sha
+	d.presenceLanded = time.Now().Round(0) // by the wall clock: time asleep counts (colorAwayLocked)
 	d.mu.Unlock()
 	return nil
 }
