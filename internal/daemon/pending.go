@@ -182,15 +182,17 @@ func (d *Daemon) retryPending() {
 		d.ownLanded(ctx, ref, sha, false)
 		return
 	}
-	looked := false
+	lookBudget := pendingLook
 	if errors.Is(err, bus.ErrRejected) {
 		// The remote's tip isn't under this one: an older copy of the log, or junk, to push over,
 		// as appendEventIf does; or a log that went on without the pending sends. Give this look
 		// its own time (pendingLook, reserved above), not what is left of the push's: if the push
 		// was rejected just before its limit, an expired ctx during IsAncestor would miss landed
-		// sends (#1073). Share that reserved budget with give-up below (looked=true) so a failed
-		// lookup never adds a second pendingLook past a queued send's 90 s wait on writeMu.
-		looked = true
+		// sends (#1073). Share that reserved budget with give-up below so a failed lookup never
+		// adds a second pendingLook past a queued send's 90 s wait on writeMu; if a lease push runs
+		// and ends unsure, give-up gets whatever remains of PendingPush + pushLook to check whether
+		// that lease push landed.
+		lookBudget = 0
 		lctx, lcancel := context.WithTimeout(d.bgCtx, pendingLook)
 		defer lcancel()
 		if tip, rerr := d.repo.RemoteRef(lctx, ref); rerr == nil {
@@ -201,9 +203,17 @@ func (d *Daemon) retryPending() {
 						return
 					}
 					// Unchecked sends stay pending, unless give-up below says time is up.
-				} else if err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill); err == nil {
-					d.ownLanded(ctx, ref, sha, false)
-					return
+				} else {
+					err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill)
+					if err == nil {
+						d.ownLanded(ctx, ref, sha, false)
+						return
+					}
+					if d.opt.PendingPush <= pendingLook {
+						lookBudget = pendingLook
+					} else {
+						lookBudget = min(pendingLook, max(0, d.opt.PendingPush+pushLook-time.Since(start)))
+					}
 				}
 			}
 		}
@@ -217,7 +227,7 @@ func (d *Daemon) retryPending() {
 		return // the daemon is stopping: pendingLoop gives them up, which knows how long it has
 	}
 	if gone || last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp {
-		d.giveUpPending(err, !looked)
+		d.giveUpPendingWith(err, lookBudget)
 	}
 }
 
@@ -281,14 +291,22 @@ func (d *Daemon) settlePendingOn(ctx context.Context, tip string, err error, giv
 // asked, so a send that an earlier push had landed was called not sent, and went twice if its
 // sender sent it again (#951).
 func (d *Daemon) giveUpPending(err error, look bool) {
+	if look {
+		d.giveUpPendingWith(err, pendingLook)
+		return
+	}
+	d.giveUpPendingWith(err, 0)
+}
+
+func (d *Daemon) giveUpPendingWith(err error, look time.Duration) {
 	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends), err)
 	ref := d.meshRef()
-	if look {
+	if look > 0 {
 		// A stopping daemon's context is done, and would fail the asking at once: it asks in a short
 		// time of its own (#857).
-		from, limit := d.bgCtx, pendingLook
+		from, limit := d.bgCtx, look
 		if from.Err() != nil {
-			from, limit = context.Background(), pendingStopLook
+			from, limit = context.Background(), min(look, pendingStopLook)
 		}
 		lctx, cancel := context.WithTimeout(from, limit)
 		defer cancel()

@@ -598,3 +598,54 @@ func TestRejectedRetryGivesUpPastDeadlineWhenReconcileFails(t *testing.T) {
 		t.Errorf("settled=%v landed=%v remaining=%d, want given up", settled, gotLanded, len(d.pendSends))
 	}
 }
+
+// When a rejected retry determines it should push over the remote tip with a lease, and that lease
+// push lands on the remote but returns an unsure error past PendingGiveUp, give-up still checks
+// the remote within the remaining retry budget and settles the send as landed (#1073).
+func TestRejectedRetryLeasePushUnsureChecksRemoteAtGiveUp(t *testing.T) {
+	t.Parallel()
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingPush: time.Minute, PendingGiveUp: 50 * time.Millisecond}, false)
+	ctx := context.Background()
+	tip := d.sendFirst(t)
+
+	// Keep the remote at tip while d.ownTip is one commit ahead so overRemoteTip returns over=true
+	// when testPush #1 simulates bus.ErrRejected, forcing retryPending onto the lease-push path.
+	next, err := d.repo.NewCommit(ctx, tip, "pending send\n")
+	if err != nil {
+		t.Fatalf("NewCommit: %v", err)
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.ownTip = next
+	d.pendBase = tip
+	d.pendFrom = time.Now().Add(-time.Second)
+	var settled, gotLanded bool
+	d.pendSends = []pendingSend{{
+		sha: next,
+		settle: func(landed, _ bool, _ error) {
+			settled = true
+			gotLanded = landed
+		},
+	}}
+	var calls atomic.Int32
+	d.testPush = func(real func() error) error {
+		switch calls.Add(1) {
+		case 1:
+			return bus.ErrRejected // triggers overRemoteTip (over=true) -> lease push
+		case 2:
+			if perr := real(); perr != nil {
+				return perr
+			}
+			return errors.New("connection dropped after lease push landed")
+		default:
+			return real()
+		}
+	}
+	d.retryPending()
+	if !settled || !gotLanded || len(d.pendSends) != 0 {
+		t.Errorf("settled=%v landed=%v remaining=%d, want landed via post-lease give-up lookup", settled, gotLanded, len(d.pendSends))
+	}
+	if calls.Load() != 2 {
+		t.Errorf("testPush called %d times, want 2 (rejected + unsure lease)", calls.Load())
+	}
+}
