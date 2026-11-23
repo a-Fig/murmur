@@ -9,6 +9,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/here"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // cursorLink starts a Cursor session's link against f, with named as what its hook has said.
@@ -19,10 +20,27 @@ func cursorLink(t *testing.T, f *fakeDaemon, named func() (string, bool)) *link 
 	}
 	gitDir := f.serve(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("cursor", "/work"), changed: make(chan struct{}), seek: currentSeek(),
-		named: named}
-	go l.run(ctx)
+	var wg sync.WaitGroup
+	l := &link{
+		c: &client.Client{GitDir: gitDir}, hello: helloFor("cursor", "/work"),
+		changed: make(chan struct{}), seek: currentSeek(), named: named,
+		goBG: func(fn func()) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				fn()
+			}()
+		},
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		l.run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
 	return l
 }
 
@@ -124,13 +142,24 @@ func TestNamedOnlyForTheProcesssOneServer(t *testing.T) {
 // hook that names the chat may come only after the call.
 func TestAToolCallEndsACursorSessionsWait(t *testing.T) {
 	shortNameWait(t, time.Hour)
+	old := cursorCLI
+	cursorCLI = func(int) bool { return true }
+	t.Cleanup(func() { cursorCLI = old })
+	for _, k := range []string{"T3CODE_CLI_PATH", "T3CODE_HOME", "T3CODE_THREAD_ID"} {
+		t.Setenv(k, "")
+	}
 	f := &fakeDaemon{}
-	l := cursorLink(t, f, func() (string, bool) { return "", false })
+	top, _ := joinedRepo(t, f)
+	cs, _ := openWith(t, Options{Agent: "cursor", Dir: top, Poll: 25 * time.Millisecond, HereDir: t.TempDir()})
 	time.Sleep(100 * time.Millisecond)
 	if n := f.helloCount(); n != 0 {
 		t.Fatalf("registered %d times before a call", n)
 	}
-	l.callCame()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "who"}); err != nil {
+		t.Fatalf("CallTool(who): %v", err)
+	}
 	waitFor(t, "the server to register", func() bool { return f.helloCount() > 0 })
 	if h := f.lastHello(); h.Native != "" {
 		t.Errorf("hello: %+v", h)

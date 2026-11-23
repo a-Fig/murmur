@@ -309,6 +309,15 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		left = d.yieldThreadLocked(h.ID, agent, h.ClientPID, base, claude)
 	}
 	d.shareNameLocked(base, claudeAlias(agent, route.T3Thread, claude), h.ID)
+	if s == nil && h.Reconnect && base != "session:"+h.ID && d.st.NameKeys[base] == "" {
+		// A session that registered unnamed (for example a Cursor session whose hold ended before
+		// its hook ran) and learned its chat while the daemon was down keeps its earlier name on
+		// the new key, as rekeyLocked does when OpRoute arrives while connected.
+		if old := d.st.NameKeys["session:"+h.ID]; old != "" {
+			d.st.NameKeys[base] = old
+			d.saveLocked()
+		}
+	}
 	key := d.uniqueKeyLocked(base, h.ID, h.ClientPID)
 	taken := false
 	if s != nil {
@@ -326,9 +335,15 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		s.worktree = worktree
 		// The name is set again even when the key hasn't changed: while s was in its grace another
 		// session may have taken its key and name, and s, back, holds the name now. As any taking
-		// of a name does, that also takes what was kept for the name (see adoptLocked).
-		s.key = key
-		d.setNameLocked(s, d.nameForKeyLocked(s, key))
+		// of a name does, that also takes what was kept for the name (see adoptLocked). When s had
+		// registered unnamed (session:<id>) and learned its chat while disconnected, rekeyLocked
+		// carries its name onto the new key if that key has none yet.
+		if s.key != key && strings.HasPrefix(s.key, "session:") {
+			d.rekeyLocked(s, key)
+		} else {
+			s.key = key
+			d.setNameLocked(s, d.nameForKeyLocked(s, key))
+		}
 		s.dropped = time.Time{}
 		if s.takeover != nil { // nil for a session a command held
 			close(s.takeover)

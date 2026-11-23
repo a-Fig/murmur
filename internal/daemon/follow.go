@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/here"
 	"github.com/a-Fig/murmur/internal/proto"
 )
 
@@ -693,7 +694,8 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	if len(byID) > 0 {
 		return byID
 	}
-	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" {
+	if len(byProcess) == 1 && byProcess[0].route.Native == "" && byProcess[0].hookNative == "" &&
+		(!isAgent(byProcess[0].agent, "cursor") || cursorCLI(byProcess[0].clientPID)) {
 		s := byProcess[0]
 		s.hookNative = req.ClaudeSession
 		if isAgent(s.agent, "antigravity") && s.hookNative != "" && s.route.T3CLI != "" && s.route.T3Thread == "" {
@@ -706,6 +708,11 @@ func (d *Daemon) agentHookSessionsLocked(req proto.Request) []*session {
 	}
 	return nil
 }
+
+// cursorCLI is here.CursorCLI: only Cursor's command line runs one chat per process, so outside it
+// (T3 Code or the editor) the daemon must not bind a hook's chat to a server by process. A
+// variable, for tests.
+var cursorCLI = func(pid int) bool { return here.CursorCLI(pid) }
 
 // isAgent says a session's agent, as its MCP server named it ("codex", or "codex in T3"), is agent.
 func isAgent(sessionAgent, agent string) bool {

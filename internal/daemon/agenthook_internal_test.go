@@ -86,10 +86,16 @@ func TestAMuseHookFindsItsSessionByItsID(t *testing.T) {
 }
 
 // A Cursor session's server registers by the chat its hook named (#921), and the hook finds it by
-// that ID; one that registered before the hook named it is found by its process, once, as
-// Antigravity's is, and keeps that chat.
+// that ID; one that registered before the hook named it is found by its process only when its
+// client is Cursor's command line (not a shared T3 Code or editor process), once, and keeps that
+// chat.
 func TestACursorHookFindsItsSession(t *testing.T) {
 	d := agentHookDaemon(t)
+	cli := false
+	old := cursorCLI
+	cursorCLI = func(int) bool { return cli }
+	t.Cleanup(func() { cursorCLI = old })
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	named := d.newSessionLocked(&proto.Hello{ID: "aaaaaa", ClientPID: 700}, "cursor", "", "aaaaaa")
@@ -99,6 +105,12 @@ func TestACursorHookFindsItsSession(t *testing.T) {
 	}
 	late := d.newSessionLocked(&proto.Hello{ID: "bbbbbb", ClientPID: 900}, "cursor", "", "bbbbbb")
 	late.clientPID = 900
+	// Outside Cursor's CLI (T3 Code or the editor), a hook never binds to a sole unnamed session
+	// by process: another thread in that process could send its hook first.
+	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-b", Ancestors: []int{901, 900}}); len(got) != 0 || late.hookNative != "" || !late.hookSeen {
+		t.Fatalf("outside CLI: got %v, hookNative %q, hookSeen %v", ids(got), late.hookNative, late.hookSeen)
+	}
+	cli = true
 	if got := d.touchHookLocked(proto.Request{Op: proto.OpNotices, Agent: "cursor", ClaudeSession: "chat-b", Ancestors: []int{901, 900}}); len(got) != 1 || got[0] != late || late.hookNative != "chat-b" {
 		t.Fatalf("by its process: %v, hookNative %q", ids(got), late.hookNative)
 	}

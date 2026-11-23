@@ -326,10 +326,9 @@ does, against a real daemon. Details and sources are in `internal/join/cursor.go
   `mcp.json` needs no approval; only a project's does.
 - **Not covered.** A turn for an idle chat (#923; `agent --resume <id> -p` is the way in to try). T3
   Code (#924): one process runs every Cursor thread, and nothing in the hook's payload or the
-  server's environment says which thread is which. Its process isn't Cursor's command line, so the
-  hook names no chat there and the server doesn't wait; with one Cursor thread the daemon may still
-  pair the hook with the server by process (not tried), with several it pairs none, and their
-  messages wait in `inbox`. Past `loop_limit` follow-ups in a row Cursor runs no `stop` hook, so the
+  server's environment says which thread is which. Its process isn't Cursor's command line, so
+  neither the hook nor the daemon pairs a chat with a server there, the server doesn't wait, and
+  their messages wait in `inbox`. Past `loop_limit` follow-ups in a row Cursor runs no `stop` hook, so the
   daemon keeps that session at work until its next prompt. A
   second chat started in the same `agent` process is unknown to the daemon, as its process's
   session already has a chat. Commits aren't credited, nor issues filed from Cursor's shell. The
