@@ -141,8 +141,15 @@ person can pick one on Settings.
   leaves its pick out of presence until it has synced with every live presence open, then gives
   the pick up if a peer took it. Keeping a lost pick to reclaim later made two devices swap
   colours each time one went idle (found in review, #577).
-- **Stale devices keep their colours**, since staleness is each reader's own clock: a dead device
-  holds its colour until its presence goes (#581).
+- **Stale devices keep their colours**, since staleness is each reader's own clock, and two pages
+  minutes apart would otherwise colour a sleeping device differently. A device whose presence has
+  not changed for a week lets its colour go (#581, 2026-11-22): a daemon that was killed, or a clone
+  that was abandoned, leaves its presence behind for good, and its colour could never be picked. It
+  is then shown as though it had picked none, and anyone can pick the colour. If it comes back, it
+  gives the pick up to whoever took it, as any returning device does; a daemon that never stopped,
+  and slept through the week or couldn't push for it, holds its pick out of presence until it has
+  synced. The week is by each reader's wall clock, so pages can disagree about a gone device's
+  colour for as long as their clocks differ.
 - **Auto** is the colour the ID hashes to, or the next one nobody picked.
 - **No protocol bump.** An older device ignores the fields and shows in its automatic colour, and
   the pick is a page call to the page's own daemon.
