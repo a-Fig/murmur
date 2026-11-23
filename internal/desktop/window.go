@@ -25,9 +25,6 @@ var (
 	dockPNG []byte // 512 px, inset as macOS draws app icons: the Dock
 )
 
-// followEvery is how often the window checks that its daemon is still where the page is.
-const followEvery = 10 * time.Second
-
 // frontEvery is how often the window checks whether it is in front, to tell the page (#638).
 const frontEvery = time.Second
 
@@ -282,7 +279,7 @@ func (a *app) openOutside(link string) {
 // Its next start is on a new port with a new token, which the old page can't reach, so follow
 // starts it again and sends the window there.
 func (a *app) follow(ctx context.Context, follow func(context.Context, string) string) {
-	t := time.NewTicker(followEvery)
+	t := time.NewTicker(FollowEvery)
 	defer t.Stop()
 	for {
 		select {

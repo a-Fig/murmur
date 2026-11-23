@@ -638,5 +638,36 @@ func runStop(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	}
 	fmt.Fprintln(out, "Stopped the daemon.")
+	if appShows(gitDir) {
+		// The window starts its clone's daemon again within desktop.FollowEvery (#639): someone who
+		// stopped it on purpose would otherwise see it come back with no word why.
+		fmt.Fprintf(out, "%s's app has this repo open, so it starts the daemon again within %d seconds.\n",
+			brand.Product, int(desktop.FollowEvery/time.Second))
+	}
 	return nil
+}
+
+// appShows says the app's window is open on the clone at gitDir: its record names a live window,
+// and the clone it last showed (last.json) is this one. Neither is made if it isn't there.
+func appShows(gitDir string) bool {
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		return false
+	}
+	dir := filepath.Join(cfg, brand.Name, "app")
+	shown := lastClone(dir)
+	if shown == "" || !sameDir(shown, gitDir) {
+		return false
+	}
+	return desktop.WindowOpen(filepath.Join(dir, "window.json"))
+}
+
+// sameDir says a and b are one directory, however each is written.
+func sameDir(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	return err == nil && os.SameFile(fa, fb)
 }
