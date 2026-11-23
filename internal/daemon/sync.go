@@ -1474,7 +1474,10 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	for attempt := 0; ; attempt++ {
-		d.dropSwitchedOff()
+		d.dropSwitchedOff(ctx)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		sha, err := d.repo.NewCommit(ctx, d.ownTip, msg)
 		if err != nil {
 			return err
@@ -1518,7 +1521,12 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		// The remote's copy of this log is ahead of what this daemon knew: a restart before the
 		// first sync, or a copied .git. Build on the remote's tip instead. A send pending on the
 		// tip that was given up for it is settled by whether the remote's has it.
-		d.settlePendingOn(ctx, tip, rejected)
+		if !d.settlePendingOn(ctx, tip, rejected, false) {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			return rejected
+		}
 		d.ownTip = tip
 	}
 }
