@@ -384,7 +384,6 @@ func TestCheckSoonAfterAChange(t *testing.T) {
 	t.Cleanup(func() { checkGap = was })
 	global(t)
 	gitDir := repo(t)
-	gitConfig(t, "--global", "murmur.update", "false") // so no check reaches the network
 	path := filepath.Join(t.TempDir(), "mur")
 	os.WriteFile(path, []byte("old"), 0o755)
 	check := make(chan struct{}, 1)
@@ -392,7 +391,13 @@ func TestCheckSoonAfterAChange(t *testing.T) {
 	times := make(chan time.Time, 10)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: "http://127.0.0.1:1", OS: "linux", Arch: "amd64", Getenv: noEnv,
+	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: "http://127.0.0.1:1", OS: "linux", Arch: "amd64",
+		Getenv: func(k string) string { // so no check reaches the network, and each reports once
+			if k == "MURMUR_NO_UPDATE" {
+				return "1"
+			}
+			return ""
+		},
 		Every: time.Hour, Check: check, Report: func(Status) { reports.Add(1); times <- time.Now() }}, func() {})
 	first := <-times
 	check <- struct{}{}
