@@ -29,9 +29,6 @@ func remoteWithClone(t *testing.T) (remote, seed, clone string) {
 		"GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"} {
 		t.Setenv(k, v)
 	}
-	old := upstreamRecheck
-	upstreamRecheck = 0
-	t.Cleanup(func() { upstreamRecheck = old })
 	root := t.TempDir()
 	remote, seed, clone = filepath.Join(root, "remote.git"), filepath.Join(root, "seed"), filepath.Join(root, "clone")
 	g(t, root, "init", "-q", "--bare", "--initial-branch=main", remote)
@@ -234,25 +231,6 @@ func TestPushFollowsALinkInTheCommit(t *testing.T) {
 	}
 }
 
-// A worktree on a branch made before init counts as marked once the remote-tracking main has the
-// section, though its own files don't.
-func TestMarkedThroughTheRemoteTrackingBranch(t *testing.T) {
-	_, _, clone := remoteWithClone(t)
-	old := filepath.Join(filepath.Dir(clone), "old")
-	g(t, clone, "worktree", "add", "-q", "-b", "old", old)
-	old, _ = Top(context.Background(), old)
-	if Marked(old) {
-		t.Fatal("marked before init")
-	}
-	push(t, clone)
-	if markedTree(old) {
-		t.Fatal("init changed the other worktree's files")
-	}
-	if !Marked(old) {
-		t.Error("a worktree of a clone whose remote-tracking main has the section isn't marked")
-	}
-}
-
 func TestPullURL(t *testing.T) {
 	want := "https://github.com/a-Fig/murmur/compare/main...murmur-init?expand=1"
 	for _, remote := range []string{"https://github.com/a-Fig/murmur.git", "https://github.com/a-Fig/murmur",
@@ -286,7 +264,7 @@ func TestPushDoesNotOverwriteAnIgnoredFile(t *testing.T) {
 }
 
 // A refs/remotes/origin/HEAD left naming an old default branch is pointed at the one init pushed
-// to, since that is what Marked reads.
+// to.
 func TestPushRepointsAStaleRemoteHead(t *testing.T) {
 	_, _, clone := remoteWithClone(t)
 	g(t, clone, "update-ref", "refs/remotes/origin/old", "HEAD")

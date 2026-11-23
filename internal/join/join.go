@@ -190,28 +190,16 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	steps := stepper{w: e.Progress, now: "reading which agents this machine has"}
 	defer steps.stop()
 
-	// The repo must have been set up, with `mur init`, in one of two ways: the section in AGENTS.md
-	// or CLAUDE.md, or the bus refs on the remote, for a repo whose files are to say nothing (Tyler,
-	// 2026-11-23, #830). Join is each user's yes after that. The remote is asked only when the
-	// section isn't there, and its answer is kept with the consent (Place.Active).
-	byRefs := false
-	if !p.Marked() {
-		steps.start("asking the remote whether this repo is set up for " + brand.Product)
-		ok, err := setUpByRefs(ctx, p.GitDir)
-		steps.stop()
-		if err != nil {
-			return r, fmt.Errorf("this repo's AGENTS.md and CLAUDE.md have no %s section, and %v; run `%s join` again once the remote answers",
-				brand.Product, err, brand.Command)
-		}
-		if !ok {
-			return r, fmt.Errorf("this repo isn't set up for %[1]s: neither AGENTS.md nor CLAUDE.md has the %[1]s section, "+
-				"here or on the default branch as this clone last fetched it, and the remote has no %[4]s* refs. "+
-				"`%[2]s init` sets it up, after the user agrees: it pushes the section to the default branch, or with --refs-only "+
-				"makes only the refs (%[3]s)", brand.Product, brand.Command, brand.SetupDoc, brand.RefRoot)
-		}
-		byRefs = true
-		steps.now = "reading which agents this machine has"
+	// The repo must have been set up with `mur init`, which pushes the bus refs; the refs are the one
+	// proof, and no file or branch is read (Tyler, 2026-11-23, #830). Join is each user's yes after
+	// that, and the consent it records stands for both.
+	steps.start("asking the remote whether this repo is set up for " + brand.Product)
+	err = setUp(ctx, p.GitDir)
+	steps.stop()
+	if err != nil {
+		return r, err
 	}
+	steps.now = "reading which agents this machine has"
 
 	// Per user: the MCP server, registered once for every repo this user opens, in every
 	// configuration of each agent. Advice about the calling agent depends on its own home.
@@ -289,11 +277,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	if cut() {
 		return e.cutShort(r, parent, steps.now, false)
 	}
-	record := p.RecordConsent
-	if byRefs {
-		record = p.RecordConsentByRefs
-	}
-	news, consentErr := record()
+	news, consentErr := p.RecordConsent()
 	if consentErr != nil {
 		problem("recording that you joined", consentErr)
 	} else if news {
@@ -349,10 +333,6 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		cancel()
 		steps.stop()
 	}
-	if byRefs {
-		last := len(r.Tell) - 1
-		r.Tell = append(r.Tell[:last], unmentionedNote, r.Tell[last])
-	}
 	if len(othersFresh) > 0 && len(r.Problems) == 0 {
 		// Before the last paragraph, which is about the page and leaving.
 		last := len(r.Tell) - 1
@@ -367,32 +347,38 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	return r, nil
 }
 
-// setUpByRefs reports whether the remote of the clone with this git dir has any refs/murmur/* ref:
-// the other proof, beside the section, that the repo was set up (`mur init --refs-only` makes two,
-// and every clone that has joined adds its own). It is one ls-remote, the round trip a daemon makes
-// every few seconds, within 15 s.
+// setUpWait is how long join waits for the remote to list its bus refs.
+const setUpWait = 15 * time.Second
+
+// setUp says why the repo of the clone with this git dir can't be joined, or nil if its remote has
+// any refs/murmur/* ref: every `mur init` makes two, and every clone that has joined adds its own.
+// It is one ls-remote, the round trip a daemon makes every few seconds.
 //
 // Join runs in the user's terminal, so the ls-remote runs with none (gitx.Git.NoTerminal): an ssh
 // key with a passphrase and no agent would otherwise ask for it there, and could still be asking
-// after the 15 s limit ended git.
-func setUpByRefs(ctx context.Context, gitDir string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+// after the limit ended git.
+func setUp(ctx context.Context, gitDir string) error {
+	ctx, cancel := context.WithTimeout(ctx, setUpWait)
 	defer cancel()
 	g := gitx.Git{Dir: gitDir, NoTerminal: true}
 	remote, err := bus.RemoteFor(ctx, g)
 	if err != nil {
-		return false, err
+		return err // no remote: its own advice, to add one
 	}
 	refs, err := (&bus.Repo{Git: g, Remote: remote}).ListRemote(ctx)
-	if err != nil {
-		return false, fmt.Errorf("asking %s for its %s* refs failed: %w", remote, brand.RefRoot, err)
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Errorf("%s didn't answer within %d s, so join couldn't see whether this repo is set up for %s; run `%s join` again",
+			remote, int(setUpWait/time.Second), brand.Product, brand.Command)
+	case err != nil:
+		return fmt.Errorf("couldn't reach %s to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again",
+			remote, brand.Product, remote, brand.Command)
+	case len(refs) == 0:
+		return fmt.Errorf("this repo isn't set up for %[1]s: %[4]s has no %[5]s* refs. `%[2]s init` sets it up, after the user agrees (%[3]s)",
+			brand.Product, brand.Command, brand.SetupDoc, remote, brand.RefRoot)
 	}
-	return len(refs) > 0, nil
+	return nil
 }
-
-// unmentionedNote is what a join tells the user in a repo set up by its refs alone.
-var unmentionedNote = "This repo's AGENTS.md and CLAUDE.md don't mention " + brand.Product +
-	", so teammates' agents won't know to join unless someone tells them."
 
 // How long a join may take in all, and how long one step runs before the join says it is still on
 // it. Agents run join under a timeout of their own, and one that kills it sees nothing of what it

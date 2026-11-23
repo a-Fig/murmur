@@ -16,10 +16,10 @@ type RefsSet struct {
 	Made, Had []string
 }
 
-// RefsOnly sets the repo up through the bus refs alone, as `mur init --refs-only` does (#830): it
-// creates refs/murmur/names and refs/murmur/team on the clone's remote in their empty state, one
-// root commit each on the empty tree (bus.NamesGenesis, bus.TeamGenesis), so that `mur join` finds
-// the repo set up with nothing on any branch. Each commit is written with commit-tree and pushed as
+// RefsOnly sets the repo up, as every `mur init` that pushes does, and all `mur init --refs-only`
+// does (#830): it creates refs/murmur/names and refs/murmur/team on the clone's remote in their
+// empty state, one root commit each on the empty tree (bus.NamesGenesis, bus.TeamGenesis), which is
+// what `mur join` looks for. Each commit is written with commit-tree and pushed as
 // <sha>:<ref>, leased on the ref not being there: the working tree, the index and every branch stay
 // as they were, a ref already on the remote is left alone, and of two inits at once, one makes each
 // ref. The per-device refs are each daemon's to make, after its clone joins.

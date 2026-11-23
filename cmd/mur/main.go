@@ -49,13 +49,14 @@ var usage = strings.NewReplacer("Murmur", brand.Product, "mur", brand.Command, "
 
 Setup:
   mur init [--no-push|--refs-only]
-                                set this repo up for Murmur, once: add the section to AGENTS.md and CLAUDE.md
-                                that invites agents to join, as a commit pushed to the default branch;
-                                --no-push only edits the files here; --refs-only changes no file or branch,
-                                and only makes Murmur's empty refs/murmur/* refs on the remote
-  mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this);
-                                the agent's session joins too, even one that started outside the repo;
-                                --leave undoes it
+                                set this repo up for Murmur, once: make Murmur's empty refs/murmur/* refs on
+                                the remote, which join looks for, and add the section to AGENTS.md and
+                                CLAUDE.md that invites agents to join, as a commit pushed to the default
+                                branch; --refs-only makes only the refs; --no-push only edits the files
+                                here and pushes nothing, so join refuses until a pushing init runs
+  mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this); needs
+                                the refs mur init makes; the agent's session joins too, even one that
+                                started outside the repo; --leave undoes it
   mur uninstall [--leave]       remove Murmur from this machine for you: its server, hooks and skills from
                                 every agent, its daemons, its folder in your config directory; refuses
                                 while a repo here is joined, unless --leave leaves each first
@@ -417,8 +418,8 @@ func redirectOutput(path string) error {
 
 func runInit(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("init")
-	noPush := fs.Bool("no-push", false, "only edit the files in this working tree, for you to review and commit")
-	refsOnly := fs.Bool("refs-only", false, "set the repo up through its refs/murmur/* refs alone: no file, commit or branch changes")
+	noPush := fs.Bool("no-push", false, "only edit the files in this working tree, for you to review and commit; nothing is pushed, so join refuses until a pushing init runs")
+	refsOnly := fs.Bool("refs-only", false, "make only the refs/murmur/* refs join looks for: no file, commit or branch changes")
 	fs.Parse(args)
 	if *noPush && *refsOnly {
 		return errors.New("--no-push edits the files and --refs-only leaves them alone; choose one")
@@ -428,6 +429,17 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if *refsOnly {
 		return initRefsOnly(ctx, *dir, out)
+	}
+	// The refs first: they are what join looks for, so a section that went to a branch for a pull
+	// request still leaves the repo set up (#830).
+	refs, err := setup.RefsOnly(ctx, *dir)
+	if err != nil {
+		return err
+	}
+	made := ""
+	if len(refs.Made) > 0 {
+		made = fmt.Sprintf("Made %s on %s, empty for now: `%s join` looks for them.\n",
+			strings.Join(refs.Made, " and "), refs.Remote, brand.Command)
 	}
 	p, err := setup.Push(ctx, *dir)
 	if err != nil {
@@ -444,7 +456,11 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	}
 	switch {
 	case p.SHA == "":
-		fmt.Fprintf(out, "Already set up on %s's %s; nothing pushed.\n", p.Remote, p.Branch)
+		if made == "" {
+			fmt.Fprintf(out, "Already set up on %s's %s; nothing pushed.\n", p.Remote, p.Branch)
+		} else {
+			fmt.Fprintf(out, "%s's %s already has the section.\n%s", p.Remote, p.Branch, made)
+		}
 		if p.Checkout != "" {
 			fmt.Fprintf(out, "%s%s.\n", strings.ToUpper(p.Checkout[:1]), p.Checkout[1:])
 		}
@@ -461,6 +477,7 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "Pushed %s to %s's %s:\n", short, p.Remote, p.Branch)
 		list()
 	}
+	fmt.Fprint(out, made)
 	if p.Fallback != "" {
 		if p.PullURL != "" {
 			fmt.Fprintf(out, "\nOpen a pull request from it, for someone who may merge into %s: %s\n", p.Branch, p.PullURL)
@@ -510,8 +527,7 @@ func initRefsOnly(ctx context.Context, dir string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "No file, commit or branch changed.\n\n"+
 		"Each teammate joins for themselves, with `%[2]s join`. Nothing in the repo mentions %[1]s, so their agents\n"+
-		"won't know to ask unless someone tells them. Joining here takes a %[2]s newer than 0.5.3: an older one\n"+
-		"looks only for the section in AGENTS.md or CLAUDE.md, and refuses.\n", brand.Product, brand.Command)
+		"won't know to ask unless someone tells them. Joining takes %[2]s 0.5.4 or later.\n", brand.Product, brand.Command)
 	return nil
 }
 
@@ -525,13 +541,17 @@ func initWorkTree(ctx context.Context, dir string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Nothing is pushed, so join can't find the repo set up yet (#830).
+	notYet := fmt.Sprintf("Nothing was pushed, so `%[1]s join` refuses here until someone runs `%[1]s init` or `%[1]s init --refs-only`.\n", brand.Command)
 	if len(changed) == 0 {
-		fmt.Fprintln(out, "Already set up; nothing changed.")
+		fmt.Fprintln(out, "The files here already have the section; nothing changed.")
+		fmt.Fprint(out, notYet)
 		return nil
 	}
 	fmt.Fprintf(out, "\nReview and commit these files. A teammate's agent that reads them asks its user whether to join,\n"+
 		"and if the user says yes it installs %[1]s and sets it up itself. Committing installs nothing, and %[1]s\n"+
 		"does nothing in a clone until its user has joined there.\n", brand.Product)
+	fmt.Fprint(out, notYet)
 	return nil
 }
 

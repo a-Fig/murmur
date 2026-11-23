@@ -93,8 +93,8 @@ don't raise it again in this conversation. Go on only after a clear yes.
 
 ## 2. Install mur, if this machine doesn't have it
 
-Run `mur version`. If it prints a version, skip to step 3. Otherwise run the one-line install for
-this OS:
+Run `mur version`. If it prints 0.5.4 or later, skip to step 3. Otherwise run the one-line install
+for this OS:
 
 - macOS or Linux:
 
@@ -126,14 +126,12 @@ your user what it says; running `mur join` again retries. If a step gets stuck, 
 about 100 seconds and says which step; run it once more before telling your user. Give the command
 a timeout of 2 minutes or more.
 
-If it says the repo isn't set up for Murmur, the section may be on the default branch but not yet
-in this clone. Fetch from the remote Murmur uses (the one `git config murmur.remote` names, else
-origin), with `git fetch <that remote>`, and run `mur join` again. Never run `mur init` to get past this; that is
-for a user who asked to set Murmur up in a repo:
-https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
+If it says the repo isn't set up for Murmur, nobody has run `mur init` there yet, so tell your
+user. Never run `mur init` to get past this; that is for a user who asked to set Murmur up in a
+repo: https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/setup.md
 
-If it says instead that the repo "doesn't say it uses Murmur", this mur is 0.5.3 or older, which
-can't join a repo set up without the section. Install mur again (step 2), then run `mur join` again.
+If it says instead that the repo "doesn't say it uses Murmur", this mur is older than 0.5.4. If
+installing (step 2) still gives an older version, 0.5.4 isn't released yet: tell your user, and stop.
 
 ## 4. Tell your user what it printed
 

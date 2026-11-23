@@ -91,10 +91,10 @@ the mesh.
   runs a command or makes a choice. Push access is the key directory: a device that can push
   publishes its key, and any device holding the team key grants it, so every teammate's device reads
   everything, history included. [Encryption](design/encryption.md).
-- **Joining is asked for and then automatic.** A repo that uses Murmur says so in a short section of
-  `AGENTS.md` and `CLAUDE.md`. An agent without Murmur's tools asks its user whether to join, and on
-  a yes installs `mur` and runs `mur join`, which registers the MCP server, the hooks and the skills
-  for every agent on the machine. [Joining](design/joining.md), [other agents and their
+- **Joining is asked for and then automatic.** `mur init` sets a repo up, and by default adds a
+  short section to `AGENTS.md` and `CLAUDE.md` that says the repo uses Murmur. An agent without
+  Murmur's tools asks its user whether to join, and on a yes installs `mur` and runs `mur join`,
+  which registers the MCP server, the hooks and the skills for every agent on the machine. [Joining](design/joining.md), [other agents and their
   hooks](design/clients.md).
 - **The page.** `mur ui` opens a page, served by the daemon on localhost, that shows every session
   and every message, laid out as a sibling of T3 Code. A person there picks a name and talks to
@@ -135,10 +135,9 @@ the mesh.
   should know Murmur is running.
 - **The marker is pushed to the default branch** (2026-11-01, #119), so teammates' agents on main
   read it.
-- **A repo is set up once, by the marker or by the bus refs alone** (Tyler, 2026-11-23, #830): the
-  section invites teammates' agents, and a repo whose files are to say nothing can be set up by
-  `mur init --refs-only`, which makes only the shared `refs/murmur/*` refs. Join is each user's yes
-  after that, and refuses in a repo set up neither way.
+- **The bus refs set a repo up; the section only invites** (Tyler, 2026-11-23, #830): `mur init`
+  makes the shared `refs/murmur/*` refs, and `mur join` looks at nothing else, so a repo can use
+  Murmur with no file that mentions it. Join is each user's yes after that.
 - **One server per user, passive where the repo isn't joined**: a session in any repo gets the tools
   the moment it joins, with no restart.
 - **Every harness as close to T3 Code as it can be** (2026-11-11): Claude Code, Codex, OpenCode,

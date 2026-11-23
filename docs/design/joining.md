@@ -4,7 +4,8 @@ Decided 2026-10-29 (#55), built the same day. Tyler's requirement: setup should 
 T3 Code users are the main customers, but the user should still know Murmur is running and choose to
 join. So a repo that uses Murmur says so in a section of `AGENTS.md` and `CLAUDE.md`; an agent
 without Murmur's tools asks its user whether to join; and on a yes it installs mur and runs `mur
-join`, which does the rest. Tyler also decided that messaging gets no commands (`who`, `send`,
+join`, which does the rest. Since 2026-11-23 (#830) the section only invites: what sets a repo up is
+its bus refs, which `mur init` pushes ([the bus refs](#the-bus-refs-set-a-repo-up)). Tyler also decided that messaging gets no commands (`who`, `send`,
 `inbox` and `log` were removed): "If everyone is using the CLI, there will be no one to message."
 Agents message through MCP, and people use the page. Since 2026-11-21 (#913) an agent Murmur has no
 tools for runs `mur who`, `mur send`, `mur inbox` and `mur status` in its shell instead ([any agent
@@ -35,47 +36,48 @@ in T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
   brings, even an identical one, checked 2026-11-01). `init --no-push` is the old behavior.
   `docs/agents/setup.md` is the page an agent follows when asked to set Murmur up.
 
-## Set up by refs alone
+## The bus refs set a repo up
 
-Tyler's direction (2026-11-23, #830): a repo can be set up with nothing on any branch that mentions
-Murmur. `mur init --refs-only` (`setup.RefsOnly`) makes the two shared bus refs on the remote, in
-their empty state, and touches no working tree, index or branch. The flag says what it does: the
-refs are all it writes. A ref must point at a commit, so each gets a root commit on the empty tree,
-written with `commit-tree` and pushed as `<sha>:<ref>`, leased on the ref not being there:
+Tyler's direction (2026-11-23, #830): join looks only at the remote's `refs/murmur/*`, never at a
+file or a branch. Every `mur init` that pushes (`setup.RefsOnly`) makes the two shared bus refs in
+their empty state, before the section's commit, so a section that went to `murmur-init` for a pull
+request still leaves the repo joinable. `init --refs-only` makes only the refs, for a repo whose
+files are to say nothing; `init --no-push` pushes nothing, so join refuses until a pushing init
+runs. A ref must point at a commit, so each gets a root commit on the empty tree, written with
+`commit-tree` and pushed as `<sha>:<ref>`, leased on the ref not being there:
 
-- `refs/murmur/names` gets a snapshot of no names (`bus.NamesGenesis`), the same record a daemon
-  writes when it repairs a registry that held none. A snapshot counts on a history's root, so every
-  daemon, released ones too, reads it as an empty registry and writes the first name on top.
-- `refs/murmur/team` gets a plain, unsealed message saying there is no team key yet
-  (`bus.IsTeamGenesis`). The first daemon to read it with no epoch makes epoch 1 on top of it, as it
-  does on a team ref that isn't there (`teamGenesisTip` in `internal/daemon/team.go`). The push is
-  leased on the genesis commit, so of two first daemons, one lands and the other reads its epoch.
-  A daemon that read the genesis just as another pushed epoch 1 is refused the same way.
+- `refs/murmur/names` gets a snapshot of no names (`bus.NamesGenesis`), the record a daemon writes
+  when it repairs a registry that held none. A snapshot counts on a history's root, so every daemon,
+  released ones too, reads it as an empty registry and writes the first name on top.
+- `refs/murmur/team` gets an unsealed message saying there is no team key yet. A daemon that finds
+  the tip is that commit, a root on the empty tree (`Repo.IsTeamGenesis`; the message alone isn't
+  enough), and has read no epoch, makes epoch 1 on top of it, as it does on a team ref that isn't
+  there (`teamGenesisTip` in `internal/daemon/team.go`). The push is leased on the genesis, so of two
+  first daemons one lands and the other reads its epoch; one that read the genesis just as another
+  pushed epoch 1 is refused the same way.
 
 The per-device refs, `mesh/<deviceId>` and `presence/<deviceId>`, are each daemon's own and come
-after its clone joins. A ref already on the remote is left alone, so running it again changes
-nothing, and says so.
+after its clone joins. A ref already on the remote is left alone, so a rerun makes nothing new. Once
+a repo has bus refs it stays joinable: Murmur never deletes the names or team ref, and taking the
+section out no longer stops anything.
 
-**Older versions** (checked against v0.5.3 and main before #830, 2026-11-23). An older `mur join`
-looks only for the section, so it refuses in a refs-only repo, and an older MCP server stays off
-there. An older daemon reads the names genesis as an empty registry, but makes no epoch on a team ref
-that is there: it reads the genesis, passes over it as unsealed, and waits. Its presence stays
-encrypted for its own device, so nobody can read it, and each send fails after its wait with "the
-team's encryption key isn't set up yet". Nothing errors and nothing is overwritten. Once any newer
-daemon makes epoch 1, older ones read it and are granted the key as usual. So a refs-only repo needs
-a `mur` newer than 0.5.3 for each teammate who joins, and `init --refs-only` says so. An older
-daemon can only meet the genesis in a repo that also got the section later, from a default `init`,
-before any newer daemon had run there; daemons update themselves, so that lasts until one does.
+**Older versions** (checked against v0.5.3, 2026-11-23; Tyler: only post-0.5.3 needs to work). A
+0.5.3 `mur join` looks only for the section, so it refuses where there is none, and a 0.5.3 MCP
+server stays off there. A 0.5.3 daemon reads the names genesis as an empty registry, but makes no
+epoch on a team ref that is there: it passes over the genesis as unsealed and waits. Its presence
+stays encrypted for its own device, so nobody reads it, and each send fails after its wait with "the
+team's encryption key isn't set up yet". Nothing errors and nothing is overwritten, and once any
+0.5.4 daemon makes epoch 1, older ones read it and are granted the key as usual. Since daemons update
+themselves, that lasts until one does.
 
 ## What `mur join` writes
 
-It refuses in a repo set up neither way: with no marker, here or on the remote-tracking default
-branch, and no `refs/murmur/*` on the remote. The error names both forms of `mur init`. The remote is
-asked only when the marker isn't there, with one `ls-remote` of `refs/murmur/*` within 15 s, the
-round trip a daemon makes every few seconds; a remote that can't be asked fails the join, and says
-to run it again. Any bus ref counts, not only the two init makes, since every clone that has joined
-adds its own. A join that found the refs records that with the consent, and its report says the
-repo's files don't mention Murmur, so teammates' agents won't know to join unless someone tells them.
+It refuses, before writing anything, in a repo whose remote has no `refs/murmur/*`, and says the repo
+needs `mur init`. It asks with one `ls-remote` within 15 s, the round trip a daemon makes every few
+seconds. Any bus ref counts, not only the two init makes, since every clone that has joined adds its
+own. A remote that doesn't answer in time, or can't be reached, fails the join with advice to run it
+again; a clone with no remote is told to add one. Consent is recorded only after the refs are found,
+so the consent file is the proof the repo was set up too.
 
 The `ls-remote` runs with no controlling terminal (`gitx.Git.NoTerminal`, a new session on Unix):
 `GIT_TERMINAL_PROMPT=0` doesn't stop ssh asking for a key's passphrase on `/dev/tty`, and an ssh left
@@ -107,8 +109,7 @@ Everything it writes is outside the repo's tracked files:
   follow it only when the user has made the session the manager in words. A SKILL.md of the same name without the skills'
   marker comment is the user's own and is left alone. They cost every session of those agents their
   descriptions' worth of context in any repo, so each description says it applies only where the
-  session has Murmur's tools (until #830, where the repo had the Murmur section, which a repo set up
-  by refs lacks). The folders are from each agent's documentation, not tried in a
+  session has Murmur's tools (until #830, where the repo had the Murmur section). The folders are from each agent's documentation, not tried in a
   session (2026-11-08). OpenCode also reads `~/.claude/skills`, so beside Claude Code it sees each
   skill twice.
 - **Edited, never replaced.** A client that isn't installed is skipped. Other servers, settings and
@@ -172,22 +173,17 @@ reads the record of this machine's clones (`internal/clones`).
   before the record existed and whose daemon hasn't started since isn't on the record; its server
   entry is gone anyway, so nothing runs there.
 
-## The server stays passive where it isn't invited
+## The server stays passive where it isn't joined
 
-The user-scope entry starts `mur mcp` in every repo the user opens. The server is on only while the
-repo was set up and this user has joined in this clone (`Place.Active`), checked every 2 seconds.
-Set up means the marker is in this working tree's `AGENTS.md` or `CLAUDE.md`, or on the clone's
-remote-tracking default branch, so a worktree on a branch made before `init` pushed isn't left out
-(#119; that branch needs git, so it is read at most every 20 s). Or it means this user's join found
-the bus refs on the remote, and wrote `byRefs` into `joined.json` (#830). The check stays off the
-network. The clone's own `refs/murmur/*` would not do in place of the record: a fresh clone has
-none until its daemon's first fetch, and the daemon is started only where the check says yes, so a
-first daemon that failed would leave the clone off for good. A clone joined by a `mur` from before
-#830 has no `byRefs`; it was joined with the marker, and goes off without it as before, until a
-join run again records the refs. Off, it advertises a tools capability
-with no tools, contacts no daemon, and answers a stray call with why it is off. A join turns it on
-through `tools/list_changed`, and a leave turns it off. MCP instructions are fixed at initialize, so
-a server that started off never has them; the pages the section links to carry that guidance.
+The user-scope entry starts `mur mcp` in every repo the user opens. The server is on only while this
+user has joined in this clone (`Place.Joined`, the consent file), checked every 2 seconds, with no
+network. Until #830 (2026-11-23) it also needed the marker, in this working tree or on the clone's
+remote-tracking default branch; join now records consent only where it found the bus refs, so the
+consent is enough, and a clone stays on after someone removes the section. Off, it advertises a tools
+capability with no tools, contacts no daemon, and answers a stray call with why it is off. A join
+turns it on through `tools/list_changed`, and a leave turns it off. MCP instructions are fixed at
+initialize, so a server that started off never has them; the pages in `docs/agents/` carry that
+guidance.
 
 Nothing relies on the server alone, and each check sits where its harm would be:
 
@@ -204,9 +200,9 @@ Nothing relies on the server alone, and each check sits where its harm would be:
   past its own check can still launch a daemon, which exits at its consent check before it opens any
   state.
 
-A repo set up neither way, or one the user hasn't joined, gets no daemon, no `refs/murmur/*` of its
-own and nothing published. A clone whose user joined with the marker, but whose current branch lacks
-it, keeps its daemon and gets no tools there.
+A clone the user hasn't joined gets no daemon, no `refs/murmur/*` of its own and nothing published.
+The hooks need no check of their own: they only talk to a running daemon, and the daemon runs only
+with the consent.
 
 ## Every account T3 runs
 

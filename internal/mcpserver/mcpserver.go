@@ -93,15 +93,15 @@ func Run(ctx context.Context, opt Options) error {
 }
 
 // errPassive is what a tool call says in a repo Murmur isn't on for.
-var errPassive = fmt.Errorf("%[1]s isn't on for this repo. It is once the repo is set up for %[1]s (`%[2]s init`: a section in AGENTS.md "+
-	"or CLAUDE.md, or the refs alone) and this user has joined in this clone (`%[2]s join`, after asking them)", brand.Product, brand.Command)
+var errPassive = fmt.Errorf("%[1]s isn't on for this repo. It is once this user has joined in this clone "+
+	"(`%[2]s join`, after asking them)", brand.Product, brand.Command)
 
 // Serve is Run over any transport.
 //
-// The user registers this server once, for every repo they open, so it starts in repos that never
-// asked for Murmur. There it must do nothing: no tools, no daemon, no ref written, nothing sent. It
-// is "on" only while Place.Active says the repo was set up for Murmur and this user joined, checked
-// from files every Poll, so a join mid-session turns it on (the tools appear through tools/list_changed)
+// The user registers this server once, for every repo they open, so it starts in repos they never
+// joined. There it must do nothing: no tools, no daemon, no ref written, nothing sent. It is "on"
+// only while Place.Joined says this user joined in this clone (which join records only in a repo
+// that was set up), checked from a file every Poll, so a join mid-session turns it on (the tools appear through tools/list_changed)
 // and a leave turns it off. Each step that would reach the daemon asks again first.
 func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
 	cwd := opt.Dir
@@ -123,8 +123,8 @@ func Serve(ctx context.Context, opt Options, t mcp.Transport) error {
 		// initialize would never ask again.
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: true}},
 	}
-	if located && place.Active() {
-		sopts.Instructions = Instructions // fixed at initialize; the repo's own section says the rest
+	if located && place.Joined() {
+		sopts.Instructions = Instructions // fixed at initialize
 	}
 	s.srv = mcp.NewServer(&mcp.Implementation{Name: brand.MCPServer, Version: opt.Version}, sopts)
 	// The work below can be starting a daemon (on Windows through WMI, which takes seconds) with the
@@ -260,7 +260,7 @@ func (s *server) watch(ctx context.Context) {
 
 func (s *server) sync(ctx context.Context) {
 	s.follow(ctx)
-	if s.placeNow().Active() {
+	if s.placeNow().Joined() {
 		s.activate(ctx)
 	} else {
 		s.deactivate()
@@ -693,7 +693,7 @@ func (s *server) activate(ctx context.Context) {
 	if s.on || s.closed {
 		return
 	}
-	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Active}
+	c := &client.Client{GitDir: s.place.GitDir, Spawn: true, MaySpawn: s.place.Joined}
 	lctx, cancel := context.WithCancel(ctx)
 	s.c, s.stop, s.on = c, cancel, true
 	if sharedAgent(s.opt.Agent) {
@@ -712,7 +712,7 @@ func (s *server) activate(ctx context.Context) {
 // newLink makes the link for a registration, which runs in ctx. Its goroutines are background work
 // Serve waits for.
 func (s *server) newLink(ctx context.Context, c *client.Client, h proto.Hello) *link {
-	l := &link{c: c, hello: h, native: h.Native, changed: make(chan struct{}), allowed: s.place.Active, seek: currentSeek(),
+	l := &link{c: c, hello: h, native: h.Native, changed: make(chan struct{}), allowed: s.place.Joined, seek: currentSeek(),
 		ctx: ctx, goBG: s.goBGUnlocked}
 	l.findInT3()
 	return l

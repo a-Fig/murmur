@@ -11,8 +11,7 @@ import (
 )
 
 // A marker file in a commit is held to maxRepoFile before it is read, as one in the working tree
-// is (#947): markedAt reads the remote-tracking branch's in every session's MCP server, and a blob
-// read whole sat in memory in each. One under the limit, and a link to it, are read as before.
+// is (#947): a blob read whole sat in memory. One under the limit, and a link to it, are read as before.
 func TestABlobOverTheLimitIsNotRead(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"AGENTS.md": strings.Repeat("x", maxRepoFile+1),
