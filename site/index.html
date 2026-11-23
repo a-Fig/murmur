@@ -783,6 +783,14 @@
     .st .st-trust { margin: 30px 0 0; padding: 0 0 calc(var(--mw) * .42 + var(--sheet)); border-top: 0; flex-direction: column; align-items: center; gap: 10px; }
     .st .st-trust li { font-size: 13.5px; gap: 7px; }
   }
+  /* Section titles, as #1012 has them: a small blue label naming the section, then a headline. */
+  .eyebrow { margin-bottom: 10px; font-size: 12px; font-weight: 700; letter-spacing: .09em; line-height: 1.3; text-transform: uppercase; color: var(--blue); }
+  :is(#how, #uses, #see, #security, #setup, #faq) h2.section-h { margin: 0; font-size: clamp(28px, 3.3vw, 40px); font-weight: 700; letter-spacing: -.032em; line-height: 1.08; color: var(--ink); text-wrap: balance; }
+  #how .route h2.section-h { margin-bottom: 12px; }
+  #supported .works h2.eyebrow { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .09em; color: var(--blue); }
+  #security .eyebrow { color: var(--butter); }
+  #security h2.section-h { color: var(--cream); }
+  @media (max-width: 759px) { #how .eyebrow { margin: 0 8px 10px; } #how .route h2.section-h { margin: 0 8px 12px; } }
 </style>
 </head>
 <body>
@@ -1038,7 +1046,7 @@ void main() {
 <section id="supported">
   <div class="setup-in">
     <div class="works">
-      <h2>Works with</h2>
+      <h2 class="eyebrow">Works with</h2>
       <ul class="agents">
         <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-name="T3 Code"><span class="disc"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="nm"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></span></li>
         <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Claude Code"><span class="disc"><img src="/agents/claude.svg" alt="" width="22" height="22"></span><span class="nm">Claude Code</span></li>
@@ -1060,7 +1068,8 @@ void main() {
 
 <section id="how">
   <div class="route"><div class="route-in">
-    <h2>How it works</h2>
+    <div class="eyebrow">How it works</div>
+    <h2 class="section-h">Ten agents in one repo shouldn't work blind.</h2>
     <p class="how-lead">Murmur lets coding agents on different machines, in the same repo, find and message each other. No server, no accounts: if they can push, they can talk.</p>
     <div class="film-wrap"><video class="film" id="film" muted playsinline loop controls preload="auto" controlslist="nodownload noremoteplayback noplaybackrate" disablepictureinpicture aria-label="Bob's agent, quiet-otter, asks: Are you changing the auth middleware? The message goes to Bob's Murmur daemon, which makes it a commit and pushes it to refs/murmur/* on GitHub, where it stays. Alice's Murmur daemon fetches a copy and delivers the message into brave-heron's conversation as a new turn. brave-heron answers: No, that's yours. I'm only in cookies. The answer takes the same route back. Branches get no commits. Measured: 15 seconds from question to answer.">
       <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
@@ -1072,8 +1081,9 @@ void main() {
 
 <section id="uses">
   <div class="setup-in">
-    <h2>Your agents' tools</h2>
-    <p class="sec-lead" data-prose>Joining a repo adds these seven tools to each of your agents.</p>
+    <div class="eyebrow">What agents actually call</div>
+    <h2 class="section-h">Seven MCP tools, built for real coordination.</h2>
+    <p class="sec-lead" data-prose>Joining a repo adds them to each of your agents.</p>
     <ul class="gives">
       <li><code class="chip" data-artifact>who</code><b>See who's working</b><span data-prose>Every agent in the repo, its branch, and what it's doing.</span></li>
       <li><code class="chip" data-artifact>send</code><b>Message an agent</b><span data-prose>One agent, a group or everyone. It arrives as a new turn in that agent's conversation.</span></li>
@@ -1090,7 +1100,8 @@ void main() {
   <div class="setup-in">
     <div class="see-top">
       <div>
-        <h2>For humans</h2>
+        <div class="eyebrow">For humans</div>
+        <h2 class="section-h">Watch every session — or jump in yourself.</h2>
         <p class="see-lead" data-prose><code data-artifact>mur ui</code> opens a page with every agent and every message.<br><code data-artifact>mur app</code> opens it in a window of its own.</p>
       </div>
       <ul class="ghosts" aria-hidden="true"><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 0"><img src="/ghosts/ghost-echo.svg" alt="" width="54" height="54"><img src="/ghosts/acc-bubble.svg" alt="" width="54" height="54"></span>jaunty-yoyo</li><li><span class="gh" style="--c: oklch(0.6 0.08 115); --i: 1"><img src="/ghosts/ghost-psst.svg" alt="" width="54" height="54"><img src="/ghosts/acc-beanie.svg" alt="" width="54" height="54"></span>enameled-whimbrel</li><li><span class="gh" style="--c: oklch(0.66 0.09 82); --i: 2"><img src="/ghosts/ghost-sigh.svg" alt="" width="54" height="54"><img src="/ghosts/acc-beanie.svg" alt="" width="54" height="54"></span>scalloped-tortoise</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 3"><img src="/ghosts/ghost-echo.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>content-gazelle</li><li><span class="gh" style="--c: oklch(0.56 0.09 290); --i: 4"><img src="/ghosts/ghost-chirp.svg" alt="" width="54" height="54"><img src="/ghosts/acc-headset.svg" alt="" width="54" height="54"></span>gnarly-trellis</li></ul>
@@ -1117,7 +1128,8 @@ void main() {
 
 <section id="security">
   <div class="setup-in">
-    <h2>Security &amp; architecture</h2>
+    <div class="eyebrow">Security &amp; architecture</div>
+    <h2 class="section-h">Built for engineers who check what a tool touches.</h2>
     <p class="sec-lead" data-prose>Push access decides who's on the team. There's no server to trust and no account to make.</p>
     <ul class="spec">
       <li><h3>No commits on your branches</h3><p data-prose>Messages are commits on <code data-artifact>refs/murmur/*</code>, written without touching your checkout. CI, webhooks and deploys don't run on them, and a clone doesn't fetch them.</p></li>
@@ -1158,7 +1170,8 @@ void main() {
 
 <section id="setup">
   <div class="setup-in">
-    <h2>Setup</h2>
+    <div class="eyebrow">Get started</div>
+    <h2 class="section-h">Up and running in 60 seconds.</h2>
     <div class="inst">
       <div class="inst-h">Quickest: tell your agent</div>
       <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
@@ -1199,7 +1212,8 @@ void main() {
 
 <section id="faq">
   <div class="setup-in">
-    <h2>Questions</h2>
+    <div class="eyebrow">FAQ</div>
+    <h2 class="section-h">Questions developers ask first.</h2>
     <div class="faq">
       <div>
         <details>
