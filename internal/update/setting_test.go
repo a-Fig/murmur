@@ -604,6 +604,53 @@ func TestOffChecksButNeverInstalls(t *testing.T) {
 	}
 }
 
+// Updates just turned off are reported before the Off check asks GitHub anything, so the page stops
+// saying "Updating to X" at once rather than when a slow check ends.
+func TestOffIsReportedBeforeItsCheck(t *testing.T) {
+	was := checkGap
+	checkGap = 10 * time.Millisecond
+	t.Cleanup(func() { checkGap = was })
+	global(t)
+	gitDir := repo(t)
+	srv := releases(t, "v1.2.3", nil) // nothing newer, so the first check installs nothing
+	inner := srv.Config.Handler
+	var calls atomic.Int32
+	release := make(chan struct{})
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) > 1 {
+			<-release // the Off check waits on GitHub
+		}
+		inner.ServeHTTP(w, r)
+	})
+	path := filepath.Join(t.TempDir(), "mur")
+	os.WriteFile(path, []byte("old"), 0o755)
+	check := make(chan struct{}, 1)
+	reports := make(chan Status, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go Run(ctx, Options{Version: "1.2.3", GitDir: gitDir, Executable: path, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(),
+		Getenv: noEnv, Every: time.Hour, Check: check, Report: func(s Status) { reports <- s }}, func() { t.Error("restarted") })
+	if r := <-reports; r.Off {
+		t.Fatalf("the first check, updates on: %+v", r)
+	}
+	if _, err := Set(context.Background(), noEnv, gitDir, "1.2.3", ChoiceOff); err != nil {
+		t.Fatal(err)
+	}
+	check <- struct{}{}
+	select {
+	case r := <-reports:
+		if !r.Off || r.Latest != "" {
+			t.Fatalf("before the Off check: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Off waited for its check to be reported")
+	}
+	close(release)
+	if r := <-reports; !r.Off || r.Latest != "1.2.3" {
+		t.Fatalf("the Off check: %+v", r)
+	}
+}
+
 // With updates on, Update now that finds a newer release than the one asked for isn't a failed
 // update, and the next check, checkGap later rather than an hour, installs the newer one.
 func TestInstallFindsANewerReleaseWithUpdatesOn(t *testing.T) {

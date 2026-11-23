@@ -134,7 +134,9 @@ func Run(ctx context.Context, o Options, restart func()) {
 		}
 	}
 	cleanup(o.Executable)
+	reported, wasOff := false, false // the last report, so a change to Off shows before the check ends
 	report := func(s Status) {
+		reported, wasOff = true, s.Off
 		if o.Report != nil {
 			o.Report(s)
 		}
@@ -168,7 +170,11 @@ func Run(ctx context.Context, o Options, restart func()) {
 			report(s)
 		} else if off && !now {
 			// Off only learns which release is out, so the page can offer Update now (#1099). A
-			// failed check waits quietly for the next, as with updates on.
+			// failed check waits quietly for the next, as with updates on. Updates just turned off
+			// are reported first, so the page doesn't say "Updating" while the check runs.
+			if reported && !wasOff {
+				report(Status{Off: true})
+			}
 			latest, _ := look(ctx, o)
 			if ctx.Err() != nil {
 				return
