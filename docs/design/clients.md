@@ -295,7 +295,8 @@ registered MCP server picked up its tools from `notifications/tools/list_changed
 so an agent T3 runs that Murmur has no join for (Kiro, fx, any agent from the ACP registry) had
 none. Every harness can run a command, so `mur who`, `mur send`, `mur inbox` and `mur status` do
 what the tools of those names do (`internal/mcpserver/commands.go`, rendered by `internal/view`).
-`lookup`, `tags` and `mute` stay tools only.
+Since 2026-11-23 (#1118, Tyler: every tool that can be a command without exorbitant effort is one)
+`mur lookup` does too (#1119); `tags` and `mute` stay tools until their commands (#1120, #1121).
 
 - **Which session.** The command's shell has the thread's ID in `T3CODE_THREAD_ID`. Read in T3
   0.1.11's source (2026-11-21, not run): its Claude, Codex, Pi, Antigravity, Kiro, fx and

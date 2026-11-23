@@ -99,8 +99,8 @@ func TestHelpForOneCommand(t *testing.T) {
 	if !strings.HasPrefix(out, "  mur stop") || strings.Contains(out, "mur init") {
 		t.Errorf("mur help stop:\n%s", out)
 	}
-	out, code := b.run(b.root, "lookup")
-	if code == 0 || !strings.Contains(out, "lookup is one of") || strings.Contains(out, "Setup:") {
-		t.Errorf("mur lookup: exit %d\n%s", code, out)
+	out, code := b.run(b.root, "tags")
+	if code == 0 || !strings.Contains(out, "tags is one of") || strings.Contains(out, "Setup:") {
+		t.Errorf("mur tags: exit %d\n%s", code, out)
 	}
 }
