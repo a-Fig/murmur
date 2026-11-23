@@ -346,8 +346,9 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if ctx.Err() != nil {
 		return false, latest, ctx.Err()
 	}
-	// Manual installers do not take our lock. Do not overwrite a reinstall that
-	// completed while the release was downloading; restart onto it instead.
+	// An install.ps1 from before #1198 takes no lock, and a binary swapped by hand takes none. Do
+	// not overwrite a reinstall that completed while the release was downloading; restart onto it
+	// instead.
 	current, err = Identity(o.Executable)
 	if err != nil {
 		return false, latest, err
@@ -553,7 +554,9 @@ func replace(path string, data []byte, goos string, fs files) error {
 // holds it.
 //
 // The lock covers the updater's own backups: one is made and done with under it, so any found here
-// is left over. install.ps1 takes no lock, and its backup is its hard link to mur.exe from the
+// is left over. install.ps1 takes the same lock for its swap since #1198, so this check never sees
+// a swap half done, but an install killed mid-swap leaves what a swap leaves, and an installer
+// older than that takes no lock. Its backup is its hard link to mur.exe from the
 // moment it makes one until it renames the new file over mur.exe. Taken in between, with nothing
 // running mur.exe to make Windows refuse, the link's loss sends the installer to its two-step
 // swap, which a held file can leave with no mur.exe at all (Sol's review of #1173). Where it can't
