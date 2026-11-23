@@ -456,7 +456,14 @@
     border-radius: 1.5rem;
     background: rgb(11 19 33 / 78%);
     box-shadow: 0 12px 40px -12px rgb(0 0 0 / 55%);
-    backdrop-filter: blur(24px);
+  }
+  /* No backdrop-filter on the panels, though the design draws them as glass: under them is only the
+   * smooth glow above, which a blur leaves as it was, and the blur cost the GPU a render pass on every
+   * frame of a scroll (#1129). The scrollbars' room is kept whether or not they show, so the list and
+   * the thread, which the page redraws on each key typed, don't lay themselves out again and repaint
+   * whole each time (#1129). */
+  [data-theme="night"] :is(.chat-list, .chat-thread) {
+    scrollbar-gutter: stable;
   }
   [data-theme="night"] .chat-list {
     --dot-ring: #0f1726;
@@ -627,7 +634,10 @@
     border-radius: 1.5rem;
     background: rgb(255 255 255 / 74%);
     box-shadow: 3px 4px 21px -8px rgb(0 0 0 / 25%);
-    backdrop-filter: blur(24px);
+  }
+  /* As Night's (#1129): no backdrop-filter on the panels, and the scrollbars' room kept. */
+  [data-theme="day"] :is(.chat-list, .chat-thread) {
+    scrollbar-gutter: stable;
   }
   [data-theme="day"] .chat-list {
     --dot-ring: #fffcef;
