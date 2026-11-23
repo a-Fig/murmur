@@ -153,7 +153,7 @@ function sidebar() {
     h(
       "div",
       { class: "sidebar-header" },
-      h("img", { class: "brand-mark", src: "/assets/favicon.svg", alt: "" }),
+      h("img", { class: "brand-mark", src: "/assets/lockup-white.svg", alt: "" }),
       repoButton(),
       connBadge(false),
       NARROW.matches

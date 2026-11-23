@@ -41,8 +41,8 @@ color is a change of `fill`, not a new drawing.
 ## Where the logo appears
 
 - README: the banner at the top, the icon at the foot.
-- Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon in its sidebar and
-  on its sign-in gate.
+- Tab icons: the site's and the `mur ui` page's. `mur ui` also shows the icon on its sign-in gate,
+  and the inline lockup at the top of its sidebar.
 - Home page: the lockup behind the hero's reeded glass (on a phone, the wordmark there and the
   mark at the hero's foot), the mark in the hero's top left corner on screens 1000px and wider, the mark before "Murmur daemon" in the How it works diagram, and the
   lockup at the start of the footer.
@@ -121,7 +121,13 @@ uses Rubik.
 
 The `mur ui` page opens in Dim, with a dark sidebar, a lighter list and the lightest grey behind
 the conversation. Dark and Light use T3 Code's tokens (`internal/web/static/assets/style.css`).
-These three themes use the Murmur icon.
+
+Every theme shares the sidebar's top corner, which Night brought in (#1068, #1102): the Figma v3
+inline lockup with the fold button beside it, then the repo picker as a bordered, rounded select.
+A theme changes only its colours there. The lockup is one drawing in four fills, in
+`internal/web/static/assets/`: `lockup-white.svg` (exported from Figma) for Dark, Dim and Night,
+`lockup-ink.svg` (ink/900) for Light, `lockup-cream.svg` (cream/100) for Murmur's ink sidebar and
+`lockup-navy.svg` (Sky's `#05224D` text) for Sky.
 
 Its fourth theme, Murmur, is the brand: a cream page, ink text, blue for what is picked or
 pressed, and butter for a person's own messages. The sidebar is ink, not blue. Cream on blue is
@@ -135,9 +141,7 @@ a person's own messages. The panes keep the desktop page's spacing and hierarchy
 
 Night (2026-11-22) is the Figma v3 design's dark version, also in Rubik, and copies its layout
 as well as its colours: the conversation list, the thread and the other views float as rounded
-glass panels on a navy backdrop with soft blue glows, and the sidebar carries the design's white
-inline lockup (`internal/web/static/assets/lockup-night.svg`, exported from Figma) over the repo
-picker as a pill. Panes are near-black navy (`#0B1321`), text white, quieter text blue-grey
+glass panels on a navy backdrop with soft blue glows. Panes are near-black navy (`#0B1321`), text white, quieter text blue-grey
 (`#A8B8CF`, `#B8C5D8` in the sidebar), and the v3 blue (`#1767B0`) marks what is pressed, the
 picked sidebar row and a person's own messages: white on it is 5.8:1. As text on the page that
 blue is 3.2:1, so the new-messages line and a copied button use light blue (`#9CCBF3`) instead.
