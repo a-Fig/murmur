@@ -286,8 +286,8 @@ func (r *Repo) Fetch(ctx context.Context, refs []string) (map[string]string, err
 // never leave this clone, so the answer can't be an old one or another's ref, and a ref the reader
 // calls missing is confirmed by a new git (gitx.Reader.Refs). With no reader, a git too old for one
 // (before 2.36), a name it won't take, or any failure of it, the refs are listed with for-each-ref,
-// as they were. The reader has readerWait of the time, so that the listing has the rest if the
-// reader is busy with another read.
+// as they were. The reader has readerWait of the time, so that the listing has time left if the
+// reader is busy with another read: the rest, less what a git stopped mid-answer takes to end.
 func (r *Repo) fetched(ctx context.Context, own string, of map[string]string) (tips map[string]string, wrote []string, err error) {
 	tips = map[string]string{}
 	if r.reader != nil {

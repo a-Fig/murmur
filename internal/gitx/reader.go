@@ -95,12 +95,14 @@ func (r *Reader) Contents(ctx context.Context, names []string, max int64) ([]Obj
 // the refs of a bus.Repo.Fetch are, and its answers are sound only for those:
 //   - A ref made after the git started is found: git looks a ref up when it is asked. The tests
 //     hold it to that for loose refs, for refs made after a packing, and for reftable.
-//   - A ref that has moved can be answered at where it was. Git takes its copy of packed-refs for
-//     current by the file's size and time, and on Windows a rewrite within the same second, at the
-//     same size, isn't seen (found in review, 2026-11-23). So don't ask twice about one name.
+//   - A ref that has moved, or gone, can be answered at where it was. Git takes its copy of
+//     packed-refs for current by the file's size and time, and on Windows a rewrite within the
+//     same second, at the same size, isn't seen (found in review, 2026-11-23). So don't ask twice
+//     about one name.
 //   - A name that is no ref can be answered by something else. Git takes a name for a revision,
-//     and looks for refs/X under refs/tags/, refs/heads/ and refs/remotes/ too, so another's tag
-//     named refs/X would answer for it.
+//     and looks for refs/X under refs/, refs/tags/, refs/heads/ and refs/remotes/ too (there also
+//     as X/HEAD), so another's tag named refs/X would answer for it; and where file names ignore
+//     case, a loose ref answers for its name in another case.
 //
 // Only plain full ref names are taken (IsRefName), and anything else is ErrNoReader: a name goes to
 // git as a line, where a space, a newline or an option could be read as something else.
