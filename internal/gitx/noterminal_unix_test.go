@@ -43,4 +43,11 @@ func TestNoTerminalRunsInASessionOfItsOwn(t *testing.T) {
 	if pgid := groupOf(gitx.Git{Dir: dir, NoTerminal: true}); pgid == mine {
 		t.Errorf("a NoTerminal git's child is in this test's group, %d", pgid)
 	}
+
+	// Nor may ssh open a window to ask, and the Git's own Env is kept.
+	g := gitx.Git{Dir: dir, NoTerminal: true, Env: []string{"MURMUR_TEST_KEPT=yes"}}
+	out, err := g.Run(context.Background(), "", "-c", "alias.env=!echo $SSH_ASKPASS_REQUIRE $MURMUR_TEST_KEPT", "env")
+	if err != nil || strings.TrimSpace(out) != "never yes" {
+		t.Errorf("a NoTerminal git's environment: %q, %v", out, err)
+	}
 }

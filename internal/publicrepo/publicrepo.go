@@ -119,7 +119,10 @@ func Once(ctx context.Context, o Options) (Result, error) {
 	if o.Version == "" || strings.HasSuffix(o.Version, "-dev") {
 		return Dev, nil
 	}
-	g := gitx.Git{Dir: o.GitDir}
+	// mur join and mur init run this in the user's terminal, where its ls-remote and push could
+	// otherwise ask for an ssh key's passphrase (gitx.Git.NoTerminal, #830). The daemon has no
+	// terminal anyway, so for it nothing changes.
+	g := gitx.Git{Dir: o.GitDir, NoTerminal: true}
 	remote, err := bus.RemoteFor(ctx, g)
 	if err != nil {
 		return Waiting, err

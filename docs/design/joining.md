@@ -48,7 +48,9 @@ says so too. A remote that can't be asked within 15 s leaves that part out, and 
 `ls-remote` runs with no controlling terminal (`gitx.Git.NoTerminal`, a new session on Unix):
 `GIT_TERMINAL_PROMPT=0` doesn't stop ssh asking for a key's passphrase on `/dev/tty`, and an ssh
 left asking after the limit ended git would hold the user's terminal. A new session leaves the
-user's `core.sshCommand` and `GIT_SSH_COMMAND` alone, which forcing `BatchMode` would not.
+user's `core.sshCommand` and `GIT_SSH_COMMAND` alone, which forcing `BatchMode` would not, and
+`SSH_ASKPASS_REQUIRE=never` keeps ssh from asking in a window instead. The public-repo report that
+join and init make (`internal/publicrepo`) runs its git the same way.
 
 Everything it writes is outside the repo's tracked files:
 

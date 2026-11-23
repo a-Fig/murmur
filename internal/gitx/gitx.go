@@ -31,6 +31,7 @@ type Git struct {
 	// prompts but not ssh's, which reads a key's passphrase from /dev/tty; a process with no
 	// terminal has no /dev/tty, so ssh fails instead of asking. This leaves the user's
 	// core.sshCommand and GIT_SSH_COMMAND as they are, which an `-o BatchMode=yes` would not.
+	// SSH_ASKPASS_REQUIRE=never also keeps ssh from opening a window to ask instead.
 	// On Windows it does nothing: there git's children already run with no console (hideWindow).
 	// For a command run from a terminal that must not wait on anyone, such as join's look at
 	// the remote (#830); the daemon runs detached already.
