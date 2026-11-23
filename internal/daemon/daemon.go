@@ -433,9 +433,9 @@ type Daemon struct {
 	owner   string
 	token   string // the sessions' secret, in daemon.json
 	pageTok string // the page's secret (#42): the address carries it, so it opens the page, not the sessions' port
-	// repoName is the repository's name from its remote's address, which the page's repo picker
-	// shows.
-	repoName string
+	// repoName is the repository's name from its remote's address; repoSlug is its owner/name
+	// (clones.SlugOf). The page shows both.
+	repoName, repoSlug string
 	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
 	// asks it for a key.
 	page    atomic.Pointer[web.Server]
@@ -1221,7 +1221,7 @@ func Run(ctx context.Context, opt Options) error {
 	// answering, `mur join` that started it or another clone's page, then finds the record as this
 	// daemon leaves it, and not the join's version being replaced (#479).
 	if d.opt.Clones != "" {
-		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName}); err != nil {
+		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName, Slug: d.repoSlug}); err != nil {
 			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
 		}
 	}
@@ -1454,7 +1454,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		return nil, err
 	}
 	d.owner = d.repo.Config(ctx, "user.name")
-	d.repoName = clones.NameOf(d.repo.Config(ctx, "remote."+d.repo.Remote+".url"))
+	remoteURL := d.repo.Config(ctx, "remote."+d.repo.Remote+".url")
+	d.repoName, d.repoSlug = clones.NameOf(remoteURL), clones.SlugOf(remoteURL)
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}

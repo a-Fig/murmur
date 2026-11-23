@@ -279,7 +279,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// its clone too as it starts; this is for one that doesn't start.
 	if consentErr == nil {
 		if dir, err := clones.DefaultDir(); err == nil {
-			err = clones.Add(dir, clones.Clone{GitDir: p.GitDir, Name: clones.NameIn(ctx, p.GitDir)})
+			err = clones.Add(dir, clones.Clone{GitDir: p.GitDir, Name: clones.NameIn(ctx, p.GitDir), Slug: clones.SlugIn(ctx, p.GitDir)})
 			if err != nil {
 				r.Notes = append(r.Notes, "This clone isn't on the record of this machine's clones, so another repo's page can't switch to it until its daemon starts: "+err.Error())
 			}

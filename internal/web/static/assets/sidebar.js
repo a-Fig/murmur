@@ -3,7 +3,7 @@
 import { icon } from "./icons.js";
 import { h, when, ago, plural, root } from "./dom.js";
 import {
-  NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount,
+  NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount, repoLabel,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
 import { deny, hasUnsent, poll, tokenEra } from "./sync.js";
@@ -467,7 +467,7 @@ function versionSection() {
 // shows the repo as #1018 drew it (#1112): a dot, filled while the repo's daemon is running and a
 // ring while the page can't reach it, the repo, and how many repos the picker holds.
 function repoButton() {
-  const name = ui.state ? ui.state.repo || NAME : ""; // nothing until the state says, rather than a name that changes
+  const name = ui.state ? repoLabel() : ""; // nothing until the state says, rather than a name that changes
   const up = ui.conn !== "down";
   const n = ui.repos?.length;
   return h(
@@ -575,10 +575,10 @@ async function openRepo(r) {
 
 function repoMenu() {
   const m = ui.repoMenu;
-  const repos = m.repos || [{ id: "", name: ui.state?.repo || NAME, current: true, running: true }];
+  const repos = m.repos || [{ id: "", name: repoLabel(), current: true, running: true }];
   // A path tells two clones of one repo apart; one alone goes by its name.
   const named = new Map();
-  for (const r of repos) named.set(r.name, (named.get(r.name) || 0) + 1);
+  for (const r of repos) named.set(repoLabel(r), (named.get(repoLabel(r)) || 0) + 1);
   const menu = h(
     "div",
     {
@@ -610,7 +610,7 @@ function repoMenu() {
             onclick: () => openRepo(r),
           },
           h("span", { class: "dot" + (r.running ? " ok" : ""), role: "img", "aria-label": r.running ? "Running" : "Not running" }),
-          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, r.name), named.get(r.name) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
+          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, repoLabel(r)), named.get(repoLabel(r)) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
           m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
         ),
       ),
