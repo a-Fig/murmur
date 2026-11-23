@@ -70,8 +70,8 @@ Reply with Murmur's `send` to quiet-otter if a reply is needed.
 The first and last lines are Murmur's. The first says a teammate's agent is speaking, not the user,
 so the agent treats the message as information rather than its user's typing; the last says how to
 answer and that answering is optional. The sender's text between them, subject and body, is quoted:
-every line behind `> `, as `inbox` quotes it, by the one function (`quote` in `internal/view`) both
-use. Anything not behind `> ` is Murmur's, so nothing a sender writes can pass for a header (#297),
+every line behind `> `, as `inbox` quotes its body, by the one function (`quote` in
+`internal/view`) both use. Anything not behind `> ` is Murmur's, so nothing a sender writes can pass for a header (#297),
 a notice or the note below. Until 2026-11-23 only the lines that read as a Murmur header were
 quoted (#297, Tyler, 2026-11-15; Fable's three reviews of #710), judged in lower case past spacing,
 Markdown marks and invisible characters; a list of what a header may look like leaks somewhere

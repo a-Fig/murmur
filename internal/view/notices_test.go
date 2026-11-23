@@ -94,7 +94,7 @@ func TestKeptFileNamesAreMadeSafe(t *testing.T) {
 			}
 		}
 		if len(listed) != 1 || len(listed[0]) > 300 {
-			t.Errorf("%s lists the files on %d lines, the first %d bytes; want one short line:\n%s", what, len(listed), len(listed[0]), got)
+			t.Errorf("%s lists the files on %d lines, %q; want one short line:\n%s", what, len(listed), listed, got)
 		}
 	}
 }
