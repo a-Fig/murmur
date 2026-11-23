@@ -156,6 +156,8 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	defer func() { d.health.synced(ctx, err) }() // before cancel, so ctx still says if its time ran out
+	// Before the remote is listed: what this sync reads is no older (settleColorLocked).
+	began := time.Now()
 	listed, err := d.repo.ListRemote(ctx)
 	if err != nil {
 		return err
@@ -310,7 +312,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 		}
 	}
 	d.lastPollOK = polled
-	d.settleColorLocked()
+	d.settleColorLocked(began)
 	d.kickTeam() // a device to grant the team keys to, or a team ref still empty
 	switched := false
 	if d.mode != modeNormal && len(d.backlog) == 0 {
@@ -1969,6 +1971,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		}
 	}
 	d.colorAwayLocked()
+	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
 	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
@@ -2063,7 +2066,9 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.known[ref] = sha
-	d.presenceLanded = time.Now().Round(0) // by the wall clock: time asleep counts (colorAwayLocked)
+	// When it was built, not when it landed: a push begun before a machine slept can land after
+	// it wakes, with what the device knew a week before.
+	d.presenceLanded = built
 	d.mu.Unlock()
 	return nil
 }

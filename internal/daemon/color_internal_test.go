@@ -65,7 +65,7 @@ func TestAPickOfAGoneDevicesColourIsKept(t *testing.T) {
 			d := colorRig(t, c.gone)
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			d.settleColorLocked()
+			d.settleColorLocked(time.Now())
 			if kept := d.st.Color == 3; kept != c.kept {
 				t.Errorf("after a sync this device's pick is %d (lost to %q), want it kept: %v", d.st.Color, d.st.ColorLostTo, c.kept)
 			}
@@ -91,24 +91,25 @@ func TestADaemonAwayAWeekSettlesItsColourAgain(t *testing.T) {
 		t.Errorf("an hour after its last presence landed, the next carries colour %d, want 3", color)
 	}
 	d.presenceLanded = time.Now().Add(-8 * 24 * time.Hour).Round(0)
-	polled := time.Now().Add(-time.Second) // a sync that read its peers before the daemon found it had been away
+	began := time.Now().Add(-time.Second) // a sync that listed the remote before the daemon found it had been away
 	d.colorAwayLocked()
 	if color, _ := d.shownColorLocked(); color != 0 {
 		t.Errorf("eight days after its last presence landed, the next carries colour %d, want none until a sync", color)
 	}
 	// That sync knows nothing of a pick made meanwhile, so it doesn't settle the colour.
-	held := d.peers
 	d.peers = map[string]*peer{}
-	d.lastPollOK = polled
-	d.settleColorLocked()
+	d.lastPollOK = time.Now()
+	d.settleColorLocked(began)
 	if d.colorSettled {
 		t.Error("a sync begun before the daemon found it had been away settled its colour")
 	}
-	// A later sync finds the peer picked it meanwhile, and is live: this device gives it up, as on
-	// a restart.
-	d.peers = held
-	d.lastPollOK = time.Now()
-	d.settleColorLocked()
+	// A later sync finds a live peer picked it meanwhile, after this device had: it is given up all
+	// the same, as on a restart, where the earlier pick would win between two devices that stayed.
+	now := time.Now()
+	d.peers = map[string]*peer{"live-0001": {lastChange: now,
+		pres: bus.Presence{V: bus.Version, Device: "live-0001", Color: 3, ColorAt: now.Add(-time.Minute).UTC()}}}
+	d.lastPollOK = now
+	d.settleColorLocked(now.Add(time.Second))
 	if d.st.Color != 0 || d.st.ColorLostTo == "" || !d.colorSettled {
 		t.Errorf("after the sync: colour %d, lost to %q, settled %v; want the pick given up", d.st.Color, d.st.ColorLostTo, d.colorSettled)
 	}
@@ -124,7 +125,7 @@ func TestADaemonAwayAWeekKeepsAColourNobodyTook(t *testing.T) {
 	d.presenceLanded = time.Now().Add(-8 * 24 * time.Hour).Round(0)
 	d.colorAwayLocked()
 	d.lastPollOK = time.Now()
-	d.settleColorLocked()
+	d.settleColorLocked(time.Now().Add(time.Second))
 	if color, _ := d.shownColorLocked(); color != 3 || d.st.ColorLostTo != "" {
 		t.Errorf("after the sync the presence carries colour %d (lost to %q), want its pick, 3", color, d.st.ColorLostTo)
 	}

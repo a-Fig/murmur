@@ -57,9 +57,9 @@ func (d *Daemon) colorsLocked() map[string]bus.DeviceColor {
 	return bus.DeviceColors(picks)
 }
 
-// colorAwayLocked takes this device's pick out of its presence until a full sync begun from now on
-// has settled it again, if the last presence of its own to reach the remote is older than
-// colorHold: its teammates let the colour go meanwhile, and one may have picked it. A daemon that
+// colorAwayLocked takes this device's pick out of its presence until a full sync begun after now
+// has settled it again, if the last presence of its own to reach the remote was built longer ago
+// than colorHold: its teammates let the colour go meanwhile, and one may have picked it. A daemon that
 // restarts starts unsettled; this is for one that never stopped, and slept through the week on a
 // laptop closed that long, or was awake and couldn't push. It is called before each presence is
 // built. Caller holds mu.
@@ -84,9 +84,10 @@ func (d *Daemon) shownColorLocked() (int, time.Time) {
 
 // settleColorLocked gives up this device's pick if a peer holds that colour: one that picked it
 // first, or, at the first full sync, one that picked it while this device was away. Called after
-// each full sync. The pick stays out of presence while any peer's is locked (no team key for it
-// yet), since it could hide the holder; a lost pick is still given up meanwhile. Caller holds mu.
-func (d *Daemon) settleColorLocked() {
+// each full sync, with when the sync began. The pick stays out of presence while any peer's is
+// locked (no team key for it yet), since it could hide the holder; a lost pick is still given up
+// meanwhile. Caller holds mu.
+func (d *Daemon) settleColorLocked(began time.Time) {
 	if d.st.Color != 0 {
 		for _, id := range sortedKeys(d.peers) {
 			p := d.peers[id].pres
@@ -109,9 +110,9 @@ func (d *Daemon) settleColorLocked() {
 			return
 		}
 	}
-	// A sync that began before this device found it had been away read its peers before then, and
-	// knows nothing of a pick made meanwhile: the next one settles.
-	if !d.colorSettled && !d.lastPollOK.Before(d.colorAwayAt) {
+	// A sync that began before this device found it had been away may have listed the remote
+	// before then, and knows nothing of a pick made meanwhile: the next one settles.
+	if !d.colorSettled && (d.colorAwayAt.IsZero() || began.After(d.colorAwayAt)) {
 		d.colorSettled = true
 		if d.st.Color != 0 {
 			d.kickPresence()
