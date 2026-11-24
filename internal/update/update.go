@@ -338,6 +338,19 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
+	// A release from before the hold would install this prerelease again wherever the channel
+	// still reads "prerelease" to it (#1212). Back refuses that; this is for an override made since,
+	// found before anything downloads, so a refused going back costs no download at each check.
+	if back && newer(holdAware, rel.Tag) {
+		// Held first, as it is again before the swap, so that an include of the global file that
+		// says prerelease shows (Opus review): held with the hold beside it is how Back leaves it.
+		if _, err = holdChannel(ctx, o.GitDir); err != nil {
+			return false, latest, err
+		}
+		if where, _ := unheld(ctx, o.GitDir, o.Version, true); where != "" {
+			return false, latest, fmt.Errorf("%s sets %s prerelease, which %s reads past the hold, so it would install %s again", where, channelKey, latest, o.Version)
+		}
+	}
 	if want != "" && !same(want, rel.Tag) {
 		return false, latest, fmt.Errorf("%w: %s is the release to install now, not %s", errNotAsked, latest, want)
 	}
@@ -394,20 +407,32 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if !back && prerelease(rel.Tag) && !Prerelease(ctx, o.GitDir) {
 		return false, latest, fmt.Errorf("%w: updates moved to stable releases while %s downloaded", errNotAsked, latest)
 	}
+	// Or gone back to stable from the very prerelease downloaded, in another install or clone
+	// (#1212): the hold is read again here against the release about to go in, not the one
+	// running, which the check above compares. Update now too: it asks for what the page showed.
+	if hold := last(configValues(ctx, o.GitDir, skipKey), "").value; !back && validVersion(hold) && prerelease(rel.Tag) && !newer(rel.Tag, hold) {
+		return false, latest, fmt.Errorf("%w: %s is held back, since this machine went back to stable from %s", errNotAsked, latest, strings.TrimPrefix(hold, "v"))
+	}
+	record := skip + " " + o.Executable
 	if back {
-		if err = holdChannel(ctx, o.GitDir); err != nil {
+		if _, err = holdChannel(ctx, o.GitDir); err != nil {
+			return false, latest, err
+		}
+		// The record of going back goes in before the swap, so that a kill after it can't lose it
+		// and cost another trip (#1212); a swap that fails takes it out again. A kill between the
+		// two leaves a record of a going back that didn't happen: the next check, back on this
+		// prerelease, then takes the hold off rather than going back, and Back is offered again.
+		if _, err = (gitx.Git{Dir: o.GitDir}).Run(ctx, "", "config", "--global", "--add", backKey, record); err != nil {
 			return false, latest, err
 		}
 	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
-		return false, latest, err
-	}
-	if back {
-		// Whatever happens to ctx now: the new binary is in place, and a daemon stopping just
-		// then would otherwise leave no record, and cost a trip more.
-		if _, err := (gitx.Git{Dir: o.GitDir}).Run(context.WithoutCancel(ctx), "", "config", "--global", "--add", backKey, skip+" "+o.Executable); err != nil {
-			o.Log.Printf("self-update: couldn't record going back in %s: %v", backKey, err)
+		if back {
+			if _, uerr := (gitx.Git{Dir: o.GitDir}).Run(context.WithoutCancel(ctx), "", "config", "--global", "--fixed-value", "--unset-all", backKey, record); uerr != nil {
+				o.Log.Printf("self-update: couldn't take the record of going back out of %s: %v", backKey, uerr)
+			}
 		}
+		return false, latest, err
 	}
 	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)

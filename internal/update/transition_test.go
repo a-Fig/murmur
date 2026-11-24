@@ -221,8 +221,8 @@ func installedAt(t *testing.T, srv *httptest.Server, gitDir, running, exe string
 	return strings.TrimPrefix(string(b), "binary v")
 }
 
-// The loop through a channel Back can't hold: a repo's own murmur.channel prerelease, which is how
-// `git config murmur.channel prerelease` writes it, and which v0.5.3 reads in that clone. The
+// The loop through a channel Back can't hold: a repo's own murmur.channel prerelease set on v0.5.3,
+// which is how `git config murmur.channel prerelease` writes it, and which v0.5.3 reads. The
 // nightly goes back to v0.5.3, which takes it again; back on it, the install has gone back from it
 // once already, so the hold comes off and the nightly stays, rather than a download and a restart
 // each time for ever (Opus's second review of #1197). Another install, which hasn't gone back,
@@ -232,7 +232,6 @@ func TestGoingBackHappensOncePerInstall(t *testing.T) {
 	gitDir := repo(t)
 	ctx := context.Background()
 	const bad = "0.5.4-nightly.20261123"
-	gitConfig(t, "--file", filepath.Join(gitDir, "config"), "murmur.channel", "prerelease")
 	if _, err := Back(ctx, noEnv, gitDir, bad); err != nil {
 		t.Fatal(err)
 	}
@@ -241,11 +240,13 @@ func TestGoingBackHappensOncePerInstall(t *testing.T) {
 	if got := installedAt(t, srv, gitDir, bad, exe); got != "0.5.3" {
 		t.Fatalf("going back installed %q", got)
 	}
-	if got := v053Installs(t, srv, srv.URL, gitDir); got != bad {
-		t.Fatalf("v0.5.3 with the repo's prerelease installed %q", got)
-	}
 	if got := installed(t, srv, gitDir, bad); got != "0.5.3" {
 		t.Fatalf("another install of the nightly went back to %q", got)
+	}
+	// On v0.5.3, the repo's own prerelease, which Back would have refused had it been there.
+	gitConfig(t, "--file", filepath.Join(gitDir, "config"), "murmur.channel", "prerelease")
+	if got := v053Installs(t, srv, srv.URL, gitDir); got != bad {
+		t.Fatalf("v0.5.3 with the repo's prerelease installed %q", got)
 	}
 	if got := installedAt(t, srv, gitDir, bad, exe); got != "" {
 		t.Fatalf("the nightly went back a second time, to %q", got)
