@@ -21,6 +21,10 @@
 // #455), and in OpenCode 1 with the ID the plugin gave the MCP server for the process's sessions,
 // which OpenCode 1 doesn't tell apart (#446; internal/join/opencodeplugin.go).
 //
+// Hermes has hooks of its own, which run in its gateway; Murmur's Hermes plugin runs this one there
+// (`mur hook --agent hermes`) with Hermes' session ID, and `mur hook` first registers the session as
+// `mur tool` does (internal/mcpserver, #975, #1184).
+//
 // It never blocks or fails the agent: any problem, including no daemon running, means it
 // gives no instructions to the agent and exits 0. The time it can hold a tool call up is bounded
 // by BracketTimeout. Antigravity's hook returns an event-specific JSON response.
@@ -324,19 +328,25 @@ const (
 	Muse        = "muse"
 	Cursor      = "cursor"
 	Kiro        = "kiro"
+	Hermes      = "hermes"
 )
 
+// HermesNative is the Native a Hermes session is registered and named by: `mur tool` and this hook
+// key it by Hermes' own session ID.
+func HermesNative(sessionID string) string { return "hermes:" + sessionID }
+
 // KnownAgent says RunFor knows the agent named: "" (Claude Code), codex, grok, pi, opencode,
-// antigravity, muse, cursor or kiro.
+// antigravity, muse, cursor, kiro or hermes.
 func KnownAgent(agent string) bool {
 	return agent == "" || agent == Codex || agent == Grok || agent == Pi || agent == OpenCode || agent == Antigravity || agent == Muse ||
-		agent == Cursor || agent == Kiro
+		agent == Cursor || agent == Kiro || agent == Hermes
 }
 
 // byExtension says agent's hook is run by code of Murmur's inside the agent, not by the agent's
-// own hooks: Pi's extension and OpenCode's plugin. Their payload names the session by the ID its
-// MCP server registered with, and may say the work was interrupted.
-func byExtension(agent string) bool { return agent == Pi || agent == OpenCode }
+// own hooks: Pi's extension and OpenCode's and Hermes' plugins. Their payload names the session by
+// the ID it registered with (Hermes' as HermesNative makes it), and may say the work was
+// interrupted.
+func byExtension(agent string) bool { return agent == Pi || agent == OpenCode || agent == Hermes }
 
 // RunFor is Run for agent, "" for Claude Code. It does nothing for an agent it doesn't know, rather
 // than take another agent's hook for Claude Code's. Claude Code's hook sends its transcript.
@@ -406,8 +416,9 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		return
 	}
 	var op string
-	if agent == "" || agent == Pi || agent == Antigravity && in.ToolName == antigravityCommand {
-		// Pi's extension gives a tool_use_id only for a shell call, the one kind of call it brackets.
+	if agent == "" || agent == Pi || agent == Hermes || agent == Antigravity && in.ToolName == antigravityCommand {
+		// Pi's extension and Hermes' plugin give a tool_use_id only for a shell call, the one kind
+		// of call they bracket.
 		op = bracketOp(in)
 	}
 	// Neither PreToolUse nor PostToolUseFailure gives notices: the next PostToolUse or prompt
@@ -486,6 +497,8 @@ func RunForEvent(agent, event string, stdin io.Reader, stdout io.Writer) {
 		inbox = view.CursorInboxTool
 	case Kiro:
 		inbox = view.KiroInboxTool
+	case Hermes:
+		inbox = view.HermesInboxTool
 	}
 	text := view.HookWithInbox(resp.Read, resp.Messages, resp.Unread, inbox)
 	if text == "" {
@@ -556,6 +569,9 @@ func identify(agent string, in input) proto.Request {
 		// session's shell inherits that session's CLAUDE_PID. Nothing of theirs is a transcript of
 		// Claude Code's form. Pi's extension brackets a shell call with a tool_use_id of its own; no
 		// OpenCode call is bracketed, so its commits aren't credited to it.
+		if agent == Hermes {
+			return proto.Request{Native: HermesNative(in.SessionID)}
+		}
 		return proto.Request{Native: in.SessionID, Child: in.Child, ParentNative: in.ParentNative}
 	}
 	r := proto.Request{ClaudeSession: in.SessionID, Subagent: in.AgentID != "" || in.SubagentType != ""}

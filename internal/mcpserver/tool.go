@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,11 +9,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/hook"
 	"github.com/a-Fig/murmur/internal/join"
 	"github.com/a-Fig/murmur/internal/proto"
 )
@@ -33,7 +36,14 @@ import (
 // session, at the same address and name.
 
 // hermesSessionEnv is the variable Murmur's Hermes plugin gives `mur tool` the session's ID in.
-const hermesSessionEnv = "MURMUR_HERMES_SESSION"
+// hermesSocketEnv and hermesTokenEnv are the socket it opened for the session and the token that
+// opens it (#1184), which `mur tool` and `mur hook` give the daemon in the session's route, as
+// Claude Code's messaging socket is given.
+const (
+	hermesSessionEnv = "MURMUR_HERMES_SESSION"
+	hermesSocketEnv  = "MURMUR_HERMES_SOCKET"
+	hermesTokenEnv   = "MURMUR_HERMES_TOKEN"
+)
 
 // maxToolArgs is the most of a call's arguments read: a send's body is the largest, and the daemon
 // refuses one far smaller, with its reason.
@@ -176,11 +186,50 @@ func hermesSession(ctx context.Context) (func() (func(proto.Request) (proto.Resp
 	}, nil
 }
 
-// hermesHello is the hello of Hermes session id, at work in cwd.
+// hermesHello is the hello of Hermes session id, at work in cwd, with the socket the plugin opened
+// for it, if it names one.
 func hermesHello(id, cwd string) proto.Hello {
-	native := "hermes:" + id
-	return proto.Hello{ID: nativeID(native), Agent: "hermes", Cwd: cwd, Command: true, Route: proto.Route{Native: native}}
+	native := hook.HermesNative(id)
+	r := proto.Route{Native: native}
+	if sock, tok := os.Getenv(hermesSocketEnv), os.Getenv(hermesTokenEnv); sock != "" && tok != "" {
+		r.MsgSocket, r.MsgToken = sock, tok
+	}
+	return proto.Hello{ID: nativeID(native), Agent: hook.Hermes, Cwd: cwd, Command: true, Route: r}
 }
+
+// HermesHook is `mur hook --agent hermes`, which Murmur's Hermes plugin runs as Hermes' hooks fire
+// (#1184). It registers the session its payload names, as `mur tool` does, so a session that has
+// called no tool yet is on the mesh and has its socket known, and then runs the hook for it. In a
+// clone that hasn't joined it does nothing, and as any hook it never fails: what goes wrong means no
+// answer.
+func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
+	defer func() { recover() }()
+	b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
+	if err != nil {
+		return
+	}
+	var p struct {
+		SessionID string `json:"session_id"`
+		Cwd       string `json:"cwd"`
+	}
+	if json.Unmarshal(b, &p) != nil || hermesSessionOK(p.SessionID) != nil || p.Cwd == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hermesHookRegister)
+	defer cancel()
+	place, err := join.Locate(ctx, p.Cwd)
+	if err != nil || !place.Joined() {
+		return
+	}
+	if _, err := registerCommand(ctx, place, hermesHello(p.SessionID, p.Cwd)); err != nil {
+		return
+	}
+	hook.RunForEvent(hook.Hermes, event, bytes.NewReader(b), stdout)
+}
+
+// hermesHookRegister bounds the hook's registration, which may start the clone's daemon. The plugin
+// gives a hook longer than this and the hook's own requests together.
+const hermesHookRegister = 15 * time.Second
 
 // hermesSessionOK checks the session ID the plugin gave: Hermes' are local-<hex>, ses_<...> or a
 // gateway's own (gateway-local-sessions.md, read 2026-11-23), all short and printable.

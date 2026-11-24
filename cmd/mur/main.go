@@ -152,7 +152,9 @@ func main() {
 	case "hook":
 		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
 		// does nothing.
-		if agent, event, ok := hookAgent(args); ok {
+		if agent, event, ok := hookAgent(args); ok && agent == hook.Hermes {
+			mcpserver.HermesHook(event, os.Stdin, os.Stdout) // registers the session first (#1184)
+		} else if ok {
 			hook.RunForEvent(agent, event, os.Stdin, os.Stdout)
 		}
 	case "mcp":

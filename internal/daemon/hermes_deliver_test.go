@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,10 +73,17 @@ func TestAHermesSessionGetsNoticesWhileBusyAndTurnsWhenIdle(t *testing.T) {
 	if got := b.piHook(proto.OpTurnEnd, native).Read; len(got) != 1 || got[0].Body != "the body" {
 		t.Fatalf("the end of its turn gave %+v", got)
 	}
+	if got := b.piHook(proto.OpTurnEnd, native).Read; len(got) != 0 { // the turn it kept going ends
+		t.Fatalf("the next end gave %v", viewSubjects(got))
+	}
 
 	b.send("aaaaaa", bob, "while idle", "wake up")
 	eventually(t, "the turn on the socket", func() bool { return len(sock.lines()) >= 2 })
-	socketTurn(t, sock.lines(), "tok-hermes")
+	// A Hermes session has Murmur's tools, though a command registered it: its turn says to answer
+	// with the send tool, not with #913's shell command.
+	if turn := socketTurn(t, sock.lines(), "tok-hermes"); !strings.Contains(turn, "Murmur's `send`") || strings.Contains(turn, "mur send") {
+		t.Errorf("the turn says to answer so:\n%s", turn)
+	}
 }
 
 // A later call that names another socket moves the session's turns to it: the plugin opens a new

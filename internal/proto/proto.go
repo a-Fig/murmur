@@ -103,7 +103,9 @@ const (
 //	    and a message to its old name reaches it. A daemon of 24 or less registers a new session.
 //	26: a command's hello keyed by Native, with no T3 thread: `mur tool` for Murmur's Hermes plugin
 //	    (#975). A daemon of 25 or less refuses it.
-const Protocol = 26
+//	27: such a session's route names the socket Murmur's Hermes plugin opened for it, and the session
+//	    is held while the socket answers (#1184). A daemon of 26 holds it for 30 idle minutes.
+const Protocol = 27
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.

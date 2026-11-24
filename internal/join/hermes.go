@@ -3,6 +3,7 @@ package join
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,8 +51,33 @@ import (
 //     (docs/design/delegates.md), so it never shows as a session of its own.
 //   - Skills go in skills/ of each home, which Hermes scans for SKILL.md files.
 //
-// Messages as notices and turns are #1184. Hermes runs plugins in-process with the user's
-// credentials, as it does every plugin; Murmur's runs `mur` and nothing else.
+// The plugin brings a session its messages as Claude Code's hook does (#1184), running `mur hook
+// --agent hermes` (internal/mcpserver, HermesHook) from Hermes' plugin hooks, in a clone the user
+// joined only, by the session's folder (the same few stats as Pi's extension):
+//   - pre_llm_call, once a turn before the model's first request, is UserPromptSubmit: its notice
+//     goes into the turn's user message as context.
+//   - transform_tool_result, after each call and before the result reaches the model, is
+//     PostToolUse: the notice goes after the result. That is the one way into a running turn a
+//     plugin has (agent.steer, which Hermes has for its own /steer, isn't one), and the place
+//     OpenCode's model refused text in a file it had read (docs/design/clients.md); here it is after
+//     the tool's own output, under Murmur's [Murmur] line. pre_tool_call and it bracket a terminal
+//     call, so the daemon credits the session's commits.
+//   - on_session_end, at each turn's end, is Stop: what is unread goes back in with
+//     ctx.inject_message, which queues it as the session's next turn. An interrupted or failed
+//     turn keeps nothing going.
+//   - A socket the plugin opens for the session, a unix socket or on Windows a named pipe (Python
+//     has no unix sockets there), takes Claude Code's messaging-socket lines and puts each message
+//     in with inject_message: a turn of its own in an idle session. inject_message works for a
+//     session a client has open, and from no hook's context only with the session's key, which the
+//     plugin keeps from the hooks (seen 2026-11-23: a oneshot session's key was refused once it had
+//     closed; an ACP session's still took a turn after its client went). The plugin closes the socket
+//     at on_session_finalize and on_session_delete, or when Hermes refuses a turn, and the daemon
+//     holds the session for as long as the socket answers (internal/daemon, socketHeld).
+//   - inject_message needs plugins.entries.murmur.allow_gateway_injection in config.yaml, which
+//     join sets and uninstall takes out (hermesyaml.go). Without it the session gets notices only.
+//
+// Hermes runs plugins in-process with the user's credentials, as it does every plugin; Murmur's runs
+// `mur` and nothing else, and the grant lets it start a turn in a session of the user's own.
 
 // hermesProfileFiles are the files that make a folder under profiles/ a profile to Hermes: one is
 // enough (user-guide/profiles.md).
@@ -125,7 +151,9 @@ const hermesMarker = "# Written by `" + brand.Command + " join`"
 func hermesPluginFiles(exe string) map[string]string {
 	cmd, _ := json.Marshal(exe)
 	r := strings.NewReplacer("{{product}}", brand.Product, "{{command}}", brand.Command, "{{server}}", brand.MCPServer,
-		"{{exe}}", string(cmd), "{{sessionEnv}}", "MURMUR_HERMES_SESSION")
+		"{{exe}}", string(cmd), "{{state}}", brand.StateDir, "{{consent}}", consentFile,
+		// internal/mcpserver reads these (tool.go).
+		"{{sessionEnv}}", "MURMUR_HERMES_SESSION", "{{socketEnv}}", "MURMUR_HERMES_SOCKET", "{{tokenEnv}}", "MURMUR_HERMES_TOKEN")
 	return map[string]string{"plugin.yaml": r.Replace(hermesManifest), "__init__.py": r.Replace(hermesPlugin)}
 }
 
@@ -135,108 +163,11 @@ version: "1"
 description: "{{product}}'s tools, to message the coding agents on your teammates' machines in this repo"
 `
 
-// hermesPlugin is the plugin, with its names left for package brand to fill in.
-const hermesPlugin = `# Written by ` + "`{{command}} join`" + ` ({{product}}, https://github.com/a-Fig/murmur). ` + "`{{command}} join`" + ` writes it again when {{command}} moves,
-# and {{command}} when it is updated, so edits here are lost; take this first line out to keep yours.
-# It gives each Hermes session {{product}}'s tools ({{server}}_who, {{server}}_send and the rest). Each call runs
-# ` + "`{{command}} tool`" + ` with the session's ID and working directory, which answers as {{product}}'s MCP server does.
-# ` + "`{{command}} uninstall`" + ` takes it out, or delete this folder and {{server}} from plugins.enabled in config.yaml.
-"""{{product}}'s tools for Hermes Agent."""
-
-import json
-import logging
-import os
-import subprocess
-import threading
-
-MUR = {{exe}}
-log = logging.getLogger(__name__)
-
-# A subagent acts as the session that started it: its calls go as its parent's, so it never shows
-# to others as a session of its own.
-_parents = {}
-_lock = threading.Lock()
-
-
-def _run(args, stdin="", cwd=None, env=None, timeout=120):
-    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-    return subprocess.run([MUR, *args], input=stdin, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=cwd or None, env=env, timeout=timeout, **extra)
-
-
-def _session(session_id):
-    sid = session_id or ""
-    if not sid:
-        try:
-            from gateway.session_context import get_session_env
-            sid = get_session_env("HERMES_SESSION_ID", "")
-        except Exception:
-            sid = ""
-    with _lock:
-        seen = set()
-        while sid in _parents and sid not in seen:
-            seen.add(sid)
-            sid = _parents[sid]
-    return sid
-
-
-def _error(text):
-    return json.dumps({"error": text})
-
-
-def _handler(ctx, tool):
-    def handle(args, session_id=None, **_):
-        sid = _session(session_id)
-        if not sid:
-            return _error("{{product}} can't tell which Hermes session this is, so it can't act for it.")
-        cwd = ctx.session_cwd()
-        if not cwd:
-            return _error("{{product}} can't tell which folder this session works in, so it can't tell which repo it is in.")
-        if not os.path.isdir(cwd):
-            return _error("this session's folder, %s, isn't there any more." % cwd)
-        env = dict(os.environ)
-        env["{{sessionEnv}}"] = sid
-        try:
-            p = _run(["tool", "--agent", "hermes", tool], json.dumps(args or {}), cwd, env)
-        except subprocess.TimeoutExpired:
-            return _error("{{product}} took over two minutes to answer.")
-        except OSError as e:
-            return _error("couldn't run {{command}} (%s): %s" % (MUR, e))
-        out = p.stdout.strip()
-        if p.returncode == 0:
-            return out
-        return _error(out or p.stderr.strip() or "{{command}} exited with %d" % p.returncode)
-    return handle
-
-
-def _child_start(parent_session_id=None, child_session_id=None, **_):
-    if parent_session_id and child_session_id and parent_session_id != child_session_id:
-        with _lock:
-            _parents[str(child_session_id)] = str(parent_session_id)
-
-
-def _child_stop(child_session_id=None, **_):
-    if child_session_id:
-        with _lock:
-            _parents.pop(str(child_session_id), None)
-
-
-def register(ctx):
-    try:
-        p = _run(["tool", "--list"], timeout=8)
-        tools = json.loads(p.stdout) if p.returncode == 0 else []
-        if p.returncode != 0:
-            log.warning("{{product}}: ` + "`{{command}} tool --list`" + ` failed: %s", p.stderr.strip())
-    except Exception as e:
-        log.warning("{{product}}: couldn't list its tools with %s: %s", MUR, e)
-        tools = []
-    for t in tools:
-        name = "{{server}}_" + t["name"]
-        schema = {"name": name, "description": t["description"], "parameters": t["inputSchema"]}
-        ctx.register_tool(name=name, toolset="{{server}}", schema=schema, handler=_handler(ctx, t["name"]))
-    ctx.register_hook("subagent_start", _child_start)
-    ctx.register_hook("subagent_stop", _child_stop)
-`
+// hermesPlugin is the plugin, with its names left for package brand to fill in. It is a file of its
+// own so it reads, and is tested, as the Python it is; .gitattributes keeps it LF on every clone.
+//
+//go:embed hermesplugin.py
+var hermesPlugin string
 
 // hasHermes says Hermes is set up in home h: its folder is there. A hermes on PATH whose home
 // isn't there yet hasn't been run, and its first run makes the home.
@@ -303,13 +234,28 @@ func (e Env) registerHermesAt(h agentHome) (did []string, fresh bool, err error)
 	if err != nil {
 		return did, wrote, fmt.Errorf("%s: %w, so %s wasn't added to plugins.enabled there: add it, or run `hermes plugins enable %s`", cfg, err, brand.MCPServer, brand.MCPServer)
 	}
-	if changed {
+	// The plugin hands a session a message as a turn through Hermes' inject_message, which a plugin
+	// may use only with this grant (#1184). Without it the session still gets notices.
+	granted, grantChanged, grantErr := addYAMLGrant(out, brand.MCPServer)
+	if grantErr == nil {
+		out = granted
+	}
+	if changed || grantChanged {
 		if err := writeAtomic(cfg, []byte(out), 0o600); err != nil {
 			return did, wrote, fmt.Errorf("%s: %w", cfg, err)
 		}
+	}
+	if changed {
 		did = append(did, h.Label+": turned the plugin on, in plugins.enabled ("+cfg+")")
 	}
-	return did, wrote || changed, nil
+	if grantChanged {
+		did = append(did, h.Label+": let it start a turn in a session when a message comes (plugins.entries."+brand.MCPServer+"."+grantKey+" in "+cfg+")")
+	}
+	if grantErr != nil {
+		return did, wrote || changed, fmt.Errorf("%s: %w, so %s can't start a turn in a Hermes session there: set plugins.entries.%s.%s to true for it to",
+			cfg, grantErr, brand.Product, brand.MCPServer, grantKey)
+	}
+	return did, wrote || changed || grantChanged, nil
 }
 
 // RefreshHermes brings Murmur's Hermes plugin in each Hermes home up to this binary's, as the
@@ -385,14 +331,28 @@ func (e Env) unregisterHermesAt(_ context.Context, hs []agentHome) (did, notes [
 		problems = append(problems, rerr)
 	} else if text != "" {
 		out, changed, uerr := removeYAMLPlugin(text, brand.MCPServer)
-		switch {
-		case uerr != nil:
+		if uerr != nil {
 			problems = append(problems, fmt.Errorf("%s: %w: take %s out of plugins.enabled by hand", cfg, uerr, brand.MCPServer))
-		case changed:
-			if werr := writeAtomic(cfg, []byte(out), 0o600); werr != nil {
-				problems = append(problems, werr)
+		} else {
+			ungrantedOut, ungranted, gerr := removeYAMLGrant(out, brand.MCPServer)
+			if gerr != nil {
+				problems = append(problems, fmt.Errorf("%s: %w: take plugins.entries.%s.%s out by hand", cfg, gerr, brand.MCPServer, grantKey))
 			} else {
-				did = append(did, h.Label+": took the plugin out of plugins.enabled ("+cfg+")")
+				out = ungrantedOut
+			}
+			var what []string
+			if changed {
+				what = append(what, "plugins.enabled")
+			}
+			if ungranted {
+				what = append(what, "plugins.entries")
+			}
+			if len(what) > 0 {
+				if werr := writeAtomic(cfg, []byte(out), 0o600); werr != nil {
+					problems = append(problems, werr)
+				} else {
+					did = append(did, h.Label+": took the plugin out of "+strings.Join(what, " and ")+" ("+cfg+")")
+				}
 			}
 		}
 	}
@@ -425,6 +385,9 @@ func hermesRemoval(_ Env, h agentHome) string {
 	if text, err := readConfig(cfg); err == nil {
 		if on, _ := yamlListHas(text, "enabled", brand.MCPServer); on {
 			steps = append(steps, "take "+brand.MCPServer+" out of plugins.enabled in "+cfg)
+		}
+		if _, changed, err := removeYAMLGrant(text, brand.MCPServer); err == nil && changed {
+			steps = append(steps, "take plugins.entries."+brand.MCPServer+"."+grantKey+" out of "+cfg)
 		}
 	}
 	return strings.Join(steps, ", and ")

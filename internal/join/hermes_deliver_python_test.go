@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/msgsock"
 )
 
@@ -113,10 +114,9 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 	if _, err := writeHermesPlugin(plugin, exe); err != nil {
 		t.Fatal(err)
 	}
+	// A clone the user joined: the plugin runs hooks and opens a socket only in one.
 	folder := filepath.Join(dir, "the-repo")
-	if err := os.MkdirAll(folder, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	write(t, filepath.Join(folder, ".git", brand.StateDir, consentFile), "{}")
 	harness := filepath.Join(dir, "harness.py")
 	write(t, harness, hermesDeliverHarness)
 	cmd := exec.Command(py, "-I", harness, filepath.Join(plugin, "__init__.py"), folder)
@@ -203,7 +203,7 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 	// What mur was asked: each hook as `mur hook --agent hermes`, with the session's socket; the
 	// terminal call bracketed and the other not; the interrupted end said so; nothing for the child.
 	b, _ := os.ReadFile(record)
-	rec := strings.TrimSpace(string(b))
+	rec := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")) // Python's text mode on Windows
 	want := []string{
 		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-1", "call": null, "tool": null, "prompt": "hello there", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true}`,
 		`{"argv": ["hook", "--agent", "hermes"], "event": "PreToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true}`,
