@@ -203,24 +203,30 @@ func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
 // A Pi session that moved to a new file asks for that file's name, and may stop before the name
 // lands (an empty pool, a slow remote). The name is then still its last, as if it had landed in
 // time: kept under the name of the file it left, what it had was for that file's next session, and
-// once PiFiles was lost a Pi on that file took its ID again (Opus's review of cfa13f91). A session
-// that has taken another name since it asked keeps that one.
+// once PiFiles was lost a Pi on that file took its ID again (Opus's review of cfa13f91). Not for a
+// session that moved on to another file before it stopped (Sol's and Opus's review of c9639dca).
 func TestANameLandingAfterAPiSessionStoppedIsItsLast(t *testing.T) {
 	t.Parallel()
 	const (
 		file1 = "/s/f1.jsonl"
 		file2 = "/s/f2.jsonl"
+		file3 = "/s/f3.jsonl"
 		alpha = "calm-otter"
 	)
-	for _, since := range []string{"", "brisk-finch"} {
-		name := "no name since"
-		if since != "" {
-			name = "a name since"
+	for _, movedOn := range []bool{false, true} {
+		what := "stopped on the key it asked for"
+		if movedOn {
+			what = "moved on to a nameless key, then stopped"
 		}
-		t.Run(name, func(t *testing.T) {
+		t.Run(what, func(t *testing.T) {
 			t.Parallel()
 			d, _ := namedDaemon(t)
 			id := proto.NativeID(file1)
+			key := nameKey("", "", file2, id)
+			stoppedOn := key
+			if movedOn {
+				stoppedOn = nameKey("", "", file3, id)
+			}
 			d.mu.Lock()
 			d.st.NameKeys[nameKey("", "", file1, id)] = alpha
 			if d.st.SessionNames == nil {
@@ -229,13 +235,10 @@ func TestANameLandingAfterAPiSessionStoppedIsItsLast(t *testing.T) {
 			d.st.SessionNames[id] = alpha
 			d.st.Used[alpha] = bus.Addr(d.device, id)
 			d.st.Stopped[id] = time.Now()
-			if since != "" {
-				d.st.SessionNames[id] = since // taken after it asked
-			}
+			d.stoppedKeys = map[string]string{id: stoppedOn} // its grace ran out while the push was out
 			d.mu.Unlock()
 
-			key := nameKey("", "", file2, id)
-			w := nameWork{wants: []wanted{{id: id, key: key, agent: "pi", last: alpha}}}
+			w := nameWork{wants: []wanted{{id: id, key: key, agent: "pi"}}}
 			if err := d.pushNames(context.Background(), w); err != nil {
 				t.Fatal(err)
 			}
@@ -245,14 +248,17 @@ func TestANameLandingAfterAPiSessionStoppedIsItsLast(t *testing.T) {
 			if beta == "" {
 				t.Fatalf("no name landed for %s", key)
 			}
+			if d.stoppedKeys != nil {
+				t.Errorf("stoppedKeys outlived the push: %v", d.stoppedKeys)
+			}
 			want := beta
-			if since != "" {
-				want = since
+			if movedOn {
+				want = alpha
 			}
 			if got := d.st.SessionNames[id]; got != want {
 				t.Fatalf("the stopped session's last name is %q, want %q", got, want)
 			}
-			if since != "" {
+			if movedOn {
 				return
 			}
 			if d.st.NameHolders[beta] != id {
@@ -265,5 +271,52 @@ func TestANameLandingAfterAPiSessionStoppedIsItsLast(t *testing.T) {
 				t.Fatalf("Pi on the file left got %q, want a fresh ID", got)
 			}
 		})
+	}
+}
+
+// A Pi session that asked for a new file's name, then went back to its first file, which has a
+// name, and stopped there before the name landed, last had the first file's conversation. The name
+// landing isn't its last: what it kept stays with the first file, and a Pi on that file keeps its
+// ID (Sol's and Opus's review of c9639dca).
+func TestANameLandingAfterAPiSessionMovedBackIsNotItsLast(t *testing.T) {
+	const (
+		file1 = "/s/f1.jsonl"
+		file2 = "/s/f2.jsonl"
+		alpha = "calm-otter"
+	)
+	d, _ := namedDaemon(t)
+	id := proto.NativeID(file1)
+	d.mu.Lock()
+	d.st.NameKeys[nameKey("", "", file1, id)] = alpha
+	if d.st.SessionNames == nil {
+		d.st.SessionNames = map[string]string{}
+	}
+	if d.st.NameHolders == nil {
+		d.st.NameHolders = map[string]string{}
+	}
+	d.st.SessionNames[id] = alpha
+	d.st.NameHolders[alpha] = id
+	d.st.Used[alpha] = bus.Addr(d.device, id)
+	d.st.Stopped[id] = time.Now()
+	d.mu.Unlock()
+
+	key := nameKey("", "", file2, id)
+	w := nameWork{wants: []wanted{{id: id, key: key, agent: "pi"}}}
+	if err := d.pushNames(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	beta := d.st.NameKeys[key]
+	if got := d.st.SessionNames[id]; got != alpha {
+		t.Errorf("the session last on file1 has %q (file2's name, beta=%q) as its last, want %q", got, beta, alpha)
+	}
+	if got := d.keptForLocked(id); got != alpha {
+		t.Errorf("its kept inbox is for %q, want %q", got, alpha)
+	}
+	got, _ := d.piIDLocked(&proto.Hello{ID: id, Agent: "pi", ClientPID: 200, TakesSelf: true,
+		Route: proto.Route{Native: file1}})
+	if got != id {
+		t.Errorf("Pi on file1 got %q, want its own ID %q", got, id)
 	}
 }

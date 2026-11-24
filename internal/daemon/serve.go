@@ -492,6 +492,12 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	delete(d.st.Registered, h.ID)
 	d.lastActive = time.Now()
 	d.st.Stopped[h.ID] = time.Now().Round(0)
+	if d.assigning { // a name it asked for may land after it (noteStoppedNameLocked)
+		if d.stoppedKeys == nil {
+			d.stoppedKeys = map[string]string{}
+		}
+		d.stoppedKeys[h.ID] = s.key
+	}
 	// A session that took this one's name while it was in its grace, as a conversation resumed at
 	// another ID does (a command-line one after #51 hashed its ID), passed its inbox by: it was
 	// still among the sessions then. It takes it now (Opus's review of #51), and is handed it: its
