@@ -105,7 +105,7 @@ or GEM. Their source is in [`internal/skills`](internal/skills).
 | Antigravity (beta)      | a terminal            | inbox     | notice after its next tool call        |
 | Kiro (beta)             | T3 Code               | turn      | given at the end of the turn           |
 | Kiro (beta)             | a terminal            | inbox     | given at the end of the turn           |
-| Hermes (beta)           | a terminal            | turn      | notice after its next tool call        |
+| Hermes (beta)           | outside T3 Code       | turn      | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (beta)       | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |

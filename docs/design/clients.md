@@ -16,7 +16,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 | Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
 | Cursor (beta) | `mcpServers.murmur` in `~/.cursor/mcp.json`, the hook in `~/.cursor/hooks.json`, `Mcp(murmur:*)` in `cli-config.json` (below) | One `agent` process per chat; the chat's ID reaches only hooks and shell commands, so the hook names it to the server | Not yet: T3 runs every Cursor thread in one process of its own (#924) |
-| Hermes (beta) | no MCP entry: a plugin, `plugins/murmur/` in Hermes' home and each profile, with `murmur` in `plugins.enabled` and `plugins.entries.murmur.allow_gateway_injection` in `config.yaml`, and `skills/<name>/SKILL.md` ([below](#hermes-beta)) | One gateway process runs every session of a profile; the plugin's tool handler and hooks get the session's ID, and run `mur tool` and `mur hook` with it | Not tried |
+| Hermes (beta) | no MCP entry: a plugin, `plugins/murmur/` in Hermes' home and each profile, with `murmur` in `plugins.enabled` and `plugins.entries.murmur.allow_gateway_injection` in `config.yaml`, and `skills/<name>/SKILL.md` ([below](#hermes-beta)) | One gateway process runs every session of a profile; the plugin's tool handler and hooks get the session's ID, and run `mur tool` and `mur hook` with it | None: T3 Code has no Hermes driver (0.1.11); as an agent from the ACP registry, not tried |
 | Kiro (beta) | `mcpServers.murmur` in `settings/mcp.json` in `$KIRO_HOME` (`~/.kiro`), a `murmur/*` MCP allow rule in `settings/permissions.json` when `settings/permissions.yaml` is absent (Kiro's policy rules match by server name, not executable, so in a trusted workspace a project `murmur` server inherits the rule), `hooks/murmur.json` (`UserPromptSubmit` and `Stop`; Kiro 3.4.0 discards `PostToolUse` command output), and `skills/<name>/SKILL.md` | One `kiro-cli` -> `node` (`acp-server.js`) per session; `T3CODE_THREAD_ID` in T3, and `session_id` in hooks | `T3CODE_THREAD_ID` (Kiro CLI 3.4.0 V3, read 2026-11-22) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
@@ -360,10 +360,8 @@ model, sessions over ACP and `hermes chat --oneshot`. Details and sources are in
   (`delegate_task`) acts as its parent, which the plugin learns from `subagent_start`.
 - **When it loads.** The gateway reads plugins once, as it starts: sessions get the tools after
   `hermes gateway restart`.
-- **Trust.** Hermes runs plugins in its gateway with the user's credentials, as it does every
-  plugin. Murmur's runs only `mur`, and the grant lets it start a turn in the user's own sessions.
 - **Not tried.** macOS and Linux, where CI runs the plugin's Python test; the TUI, Desktop and the
-  messaging platforms; Hermes in T3 Code.
+  messaging platforms.
 
 ## Any agent in T3 Code: the shell commands
 

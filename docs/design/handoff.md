@@ -151,8 +151,9 @@ only in a clone the user joined, by the same few stats as Pi's extension.
 
 - **The moments.** `pre_llm_call` is UserPromptSubmit: the notice goes into the turn's user message
   as context. `transform_tool_result` is PostToolUse: the notice goes after the tool's result,
-  under a `[Murmur]` line, the one way into a running turn Hermes gives a plugin. `pre_tool_call`
-  and it bracket a `terminal` call, for commit credit.
+  under a `[Murmur]` line, the one way into a running turn Hermes gives a plugin (`agent.steer`,
+  which Hermes has for its own `/steer`, isn't one). `pre_tool_call` and it bracket a `terminal`
+  call, for commit credit.
 - **A turn's end keeps nothing going.** `on_session_end` is Stop, but the plugin would have to put
   what is unread in with `ctx.inject_message`, which Hermes may refuse after the daemon has marked
   it read. So it stays in the inbox, and the daemon hands it over through the socket once the
@@ -161,11 +162,16 @@ only in a clone the user joined, by the same few stats as Pi's extension.
   messaging-socket lines (a named pipe on Windows), once it has the session's key, and puts each
   message in with `inject_message`, which starts a turn in an idle session. That needs
   `plugins.entries.murmur.allow_gateway_injection`, which join sets; without it the plugin opens no
-  socket, and the session gets notices only.
+  socket, and the session gets notices only. The plugin learns of the grant from Hermes'
+  `_gateway_injection_allowed`, as hermes-agent 8da31006 has it; a Hermes without that check gets a
+  socket either way, and loses the first message it refuses there.
 - **Registration.** The hook registers the session at a turn's start and end, and whenever the
   plugin has a socket the daemon hasn't been told of, so the daemon knows the socket before the
   session calls a tool.
-- **How long it stays.** `inject_message` works while a client has the session open. The plugin
+- **How long it stays.** `inject_message` works while a client has the session open, and from
+  outside a hook only with the session's key, which the plugin keeps from the hooks (seen
+  2026-11-23: a oneshot session's was refused once it had closed; an ACP session's still took a
+  turn after its client went). The plugin
   closes the socket when the session finalizes or is deleted, or Hermes refuses a turn, and the
   daemon holds the session while its socket answers and it hasn't been idle for 8 hours
   (`socketHeld`).

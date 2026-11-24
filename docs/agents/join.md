@@ -45,9 +45,7 @@ joining does:
   session. For Hermes it is a plugin of Murmur's (`plugins/murmur/` in Hermes' home and each
   profile, turned on in `plugins.enabled` in `config.yaml`, and allowed to start turns in
   `plugins.entries.murmur.allow_gateway_injection`) that gives every session the tools as
-  `murmur_who`, `murmur_send` and the rest, and in a joined repo brings messages into the session.
-  Hermes runs the plugin inside its gateway with the user's credentials, as it does every plugin;
-  Murmur's runs only `mur`. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi,
+  `murmur_who`, `murmur_send` and the rest, and in a joined repo brings messages into the session. Three skills go into the skills folder of Claude Code, Codex, OpenCode, Pi,
   Antigravity, Cursor, Kiro (beta) and Hermes (beta): two short ones on using Murmur well, and one for a session its user has made the
   manager of a team of agents. In Claude Code, Codex, Grok, Antigravity, Muse Code, Cursor and Kiro (beta), Murmur also adds a hook, for every project: a
   command the agent runs around each tool call (or prompt, for Kiro) and when it finishes, so a busy session is told when
