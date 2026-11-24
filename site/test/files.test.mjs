@@ -190,7 +190,7 @@ test('the home page\'s links within the page each lead to a section on it, and t
   const hero = /<main class="st[^"]*">([\s\S]*?)<\/main>/.exec(html)?.[1] ?? '';
   // It copies Setup's prompt with JS; without JS, or when the clipboard refuses, it goes to Setup.
   assert.match(hero, /<a class="button st-prompt" href="#setup">/, 'the hero\'s button goes to Setup');
-  assert.match(html, /<div class="cmd"><span>Prompt<\/span><code[^>]*>Set up Murmur in this repo/, 'Setup\'s first command is the prompt the hero copies');
+  assert.match(html, /<div class="cmd"><span>Prompt<\/span><code[^>]*>Please help me set up this repo with Murmur, following https:\/\/murmur\.afig\.dev\/setup<\/code>/, 'Setup\'s first command is the prompt the hero copies');
 });
 
 test('the hero\'s button shows the same prompt it copies (#1234)', () => {
@@ -198,6 +198,6 @@ test('the hero\'s button shows the same prompt it copies (#1234)', () => {
   const source = /const (\w+) = document\.querySelector\('#setup \.cmd code'\);/.exec(html)?.[1];
   assert.ok(source, 'the script reads Setup\'s prompt');
   assert.ok(html.includes(`navigator.clipboard.writeText(${source}.textContent)`), 'the button copies it');
-  assert.ok(html.includes(`pop.textContent = ${source}.textContent;`), 'the card shows it');
+  assert.ok(html.includes(`quote.textContent = ${source}.textContent;`), 'the card shows it, its quotes drawn by CSS');
   assert.ok(html.includes(`prompt.setAttribute('aria-describedby', pop.id)`), 'the card is the button\'s description');
 });

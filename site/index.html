@@ -815,12 +815,19 @@
      only: on a touch screen, or without JS, there is no card. */
   .st-trim .st-copy > .st-actions { z-index: 4; }
   .st .st-pw { position: relative; display: inline-flex; }
-  .st .st-pop { position: absolute; top: calc(100% + 14px); left: 50%; z-index: 1; width: max-content; max-width: min(38rem, calc(100vw - 48px));
+  .st .st-pop { position: absolute; top: calc(100% + 14px); left: 50%; z-index: 1; width: max-content; max-width: min(46rem, calc(100vw - 48px));
     padding: 12px 16px; border-radius: var(--r-md); background: var(--ink); color: var(--cream); box-shadow: var(--shadow);
     font: 14px/1.5 var(--mono); text-align: left; overflow-wrap: anywhere;
     opacity: 0; visibility: hidden; pointer-events: none; translate: -50% -4px; transition: opacity .15s ease, translate .15s ease, visibility 0s linear .15s; }
   .st .st-pop::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 16px; }
   .st .st-pop::after { content: ""; position: absolute; left: 50%; bottom: 100%; translate: -50% 0; border: 7px solid transparent; border-bottom-color: var(--ink); border-top-width: 0; }
+  /* The prompt is shown in quotes (Tyler, 2026-11-24), so it reads as the words being copied. The
+     marks are drawn here, not in the text, so the clipboard gets the prompt alone. They're in Setup's
+     quiet label blue, and the opening one hangs into the padding so the words line up. */
+  .st .st-pop q { quotes: "\201C" "\201D"; }
+  .st .st-pop q::before, .st .st-pop q::after { color: #A9B6E6; }
+  .st .st-pop { padding-left: calc(16px + 1ch); }
+  .st .st-pop q::before { margin-left: -1ch; }
   .st .st-pop.open { opacity: 1; visibility: visible; pointer-events: auto; translate: -50% 0; transition: opacity .15s ease, translate .15s ease, visibility 0s; }
   /* The hint under the button fades while the card covers it, so its ends don't show at the card's sides. */
   .st .st-copy p.st-hint { transition: opacity .15s ease; }
@@ -1270,7 +1277,7 @@ void main() {
     <h2 class="eyebrow">Setup</h2>
     <div class="inst">
       <div class="inst-h">Quickest: tell your agent</div>
-      <div class="cmd"><span>Prompt</span><code data-artifact>Set up Murmur in this repo, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
+      <div class="cmd"><span>Prompt</span><code data-artifact>Please help me set up this repo with Murmur, following https://murmur.afig.dev/setup</code><button class="copy" type="button" hidden>Copy</button></div>
       <p class="inst-note" data-prose>It asks you before it installs or runs anything.</p>
     </div>
     <div class="inst">
@@ -1497,7 +1504,10 @@ void main() {
     prompt.replaceWith(wrap);
     const pop = document.createElement('span');
     pop.className = 'st-pop'; pop.id = 'st-pop'; pop.setAttribute('role', 'tooltip');
-    pop.textContent = promptText.textContent;
+    // The quotes around it are drawn by the CSS, so they are never part of what is copied.
+    const quote = document.createElement('q');
+    quote.textContent = promptText.textContent;
+    pop.append(quote);
     wrap.append(prompt, pop);
     prompt.setAttribute('aria-describedby', pop.id);
     let timer = 0;
