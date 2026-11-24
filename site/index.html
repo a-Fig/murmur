@@ -385,6 +385,9 @@
   #supported { padding-bottom: 4px; padding-top: clamp(30px, 4.5vh, 44px); }
   #supported .works h2 { font-size: 14px; font-weight: 600; letter-spacing: 0; line-height: 1.3; color: var(--ink-soft); }
   .agents { list-style: none; padding: 0; margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 18px; }
+  /* Ten agents on desktop: two even rows of five, columns lined up, rather than a full row and a
+     second row of two pushed to its ends. */
+  .agents:not(.os) { display: grid; grid-template-columns: repeat(5, max-content); justify-content: space-between; }
   .agents li { position: relative; outline: none; display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
   .agents .disc { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #fff;
     box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 8px 18px -8px rgba(14, 27, 69, .35); }
@@ -399,16 +402,16 @@
   .agents li::after { content: attr(data-hint); position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 5; width: 250px;
     padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; white-space: normal;
     opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; }
-  .agents li:nth-child(n + 6)::after { left: auto; right: 0; }
+  .agents li:nth-child(5n + 4)::after, .agents li:nth-child(5n)::after { left: auto; right: 0; }
   .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
   .agents li:focus-visible .disc { outline: 3px solid color-mix(in srgb, var(--blue) 45%, transparent); outline-offset: 3px; }
   /* Narrower, the eight wrap, and a hint sits over the whole list, so none runs off the screen. */
-  @media (max-width: 1100px) { .agents { position: relative; justify-content: flex-start; gap: 14px 22px; } .agents li { position: static; } .agents li:nth-child(n)::after { left: 0; right: auto; width: min(100%, 320px); } }
+  @media (max-width: 1100px) { .agents, .agents:not(.os) { display: flex; position: relative; justify-content: flex-start; gap: 14px 22px; } .agents li { position: static; } .agents li:nth-child(n)::after { left: 0; right: auto; width: min(100%, 320px); } }
   .agents.os { justify-content: flex-start; gap: 14px 30px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--rule); }
   .agents.os li::after { width: 230px; }
   /* On a phone: the logos alone, four to a row, each name in its hint. */
   @media (max-width: 759px) {
-    .agents, .agents.os { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 0; }
+    .agents, .agents.os, .agents:not(.os) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 0; }
     .agents li { flex-direction: column; gap: 8px; white-space: normal; }
     .agents .disc { width: 52px; height: 52px; }
     .agents img { width: 26px; height: 26px; }
