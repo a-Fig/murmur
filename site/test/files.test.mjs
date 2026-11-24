@@ -192,3 +192,12 @@ test('the home page\'s links within the page each lead to a section on it, and t
   assert.match(hero, /<a class="button st-prompt" href="#setup">/, 'the hero\'s button goes to Setup');
   assert.match(html, /<div class="cmd"><span>Prompt<\/span><code[^>]*>Set up Murmur in this repo/, 'Setup\'s first command is the prompt the hero copies');
 });
+
+test('the hero\'s button shows the same prompt it copies (#1234)', () => {
+  const html = read('index.html');
+  const source = /const (\w+) = document\.querySelector\('#setup \.cmd code'\);/.exec(html)?.[1];
+  assert.ok(source, 'the script reads Setup\'s prompt');
+  assert.ok(html.includes(`navigator.clipboard.writeText(${source}.textContent)`), 'the button copies it');
+  assert.ok(html.includes(`pop.textContent = ${source}.textContent;`), 'the card shows it');
+  assert.ok(html.includes(`prompt.setAttribute('aria-describedby', pop.id)`), 'the card is the button\'s description');
+});
