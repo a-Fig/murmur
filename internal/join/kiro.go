@@ -123,6 +123,9 @@ func (e Env) registerKiroAt(h agentHome) (did []string, fresh bool, err error) {
 	}
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	changed, added, err := setMCPServerFile(mcpPath, e.Exe, kiroArgs)
+	if errors.Is(err, errRemoteServer) {
+		return nil, false, err
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w, so the server wasn't added", mcpPath, err)
 	}

@@ -15,6 +15,7 @@ var remoteEntries = map[string]string{
 	"url":        `{"mcpServers": {"murmur": {"url": "https://example.com/mcp"}, "docs": {"command": "docs-mcp"}}}`,
 	"http":       `{"mcpServers": {"murmur": {"type": "http", "url": "https://example.com/mcp", "headers": {"A": "b"}}}}`,
 	"streamable": `{"mcpServers": {"murmur": {"type": "streamable-http", "command": "x"}}}`,
+	"jsonc":      "{\n  // mine\n  \"mcpServers\": {\"murmur\": {\"url\": \"https://example.com/mcp\",},},\n}\n",
 }
 
 func TestCursorJoinLeavesARemoteEntryAlone(t *testing.T) {
@@ -34,6 +35,9 @@ func TestCursorJoinLeavesARemoteEntryAlone(t *testing.T) {
 			}
 			if exists(sb.CursorConfig) || exists(ruleRecordPath(sb.CursorConfig)) {
 				t.Errorf("an approval was written for the remote server: did=%q\n%s", did, read(t, sb.CursorConfig))
+			}
+			if exists(filepath.Join(sb.CursorDir, "hooks.json")) {
+				t.Errorf("a hook was written beside the remote server: did=%q", did)
 			}
 			for _, d := range did {
 				if strings.Contains(d, "allowed") || strings.Contains(d, "registered") {
@@ -78,21 +82,28 @@ func TestKiroJoinLeavesARemoteEntryAlone(t *testing.T) {
 			if exists(perms) || exists(ruleRecordPath(perms)) {
 				t.Errorf("an approval was written for the remote server: did=%q\n%s", did, read(t, perms))
 			}
+			if exists(filepath.Join(sb.KiroHome, "hooks", kiroHookFile)) {
+				t.Errorf("a hook was written beside the remote server: did=%q", did)
+			}
 		})
 	}
 }
 
 // A local entry with its type spelled out is still Murmur's to set up.
 func TestAStdioEntryIsNotACollision(t *testing.T) {
-	sb := newSandbox(t, false)
-	h := withCursor(t, sb)
-	path := filepath.Join(sb.CursorDir, "mcp.json")
-	write(t, path, `{"mcpServers": {"murmur": {"type": "stdio", "command": "/old/mur", "env": {"A": "b"}}}}`)
-	if _, fresh, err := sb.registerCursorAt(h); err != nil || !fresh {
-		t.Fatalf("fresh=%v err=%v", fresh, err)
-	}
-	if entry := serverEntry(t, path); entry["command"] != sb.Exe || envOf(entry)["A"] != "b" {
-		t.Errorf("entry %v", entry)
+	for _, typ := range []string{`"stdio"`, `"STDIO"`, `""`, `null`} {
+		t.Run(typ, func(t *testing.T) {
+			sb := newSandbox(t, false)
+			h := withCursor(t, sb)
+			path := filepath.Join(sb.CursorDir, "mcp.json")
+			write(t, path, `{"mcpServers": {"murmur": {"type": `+typ+`, "command": "/old/mur", "env": {"A": "b"}}}}`)
+			if _, fresh, err := sb.registerCursorAt(h); err != nil || !fresh {
+				t.Fatalf("fresh=%v err=%v", fresh, err)
+			}
+			if entry := serverEntry(t, path); entry["command"] != sb.Exe || envOf(entry)["A"] != "b" {
+				t.Errorf("entry %v", entry)
+			}
+		})
 	}
 }
 

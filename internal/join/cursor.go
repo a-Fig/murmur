@@ -101,14 +101,18 @@ func (e Env) registerCursorAt(h agentHome) (did []string, fresh bool, err error)
 		fresh = true
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
 	}
+	// No hook or approval for a server that isn't registered: the name may be another server's, and
+	// the hook's messages would send the agent to it (#1213).
+	if serverFailed {
+		return did, fresh, errors.Join(errs...)
+	}
 	path = filepath.Join(h.Dir, "hooks.json")
 	if changed, err := setCursorHooks(path, agentHookCommand(e.Exe, "cursor")); err != nil {
 		errs = append(errs, fmt.Errorf("%w, so %s's hook wasn't added", err, brand.Product))
 	} else if changed {
 		did = append(did, h.Label+": added "+brand.Product+"'s hook, in every project ("+path+")")
 	}
-	// No approval for a server that isn't registered: the name may be another server's (#1213).
-	if path = cursorConfigFile(h); path != "" && !serverFailed {
+	if path = cursorConfigFile(h); path != "" {
 		if changed, err := allowCursorTools(path); err != nil {
 			errs = append(errs, fmt.Errorf("%w, so the allow rule wasn't added, and each of %s's tools asks before it runs", err, brand.Product))
 		} else if changed {
@@ -129,6 +133,9 @@ func (e Env) setCursorServer(path string) (bool, error) {
 		text = "{}\n"
 	}
 	out, changed, _, err := mergeMCPServer(text, e.Exe, cursorArgs)
+	if errors.Is(err, errRemoteServer) {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
 	if err != nil {
 		return false, fmt.Errorf("%s: %w, so the server wasn't added", path, err)
 	}

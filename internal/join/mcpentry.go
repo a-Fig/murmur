@@ -34,8 +34,13 @@ func isRemoteServer(entry map[string]any) bool {
 	if _, ok := entry["url"]; ok {
 		return true
 	}
+	// Cursor and Kiro read only url and type. A type left empty, or spelled in capitals, is stdio.
 	t, ok := entry["type"]
-	return ok && t != "stdio"
+	if !ok || t == nil {
+		return false
+	}
+	s, isString := t.(string)
+	return !isString || (s != "" && !strings.EqualFold(s, "stdio"))
 }
 
 // hasLocalServer says text has Murmur's entry, and it isn't a remote server.
