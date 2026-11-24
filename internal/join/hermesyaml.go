@@ -389,3 +389,180 @@ func removeYAMLPlugin(text, name string) (out string, changed bool, err error) {
 	}
 	return y.String(), true, nil
 }
+
+// grantKey is what lets a plugin start a turn in a Hermes session: plugins.entries.<plugin>.
+// allow_gateway_injection, which Hermes reads as true only when it is (plugins.md, "Injecting
+// Messages", read 2026-11-23). Murmur's plugin needs it to hand a session a message as a turn
+// (#1184).
+const grantKey = "allow_gateway_injection"
+
+// errGrantOff is a grant the user set to something other than true, which join leaves as it is.
+var errGrantOff = errors.New("it is set, to something other than true")
+
+// yamlTrue says a value YAML reads as true, as Hermes' loader (PyYAML, YAML 1.1) does.
+func yamlTrue(v string) bool {
+	switch v {
+	case "true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON":
+		return true
+	}
+	return false
+}
+
+// checkGrantPath refuses what the grant's path runs through that join can't edit as a mapping: a
+// block scalar anywhere in plugins (its lines may look like keys, or comments, and aren't), or a list
+// where one of the path's keys should hold keys.
+func checkGrantPath(y yamlLines, keys []yamlKey, ends []int, path []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	for i := keys[0].line + 1; i < ends[0]; i++ {
+		l := y.lines[i]
+		if blankOrComment(l) {
+			continue
+		}
+		t := strings.TrimSpace(l)
+		v := t
+		if m := yamlKeyLine.FindStringSubmatch(t); m != nil {
+			v = m[2]
+		} else if strings.HasPrefix(t, "- ") {
+			v = strings.TrimSpace(t[2:])
+		}
+		if strings.HasPrefix(v, "|") || strings.HasPrefix(v, ">") {
+			return yamlFormErr("line %d, in plugins, starts a block of text (| or >), which join doesn't edit around", i+1)
+		}
+	}
+	for i, k := range keys {
+		for j := k.line + 1; j < ends[i]; j++ {
+			if blankOrComment(y.lines[j]) {
+				continue
+			}
+			if t := strings.TrimSpace(y.lines[j]); t == "-" || strings.HasPrefix(t, "- ") {
+				return yamlFormErr("%s, on line %d, holds a list", strings.Join(path[:i+1], "."), k.line+1)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+// openBlock checks key k holds a block, or nothing yet, and makes a null or {} value the start of
+// one, keeping the line's comment.
+func openBlock(y *yamlLines, k yamlKey, name string) error {
+	switch {
+	case k.value == "":
+		return nil
+	case nullValueYML[k.value] || k.value == "{}":
+		line := y.lines[k.line]
+		head := line[:strings.Index(line, ":")+1]
+		y.lines[k.line] = strings.TrimRight(head+" "+k.comment, " ")
+		return nil
+	}
+	return yamlFormErr("%s, on line %d, isn't a block join can read", name, k.line+1)
+}
+
+// yamlPath finds the keys of path in y, each in the block of the one before: each key and where its
+// block ends, as far as they are there.
+func yamlPath(y yamlLines, path []string) (keys []yamlKey, ends []int, err error) {
+	from, to, ind := 0, len(y.lines), 0
+	for _, key := range path {
+		k, end, found, err := findKey(y, from, to, ind, key)
+		if err != nil || !found {
+			return keys, ends, err
+		}
+		keys, ends = append(keys, k), append(ends, end)
+		from, to = k.line+1, end
+		ind = childIndent(y, from, to, k.indent+2)
+	}
+	return keys, ends, nil
+}
+
+// addYAMLGrant sets plugins.entries.<name>.allow_gateway_injection to true in text, making each
+// block that isn't there. changed is false where it is true already. One set otherwise is the
+// user's, and is errGrantOff.
+func addYAMLGrant(text, name string) (out string, changed bool, err error) {
+	y := splitYAML(text)
+	if err := checkYAML(y); err != nil {
+		return text, false, err
+	}
+	path := []string{"plugins", "entries", name}
+	keys, ends, err := yamlPath(y, path)
+	if err == nil {
+		err = checkGrantPath(y, keys, ends, path)
+	}
+	if err != nil {
+		return text, false, err
+	}
+	for i, k := range keys {
+		if err := openBlock(&y, k, strings.Join(path[:i+1], ".")); err != nil {
+			return text, false, err
+		}
+	}
+	pad := func(n int) string { return strings.Repeat(" ", n) }
+	insert := func(at int, lines ...string) {
+		y.lines = append(y.lines[:at], append(lines, y.lines[at:]...)...)
+	}
+	if len(keys) == len(path) {
+		k, end := keys[len(keys)-1], ends[len(ends)-1]
+		ind := childIndent(y, k.line+1, end, k.indent+2)
+		g, _, found, err := findKey(y, k.line+1, end, ind, grantKey)
+		switch {
+		case err != nil:
+			return text, false, err
+		case found && yamlTrue(g.value):
+			return text, false, nil
+		case found:
+			return text, false, fmt.Errorf("plugins.entries.%s.%s, on line %d, %w", name, grantKey, g.line+1, errGrantOff)
+		}
+		insert(end, pad(ind)+grantKey+": true")
+		return y.String(), true, nil
+	}
+	// The keys from the first one missing, each in the block of the one before, then the grant.
+	at, ind := len(y.lines), 0
+	if n := len(keys); n > 0 {
+		k := keys[n-1]
+		at, ind = ends[n-1], childIndent(y, k.line+1, ends[n-1], k.indent+2)
+	} else if at > 0 && strings.TrimSpace(y.lines[at-1]) != "" {
+		y.lines = append(y.lines, "")
+		at++
+	}
+	var lines []string
+	for i, key := range path[len(keys):] {
+		lines = append(lines, pad(ind+2*i)+key+":")
+	}
+	lines = append(lines, pad(ind+2*(len(path)-len(keys)))+grantKey+": true")
+	insert(at, lines...)
+	return y.String(), true, nil
+}
+
+// removeYAMLGrant takes plugins.entries.<name>.allow_gateway_injection out of text where it is true,
+// as join sets it, and then each block of that path it left with nothing in it, unless the block's
+// line has a comment, which is the user's. One set otherwise is the user's, and stays; one the user
+// set to true before joining goes too, as nothing tells it from join's.
+func removeYAMLGrant(text, name string) (out string, changed bool, err error) {
+	y := splitYAML(text)
+	if err := checkYAML(y); err != nil {
+		return text, false, err
+	}
+	path := []string{"plugins", "entries", name, grantKey}
+	keys, ends, err := yamlPath(y, path)
+	if err == nil {
+		err = checkGrantPath(y, keys, ends, path)
+	}
+	if err != nil || len(keys) < len(path) || !yamlTrue(keys[len(keys)-1].value) {
+		return text, false, err
+	}
+	g := keys[len(keys)-1]
+	y.lines = append(y.lines[:g.line], y.lines[g.line+1:]...)
+	for depth := len(path) - 1; depth > 0; depth-- {
+		keys, ends, err := yamlPath(y, path[:depth])
+		if err != nil || len(keys) < depth {
+			break
+		}
+		k := keys[depth-1]
+		if ends[depth-1] != k.line+1 || k.value != "" || k.comment != "" {
+			break
+		}
+		y.lines = append(y.lines[:k.line], y.lines[k.line+1:]...)
+	}
+	return y.String(), true, nil
+}

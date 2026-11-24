@@ -150,7 +150,7 @@ func TestHermesJoinAndUninstall(t *testing.T) {
 	before := read(t, cfg)
 	for _, h := range hs {
 		did, fresh, err := sb.registerHermesAt(h)
-		if err != nil || !fresh || len(did) != 2 {
+		if err != nil || !fresh || len(did) != 3 {
 			t.Fatalf("%s: did=%q fresh=%v err=%v", h.Label, did, fresh, err)
 		}
 		init := read(t, filepath.Join(hermesPluginDir(h.Dir), "__init__.py"))
@@ -164,10 +164,11 @@ func TestHermesJoinAndUninstall(t *testing.T) {
 			t.Errorf("%s: skills in %q", h.Label, dir)
 		}
 	}
-	if got := read(t, cfg); got != "# my settings\nmodel:\n  default: stub\nplugins:\n  enabled:\n    - disk-cleanup\n    - murmur\n" {
+	grant := "  entries:\n    murmur:\n      allow_gateway_injection: true\n"
+	if got := read(t, cfg); got != "# my settings\nmodel:\n  default: stub\nplugins:\n  enabled:\n    - disk-cleanup\n    - murmur\n"+grant {
 		t.Errorf("config.yaml:\n%s", got)
 	}
-	if got := read(t, filepath.Join(hs[1].Dir, "config.yaml")); got != "plugins:\n  enabled:\n    - murmur\n" {
+	if got := read(t, filepath.Join(hs[1].Dir, "config.yaml")); got != "plugins:\n  enabled:\n    - murmur\n"+grant {
 		t.Errorf("the profile's config.yaml:\n%s", got)
 	}
 	for _, h := range hs {
@@ -191,6 +192,68 @@ func TestHermesJoinAndUninstall(t *testing.T) {
 	}
 	if got := read(t, cfg); got != before {
 		t.Errorf("config.yaml after uninstall:\n%s\nwant\n%s", got, before)
+	}
+}
+
+// Join lets the plugin start turns (plugins.entries.murmur.allow_gateway_injection, #1184), adding
+// only what is missing and keeping the rest of the file as it was, and uninstall takes out what join
+// added, and the blocks it left empty.
+func TestHermesGrantRoundTrips(t *testing.T) {
+	g := "allow_gateway_injection: true"
+	for _, c := range []struct{ name, in, out, back string }{
+		{"no file", "", "plugins:\n  entries:\n    murmur:\n      " + g + "\n", ""},
+		{"plugins without entries", "plugins:\n  enabled: [murmur]\n",
+			"plugins:\n  enabled: [murmur]\n  entries:\n    murmur:\n      " + g + "\n", "plugins:\n  enabled: [murmur]\n"},
+		{"another plugin's entry", "plugins:\n  enabled:\n  - murmur\n  entries:\n    other:\n      x: 1 # theirs\nmodel: m\n",
+			"plugins:\n  enabled:\n  - murmur\n  entries:\n    other:\n      x: 1 # theirs\n    murmur:\n      " + g + "\nmodel: m\n",
+			"plugins:\n  enabled:\n  - murmur\n  entries:\n    other:\n      x: 1 # theirs\nmodel: m\n"},
+		{"murmur's entry with a setting of the user's", "plugins:\n    entries:\n        murmur:\n            level: 2  # mine\n",
+			"plugins:\n    entries:\n        murmur:\n            level: 2  # mine\n            " + g + "\n",
+			"plugins:\n    entries:\n        murmur:\n            level: 2  # mine\n"},
+		{"null entries", "plugins:\n  entries: ~ # none yet\n", "plugins:\n  entries: # none yet\n    murmur:\n      " + g + "\n",
+			"plugins:\n  entries: # none yet\n"},
+		// A block left empty goes, unless its line has a comment, which is the user's.
+		{"empty entries", "plugins:\n  entries: {}\n", "plugins:\n  entries:\n    murmur:\n      " + g + "\n", ""},
+		{"CRLF", "plugins:\r\n  enabled: [murmur]\r\n", "plugins:\r\n  enabled: [murmur]\r\n  entries:\r\n    murmur:\r\n      " + g + "\r\n",
+			"plugins:\r\n  enabled: [murmur]\r\n"},
+	} {
+		got, changed, err := addYAMLGrant(c.in, "murmur")
+		if err != nil || !changed || got != c.out {
+			t.Errorf("%s: add gave %q, %v, %v; want %q", c.name, got, changed, err, c.out)
+			continue
+		}
+		if again, changed, err := addYAMLGrant(got, "murmur"); err != nil || changed || again != got {
+			t.Errorf("%s: a second add changed it to %q (%v)", c.name, again, err)
+		}
+		if back, changed, err := removeYAMLGrant(got, "murmur"); err != nil || !changed || back != c.back {
+			t.Errorf("%s: remove gave %q, %v, %v; want %q", c.name, back, changed, err, c.back)
+		}
+	}
+	// A grant the user turned off stays off, and join says so; one it can't read is left alone.
+	for _, in := range []string{
+		"plugins:\n  entries:\n    murmur:\n      allow_gateway_injection: false\n",
+		"plugins:\n  entries: {murmur: {allow_gateway_injection: true}}\n",
+		"plugins:\n  entries:\n    murmur: {level: 2}\n",
+		// A block of text: its lines aren't keys or comments, and the grant would go into it.
+		"plugins:\n  entries:\n    murmur:\n      note: |\n        text\n        # also text\n",
+		"plugins:\n  entries:\n    murmur:\n      note: >-\n        text\n",
+		// A list where the grant's mapping should be.
+		"plugins:\n  entries:\n    murmur:\n      - x\n",
+		"plugins:\n  entries:\n  - murmur\n",
+	} {
+		if got, changed, err := addYAMLGrant(in, "murmur"); err == nil || changed || got != in {
+			t.Errorf("%q: add gave %q, %v, %v; want it refused", in, got, changed, err)
+		}
+	}
+	if got, changed, err := removeYAMLGrant("plugins:\n  entries:\n    murmur:\n      allow_gateway_injection: false\n", "murmur"); err != nil || changed {
+		t.Errorf("removing a grant that is off gave %q, %v, %v", got, changed, err)
+	}
+	// YAML 1.1, which Hermes' loader reads, spells true as yes and on too.
+	for _, v := range []string{"yes", "On"} {
+		in := "plugins:\n  entries:\n    murmur:\n      allow_gateway_injection: " + v + "\n"
+		if got, changed, err := addYAMLGrant(in, "murmur"); err != nil || changed || got != in {
+			t.Errorf("%s: add gave %q, %v, %v; want it left as true", v, got, changed, err)
+		}
 	}
 }
 

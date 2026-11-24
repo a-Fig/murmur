@@ -40,6 +40,24 @@ type userMessage struct {
 	Content string `json:"content"`
 }
 
+// Answers says whether something accepts a connection at path, within Timeout or the context's end.
+// It writes nothing: the connection is closed at once. Murmur's Hermes plugin keeps a session's
+// socket for as long as Hermes can start a turn in the session, so the daemon asks this to know the
+// session is still open (#1184).
+func Answers(ctx context.Context, path string) bool {
+	if path == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	conn, err := dial(ctx, path)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // Send connects to the socket at path, authenticates with token and writes text as a user message.
 // It returns once the lines are written: the session is not asked whether it took them, as the
 // socket has no reply to ask for.

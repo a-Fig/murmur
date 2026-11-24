@@ -152,7 +152,13 @@ func main() {
 	case "hook":
 		// Never an error: a hook that fails would fail the agent's tool call. One it can't read
 		// does nothing.
-		if agent, event, ok := hookAgent(args); ok {
+		if agent, event, ok := hookAgent(args); ok && agent == hook.Hermes {
+			// It registers the session first (#1184). 3 tells Murmur's plugin, and only it, that it
+			// couldn't.
+			if !mcpserver.HermesHook(event, os.Stdin, os.Stdout) {
+				os.Exit(3)
+			}
+		} else if ok {
 			hook.RunForEvent(agent, event, os.Stdin, os.Stdout)
 		}
 	case "mcp":

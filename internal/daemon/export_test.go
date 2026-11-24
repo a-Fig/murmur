@@ -49,3 +49,10 @@ func SetCommandHold(idle, check time.Duration) func() {
 	wasIdle, wasCheck := commandIdle.Swap(int64(idle)), holdCheck.Swap(int64(check))
 	return func() { commandIdle.Store(wasIdle); holdCheck.Store(wasCheck) }
 }
+
+// SetSocketIdle sets how long a session whose plugin's socket answers is held idle (socketIdle), and
+// returns what puts it back (#1184).
+func SetSocketIdle(idle time.Duration) func() {
+	was := socketIdle.Swap(int64(idle))
+	return func() { socketIdle.Store(was) }
+}
