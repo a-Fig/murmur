@@ -338,6 +338,14 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	}
 	recordLatest(o.GitDir, rel.Tag)
 	latest = strings.TrimPrefix(rel.Tag, "v")
+	// A release from before the hold would install this prerelease again wherever the channel
+	// still reads "prerelease" to it (#1212). Back refuses that; this is for an override made since,
+	// found before anything downloads, so a refused going back costs no download at each check.
+	if back && newer(holdAware, rel.Tag) {
+		if where, _ := unheld(ctx, o.GitDir, o.Version, false); where != "" {
+			return false, latest, fmt.Errorf("%s sets %s prerelease, which %s reads past the hold, so it would install %s again", where, channelKey, latest, o.Version)
+		}
+	}
 	if want != "" && !same(want, rel.Tag) {
 		return false, latest, fmt.Errorf("%w: %s is the release to install now, not %s", errNotAsked, latest, want)
 	}
@@ -404,14 +412,6 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if back {
 		if _, err = holdChannel(ctx, o.GitDir); err != nil {
 			return false, latest, err
-		}
-		// A release from before the hold would install this prerelease again wherever the
-		// channel still reads "prerelease" to it (#1212). Back refuses that; this is for an
-		// override made since.
-		if newer(holdAware, rel.Tag) {
-			if where := unheld(ctx, o.GitDir, o.Version); where != "" {
-				return false, latest, fmt.Errorf("%s sets %s prerelease, which %s reads past the hold, so it would install %s again", where, channelKey, latest, o.Version)
-			}
 		}
 		// The record of going back goes in before the swap, so that a kill after it can't lose it
 		// and cost another trip (#1212); a swap that fails takes it out again. A kill between the

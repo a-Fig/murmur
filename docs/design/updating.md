@@ -137,7 +137,10 @@ information in the request; a network failure waits quietly for the next hour. A
     it writes nothing and names it, to be taken out. The updater looks again before it goes back
     to a release from before v0.5.4, for an override made since, and the page then says why it
     can't go back. From a later prerelease Back doesn't look: the stable release gone back to
-    knows the hold, wherever the channel is set.
+    knows the hold, wherever the channel is set. Back judges by the version running, not knowing
+    the release it will land on, so from a 0.5.4 prerelease after v0.5.4 is out it refuses all the
+    same; the updater, which knows, doesn't. It looks before it writes anything, since a hold
+    written during the look would leave the channel held with nothing held back.
   - *At most once per install.* What the look can't see (a clone not on the record, a person on
     v0.5.3 setting `prerelease` again) still sends v0.5.3 to the nightly. So the updater records
     each install that goes back from the prerelease in the hold (`murmur.updateBack`, the version

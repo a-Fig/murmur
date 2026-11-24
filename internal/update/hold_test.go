@@ -70,7 +70,7 @@ func TestBackRefusesAChannelV053WouldStillRead(t *testing.T) {
 	const bad = "0.5.4-nightly.20261123"
 	gitConfig(t, "--file", path, "murmur.channel", "prerelease")
 	gitConfig(t, "--file", filepath.Join(gitDir, "config"), "murmur.channel", "prerelease")
-	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil || !strings.Contains(err.Error(), "this repo's git config sets murmur.channel prerelease") {
+	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil || !strings.Contains(err.Error(), "this repo's git config sets murmur.channel prerelease") || !strings.Contains(err.Error(), "git config --unset murmur.channel") {
 		t.Fatalf("Back: %v", err)
 	}
 	if ch, skip := globalValues(path, "murmur.channel"), globalValues(path, "murmur.updateSkip"); ch != "prerelease" || skip != "" {
@@ -91,8 +91,23 @@ func TestBackRefusesAChannelV053WouldStillRead(t *testing.T) {
 	if err := clones.Add(dir, clones.Clone{GitDir: other}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil || !strings.Contains(err.Error(), other) {
+	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "take it out there") {
 		t.Fatalf("Back with another clone's prerelease: %v", err)
+	}
+	if ch, skip := globalValues(path, "murmur.channel"), globalValues(path, "murmur.updateSkip"); ch != "prerelease" || skip != "" {
+		t.Fatalf("a refused Back wrote: channel %q, hold %q", ch, skip)
+	}
+
+	// An include of the global file, which shows only once the file itself is held: refused, and
+	// both writes taken out again.
+	t.Setenv(clones.DirEnv, t.TempDir())
+	included := filepath.Join(t.TempDir(), "more")
+	gitConfig(t, "--file", included, "murmur.channel", "prerelease")
+	gitConfig(t, "--file", path, "--unset-all", "murmur.channel")
+	gitConfig(t, "--file", path, "murmur.channel", "prerelease")
+	gitConfig(t, "--file", path, "include.path", included)
+	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil || !strings.Contains(err.Error(), "another global git config file") {
+		t.Fatalf("Back with an include: %v", err)
 	}
 	if ch, skip := globalValues(path, "murmur.channel"), globalValues(path, "murmur.updateSkip"); ch != "prerelease" || skip != "" {
 		t.Fatalf("a refused Back wrote: channel %q, hold %q", ch, skip)
@@ -119,9 +134,20 @@ func TestGoingBackRefusesAnOverrideMadeSince(t *testing.T) {
 	os.WriteFile(exe, []byte("old"), 0o755)
 	original, _ := Identity(exe)
 	o := Options{Version: bad, GitDir: gitDir, Executable: exe, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(), Getenv: noEnv, Log: log.New(io.Discard, "", 0)}
+	var downloads int
+	inner := srv.Config.Handler
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/binary/") {
+			downloads++
+		}
+		inner.ServeHTTP(w, r)
+	})
 	done, _, err := attempt(ctx, o, original)
 	if b, _ := os.ReadFile(exe); done || string(b) != "old" || err == nil || !strings.Contains(err.Error(), "this repo's git config") {
 		t.Fatalf("installed %q, err %v", b, err)
+	}
+	if downloads != 0 {
+		t.Errorf("downloaded %d times for a going back it refuses", downloads)
 	}
 	if rec := globalValues(path, "murmur.updateBack"); rec != "" {
 		t.Errorf("recorded %q", rec)
