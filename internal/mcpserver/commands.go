@@ -310,6 +310,11 @@ func registerCommand(ctx context.Context, place join.Place, h proto.Hello) (func
 		conn, resp, err := c.Hello(hctx, h)
 		cancel()
 		if err != nil {
+			// A daemon kept as older (#1197) refuses what it doesn't know, such as a hello keyed by
+			// Native (`mur tool`): why it was kept says more than its refusal.
+			if why := c.Kept(); why != "" {
+				return "", fmt.Errorf("not registered with the %s daemon: %s", brand.Product, why)
+			}
 			return "", fmt.Errorf("not registered with the %s daemon: %w", brand.Product, err)
 		}
 		conn.Close()
