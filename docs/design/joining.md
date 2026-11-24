@@ -118,7 +118,7 @@ Everything it writes is outside the repo's tracked files:
   before join, or that an older mur added without a record, stays, with a note. A `murmur` entry
   that is a remote server (a `url`, or a `type` other than `stdio`) is a collision (#1213): join
   refuses it before editing the file or writing any allow rule, and says so; uninstall leaves it. Cursor
-  also writes no allow rule when its server couldn't be registered. Join and uninstall in
+  also writes no hook or allow rule when its server couldn't be registered, for any reason. Join and uninstall in
   a scratch home also refuse a home whose `mcp.json`, `hooks.json`, permissions file, record or
   skills are links to files outside the temporary folder (#995).
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
