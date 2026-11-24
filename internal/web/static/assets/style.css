@@ -1810,6 +1810,39 @@ a.g-pr:hover {
     opacity 0.1s var(--ease),
     transform 0.1s var(--ease);
 }
+/* The Star button's pleading ghost, at the end of a line of its tip: a little over the text's
+   height, swaying a little unless motion is reduced. */
+.beg-ghost {
+  display: inline-block;
+  width: 1.5em;
+  height: 1.5em;
+  margin: -0.25em 0 -0.25em 0.25em;
+  vertical-align: -0.4375em;
+  transform-origin: 50% 90%;
+  animation: beg-sway 1.8s ease-in-out infinite;
+}
+.beg-ghost .beg-hi {
+  fill: var(--foreground);
+}
+.beg-ghost .beg-line {
+  fill: none;
+  stroke: var(--foreground);
+  stroke-linecap: round;
+}
+@keyframes beg-sway {
+  0%,
+  100% {
+    rotate: -5deg;
+  }
+  50% {
+    rotate: 5deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .beg-ghost {
+    animation: none;
+  }
+}
 .tip[data-side="bottom"] {
   transform: translateY(-2px);
 }
