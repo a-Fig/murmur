@@ -565,3 +565,48 @@ func TestAPiSessionBackOnItsFileKeepsItsIDAfterPiFilesIsLost(t *testing.T) {
 	}
 	b.nameIs(again, nameA)
 }
+
+// A Pi that came back to its file while another Pi held the file's key is named under the key
+// with its ID after it (uniqueKeyLocked). That name is the file's too: started again on the file,
+// it keeps its ID and what it kept, rather than taking a fresh ID each time (Opus's review of
+// cfa13f91).
+func TestAPiNamedUnderItsFilesSuffixedKeyKeepsItsID(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
+	stopped := func(addr string, n int) {
+		t.Helper()
+		eventually(t, addr+" to stop", func() bool { return busLines(b, addr, "stopped") == n })
+	}
+	x, conn := b.piStart(piFileA, "", procP)
+	alpha := b.named(x)
+	// A second Pi on the file finds its ID in use and takes another.
+	c2, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: "f0f0f0", Agent: "pi",
+		ClientPID: procQ, TakesSelf: true, Route: proto.Route{Native: piFileA}})
+	if err != nil {
+		t.Fatalf("the second Pi: %v", err)
+	}
+	r := resp.Self
+	b.nameHeld(r, alpha)
+	conn.Close()
+	stopped(x, 1)
+	// The second Pi reloads, and takes the file's key and name.
+	c2.Close()
+	if again, _ := b.piAgain(piFileA, "", procQ); again != r {
+		t.Fatalf("the second Pi's reload is at %s, not %s", again, r)
+	}
+	b.nameIs(r, alpha)
+	// The first Pi starts again: its ID, and a name of its own under the file's key with its ID.
+	back, conn := b.piAgain(piFileA, "", procP+1)
+	if back != x {
+		t.Fatalf("the first Pi started again at %s, not %s", back, x)
+	}
+	delta := b.nameHeld(x, alpha)
+	conn.Close()
+	stopped(x, 2)
+	again, _ := b.piAgain(piFileA, "", procP+2)
+	if again != x {
+		t.Fatalf("the first Pi started a third time at %s, not %s", again, x)
+	}
+	b.nameIs(x, delta)
+}

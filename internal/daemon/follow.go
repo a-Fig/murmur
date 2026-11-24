@@ -411,20 +411,24 @@ func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
 	if t3Thread == "" && h.T3CLI != "" {
 		t3Thread = d.st.T3Routes[id].Thread
 	}
-	fileName := d.st.NameKeys[nameKey(t3Thread, "", h.Native, id)]
+	// The file's names: its key's, and the one its session at id has under that key with id after
+	// it (uniqueKeyLocked), as a Pi that came back to the file while another Pi held its key does.
+	base := nameKey(t3Thread, "", h.Native, id)
+	fileName, ownName := d.st.NameKeys[base], d.st.NameKeys[base+"/"+id]
+	isFiles := func(name string) bool { return name == fileName || ownName != "" && name == ownName }
 	// The session's last name settles it when it is known: a conversation that moved off the file
 	// and back (/new, then /resume) has its own earlier names at this address in Used too, and is
 	// still this file's. SessionNames outlives a pool name's move, as it is kept while Used has the
 	// name at this address (pruneSessionNamesLocked); only once it is gone do Used's names decide.
 	if last := d.st.SessionNames[id]; last != "" {
-		return last != fileName
+		return !isFiles(last)
 	}
-	if kept := d.keptForLocked(id); kept != "" && kept != fileName {
+	if kept := d.keptForLocked(id); kept != "" && !isFiles(kept) {
 		return true
 	}
 	addr := bus.Addr(d.device, id)
 	for name, a := range d.st.Used {
-		if a == addr && name != fileName {
+		if a == addr && !isFiles(name) {
 			return true
 		}
 	}

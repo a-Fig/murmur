@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"log"
 	"testing"
 	"time"
@@ -197,4 +198,72 @@ func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
 			t.Fatalf("got %q, want %q", got, id1)
 		}
 	})
+}
+
+// A Pi session that moved to a new file asks for that file's name, and may stop before the name
+// lands (an empty pool, a slow remote). The name is then still its last, as if it had landed in
+// time: kept under the name of the file it left, what it had was for that file's next session, and
+// once PiFiles was lost a Pi on that file took its ID again (Opus's review of cfa13f91). A session
+// that has taken another name since it asked keeps that one.
+func TestANameLandingAfterAPiSessionStoppedIsItsLast(t *testing.T) {
+	t.Parallel()
+	const (
+		file1 = "/s/f1.jsonl"
+		file2 = "/s/f2.jsonl"
+		alpha = "calm-otter"
+	)
+	for _, since := range []string{"", "brisk-finch"} {
+		name := "no name since"
+		if since != "" {
+			name = "a name since"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			d, _ := namedDaemon(t)
+			id := proto.NativeID(file1)
+			d.mu.Lock()
+			d.st.NameKeys[nameKey("", "", file1, id)] = alpha
+			if d.st.SessionNames == nil {
+				d.st.SessionNames = map[string]string{}
+			}
+			d.st.SessionNames[id] = alpha
+			d.st.Used[alpha] = bus.Addr(d.device, id)
+			d.st.Stopped[id] = time.Now()
+			if since != "" {
+				d.st.SessionNames[id] = since // taken after it asked
+			}
+			d.mu.Unlock()
+
+			key := nameKey("", "", file2, id)
+			w := nameWork{wants: []wanted{{id: id, key: key, agent: "pi", last: alpha}}}
+			if err := d.pushNames(context.Background(), w); err != nil {
+				t.Fatal(err)
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			beta := d.st.NameKeys[key]
+			if beta == "" {
+				t.Fatalf("no name landed for %s", key)
+			}
+			want := beta
+			if since != "" {
+				want = since
+			}
+			if got := d.st.SessionNames[id]; got != want {
+				t.Fatalf("the stopped session's last name is %q, want %q", got, want)
+			}
+			if since != "" {
+				return
+			}
+			if d.st.NameHolders[beta] != id {
+				t.Errorf("%s's holder is %q, want %q", beta, d.st.NameHolders[beta], id)
+			}
+			// With PiFiles lost, a Pi on the file the session left doesn't take its ID.
+			got, _ := d.piIDLocked(&proto.Hello{ID: id, Agent: "pi", ClientPID: 200, TakesSelf: true,
+				Route: proto.Route{Native: file1}})
+			if got == id || got == "" {
+				t.Fatalf("Pi on the file left got %q, want a fresh ID", got)
+			}
+		})
+	}
 }

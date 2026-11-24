@@ -577,8 +577,10 @@ func (d *Daemon) nameLoop(ctx context.Context) {
 
 // wanted is a session that needs a name, and has no pool to take one from. alias is its
 // conversation's Claude session key when key is a T3 thread's, so the name is shared even if the
-// session stops before the push lands (#874).
-type wanted struct{ id, key, agent, alias string }
+// session stops before the push lands (#874). last is the session's last name when it asked
+// (SessionNames), so a name landing after the session has stopped is recorded as its last only if
+// it has taken none since (noteStoppedNameLocked).
+type wanted struct{ id, key, agent, alias, last string }
 
 // pendingShare is a Claude Code conversation's (t3, claude) key pair seen by shareNameLocked while
 // both keys were unnamed and an assigner push was in flight (#874).
@@ -651,6 +653,33 @@ func (d *Daemon) nameForKeyLocked(s *session, key string) string {
 	d.kickNames() // to put the session in the registry, and fill the pool again
 	d.log.Printf("session %s is named %s, a name set aside for it", bus.Addr(d.device, id), name)
 	return name
+}
+
+// noteStoppedNameLocked records name, just landed for want s, as the last name of s's session,
+// which stopped while the name was pushed, as setNameLocked would have had it landed in time. A
+// Pi session that moved to a new file asks for that file's name, and one that stops first, its
+// Pi gone, was still recorded under the name of the file it left: what it kept was then for that
+// file's next session, and a Pi on that file, once PiFiles is lost, took its ID again
+// (piIDOtherLocked, Opus's review of cfa13f91). Only if it has taken no name since it asked, and
+// the name's holder isn't another session's already. Caller holds mu.
+func (d *Daemon) noteStoppedNameLocked(s wanted, name string) {
+	if d.st.SessionNames[s.id] != s.last {
+		return
+	}
+	if d.st.SessionNames == nil {
+		d.st.SessionNames = map[string]string{}
+	}
+	if d.st.NameHolders == nil {
+		d.st.NameHolders = map[string]string{}
+	}
+	if d.st.NamesSeen == nil {
+		d.st.NamesSeen = map[string]time.Time{}
+	}
+	d.st.SessionNames[s.id] = name
+	d.st.NamesSeen[s.id] = time.Now().UTC().Truncate(time.Hour)
+	if d.st.NameHolders[name] == "" {
+		d.st.NameHolders[name] = s.id
+	}
 }
 
 // givePoolLocked gives names from the pool to the sessions that have none, which started while the
@@ -730,7 +759,7 @@ func (d *Daemon) nextNames() nameWork {
 		if alias != "" {
 			keys[alias] = true
 		}
-		w.wants = append(w.wants, wanted{id: s.id, key: s.key, agent: s.agent, alias: alias})
+		w.wants = append(w.wants, wanted{id: s.id, key: s.key, agent: s.agent, alias: alias, last: d.st.SessionNames[s.id]})
 	}
 	d.assigning = len(w.wants) > 0
 	for _, name := range sortedKeys(d.st.NameBinds) {
@@ -981,6 +1010,8 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		name := given[i]
 		if o := d.sessions[s.id]; o != nil && o.name == "" && d.st.NameKeys[o.key] == name {
 			d.setNameLocked(o, name)
+		} else if o == nil && d.st.NameKeys[s.key] == name {
+			d.noteStoppedNameLocked(s, name)
 		}
 	}
 	for _, name := range person {
