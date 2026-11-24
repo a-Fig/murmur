@@ -94,6 +94,13 @@ say("no grant:", json.dumps(["MURMUR_HERMES_SOCKET" in env, m._socket_of("local-
 # Nor before it has the session's key, which it would need to put a message in.
 env = m._env(ctx, "local-4", sys.argv[2])
 say("no key:", json.dumps(["MURMUR_HERMES_SOCKET" in env, m._socket_of("local-4")[0]]))
+# A new socket is said to be new on each run, a tool call's included, until a hook has run with it.
+m._keys["local-5"] = "agent:main:local:dm:local-5"
+flags = [bool(m._env(ctx, "local-5", sys.argv[2]).get("MURMUR_HERMES_NEW_SOCKET")) for _ in range(2)]
+m._announced("local-5", m._env(ctx, "local-5", sys.argv[2]))
+flags.append(bool(m._env(ctx, "local-5", sys.argv[2]).get("MURMUR_HERMES_NEW_SOCKET")))
+m._close_socket("local-5")
+say("new until a hook:", json.dumps(flags))
 `
 
 // hermesDeliverStandIn is the mur the plugin runs: it records each hook's event, session, call and
@@ -225,6 +232,9 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 	}
 	if v := next("no key:"); v != "[false, null]" {
 		t.Errorf("without the session's key, [a socket in the hook's env, the session's socket]: %s", v)
+	}
+	if v := next("new until a hook:"); v != "[true, true, false]" {
+		t.Errorf("a new socket said to be new [on its first run, its second, after a hook]: %s", v)
 	}
 
 	// What mur was asked: each hook as `mur hook --agent hermes`, with the session's socket; the

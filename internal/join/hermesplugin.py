@@ -100,6 +100,9 @@ class _Socket:
     def __init__(self, ctx, sid):
         self.ctx, self.sid, self.token = ctx, sid, secrets.token_hex(16)
         self.closed = False
+        # Whether a hook has run with this socket new, which registers it with the daemon. A tool
+        # call that never reaches the daemon doesn't, so each run says it is new until a hook has.
+        self.announced = False
         if os.name == "nt":
             from multiprocessing.connection import Listener
             self.addr = "\\\\.\\pipe\\{{server}}-hermes-" + secrets.token_hex(8)
@@ -288,12 +291,21 @@ def _env(ctx, sid, cwd):
     with _lock:
         keyed = sid in _keys
     if keyed and _joined(cwd) and _can_inject(ctx):
-        s, new = _open_socket(ctx, sid)
+        s, _ = _open_socket(ctx, sid)
         if s:
             env["{{socketEnv}}"], env["{{tokenEnv}}"] = s.addr, s.token
-            if new:  # so `{{command}} hook` tells the daemon of it, as it does only now and then
+            if not s.announced:  # so `{{command}} hook` tells the daemon of it, as it does only now and then
                 env["{{newSocketEnv}}"] = "1"
     return env
+
+
+def _announced(sid, env):
+    """Notes that a hook ran with the session's socket new, as env gave it."""
+    if env.get("{{newSocketEnv}}"):
+        with _lock:
+            s = _sockets.get(sid)
+            if s and s.addr == env.get("{{socketEnv}}"):
+                s.announced = True
 
 
 def _error(text):
@@ -341,7 +353,9 @@ def _hook(ctx, session_id, event, **fields):
     _note_key(sid)
     payload = dict(fields, session_id=sid, hook_event_name=event, cwd=cwd)
     try:
-        p = _run(["hook", "--agent", "hermes"], json.dumps(payload), cwd, _env(ctx, sid, cwd), timeout=25)
+        env = _env(ctx, sid, cwd)
+        p = _run(["hook", "--agent", "hermes"], json.dumps(payload), cwd, env, timeout=25)
+        _announced(sid, env)
         out = p.stdout.strip()
         return json.loads(out) if out else None
     except Exception as e:
