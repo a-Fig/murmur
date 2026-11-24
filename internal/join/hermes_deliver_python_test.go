@@ -100,6 +100,11 @@ flags = [bool(m._env(ctx, "local-5", sys.argv[2]).get("MURMUR_HERMES_NEW_SOCKET"
 m._announced("local-5", m._env(ctx, "local-5", sys.argv[2]))
 flags.append(bool(m._env(ctx, "local-5", sys.argv[2]).get("MURMUR_HERMES_NEW_SOCKET")))
 m._close_socket("local-5")
+# A hook that couldn't register the session (mur exits 3) leaves the socket new for the next run.
+KEY[0] = "agent:main:local:dm:local-6"
+h["pre_llm_call"](session_id="local-6", user_message="FAIL", platform="cli")
+flags.append(bool(m._env(ctx, "local-6", sys.argv[2]).get("MURMUR_HERMES_NEW_SOCKET")))
+m._close_socket("local-6")
 say("new until a hook:", json.dumps(flags))
 `
 
@@ -117,6 +122,8 @@ with open(sys.argv[1], "a", encoding="utf-8") as f:
         "call": p.get("tool_use_id"), "tool": p.get("tool_name"), "prompt": p.get("prompt"), "cwd": os.path.basename(p.get("cwd") or ""),
         "interrupted": p.get("interrupted"), "socket": bool(os.environ.get("MURMUR_HERMES_SOCKET")),
         "token": bool(os.environ.get("MURMUR_HERMES_TOKEN")), "new": bool(os.environ.get("MURMUR_HERMES_NEW_SOCKET"))}) + "\n")
+if p.get("prompt") == "FAIL":
+    sys.exit(3)  # as mur hook does when it couldn't register the session
 ev = p.get("hook_event_name")
 if ev in ("UserPromptSubmit", "PostToolUse"):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": ev, "additionalContext": "NOTICE " + ev}}))
@@ -233,8 +240,8 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 	if v := next("no key:"); v != "[false, null]" {
 		t.Errorf("without the session's key, [a socket in the hook's env, the session's socket]: %s", v)
 	}
-	if v := next("new until a hook:"); v != "[true, true, false]" {
-		t.Errorf("a new socket said to be new [on its first run, its second, after a hook]: %s", v)
+	if v := next("new until a hook:"); v != "[true, true, false, true]" {
+		t.Errorf("a new socket said to be new [on its first run, its second, after a hook, after a hook that couldn't register]: %s", v)
 	}
 
 	// What mur was asked: each hook as `mur hook --agent hermes`, with the session's socket; the
@@ -248,6 +255,7 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": null, "tool": "read_file", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
 		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": false, "socket": true, "token": true, "new": false}`,
 		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": true, "socket": true, "token": true, "new": false}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-6", "call": null, "tool": null, "prompt": "FAIL", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": true}`,
 	}
 	if rec != strings.Join(want, "\n") {
 		t.Errorf("mur was asked:\n%s\nwant\n%s", rec, strings.Join(want, "\n"))

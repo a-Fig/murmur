@@ -236,16 +236,18 @@ func HermesHook(event string, stdin io.Reader, stdout io.Writer) (registered boo
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hermesHookRegister)
 	defer cancel()
+	registered = false // until it has: a panic in between says it couldn't
 	place, err := join.Locate(ctx, p.Cwd)
 	if err != nil {
-		return false
-	}
-	if !place.Joined() {
 		return
 	}
-	if _, err := registerCommand(ctx, place, hermesHello(p.SessionID, p.Cwd)); err != nil {
-		return false
+	if !place.Joined() {
+		return true
 	}
+	if _, err := registerCommand(ctx, place, hermesHello(p.SessionID, p.Cwd)); err != nil {
+		return
+	}
+	registered = true
 	hook.RunForEvent(hook.Hermes, event, bytes.NewReader(b), stdout)
 	return
 }
