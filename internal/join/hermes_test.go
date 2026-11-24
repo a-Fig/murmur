@@ -234,6 +234,12 @@ func TestHermesGrantRoundTrips(t *testing.T) {
 		"plugins:\n  entries:\n    murmur:\n      allow_gateway_injection: false\n",
 		"plugins:\n  entries: {murmur: {allow_gateway_injection: true}}\n",
 		"plugins:\n  entries:\n    murmur: {level: 2}\n",
+		// A block of text: its lines aren't keys or comments, and the grant would go into it.
+		"plugins:\n  entries:\n    murmur:\n      note: |\n        text\n        # also text\n",
+		"plugins:\n  entries:\n    murmur:\n      note: >-\n        text\n",
+		// A list where the grant's mapping should be.
+		"plugins:\n  entries:\n    murmur:\n      - x\n",
+		"plugins:\n  entries:\n  - murmur\n",
 	} {
 		if got, changed, err := addYAMLGrant(in, "murmur"); err == nil || changed || got != in {
 			t.Errorf("%q: add gave %q, %v, %v; want it refused", in, got, changed, err)
@@ -241,6 +247,13 @@ func TestHermesGrantRoundTrips(t *testing.T) {
 	}
 	if got, changed, err := removeYAMLGrant("plugins:\n  entries:\n    murmur:\n      allow_gateway_injection: false\n", "murmur"); err != nil || changed {
 		t.Errorf("removing a grant that is off gave %q, %v, %v", got, changed, err)
+	}
+	// YAML 1.1, which Hermes' loader reads, spells true as yes and on too.
+	for _, v := range []string{"yes", "On"} {
+		in := "plugins:\n  entries:\n    murmur:\n      allow_gateway_injection: " + v + "\n"
+		if got, changed, err := addYAMLGrant(in, "murmur"); err != nil || changed || got != in {
+			t.Errorf("%s: add gave %q, %v, %v; want it left as true", v, got, changed, err)
+		}
 	}
 }
 

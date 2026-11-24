@@ -62,9 +62,10 @@ import (
 //     OpenCode's model refused text in a file it had read (docs/design/clients.md); here it is after
 //     the tool's own output, under Murmur's [Murmur] line. pre_tool_call and it bracket a terminal
 //     call, so the daemon credits the session's commits.
-//   - on_session_end, at each turn's end, is Stop: what is unread goes back in with
-//     ctx.inject_message, which queues it as the session's next turn. An interrupted or failed
-//     turn keeps nothing going.
+//   - on_session_end, at each turn's end, is Stop, which keeps nothing going: putting what is
+//     unread in with ctx.inject_message could lose it, as Hermes may refuse it once the daemon has
+//     marked it read. It stays in the inbox, and the daemon hands it over through the socket once
+//     the session is idle, where a refusal loses nothing.
 //   - A socket the plugin opens for the session, a unix socket or on Windows a named pipe (Python
 //     has no unix sockets there), takes Claude Code's messaging-socket lines and puts each message
 //     in with inject_message: a turn of its own in an idle session. inject_message works for a
@@ -72,9 +73,11 @@ import (
 //     plugin keeps from the hooks (seen 2026-11-23: a oneshot session's key was refused once it had
 //     closed; an ACP session's still took a turn after its client went). The plugin closes the socket
 //     at on_session_finalize and on_session_delete, or when Hermes refuses a turn, and the daemon
-//     holds the session for as long as the socket answers (internal/daemon, socketHeld).
+//     holds the session for as long as the socket answers and it hasn't been idle for 8 hours
+//     (internal/daemon, socketHeld).
 //   - inject_message needs plugins.entries.murmur.allow_gateway_injection in config.yaml, which
-//     join sets and uninstall takes out (hermesyaml.go). Without it the session gets notices only.
+//     join sets and uninstall takes out (hermesyaml.go). Without it the plugin opens no socket, and
+//     the session gets notices only.
 //
 // Hermes runs plugins in-process with the user's credentials, as it does every plugin; Murmur's runs
 // `mur` and nothing else, and the grant lets it start a turn in a session of the user's own.

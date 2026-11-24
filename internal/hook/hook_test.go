@@ -807,7 +807,9 @@ func TestHermesHookNamesItsSessionAsMurToolDoes(t *testing.T) {
 	if !strings.Contains(out, `\"hi\"`) || !strings.Contains(out, "murmur_inbox") {
 		t.Errorf("PostToolUse printed %q", out)
 	}
-	if out := run(map[string]any{"hook_event_name": "Stop"}); !strings.Contains(out, `"decision":"block"`) {
+	// Its Stop keeps nothing going: the plugin would have to put the messages in with inject_message,
+	// which Hermes may refuse once the daemon has marked them read (#1184).
+	if out := run(map[string]any{"hook_event_name": "Stop"}); out != "" {
 		t.Errorf("Stop printed %q", out)
 	}
 	if out := run(map[string]any{"hook_event_name": "Stop", "interrupted": true}); out != "" {
@@ -821,6 +823,9 @@ func TestHermesHookNamesItsSessionAsMurToolDoes(t *testing.T) {
 		ops[r.Op]++
 		if r.Native != "hermes:local-1" || r.ClaudeSession != "" || r.ClientPID != 0 || r.Agent != "" {
 			t.Errorf("%s named its session %q, Claude %q, pid %d, agent %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Agent)
+		}
+		if r.Op == proto.OpTurnEnd && r.Continues {
+			t.Errorf("a turn's end asked to keep it going")
 		}
 		if (r.Op == proto.OpToolStart || r.Op == proto.OpToolEnd) && (r.ToolUseID != "call_1" || r.Cwd != repo) {
 			t.Errorf("%s: call %q in %q", r.Op, r.ToolUseID, r.Cwd)

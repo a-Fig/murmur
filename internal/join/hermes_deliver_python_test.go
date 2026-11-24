@@ -77,6 +77,19 @@ del injected[:]
 h["on_session_finalize"](session_id="local-1", platform="cli")
 say("finalized:", json.dumps(m._socket_of("local-1")))
 sys.stdin.readline()
+# A socket Hermes refuses a turn through closes only itself, not one the session opened after it.
+old = m._open_socket(ctx, "local-2")
+m._close_socket("local-2")
+new = m._open_socket(ctx, "local-2")
+m._keys["local-2"] = "agent:main:local:dm:local-2"
+old._inject("REFUSE this")
+say("stale refused:", json.dumps([m._socket_of("local-2")[0] == new.addr, old.closed, new.closed]))
+m._close_socket("local-2")
+# Where Hermes doesn't let the plugin start turns, it opens no socket for the session.
+ctx2 = Ctx(sys.argv[2])
+ctx2._gateway_injection_allowed = lambda: False
+env = m._env(ctx2, "local-3", sys.argv[2])
+say("no grant:", json.dumps(["MURMUR_HERMES_SOCKET" in env, m._socket_of("local-3")[0]]))
 `
 
 // hermesDeliverStandIn is the mur the plugin runs: it records each hook's event, session, call and
@@ -101,10 +114,11 @@ elif ev == "Stop" and not p.get("interrupted"):
 `
 
 // The plugin brings a Hermes session its messages as Claude Code's hook does (#1184): a notice as
-// context when a turn starts, a notice after a tool's result, what is unread at a turn's end as the
-// next turn, nothing for an interrupted turn or a subagent, a terminal call bracketed for commit
-// credit; and a socket for the session that takes Claude Code's messaging-socket lines, written by
-// Murmur's own client, until the session closes. Skipped where no Python is on PATH.
+// context when a turn starts, a notice after a tool's result, nothing put in at a turn's end (the
+// daemon hands what is unread through the socket instead), nothing for a subagent, a terminal call
+// bracketed for commit credit; and a socket for the session that takes Claude Code's messaging-socket
+// lines, written by Murmur's own client, until the session closes, where Hermes lets the plugin start
+// turns. Skipped where no Python is on PATH.
 func TestHermesPluginDeliversInPython(t *testing.T) {
 	py := hermesPython(t)
 	dir := t.TempDir()
@@ -162,7 +176,7 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 		"hooks":                "on_session_delete,on_session_end,on_session_finalize,pre_llm_call,pre_tool_call,transform_tool_result",
 		"start":                `{"context": "NOTICE UserPromptSubmit"}`,
 		"pre":                  "None",
-		"end injected":         `[["WHOLE AT THE END", "agent:main:local:dm:local-1"]]`,
+		"end injected":         "[]",
 		"interrupted injected": "[]",
 		"child start":          "null",
 	} {
@@ -199,6 +213,12 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 		t.Errorf("writing to a closed session's socket: %v, want it not to connect", err)
 	}
 	stdin.Write([]byte("done\n"))
+	if v := next("stale refused:"); v != "[true, true, false]" {
+		t.Errorf("after a refusal through an old socket, [the session keeps its new socket, the old is closed, the new is closed]: %s", v)
+	}
+	if v := next("no grant:"); v != "[false, null]" {
+		t.Errorf("without Hermes' grant, [a socket in the hook's env, the session's socket]: %s", v)
+	}
 
 	// What mur was asked: each hook as `mur hook --agent hermes`, with the session's socket; the
 	// terminal call bracketed and the other not; the interrupted end said so; nothing for the child.

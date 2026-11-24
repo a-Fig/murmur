@@ -399,8 +399,51 @@ const grantKey = "allow_gateway_injection"
 // errGrantOff is a grant the user set to something other than true, which join leaves as it is.
 var errGrantOff = errors.New("it is set, to something other than true")
 
-// yamlTrue says a value YAML reads as true, as Hermes' loader does.
-func yamlTrue(v string) bool { return v == "true" || v == "True" || v == "TRUE" }
+// yamlTrue says a value YAML reads as true, as Hermes' loader (PyYAML, YAML 1.1) does.
+func yamlTrue(v string) bool {
+	switch v {
+	case "true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON":
+		return true
+	}
+	return false
+}
+
+// checkGrantPath refuses what the grant's path runs through that join can't edit as a mapping: a
+// block scalar anywhere in plugins (its lines may look like keys, or comments, and aren't), or a list
+// where one of the path's keys should hold keys.
+func checkGrantPath(y yamlLines, keys []yamlKey, ends []int, path []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	for i := keys[0].line + 1; i < ends[0]; i++ {
+		l := y.lines[i]
+		if blankOrComment(l) {
+			continue
+		}
+		t := strings.TrimSpace(l)
+		v := t
+		if m := yamlKeyLine.FindStringSubmatch(t); m != nil {
+			v = m[2]
+		} else if strings.HasPrefix(t, "- ") {
+			v = strings.TrimSpace(t[2:])
+		}
+		if strings.HasPrefix(v, "|") || strings.HasPrefix(v, ">") {
+			return yamlFormErr("line %d is a block of text, in plugins", i+1)
+		}
+	}
+	for i, k := range keys {
+		for j := k.line + 1; j < ends[i]; j++ {
+			if blankOrComment(y.lines[j]) {
+				continue
+			}
+			if t := strings.TrimSpace(y.lines[j]); t == "-" || strings.HasPrefix(t, "- ") {
+				return yamlFormErr("%s, on line %d, holds a list", strings.Join(path[:i+1], "."), k.line+1)
+			}
+			break
+		}
+	}
+	return nil
+}
 
 // openBlock checks key k holds a block, or nothing yet, and makes a null or {} value the start of
 // one, keeping the line's comment.
@@ -443,6 +486,9 @@ func addYAMLGrant(text, name string) (out string, changed bool, err error) {
 	}
 	path := []string{"plugins", "entries", name}
 	keys, ends, err := yamlPath(y, path)
+	if err == nil {
+		err = checkGrantPath(y, keys, ends, path)
+	}
 	if err != nil {
 		return text, false, err
 	}
@@ -490,14 +536,18 @@ func addYAMLGrant(text, name string) (out string, changed bool, err error) {
 
 // removeYAMLGrant takes plugins.entries.<name>.allow_gateway_injection out of text where it is true,
 // as join sets it, and then each block of that path it left with nothing in it, unless the block's
-// line has a comment, which is the user's. One set otherwise is the user's, and stays.
+// line has a comment, which is the user's. One set otherwise is the user's, and stays; one the user
+// set to true before joining goes too, as nothing tells it from join's.
 func removeYAMLGrant(text, name string) (out string, changed bool, err error) {
 	y := splitYAML(text)
 	if err := checkYAML(y); err != nil {
 		return text, false, err
 	}
 	path := []string{"plugins", "entries", name, grantKey}
-	keys, _, err := yamlPath(y, path)
+	keys, ends, err := yamlPath(y, path)
+	if err == nil {
+		err = checkGrantPath(y, keys, ends, path)
+	}
 	if err != nil || len(keys) < len(path) || !yamlTrue(keys[len(keys)-1].value) {
 		return text, false, err
 	}

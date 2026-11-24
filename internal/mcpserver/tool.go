@@ -198,8 +198,9 @@ func hermesHello(id, cwd string) proto.Hello {
 }
 
 // HermesHook is `mur hook --agent hermes`, which Murmur's Hermes plugin runs as Hermes' hooks fire
-// (#1184). It registers the session its payload names, as `mur tool` does, so a session that has
-// called no tool yet is on the mesh and has its socket known, and then runs the hook for it. In a
+// (#1184). As a turn starts it registers the session its payload names, as `mur tool` does, so a
+// session that has called no tool yet is on the mesh and has its socket known; then, and for every
+// other hook, it runs the hook for it. In a
 // clone that hasn't joined it does nothing, and as any hook it never fails: what goes wrong means no
 // answer.
 func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
@@ -211,8 +212,16 @@ func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
 	var p struct {
 		SessionID string `json:"session_id"`
 		Cwd       string `json:"cwd"`
+		Event     string `json:"hook_event_name"`
 	}
 	if json.Unmarshal(b, &p) != nil || hermesSessionOK(p.SessionID) != nil || p.Cwd == "" {
+		return
+	}
+	// Registered as each turn starts, and by each `mur tool`: a hook for a tool call or a turn's end
+	// comes after both, so it doesn't spend the few git processes registering takes on every call.
+	// The plugin names the event in the payload; a hook command may name it instead.
+	if prompt := event == "UserPromptSubmit" || event == "" && p.Event == "UserPromptSubmit"; !prompt {
+		hook.RunForEvent(hook.Hermes, event, bytes.NewReader(b), stdout)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hermesHookRegister)

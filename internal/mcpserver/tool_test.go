@@ -183,6 +183,22 @@ func TestAHermesHookRegistersItsSessionFirst(t *testing.T) {
 	}
 }
 
+// A hook for a tool call asks the daemon as the hook does without registering the session again: the
+// turn's start and each `mur tool` did, and registering takes a few git processes.
+func TestAHermesToolCallsHookDoesntRegister(t *testing.T) {
+	f := &fakeDaemon{}
+	toolRepo(t, f)
+	cwd, _ := os.Getwd()
+	payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": "PostToolUse", "tool_name": "read_file", "cwd": cwd})
+	HermesHook("", strings.NewReader(string(payload)), io.Discard)
+	if n := f.helloCount(); n != 0 {
+		t.Errorf("%d hellos, want none", n)
+	}
+	if got := f.requestsOf(proto.OpNotices); len(got) != 1 || got[0].Native != "hermes:local-9" {
+		t.Errorf("notices requests %+v, want one for hermes:local-9", got)
+	}
+}
+
 // Outside a joined repo the hook registers nothing and asks nothing, as `mur tool` does.
 func TestAHermesHookOutsideAJoinedRepoDoesNothing(t *testing.T) {
 	f := &fakeDaemon{}

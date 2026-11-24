@@ -1,8 +1,8 @@
 # Written by `{{command}} join` ({{product}}, https://github.com/a-Fig/murmur). `{{command}} join` writes it again when {{command}} moves,
 # and {{command}} when it is updated, so edits here are lost; take this first line out to keep yours.
 # It gives each Hermes session {{product}}'s tools ({{server}}_who, {{server}}_send and the rest), and brings it its
-# messages: a notice as a turn starts and after a tool's result, what it hasn't read at a turn's end, and a
-# turn of its own when it is idle, through a socket it opens for the session. Each call runs `{{command}} tool`,
+# messages: a notice as a turn starts and after a tool's result, and a turn of its own when it is idle,
+# through a socket it opens for the session. Each call runs `{{command}} tool`,
 # and each hook `{{command}} hook`, with the session's ID and working directory.
 # `{{command}} uninstall` takes it out, or delete this folder and {{server}} from plugins.enabled and plugins.entries in config.yaml.
 """{{product}}'s tools and messages for Hermes Agent."""
@@ -178,15 +178,37 @@ class _Socket:
         with _lock:
             key = _keys.get(self.sid)
         ok = False
-        try:
-            ok = bool(key) and self.ctx.inject_message(text, role="user", session_key=key)
-        except Exception as e:
-            log.warning("{{product}}: couldn't put a message into Hermes session %s: %s", self.sid, e)
+        if not key:
+            log.warning("{{product}}: no key for Hermes session %s yet, so no turn for it; its socket closes", self.sid)
+        else:
+            try:
+                ok = self.ctx.inject_message(text, role="user", session_key=key)
+                if not ok:
+                    log.warning("{{product}}: Hermes refused a turn in session %s; its socket closes", self.sid)
+            except Exception as e:
+                log.warning("{{product}}: couldn't put a message into Hermes session %s; its socket closes: %s", self.sid, e)
         if not ok:
             # Hermes has no turn for the session (it closed without saying so): stop answering, so
             # the daemon ends the session and keeps what comes next for it.
-            log.warning("{{product}}: Hermes refused a turn in session %s; its socket closes", self.sid)
-            _close_socket(self.sid)
+            _close_socket(self.sid, self)
+
+    def _drain(self):
+        """Connects to each of the pipe's instances that waits for a connection, until none is left.
+        CreateFile fails at once on a busy pipe, where multiprocessing's Client would wait."""
+        import _winapi
+        for _ in range(16):
+            try:
+                h = _winapi.CreateFile(self.addr, _winapi.GENERIC_READ | _winapi.GENERIC_WRITE, 0,
+                                       _winapi.NULL, _winapi.OPEN_EXISTING, 0, _winapi.NULL)
+            except OSError:
+                return
+            _winapi.CloseHandle(h)
+
+    def _drain_later(self):
+        import time
+        for _ in range(5):
+            time.sleep(0.3)
+            self._drain()
 
     def close(self):
         self.closed = True
@@ -195,12 +217,11 @@ class _Socket:
                 self._ln.close()
             except Exception:
                 pass
-            # Its accept is waiting on a pipe of its own: a connection ends the wait, and the pipe.
-            try:
-                from multiprocessing.connection import Client
-                Client(self.addr, family="AF_PIPE").close()
-            except Exception:
-                pass
+            # Its accept may be waiting on a pipe instance the close didn't reach, or about to make one:
+            # connecting takes each until none is left, so nothing answers for the session after this.
+            # Once now, and a few times after, for an instance its accept makes as the close happens.
+            self._drain()
+            threading.Thread(target=self._drain_later, name="{{server}}-socket-close", daemon=True).start()
         else:
             for f in (lambda: os.unlink(self.addr), self._ln.close, lambda: os.rmdir(self._dir)):
                 try:
@@ -234,17 +255,34 @@ def _open_socket(ctx, sid):
     return s
 
 
-def _close_socket(sid):
+def _close_socket(sid, only=None):
+    """Closes the session's socket, or, given only, that socket if it is still the session's."""
     with _lock:
-        s = _sockets.pop(sid, None)
+        s = _sockets.get(sid)
+        if s is None or (only is not None and s is not only):
+            s = None
+        else:
+            del _sockets[sid]
     if s:
         s.close()
+    elif only is not None:
+        only.close()
+
+
+def _can_inject(ctx):
+    """Says Hermes lets this plugin start turns (plugins.entries.{{server}}.allow_gateway_injection).
+    Without it the plugin opens no socket, so the daemon keeps the session's messages for notices."""
+    try:
+        check = getattr(ctx, "_gateway_injection_allowed", None)
+        return bool(check()) if callable(check) else True
+    except Exception:
+        return True
 
 
 def _env(ctx, sid, cwd):
     env = dict(os.environ)
     env["{{sessionEnv}}"] = sid
-    if _joined(cwd):
+    if _joined(cwd) and _can_inject(ctx):
         s = _open_socket(ctx, sid)
         if s:
             env["{{socketEnv}}"], env["{{tokenEnv}}"] = s.addr, s.token
@@ -330,17 +368,9 @@ def _register_hooks(ctx):
         return result + "\n\n" + text
 
     def turn_end(session_id=None, completed=True, interrupted=False, failed=False, **_):
-        answer = _hook(ctx, session_id, "Stop", interrupted=bool(interrupted or failed))
-        reason = (answer or {}).get("reason") if (answer or {}).get("decision") == "block" else None
-        if not isinstance(reason, str) or not reason:
-            return
-        with _lock:
-            key = _keys.get(session_id)
-        try:
-            if not ctx.inject_message(reason, role="user", session_key=key):
-                log.warning("{{product}}: Hermes refused the messages for session %s as its next turn", session_id)
-        except Exception as e:
-            log.warning("{{product}}: couldn't give session %s its messages: %s", session_id, e)
+        # Tells the daemon the session is idle. What it hasn't read comes back through its socket as a
+        # turn, so nothing the daemon has marked read waits on an inject_message Hermes may refuse.
+        _hook(ctx, session_id, "Stop", interrupted=bool(interrupted or failed))
 
     def closed(session_id=None, old_session_id=None, deleted_ids=None, **_):
         for sid in [session_id, old_session_id, *(deleted_ids or [])]:

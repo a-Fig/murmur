@@ -20,9 +20,9 @@ import (
 //
 // `mur tool` and `mur hook`, which Murmur's Hermes plugin runs for each tool call and hook (#975,
 // #1184), register its session the same way, keyed by the session's own ID (proto.Route.Native) with
-// no thread. Its hold lasts for as long as the socket the plugin opened for it answers (socketHeld),
-// or where it names none, until the session has been idle for commandIdle, which with no T3 thread
-// to read is since its last call or hook.
+// no thread. Its hold lasts for as long as the socket the plugin opened for it answers (socketHeld)
+// and it hasn't been idle for socketIdle, or where it names none, until the session has been idle for
+// commandIdle. With no T3 thread to read, idle is since its last call or hook.
 //
 // Not held across a daemon restart: a restarted daemon has the session stopped, as it has any
 // session whose server didn't come back, and the next command registers it again.
@@ -31,6 +31,11 @@ import (
 // keeps an idle thread's provider running, and so its MCP server and session (docs/design/handoff.md,
 // "A thread that is idle"). Atomic, for tests: one sets it while a daemon's holds read it (#1189).
 var commandIdle = durationVar(30 * time.Minute)
+
+// socketIdle is how long a session whose plugin's socket still answers is held idle. Hermes keeps a
+// session live after its ACP client goes, for as long as the gateway runs, so the socket alone would
+// hold it for days; a day's work is about as long as a person leaves a session they will come back to.
+var socketIdle = durationVar(8 * time.Hour)
 
 // holdCheck is how often a held session's thread is looked at. Atomic, as commandIdle is.
 var holdCheck = durationVar(time.Minute)
@@ -109,8 +114,8 @@ func (d *Daemon) releaseHoldLocked(s *session, taken bool) {
 }
 
 // holdOverLocked says whether the thread of held session s is done with: settled in T3's database,
-// or idle for commandIdle. Caller holds mu.
-func (d *Daemon) holdOverLocked(s *session, now time.Time) bool {
+// or idle for longer than idle. Caller holds mu.
+func (d *Daemon) holdOverLocked(s *session, now time.Time, idle time.Duration) bool {
 	if st, ok := d.threadStateLocked(s.id); ok && st.Settled {
 		return true
 	}
@@ -118,14 +123,15 @@ func (d *Daemon) holdOverLocked(s *session, now time.Time) bool {
 	if busy {
 		return false
 	}
-	return now.Sub(later(since, s.started, s.lastActive)) > time.Duration(commandIdle.Load())
+	return now.Sub(later(since, s.started, s.lastActive)) > idle
 }
 
 // socketHeld says held session s is one `mur tool` or `mur hook` keyed by its own ID with a socket
 // its plugin opened for it (Hermes, #1184), and gives the socket. Such a session is held for as long
 // as the socket answers, however long it is idle: Hermes can start a turn in a session for as long
 // as a client has it open, and the plugin closes the socket when the session closes or Hermes
-// refuses it a turn. The gateway's going takes the socket with it. Caller holds mu.
+// refuses it a turn. The gateway's going takes the socket with it. socketIdle caps it. Caller holds
+// mu.
 func socketHeld(s *session) (string, bool) {
 	r := s.route
 	if !s.byCommand || r.T3Thread != "" || r.Native == "" || r.MsgSocket == "" || r.MsgToken == "" {
@@ -155,7 +161,11 @@ func (d *Daemon) waitHold(ctx context.Context, s *session, h *commandHold) bool 
 			if s.hold == h {
 				sock, bySocket = socketHeld(s)
 			}
-			over := s.hold == h && !bySocket && d.holdOverLocked(s, time.Now())
+			idle := time.Duration(commandIdle.Load())
+			if bySocket {
+				idle = time.Duration(socketIdle.Load())
+			}
+			over := s.hold == h && d.holdOverLocked(s, time.Now(), idle)
 			if over {
 				d.releaseHoldLocked(s, false)
 				d.log.Printf("session %s, which commands registered, is done with: it is idle, or its thread settled", s.id)
@@ -165,7 +175,7 @@ func (d *Daemon) waitHold(ctx context.Context, s *session, h *commandHold) bool 
 				return true
 			}
 			// Asked outside the lock: a socket answers at once, or not at all within msgsock's limit.
-			if bySocket && !msgsock.Answers(ctx, sock) {
+			if bySocket && !msgsock.Answers(ctx, sock) && ctx.Err() == nil {
 				d.mu.Lock()
 				gone := s.hold == h && s.route.MsgSocket == sock
 				if gone {

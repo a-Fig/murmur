@@ -48,8 +48,21 @@ func TestAHermesSessionIsHeldWhileItsSocketAnswers(t *testing.T) {
 	eventually(t, "the session to stop once its socket is gone", func() bool { return logHas(b, "/f1f1f1 stopped") })
 }
 
-// While a Hermes session works its message is a notice, at the end of its turn the message whole
-// keeps it going, and once it is idle a message goes in through the plugin's socket.
+// A session whose socket still answers ends once it has been idle for socketIdle: Hermes keeps a
+// session after its ACP client goes for as long as the gateway runs.
+func TestAHermesSessionIdleTooLongEndsThoughItsSocketAnswers(t *testing.T) {
+	defer daemon.SetCommandHold(time.Hour, 50*time.Millisecond)()
+	defer daemon.SetSocketIdle(400 * time.Millisecond)()
+	remote := newRemote(t)
+	sock := useFakeSocket(t)
+	b := newDeviceWith(t, remote, func(d *device) { d.grace = 100 * time.Millisecond })
+	hermesHello(t, b, "f4f4f4", "hermes:local-idle", sock, "tok-i")
+	eventually(t, "the idle session to stop", func() bool { return logHas(b, "/f4f4f4 stopped") })
+}
+
+// While a Hermes session works its message is a notice. The end of its turn keeps nothing going, as
+// the plugin couldn't put the messages in without a refusal losing them: what is unread goes in
+// through the plugin's socket once the session is idle, as does a message to it then.
 func TestAHermesSessionGetsNoticesWhileBusyAndTurnsWhenIdle(t *testing.T) {
 	t.Parallel()
 	remote := newRemote(t)
@@ -70,19 +83,22 @@ func TestAHermesSessionGetsNoticesWhileBusyAndTurnsWhenIdle(t *testing.T) {
 		t.Errorf("the notice: %+v", r.Messages)
 	}
 	holds(t, "nothing on the socket while it works", time.Second, func() bool { return len(sock.lines()) == 0 })
-	if got := b.piHook(proto.OpTurnEnd, native).Read; len(got) != 1 || got[0].Body != "the body" {
-		t.Fatalf("the end of its turn gave %+v", got)
+	// As `mur hook --agent hermes` ends a turn: it keeps nothing going.
+	if r := b.do(proto.Request{Op: proto.OpTurnEnd, Native: native}); r.Error != "" || len(r.Read) != 0 {
+		t.Fatalf("the end of its turn gave %+v", r)
 	}
-	if got := b.piHook(proto.OpTurnEnd, native).Read; len(got) != 0 { // the turn it kept going ends
-		t.Fatalf("the next end gave %v", viewSubjects(got))
+	eventually(t, "the unread message as a turn on the socket", func() bool { return len(sock.lines()) >= 2 })
+	// A Hermes session has Murmur's tools, though a command registered it: its turn says to answer
+	// with the send tool, not with #913's shell command.
+	turn := socketTurn(t, sock.lines()[:2], "tok-hermes")
+	if !strings.Contains(turn, "the body") || !strings.Contains(turn, "Murmur's `send`") || strings.Contains(turn, "mur send") {
+		t.Errorf("the turn:\n%s", turn)
 	}
 
 	b.send("aaaaaa", bob, "while idle", "wake up")
-	eventually(t, "the turn on the socket", func() bool { return len(sock.lines()) >= 2 })
-	// A Hermes session has Murmur's tools, though a command registered it: its turn says to answer
-	// with the send tool, not with #913's shell command.
-	if turn := socketTurn(t, sock.lines(), "tok-hermes"); !strings.Contains(turn, "Murmur's `send`") || strings.Contains(turn, "mur send") {
-		t.Errorf("the turn says to answer so:\n%s", turn)
+	eventually(t, "the next turn on the socket", func() bool { return len(sock.lines()) >= 4 })
+	if turn := socketTurn(t, sock.lines()[2:4], "tok-hermes"); !strings.Contains(turn, "wake up") {
+		t.Errorf("the next turn:\n%s", turn)
 	}
 }
 
