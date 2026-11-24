@@ -173,8 +173,7 @@ only in a clone the user joined, by the same few stats as Pi's extension.
   2026-11-23: a oneshot session's was refused once it had closed; an ACP session's still took a
   turn after its client went). The plugin closes the socket when the session finalizes or is
   deleted, or Hermes refuses a turn, and the daemon holds the session while its socket answers and
-  it hasn't been idle for 8 hours
-  (`socketHeld`).
+  it hasn't been idle for 8 hours (`socketHeld`).
 - **Seen** on Windows (2026-11-23): a message to an idle ACP session started a turn within a second;
   one sent during a 25-second `terminal` call came after the call's result, and whole as a turn
   once that turn ended; the session ended within a minute of `hermes gateway stop`.
