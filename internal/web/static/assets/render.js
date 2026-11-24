@@ -16,7 +16,7 @@ import { settingsPage } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
-export { announce, render, go, setView, starLink };
+export { announce, render, go, setView, starRow };
 
 let content; // the scrolling pane, kept across renders so its scroll position is too
 
@@ -294,11 +294,12 @@ function topbar() {
       ),
     h("h1", { class: "truncate" }, viewTitle()),
     NARROW.matches && connBadge(false),
-    starLink(),
+    (ui.view === "sessions" || ui.view === "recent") && starLink(),
   );
 }
 
-// A way to star the repo on GitHub, at the right end of the pane's header (#1233). It is a plain
+// A way to star the repo on GitHub (#1233), at the top right of Sessions, Recent and a Conversations
+// view with nothing open: not over a conversation or in Settings (Tyler, 2026-11-24). It is a plain
 // link, with no star count, so the page makes no request of its own to GitHub. A phone's header
 // has no room for it.
 function starLink() {
@@ -309,6 +310,12 @@ function starLink() {
     icon("github"),
     "Star us on GitHub",
   );
+}
+
+// Conversations has no top bar on a wide page, so with nothing open the link gets a row of the top
+// bar's height to itself, and lands where the top bar's would.
+function starRow() {
+  return !NARROW.matches && h("div", { class: "star-row" }, starLink());
 }
 
 function page() {
