@@ -172,7 +172,9 @@ func TestAHermesHookRegistersItsSessionFirst(t *testing.T) {
 	t.Setenv(hermesTokenEnv, "tok-1")
 	cwd, _ := os.Getwd()
 	payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": "UserPromptSubmit", "cwd": cwd, "prompt": "hi"})
-	HermesHook("", strings.NewReader(string(payload)), io.Discard)
+	if !HermesHook("", strings.NewReader(string(payload)), io.Discard) {
+		t.Error("it said it couldn't register the session")
+	}
 	h := f.lastHello()
 	if !h.Command || h.Native != "hermes:local-9" || h.ID != nativeID("hermes:local-9") || h.MsgSocket != "/tmp/murmur-hermes-x/s" || h.Cwd != cwd {
 		t.Errorf("hello %+v, want the payload's session, with its socket", h)
@@ -211,6 +213,21 @@ func TestAHermesToolCallsHookRegistersOnlyForANewSocket(t *testing.T) {
 	hookFor("Stop")
 	if n := f.helloCount(); n != 2 {
 		t.Errorf("a turn's end: %d hellos in all, want two", n)
+	}
+}
+
+// A hook that couldn't register the session says so, so the plugin gives the next one its new socket
+// again; it asks the daemon nothing for the session.
+func TestAHermesHookSaysItCouldntRegister(t *testing.T) {
+	f := &fakeDaemon{helloReply: func(proto.Hello) (string, string) { return "no room", "" }}
+	toolRepo(t, f)
+	cwd, _ := os.Getwd()
+	payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": "UserPromptSubmit", "cwd": cwd})
+	if HermesHook("", strings.NewReader(string(payload)), io.Discard) {
+		t.Error("it said it registered the session")
+	}
+	if got := f.requestsOf(proto.OpNotices); len(got) != 0 {
+		t.Errorf("notices requests %+v, want none", got)
 	}
 }
 

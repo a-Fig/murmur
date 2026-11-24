@@ -205,8 +205,10 @@ func hermesHello(id, cwd string) proto.Hello {
 // session its payload names, as `mur tool` does, so a session that has called no tool yet is on the
 // mesh and has its socket known; then, as for every other hook, it runs the hook for it. In a
 // clone that hasn't joined it does nothing, and as any hook it never fails: what goes wrong means no
-// answer.
-func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
+// answer. registered is false only where it tried to register the session and couldn't, so the
+// plugin knows the daemon may not have the socket yet (`mur hook` exits 3; Hermes never sees it).
+func HermesHook(event string, stdin io.Reader, stdout io.Writer) (registered bool) {
+	registered = true
 	defer func() { recover() }()
 	b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
@@ -235,13 +237,17 @@ func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), hermesHookRegister)
 	defer cancel()
 	place, err := join.Locate(ctx, p.Cwd)
-	if err != nil || !place.Joined() {
+	if err != nil {
+		return false
+	}
+	if !place.Joined() {
 		return
 	}
 	if _, err := registerCommand(ctx, place, hermesHello(p.SessionID, p.Cwd)); err != nil {
-		return
+		return false
 	}
 	hook.RunForEvent(hook.Hermes, event, bytes.NewReader(b), stdout)
+	return
 }
 
 // hermesHookRegister bounds the hook's registration, which may start the clone's daemon. The plugin

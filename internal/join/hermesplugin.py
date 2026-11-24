@@ -355,7 +355,8 @@ def _hook(ctx, session_id, event, **fields):
     try:
         env = _env(ctx, sid, cwd)
         p = _run(["hook", "--agent", "hermes"], json.dumps(payload), cwd, env, timeout=25)
-        _announced(sid, env)
+        if p.returncode == 0:  # 3: it couldn't register the session, so the socket may not be known
+            _announced(sid, env)
         out = p.stdout.strip()
         return json.loads(out) if out else None
     except Exception as e:
