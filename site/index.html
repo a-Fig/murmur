@@ -377,48 +377,64 @@
   #uses, #security, #supported, #faq { --ink-soft: #3A4670; --badge-bg: #DCE6FF; --badge-ink: #1640BF; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #faq { padding-top: 0; padding-bottom: clamp(56px, 9vh, 96px); }
   #uses h2, #security h2, #supported h2, #faq h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
-  /* Works with: a row right under the hero, the agents Murmur works with and then the systems it
-     runs on, each logo (agents/, os/; their SOURCES.txt) on a white disc with its name beside it.
-     T3 Code comes first, on black, since every agent in it gets a message as a new turn. The three
-     agents in beta sit flat, with "beta" beside them. The cream sheet's top edge starts here. */
+  /* Works with: a Swiss hairline matrix right under the hero. Ten harnesses in a 5x2 grid (2x5 on
+     phones) bounded by heavy ink top/bottom rules and 1px internal hairlines, with an inline OS
+     strip in the header and a live readout bar below. Every harness keeps full ink contrast and
+     carries a mono sticker (BEST, FULL, or BETA). The cream sheet's top edge starts here. */
   #supported { position: relative; z-index: 1; margin-top: calc(-1 * var(--sheet)); border-radius: var(--sheet) var(--sheet) 0 0; }
-  #supported { padding-bottom: 4px; padding-top: clamp(30px, 4.5vh, 44px); }
-  #supported .works h2 { font-size: 14px; font-weight: 600; letter-spacing: 0; line-height: 1.3; color: var(--ink-soft); }
-  .agents { list-style: none; padding: 0; margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 18px; }
-  /* Ten agents on desktop: two even rows of five, columns lined up, rather than a full row and a
-     second row of two pushed to its ends. */
-  .agents:not(.os) { display: grid; grid-template-columns: repeat(5, max-content); justify-content: space-between; }
-  .agents li { position: relative; outline: none; display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
-  .agents .disc { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #fff;
-    box-shadow: 0 1px 2px rgba(14, 27, 69, .10), 0 8px 18px -8px rgba(14, 27, 69, .35); }
-  .agents img { width: 19px; height: 19px; object-fit: contain; }
-  .agents .t3 .disc { background: #000; }
-  .agents .t3 img { width: 24px; height: 24px; }
-  .agents li:has(.beta) .disc { background: color-mix(in srgb, #fff 55%, var(--cream)); box-shadow: none; }
-  .agents .beta { margin-left: -3px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--ink-soft); }
-  .agents .t3 a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent); text-underline-offset: 4px; }
-  .agents .t3 a:hover { text-decoration-color: var(--ink); }
-  /* A hint above each agent on hover, or on focus, which a tap gives on a phone. */
-  .agents li::after { content: attr(data-hint); position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 5; width: 250px;
-    padding: 9px 12px; border-radius: 10px; background: var(--ink); color: var(--cream); font-size: 13.5px; font-weight: 500; line-height: 1.4; white-space: normal;
-    opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; }
-  .agents li:nth-child(5n + 4)::after, .agents li:nth-child(5n)::after { left: auto; right: 0; }
-  .agents li:hover::after, .agents li:focus-within::after, .agents li:focus::after { opacity: 1; transform: none; }
-  .agents li:focus-visible .disc { outline: 3px solid color-mix(in srgb, var(--blue) 45%, transparent); outline-offset: 3px; }
-  /* Narrower, the eight wrap, and a hint sits over the whole list, so none runs off the screen. */
-  @media (max-width: 1100px) { .agents, .agents:not(.os) { display: flex; position: relative; justify-content: flex-start; gap: 14px 22px; } .agents li { position: static; } .agents li:nth-child(n)::after { left: 0; right: auto; width: min(100%, 320px); } }
-  .agents.os { justify-content: flex-start; gap: 14px 30px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--rule); }
-  .agents.os li::after { width: 230px; }
-  /* On a phone: the logos alone, four to a row, each name in its hint. */
+  #supported { padding-bottom: 4px; padding-top: clamp(32px, 4.5vh, 46px); }
+  .works-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px; margin-bottom: 12px; }
+  #supported .works .works-head h2.eyebrow { margin: 0; }
+  .works-os { list-style: none; padding: 0; margin: 0 -9px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+  .os-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--ink);
+    font: 600 13.5px/1.2 Inter, system-ui, sans-serif; cursor: pointer; transition: background-color .14s ease; }
+  .os-btn img { width: 14px; height: 14px; object-fit: contain; flex: none; display: block; }
+  .os-btn:hover, .os-btn[aria-pressed="true"] { background: var(--butter); }
+  .os-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .matrix { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    border-top: 2px solid var(--ink); border-bottom: 1.5px solid var(--ink); }
+  .matrix > li { border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .matrix > li:nth-child(5n) { border-right: 0; }
+  .matrix > li:nth-child(n + 6) { border-bottom: 0; }
+  .m-cell { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; height: 100%; min-height: 112px; padding: 26px 12px 18px; border: 0; border-radius: 0;
+    background: transparent; color: var(--ink); font-family: inherit; text-align: center; cursor: pointer;
+    transition: background-color .14s ease; }
+  .m-cell:hover, .m-cell[aria-pressed="true"] { background: var(--butter); }
+  .m-cell:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; z-index: 1; }
+  .m-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; transition: transform .15s ease; }
+  .m-icon img { width: 29px; height: 29px; object-fit: contain; display: block; opacity: 1; }
+  .m-cell.t3 .m-icon { background: #000; border-radius: 8px; }
+  .m-cell.t3 .m-icon img { width: 22px; height: 22px; }
+  .m-cell:hover .m-icon, .m-cell:focus-visible .m-icon, .m-cell[aria-pressed="true"] .m-icon { transform: translateY(-1px) scale(1.05); }
+  .m-name { font-size: 14px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; color: var(--ink); }
+  .m-sticker { position: absolute; top: 9px; right: 9px; padding: 2.5px 5.5px; border-radius: 4px;
+    font: 700 9.5px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+  .m-sticker.s-best { background: var(--blue); color: var(--cream); }
+  .m-sticker.s-full { background: var(--badge-bg); color: var(--badge-ink); }
+  .m-sticker.s-beta { background: var(--cream-3); color: var(--ink); }
+  .works-readout { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 20px;
+    padding: 13px 2px 2px; min-height: 44px; font-size: 14px; line-height: 1.45; color: var(--ink-soft); }
+  .works-readout-main { min-width: 0; }
+  .works-readout-name { font-weight: 700; color: var(--ink); margin-right: 8px; }
+  .works-readout-name a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); text-underline-offset: 3px; transition: text-decoration-color .14s ease; }
+  .works-readout-name a:hover { text-decoration-color: var(--ink); }
+  .works-readout-name a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+  .works-readout-tag { flex: none; font: 700 10.5px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); white-space: nowrap; }
   @media (max-width: 759px) {
-    .agents, .agents.os, .agents:not(.os) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 0; }
-    .agents li { flex-direction: column; gap: 8px; white-space: normal; }
-    .agents .disc { width: 52px; height: 52px; }
-    .agents img { width: 26px; height: 26px; }
-    .agents .t3 img { width: 34px; height: 34px; }
-    .agents .nm { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    .agents .beta { margin: 0; }
-    .agents li::after { content: attr(data-name) "\A" attr(data-hint); white-space: pre-line; }
+    .works-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .works-os { margin: 0 0 0 -9px; }
+    .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .matrix > li:nth-child(5n) { border-right: 1px solid var(--rule); }
+    .matrix > li:nth-child(n + 6) { border-bottom: 1px solid var(--rule); }
+    .matrix > li:nth-child(2n) { border-right: 0; }
+    .matrix > li:nth-child(n + 9) { border-bottom: 0; }
+    .m-cell { min-height: 100px; padding: 24px 10px 16px; }
+    .works-readout { flex-direction: column; align-items: flex-start; gap: 6px; padding-top: 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .m-icon { transition: none; }
+    .m-cell:hover .m-icon, .m-cell:focus-visible .m-icon, .m-cell[aria-pressed="true"] .m-icon { transform: none; }
   }
   .chip { padding: 2px 7px; border-radius: 6px; background: var(--badge-bg); color: var(--badge-ink); font: 600 .88em/1.4 var(--mono); white-space: nowrap; }
   /* What it gives your agents: three tools, a line each. */
@@ -1076,24 +1092,30 @@ void main() {
 <section id="supported">
   <div class="setup-in">
     <div class="works">
-      <h2 class="eyebrow">Works with</h2>
-      <ul class="agents">
-        <li class="t3 best" tabindex="0" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-name="T3 Code"><span class="disc"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="nm"><a href="https://github.com/pingdotgg/t3code">T3 Code</a></span></li>
-        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Claude Code"><span class="disc"><img src="/agents/claude.svg" alt="" width="22" height="22"></span><span class="nm">Claude Code</span></li>
-        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Codex"><span class="disc"><img src="/agents/codex.svg" alt="" width="22" height="22"></span><span class="nm">Codex</span></li>
-        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="OpenCode"><span class="disc"><img src="/agents/opencode.svg" alt="" width="22" height="22"></span><span class="nm">OpenCode</span></li>
-        <li class="best" tabindex="0" data-hint="A message starts a new turn, in T3 Code or on its own." data-name="Pi"><span class="disc"><img src="/agents/pi.svg" alt="" width="22" height="22"></span><span class="nm">Pi</span></li>
-        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Muse Code"><span class="disc"><img src="/agents/muse.svg" alt="" width="22" height="22"></span><span class="nm">Muse Code</span><span class="beta">beta</span></li>
-        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Grok"><span class="disc"><img src="/agents/grok.svg" alt="" width="22" height="22"></span><span class="nm">Grok</span><span class="beta">beta</span></li>
-        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Antigravity"><span class="disc"><img src="/agents/antigravity.svg" alt="" width="22" height="22"></span><span class="nm">Antigravity</span><span class="beta">beta</span></li>
-        <li tabindex="0" data-hint="In beta. A message waits in its inbox, in T3 Code or on its own." data-name="Cursor"><span class="disc"><img src="/agents/cursor.svg" alt="" width="22" height="22"></span><span class="nm">Cursor</span><span class="beta">beta</span></li>
-        <li tabindex="0" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-name="Kiro"><span class="disc"><img src="/agents/kiro.svg" alt="" width="22" height="22"></span><span class="nm">Kiro</span><span class="beta">beta</span></li>
+      <div class="works-head">
+        <h2 class="eyebrow">Works with</h2>
+        <ul class="works-os" aria-label="Operating systems">
+          <li><button type="button" class="os-btn" aria-pressed="false" data-name="Windows" data-hint="Installs with one PowerShell line, from Setup." data-tag="WINDOWS"><img src="/os/windows.svg" alt="" width="14" height="14"><span>Windows</span></button></li>
+          <li><button type="button" class="os-btn" aria-pressed="false" data-name="macOS" data-hint="Installs with one sh line, from Setup." data-tag="MACOS"><img src="/os/apple.svg" alt="" width="14" height="14"><span>macOS</span></button></li>
+          <li><button type="button" class="os-btn" aria-pressed="false" data-name="Linux" data-hint="Installs with one sh line, from Setup." data-tag="LINUX"><img src="/os/linux.svg" alt="" width="14" height="14"><span>Linux</span></button></li>
+        </ul>
+      </div>
+      <ul class="matrix" aria-label="Supported coding agents">
+        <li><button type="button" class="m-cell t3" aria-pressed="true" data-name="T3 Code" data-url="https://github.com/pingdotgg/t3code" data-hint="The best way to use Murmur. Every agent in T3 Code gets a message as a new turn." data-tag="NEW TURN · BEST"><span class="m-sticker s-best">BEST</span><span class="m-icon"><img src="/agents/t3.svg" alt="" width="22" height="22"></span><span class="m-name">T3 Code</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Claude Code" data-hint="A message starts a new turn, in T3 Code or on its own." data-tag="NEW TURN · FULL"><span class="m-sticker s-full">FULL</span><span class="m-icon"><img src="/agents/claude.svg" alt="" width="29" height="29"></span><span class="m-name">Claude Code</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Codex" data-hint="A message starts a new turn, in T3 Code or on its own." data-tag="NEW TURN · FULL"><span class="m-sticker s-full">FULL</span><span class="m-icon"><img src="/agents/codex.svg" alt="" width="29" height="29"></span><span class="m-name">Codex</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="OpenCode" data-hint="A message starts a new turn, in T3 Code or on its own." data-tag="NEW TURN · FULL"><span class="m-sticker s-full">FULL</span><span class="m-icon"><img src="/agents/opencode.svg" alt="" width="29" height="29"></span><span class="m-name">OpenCode</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Pi" data-hint="A message starts a new turn, in T3 Code or on its own." data-tag="NEW TURN · FULL"><span class="m-sticker s-full">FULL</span><span class="m-icon"><img src="/agents/pi.svg" alt="" width="29" height="29"></span><span class="m-name">Pi</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Muse Code" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-tag="BETA · NEW TURN IN T3"><span class="m-sticker s-beta">BETA</span><span class="m-icon"><img src="/agents/muse.svg" alt="" width="29" height="29"></span><span class="m-name">Muse Code</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Grok" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-tag="BETA · NEW TURN IN T3"><span class="m-sticker s-beta">BETA</span><span class="m-icon"><img src="/agents/grok.svg" alt="" width="29" height="29"></span><span class="m-name">Grok</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Antigravity" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-tag="BETA · NEW TURN IN T3"><span class="m-sticker s-beta">BETA</span><span class="m-icon"><img src="/agents/antigravity.svg" alt="" width="29" height="29"></span><span class="m-name">Antigravity</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Cursor" data-hint="In beta. A message waits in its inbox, in T3 Code or on its own." data-tag="BETA · INBOX ONLY"><span class="m-sticker s-beta">BETA</span><span class="m-icon"><img src="/agents/cursor.svg" alt="" width="29" height="29"></span><span class="m-name">Cursor</span></button></li>
+        <li><button type="button" class="m-cell" aria-pressed="false" data-name="Kiro" data-hint="In beta. Best used through T3 Code, where a message starts a new turn. On its own, it waits in the inbox." data-tag="BETA · NEW TURN IN T3"><span class="m-sticker s-beta">BETA</span><span class="m-icon"><img src="/agents/kiro.svg" alt="" width="29" height="29"></span><span class="m-name">Kiro</span></button></li>
       </ul>
-      <ul class="agents os" aria-label="Operating systems">
-        <li tabindex="0" data-hint="Installs with one PowerShell line, from Setup." data-name="Windows"><span class="disc"><img src="/os/windows.svg" alt="" width="22" height="22"></span><span class="nm">Windows</span></li>
-        <li tabindex="0" data-hint="Installs with one sh line, from Setup." data-name="macOS"><span class="disc"><img src="/os/apple.svg" alt="" width="22" height="22"></span><span class="nm">macOS</span></li>
-        <li tabindex="0" data-hint="Installs with one sh line, from Setup." data-name="Linux"><span class="disc"><img src="/os/linux.svg" alt="" width="22" height="22"></span><span class="nm">Linux</span></li>
-      </ul>
+      <div class="works-readout" aria-live="polite">
+        <div class="works-readout-main"><strong class="works-readout-name"><a href="https://github.com/pingdotgg/t3code">T3 Code &#8599;</a></strong><span class="works-readout-hint">The best way to use Murmur. Every agent in T3 Code gets a message as a new turn.</span></div>
+        <span class="works-readout-tag">NEW TURN · BEST</span>
+      </div>
     </div>
   </div>
 </section>
@@ -1452,6 +1474,35 @@ void main() {
     new ResizeObserver(([e]) => { const w = Math.round(e.contentRect.width); if (w !== width) { width = w; later(); } }).observe(strip);
     if (calm.addEventListener) calm.addEventListener('change', later);
     if (document.fonts) document.fonts.ready.then(later);
+  }
+
+  // Works with: hovering, focusing, or clicking a harness or OS updates the readout bar below.
+  const works = document.querySelector('#supported .works');
+  if (works) {
+    const items = [...works.querySelectorAll('.m-cell, .os-btn')];
+    const rName = works.querySelector('.works-readout-name');
+    const rHint = works.querySelector('.works-readout-hint');
+    const rTag = works.querySelector('.works-readout-tag');
+    const activate = btn => {
+      items.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      const name = btn.dataset.name || '';
+      const url = btn.dataset.url || '';
+      if (url) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.textContent = name + ' \u2197';
+        rName.replaceChildren(a);
+      } else {
+        rName.textContent = name;
+      }
+      rHint.textContent = btn.dataset.hint || '';
+      rTag.textContent = btn.dataset.tag || '';
+    };
+    items.forEach(btn => {
+      btn.addEventListener('pointerenter', e => { if (e.pointerType !== 'touch') activate(btn); });
+      btn.addEventListener('click', () => activate(btn));
+      btn.addEventListener('focus', () => activate(btn));
+    });
   }
 
   // Copy buttons on the install commands; hidden without JS.
