@@ -691,6 +691,10 @@
   .st .fl.t3 > span { background: #000; border-color: rgba(255, 255, 255, .12); }
   .st .fl.t3 img { width: 66%; height: 66%; }
   @media (min-width: 1100px) {
+    /* The top pair sits above the wordmark, so the hero needs room above its copy: a line under the
+       headline (#1202) moved the copy up 26px and the tiles 35px, and on a 768px-tall screen the
+       top two were cut off by the page's edge (#1220). */
+    .st-trim { padding-top: 64px; }
     .st .st-copy > .st-float { position: absolute; inset: 0; z-index: 3; pointer-events: none; --px: 0px; --py: 0px; }
     .st .fl { position: absolute; left: calc(50% + var(--x)); top: var(--y); width: var(--s); height: var(--s); margin-left: calc(var(--s) / -2);
       translate: calc(var(--px) * var(--z)) calc(var(--py) * var(--z)); transition: translate .7s cubic-bezier(.2, .7, .2, 1); }
