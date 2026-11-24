@@ -534,3 +534,34 @@ func TestAPiOnALeftFileDoesNotReceiveMovedNameAfterFullPrune(t *testing.T) {
 		t.Fatalf("piFileA's inbox: %v, want only [for a]", got)
 	}
 }
+
+// #1187: A Pi session that moved off its file and back (/new, then /resume) is still that file's
+// conversation, though its name from the other file is at its address in Used too. After PiFiles
+// is lost, Pi on the file keeps the session's ID rather than taking a fresh one (Opus's review of
+// 08e9e082).
+func TestAPiSessionBackOnItsFileKeepsItsIDAfterPiFilesIsLost(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	b := newTimedDevice(t, remote, time.Hour, time.Hour)
+	moved, conn := b.piStart(piFileA, "", procP)
+	nameA := b.named(moved)
+	conn.Close()
+	_, conn = b.piAgain(piFileB, piFileA, procP) // /new
+	b.nameHeld(moved, nameA)
+	conn.Close()
+	back, conn := b.piAgain(piFileA, piFileB, procP) // /resume of the first file
+	if back != moved {
+		t.Fatalf("/resume back gave %s, want %s", back, moved)
+	}
+	b.nameIs(back, nameA)
+
+	conn.Close()
+	b.stop()
+	b.dropStateKeys("piFiles")
+	b.start()
+	again, _ := b.piAgain(piFileA, "", procQ)
+	if again != moved {
+		t.Fatalf("after piFiles loss, Pi on the file it came back to got %s, want %s", again, moved)
+	}
+	b.nameIs(again, nameA)
+}

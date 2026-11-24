@@ -357,6 +357,10 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 	if f, ok := d.st.PiFiles[h.Native]; ok {
 		if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID {
 			if d.piIDOtherLocked(h) {
+				// Not recorded: the file is the live session's in PiFiles. So this second Pi on the
+				// file takes a fresh ID, and with it a new name, at each full restart (a /reload
+				// finds its session through ofProcess), where it had kept the file's ID before. A
+				// new name each time is the price of not taking another conversation's address.
 				return d.freshPiIDLocked(), false
 			}
 			return h.ID, false
@@ -388,8 +392,8 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 // piIDOtherLocked says whether h.ID (proto.NativeID(h.Native)) is held by a conversation other than
 // h.Native on this device (#1187): a session (live or in its grace) on another file or client,
 // another file's PiFiles record, a stopped T3 route for another thread, a session whose last name
-// isn't h.Native's, or any registry name in Used at this address that isn't h.Native's. Caller
-// holds mu.
+// isn't h.Native's, or, when no last name is known, any registry name in Used at this address that
+// isn't h.Native's. Caller holds mu.
 func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
 	id := h.ID
 	if o := d.sessions[id]; o != nil {
@@ -408,8 +412,12 @@ func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
 		t3Thread = d.st.T3Routes[id].Thread
 	}
 	fileName := d.st.NameKeys[nameKey(t3Thread, "", h.Native, id)]
-	if last := d.st.SessionNames[id]; last != "" && last != fileName {
-		return true
+	// The session's last name settles it when it is known: a conversation that moved off the file
+	// and back (/new, then /resume) has its own earlier names at this address in Used too, and is
+	// still this file's. SessionNames outlives a pool name's move, as it is kept while Used has the
+	// name at this address (pruneSessionNamesLocked); only once it is gone do Used's names decide.
+	if last := d.st.SessionNames[id]; last != "" {
+		return last != fileName
 	}
 	if kept := d.keptForLocked(id); kept != "" && kept != fileName {
 		return true
