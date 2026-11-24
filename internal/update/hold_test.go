@@ -112,6 +112,44 @@ func TestBackRefusesAChannelV053WouldStillRead(t *testing.T) {
 	if ch, skip := globalValues(path, "murmur.channel"), globalValues(path, "murmur.updateSkip"); ch != "prerelease" || skip != "" {
 		t.Fatalf("a refused Back wrote: channel %q, hold %q", ch, skip)
 	}
+	// With the channel in the include only, the refused Back leaves none in the file itself.
+	gitConfig(t, "--file", path, "--unset-all", "murmur.channel")
+	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil {
+		t.Fatal("Back with the channel in an include only went ahead")
+	}
+	if out, _ := exec.Command("git", "config", "--file", path, "--no-includes", "--get-all", "murmur.channel").Output(); len(out) != 0 {
+		t.Fatalf("a refused Back left the channel %q in the file", out)
+	}
+}
+
+// An include of the global file that says prerelease, made after Back, is found as the updater
+// goes back: it holds the file first, as Back did, and then looks (Opus review).
+func TestGoingBackRefusesAnIncludeMadeSince(t *testing.T) {
+	path := global(t)
+	gitDir := repo(t)
+	ctx := context.Background()
+	const bad = "0.5.4-nightly.20261123"
+	if _, err := Set(ctx, noEnv, gitDir, bad, ChoiceNightly); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Back(ctx, noEnv, gitDir, bad); err != nil {
+		t.Fatal(err)
+	}
+	included := filepath.Join(t.TempDir(), "more")
+	gitConfig(t, "--file", included, "murmur.channel", "prerelease")
+	gitConfig(t, "--file", path, "include.path", included)
+	srv := releases(t, "v0.5.3", []rel{{"v" + bad, true}, {"v0.5.3", false}})
+	exe := filepath.Join(t.TempDir(), "mur")
+	os.WriteFile(exe, []byte("old"), 0o755)
+	original, _ := Identity(exe)
+	o := Options{Version: bad, GitDir: gitDir, Executable: exe, URL: srv.URL, OS: "linux", Arch: "amd64", Client: srv.Client(), Getenv: noEnv, Log: log.New(io.Discard, "", 0)}
+	done, _, err := attempt(ctx, o, original)
+	if b, _ := os.ReadFile(exe); done || string(b) != "old" || err == nil || !strings.Contains(err.Error(), "another global git config file") {
+		t.Fatalf("installed %q, err %v", b, err)
+	}
+	if s := Read(ctx, noEnv, gitDir, bad); !strings.HasPrefix(s.Hold, "Can't go back for good: another global git config file") {
+		t.Errorf("hold %q", s.Hold)
+	}
 }
 
 // An override made after Back, before the release gone back to installs, is caught there: the

@@ -342,7 +342,12 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	// still reads "prerelease" to it (#1212). Back refuses that; this is for an override made since,
 	// found before anything downloads, so a refused going back costs no download at each check.
 	if back && newer(holdAware, rel.Tag) {
-		if where, _ := unheld(ctx, o.GitDir, o.Version, false); where != "" {
+		// Held first, as it is again before the swap, so that an include of the global file that
+		// says prerelease shows (Opus review): held with the hold beside it is how Back leaves it.
+		if _, err = holdChannel(ctx, o.GitDir); err != nil {
+			return false, latest, err
+		}
+		if where, _ := unheld(ctx, o.GitDir, o.Version, true); where != "" {
 			return false, latest, fmt.Errorf("%s sets %s prerelease, which %s reads past the hold, so it would install %s again", where, channelKey, latest, o.Version)
 		}
 	}

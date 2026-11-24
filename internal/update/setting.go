@@ -74,8 +74,8 @@ type configValue struct{ scope, value string }
 
 // configValues is every value of key in the order git reads them, so the last one is the one
 // that applies; none if it isn't set, or git can't read it.
-func configValues(ctx context.Context, gitDir, key string) []configValue {
-	vals, _ := configValuesErr(ctx, gitDir, key)
+func configValues(ctx context.Context, gitDir, key string, opts ...string) []configValue {
+	vals, _ := configValuesErr(ctx, gitDir, key, opts...)
 	return vals
 }
 
@@ -175,7 +175,7 @@ func Read(ctx context.Context, getenv func(string) string, gitDir, running strin
 		case s.Skip == "":
 		case same(running, s.Skip):
 			s.Hold = "Going back to the latest stable release."
-			if where, _ := unheld(ctx, gitDir, running, false); where != "" {
+			if where, _ := unheld(ctx, gitDir, running, true); where != "" { // Back held the global file
 				s.Hold = "Can't go back for good: " + where + " sets " + channelKey + " prerelease, which v0.5.3 and older read past the hold."
 			}
 		case s.Effective == ChoiceNightly:
@@ -300,7 +300,9 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 		return refuse(where, here)
 	}
 	// Then the hold, and the channel after it: written the other way round, another clone's updater
-	// could find the channel held with no hold beside it.
+	// could find the channel held with no hold beside it. What the global file itself said of the
+	// channel, includes apart, is kept, to put back exactly if Back is refused after all.
+	own := configValues(ctx, gitDir, channelKey, "--global", "--no-includes")
 	if err := setGlobal(ctx, gitDir, skipKey, strings.TrimPrefix(running, "v")); err != nil {
 		return s, err
 	}
@@ -310,11 +312,20 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 	}
 	// An include of the global file that also says prerelease shows only once the file is held.
 	if where, here := unheld(ctx, gitDir, running, true); where != "" {
-		unsetGlobal(ctx, gitDir, skipKey)
-		if held {
-			setGlobal(ctx, gitDir, channelKey, "prerelease")
+		// The hold first, so that nothing is held back with the channel open.
+		uerr := unsetGlobal(ctx, gitDir, skipKey)
+		if held && uerr == nil {
+			if v := last(own, "").value; v == "" {
+				uerr = unsetGlobal(ctx, gitDir, channelKey)
+			} else {
+				uerr = setGlobal(ctx, gitDir, channelKey, v)
+			}
 		}
-		return refuse(where, here)
+		s, err := refuse(where, here)
+		if uerr != nil {
+			err = fmt.Errorf("%w (and putting the git config back failed: %v)", err, uerr)
+		}
+		return s, err
 	}
 	s = Read(ctx, getenv, gitDir, running)
 	if !same(s.Skip, running) {
