@@ -7,6 +7,11 @@
 
 Closes #
 
+## Preview
+<!-- Only for a PR that changes the website (site/). Delete this section, heading and all, when it doesn't.
+  The preview URL, on its own line: `npx wrangler versions upload` in site/ prints one without deploying.
+  Until it's up, write "Preview link incoming." and replace it with the link once it is. -->
+
 ## Why
 
 ## Change
