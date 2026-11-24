@@ -274,7 +274,11 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
     moved there, with what it had unread. Another Pi on the file left is a session of its own at
     once, and is never handed what the moved session had. A server of the same Pi process on the
     file it is on is that process's session there, recorded or not. An entry goes 30 days after
-    its last use, once no session runs or is kept at either ID.
+    its last use, once no session runs or is kept at either ID. If `PiFiles` has no entry for a
+    file (after pruning, or after a downgrade to a daemon before #1145 dropped the field), and the
+    ID the file makes is still held by another conversation's session, kept inbox, or registry name
+    (`Used`), the hello gets a fresh ID instead so it neither takes over that session nor receives
+    messages sent to its name (#1187).
   - *Two Pi processes on one file.* They are two sessions. A `/resume` of a file another Pi has
     open, live or in its grace while its server restarts, still moves the session there, but the
     file isn't recorded as the moved session's and nothing of the other's is taken: the other Pi's

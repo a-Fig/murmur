@@ -312,7 +312,11 @@ func isPi(agent string) bool { return strings.TrimSuffix(agent, " in T3") == "pi
 // recorded ID. So a /reload, which starts the server again without a From, or Pi started again on
 // the file, finds the session that moved there, and a Pi on the file it left is a session of its
 // own, never handed what the moved one had. A recorded session live in another Pi process is that
-// process's, and the hello keeps its own ID, as two Pis on one file did before.
+// process's, and the hello keeps its own ID, as two Pis on one file did before, unless that ID is
+// already held by another conversation's session or name, in which case it gets a fresh ID. The
+// same check guards against PiFiles being lost to a downgrade or pruned after 30 quiet days
+// (#1187): a Pi on the left file gets a fresh ID rather than taking over the moved session's grace,
+// its kept inbox, or a registry name that still points at its address.
 //
 // Only a server's first registration, as one coming back (Reconnect) has its ID already, and only
 // a server that goes by the ID the reply's Self names (TakesSelf): one from before #1145 would
@@ -347,18 +351,121 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 	}
 	// Only for the ID the server made from its file: one that took another, after its own was in
 	// use for too long, keeps that.
-	f, ok := d.st.PiFiles[h.Native]
-	if !ok || h.ID != proto.NativeID(h.Native) {
+	if h.ID != proto.NativeID(h.Native) {
 		return h.ID, false
 	}
-	if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID {
+	if f, ok := d.st.PiFiles[h.Native]; ok {
+		if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID {
+			if d.piIDOtherLocked(h) {
+				// Not recorded: the file is the live session's in PiFiles. So this second Pi on the
+				// file takes a fresh ID, and with it a new name, at each full restart (a /reload
+				// finds its session through ofProcess), where it had kept the file's ID before. A
+				// new name each time is the price of not taking another conversation's address.
+				return d.freshPiIDLocked(), false
+			}
+			return h.ID, false
+		}
+		if time.Since(f.At) > 24*time.Hour {
+			d.st.PiFiles[h.Native] = piFile{ID: f.ID, At: time.Now().UTC().Truncate(time.Hour)}
+			d.saveLocked()
+		}
+		return f.ID, false
+	}
+	if !d.piIDOtherLocked(h) {
 		return h.ID, false
 	}
-	if time.Since(f.At) > 24*time.Hour {
-		d.st.PiFiles[h.Native] = piFile{ID: f.ID, At: time.Now().UTC().Truncate(time.Hour)}
+	id := d.freshPiIDLocked()
+	shared := false
+	for _, o := range d.sessions {
+		shared = shared || o.route.Native == h.Native && o.claudeSession == "" && o.clientPID != h.ClientPID
+	}
+	if !shared {
+		if d.st.PiFiles == nil {
+			d.st.PiFiles = map[string]piFile{}
+		}
+		d.st.PiFiles[h.Native] = piFile{ID: id, At: time.Now().UTC().Truncate(time.Hour)}
 		d.saveLocked()
 	}
-	return f.ID, false
+	return id, false
+}
+
+// piIDOtherLocked says whether h.ID (proto.NativeID(h.Native)) is held by a conversation other than
+// h.Native on this device (#1187): a session (live or in its grace) on another file or client,
+// another file's PiFiles record, a stopped T3 route for another thread, a session whose last name
+// isn't h.Native's, or, when no last name is known, any registry name in Used at this address that
+// isn't h.Native's. Caller holds mu.
+func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
+	id := h.ID
+	if o := d.sessions[id]; o != nil {
+		return o.route.Native != h.Native || o.claudeSession != ""
+	}
+	if r := d.st.T3Routes[id]; r.Thread != "" && (h.T3CLI == "" || h.T3Thread != "" && r.Thread != h.T3Thread) {
+		return true
+	}
+	for file, f := range d.st.PiFiles {
+		if file != h.Native && f.ID == id {
+			return true
+		}
+	}
+	t3Thread := h.T3Thread
+	if t3Thread == "" && h.T3CLI != "" {
+		t3Thread = d.st.T3Routes[id].Thread
+	}
+	// The file's names: its key's, and the one its session at id has under that key with id after
+	// it (uniqueKeyLocked), as a Pi that came back to the file while another Pi held its key does.
+	base := nameKey(t3Thread, "", h.Native, id)
+	fileName, ownName := d.st.NameKeys[base], d.st.NameKeys[base+"/"+id]
+	isFiles := func(name string) bool { return name == fileName || ownName != "" && name == ownName }
+	// The session's last name settles it when it is known: a conversation that moved off the file
+	// and back (/new, then /resume) has its own earlier names at this address in Used too, and is
+	// still this file's. SessionNames outlives a pool name's move, as it is kept while Used has the
+	// name at this address (pruneSessionNamesLocked); only once it is gone do Used's names decide.
+	if last := d.st.SessionNames[id]; last != "" {
+		return !isFiles(last)
+	}
+	if kept := d.keptForLocked(id); kept != "" && !isFiles(kept) {
+		return true
+	}
+	addr := bus.Addr(d.device, id)
+	for name, a := range d.st.Used {
+		if a == addr && !isFiles(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// freshPiIDLocked picks a random 6-hex session ID not held by any session, stopped inbox, PiFiles
+// record, or known name on this device. Caller holds mu.
+func (d *Daemon) freshPiIDLocked() string {
+	used := func(id string) bool {
+		if d.sessions[id] != nil {
+			return true
+		}
+		if _, stopped := d.st.Stopped[id]; stopped {
+			return true
+		}
+		if d.st.SessionNames[id] != "" {
+			return true
+		}
+		for _, f := range d.st.PiFiles {
+			if f.ID == id {
+				return true
+			}
+		}
+		addr := bus.Addr(d.device, id)
+		for _, a := range d.st.Used {
+			if a == addr {
+				return true
+			}
+		}
+		return false
+	}
+	id := bus.RandHex(6)
+	for used(id) {
+		id = bus.RandHex(6)
+	}
+	return id
 }
 
 // notePiMoveLocked records that Pi session s has moved to the file it is on from the file from
@@ -375,11 +482,7 @@ func (d *Daemon) notePiMoveLocked(s *session, from string) {
 	}
 	now := time.Now().UTC().Truncate(time.Hour)
 	if f, ok := d.st.PiFiles[from]; !ok || f.ID == s.id {
-		id := bus.RandHex(6)
-		for _, stopped := d.st.Stopped[id]; d.sessions[id] != nil || stopped; _, stopped = d.st.Stopped[id] {
-			id = bus.RandHex(6)
-		}
-		d.st.PiFiles[from] = piFile{ID: id, At: now}
+		d.st.PiFiles[from] = piFile{ID: d.freshPiIDLocked(), At: now}
 	}
 	shared := false
 	for _, o := range d.sessions {
@@ -539,8 +642,8 @@ func (d *Daemon) pruneSessionNamesLocked(now time.Time) bool {
 		}
 	}
 	// A Pi file's ID goes too, once no session runs or is kept at it, nor at the ID the file makes,
-	// which a session that left the file may still have: a server on the file then registers at
-	// the ID it makes from it, as before any move.
+	// which a session that left the file may still have: a later server on the file gets a fresh ID
+	// if another conversation's session or name still holds that ID (piIDOtherLocked, #1187).
 	live := func(id string) bool {
 		_, stopped := d.st.Stopped[id]
 		return d.sessions[id] != nil || stopped
