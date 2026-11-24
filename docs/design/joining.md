@@ -115,7 +115,10 @@ Everything it writes is outside the repo's tracked files:
   with it. An allow rule is a line among the user's own that Cursor and Kiro
   rewrite, so nothing in it says who added it: join records each rule it adds in `.murmur-join.json`
   beside that permissions file, and uninstall removes only a recorded one. A rule that was there
-  before join, or that an older mur added without a record, stays, with a note. Join and uninstall in
+  before join, or that an older mur added without a record, stays, with a note. A `murmur` entry
+  that is a remote server (a `url`, or a `type` other than `stdio`) is a collision (#1213): join
+  refuses it before editing the file or writing any allow rule, and says so; uninstall leaves it. Cursor
+  also writes no allow rule when its server couldn't be registered. Join and uninstall in
   a scratch home also refuse a home whose `mcp.json`, `hooks.json`, permissions file, record or
   skills are links to files outside the temporary folder (#995).
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and

@@ -444,6 +444,8 @@ func (e Env) unregisterKiroAt(_ context.Context, hs []agentHome) (did, notes []s
 	} else if text != "" {
 		out, changed, dropped, uerr := removeMCPServer(text)
 		switch {
+		case errors.Is(uerr, errRemoteServer):
+			notes = append(notes, h.Label+": left the "+brand.MCPServer+" MCP server in "+mcpPath+" alone: it is a remote server, not one "+brand.Command+" added")
 		case uerr != nil:
 			problems = append(problems, fmt.Errorf("%s: %w", mcpPath, uerr))
 		case changed:
@@ -490,7 +492,7 @@ func kiroRemoval(_ Env, h agentHome) string {
 	var steps []string
 	mcpPath := filepath.Join(h.Dir, "settings", "mcp.json")
 	if b, err := os.ReadFile(mcpPath); err == nil {
-		if _, found, _ := jsonedit.GetIn(string(b), []string{"mcpServers", brand.MCPServer}); found {
+		if hasLocalServer(string(b)) {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+mcpPath)
 		}
 	}

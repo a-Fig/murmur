@@ -93,8 +93,10 @@ func (e Env) registerCursorAt(h agentHome) (did []string, fresh bool, err error)
 	}
 	var errs []error
 	path := filepath.Join(h.Dir, "mcp.json")
+	serverFailed := false
 	if changed, err := e.setCursorServer(path); err != nil {
 		errs = append(errs, err)
+		serverFailed = true
 	} else if changed {
 		fresh = true
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
@@ -105,7 +107,8 @@ func (e Env) registerCursorAt(h agentHome) (did []string, fresh bool, err error)
 	} else if changed {
 		did = append(did, h.Label+": added "+brand.Product+"'s hook, in every project ("+path+")")
 	}
-	if path = cursorConfigFile(h); path != "" {
+	// No approval for a server that isn't registered: the name may be another server's (#1213).
+	if path = cursorConfigFile(h); path != "" && !serverFailed {
 		if changed, err := allowCursorTools(path); err != nil {
 			errs = append(errs, fmt.Errorf("%w, so the allow rule wasn't added, and each of %s's tools asks before it runs", err, brand.Product))
 		} else if changed {
@@ -307,6 +310,8 @@ func (e Env) unregisterCursorAt(_ context.Context, hs []agentHome) (did, notes [
 	} else if text != "" {
 		out, changed, dropped, err := removeMCPServer(text)
 		switch {
+		case errors.Is(err, errRemoteServer):
+			notes = append(notes, h.Label+": left the "+brand.MCPServer+" MCP server in "+path+" alone: it is a remote server, not one "+brand.Command+" added")
 		case err != nil:
 			errs = append(errs, fmt.Errorf("%s: %w", path, err))
 		case changed:
@@ -357,7 +362,7 @@ func cursorRemoval(_ Env, h agentHome) string {
 	var steps []string
 	path := filepath.Join(h.Dir, "mcp.json")
 	if b, err := os.ReadFile(path); err == nil {
-		if _, found, _ := jsonedit.GetIn(string(b), []string{"mcpServers", brand.MCPServer}); found {
+		if hasLocalServer(string(b)) {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+path)
 		}
 	}
