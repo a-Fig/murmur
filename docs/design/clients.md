@@ -16,6 +16,7 @@ since it wasn't installed). The details, and where each came from, are in the co
 | Grok | `[mcp_servers.murmur]` in `~/.grok/config.toml`, and `MCPTool(murmur__*)` in `[permission] allow` | One process per session, with `GROK_SESSION_ID` | Expected to be the ACP session ID T3 records (not tried) |
 | Antigravity | `mcpServers.murmur` in `config/mcp_config.json` in `$GEMINI_HOME` (`~/.gemini`), and in T3's own home for each instance (below) | One `agy` (1.5.13+; `agy_acp_server` in 1.4.5) per thread; `T3CODE_THREAD_ID` in T3, and `conversationId` in hooks | `T3CODE_THREAD_ID` (seen 2026-11-20), or `conversationId` via `t3db.ThreadOf` |
 | Cursor (beta) | `mcpServers.murmur` in `~/.cursor/mcp.json`, the hook in `~/.cursor/hooks.json`, `Mcp(murmur:*)` in `cli-config.json` (below) | One `agent` process per chat; the chat's ID reaches only hooks and shell commands, so the hook names it to the server | Not yet: T3 runs every Cursor thread in one process of its own (#924) |
+| Hermes (beta) | no MCP entry: a plugin, `plugins/murmur/` in Hermes' home and each profile, with `murmur` in `plugins.enabled` and `plugins.entries.murmur.allow_gateway_injection` in `config.yaml`, and `skills/<name>/SKILL.md` ([below](#hermes-beta)) | One gateway process runs every session of a profile; the plugin's tool handler and hooks get the session's ID, and run `mur tool` and `mur hook` with it | None: T3 Code has no Hermes driver (0.1.11); as an agent from the ACP registry, not tried |
 | Kiro (beta) | `mcpServers.murmur` in `settings/mcp.json` in `$KIRO_HOME` (`~/.kiro`), a `murmur/*` MCP allow rule in `settings/permissions.json` when `settings/permissions.yaml` is absent (Kiro's policy rules match by server name, not executable, so in a trusted workspace a project `murmur` server inherits the rule), `hooks/murmur.json` (`UserPromptSubmit` and `Stop`; Kiro 3.4.0 discards `PostToolUse` command output), and `skills/<name>/SKILL.md` | One `kiro-cli` -> `node` (`acp-server.js`) per session; `T3CODE_THREAD_ID` in T3, and `session_id` in hooks | `T3CODE_THREAD_ID` (Kiro CLI 3.4.0 V3, read 2026-11-22) |
 
 - **Edited, not rewritten.** JSON and JSONC files are edited as text (`jsonedit`), so comments and
@@ -336,6 +337,31 @@ does, against a real daemon. Details and sources are in `internal/join/cursor.go
   editor reads the same files and wasn't tried: it isn't Cursor's command line, so it is handled as
   T3's is. `mur who` and `mur
   send` in Cursor's shell, which has the chat's ID, aren't wired up.
+
+## Hermes (beta)
+
+Added 2026-11-23 (#975: #1183, #1184), at Tyler's request. Read in Nous Research's hermes-agent at
+8da31006 and its docs, and run from source on Windows in a scratch `HERMES_HOME`, with a stand-in
+model, sessions over ACP and `hermes chat --oneshot`. Details and sources are in
+`internal/join/hermes.go`; delivery is in [handoff](handoff.md#hermes-plugin).
+
+- **A plugin, not an MCP server.** Every session of a profile, from the CLI, TUI, Desktop or ACP,
+  runs in one gateway process, which also runs the profile's MCP servers. One `mur mcp` would serve
+  every session in every repo, and no MCP call says which session made it. A plugin's tool handler
+  gets its session's ID and can read the session's folder, so the plugin registers Murmur's tools
+  as `murmur_who`, `murmur_send` and the rest, and each call runs `mur tool` with that ID and folder.
+  The names carry `murmur_` because Hermes refuses a second tool of one name.
+- **Every session has the tools.** Hermes keeps one tool list per process, so they can't be left
+  out where a session's folder isn't joined; a call there answers that Murmur is off, as the MCP
+  server's passive tools do. Hermes shows a plugin's tools as a line each in `tool_search` and loads
+  a schema when the model asks, so they cost little.
+- **Who the session is.** The hello is a command's (#913), keyed by the session's ID
+  (`hermes:<id>` as `Route.Native`), so the daemon holds the session between calls. A subagent
+  (`delegate_task`) acts as its parent, which the plugin learns from `subagent_start`.
+- **When it loads.** The gateway reads plugins once, as it starts: sessions get the tools after
+  `hermes gateway restart`.
+- **Not tried.** macOS and Linux, where CI runs the plugin's Python test; the TUI, Desktop and the
+  messaging platforms.
 
 ## Any agent in T3 Code: the shell commands
 

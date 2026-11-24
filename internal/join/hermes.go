@@ -17,7 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 )
 
-// Hermes Agent (#975, #1183; Nous Research's hermes-agent at 8da3100, read 2026-11-23, and run from
+// Hermes Agent (#975, #1183; Nous Research's hermes-agent at 8da31006, read 2026-11-23, and run from
 // source on Windows with a stand-in model) runs every session, from its classic CLI, TUI, Desktop or
 // ACP, in one gateway process per profile, and that process runs the profile's MCP servers: one
 // `mur mcp` would serve every Hermes session in every repo, and no MCP call says which session made
@@ -51,39 +51,10 @@ import (
 //     (docs/design/delegates.md), so it never shows as a session of its own.
 //   - Skills go in skills/ of each home, which Hermes scans for SKILL.md files.
 //
-// The plugin brings a session its messages as Claude Code's hook does (#1184), running `mur hook
-// --agent hermes` (internal/mcpserver, HermesHook) from Hermes' plugin hooks, in a clone the user
-// joined only, by the session's folder (the same few stats as Pi's extension):
-//   - pre_llm_call, once a turn before the model's first request, is UserPromptSubmit: its notice
-//     goes into the turn's user message as context.
-//   - transform_tool_result, after each call and before the result reaches the model, is
-//     PostToolUse: the notice goes after the result. That is the one way into a running turn a
-//     plugin has (agent.steer, which Hermes has for its own /steer, isn't one), and the place
-//     OpenCode's model refused text in a file it had read (docs/design/clients.md); here it is after
-//     the tool's own output, under Murmur's [Murmur] line. pre_tool_call and it bracket a terminal
-//     call, so the daemon credits the session's commits.
-//   - on_session_end, at each turn's end, is Stop, which keeps nothing going: putting what is
-//     unread in with ctx.inject_message could lose it, as Hermes may refuse it once the daemon has
-//     marked it read. It stays in the inbox, and the daemon hands it over through the socket once
-//     the session is idle. A refusal there loses the one message the socket took (the socket
-//     can't answer the daemon), and the plugin closes the socket, so the rest wait in the inbox.
-//     The plugin opens a socket only once it has the session's key, so no message goes to one it
-//     can't put in.
-//   - A socket the plugin opens for the session, a unix socket or on Windows a named pipe (Python
-//     has no unix sockets there), takes Claude Code's messaging-socket lines and puts each message
-//     in with inject_message: a turn of its own in an idle session. inject_message works for a
-//     session a client has open, and from no hook's context only with the session's key, which the
-//     plugin keeps from the hooks (seen 2026-11-23: a oneshot session's key was refused once it had
-//     closed; an ACP session's still took a turn after its client went). The plugin closes the socket
-//     at on_session_finalize and on_session_delete, or when Hermes refuses a turn, and the daemon
-//     holds the session for as long as the socket answers and it hasn't been idle for 8 hours
-//     (internal/daemon, socketHeld).
-//   - inject_message needs plugins.entries.murmur.allow_gateway_injection in config.yaml, which
-//     join sets and uninstall takes out (hermesyaml.go). Without it the plugin opens no socket, and
-//     the session gets notices only.
-//
-// Hermes runs plugins in-process with the user's credentials, as it does every plugin; Murmur's runs
-// `mur` and nothing else, and the grant lets it start a turn in a session of the user's own.
+// The plugin brings a session its messages as Claude Code's hook does (#1184): it runs `mur hook
+// --agent hermes` (internal/mcpserver, HermesHook) from Hermes' plugin hooks, and opens a socket for
+// the session that the daemon hands an idle session's messages to. How, and why so:
+// docs/design/handoff.md, "Hermes' plugin".
 
 // hermesProfileFiles are the files that make a folder under profiles/ a profile to Hermes: one is
 // enough (user-guide/profiles.md).
