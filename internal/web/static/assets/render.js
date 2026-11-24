@@ -294,12 +294,12 @@ function topbar() {
       ),
     h("h1", { class: "truncate" }, viewTitle()),
     NARROW.matches && connBadge(false),
-    (ui.view === "sessions" || ui.view === "recent") && starLink(),
+    ui.view !== "messages" && starLink(),
   );
 }
 
-// A way to star the repo on GitHub (#1233), at the top right of Sessions, Recent and a Conversations
-// view with nothing open: not over a conversation or in Settings (Tyler, 2026-11-24). It is a plain
+// A way to star the repo on GitHub (#1233), at the top right of Sessions, Recent, Settings and a
+// Conversations view with nothing open, but not over a conversation (Tyler, 2026-11-24). It is a plain
 // link, with no star count, so the page makes no request of its own to GitHub. A phone's header
 // has no room for it.
 function starLink() {
