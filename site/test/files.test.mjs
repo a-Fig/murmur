@@ -198,6 +198,7 @@ test('the hero\'s button shows the same prompt it copies (#1234)', () => {
   const source = /const (\w+) = document\.querySelector\('#setup \.cmd code'\);/.exec(html)?.[1];
   assert.ok(source, 'the script reads Setup\'s prompt');
   assert.ok(html.includes(`navigator.clipboard.writeText(${source}.textContent)`), 'the button copies it');
-  assert.ok(html.includes(`quote.textContent = ${source}.textContent;`), 'the card shows it, its quotes drawn by CSS');
+  assert.ok(html.includes(`${source}.textContent.split(`), 'the card is built from it, a line per sentence');
+  assert.ok(html.includes(`if (quote.textContent !== ${source}.textContent) quote.textContent = ${source}.textContent;`), 'and falls back to it whole if the words ever differ');
   assert.ok(html.includes(`prompt.setAttribute('aria-describedby', pop.id)`), 'the card is the button\'s description');
 });

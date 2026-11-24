@@ -828,6 +828,7 @@
   .st .st-pop q::before, .st .st-pop q::after { color: #A9B6E6; }
   .st .st-pop { padding-left: calc(16px + 1ch); }
   .st .st-pop q::before { margin-left: -1ch; }
+  .st .st-pop .st-url { white-space: nowrap; }
   .st .st-pop.open { opacity: 1; visibility: visible; pointer-events: auto; translate: -50% 0; transition: opacity .15s ease, translate .15s ease, visibility 0s; }
   /* The hint under the button fades while the card covers it, so its ends don't show at the card's sides. */
   .st .st-copy p.st-hint { transition: opacity .15s ease; }
@@ -1505,8 +1506,21 @@ void main() {
     const pop = document.createElement('span');
     pop.className = 'st-pop'; pop.id = 'st-pop'; pop.setAttribute('role', 'tooltip');
     // The quotes around it are drawn by the CSS, so they are never part of what is copied.
+    // Each sentence starts a line and the address is never broken (Tyler, 2026-11-24). That's
+    // display only: the line breaks are <br>s, which add no text, and every space stays put.
     const quote = document.createElement('q');
-    quote.textContent = promptText.textContent;
+    promptText.textContent.split(/(\.\s+)/).forEach((part, i) => {
+      if (i % 2) { quote.append(part, document.createElement('br')); return; }
+      part.split(/(https?:\/\/\S+)/).forEach((bit, j) => {
+        if (!bit) return;
+        if (!(j % 2)) { quote.append(bit); return; }
+        const url = document.createElement('span');
+        url.className = 'st-url'; url.textContent = bit;
+        quote.append(url);
+      });
+    });
+    // Should that ever change the words, the card shows them as one run instead.
+    if (quote.textContent !== promptText.textContent) quote.textContent = promptText.textContent;
     pop.append(quote);
     wrap.append(prompt, pop);
     prompt.setAttribute('aria-describedby', pop.id);
