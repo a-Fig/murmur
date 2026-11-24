@@ -150,6 +150,13 @@ func TestGoingBackRefusesAnIncludeMadeSince(t *testing.T) {
 	if s := Read(ctx, noEnv, gitDir, bad); !strings.HasPrefix(s.Hold, "Can't go back for good: another global git config file") {
 		t.Errorf("hold %q", s.Hold)
 	}
+	// The global file itself saying prerelease again, with no include, is no reason: the updater
+	// holds it again before it goes back.
+	gitConfig(t, "--file", path, "--unset-all", "include.path")
+	gitConfig(t, "--file", path, "--replace-all", "murmur.channel", "prerelease")
+	if s := Read(ctx, noEnv, gitDir, bad); s.Hold != "Going back to the latest stable release." {
+		t.Errorf("hold with the file's own prerelease: %q", s.Hold)
+	}
 }
 
 // An override made after Back, before the release gone back to installs, is caught there: the

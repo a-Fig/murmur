@@ -371,8 +371,10 @@ func beforeHold(running string) bool {
 // any of them would install the prerelease again. "" if nowhere, or the release gone back to
 // knows the hold. here says it is this clone's own config, which `git config --unset` changes.
 //
-// The global file is held (holdChannel) before the release gone back to installs, so a global
-// "prerelease" counts only if globalHeld says that is done already: then it comes from an include.
+// The global files are held (holdChannel) before the release gone back to installs, so a global
+// "prerelease" counts only if globalHeld says that is done already and the files don't say it
+// themselves (a person setting it again since, which the next hold takes care of): then it comes
+// from an include.
 //
 // It judges by the version running, since it can't know the release gone back to: going back
 // from a prerelease of v0.5.4 made after v0.5.4 is out lands on a release that knows the hold,
@@ -392,7 +394,12 @@ func unheld(ctx context.Context, gitDir, running string, globalHeld bool) (at st
 	}
 	for i, d := range dirs {
 		v := last(configValues(ctx, d, channelKey), "")
-		if !strings.EqualFold(v.value, "prerelease") || v.scope == "global" && !globalHeld {
+		if !strings.EqualFold(v.value, "prerelease") {
+			continue
+		}
+		// A global one counts only once the global files are held and it still reads so: then it
+		// comes from an include. One the files say themselves is held before going back.
+		if v.scope == "global" && (!globalHeld || strings.EqualFold(last(configValues(ctx, d, channelKey, "--global", "--no-includes"), "").value, "prerelease")) {
 			continue
 		}
 		in := where(v.scope)
