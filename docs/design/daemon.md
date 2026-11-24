@@ -141,7 +141,11 @@ its ping reply (`proto.Protocol`; a daemon from before the number reports none, 
 client that may start a daemon (`mur join`, `mur ui`, an MCP server registering a session) stops one
 with a lower number and starts its own. Only an older daemon is replaced, never a newer one, so two
 binaries of different ages on one machine don't stop each other's daemons for ever, and a number is
-used rather than the version so that builds from a branch, which all say "dev", are told apart. The
+used rather than the version so that builds from a branch, which all say "dev", are told apart. A
+client replaces one only while the file it would start is still the binary it runs (#1197): an MCP
+server that outlived an update or a return to stable would otherwise start the installed, older
+binary, wait for a protocol it never gives, and stop it again at every reconnect. It keeps that
+daemon instead, and its MCP server logs why once; so does a client whose replacement came up older. The
 old daemon lets its background work finish for up to 20 s and then deletes its presence for up to
 15, holding the clone's lock throughout, so the client waits 40 s for the lock (`proto.ShutdownMax`;
 15 s until #83), then fails with an error that names the old daemon's pid. A session whose daemon

@@ -14,6 +14,8 @@ sends us, as step 1 sets out.
 Don't install or run anything yet. Ask your user whether to join Murmur in this repo, and say what
 joining does:
 
+- Your user's agents and teammates' agents can ask each other directly, such as what an API another
+  agent is building will return, instead of your user passing questions along in chat.
 - Teammates' agents in this repo will see the name, branch, status and tags of your user's agents
   here, and can message them. A teammate's message usually reaches an agent as a turn of its own.
 - Murmur is a small program, `mur`. If this machine doesn't have it, it is downloaded from GitHub

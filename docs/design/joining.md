@@ -108,6 +108,19 @@ Everything it writes is outside the repo's tracked files:
 | The hook for Kiro (beta), on `UserPromptSubmit` and `Stop` | `hooks/murmur.json` in Kiro's home | user |
 | The daemon | started, if none is running | clone |
 
+- **Cursor's and Kiro's entries** (#1199, 2026-11-23). Where the user already has a `murmur` server
+  in `mcp.json`, join sets its `command` and `args` and keeps their other fields (an `env`, say), as
+  Codex's join does; uninstall takes the whole entry out, as Codex's does with its table (one left
+  with only the user's fields would be a server with no command), and says which of their fields went
+  with it. An allow rule is a line among the user's own that Cursor and Kiro
+  rewrite, so nothing in it says who added it: join records each rule it adds in `.murmur-join.json`
+  beside that permissions file, and uninstall removes only a recorded one. A rule that was there
+  before join, or that an older mur added without a record, stays, with a note. A `murmur` entry
+  that is a remote server (a `url`, or a `type` other than `stdio`) is a collision (#1213): join
+  refuses it before editing the file or writing any allow rule, and says so; uninstall leaves it. Cursor
+  also writes no hook or allow rule when its server couldn't be registered, for any reason. Join and uninstall in
+  a scratch home also refuse a home whose `mcp.json`, `hooks.json`, permissions file, record or
+  skills are links to files outside the temporary folder (#995).
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
   how to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a
   team of agents as its user's GEM, general engineering manager (#548, #779); a model may load it

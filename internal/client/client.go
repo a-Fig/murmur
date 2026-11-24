@@ -59,8 +59,15 @@ type Client struct {
 
 	mu   sync.Mutex
 	info proto.Info
-	// older says the daemon that last answered a ping speaks an older protocol than this binary.
-	older bool
+	// older says the daemon that last answered a ping speaks an older protocol than this binary,
+	// and protocol is the number it gave.
+	older    bool
+	protocol int
+	// kept says why an older daemon is kept rather than replaced (#1197): a replacement came up
+	// older. Once set it stays, so the daemon isn't stopped again at every reconnect. notOwn says
+	// why the last connect didn't try one: the binary installed isn't this one. It is asked again
+	// at each connect, since it is cheap, and a moment mid-swap can't then hold for good.
+	kept, notOwn string
 	// legacy says that daemon is from before proof (proto.ProofProtocol): it can't prove itself,
 	// and is trusted only while it holds the clone's lock.
 	legacy bool
@@ -139,23 +146,38 @@ func Connect(ctx context.Context, gitDir string, spawn bool) (*Client, error) {
 
 // Replace is Connect for `mur join`, which someone coming from 0.2 is told to run again: it starts
 // a daemon, and where one from before proof is in the way it ends that one by its process first
-// (see endOlder), which Connect leaves running.
+// (see endOlder), which Connect leaves running. An older daemon kept (Kept) is an error here, since
+// it was asked to be replaced.
 func Replace(ctx context.Context, gitDir string) (*Client, error) {
 	c := &Client{GitDir: gitDir, Spawn: true, EndOlder: true}
-	return c, c.connect(ctx)
+	if err := c.connect(ctx); err != nil {
+		return c, err
+	}
+	if why := c.Kept(); why != "" {
+		return c, errors.New(why)
+	}
+	return c, nil
 }
 
 // connect finds the clone's daemon. One that speaks an older protocol than this binary (left running
 // by the mur it replaced) is stopped and replaced if the client may start daemons; a client that
-// may not, such as `mur stop`, which has to be able to stop it, takes it as it is.
+// may not, such as `mur stop`, which has to be able to stop it, takes it as it is. So does one
+// whose replacement would be no newer (#1197): the binary installed isn't this one, as for an MCP
+// server that outlived an update or a return to stable, or a replacement already came up older.
+// Stopping it would only start the same version again, and stop it again at every reconnect.
 func (c *Client) connect(ctx context.Context) error {
+	replaced := false
+	c.mu.Lock()
+	c.notOwn = "" // asked again below, if this connect finds an older daemon
+	c.mu.Unlock()
 	if c.found(ctx) {
-		if !c.Outdated() || !c.mayStart() {
+		if !c.Outdated() || !c.mayStart() || !c.mayReplace() {
 			return nil
 		}
 		if err := c.replace(ctx); err != nil {
 			return err
 		}
+		replaced = true
 	} else if !c.mayStart() {
 		return ErrNoDaemon
 	}
@@ -173,11 +195,96 @@ func (c *Client) connect(ctx context.Context) error {
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
-		if c.found(ctx) && !c.Outdated() {
+		if c.found(ctx) {
+			// The old daemon has let go (replace waited for that), so an older one found now is
+			// what the start brought up: the binary installed is older than this one. It is
+			// worked with, and not replaced again. Where no daemon was found to begin with, an
+			// older one found now may be one whose ping was just slow, which the start found
+			// holding the lock: it is worked with, and replacing it is tried at the next connect.
+			c.mu.Lock()
+			older, protocol := c.older, c.protocol
+			c.mu.Unlock()
+			if older && replaced {
+				c.keep(fmt.Sprintf("the daemon started for this clone speaks protocol %d, older than this %s's %d: the %s installed is an older version than this one", protocol, brand.Command, proto.Protocol, brand.Command))
+			}
 			return nil
 		}
 	}
 	return fmt.Errorf("the daemon didn't come up; see %s", filepath.Join(StateDir(c.GitDir), "daemon.log"))
+}
+
+// mayReplace says the outdated daemon c found may be stopped for one that start launches: the file
+// start would run is still the binary this process came from, whose protocol is this one's. Else c
+// keeps the daemon (Kept says why).
+func (c *Client) mayReplace() bool {
+	c.mu.Lock()
+	kept, protocol := c.kept, c.protocol
+	c.mu.Unlock()
+	if kept != "" {
+		return false
+	}
+	notOwn := ""
+	if !launchesOwn() {
+		notOwn = fmt.Sprintf("this clone's daemon speaks protocol %d, older than this %s's %d, and the %s installed isn't this binary, so a daemon started from it may be no newer", protocol, brand.Command, proto.Protocol, brand.Command)
+	}
+	c.mu.Lock()
+	c.notOwn = notOwn
+	c.mu.Unlock()
+	return notOwn == ""
+}
+
+func (c *Client) keep(why string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.kept == "" {
+		c.kept = why
+	}
+}
+
+// Kept says why c works with a daemon of an older protocol than its own, which a client that may
+// start daemons would otherwise replace: "" if it doesn't. Requests that daemon can't serve fail
+// as they would with any older daemon; the caller says so once.
+func (c *Client) Kept() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.older {
+		return ""
+	}
+	if c.kept != "" {
+		return c.kept
+	}
+	return c.notOwn
+}
+
+// ownBinary is the file this process was started from, read as the package loads, before an
+// update or a return to stable can put another at its path; nil if it couldn't be read. Every mur
+// process reads it, hooks included, so on Windows it is read through a handle that lets the file
+// be renamed over meanwhile (fileIdentity): os.Open's would fail an update's swap at that moment.
+var ownBinary = func() *fileID {
+	exe, err := launchPath()
+	if err != nil {
+		return nil
+	}
+	id, err := fileIdentity(exe)
+	if err != nil {
+		return nil
+	}
+	return &id
+}()
+
+// launchesOwn says the file start would run is still the binary this process came from. Where
+// that couldn't be read as the process started, it says yes, as before #1197, and a replacement
+// that comes up older still keeps the next one from being tried. A variable, for tests.
+var launchesOwn = func() bool {
+	if ownBinary == nil {
+		return true
+	}
+	exe, err := launchPath()
+	if err != nil {
+		return false
+	}
+	id, err := fileIdentity(exe)
+	return err == nil && sameFile(*ownBinary, id)
 }
 
 func (c *Client) mayStart() bool {
@@ -276,7 +383,7 @@ func letGo(ctx context.Context, gitDir string, old proto.Info, stayed string) (f
 func (c *Client) found(ctx context.Context) bool {
 	info, protocol, legacy, ok := c.running(ctx)
 	c.mu.Lock()
-	c.info, c.legacy, c.older = info, legacy, ok && protocol < proto.Protocol
+	c.info, c.legacy, c.older, c.protocol = info, legacy, ok && protocol < proto.Protocol, protocol
 	c.mu.Unlock()
 	return ok
 }
@@ -504,14 +611,21 @@ func readLine(r *bufio.Reader, max int) ([]byte, error) {
 // start launches a daemon detached from this process. If two clients start one at once, the
 // second daemon finds the lock taken and exits.
 func (c *Client) start() error {
-	exe, err := os.Executable()
+	exe, err := launchPath()
 	if err != nil {
 		return err
 	}
-	// A running MCP server can outlive an update. Start the installed path rather
-	// than the renamed Windows backup (or Linux's deleted executable name).
-	exe = installedExecutable(exe)
 	return StartDaemon(exe, c.GitDir, nil)
+}
+
+// launchPath is the executable start runs. A running MCP server can outlive an update: it starts
+// the installed path rather than the renamed Windows backup (or Linux's deleted executable name).
+func launchPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return installedExecutable(exe), nil
 }
 
 // StartDaemon starts the installed executable after a self-update has released the clone lock.

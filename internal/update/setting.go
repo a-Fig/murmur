@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/gitx"
 )
 
@@ -24,9 +26,23 @@ const (
 	channelKey = "murmur.channel"
 	// skipKey holds a prerelease a person went back to stable from (#1045): the updater installs
 	// no prerelease that isn't newer than it, and takes the key off once a newer version is in.
-	skipKey  = "murmur.updateSkip"
+	skipKey = "murmur.updateSkip"
+	// backKey records each install that has gone back from the prerelease in skipKey, as
+	// "<version> <executable>", so that it goes back from it at most once (#1197): see wentBack.
+	backKey  = "murmur.updateBack"
 	noUpdate = "MURMUR_NO_UPDATE"
+	// heldNightly is murmur.channel while a return to stable from a nightly holds (#1197): the
+	// nightly channel to this release and later ones, the stable channel to v0.5.3 and older,
+	// which know nothing of murmur.updateSkip and take a prerelease only for the value
+	// "prerelease". Left at that, a v0.5.3 gone back to would take the nightly again at once, and
+	// the nightly would go back again. The updater writes "prerelease" again once the hold is off.
+	heldNightly = "prerelease-held"
 )
+
+// nightly says a murmur.channel value chooses prereleases and nightlies.
+func nightly(channel string) bool {
+	return strings.EqualFold(channel, "prerelease") || strings.EqualFold(channel, heldNightly)
+}
 
 // Setting is the machine's update choice and what applies in one clone.
 type Setting struct {
@@ -58,8 +74,8 @@ type configValue struct{ scope, value string }
 
 // configValues is every value of key in the order git reads them, so the last one is the one
 // that applies; none if it isn't set, or git can't read it.
-func configValues(ctx context.Context, gitDir, key string) []configValue {
-	vals, _ := configValuesErr(ctx, gitDir, key)
+func configValues(ctx context.Context, gitDir, key string, opts ...string) []configValue {
+	vals, _ := configValuesErr(ctx, gitDir, key, opts...)
 	return vals
 }
 
@@ -132,7 +148,7 @@ func choiceOf(update, channel string) string {
 	switch {
 	case update == "false":
 		return ChoiceOff
-	case strings.EqualFold(channel, "prerelease"):
+	case nightly(channel):
 		return ChoiceNightly
 	}
 	return ChoiceOn
@@ -159,6 +175,9 @@ func Read(ctx context.Context, getenv func(string) string, gitDir, running strin
 		case s.Skip == "":
 		case same(running, s.Skip):
 			s.Hold = "Going back to the latest stable release."
+			if where, _ := unheld(ctx, gitDir, running, true); where != "" { // Back held the global file
+				s.Hold = "Can't go back for good: " + where + " sets " + channelKey + " prerelease, which v0.5.3 and older read past the hold."
+			}
 		case s.Effective == ChoiceNightly:
 			on := "stable"
 			if prerelease(running) {
@@ -249,7 +268,9 @@ func unsetGlobal(ctx context.Context, gitDir, key string) error {
 // next check installs the latest stable release, older or not, through the same verified download
 // and restart as any update. From then on it installs no prerelease that isn't newer than the one
 // gone back from; stable releases still come, so the machine never stays below the latest one. It
-// writes murmur.updateSkip, in the global git config.
+// writes murmur.updateSkip, in the global git config, and on the nightly channel makes the global
+// murmur.channel heldNightly, so that the stable release gone back to keeps to stable releases
+// even if it is one from before murmur.updateSkip (#1197).
 func Back(ctx context.Context, getenv func(string) string, gitDir, running string) (Setting, error) {
 	settingMu.Lock()
 	defer settingMu.Unlock()
@@ -265,7 +286,45 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 		}
 		return s, nil // already going back
 	}
-	if _, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--global", skipKey, strings.TrimPrefix(running, "v")); err != nil {
+	// A rollback v0.5.3 wouldn't keep is refused before anything is written (#1212): the look at
+	// every clone is slow, and a hold written in the middle of it would leave the channel held with
+	// no hold beside it, which another install's updater reads as nightly with nothing held back.
+	refuse := func(where string, here bool) (Setting, error) {
+		how := "take it out there"
+		if here {
+			how = "take it out (git config --unset " + channelKey + ")"
+		}
+		return Read(ctx, getenv, gitDir, running), fmt.Errorf("%s sets %s prerelease, which v0.5.3 and older read past the hold, so going back to one of them would install %s again: %s, then go back", where, channelKey, strings.TrimPrefix(running, "v"), how)
+	}
+	if where, here := unheld(ctx, gitDir, running, false); where != "" {
+		return refuse(where, here)
+	}
+	// Then the hold, and the channel after it: written the other way round, another clone's updater
+	// could find the channel held with no hold beside it. What the global file itself said of the
+	// channel, includes apart, is kept, to put back exactly if Back is refused after all.
+	own := configValues(ctx, gitDir, channelKey, "--global", "--no-includes")
+	if err := setGlobal(ctx, gitDir, skipKey, strings.TrimPrefix(running, "v")); err != nil {
+		return s, err
+	}
+	held, err := holdChannel(ctx, gitDir)
+	if err != nil {
+		return s, err
+	}
+	// An include of the global file that also says prerelease shows only once the file is held.
+	if where, here := unheld(ctx, gitDir, running, true); where != "" {
+		// The hold first, so that nothing is held back with the channel open.
+		uerr := unsetGlobal(ctx, gitDir, skipKey)
+		if held && uerr == nil {
+			if v := last(own, "").value; v == "" {
+				uerr = unsetGlobal(ctx, gitDir, channelKey)
+			} else {
+				uerr = setGlobal(ctx, gitDir, channelKey, v)
+			}
+		}
+		s, err := refuse(where, here)
+		if uerr != nil {
+			err = fmt.Errorf("%w (and putting the git config back failed: %v)", err, uerr)
+		}
 		return s, err
 	}
 	s = Read(ctx, getenv, gitDir, running)
@@ -273,6 +332,86 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 		return s, fmt.Errorf("another git config file still sets %s", skipKey)
 	}
 	return s, nil
+}
+
+// holdChannel makes a global murmur.channel of "prerelease" heldNightly, which v0.5.3 and older read
+// as stable (#1197). Back calls it, and so does the updater just before it installs the stable
+// release gone back to, since by then the channel may read "prerelease" again: v0.5.3's only way to
+// take nightlies, which a person on it may use, or another clone's updater taking the hold for
+// one that had come off as Back wrote it.
+func holdChannel(ctx context.Context, gitDir string) (changed bool, err error) {
+	if !strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "global").value, "prerelease") {
+		return false, nil
+	}
+	return true, setGlobal(ctx, gitDir, channelKey, heldNightly)
+}
+
+func setGlobal(ctx context.Context, gitDir, key, value string) error {
+	_, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--global", "--replace-all", key, value)
+	return err
+}
+
+// holdAware is the first stable release whose updater knows the hold (murmur.updateSkip). One
+// before it takes a prerelease whenever `git config --get murmur.channel`, read in its clone, is
+// "prerelease", in any scope (#1212).
+const holdAware = "0.5.4"
+
+// beforeHold says going back from running may land on a stable release from before holdAware: a
+// prerelease of holdAware or earlier was cut while the latest stable release was older. From a
+// later one, the stable release gone back to knows the hold, wherever the channel is set.
+func beforeHold(running string) bool {
+	core, _, ok := version(running)
+	return ok && !newer(strings.Join(core, "."), holdAware)
+}
+
+// unheld names where a release from before the hold would still read murmur.channel prerelease
+// with the global one held, if going back from running may land on one: in this clone, or in
+// another on this machine's record (internal/clones), as v0.5.3's updater reads it there (`git
+// config --get`, in that clone). One binary serves them all, so a daemon of the old release in
+// any of them would install the prerelease again. "" if nowhere, or the release gone back to
+// knows the hold. here says it is this clone's own config, which `git config --unset` changes.
+//
+// The global files are held (holdChannel) before the release gone back to installs, so a global
+// "prerelease" counts only if globalHeld says that is done already and the files don't say it
+// themselves (a person setting it again since, which the next hold takes care of): then it comes
+// from an include.
+//
+// It judges by the version running, since it can't know the release gone back to: going back
+// from a prerelease of v0.5.4 made after v0.5.4 is out lands on a release that knows the hold,
+// and is refused all the same (Opus review). The updater, which knows the release, doesn't refuse.
+func unheld(ctx context.Context, gitDir, running string, globalHeld bool) (at string, here bool) {
+	if !beforeHold(running) {
+		return "", false
+	}
+	dirs := []string{gitDir}
+	if dir, err := clones.DefaultDir(); err == nil {
+		list, _ := clones.List(dir, func(string) bool { return true })
+		for _, c := range list {
+			if filepath.Clean(c.GitDir) != filepath.Clean(gitDir) {
+				dirs = append(dirs, c.GitDir)
+			}
+		}
+	}
+	for i, d := range dirs {
+		v := last(configValues(ctx, d, channelKey), "")
+		if !strings.EqualFold(v.value, "prerelease") {
+			continue
+		}
+		// A global one counts only once the global files are held and it still reads so: then it
+		// comes from an include. One the files say themselves is held before going back.
+		if v.scope == "global" && (!globalHeld || strings.EqualFold(last(configValues(ctx, d, channelKey, "--global", "--no-includes"), "").value, "prerelease")) {
+			continue
+		}
+		in := where(v.scope)
+		if v.scope == "global" {
+			in = "another global git config file" // an include: the global file itself is held
+		}
+		if i > 0 {
+			in = strings.TrimPrefix(in, "this repo's ") + " of " + d
+		}
+		return in, i == 0 && (v.scope == "local" || v.scope == "worktree")
+	}
+	return "", false
 }
 
 // skipped is the release this machine went back to stable from, while it still holds updates back:

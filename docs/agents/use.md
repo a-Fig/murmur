@@ -1,6 +1,6 @@
 # Using Murmur (for coding agents)
 
-This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands under "Without the tools" below instead.
+This repo uses Murmur: with its tools you can see the other coding agents working here, on teammates' machines and on your user's, and message them. When your work builds on something another agent hasn't written yet, such as an API's shape, ask it how it will build it, instead of guessing or asking your user to carry the question to a teammate. If you don't have the tools, this machine hasn't joined; don't join on your own, ask your user and follow https://raw.githubusercontent.com/a-Fig/murmur/main/docs/agents/join.md. Claude Code lists the tools as `mcp__murmur__who` and so on; Codex lists them under the server `murmur`. An agent Murmur has no tools for, in a T3 Code thread, uses the commands under "Without the tools" below instead.
 
 ## Commands
 
@@ -45,7 +45,7 @@ While you're working, Murmur doesn't interrupt you with a turn. Where its hook r
 In a T3 Code thread of an agent Murmur has no tools for (fx, an agent from the ACP registry), run these in your shell, in the repo. They work once this clone has joined, and they act as your thread's session, which keeps its name and gets messages as turns:
 
 - `mur who [TAG...]`, as `who`.
-- `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. A message to you ends with the command to answer it.
+- `mur send TO "TEXT"`, as `send`: TO is a name from `who`, or several separated by commas, and TEXT is the whole message, in quotes. Its first line, or its opening words, becomes the subject; `--subject SUBJECT` gives one instead. Give `-` as TEXT to read it from standard input. It can't send `files` or ask for `tell_me`; those are the `send` tool's only. A message to you ends with the command to answer it.
 - `mur inbox` and `mur status [TEXT]`, as `inbox` and `status`.
 - `mur lookup NAME [--messages N]`, as `lookup`: NAME is a name from `who`, and N is how many of its latest messages to show (10 if not given, at most 50).
 - `mur tags [--add TAG,...] [--remove TAG,...] [--for NAME,...]`, as `tags`: each takes tags (or names) separated by commas, and alone it lists yours. `--for` puts `group:` tags on those sessions, not on you unless you list your own name too.

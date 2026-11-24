@@ -174,7 +174,7 @@ every combination; a change to the set means running it again.
 
 `site/how-wide.mp4`, `site/how-tall.mp4` and their posters are rendered from
 `site/src/how-scene.html` by `site/src/render-video.mjs`. `docs/assets/murmur-demo.gif` comes from
-the wide film, at about 14 frames a second, 960px wide. A change to the palette means rendering all
+the wide film, played 1.3 times as fast (Tyler, 2026-11-23), at about 14 frames a second, 960px wide. A change to the palette means rendering all
 of them again.
 
 `site/og.jpg` is a capture of the home page's hero (2026-11-12, #488; before that it was the film's

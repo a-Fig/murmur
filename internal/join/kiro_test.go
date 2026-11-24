@@ -279,6 +279,10 @@ func TestUnregisterKiroPreservesMergedAllowPatterns(t *testing.T) {
 	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
 	write(t, permPath, "{\n  \"rules\": [\n    {\"capability\": \"mcp\", \"match\": [\"murmur/*\", \"github/*\"], \"effect\": \"allow\"},\n    {\"capability\": \"shell\", \"match\": [\"git status\"], \"effect\": \"allow\"}\n  ]\n}\n")
 
+	if err := recordRule(permPath, kiroAllowPattern); err != nil { // join added it
+		t.Fatal(err)
+	}
+
 	did, _, err := (Env{}).unregisterKiroAt(context.Background(), []agentHome{h})
 	if err != nil || len(did) != 1 {
 		t.Fatalf("unregister: did=%q err=%v", did, err)
@@ -443,6 +447,9 @@ func TestUnregisterKiroContinuesAfterMalformedFile(t *testing.T) {
 	permPath := filepath.Join(h.Dir, "settings", "permissions.json")
 	write(t, mcpPath, "{")
 	write(t, permPath, `{"rules": [{"capability": "mcp", "match": ["murmur/*"], "effect": "allow"}]}`)
+	if err := recordRule(permPath, kiroAllowPattern); err != nil { // join added it
+		t.Fatal(err)
+	}
 
 	did, _, err := (Env{}).unregisterKiroAt(context.Background(), []agentHome{h})
 	if err == nil || !strings.Contains(err.Error(), mcpPath) || len(did) != 1 {

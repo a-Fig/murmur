@@ -123,7 +123,7 @@ func TestReplace(t *testing.T) {
 }
 
 // TestLinkFailureThatMayPass: only a volume without links stops updates; a link that fails because
-// mur.exe was moved for a moment (install.ps1 takes no lock) leaves the next check to try again.
+// mur.exe was moved for a moment (an install.ps1 from before #1198 takes no lock) leaves the next check to try again.
 func TestLinkFailureThatMayPass(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mur.exe")
 	os.WriteFile(path, []byte("old"), 0755)
@@ -171,7 +171,7 @@ func TestChannelConfig(t *testing.T) {
 	for _, c := range []struct {
 		value string
 		want  bool
-	}{{"", false}, {"stable", false}, {"nightly", false}, {"prerelease", true}, {"Prerelease", true}} {
+	}{{"", false}, {"stable", false}, {"nightly", false}, {"prerelease", true}, {"Prerelease", true}, {"prerelease-held", true}} {
 		args := []string{"--git-dir=" + gitDir, "config", "murmur.channel", c.value}
 		if c.value == "" {
 			args = []string{"--git-dir=" + gitDir, "config", "--unset-all", "murmur.channel"}
@@ -432,7 +432,7 @@ func TestCleanup(t *testing.T) {
 }
 
 // An installer's backup that is still a second name of the binary stays (#1171, Sol's review of
-// #1173): install.ps1 takes no lock, and its backup is its hard link to mur.exe until it renames
+// #1173): an install.ps1 from before #1198 takes no lock, and its backup is its hard link to mur.exe until it renames
 // the new file over mur.exe. Taken in between, the link's loss sends the installer to a swap that can leave
 // no mur.exe. Once the new binary is in place the backup is an older binary, and goes.
 func TestCleanupLeavesABackupThatIsStillTheBinary(t *testing.T) {

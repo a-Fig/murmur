@@ -93,11 +93,18 @@ func (e Env) registerCursorAt(h agentHome) (did []string, fresh bool, err error)
 	}
 	var errs []error
 	path := filepath.Join(h.Dir, "mcp.json")
+	serverFailed := false
 	if changed, err := e.setCursorServer(path); err != nil {
 		errs = append(errs, err)
+		serverFailed = true
 	} else if changed {
 		fresh = true
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
+	}
+	// No hook or approval for a server that isn't registered: the name may be another server's, and
+	// the hook's messages would send the agent to it (#1213).
+	if serverFailed {
+		return did, fresh, errors.Join(errs...)
 	}
 	path = filepath.Join(h.Dir, "hooks.json")
 	if changed, err := setCursorHooks(path, agentHookCommand(e.Exe, "cursor")); err != nil {
@@ -115,7 +122,8 @@ func (e Env) registerCursorAt(h agentHome) (did []string, fresh bool, err error)
 	return did, fresh, errors.Join(errs...)
 }
 
-// setCursorServer writes Murmur's entry in the mcp.json at path, and says whether it changed.
+// setCursorServer writes Murmur's entry in the mcp.json at path, and says whether it changed. An
+// entry the user already has keeps every field but command and args (mergeMCPServer).
 func (e Env) setCursorServer(path string) (bool, error) {
 	text, err := readConfig(path)
 	if err != nil {
@@ -124,10 +132,10 @@ func (e Env) setCursorServer(path string) (bool, error) {
 	if strings.TrimSpace(text) == "" {
 		text = "{}\n"
 	}
-	entry := jsonedit.New()
-	entry.Set("command", e.Exe)
-	entry.Set("args", toAny(cursorArgs))
-	out, changed, err := jsonedit.SetIn(text, []string{"mcpServers", brand.MCPServer}, entry)
+	out, changed, _, err := mergeMCPServer(text, e.Exe, cursorArgs)
+	if errors.Is(err, errRemoteServer) {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
 	if err != nil {
 		return false, fmt.Errorf("%s: %w, so the server wasn't added", path, err)
 	}
@@ -138,7 +146,7 @@ func (e Env) setCursorServer(path string) (bool, error) {
 }
 
 // allowCursorTools adds the allow rule to the cli-config.json at path, and says whether it was
-// new. A file Cursor would refuse (a comment, a trailing comma) is left alone: written back with
+// new, which it records: a rule already there is the user's, and uninstall leaves it. A file Cursor would refuse (a comment, a trailing comma) is left alone: written back with
 // the rule in it, it would still be refused, and Cursor would replace it with its defaults.
 func allowCursorTools(path string) (bool, error) {
 	text, err := readConfig(path)
@@ -168,7 +176,15 @@ func allowCursorTools(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", path, err)
 	}
-	return true, writeJSONConfig(path, out, 0o644)
+	// Recorded first, so a rule is never in the file that join can't say it added (ruleowned.go).
+	if err := recordRule(path, cursorAllowRule); err != nil {
+		return false, err
+	}
+	if err := writeJSONConfig(path, out, 0o644); err != nil {
+		_ = forgetRule(path, cursorAllowRule)
+		return false, err
+	}
+	return true, nil
 }
 
 // isCursorHook says a hooks.json entry is join's, by its command (`mur hook cursor`).
@@ -291,7 +307,7 @@ func removeCursorHooks(text string) (out string, changed bool, err error) {
 }
 
 // unregisterCursorAt takes out of Cursor home hs[0] what join put there: the server, the hook and
-// the allow rule.
+// the allow rule, if join added it (ruleowned.go).
 func (e Env) unregisterCursorAt(_ context.Context, hs []agentHome) (did, notes []string, err error) {
 	h := hs[0]
 	var errs []error
@@ -299,13 +315,18 @@ func (e Env) unregisterCursorAt(_ context.Context, hs []agentHome) (did, notes [
 	if text, rerr := readConfig(path); rerr != nil {
 		errs = append(errs, rerr)
 	} else if text != "" {
-		out, changed, err := jsonSteps(text, deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers"))
+		out, changed, dropped, err := removeMCPServer(text)
 		switch {
+		case errors.Is(err, errRemoteServer):
+			notes = append(notes, h.Label+": left the "+brand.MCPServer+" MCP server in "+path+" alone: it is a remote server, not one "+brand.Command+" added")
 		case err != nil:
 			errs = append(errs, fmt.Errorf("%s: %w", path, err))
 		case changed:
 			if err := writeJSONConfig(path, out, 0o644); err != nil {
 				errs = append(errs, err)
+			} else if len(dropped) > 0 {
+				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+path+")")
+				notes = append(notes, droppedFieldsNote(h.Label, path, dropped))
 			} else {
 				did = append(did, h.Label+": removed the "+brand.MCPServer+" MCP server ("+path+")")
 			}
@@ -328,23 +349,19 @@ func (e Env) unregisterCursorAt(_ context.Context, hs []agentHome) (did, notes [
 		}
 	}
 	if path = cursorConfigFile(h); path != "" {
-		if text, rerr := readConfig(path); rerr != nil {
-			errs = append(errs, rerr)
-		} else if text != "" {
-			out, changed, err := jsonedit.RemoveIn(text, []string{"permissions", "allow"}, cursorAllowRule)
-			switch {
-			case err != nil:
-				errs = append(errs, fmt.Errorf("%s: %w", path, err))
-			case changed:
-				if err := writeJSONConfig(path, out, 0o644); err != nil {
-					errs = append(errs, err)
-				} else {
-					did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+path+")")
-				}
-			}
+		removed, note, err := takeOutAddedRule(h.Label, path, cursorAllowRule, func(text string) (string, bool, error) {
+			return jsonedit.RemoveIn(text, []string{"permissions", "allow"}, cursorAllowRule)
+		})
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+		case removed:
+			did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+path+")")
+		case note != "":
+			notes = append(notes, note)
 		}
 	}
-	return did, nil, errors.Join(errs...)
+	return did, notes, errors.Join(errs...)
 }
 
 // cursorRemoval says how to take out by hand what join put in Cursor home h.
@@ -352,7 +369,7 @@ func cursorRemoval(_ Env, h agentHome) string {
 	var steps []string
 	path := filepath.Join(h.Dir, "mcp.json")
 	if b, err := os.ReadFile(path); err == nil {
-		if _, found, _ := jsonedit.GetIn(string(b), []string{"mcpServers", brand.MCPServer}); found {
+		if hasLocalServer(string(b)) {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+path)
 		}
 	}
@@ -364,10 +381,21 @@ func cursorRemoval(_ Env, h agentHome) string {
 	}
 	if path = cursorConfigFile(h); path != "" {
 		if b, err := os.ReadFile(path); err == nil {
-			if _, allowed, _ := jsonedit.RemoveIn(string(b), []string{"permissions", "allow"}, cursorAllowRule); allowed {
+			if _, allowed, _ := jsonedit.RemoveIn(string(b), []string{"permissions", "allow"}, cursorAllowRule); allowed && joinAddedRule(path, cursorAllowRule) {
 				steps = append(steps, "delete \""+cursorAllowRule+"\" from permissions.allow in "+path)
 			}
 		}
 	}
 	return strings.Join(steps, "; ")
+}
+
+// cursorPathsInTemp reports whether every file join and uninstall write for Cursor home h, and the
+// folders above them, resolve inside the temporary folder: a link in a scratch home to a file
+// outside it is written through (#1199).
+func cursorPathsInTemp(h agentHome) bool {
+	paths := []string{filepath.Join(h.Dir, "mcp.json"), filepath.Join(h.Dir, "hooks.json")}
+	if cfg := cursorConfigFile(h); cfg != "" {
+		paths = append(paths, cfg, ruleRecordPath(cfg))
+	}
+	return pathsInTemp(append(paths, skillPaths(filepath.Join(h.Dir, "skills"))...))
 }

@@ -17,6 +17,11 @@ fast as they can. The agents can't see each other. Two of them build the same au
 refactors a module another is halfway through extending; a third picks a different state library.
 The humans find out at merge time, or at the demo.
 
+Git doesn't catch these: it stops two edits to the same lines, and merges two auth flows in two
+folders without a word. Today the humans are the only link between the agents. When one needs an
+answer from another, its person pastes the question into Slack, a teammate pastes it into their
+agent, and the answer comes back the same way.
+
 T3 Code already lets sessions on **one machine** discover and message each other. Murmur extends
 that to sessions on **different machines working in the same repo**, so agents can settle "who is
 building what" among themselves, without bringing the humans in.

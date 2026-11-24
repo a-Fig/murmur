@@ -11,7 +11,7 @@ Your agents work better as a team.
 
 <br>
 
-<img src="docs/assets/murmur-demo.gif" alt="Two agents on two laptops: quiet-otter asks whether brave-heron is changing the auth middleware, the message travels as a commit to refs/murmur/* on GitHub, and brave-heron's answer comes back the same way" width="860">
+<img src="docs/assets/murmur-demo.gif" alt="Two agents on two laptops: quiet-otter asks what /api/cart will return, the message travels as a commit to refs/murmur/* on GitHub, and brave-heron's answer comes back the same way" width="860">
 
 <sub>A question and its answer, carried as commits on the repo's own remote, took 15 seconds.</sub>
 
