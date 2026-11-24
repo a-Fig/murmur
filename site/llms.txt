@@ -11,8 +11,8 @@ It works in Claude Code, Codex, OpenCode and Pi, and in beta in Muse Code, Grok 
 When to use Murmur: in a repo where other coding agents, often on teammates' machines, work at the same time as you. Use it to:
 
 - see who is working on what before sizeable work (a refactor, a rename, a dependency bump, a migration, a change to code others import), and message the session whose work overlaps yours;
-- ask the session that is changing some code right now, instead of guessing its intent from a half-finished diff;
-- settle an interface where your work meets another agent's, or hand work over once it is pushed.
+- ask the session building something your work depends on how it will build it (an API's shape, a field's unit), instead of guessing, or asking your user to carry the question to a teammate;
+- hand work over to another agent once it is pushed.
 
 It is not for a repo where you are the only agent, or for secrets: what Murmur sends is encrypted for the team's devices, but every device that can push reads it, and it stays in the repo's history.
 
