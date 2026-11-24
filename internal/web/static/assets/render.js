@@ -16,7 +16,7 @@ import { settingsPage } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
-export { announce, render, go, setView };
+export { announce, render, go, setView, starLink };
 
 let content; // the scrolling pane, kept across renders so its scroll position is too
 
@@ -294,6 +294,20 @@ function topbar() {
       ),
     h("h1", { class: "truncate" }, viewTitle()),
     NARROW.matches && connBadge(false),
+    starLink(),
+  );
+}
+
+// A way to star the repo on GitHub, at the right end of the pane's header (#1233). It is a plain
+// link, with no star count, so the page makes no request of its own to GitHub. A phone's header
+// has no room for it.
+function starLink() {
+  if (NARROW.matches) return null;
+  return h(
+    "a",
+    { class: "btn btn-outline star-link", href: "https://github.com/a-Fig/murmur", target: "_blank", rel: "noopener noreferrer", "data-key": "star" },
+    icon("github"),
+    "Star us on GitHub",
   );
 }
 

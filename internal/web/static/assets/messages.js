@@ -9,7 +9,7 @@ import {
 import { onlyMine, setOnlyMine } from "./preferences.js";
 import { AuthError, api } from "./api.js";
 import { deliver, queueSettings, saveSettings, deny, poll } from "./sync.js";
-import { announce, render, go } from "./render.js";
+import { announce, render, go, starLink } from "./render.js";
 import { humanTag } from "./sidebar.js";
 import {
   modelOf, sessionState, dotted, statusDot, prFor, prBadge, presence, settledSessions, isSettled,
@@ -584,6 +584,7 @@ function conversationPane(c) {
       ),
       of && prFor(of.session) && prBadge(prFor(of.session), true, "pr-chat-" + of.session.name),
       c.kind !== "dm" && membersButton(c),
+      starLink(),
     ),
     h("div", { class: "chat-thread", "data-conversation": c.key }, c.messages.length || pendingIn(c).length ? chatMessages(c) : chatIntro(o)),
     waitLine(c),
