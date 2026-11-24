@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -141,5 +143,54 @@ func TestAToolCallOfNoToolRegistersNothing(t *testing.T) {
 	}
 	if n := f.helloCount(); n != 0 {
 		t.Errorf("%d hellos", n)
+	}
+}
+
+// The plugin names the socket it opened for the session (#1184), and the session's hello carries
+// it, so the daemon can start a turn there.
+func TestAToolCallNamesTheSessionsSocket(t *testing.T) {
+	f := &fakeDaemon{}
+	toolRepo(t, f)
+	t.Setenv(hermesSocketEnv, "/tmp/murmur-hermes-x/s")
+	t.Setenv(hermesTokenEnv, "tok-1")
+	var out strings.Builder
+	if err := Tool(context.Background(), "hermes", "who", strings.NewReader("{}"), &out); err != nil {
+		t.Fatalf("%v: %s", err, out.String())
+	}
+	if h := f.lastHello(); h.MsgSocket != "/tmp/murmur-hermes-x/s" || h.MsgToken != "tok-1" {
+		t.Errorf("hello route %+v, want the plugin's socket", h.Route)
+	}
+}
+
+// The hook registers the session its payload names, with its socket, before it asks the daemon
+// anything, so a session that hasn't called a tool yet still gets its messages; then it asks as the
+// hook does, by the same Native.
+func TestAHermesHookRegistersItsSessionFirst(t *testing.T) {
+	f := &fakeDaemon{}
+	toolRepo(t, f)
+	t.Setenv(hermesSocketEnv, "/tmp/murmur-hermes-x/s")
+	t.Setenv(hermesTokenEnv, "tok-1")
+	cwd, _ := os.Getwd()
+	payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": "UserPromptSubmit", "cwd": cwd, "prompt": "hi"})
+	HermesHook("", strings.NewReader(string(payload)), io.Discard)
+	h := f.lastHello()
+	if !h.Command || h.Native != "hermes:local-9" || h.ID != nativeID("hermes:local-9") || h.MsgSocket != "/tmp/murmur-hermes-x/s" || h.Cwd != cwd {
+		t.Errorf("hello %+v, want the payload's session, with its socket", h)
+	}
+	got := f.requestsOf(proto.OpNotices)
+	if len(got) != 1 || got[0].Native != "hermes:local-9" {
+		t.Errorf("notices requests %+v, want one for hermes:local-9", got)
+	}
+}
+
+// Outside a joined repo the hook registers nothing and asks nothing, as `mur tool` does.
+func TestAHermesHookOutsideAJoinedRepoDoesNothing(t *testing.T) {
+	f := &fakeDaemon{}
+	p := repo(t, true, f) // marked, never joined here
+	payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": "UserPromptSubmit", "cwd": p.Top})
+	var out strings.Builder
+	HermesHook("", strings.NewReader(string(payload)), &out)
+	if n := f.helloCount(); n != 0 || out.Len() != 0 || len(f.requestsOf(proto.OpNotices)) != 0 {
+		t.Errorf("%d hellos, printed %q", n, out.String())
 	}
 }

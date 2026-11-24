@@ -52,11 +52,10 @@ print("session=%s folder=%s argv=%s args=%s" % (os.environ.get("MURMUR_HERMES_SE
       os.path.basename(os.getcwd()), " ".join(sys.argv[1:]), sys.stdin.read()))
 `
 
-// The plugin runs in Python: it registers the tools mur lists, under Murmur's names; a call runs
-// mur with the session's ID, its folder and the arguments; a subagent's goes as its parent's; and a
-// call with no session or folder is refused without running mur. Skipped where no Python is on
-// PATH; CI's runners have one.
-func TestHermesPluginRunsInPython(t *testing.T) {
+// hermesPython is a Python 3.8 or later on PATH, which Hermes needs too; the test is skipped
+// without one. CI's runners have one.
+func hermesPython(t *testing.T) string {
+	t.Helper()
 	py, err := exec.LookPath("python3")
 	if err != nil {
 		if py, err = exec.LookPath("python"); err != nil {
@@ -66,19 +65,43 @@ func TestHermesPluginRunsInPython(t *testing.T) {
 	if out, err := exec.Command(py, "-c", "import sys; assert sys.version_info >= (3, 8)").CombinedOutput(); err != nil {
 		t.Skipf("no usable python: %v %s", err, out)
 	}
-	dir := t.TempDir()
+	return py
+}
+
+// hermesStandInMur writes source, a Python stand-in for mur, into dir, and a program the plugin
+// can run as mur that runs it with args first: a .cmd on Windows, a shell script elsewhere.
+func hermesStandInMur(t *testing.T, py, dir, source string, args ...string) string {
+	t.Helper()
 	standIn := filepath.Join(dir, "standin.py")
-	write(t, standIn, hermesStandIn)
+	write(t, standIn, source)
 	exe := filepath.Join(dir, "mur")
 	if runtime.GOOS == "windows" {
-		exe += ".cmd"
-		write(t, exe, "@\""+py+"\" \""+standIn+"\" %*\r\n")
-	} else {
-		write(t, exe, "#!/bin/sh\nexec '"+py+"' '"+standIn+"' \"$@\"\n")
-		if err := os.Chmod(exe, 0o755); err != nil {
-			t.Fatal(err)
+		line := "@\"" + py + "\" \"" + standIn + "\""
+		for _, a := range args {
+			line += " \"" + a + "\""
 		}
+		write(t, exe+".cmd", line+" %*\r\n")
+		return exe + ".cmd"
 	}
+	line := "#!/bin/sh\nexec '" + py + "' '" + standIn + "'"
+	for _, a := range args {
+		line += " '" + a + "'"
+	}
+	write(t, exe, line+" \"$@\"\n")
+	if err := os.Chmod(exe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return exe
+}
+
+// The plugin runs in Python: it registers the tools mur lists, under Murmur's names; a call runs
+// mur with the session's ID, its folder and the arguments; a subagent's goes as its parent's; and a
+// call with no session or folder is refused without running mur. Skipped where no Python is on
+// PATH; CI's runners have one.
+func TestHermesPluginRunsInPython(t *testing.T) {
+	py := hermesPython(t)
+	dir := t.TempDir()
+	exe := hermesStandInMur(t, py, dir, hermesStandIn)
 	plugin := filepath.Join(dir, "plugins", "murmur")
 	if _, err := writeHermesPlugin(plugin, exe); err != nil {
 		t.Fatal(err)

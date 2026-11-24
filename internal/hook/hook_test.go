@@ -776,3 +776,57 @@ func TestTheHookTellsTheDaemonOfAnIssueFiled(t *testing.T) {
 		t.Errorf("the notices requests reported %+v, want %+v", got, want)
 	}
 }
+
+// Murmur's Hermes plugin runs the hook with Hermes' session ID (#1184): the requests name the
+// session as `mur tool` registered it, hermes:<ID>, never by a Claude Code ID or process. A call is
+// bracketed when the plugin gives its ID (a terminal call). A notice names the inbox tool by the
+// name Hermes gives it, and an interrupted turn's end keeps nothing going.
+func TestHermesHookNamesItsSessionAsMurToolDoes(t *testing.T) {
+	t.Setenv("CLAUDE_PID", "4242")
+	repo := newRepo(t)
+	requests := fakeDaemon(t, filepath.Join(repo, ".git"), func(r proto.Request) string {
+		switch r.Op {
+		case proto.OpNotices:
+			return `{"ok":true,"self":"fake-0001/aaaaaa","unread":1,"messages":[{"id":"m1","from":"other-0001/bbbbbb","subject":"hi"}]}`
+		case proto.OpTurnEnd:
+			return `{"ok":true,"delivered":[{"id":"m2","from":"other-0001/bbbbbb","subject":"at the end"}]}`
+		}
+		return `{"ok":true}`
+	})
+	run := func(payload map[string]any) string {
+		payload["session_id"], payload["cwd"] = "local-1", repo
+		b, _ := json.Marshal(payload)
+		var out bytes.Buffer
+		hook.RunFor("hermes", bytes.NewReader(b), &out)
+		return out.String()
+	}
+	if out := run(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "terminal", "tool_use_id": "call_1"}); out != "" {
+		t.Errorf("PreToolUse printed %q", out)
+	}
+	out := run(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "terminal", "tool_use_id": "call_1"})
+	if !strings.Contains(out, `\"hi\"`) || !strings.Contains(out, "murmur_inbox") {
+		t.Errorf("PostToolUse printed %q", out)
+	}
+	if out := run(map[string]any{"hook_event_name": "Stop"}); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("Stop printed %q", out)
+	}
+	if out := run(map[string]any{"hook_event_name": "Stop", "interrupted": true}); out != "" {
+		t.Errorf("an interrupted Stop printed %q", out)
+	}
+	ops := map[string]int{}
+	for _, r := range requests() {
+		if r.Op == proto.OpPing {
+			continue
+		}
+		ops[r.Op]++
+		if r.Native != "hermes:local-1" || r.ClaudeSession != "" || r.ClientPID != 0 || r.Agent != "" {
+			t.Errorf("%s named its session %q, Claude %q, pid %d, agent %q", r.Op, r.Native, r.ClaudeSession, r.ClientPID, r.Agent)
+		}
+		if (r.Op == proto.OpToolStart || r.Op == proto.OpToolEnd) && (r.ToolUseID != "call_1" || r.Cwd != repo) {
+			t.Errorf("%s: call %q in %q", r.Op, r.ToolUseID, r.Cwd)
+		}
+	}
+	if ops[proto.OpToolStart] != 1 || ops[proto.OpToolEnd] != 1 || ops[proto.OpNotices] != 1 || ops[proto.OpTurnEnd] != 2 {
+		t.Errorf("requests by op: %v", ops)
+	}
+}

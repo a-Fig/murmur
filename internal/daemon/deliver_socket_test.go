@@ -23,6 +23,7 @@ import (
 // fakeSocket records every line written to it, from every connection, and when the first came.
 type fakeSocket struct {
 	path  string
+	ln    net.Listener
 	mu    sync.Mutex
 	got   []string
 	first time.Time
@@ -40,6 +41,7 @@ func useFakeSocket(t *testing.T) *fakeSocket {
 	if err != nil {
 		t.Skipf("no unix sockets here: %v", err)
 	}
+	f.ln = ln
 	t.Cleanup(func() { ln.Close() })
 	go func() {
 		for {
@@ -64,6 +66,9 @@ func useFakeSocket(t *testing.T) *fakeSocket {
 	}()
 	return f
 }
+
+// stop closes the socket, as a client that has gone does: nothing answers at its address.
+func (f *fakeSocket) stop() { f.ln.Close() }
 
 func (f *fakeSocket) lines() []string {
 	f.mu.Lock()

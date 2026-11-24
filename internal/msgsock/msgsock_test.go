@@ -171,3 +171,24 @@ func TestSendStopsWithTheContext(t *testing.T) {
 		t.Error("a cancelled context: no error")
 	}
 }
+
+// Answers says whether something accepts a connection at the address, and writes nothing there: a
+// session's socket is asked it to tell whether the session is still open (#1184).
+func TestAnswersSaysWhetherTheSocketTakesAConnection(t *testing.T) {
+	f, path := unixSession(t)
+	if !Answers(context.Background(), path) {
+		t.Fatal("an open socket doesn't answer")
+	}
+	select {
+	case l := <-f.lines:
+		t.Errorf("asking wrote %q", l)
+	case <-time.After(200 * time.Millisecond):
+	}
+	f.ln.Close()
+	if Answers(context.Background(), path) {
+		t.Error("a closed socket answers")
+	}
+	if Answers(context.Background(), "") {
+		t.Error("no address answers")
+	}
+}
