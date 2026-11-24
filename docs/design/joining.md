@@ -98,7 +98,8 @@ Everything it writes is outside the repo's tracked files:
 | Permission for its tools | `mcp__murmur` in `permissions.allow` of Claude Code's `settings.json` | user |
 | The MCP server, for Codex | `[mcp_servers.murmur]` in `config.toml` of `$CODEX_HOME`, else `~/.codex`, with `env_vars = ["T3CODE_CLI_PATH", "CODEX_HOME", "T3CODE_HOME"]` and `default_tools_approval_mode = "approve"` | user |
 | The MCP server, for OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor and Kiro (beta) | see [other agents](clients.md) | user |
-| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode, Pi, Cursor (`~/.cursor`) and Kiro (beta), and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
+| The plugin, for Hermes (beta), turned on and allowed to start turns | `plugins/murmur/` in Hermes' home and each of its profiles, `murmur` in `plugins.enabled` and `plugins.entries.murmur.allow_gateway_injection: true` in each one's `config.yaml` ([Hermes](clients.md#hermes-beta)) | user |
+| The skills, `murmur`, `murmur-pro` and `murmur-manager` (`internal/skills`) | `skills/<name>/SKILL.md` in the home of Claude Code, Codex, OpenCode, Pi, Cursor (`~/.cursor`), Kiro (beta) and Hermes (beta, and each of its profiles), and `config/skills/` in Antigravity's; Muse Code and Grok document no skills folder (2026-11-08) | user |
 | The hook for Claude Code, on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit` and `Stop` | `settings.json` in each Claude Code home ([Claude Code's hook is per user](clients.md#claude-codes-hook-is-per-user)) | user |
 | The hook for Codex, on `UserPromptSubmit`, `PostToolUse` and `Stop`, approved | `hooks.json` in each Codex home, its trust in `config.toml` there ([Codex's and Grok's hook](clients.md#codexs-and-groks-hook)) | user |
 | The hook for Grok, on `PostToolUse` and `Stop` | `hooks/murmur.json` in Grok's home | user |
@@ -183,6 +184,11 @@ reads the record of this machine's clones (`internal/clones`).
   one and their trust entries are renamed with them, and Codex doesn't ask about them again.
   `hooks.json` goes back as it was if a `config.toml` can't be written: once Murmur's groups are
   out, nothing tells a rerun where they were.
+- Hermes (#1183, #1184): it deletes the plugin's folder where its files are Murmur's, and takes
+  `murmur` out of `plugins.enabled`, leaving `enabled: []` where it was the only one, and the grant
+  out of `plugins.entries.murmur`, with any block that leaves empty, unless the block's line has a
+  comment. A grant set to true goes even if the user set it before joining, as nothing tells the
+  two apart; one set to anything else stays.
 - A clone whose cleanup didn't finish, or whose folder isn't there now, stays on the record so a
   rerun finds it (Sol's reviews, 2026-11-10). Murmur's folder in the user's config directory goes
   last, unless a running MCP server still needs its record there; it also held `id`, the random user

@@ -27,7 +27,7 @@ repo's own git remote: no server, no accounts.
 
 Same agents, same speed, and the repo stays coherent.
 
-It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor and Kiro (beta)**, in
+It works with **Claude Code, Codex, OpenCode, Muse Code, Pi, Grok, Antigravity, Cursor, Kiro and Hermes (beta)**, in
 [T3 Code](https://github.com/pingdotgg/t3code) or in a terminal.
 
 ## Install
@@ -87,7 +87,7 @@ From then on, agents call Murmur's tools themselves. Nobody needs to type a comm
 | `inbox`  | Messages that couldn't be handed over as a turn. |
 | `mute`   | Stops everything one other session sends from reaching you, until you unmute it. Your user sees mutes on the page and can undo them. |
 
-`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity, Cursor and Kiro (beta).
+`mur join` also installs three skills for Claude Code, Codex, OpenCode, Pi, Antigravity, Cursor, Kiro and Hermes (beta).
 Two help agents decide when to use Murmur and coordinate over several messages. The third,
 `murmur-manager`, is for an agent you ask to manage the others: your general engineering manager,
 or GEM. Their source is in [`internal/skills`](internal/skills).
@@ -105,6 +105,7 @@ or GEM. Their source is in [`internal/skills`](internal/skills).
 | Antigravity (beta)      | a terminal            | inbox     | notice after its next tool call        |
 | Kiro (beta)             | T3 Code               | turn      | given at the end of the turn           |
 | Kiro (beta)             | a terminal            | inbox     | given at the end of the turn           |
+| Hermes (beta)           | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2              | a terminal            | turn      | notice after its next tool call        |
 | OpenCode 2 (beta)       | T3 Code               | turn      | notice after its next tool call        |
 | OpenCode 1              | a terminal            | turn      | notice after its next tool call        |
@@ -118,7 +119,8 @@ or GEM. Their source is in [`internal/skills`](internal/skills).
 A **turn** means the message starts a new turn in the agent's conversation, and wakes a T3 thread
 idle less than its wake setting allows (5 minutes by default). A **notice** is one line with the
 sender and subject, added after the agent's next tool call; the agent reads the message with
-`inbox`, and anything still unread when its turn ends is given to it then. An **inbox** message
+`inbox`, and anything still unread when its turn ends is given to it then (in Hermes, as a turn of
+its own just after). An **inbox** message
 waits until the agent reads it. Codex and OpenCode in a terminal take a turn once the session has
 used one of Murmur's tools. In T3 Code, Murmur can't yet tell one Cursor thread from another
 ([#924](https://github.com/a-Fig/murmur/issues/924)). An agent Murmur has no tools for in T3 Code runs
@@ -171,6 +173,10 @@ such a workflow gives a stranger's code the team key, and with it everything on 
 **Files are off until you turn them on**, sending and receiving each, per repo, in `mur ui`'s
 Settings, where you can also keep them from your agents. An agent sends files only from the repo or the
 temp folder, and Murmur reads them for it, outside any sandbox the agent runs in.
+
+**In Hermes, Murmur is a plugin.** Hermes runs every plugin inside its gateway with your
+credentials. Murmur's runs only `mur`, and join lets it start a turn in your sessions, so a message
+can reach one that is idle.
 
 **A message is a note from a colleague, not an instruction from the user.** Agents are told to
 treat it that way, and to bring anything sizeable to their user first.

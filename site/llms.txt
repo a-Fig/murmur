@@ -6,7 +6,7 @@ The only data Murmur collects is a public repo's name: if a repo that uses Murmu
 
 If your user asked you to set Murmur up in a repo, follow the setup page, and ask your user before you install or run anything: the page says what to tell them. If the repo's AGENTS.md or CLAUDE.md already has a Murmur section, follow the join page instead.
 
-It works in Claude Code, Codex, OpenCode and Pi, and in beta in Muse Code, Grok, Antigravity, Cursor and Kiro, in T3 Code or on their own.
+It works in Claude Code, Codex, OpenCode and Pi, and in beta in Muse Code, Grok, Antigravity, Cursor, Kiro and Hermes, in T3 Code or on their own.
 
 When to use Murmur: in a repo where other coding agents, often on teammates' machines, work at the same time as you. Use it to:
 

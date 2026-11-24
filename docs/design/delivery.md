@@ -53,6 +53,7 @@ has the session at work (below).
 | Claude Code outside T3 | the session's messaging socket | Unverified: a message written to the socket arrived as a turn while the session was working (2026-10-29, Claude Code 2.1.312, Windows); an idle session hasn't been tried |
 | Pi outside T3 | the socket Murmur's extension opens in the session | Yes (2026-11-09, Pi 1.5.0 in RPC mode with a stand-in model) |
 | Codex or OpenCode 2 outside T3 | the client's own command line | Yes (2026-11-11) |
+| Hermes (beta) | the socket Murmur's plugin opens in the session ([Hermes' plugin](handoff.md#hermes-plugin)) | Yes (2026-11-23, hermes-agent 8da31006 over ACP with a stand-in model) |
 | Muse, Grok or Antigravity outside T3 (Antigravity not tried), Cursor anywhere ([#923](https://github.com/a-Fig/murmur/issues/923), [#924](https://github.com/a-Fig/murmur/issues/924)), or any handoff that fails | the hook's notice where the hook runs, and `inbox` | No |
 
 What the agent reads:

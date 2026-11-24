@@ -143,6 +143,41 @@ user's role, never `sendUserMessage`, which Pi treats as the user's typing.
 - **Not covered:** a session without a file (`--no-session`) gets turns and no notices, and no
   credit for commits, as the hook has no ID to name it by.
 
+## Hermes' plugin
+
+2026-11-23, #1184. Hermes has no hooks of Claude Code's kind, so Murmur's plugin
+([Hermes](clients.md#hermes-beta)) runs `mur hook --agent hermes` from Hermes' plugin hooks, and
+only in a clone the user joined, by the same few stats as Pi's extension.
+
+- **The moments.** `pre_llm_call` is UserPromptSubmit: the notice goes into the turn's user message
+  as context. `transform_tool_result` is PostToolUse: the notice goes after the tool's result,
+  under a `[Murmur]` line, the one way into a running turn Hermes gives a plugin. `pre_tool_call`
+  and it bracket a `terminal` call, for commit credit.
+- **A turn's end keeps nothing going.** `on_session_end` is Stop, but the plugin would have to put
+  what is unread in with `ctx.inject_message`, which Hermes may refuse after the daemon has marked
+  it read. So it stays in the inbox, and the daemon hands it over through the socket once the
+  session is idle: a turn of its own, just after.
+- **A turn when idle.** The plugin opens a socket for the session that takes Claude Code's
+  messaging-socket lines (a named pipe on Windows), once it has the session's key, and puts each
+  message in with `inject_message`, which starts a turn in an idle session. That needs
+  `plugins.entries.murmur.allow_gateway_injection`, which join sets; without it the plugin opens no
+  socket, and the session gets notices only.
+- **Registration.** The hook registers the session at a turn's start and end, and whenever the
+  plugin has a socket the daemon hasn't been told of, so the daemon knows the socket before the
+  session calls a tool.
+- **How long it stays.** `inject_message` works while a client has the session open. The plugin
+  closes the socket when the session finalizes or is deleted, or Hermes refuses a turn, and the
+  daemon holds the session while its socket answers and it hasn't been idle for 8 hours
+  (`socketHeld`).
+- **Seen** on Windows (2026-11-23): a message to an idle ACP session started a turn within a second;
+  one sent during a 25-second `terminal` call came after the call's result, and whole as a turn
+  once that turn ended; the session ended within a minute of `hermes gateway stop`.
+- **Not covered.** A message the socket takes and Hermes then refuses is lost: the daemon has
+  handed it over, and the socket can't answer. The plugin closes the socket at once, so the rest
+  wait. A session whose ACP client went without Hermes finalizing it stays live, and a message to it
+  starts a turn nobody watches. A real model's reading of a notice after a tool's result, which
+  OpenCode's model refused when it was appended to a file it had read.
+
 ## Codex and OpenCode 2 outside T3: their command lines
 
 2026-11-11, #135. Until then these got a message only through `inbox` (and Codex a notice, where its
