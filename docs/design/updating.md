@@ -31,7 +31,8 @@ information in the request; a network failure waits quietly for the next hour. A
   nothing (#1198). An `install.ps1` from before that takes no lock, so a reinstall during the
   daemon's download is left alone. The setting and the channel are read again just before the
   swap (#1197): updates turned off during the download install nothing (unless a person asked for
-  that install, *Update now* below), and a prerelease isn't installed after a move to stable. An
+  that install, *Update now* below), and a prerelease isn't installed after a move to stable, nor
+  one a return to stable has held back since the check picked it, Update now included (#1212). An
   install the daemon can't write (a package manager's) is logged once and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another
@@ -127,16 +128,26 @@ information in the request; a network failure waits quietly for the next hour. A
     before it installs the release gone back to, in case it reads `prerelease` by then. Once the
     hold is off, it writes `prerelease` again. While such a release runs, the machine waits for the
     next stable release, not the next nightly.
-  - *At most once per install.* A channel Back can't hold still loops: a repo's own `prerelease`
-    (how `git config murmur.channel prerelease` writes it, v0.5.3's way to nightlies), the
-    system's, or a person on v0.5.3 setting it again. So the updater records each install that has
-    gone back from the prerelease in the hold (`murmur.updateBack`, the version and the
-    executable's path), and an install found running that prerelease again takes the hold off and
-    stays on it: whatever the older release read chose it (Opus's second review). Each Back is then
-    one trip at most per install, a download and a restart each way, never a loop. The hold comes
-    off for the whole machine, so another install held on the older release takes the nightly
-    again too. Once v0.5.4 is the latest stable release, every release gone back to knows the hold
-    and none of this arises.
+  - *A channel Back can't hold* (#1212, Sol's re-check). v0.5.3 reads `murmur.channel` in every
+    scope, so a repo's own `prerelease` (how `git config murmur.channel prerelease` writes it,
+    v0.5.3's way to nightlies), the system's or an include's still sends it to the nightly. Going
+    back from a prerelease of v0.5.4 or earlier may land on v0.5.3, so Back looks, in this clone
+    and every clone on the machine's record (`internal/clones`, one binary serving them all), for
+    a channel v0.5.3 would still read as `prerelease` with the global one held. If it finds one,
+    it writes nothing and names it, to be taken out. The updater looks again before it goes back
+    to a release from before v0.5.4, for an override made since, and the page then says why it
+    can't go back. From a later prerelease Back doesn't look: the stable release gone back to
+    knows the hold, wherever the channel is set.
+  - *At most once per install.* What the look can't see (a clone not on the record, a person on
+    v0.5.3 setting `prerelease` again) still sends v0.5.3 to the nightly. So the updater records
+    each install that goes back from the prerelease in the hold (`murmur.updateBack`, the version
+    and the executable's path), before the swap, so that a kill after it loses nothing; a swap that
+    fails takes the record out again. An install found running that prerelease again takes the
+    hold off and stays on it: whatever the older release read chose it (Opus's second review of
+    #1197). Each Back is then one trip at most per install, never a loop. A kill between the record
+    and the swap reads the same way: the nightly stays, and Back is offered again. The hold comes
+    off for the whole machine. Once v0.5.4 is the latest stable release, every release gone back
+    to knows the hold and none of this arises.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.
