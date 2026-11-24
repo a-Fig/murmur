@@ -29,8 +29,10 @@ information in the request; a network failure waits quietly for the next hour. A
   for a whole update, downloads included, and serializes clones sharing an install.
   `install.ps1` takes it too, for its whole swap: it waits ten seconds, then says so and changes
   nothing (#1198). An `install.ps1` from before that takes no lock, so a reinstall during the
-  daemon's download is left alone. An install the daemon can't write (a package manager's) is
-  logged once and left alone.
+  daemon's download is left alone. The setting and the channel are read again just before the
+  swap (#1197): updates turned off during the download install nothing (unless a person asked for
+  that install, *Update now* below), and a prerelease isn't installed after a move to stable. An
+  install the daemon can't write (a package manager's) is logged once and left alone.
 - **Restart.** After installing, the daemon waits until no handoff is in flight and no page counts
   as open, or until the page asks for the restart (#240), and until no key to its page that another
   clone's page handed out is still good (#348), since the next daemon's page wouldn't know it. It
@@ -117,6 +119,24 @@ information in the request; a network failure waits quietly for the next hour. A
   machine never stays below the latest stable one (Opus review: a hold on every release would have
   kept back a stable fix). The key is taken off once a newer version is in place, or found running.
   It isn't offered while an update waits for its restart, which would start that update instead.
+  - *Back to a release from before the hold* (#1197, Sol's pre-release review of v0.5.4). v0.5.3
+    and older don't know `murmur.updateSkip`, and take a prerelease whenever `murmur.channel` is
+    `prerelease`: gone back to, v0.5.3 installed the same nightly again, which went back again. So
+    on the nightly channel Back also makes the global `murmur.channel` `prerelease-held`, which
+    those releases read as stable and later ones as nightly, and the updater holds it again just
+    before it installs the release gone back to, in case it reads `prerelease` by then. Once the
+    hold is off, it writes `prerelease` again. While such a release runs, the machine waits for the
+    next stable release, not the next nightly.
+  - *At most once per install.* A channel Back can't hold still loops: a repo's own `prerelease`
+    (how `git config murmur.channel prerelease` writes it, v0.5.3's way to nightlies), the
+    system's, or a person on v0.5.3 setting it again. So the updater records each install that has
+    gone back from the prerelease in the hold (`murmur.updateBack`, the version and the
+    executable's path), and an install found running that prerelease again takes the hold off and
+    stays on it: whatever the older release read chose it (Opus's second review). Each Back is then
+    one trip at most per install, a download and a restart each way, never a loop. The hold comes
+    off for the whole machine, so another install held on the older release takes the nightly
+    again too. Once v0.5.4 is the latest stable release, every release gone back to knows the hold
+    and none of this arises.
 - **What the checksum proves.** It catches corruption or a download inconsistent with the release,
   not who published it: a compromised GitHub account, or a release with a replaced checksum file,
   gets through. Release signing is #193.

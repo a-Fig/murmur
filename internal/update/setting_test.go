@@ -65,6 +65,7 @@ func TestReadSetting(t *testing.T) {
 		{name: "a value git can't read as a bool, first", global: [][2]string{{"murmur.update", "maybe"}}, local: [][2]string{{"murmur.update", "false"}}, choice: "on", applies: "off",
 			why: "Off here: this repo's git config sets murmur.update."},
 		{name: "nightly", global: [][2]string{{"murmur.channel", "prerelease"}}, choice: "nightly", applies: "nightly"},
+		{name: "nightly, held by a return to stable", global: [][2]string{{"murmur.channel", "prerelease-held"}}, choice: "nightly", applies: "nightly"},
 		{name: "off beats a channel", global: [][2]string{{"murmur.update", "false"}, {"murmur.channel", "prerelease"}}, choice: "off", applies: "off"},
 		{name: "the repo turns it off", local: [][2]string{{"murmur.update", "false"}}, choice: "on", applies: "off",
 			why: "Off here: this repo's git config sets murmur.update."},

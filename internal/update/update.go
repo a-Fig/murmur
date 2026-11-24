@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 )
 
@@ -84,8 +85,10 @@ func Off(ctx context.Context, getenv func(string) string, gitDir string) bool {
 // which takes the newest published release, prerelease or stable. Any other value is the stable
 // channel. It is a key of its own because daemons from before it read murmur.update as a bool, and
 // they ignore this one, so they keep taking stable releases until one of those brings the channel.
+//
+// While a return to stable holds, the value is heldNightly, which v0.5.3 and older read as stable.
 func Prerelease(ctx context.Context, gitDir string) bool {
-	return strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "").value, "prerelease")
+	return nightly(last(configValues(ctx, gitDir, channelKey), "").value)
 }
 
 // checkGap is the least time between a check and one a changed setting asks for (Options.Check),
@@ -195,9 +198,11 @@ func Run(ctx context.Context, o Options, restart func()) {
 				return
 			}
 			// Another release than the one asked for isn't a failed update: with updates on, the
-			// next check installs it, and soon.
+			// next check installs it, and soon. Nor is updates turned off during the download.
 			other := errors.Is(err, errNotAsked)
-			s := Status{Latest: latest, Off: off, Failed: err != nil && !other, Asked: now}
+			turnedOff := errors.Is(err, errTurnedOff)
+			off = off || turnedOff
+			s := Status{Latest: latest, Off: off, Failed: err != nil && !other && !turnedOff, Asked: now}
 			if err != nil && now {
 				s.Error = err.Error()
 			}
@@ -273,8 +278,12 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// errNotAsked says the release a person asked to install isn't the one the check found.
+// errNotAsked says the release a person asked to install isn't the one the check found, or the one
+// a check picked isn't the one to install by the time it has downloaded.
 var errNotAsked = errors.New("another release is out")
+
+// errTurnedOff says updates were turned off while the release downloaded, so it wasn't installed.
+var errTurnedOff = errors.New("updates were turned off")
 
 // attempt installs the latest release if it is newer than this one. latest is that release's
 // version, once the check has read it.
@@ -284,6 +293,9 @@ func attempt(ctx context.Context, o Options, original os.FileInfo) (done bool, l
 
 // install is attempt, and if want isn't "", installs only that release: a person asked for it.
 func install(ctx context.Context, o Options, original os.FileInfo, want string) (done bool, latest string, err error) {
+	if o.Getenv == nil {
+		o.Getenv = os.Getenv
+	}
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
@@ -303,6 +315,17 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	// channel. Stable releases still do, so the machine never stays below the latest of them.
 	skip := skipped(ctx, o.GitDir, o.Version)
 	clearSkip(ctx, o, o.Version)
+	if skip != "" && same(skip, o.Version) && wentBack(ctx, o.GitDir, skip, o.Executable) {
+		// This install went back from this prerelease once, and it runs again: the release gone
+		// back to took it again, so whatever that release reads chose it (#1197). v0.5.3 and older
+		// know no hold, and take it whenever any git config file says murmur.channel prerelease,
+		// a repo's own as `git config murmur.channel prerelease` writes it, or a person setting it
+		// again. Going back again would loop, a download and a restart each time, so the hold
+		// comes off and the prerelease stays.
+		o.Log.Printf("self-update: back on %s after going back from it, so it was chosen again: %s comes off", o.Version, skipKey)
+		takeHoldOff(ctx, o)
+		skip = ""
+	}
 	rel, back, err := target(ctx, o, skip)
 	if err != nil {
 		return false, latest, err
@@ -361,8 +384,30 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	if !back && same(skipped(ctx, o.GitDir, o.Version), o.Version) {
 		return false, latest, nil
 	}
+	// Or turned updates off, or moved to stable releases, which the check read before the download
+	// (#1197). Off doesn't stop an install a person asked for (want), which is for updates off; a
+	// prerelease after a move to stable isn't installed even then, as the person asked for it
+	// on the channel they have since left.
+	if want == "" && Off(ctx, o.Getenv, o.GitDir) {
+		return false, latest, errTurnedOff
+	}
+	if !back && prerelease(rel.Tag) && !Prerelease(ctx, o.GitDir) {
+		return false, latest, fmt.Errorf("%w: updates moved to stable releases while %s downloaded", errNotAsked, latest)
+	}
+	if back {
+		if err = holdChannel(ctx, o.GitDir); err != nil {
+			return false, latest, err
+		}
+	}
 	if err = replace(o.Executable, data, o.OS, osFiles); err != nil {
 		return false, latest, err
+	}
+	if back {
+		// Whatever happens to ctx now: the new binary is in place, and a daemon stopping just
+		// then would otherwise leave no record, and cost a trip more.
+		if _, err := (gitx.Git{Dir: o.GitDir}).Run(context.WithoutCancel(ctx), "", "config", "--global", "--add", backKey, skip+" "+o.Executable); err != nil {
+			o.Log.Printf("self-update: couldn't record going back in %s: %v", backKey, err)
+		}
 	}
 	clearSkip(ctx, o, latest)
 	o.Log.Printf("self-update: %s -> %s", o.Version, latest)
@@ -393,17 +438,50 @@ func look(ctx context.Context, o Options) (latest string, err error) {
 	return strings.TrimPrefix(rel.Tag, "v"), nil
 }
 
+// wentBack says the install at exe has gone back to stable from skip before: backKey has it, as
+// the updater records it once the release gone back to is in place.
+func wentBack(ctx context.Context, gitDir, skip, exe string) bool {
+	for _, v := range configValues(ctx, gitDir, backKey) {
+		version, path, ok := strings.Cut(v.value, " ")
+		if ok && same(version, skip) && path == exe {
+			return true
+		}
+	}
+	return false
+}
+
 // clearSkip takes murmur.updateSkip off once version, the one running or just installed, has
 // passed it, so a later prerelease that misbehaves starts from no hold. It reads the key again
 // each time: a person may have gone back from another prerelease since the check began. It is the
 // global key Back writes; a repo's own is left alone.
 func clearSkip(ctx context.Context, o Options, version string) {
 	v := last(configValues(ctx, o.GitDir, skipKey), "global").value
-	if v == "" || validVersion(v) && !newer(version, v) {
+	if v != "" && validVersion(v) && !newer(version, v) {
 		return
 	}
-	if err := unsetGlobal(ctx, o.GitDir, skipKey); err != nil {
-		o.Log.Printf("self-update: couldn't take %s off: %v", skipKey, err)
+	takeHoldOff(ctx, o)
+}
+
+// takeHoldOff takes murmur.updateSkip off, with the record of going back from it (backKey), and
+// makes a held channel "prerelease" again.
+func takeHoldOff(ctx context.Context, o Options) {
+	// The record first: a hold left without it is a hold Back wrote, while a record left without
+	// the hold would take the next Back for one already gone back from (Opus review).
+	for _, key := range []string{backKey, skipKey} {
+		if last(configValues(ctx, o.GitDir, key), "global").value == "" {
+			continue // as at almost every check: git is asked only to read
+		}
+		if err := unsetGlobal(ctx, o.GitDir, key); err != nil {
+			o.Log.Printf("self-update: couldn't take %s off: %v", key, err)
+			return
+		}
+	}
+	// With the hold off, the channel Back held reads "prerelease" again, as `mur updates nightly`
+	// writes it (#1197).
+	if strings.EqualFold(last(configValues(ctx, o.GitDir, channelKey), "global").value, heldNightly) {
+		if _, err := (gitx.Git{Dir: o.GitDir}).Run(ctx, "", "config", "--global", "--replace-all", channelKey, "prerelease"); err != nil {
+			o.Log.Printf("self-update: couldn't set %s back to prerelease: %v", channelKey, err)
+		}
 	}
 }
 

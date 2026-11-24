@@ -24,9 +24,23 @@ const (
 	channelKey = "murmur.channel"
 	// skipKey holds a prerelease a person went back to stable from (#1045): the updater installs
 	// no prerelease that isn't newer than it, and takes the key off once a newer version is in.
-	skipKey  = "murmur.updateSkip"
+	skipKey = "murmur.updateSkip"
+	// backKey records each install that has gone back from the prerelease in skipKey, as
+	// "<version> <executable>", so that it goes back from it at most once (#1197): see wentBack.
+	backKey  = "murmur.updateBack"
 	noUpdate = "MURMUR_NO_UPDATE"
+	// heldNightly is murmur.channel while a return to stable from a nightly holds (#1197): the
+	// nightly channel to this release and later ones, the stable channel to v0.5.3 and older,
+	// which know nothing of murmur.updateSkip and take a prerelease only for the value
+	// "prerelease". Left at that, a v0.5.3 gone back to would take the nightly again at once, and
+	// the nightly would go back again. The updater writes "prerelease" again once the hold is off.
+	heldNightly = "prerelease-held"
 )
+
+// nightly says a murmur.channel value chooses prereleases and nightlies.
+func nightly(channel string) bool {
+	return strings.EqualFold(channel, "prerelease") || strings.EqualFold(channel, heldNightly)
+}
 
 // Setting is the machine's update choice and what applies in one clone.
 type Setting struct {
@@ -132,7 +146,7 @@ func choiceOf(update, channel string) string {
 	switch {
 	case update == "false":
 		return ChoiceOff
-	case strings.EqualFold(channel, "prerelease"):
+	case nightly(channel):
 		return ChoiceNightly
 	}
 	return ChoiceOn
@@ -249,7 +263,9 @@ func unsetGlobal(ctx context.Context, gitDir, key string) error {
 // next check installs the latest stable release, older or not, through the same verified download
 // and restart as any update. From then on it installs no prerelease that isn't newer than the one
 // gone back from; stable releases still come, so the machine never stays below the latest one. It
-// writes murmur.updateSkip, in the global git config.
+// writes murmur.updateSkip, in the global git config, and on the nightly channel makes the global
+// murmur.channel heldNightly, so that the stable release gone back to keeps to stable releases
+// even if it is one from before murmur.updateSkip (#1197).
 func Back(ctx context.Context, getenv func(string) string, gitDir, running string) (Setting, error) {
 	settingMu.Lock()
 	defer settingMu.Unlock()
@@ -265,7 +281,13 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 		}
 		return s, nil // already going back
 	}
-	if _, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--global", skipKey, strings.TrimPrefix(running, "v")); err != nil {
+	g := gitx.Git{Dir: gitDir}
+	// The hold first: written the other way round, another clone's updater could find the channel
+	// held with no hold beside it, and take it for one that has come off (clearSkip).
+	if _, err := g.Run(ctx, "", "config", "--global", skipKey, strings.TrimPrefix(running, "v")); err != nil {
+		return s, err
+	}
+	if err := holdChannel(ctx, gitDir); err != nil {
 		return s, err
 	}
 	s = Read(ctx, getenv, gitDir, running)
@@ -273,6 +295,19 @@ func Back(ctx context.Context, getenv func(string) string, gitDir, running strin
 		return s, fmt.Errorf("another git config file still sets %s", skipKey)
 	}
 	return s, nil
+}
+
+// holdChannel makes a global murmur.channel of "prerelease" heldNightly, which v0.5.3 and older read
+// as stable (#1197). Back calls it, and so does the updater just before it installs the stable
+// release gone back to, since by then the channel may read "prerelease" again: v0.5.3's only way to
+// take nightlies, which a person on it may use, or another clone's updater taking the hold for
+// one that had come off as Back wrote it.
+func holdChannel(ctx context.Context, gitDir string) error {
+	if !strings.EqualFold(last(configValues(ctx, gitDir, channelKey), "global").value, "prerelease") {
+		return nil
+	}
+	_, err := (gitx.Git{Dir: gitDir}).Run(ctx, "", "config", "--global", "--replace-all", channelKey, heldNightly)
+	return err
 }
 
 // skipped is the release this machine went back to stable from, while it still holds updates back:

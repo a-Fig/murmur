@@ -171,7 +171,7 @@ func TestChannelConfig(t *testing.T) {
 	for _, c := range []struct {
 		value string
 		want  bool
-	}{{"", false}, {"stable", false}, {"nightly", false}, {"prerelease", true}, {"Prerelease", true}} {
+	}{{"", false}, {"stable", false}, {"nightly", false}, {"prerelease", true}, {"Prerelease", true}, {"prerelease-held", true}} {
 		args := []string{"--git-dir=" + gitDir, "config", "murmur.channel", c.value}
 		if c.value == "" {
 			args = []string{"--git-dir=" + gitDir, "config", "--unset-all", "murmur.channel"}
