@@ -544,9 +544,9 @@ func turnEnd(agent string, in input, who proto.Request, stdout io.Writer) {
 	// Grok's Stop at the session's close can't keep anything going, nor can Pi's or OpenCode's after
 	// Escape or an error: the messages are left to be handed over as a turn, as after a turn the user interrupted.
 	// Hermes' plugin keeps nothing going either: it would have to put the messages in with
-	// inject_message, which Hermes may refuse after the daemon has marked them read. Left in the
-	// inbox, they go to the idle session through the plugin's socket, where a refusal loses nothing
-	// (#1184).
+	// inject_message, which Hermes may refuse after the daemon has marked them all read. Left in the
+	// inbox, they go to the idle session through the plugin's socket, where a refusal loses the one
+	// message the socket took, and the socket closes, so the rest wait (#1184).
 	who.Op, who.Continues = proto.OpTurnEnd, (in.Reason == "" || in.Reason == "end_turn") && !in.Interrupted && agent != Hermes
 	resp, err := c.Do(ctx, who)
 	if err != nil || len(resp.Read) == 0 || !who.Continues {

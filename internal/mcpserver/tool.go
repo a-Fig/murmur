@@ -43,6 +43,9 @@ const (
 	hermesSessionEnv = "MURMUR_HERMES_SESSION"
 	hermesSocketEnv  = "MURMUR_HERMES_SOCKET"
 	hermesTokenEnv   = "MURMUR_HERMES_TOKEN"
+	// hermesNewSocketEnv says the plugin opened the socket for this hook, so the hook registers the
+	// session with it, whatever its event.
+	hermesNewSocketEnv = "MURMUR_HERMES_NEW_SOCKET"
 )
 
 // maxToolArgs is the most of a call's arguments read: a send's body is the largest, and the daemon
@@ -198,9 +201,9 @@ func hermesHello(id, cwd string) proto.Hello {
 }
 
 // HermesHook is `mur hook --agent hermes`, which Murmur's Hermes plugin runs as Hermes' hooks fire
-// (#1184). As a turn starts it registers the session its payload names, as `mur tool` does, so a
-// session that has called no tool yet is on the mesh and has its socket known; then, and for every
-// other hook, it runs the hook for it. In a
+// (#1184). As a turn starts and ends, and for a socket the plugin has just opened, it registers the
+// session its payload names, as `mur tool` does, so a session that has called no tool yet is on the
+// mesh and has its socket known; then, as for every other hook, it runs the hook for it. In a
 // clone that hasn't joined it does nothing, and as any hook it never fails: what goes wrong means no
 // answer.
 func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
@@ -217,10 +220,15 @@ func HermesHook(event string, stdin io.Reader, stdout io.Writer) {
 	if json.Unmarshal(b, &p) != nil || hermesSessionOK(p.SessionID) != nil || p.Cwd == "" {
 		return
 	}
-	// Registered as each turn starts, and by each `mur tool`: a hook for a tool call or a turn's end
-	// comes after both, so it doesn't spend the few git processes registering takes on every call.
-	// The plugin names the event in the payload; a hook command may name it instead.
-	if prompt := event == "UserPromptSubmit" || event == "" && p.Event == "UserPromptSubmit"; !prompt {
+	// Registered as each turn starts and ends, by each `mur tool`, and when the plugin opens a new
+	// socket: a daemon that restarted mid-turn knows the session again by the turn's end, and a socket
+	// the plugin opened again is known at once. A hook for a tool call otherwise doesn't spend the
+	// few git processes registering takes. The plugin names the event in the payload; a hook command
+	// may name it instead.
+	if event == "" {
+		event = p.Event
+	}
+	if event != "UserPromptSubmit" && event != "Stop" && os.Getenv(hermesNewSocketEnv) == "" {
 		hook.RunForEvent(hook.Hermes, event, bytes.NewReader(b), stdout)
 		return
 	}

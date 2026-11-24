@@ -184,18 +184,33 @@ func TestAHermesHookRegistersItsSessionFirst(t *testing.T) {
 }
 
 // A hook for a tool call asks the daemon as the hook does without registering the session again: the
-// turn's start and each `mur tool` did, and registering takes a few git processes.
-func TestAHermesToolCallsHookDoesntRegister(t *testing.T) {
+// turn's start and each `mur tool` did, and registering takes a few git processes. A turn's end
+// registers it, for a daemon that restarted mid-turn, and so does any hook for a socket the plugin
+// has just opened.
+func TestAHermesToolCallsHookRegistersOnlyForANewSocket(t *testing.T) {
 	f := &fakeDaemon{}
 	toolRepo(t, f)
 	cwd, _ := os.Getwd()
-	payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": "PostToolUse", "tool_name": "read_file", "cwd": cwd})
-	HermesHook("", strings.NewReader(string(payload)), io.Discard)
+	hookFor := func(event string) {
+		payload, _ := json.Marshal(map[string]string{"session_id": "local-9", "hook_event_name": event, "tool_name": "read_file", "cwd": cwd})
+		HermesHook("", strings.NewReader(string(payload)), io.Discard)
+	}
+	hookFor("PostToolUse")
 	if n := f.helloCount(); n != 0 {
-		t.Errorf("%d hellos, want none", n)
+		t.Errorf("a tool call's hook: %d hellos, want none", n)
 	}
 	if got := f.requestsOf(proto.OpNotices); len(got) != 1 || got[0].Native != "hermes:local-9" {
 		t.Errorf("notices requests %+v, want one for hermes:local-9", got)
+	}
+	t.Setenv(hermesNewSocketEnv, "1")
+	hookFor("PostToolUse")
+	if n := f.helloCount(); n != 1 {
+		t.Errorf("a tool call's hook with a new socket: %d hellos, want one", n)
+	}
+	t.Setenv(hermesNewSocketEnv, "")
+	hookFor("Stop")
+	if n := f.helloCount(); n != 2 {
+		t.Errorf("a turn's end: %d hellos in all, want two", n)
 	}
 }
 

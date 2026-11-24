@@ -238,21 +238,22 @@ def _socket_of(sid):
 
 
 def _open_socket(ctx, sid):
+    """The session's socket, opened if it has none: the socket, and whether it is new."""
     with _lock:
         s = _sockets.get(sid)
     if s:
-        return s
+        return s, False
     try:
         s = _Socket(ctx, sid)
     except Exception as e:
         log.warning("{{product}}: couldn't open a socket for Hermes session %s: %s", sid, e)
-        return None
+        return None, False
     with _lock:
         if sid in _sockets:  # another thread opened one meanwhile
             s.close()
-            return _sockets[sid]
+            return _sockets[sid], False
         _sockets[sid] = s
-    return s
+    return s, True
 
 
 def _close_socket(sid, only=None):
@@ -282,10 +283,16 @@ def _can_inject(ctx):
 def _env(ctx, sid, cwd):
     env = dict(os.environ)
     env["{{sessionEnv}}"] = sid
-    if _joined(cwd) and _can_inject(ctx):
-        s = _open_socket(ctx, sid)
+    # Only once it has the session's key: a message the socket takes is out of the daemon's inbox,
+    # and without the key the plugin couldn't put it in.
+    with _lock:
+        keyed = sid in _keys
+    if keyed and _joined(cwd) and _can_inject(ctx):
+        s, new = _open_socket(ctx, sid)
         if s:
             env["{{socketEnv}}"], env["{{tokenEnv}}"] = s.addr, s.token
+            if new:  # so `{{command}} hook` tells the daemon of it, as it does only now and then
+                env["{{newSocketEnv}}"] = "1"
     return env
 
 

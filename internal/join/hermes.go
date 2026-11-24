@@ -65,7 +65,10 @@ import (
 //   - on_session_end, at each turn's end, is Stop, which keeps nothing going: putting what is
 //     unread in with ctx.inject_message could lose it, as Hermes may refuse it once the daemon has
 //     marked it read. It stays in the inbox, and the daemon hands it over through the socket once
-//     the session is idle, where a refusal loses nothing.
+//     the session is idle. A refusal there loses the one message the socket took (the socket
+//     can't answer the daemon), and the plugin closes the socket, so the rest wait in the inbox.
+//     The plugin opens a socket only once it has the session's key, so no message goes to one it
+//     can't put in.
 //   - A socket the plugin opens for the session, a unix socket or on Windows a named pipe (Python
 //     has no unix sockets there), takes Claude Code's messaging-socket lines and puts each message
 //     in with inject_message: a turn of its own in an idle session. inject_message works for a
@@ -156,7 +159,8 @@ func hermesPluginFiles(exe string) map[string]string {
 	r := strings.NewReplacer("{{product}}", brand.Product, "{{command}}", brand.Command, "{{server}}", brand.MCPServer,
 		"{{exe}}", string(cmd), "{{state}}", brand.StateDir, "{{consent}}", consentFile,
 		// internal/mcpserver reads these (tool.go).
-		"{{sessionEnv}}", "MURMUR_HERMES_SESSION", "{{socketEnv}}", "MURMUR_HERMES_SOCKET", "{{tokenEnv}}", "MURMUR_HERMES_TOKEN")
+		"{{sessionEnv}}", "MURMUR_HERMES_SESSION", "{{socketEnv}}", "MURMUR_HERMES_SOCKET", "{{tokenEnv}}", "MURMUR_HERMES_TOKEN",
+		"{{newSocketEnv}}", "MURMUR_HERMES_NEW_SOCKET")
 	return map[string]string{"plugin.yaml": r.Replace(hermesManifest), "__init__.py": r.Replace(hermesPlugin)}
 }
 

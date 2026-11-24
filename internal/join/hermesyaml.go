@@ -428,7 +428,7 @@ func checkGrantPath(y yamlLines, keys []yamlKey, ends []int, path []string) erro
 			v = strings.TrimSpace(t[2:])
 		}
 		if strings.HasPrefix(v, "|") || strings.HasPrefix(v, ">") {
-			return yamlFormErr("line %d is a block of text, in plugins", i+1)
+			return yamlFormErr("line %d, in plugins, starts a block of text (| or >), which join doesn't edit around", i+1)
 		}
 	}
 	for i, k := range keys {

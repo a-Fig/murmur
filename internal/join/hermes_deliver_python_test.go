@@ -78,18 +78,22 @@ h["on_session_finalize"](session_id="local-1", platform="cli")
 say("finalized:", json.dumps(m._socket_of("local-1")))
 sys.stdin.readline()
 # A socket Hermes refuses a turn through closes only itself, not one the session opened after it.
-old = m._open_socket(ctx, "local-2")
+old, _ = m._open_socket(ctx, "local-2")
 m._close_socket("local-2")
-new = m._open_socket(ctx, "local-2")
+new, fresh = m._open_socket(ctx, "local-2")
 m._keys["local-2"] = "agent:main:local:dm:local-2"
 old._inject("REFUSE this")
-say("stale refused:", json.dumps([m._socket_of("local-2")[0] == new.addr, old.closed, new.closed]))
+say("stale refused:", json.dumps([fresh, m._socket_of("local-2")[0] == new.addr, old.closed, new.closed]))
 m._close_socket("local-2")
 # Where Hermes doesn't let the plugin start turns, it opens no socket for the session.
 ctx2 = Ctx(sys.argv[2])
 ctx2._gateway_injection_allowed = lambda: False
+m._keys["local-3"] = "agent:main:local:dm:local-3"
 env = m._env(ctx2, "local-3", sys.argv[2])
 say("no grant:", json.dumps(["MURMUR_HERMES_SOCKET" in env, m._socket_of("local-3")[0]]))
+# Nor before it has the session's key, which it would need to put a message in.
+env = m._env(ctx, "local-4", sys.argv[2])
+say("no key:", json.dumps(["MURMUR_HERMES_SOCKET" in env, m._socket_of("local-4")[0]]))
 `
 
 // hermesDeliverStandIn is the mur the plugin runs: it records each hook's event, session, call and
@@ -105,7 +109,7 @@ with open(sys.argv[1], "a", encoding="utf-8") as f:
     f.write(json.dumps({"argv": args, "event": p.get("hook_event_name"), "session": p.get("session_id"),
         "call": p.get("tool_use_id"), "tool": p.get("tool_name"), "prompt": p.get("prompt"), "cwd": os.path.basename(p.get("cwd") or ""),
         "interrupted": p.get("interrupted"), "socket": bool(os.environ.get("MURMUR_HERMES_SOCKET")),
-        "token": bool(os.environ.get("MURMUR_HERMES_TOKEN"))}) + "\n")
+        "token": bool(os.environ.get("MURMUR_HERMES_TOKEN")), "new": bool(os.environ.get("MURMUR_HERMES_NEW_SOCKET"))}) + "\n")
 ev = p.get("hook_event_name")
 if ev in ("UserPromptSubmit", "PostToolUse"):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": ev, "additionalContext": "NOTICE " + ev}}))
@@ -213,11 +217,14 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 		t.Errorf("writing to a closed session's socket: %v, want it not to connect", err)
 	}
 	stdin.Write([]byte("done\n"))
-	if v := next("stale refused:"); v != "[true, true, false]" {
-		t.Errorf("after a refusal through an old socket, [the session keeps its new socket, the old is closed, the new is closed]: %s", v)
+	if v := next("stale refused:"); v != "[true, true, true, false]" {
+		t.Errorf("after a refusal through an old socket, [the second is new, the session keeps it, the old is closed, the new is closed]: %s", v)
 	}
 	if v := next("no grant:"); v != "[false, null]" {
 		t.Errorf("without Hermes' grant, [a socket in the hook's env, the session's socket]: %s", v)
+	}
+	if v := next("no key:"); v != "[false, null]" {
+		t.Errorf("without the session's key, [a socket in the hook's env, the session's socket]: %s", v)
 	}
 
 	// What mur was asked: each hook as `mur hook --agent hermes`, with the session's socket; the
@@ -225,12 +232,12 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 	b, _ := os.ReadFile(record)
 	rec := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")) // Python's text mode on Windows
 	want := []string{
-		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-1", "call": null, "tool": null, "prompt": "hello there", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "PreToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": null, "tool": "read_file", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": false, "socket": true, "token": true}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": true, "socket": true, "token": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-1", "call": null, "tool": null, "prompt": "hello there", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "PreToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": null, "tool": "read_file", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": false, "socket": true, "token": true, "new": false}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": true, "socket": true, "token": true, "new": false}`,
 	}
 	if rec != strings.Join(want, "\n") {
 		t.Errorf("mur was asked:\n%s\nwant\n%s", rec, strings.Join(want, "\n"))
