@@ -43,6 +43,7 @@ type Env struct {
 	// variable moves it (cursorConfigDir).
 	CursorConfig string
 	KiroHome     string // Kiro's home, with its settings/mcp.json
+	HermesHome   string // Hermes Agent's home, with its config.yaml and plugins/ (hermes.go)
 	Home         string // the user's home directory, for the homes T3 Code's settings name with ~ or leave to the default
 	T3Settings   string // T3 Code's settings.json, "" without T3: the other agent homes T3 runs (t3homes.go)
 	Getenv       func(string) string
@@ -107,6 +108,7 @@ func EnvFromProcess() (Env, error) {
 	e.CursorDir = filepath.Join(home, ".cursor")
 	e.CursorConfig = filepath.Join(cursorConfigDir(os.Getenv, home), "cli-config.json")
 	e.KiroHome = kiroHomeDir(os.Getenv, home)
+	e.HermesHome = hermesHomeDir(os.Getenv, home)
 	return e, nil
 }
 
@@ -215,7 +217,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 	// configuration of each agent. Advice about the calling agent depends on its own home.
 	byAgent, notes := e.homes()
 	r.Notes = append(r.Notes, notes...)
-	var claudeFresh, codexFresh, antigravityFresh, kiroFresh bool
+	var claudeFresh, codexFresh, antigravityFresh, kiroFresh, hermesFresh bool
 	var othersFresh []string
 	claudeOK := true // no Claude Code home failed to take what join writes there, the hook included
 	for i, a := range agents {
@@ -263,6 +265,9 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 				antigravityFresh = true
 			case a.driver == "kiro" && e.looksLikeKiro() && sameEntry(h.Dir, e.KiroHome):
 				kiroFresh = true
+			case a.driver == "hermes" && e.looksLikeHermes():
+				// Any of its homes: which profile this session runs in isn't told to its commands.
+				hermesFresh = true
 			case a.driver != "claudeAgent" && a.driver != "codex" && !slices.Contains(othersFresh, a.label):
 				othersFresh = append(othersFresh, a.label)
 			}
@@ -330,7 +335,7 @@ func Join(ctx context.Context, e Env, dir string) (Report, error) {
 		return e.cutShort(r, parent, steps.now, consentErr == nil)
 	}
 
-	r.Tell = e.advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, len(r.Problems) > 0)
+	r.Tell = e.advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, hermesFresh, len(r.Problems) > 0)
 	if consentErr == nil {
 		// Even when something else failed: with consent recorded, a daemon may report the repo.
 		// Before the last paragraph, which is about the page and leaving, or about the problems.
@@ -576,7 +581,7 @@ func othersAdvice(labels []string) string {
 	}
 	var restart []string
 	for _, l := range labels {
-		if l != "OpenCode" && l != "Kiro" && l != "Pi" {
+		if l != "OpenCode" && l != "Kiro" && l != "Pi" && l != "Hermes" {
 			restart = append(restart, l)
 		}
 	}
@@ -589,6 +594,9 @@ func othersAdvice(labels []string) string {
 	}
 	if slices.Contains(labels, "Pi") {
 		s += " In a Pi session already open, type /reload to get its tools (in T3 Code, open a new thread)."
+	}
+	if slices.Contains(labels, "Hermes") {
+		s += " Hermes loads plugins only as its gateway starts: its sessions get the tools after `hermes gateway restart`."
 	}
 	return s
 }
@@ -614,7 +622,7 @@ func servingT3(getenv func(string) string) string {
 // after that already runs it (idle, with no tools, until the join), and one that started before
 // has never heard of it. What each kind of session picks up was measured, 2026-10-29
 // (docs/design/joining.md, "Reloading MCP servers").
-func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, problems bool) []string {
+func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, hermesFresh, problems bool) []string {
 	if problems {
 		return []string{"Joining didn't finish: tell your user what is under Problems. Running `" + brand.Command + " join` again retries, and only does what is missing."}
 	}
@@ -669,6 +677,19 @@ func (e Env) advice(claudeFresh, codexFresh, antigravityFresh, kiroFresh, proble
 		} else {
 			out = append(out, brand.Product+" is on for this repo. Antigravity should show its tools within a few seconds. If they're still missing after a minute, "+restart+".")
 		}
+	// Hermes discovers plugins once, as its gateway starts, for every session it runs; a session
+	// resumed after a restart of the gateway has the tools (seen 2026-11-23, #1183). The restart
+	// drains what the gateway's sessions are doing first.
+	case e.looksLikeHermes() && hermesFresh:
+		resume := "`hermes --resume`"
+		if id := e.getenv("HERMES_SESSION_ID"); id != "" {
+			resume = "`hermes --resume " + id + "`"
+		}
+		out = append(out, brand.Product+" was just added to Hermes, which loads plugins only as its gateway starts, so this session doesn't have its tools yet. "+
+			"To load them: run `hermes gateway restart` when no Hermes session is in the middle of something, then come back to this session with "+resume+".")
+	case e.looksLikeHermes():
+		out = append(out, brand.Product+" is on for this repo. Its tools are "+brand.MCPServer+"_who, "+brand.MCPServer+"_send and the rest; "+
+			"if this session doesn't have them, run `hermes gateway restart` and resume it.")
 	// Cursor reads its MCP servers as a chat starts (not seen whether a running chat picks up one
 	// added later: no Cursor account was at hand, 2026-11-22). Resuming starts a new process.
 	case e.looksLikeCursor():

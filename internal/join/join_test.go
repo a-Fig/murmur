@@ -30,7 +30,8 @@ func TestMain(m *testing.M) {
 		k, _, _ := strings.Cut(kv, "=")
 		switch up := strings.ToUpper(k); {
 		case strings.HasPrefix(up, "T3CODE_"), up == "CLAUDE_CONFIG_DIR", up == "CODEX_HOME", up == "GEMINI_HOME",
-			up == "GROK_HOME", up == "KIRO_HOME", up == "KIRO_SESSION_ID", up == "PI_CODING_AGENT_DIR", up == "XDG_CONFIG_HOME":
+			up == "GROK_HOME", up == "KIRO_HOME", up == "KIRO_SESSION_ID", up == "PI_CODING_AGENT_DIR", up == "XDG_CONFIG_HOME",
+			up == "HERMES_HOME", up == "HERMES_SESSION_ID", up == "HERMES_DATA_DIR_SUFFIX":
 			os.Unsetenv(k)
 		}
 	}

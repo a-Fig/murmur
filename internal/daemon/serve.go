@@ -199,7 +199,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, fail("hello needs a session ID of lowercase letters, digits and dashes"))
 		return
 	}
-	if h.Command && (h.T3CLI == "" || h.T3Thread == "") {
+	// A command's session is a T3 thread's, or one its client names itself (Native), as Murmur's
+	// Hermes plugin does for `mur tool` (#975): keyed by that, it is the same session each call.
+	if h.Command && (h.T3CLI == "" || h.T3Thread == "") && (h.Native == "" || h.T3Thread != "") {
 		writeResp(conn, fail("a command's session is a T3 thread's, and its hello names no thread"))
 		return
 	}
@@ -244,6 +246,21 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		writeResp(conn, proto.Response{OK: true, Self: bus.Addr(d.device, o.id), Name: name, NamePending: name == ""})
 		return
 	}
+	if o := d.sessions[h.ID]; h.Command && h.T3Thread == "" && o != nil && o.dropped.IsZero() && o.route.Native == h.Native {
+		// A session its client names, live already, from an earlier call: as above, at work where
+		// this call is.
+		if o.cwd != h.Cwd || o.branch != branch || o.worktree != worktree {
+			if o.branch != branch {
+				d.kickPresence()
+			}
+			o.cwd, o.branch, o.worktree = h.Cwd, branch, worktree
+		}
+		d.touchLocked(o, time.Now())
+		name := o.name
+		d.mu.Unlock()
+		writeResp(conn, proto.Response{OK: true, Self: bus.Addr(d.device, o.id), Name: name, NamePending: name == ""})
+		return
+	}
 	h.ID = d.threadIDLocked(h)
 	var moved bool // to another conversation of its client (#1145)
 	h.ID, moved = d.piIDLocked(h)
@@ -251,7 +268,10 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 	// A held session is taken over by its thread's server, or, with no thread named yet, only if it
 	// is still a server's (a command in that server's grace): a command's own session would be a
 	// conversation outside the thread taking it.
-	if s != nil && s.dropped.IsZero() && (s.hold == nil || (h.T3Thread != "" || s.byCommand) && s.route.T3Thread != h.T3Thread) {
+	// One a command keyed by its own ID holds (`mur tool`, #975) is taken over by no other: two IDs
+	// that hash alike are two sessions, as they are where a server holds the ID.
+	nativeHeld := s != nil && s.hold != nil && s.byCommand && s.route.T3Thread == "" && s.route.Native != "" && s.route.Native != h.Native
+	if s != nil && s.dropped.IsZero() && (s.hold == nil || nativeHeld || (h.T3Thread != "" || s.byCommand) && s.route.T3Thread != h.T3Thread) {
 		d.mu.Unlock()
 		writeResp(conn, fail("session ID "+h.ID+" is in use"))
 		return

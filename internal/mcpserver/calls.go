@@ -41,6 +41,9 @@ func (s *server) call(ctx context.Context, req proto.Request) (proto.Response, e
 // callFrom is call for a tool call, which says something about its session first: Codex's thread
 // in its _meta, or the OpenCode session a shared server's call comes from.
 func (s *server) callFrom(ctx context.Context, mreq *mcp.CallToolRequest, req proto.Request) (proto.Response, error) {
+	if s.direct != nil {
+		return s.direct(req)
+	}
 	if !sharedAgent(s.opt.Agent) {
 		s.noteMeta(ctx, mreq)
 		return s.call(ctx, req)

@@ -124,8 +124,8 @@ A throwaway `HOME` isn't enough. Join also follows the variables that move an ag
 and an agent's shell in T3 has several: on 2026-11-21 a test join in a scratch home followed them
 and pointed the real `~/.claude_personal` and T3's Antigravity configurations at a test build that
 was deleted afterwards, so every new session failed to join (#995). Alongside `HOME`, set
-`USERPROFILE` (on Windows it is the home) and `APPDATA`, and unset `CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`, `GEMINI_HOME`, `GROK_HOME`, `KIRO_HOME`, `PI_CODING_AGENT_DIR`, `XDG_CONFIG_HOME` and every
+`USERPROFILE` (on Windows it is the home), `APPDATA` and `LOCALAPPDATA` (Hermes' home on Windows is in it), and unset `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `GEMINI_HOME`, `GROK_HOME`, `HERMES_HOME`, `KIRO_HOME`, `PI_CODING_AGENT_DIR`, `XDG_CONFIG_HOME` and every
 `T3CODE_*` variable (`env | grep ^T3CODE_` lists them).
 
 Since #995, join and uninstall in a home inside the temporary folder leave alone every agent

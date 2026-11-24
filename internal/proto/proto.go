@@ -101,7 +101,9 @@ const (
 //	    thread is in use. A daemon of 23 or less would drop it a minute after the command exits.
 //	25: a hello's From (#1145): a Pi session that moved to another conversation keeps its address,
 //	    and a message to its old name reaches it. A daemon of 24 or less registers a new session.
-const Protocol = 25
+//	26: a command's hello keyed by Native, with no T3 thread: `mur tool` for Murmur's Hermes plugin
+//	    (#975). A daemon of 25 or less refuses it.
+const Protocol = 26
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
@@ -369,8 +371,10 @@ type Hello struct {
 	ByThread bool `json:"byThread,omitempty"`
 	// Command says a shell command (`mur who`, `mur send`) registers the session, for a harness
 	// with no Murmur tools (#913). Its connection closes with the command, so the daemon keeps the
-	// session for as long as its T3 thread is in use, which Route must name. If a session is live in
-	// that thread already, the command acts as it, and nothing is registered.
+	// session for as long as its T3 thread is in use, which Route must name, or, for `mur tool`
+	// from Murmur's Hermes plugin (#975), its Native ID, with no thread: then while it makes calls.
+	// If a session is live in that thread, or at that ID, already, the command acts as it, and
+	// nothing is registered.
 	Command bool `json:"command,omitempty"`
 	// From is the client's own ID for the conversation the session was in before this one, where
 	// the client moved it to another in the same process: Pi's previous session file after /new,

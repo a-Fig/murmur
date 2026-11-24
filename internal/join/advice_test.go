@@ -16,7 +16,7 @@ func TestAdviceForACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 	const want = "open a new thread in this project to talk to other agents through Murmur"
 	for _, fresh := range []bool{true, false} {
 		e := envWith(map[string]string{"CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"})
-		got := strings.Join(e.advice(false, fresh, false, false, false), "\n")
+		got := strings.Join(e.advice(false, fresh, false, false, false, false), "\n")
 		if !strings.Contains(got, want) {
 			t.Errorf("codexFresh %v: advice doesn't say %q:\n%s", fresh, want, got)
 		}
@@ -28,7 +28,7 @@ func TestAdviceForACodexThreadInT3SaysToOpenANewThread(t *testing.T) {
 
 // Codex outside T3 has sessions, not threads, and the advice for it says so.
 func TestAdviceForCodexOutsideT3SaysToStartANewSession(t *testing.T) {
-	got := strings.Join(envWith(map[string]string{"CODEX_THREAD_ID": "019a"}).advice(false, true, false, false, false), "\n")
+	got := strings.Join(envWith(map[string]string{"CODEX_THREAD_ID": "019a"}).advice(false, true, false, false, false, false), "\n")
 	if !strings.Contains(got, "start a new session") || strings.Contains(got, "open a new thread") {
 		t.Errorf("advice:\n%s", got)
 	}
@@ -37,7 +37,7 @@ func TestAdviceForCodexOutsideT3SaysToStartANewSession(t *testing.T) {
 // Claude Code in T3 still gets Claude's advice, though T3 is there too.
 func TestAdviceForClaudeInT3IsNotCodexs(t *testing.T) {
 	e := envWith(map[string]string{"CLAUDECODE": "1", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"})
-	got := strings.Join(e.advice(true, false, false, false, false), "\n")
+	got := strings.Join(e.advice(true, false, false, false, false, false), "\n")
 	if !strings.Contains(got, "press Stop in T3") || strings.Contains(got, "open a new thread in this project to talk") {
 		t.Errorf("advice:\n%s", got)
 	}
@@ -47,7 +47,7 @@ func TestAdviceForClaudeInT3IsNotCodexs(t *testing.T) {
 // told to press Stop in T3, as in T3's app, not to exit and run `claude --continue`.
 func TestAdviceForClaudeInHeadlessT3SaysStopInT3(t *testing.T) {
 	e := envWith(map[string]string{"CLAUDECODE": "1", "T3CODE_THREAD_ID": "thread-1", "T3CODE_HOME": "/home/u/.t3"})
-	got := strings.Join(e.advice(true, false, false, false, false), "\n")
+	got := strings.Join(e.advice(true, false, false, false, false, false), "\n")
 	if !strings.Contains(got, "press Stop in T3") || strings.Contains(got, "claude --continue") {
 		t.Errorf("advice:\n%s", got)
 	}
@@ -67,7 +67,7 @@ func TestAdviceForPi(t *testing.T) {
 		{"in T3", map[string]string{"PI_CODING_AGENT": "true", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project", "/reload"},
 	}
 	for _, c := range cases {
-		got := strings.Join(envWith(c.vars).advice(false, false, false, false, false), "\n")
+		got := strings.Join(envWith(c.vars).advice(false, false, false, false, false, false), "\n")
 		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) || strings.Contains(got, "Claude Code") || strings.Contains(got, "Codex") ||
 			strings.Contains(got, "seconds") || strings.Contains(got, "minute") {
 			t.Errorf("%s: advice:\n%s", c.name, got)
@@ -86,7 +86,7 @@ func TestAdviceForPi(t *testing.T) {
 		{"Codex under Pi, in T3", map[string]string{"PI_CODING_AGENT": "true", "CODEX_THREAD_ID": "019a", "T3CODE_CLI_PATH": "/opt/t3/bin/t3"}, "open a new thread in this project to talk"},
 	} {
 		e := envWith(c.vars)
-		got := strings.Join(e.advice(false, false, false, false, false), "\n")
+		got := strings.Join(e.advice(false, false, false, false, false, false), "\n")
 		if e.looksLikePi() || strings.Contains(got, "Pi") || !strings.Contains(got, c.want) {
 			t.Errorf("%s: advice:\n%s", c.name, got)
 		}
@@ -107,7 +107,7 @@ func TestAdviceForAntigravity(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := envWith(c.vars)
-			got := e.advice(false, false, c.fresh, false, false)[0]
+			got := e.advice(false, false, c.fresh, false, false, false)[0]
 			if !e.looksLikeAntigravity() || !strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) ||
 				(!c.fresh && !strings.Contains(got, "within a few seconds")) {
 				t.Errorf("advice: %q", got)
@@ -131,7 +131,7 @@ func TestAdviceForKiro(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := envWith(c.vars)
-			got := e.advice(false, false, false, c.fresh, false)[0]
+			got := e.advice(false, false, false, c.fresh, false, false)[0]
 			if !e.looksLikeKiro() || e.looksLikeAntigravity() || !strings.Contains(got, "Kiro") || strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) ||
 				(!c.fresh && !strings.Contains(got, "within a few seconds")) {
 				t.Errorf("advice: %q", got)
@@ -151,7 +151,7 @@ func TestAntigravityWithInheritedAgentMarkers(t *testing.T) {
 		for _, name := range []string{c.name + " under Antigravity", "Antigravity under " + c.name} {
 			t.Run(name, func(t *testing.T) {
 				e := envWith(map[string]string{"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "conv-1", c.key: c.value})
-				got := e.advice(false, false, true, false, false)[0]
+				got := e.advice(false, false, true, false, false, false)[0]
 				if e.looksLikeAntigravity() || strings.Contains(got, "Antigravity") || !strings.Contains(got, c.want) {
 					t.Errorf("advice %q", got)
 				}

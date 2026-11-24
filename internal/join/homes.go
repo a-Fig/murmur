@@ -80,6 +80,12 @@ var agents = []agent{
 		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerKiroAt(h) },
 		removal:    kiroRemoval,
 		unregister: Env.unregisterKiroAt},
+	// T3 Code has no Hermes driver (0.1.11), so Hermes has no T3 homes; its profiles are homes of
+	// their own (hermes.go).
+	{driver: "hermes", label: "Hermes", t3Var: "HERMES_HOME",
+		register:   func(e Env, _ context.Context, h agentHome) ([]string, bool, error) { return e.registerHermesAt(h) },
+		removal:    hermesRemoval,
+		unregister: Env.unregisterHermesAt},
 }
 
 // defaultHome is an agent's configuration as this process's environment says, "" Dir where the
@@ -105,6 +111,8 @@ func (e Env) defaultHome(a agent) agentHome {
 		h.Dir, h.JSON = e.CursorDir, e.CursorConfig
 	case "kiro":
 		h.Dir = e.KiroHome
+	case "hermes":
+		h.Dir = e.HermesHome
 	}
 	return h
 }
@@ -184,6 +192,8 @@ func (e Env) homesWith(off bool) (byAgent [][]agentHome, notes []string) {
 	for i, a := range agents {
 		byAgent[i] = []agentHome{e.defaultHome(a)}
 	}
+	hi := agentIndex("hermes")
+	byAgent[hi] = append(byAgent[hi], hermesProfiles(e.HermesHome)...)
 	// A scratch home's join reads T3's settings only from the temporary folder (scratch.go).
 	skipT3 := e.T3Settings != "" && e.scratchHome() != "" && !inTemp(e.T3Settings, false)
 	settings := e.T3Settings

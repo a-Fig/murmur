@@ -165,8 +165,9 @@ func (b *box) env() []string {
 		"CODEX_SANDBOX": true, "CODEX_CI": true, "XDG_CONFIG_HOME": true, jointest.LogEnv: true,
 		// Where T3 Code and the other agents keep their settings: join reads and writes those too.
 		"T3CODE_HOME": true, "PI_CODING_AGENT_DIR": true, "GROK_HOME": true, "GEMINI_HOME": true, "KIRO_HOME": true,
+		"HERMES_HOME": true, "HERMES_DATA_DIR_SUFFIX": true, "LOCALAPPDATA": true,
 		// Which session ran the command, and where sessions are found (internal/here).
-		"CLAUDE_PID": true, "ANTIGRAVITY_AGENT": true, "ANTIGRAVITY_CONVERSATION_ID": true, "KIRO_SESSION_ID": true,
+		"CLAUDE_PID": true, "ANTIGRAVITY_AGENT": true, "ANTIGRAVITY_CONVERSATION_ID": true, "KIRO_SESSION_ID": true, "HERMES_SESSION_ID": true,
 		brand.SessionsDirEnv: true, clones.DirEnv: true}
 	var env []string
 	for _, kv := range os.Environ() {
@@ -177,6 +178,7 @@ func (b *box) env() []string {
 	}
 	return append(env,
 		"HOME="+b.home, "USERPROFILE="+b.home, "APPDATA="+filepath.Join(b.home, "AppData", "Roaming"),
+		"LOCALAPPDATA="+filepath.Join(b.home, "AppData", "Local"), // Hermes' home on Windows
 		"CLAUDE_CONFIG_DIR="+b.claudeDir, "CODEX_HOME="+b.codexHome,
 		jointest.LogEnv+"="+b.log, brand.SessionsDirEnv+"="+filepath.Join(b.root, "sessions"),
 		clones.DirEnv+"="+filepath.Join(b.root, "clones"),
