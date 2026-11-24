@@ -93,11 +93,18 @@ func (e Env) registerCursorAt(h agentHome) (did []string, fresh bool, err error)
 	}
 	var errs []error
 	path := filepath.Join(h.Dir, "mcp.json")
+	serverFailed := false
 	if changed, err := e.setCursorServer(path); err != nil {
 		errs = append(errs, err)
+		serverFailed = true
 	} else if changed {
 		fresh = true
 		did = append(did, h.Label+": registered the "+brand.MCPServer+" MCP server for you, in every project ("+path+")")
+	}
+	// No hook or approval for a server that isn't registered: the name may be another server's, and
+	// the hook's messages would send the agent to it (#1213).
+	if serverFailed {
+		return did, fresh, errors.Join(errs...)
 	}
 	path = filepath.Join(h.Dir, "hooks.json")
 	if changed, err := setCursorHooks(path, agentHookCommand(e.Exe, "cursor")); err != nil {
@@ -126,6 +133,9 @@ func (e Env) setCursorServer(path string) (bool, error) {
 		text = "{}\n"
 	}
 	out, changed, _, err := mergeMCPServer(text, e.Exe, cursorArgs)
+	if errors.Is(err, errRemoteServer) {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
 	if err != nil {
 		return false, fmt.Errorf("%s: %w, so the server wasn't added", path, err)
 	}
@@ -307,6 +317,8 @@ func (e Env) unregisterCursorAt(_ context.Context, hs []agentHome) (did, notes [
 	} else if text != "" {
 		out, changed, dropped, err := removeMCPServer(text)
 		switch {
+		case errors.Is(err, errRemoteServer):
+			notes = append(notes, h.Label+": left the "+brand.MCPServer+" MCP server in "+path+" alone: it is a remote server, not one "+brand.Command+" added")
 		case err != nil:
 			errs = append(errs, fmt.Errorf("%s: %w", path, err))
 		case changed:
@@ -357,7 +369,7 @@ func cursorRemoval(_ Env, h agentHome) string {
 	var steps []string
 	path := filepath.Join(h.Dir, "mcp.json")
 	if b, err := os.ReadFile(path); err == nil {
-		if _, found, _ := jsonedit.GetIn(string(b), []string{"mcpServers", brand.MCPServer}); found {
+		if hasLocalServer(string(b)) {
 			steps = append(steps, "delete \""+brand.MCPServer+"\" from mcpServers in "+path)
 		}
 	}
