@@ -5,7 +5,7 @@ import { h, when, plural, root } from "./dom.js";
 import { NAME, ui, devices, me, myName, people, personOnline } from "./state.js";
 import { AuthError, api } from "./api.js";
 import { deny, poll } from "./sync.js";
-import { render, go, setView } from "./render.js";
+import { render, go, setView, starRow } from "./render.js";
 import { humanTag } from "./sidebar.js";
 import { sessionState, isHidden, presence, host } from "./sessions.js";
 import { inGroup, liveGroups, isGroupTag, validTag, sessionByAddr, tagSessions } from "./tags.js";
@@ -436,6 +436,7 @@ function startPane() {
   return h(
     "section",
     { class: "chat-pane start-pane", "aria-label": "Start a conversation" },
+    starRow(),
     h(
       "div",
       { class: "start-inner" },

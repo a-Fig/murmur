@@ -16,7 +16,7 @@ import { settingsPage } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
-export { announce, render, go, setView };
+export { announce, render, go, setView, starRow };
 
 let content; // the scrolling pane, kept across renders so its scroll position is too
 
@@ -294,7 +294,74 @@ function topbar() {
       ),
     h("h1", { class: "truncate" }, viewTitle()),
     NARROW.matches && connBadge(false),
+    ui.view !== "messages" && starLink(),
   );
+}
+
+// A way to star the repo on GitHub (#1233), at the top right of Sessions, Recent, Settings and a
+// Conversations view with nothing open, but not over a conversation (Tyler, 2026-11-24). It is a plain
+// link, with no star count, so the page makes no request of its own to GitHub. A phone's header
+// has no room for it. Its hint begs a little, a different line each time (Tyler's lines); the first
+// ends with a pleading ghost where a 🥺 would be.
+const STAR_LINES = [
+  () => ["We don't charge for Murmur. But we do beg for stars.", begGhost()],
+  "Murmur is free and open source. A star is the only way to pay us.",
+  "Please, please, please.",
+  "No price, no account, no ads. Just a star, if Murmur earned it.",
+];
+function starLink() {
+  if (NARROW.matches) return null;
+  const a = h(
+    "a",
+    {
+      class: "btn btn-outline star-link",
+      href: "https://github.com/a-Fig/murmur",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      "data-tip-lines": STAR_LINES.length,
+      "data-tip-align": "end",
+      "data-key": "star",
+    },
+    icon("github"),
+    "Star us on GitHub",
+  );
+  a.tipLines = STAR_LINES;
+  return a;
+}
+
+// The ghost of the mark and the session faces, pleading: big glossy eyes under worried brows and a
+// small frown. Hands were tried, and at this size read as a snout. It is drawn in the tip's two
+// colors (its text color, and its ground for the features), so it reads in every theme.
+const SVG = "http://www.w3.org/2000/svg";
+function svg(tag, attrs) {
+  const el = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  return el;
+}
+function begGhost() {
+  const g = svg("svg", { class: "beg-ghost", viewBox: "0 0 24 24", "aria-hidden": "true" });
+  g.append(
+    svg("path", {
+      fill: "currentColor",
+      transform: "translate(2.5 1) scale(0.5) translate(-13 -9)",
+      d: "M13 46V28C13 17.5 21.5 9 32 9C42.5 9 51 17.5 51 28V46C50.2 53.2 39.1 53.2 38.33 46C37.5 53.2 26.5 53.2 25.67 46C24.9 53.2 13.8 53.2 13 46Z",
+    }),
+    ...[8.4, 15.6].flatMap((x) => [
+      svg("circle", { class: "beg-hi", cx: x, cy: 11.6, r: 3.6 }),
+      svg("circle", { fill: "currentColor", cx: x, cy: 12.2, r: 2.85 }),
+      svg("circle", { class: "beg-hi", cx: x - 1, cy: 11, r: 1.15 }),
+      svg("circle", { class: "beg-hi", cx: x + 1, cy: 13.3, r: 0.55 }),
+    ]),
+    svg("path", { class: "beg-line", "stroke-width": 1.2, d: "M5.2 7.2 9 5.8M18.8 7.2 15 5.8" }),
+    svg("path", { class: "beg-line", "stroke-width": 1.1, d: "M10.9 17.6Q12 16.9 13.1 17.6" }),
+  );
+  return g;
+}
+
+// Conversations has no top bar on a wide page, so with nothing open the link gets a row of the top
+// bar's height to itself, and lands where the top bar's would.
+function starRow() {
+  return !NARROW.matches && h("div", { class: "star-row" }, starLink());
 }
 
 function page() {

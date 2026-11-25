@@ -9,7 +9,7 @@ import {
 import { onlyMine, setOnlyMine } from "./preferences.js";
 import { AuthError, api } from "./api.js";
 import { deliver, queueSettings, saveSettings, deny, poll } from "./sync.js";
-import { announce, render, go } from "./render.js";
+import { announce, render, go, starRow } from "./render.js";
 import { humanTag } from "./sidebar.js";
 import {
   modelOf, sessionState, dotted, statusDot, prFor, prBadge, presence, settledSessions, isSettled,
@@ -316,7 +316,7 @@ function conversationsPage() {
     // A picked session keeps its header, and so its tags, before it has any messages. With an
     // account, the list stays, with who you could talk to beside it.
     every.length === 0 && !ui.filter && !me()
-      ? emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")
+      ? [starRow(), emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")]
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
