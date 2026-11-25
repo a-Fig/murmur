@@ -18,7 +18,7 @@ export { refreshTip, showTipNow };
 // screen reader still reads the title as its description.
 // It is a tooltip only while it shows: an empty one would be a tooltip with no name (WCAG 4.1.2).
 // An element marked data-tip-lines, with its lines in a tipLines property, shows one of them,
-// picked each time its tip opens and never the one before; it keeps that line while it stays open,
+// picked each time its tip opens, by weight, and never the one before; it keeps that line while it stays open,
 // through renders. With
 // data-tip-align="end" the tip lines up with the element's right edge, for one at the top right.
 const tip = h("div", { class: "tip", id: "page-tip" });
@@ -40,8 +40,11 @@ function tipText(el) {
 
 function pickLine(el) {
   if (!el.tipLines) return;
+  // Each line is picked by its weight in tipWeights (1 when there is none), among the lines but the last.
   const others = el.tipLines.map((_, i) => i).filter((i) => i !== pickedBefore);
-  pickedBefore = others[Math.floor(Math.random() * others.length)];
+  const weight = (i) => (el.tipWeights && el.tipWeights[i]) || 1;
+  let roll = Math.random() * others.reduce((n, i) => n + weight(i), 0);
+  pickedBefore = others.find((i) => (roll -= weight(i)) < 0) ?? others[others.length - 1];
   // A line is text, or a function that draws it, for a line with a picture in it. It is drawn once,
   // so a render doesn't restart the picture's motion.
   const line = el.tipLines[pickedBefore] || "";

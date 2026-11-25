@@ -308,7 +308,10 @@ const STAR_LINES = [
   "Murmur is free and open source. A star is the only way to pay us.",
   "Please, please, please.",
   "No price, no account, no ads. Just a star, if Murmur earned it.",
+  "Please.",
 ];
+// The two please lines come up twice as often as the others (Tyler, 2026-11-24).
+const STAR_WEIGHTS = [1, 1, 2, 1, 2];
 function starLink() {
   if (NARROW.matches) return null;
   const a = h(
@@ -326,6 +329,7 @@ function starLink() {
     "Star us on GitHub",
   );
   a.tipLines = STAR_LINES;
+  a.tipWeights = STAR_WEIGHTS;
   return a;
 }
 
