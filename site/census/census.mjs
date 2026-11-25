@@ -17,8 +17,9 @@
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
 // there were, how many bytes those records' events came to, and which devices wrote, each device
-// by a hash with a hash of its owner and of the GitHub account it is matched to (#323); and each
-// contributor by a hash, so one person in two repos counts once.
+// by a hash with a hash of its owner, of the GitHub account it is matched to (#323) and of the
+// machine its ID names (#1245, machine()); and each contributor by a hash, so one person in two
+// repos counts once.
 //
 // Since Murmur 0.3 every event is encrypted (#156), and its kind is sealed inside with the rest.
 // The record count and the bytes stay exact. The sessions and messages an encrypted log hides are
@@ -127,6 +128,31 @@ function identity(email, name) {
 }
 
 const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
+
+// The machine a device ran on, from its ID, or null (#1245). Before #330 a clone's ID was a slug of
+// its machine's hostname and four random hex digits (`laptop-gjlpfunp-ccf2`), so every clone on one
+// machine, in any repo, shares the slug. Encrypted presence hides who owns a clone, so the slug is
+// often the only sign that two clones are one person's. The site gets it hashed, and joins those
+// clones into one user unless they carry different accounts (src/repos.js, users()).
+//
+// Left out, as null: a new ID (`device-` and 6 or 8 hex digits) names no machine, and some slugs
+// name no one machine. A network can assign the hostname (`wifi-10-44-…`, `ip-10-0-0-1`), and a
+// default one is shared by strangers (`macbook-pro`, `users-macbook-pro`, from "User's MacBook
+// Pro", `ubuntu`, `localhost`, `codespaces-…`). A wrong merge costs more than a missed one, so the
+// list errs toward leaving a slug out.
+const OLD_ID = /^([a-z0-9][a-z0-9-]*?)-[0-9a-f]{4}$/;
+const GENERIC = new RegExp('^(?:' + [
+  'device', 'localhost', 'ubuntu', 'debian', 'fedora', 'archlinux', 'linux', 'raspberrypi', 'kali', 'pop-os',
+  'desktop', 'laptop', 'pc', 'computer', 'workstation', 'server', 'dev', 'devbox', 'vm', 'docker', 'runner',
+  // "MacBook Pro", "My MacBook Air (2)", "User's iMac", "Mac mini".
+  '(?:users?s?-|my-)?(?:macbook|imac|mac|mac-mini|mac-studio|mac-pro|mbp|mba)(?:-pro|-air)?(?:-\\d+)?',
+  // Hostnames a network or a cloud machine assigns.
+  'wifi-.*', 'ip-.*', 'dhcp-.*', 'codespaces-.*', 'fv-az.*', 'runnervm.*',
+].join('|') + ')$');
+export function machine(device) {
+  const slug = OLD_ID.exec(device)?.[1];
+  return slug && !GENERIC.test(slug) ? slug : null;
+}
 
 // Estimating what encryption hides (#550)
 //
@@ -302,7 +328,10 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
       };
     }),
     // The owner's name stays here: census() hashes it, and matches it to an account, before sending.
-    devices: [...devices].sort().map(v => ({ id: hash('device:' + v), owner: owners.get(v) ?? null })),
+    devices: [...devices].sort().map(v => {
+      const m = machine(v);
+      return { id: hash('device:' + v), owner: owners.get(v) ?? null, machine: m && hash('machine:' + m) };
+    }),
     totals: {
       sessions: started.size, messages, records, bytes, est_sessions: estSessions, est_messages: estMessages,
       first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null,
@@ -424,10 +453,11 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
     const commits = authors(dir, { deadline });
     const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, lookup(m[1], m[2], deadline));
-    const devices = bus.devices.map(({ id, owner }) => ({
+    const devices = bus.devices.map(({ id, owner, machine }) => ({
       id,
       person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,
       account: matched.has(owner) ? hash(matched.get(owner)) : null,
+      machine,
     }));
     return { repo: name.toLowerCase(), ...bus, devices, contributors: contributors(commits) };
   } finally {

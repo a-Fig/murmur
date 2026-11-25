@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -750,4 +750,34 @@ test("a commit larger than any Murmur writes is passed over, as a daemon passes 
     sessions: 0, messages: 1, records: 1, bytes: Buffer.byteLength(JSON.stringify({ v: 1, type: 'message', at: AT, body: 'x' })),
     est_sessions: 0, est_messages: 0, first_day: '2026-11-05', last_day: '2026-11-05',
   });
+});
+
+test("clones on one machine are sent with the same hash of it, and the hostname never leaves", t => {
+  const { dir, commit } = repo(t);
+  const at = '2026-11-08T10:00:00Z';
+  for (const d of ['black-forest-0a1b', 'black-forest-2c3d', 'device-1a2b3c4d', 'macbook-pro-9f8e']) {
+    // Each its own message, or the four commits would be one.
+    commit(`refs/murmur/mesh/${d}`, event({ type: 'message', from: d, at }), { date: at });
+  }
+  const c = count(dir, { now: NOW });
+  const [one, two, plain, generic] = ['black-forest-0a1b', 'black-forest-2c3d', 'device-1a2b3c4d', 'macbook-pro-9f8e']
+    .map(d => c.devices.find(v => v.id === createHash('sha256').update('device:' + d).digest('hex').slice(0, 16)));
+  assert.match(one.machine, /^[0-9a-f]{16}$/);
+  assert.equal(one.machine, two.machine);
+  assert.equal(plain.machine, null);
+  assert.equal(generic.machine, null);
+  assert.ok(!JSON.stringify(c).includes('black-forest'));
+});
+
+test('a machine is kept once seen, and a device without one is refused only when it is not a hash', { skip: !sqlite && 'no node:sqlite in this node' }, async () => {
+  const db = await sqliteD1();
+  db.sql.exec(`INSERT INTO repos (repo, name, first) VALUES ('github.com/a/one', 'github.com/a/one', '${daysAgo(3)}')`);
+  const c = counts('github.com/a/one');
+  c.devices[0].machine = 'c'.repeat(16);
+  assert.equal((await post(db, c)).status, 200);
+  delete c.devices[0].machine;
+  assert.equal((await post(db, c)).status, 200);
+  assert.equal(db.sql.prepare('SELECT machine FROM devices').get().machine, 'c'.repeat(16));
+  c.devices[0].machine = 'laptop-gjlpfunp';
+  assert.equal((await post(db, c)).status, 400);
 });
