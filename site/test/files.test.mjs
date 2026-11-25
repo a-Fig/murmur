@@ -202,3 +202,15 @@ test('the hero\'s button shows the same prompt it copies (#1234)', () => {
   assert.ok(html.includes(`if (quote.textContent !== ${source}.textContent) quote.textContent = ${source}.textContent;`), 'and falls back to it whole if the words ever differ');
   assert.ok(html.includes(`prompt.setAttribute('aria-describedby', pop.id)`), 'the card is the button\'s description');
 });
+
+test('the Star us on GitHub buttons beg with Tyler\'s four lines (#1240)', () => {
+  const html = read('index.html');
+  for (const line of [
+    "We don't charge for Murmur. But we do beg for ",
+    'Murmur is free and open source. A star is the only way to pay us.',
+    'Please, please, please.',
+    'No price, no account, no ads. Just a star, if Murmur earned it.',
+  ]) assert.ok(html.includes(line), line);
+  assert.equal(html.match(/class="gh-star /g).length, 2);
+  assert.ok(!/class="gh-star[^>]*aria-label/.test(html), 'the visible text is the name');
+});

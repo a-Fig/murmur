@@ -334,6 +334,27 @@
   .other a:hover svg { transform: translateX(3px); }
   .other a:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
   .setup-end { margin-top: 28px; }
+  /* The two Star buttons beg on hover (#1240, Tyler's four lines): the script wraps each in .gh-pw
+     and fills a card, drawn like the prompt card above (opens a moment after the pointer rests, at
+     once for keyboard focus, hangs below the button). It shows one line at random, never the one
+     before, and keeps it while open. The card is the button's description, so the visible text stays
+     its name. The first line ends with the begging ghost, 1.5x the text, in the card's two colors.
+     Desktop only: no card on a touch screen or without JS. */
+  .gh-pw { position: relative; display: inline-flex; }
+  .gh-pop { position: absolute; top: calc(100% + 14px); left: 50%; z-index: 1; width: max-content; max-width: min(21rem, calc(100vw - 48px));
+    padding: 12px 16px; border-radius: var(--r-md); background: var(--ink); color: var(--cream); box-shadow: var(--shadow);
+    font: 500 14.5px/1.45 Inter, system-ui, sans-serif; text-align: left; letter-spacing: normal; text-transform: none;
+    opacity: 0; visibility: hidden; pointer-events: none; translate: -50% -4px; transition: opacity .15s ease, translate .15s ease, visibility 0s linear .15s; }
+  .gh-pop::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 16px; }
+  .gh-pop::after { content: ""; position: absolute; left: 50%; bottom: 100%; translate: -50% 0; border: 7px solid transparent; border-bottom-color: var(--ink); border-top-width: 0; }
+  .gh-pop.open { opacity: 1; visibility: visible; pointer-events: auto; translate: -50% 0; transition: opacity .15s ease, translate .15s ease, visibility 0s; }
+  .gh-pop .nb { white-space: nowrap; }
+  .beg-ghost { display: inline-block; width: 1.5em; height: 1.5em; margin: -.25em 0 -.25em .25em; vertical-align: -.4375em; transform-origin: 50% 90%; animation: beg-sway 1.8s ease-in-out infinite; }
+  .beg-ghost .beg-hi { fill: var(--ink); }
+  .beg-ghost .beg-line { fill: none; stroke: var(--ink); stroke-linecap: round; }
+  @keyframes beg-sway { 0%, 100% { rotate: -5deg; } 50% { rotate: 5deg; } }
+  @media (prefers-reduced-motion: reduce) { .gh-pop, .gh-pop.open { translate: -50% 0; } .beg-ghost { animation: none; } }
+  @media (hover: none), (max-width: 600px) { .gh-pop { display: none; } }
   /* What you see (#928): the mur ui page in real use, in a demo repo with made-up names. */
   #see { --ink-soft: #3A4670; background: var(--cream); color: var(--ink); padding: clamp(44px, 8vh, 88px) clamp(16px, 4vw, 48px) 0; }
   #see h2 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.025em; }
@@ -1527,8 +1548,11 @@ void main() {
     let timer = 0;
     const open = on => {
       clearTimeout(timer);
+      if (on) document.dispatchEvent(new CustomEvent('hover-card', { detail: pop }));
       pop.classList.toggle('open', on);
     };
+    // Only one card shows at a time: opening the Star button's card closes this one.
+    document.addEventListener('hover-card', e => { if (e.detail !== pop) open(false); });
     const later = (on, ms) => { clearTimeout(timer); timer = setTimeout(() => open(on), ms); };
     wrap.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') later(true, 350); });
     wrap.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !prompt.matches(':focus-visible')) later(false, 120); });
@@ -1536,6 +1560,60 @@ void main() {
     prompt.addEventListener('blur', () => { if (!wrap.matches(':hover')) open(false); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && pop.classList.contains('open')) open(false); });
   }
+
+  // The Star buttons' hint (#1240): one of four lines, a new one each time it opens, never the one
+  // before. It opens and closes like the prompt card, and never at the same time as it.
+  const mark = (tag, a) => { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in a) el.setAttribute(k, a[k]); return el; };
+  // The pleading ghost of the mark: big glossy eyes under worried brows and a small frown.
+  const begGhost = () => {
+    const g = mark('svg', { class: 'beg-ghost', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    g.append(
+      mark('path', { fill: 'currentColor', transform: 'translate(2.5 1) scale(0.5) translate(-13 -9)', d: 'M13 46V28C13 17.5 21.5 9 32 9C42.5 9 51 17.5 51 28V46C50.2 53.2 39.1 53.2 38.33 46C37.5 53.2 26.5 53.2 25.67 46C24.9 53.2 13.8 53.2 13 46Z' }),
+      ...[8.4, 15.6].flatMap(x => [
+        mark('circle', { class: 'beg-hi', cx: x, cy: 11.6, r: 3.6 }),
+        mark('circle', { fill: 'currentColor', cx: x, cy: 12.2, r: 2.85 }),
+        mark('circle', { class: 'beg-hi', cx: x - 1, cy: 11, r: 1.15 }),
+        mark('circle', { class: 'beg-hi', cx: x + 1, cy: 13.3, r: 0.55 })]),
+      mark('path', { class: 'beg-line', 'stroke-width': 1.2, d: 'M5.2 7.2 9 5.8M18.8 7.2 15 5.8' }),
+      mark('path', { class: 'beg-line', 'stroke-width': 1.1, d: 'M10.9 17.6Q12 16.9 13.1 17.6' }));
+    return g;
+  };
+  const STAR_LINES = [
+    () => { const t = "We don't charge for Murmur. But we do beg for stars.", i = t.lastIndexOf(' ') + 1, nb = document.createElement('span');
+      nb.className = 'nb'; nb.append(t.slice(i), begGhost()); return [t.slice(0, i), nb]; },
+    () => ['Murmur is free and open source. A star is the only way to pay us.'],
+    () => ['Please, please, please.'],
+    () => ['No price, no account, no ads. Just a star, if Murmur earned it.']
+  ];
+  let lastLine = -1, starSeq = 0;
+  document.querySelectorAll('a.gh-star').forEach(star => {
+    const wrap = document.createElement('span');
+    wrap.className = 'gh-pw';
+    star.replaceWith(wrap);
+    const pop = document.createElement('span');
+    pop.className = 'gh-pop'; pop.id = 'gh-pop-' + (++starSeq); pop.setAttribute('role', 'tooltip');
+    wrap.append(star, pop);
+    star.setAttribute('aria-describedby', pop.id);
+    let timer = 0;
+    const open = on => {
+      clearTimeout(timer);
+      if (on === pop.classList.contains('open')) return;
+      if (on) {
+        document.dispatchEvent(new CustomEvent('hover-card', { detail: pop }));
+        const others = STAR_LINES.map((_, i) => i).filter(i => i !== lastLine);
+        lastLine = others[Math.floor(Math.random() * others.length)];
+        pop.replaceChildren(...STAR_LINES[lastLine]());
+      }
+      pop.classList.toggle('open', on);
+    };
+    document.addEventListener('hover-card', e => { if (e.detail !== pop) open(false); });
+    const later = (on, ms) => { clearTimeout(timer); timer = setTimeout(() => open(on), ms); };
+    wrap.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') later(true, 350); });
+    wrap.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !star.matches(':focus-visible')) later(false, 120); });
+    star.addEventListener('focus', () => { if (star.matches(':focus-visible')) open(true); });
+    star.addEventListener('blur', () => { if (!wrap.matches(':hover')) open(false); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') open(false); });
+  });
 
   // The trust strip runs as a ticker when its five claims don't fit on one line (see its CSS).
   const strip = document.querySelector('.st .st-trust');
