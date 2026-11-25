@@ -1561,7 +1561,7 @@ void main() {
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && pop.classList.contains('open')) open(false); });
   }
 
-  // The Star buttons' hint (#1240): one of four lines, a new one each time it opens, never the one
+  // The Star buttons' hint (#1240): one of five lines, a new one each time it opens, never the one
   // before. It opens and closes like the prompt card, and never at the same time as it.
   const mark = (tag, a) => { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in a) el.setAttribute(k, a[k]); return el; };
   // The pleading ghost of the mark: big glossy eyes under worried brows and a small frown.
@@ -1583,8 +1583,11 @@ void main() {
       nb.className = 'nb'; nb.append(t.slice(i), begGhost()); return [t.slice(0, i), nb]; },
     () => ['Murmur is free and open source. A star is the only way to pay us.'],
     () => ['Please, please, please.'],
-    () => ['No price, no account, no ads. Just a star, if Murmur earned it.']
+    () => ['No price, no account, no ads. Just a star, if Murmur earned it.'],
+    () => ['Please.']
   ];
+  // The two please lines come up twice as often as the others (Tyler, 2026-11-24).
+  const STAR_WEIGHTS = [1, 1, 2, 1, 2];
   let lastLine = -1, starSeq = 0;
   document.querySelectorAll('a.gh-star').forEach(star => {
     const wrap = document.createElement('span');
@@ -1601,7 +1604,8 @@ void main() {
       if (on) {
         document.dispatchEvent(new CustomEvent('hover-card', { detail: pop }));
         const others = STAR_LINES.map((_, i) => i).filter(i => i !== lastLine);
-        lastLine = others[Math.floor(Math.random() * others.length)];
+        let roll = Math.random() * others.reduce((n, i) => n + STAR_WEIGHTS[i], 0);
+        lastLine = others.find(i => (roll -= STAR_WEIGHTS[i]) < 0) ?? others[others.length - 1];
         pop.replaceChildren(...STAR_LINES[lastLine]());
       }
       pop.classList.toggle('open', on);
