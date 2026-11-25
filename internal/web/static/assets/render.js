@@ -318,7 +318,6 @@ function starLink() {
       href: "https://github.com/a-Fig/murmur",
       target: "_blank",
       rel: "noopener noreferrer",
-      "aria-label": "Star Murmur on GitHub",
       "data-tip-lines": STAR_LINES.length,
       "data-tip-align": "end",
       "data-key": "star",
