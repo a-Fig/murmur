@@ -147,8 +147,10 @@ key and device ID. Losing either loses the ability to administer that mesh.
 ### Automatic rotation
 
 The mesh owner's daemon checks the GitHub collaborator roster at startup and about once a day
-(#412). The first check records who can push. On later checks, a collaborator who is missing or now
-has read-only access triggers a new team key. Successful checks also record new collaborators so
+(#412). If the current key has no roster, the first successful check rotates and records who can
+push. This covers collaborators who might already have lost access while the daemon had no roster.
+On later checks, a collaborator who is missing or now has read-only access triggers a new key.
+Successful checks also record new collaborators so
 their later departure can be detected. A check that fails leaves the recorded roster in place and
 is retried after an hour while the daemon is running.
 

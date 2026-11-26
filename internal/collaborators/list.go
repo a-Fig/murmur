@@ -20,7 +20,7 @@ func List(ctx context.Context, addr string) ([]string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "api", "--paginate", "repos/"+strings.TrimPrefix(addr, "github.com/")+"/collaborators", "--jq", ".[] | select(.permissions.push) | .login")
+	cmd := exec.CommandContext(ctx, "gh", "api", "--hostname", "github.com", "--paginate", "repos/"+strings.TrimPrefix(addr, "github.com/")+"/collaborators", "--jq", ".[] | select(.permissions.push) | .login")
 	b, err := cmd.Output()
 	if err != nil {
 		return nil, errors.New("gh couldn't list the collaborators (is it signed in, with access to the repo?)")

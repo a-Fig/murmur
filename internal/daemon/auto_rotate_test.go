@@ -27,7 +27,7 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 	}
 	useGitHubAddress(dir)
 	collab := []string{"alice", "bob"}
-	var listErr error
+	listErr := errors.New("fixture API error")
 	checks := make(chan string, 1)
 	a := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond,
 		listCollaborators: func(_ context.Context, address string) ([]string, error) {
@@ -45,17 +45,7 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 			t.Fatal("owner did not check collaborators at startup")
 		}
 	}
-	a.start()
-	waitCheck()
-	eventually(t, "initial collaborator roster was published", func() bool {
-		return strings.HasPrefix(gitOK(remote, "log", "-1", "--format=%s", brand.TeamRef), "roster for ")
-	})
-	a.stop()
-	if ids := teamIDs(t, remote); len(ids) != 1 {
-		t.Fatalf("seeding the roster made a new epoch: %v", ids)
-	}
 	tip := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef))
-	listErr = errors.New("fixture API error")
 	a.start()
 	waitCheck()
 	a.stop()
@@ -63,11 +53,20 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 		t.Fatalf("a failed lookup moved the team ref to %s", got)
 	}
 
+	listErr = nil
+	a.start()
+	waitCheck()
+	eventually(t, "first successful comparison recorded a fresh epoch and roster", func() bool {
+		return len(teamIDsOK(remote)) == 2 &&
+			strings.HasPrefix(gitOK(remote, "log", "-1", "--format=%s", brand.TeamRef), "roster for ")
+	})
+	a.stop()
+
 	collab, listErr = []string{"alice"}, nil
 	a.start()
 	waitCheck()
 	eventually(t, "owner rotated after bob lost push access", func() bool {
-		return len(teamIDsOK(remote)) == 2
+		return len(teamIDsOK(remote)) == 3
 	})
 	a.stop()
 }

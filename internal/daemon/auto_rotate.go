@@ -45,7 +45,7 @@ func (d *Daemon) checkForDepartures(ctx context.Context, list func(context.Conte
 	logins, err := list(ctx, d.repoAddr)
 	if err == nil {
 		var note string
-		note, err = d.compareRoster(ctx, logins, false, true)
+		note, err = d.rotateRequest(ctx, logins, false)
 		if err == nil {
 			d.log.Print("automatic team key check: " + note)
 			return rotationCheck

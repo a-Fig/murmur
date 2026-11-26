@@ -490,8 +490,7 @@ type teamAsk struct {
 	collaborators []string
 	// basis is the roster a roster written without a rotation was decided against: nobody on it had
 	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
-	basis      []string
-	basisKnown bool
+	basis []string
 }
 
 // errRosterMoved says the current epoch's roster is no longer the one a request compared against:
@@ -539,8 +538,7 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		}
 	}
 	if ask != nil && !rotate && ask.collaborators != nil {
-		cur, ok := d.rosterLocked()
-		if ok != ask.basisKnown || !slices.Equal(cur, ask.basis) || !ok && (ep == nil || ep.Roster != nil || d.teamKeys[ep.ID] == nil) {
+		if cur, ok := d.rosterLocked(); !ok || !slices.Equal(cur, ask.basis) {
 			d.mu.Unlock()
 			return "", false, errRosterMoved
 		}
@@ -696,9 +694,9 @@ func (d *Daemon) rosterLocked() ([]string, bool) {
 
 // recordRoster writes a roster of collaborators for the current epoch, in place of basis, and waits
 // for it to land. It fails with errRosterMoved if the roster is no longer basis.
-func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string, basisKnown bool) error {
+func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string) error {
 	for attempt := 0; attempt < 3; attempt++ {
-		_, pushed, err := d.teamWork(ctx, &teamAsk{collaborators: collaborators, basis: basis, basisKnown: basisKnown})
+		_, pushed, err := d.teamWork(ctx, &teamAsk{collaborators: collaborators, basis: basis})
 		if err != nil {
 			return err
 		}
@@ -720,12 +718,6 @@ func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string
 // leaving is seen later. Someone who joined and left between two runs was never on a roster, and
 // only --force covers that. It returns what it did, for the person who asked.
 func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool) (string, error) {
-	return d.compareRoster(ctx, collab, force, false)
-}
-
-// compareRoster seeds the roster on a first automatic check. Manual rotation without a
-// recorded roster still makes a new key, as it does when someone has left.
-func (d *Daemon) compareRoster(ctx context.Context, collab []string, force, seed bool) (string, error) {
 	d.rotationMu.Lock()
 	defer d.rotationMu.Unlock()
 	if err := d.pollOnce(ctx); err != nil {
@@ -761,21 +753,18 @@ func (d *Daemon) compareRoster(ctx context.Context, collab []string, force, seed
 		if collab == nil {
 			return "", errors.New("couldn't list the repo's collaborators, so there is nothing to compare; --force makes a new team key anyway")
 		}
-		if !known && !seed || len(gone) > 0 {
+		if !known || len(gone) > 0 {
 			break
 		}
-		if known && slices.Equal(prev, collab) {
+		if slices.Equal(prev, collab) {
 			return "Nobody has left since the team key was made, so it stays as it is.", nil
 		}
-		err := d.recordRoster(ctx, collab, prev, known)
+		err := d.recordRoster(ctx, collab, prev)
 		if errors.Is(err, errRosterMoved) && attempt < 3 {
 			continue
 		}
 		if err != nil {
 			return "", err
-		}
-		if !known {
-			return "Recorded the first collaborator roster for this team key.", nil
 		}
 		return "Nobody has left since the team key was made, so it stays as it is. Recorded who has joined.", nil
 	}
