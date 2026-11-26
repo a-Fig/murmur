@@ -171,19 +171,26 @@ func (d *Daemon) signalTeamLocked() {
 	d.teamChanged = make(chan struct{})
 }
 
-// awaitEpoch waits until there is an epoch to encrypt for, or ctx ends.
+// awaitEpoch waits for a verified policy and, if needed, an epoch to encrypt for.
 func (d *Daemon) awaitEpoch(ctx context.Context) error {
 	for {
 		d.mu.Lock()
 		ready, ch := d.epochLocked() != nil || d.repoModeLocked() == bus.EncryptionOff, d.teamChanged
+		historyErr := d.checkOwnerHistoryLocked()
 		d.mu.Unlock()
-		if ready {
+		if historyErr != nil {
+			d.kickPoll()
+		} else if ready {
 			return nil
+		} else {
+			d.kickTeam()
 		}
-		d.kickTeam()
 		select {
 		case <-ch:
 		case <-ctx.Done():
+			if historyErr != nil {
+				return historyErr
+			}
 			return errNoTeamKey
 		}
 	}
@@ -239,6 +246,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			d.mu.Lock()
 			d.st.TeamReplayThrough = ""
 			d.refreshRepoFilesLocked()
+			d.signalTeamLocked()
 			d.saveLocked()
 			d.mu.Unlock()
 		}
@@ -278,18 +286,13 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			}
 		}
 	}
-	// The pages may contain intermediate policies. Persist the accepted target before
-	// applying any of them so a paused read keeps writes blocked across a restart.
-	d.mu.Lock()
-	if d.st.TeamReplayThrough != sha {
-		d.st.TeamReplayThrough = sha
-		d.saveLocked()
-	}
-	d.mu.Unlock()
 	err := d.repo.Log(ctx, from, sha, d.maxRecord, func(commits []bus.Commit) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		d.applyPageLocked(func() {
+			// Save the accepted target alongside any intermediate policy. On the final
+			// page both the cursor and the policy become usable under the same lock.
+			d.st.TeamReplayThrough = sha
 			if from == "" && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
 				if checkOwner {
@@ -302,6 +305,11 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			}
 			d.st.TeamOwnerChecked = true
 			d.st.TeamTip = commits[len(commits)-1].SHA
+			if d.st.TeamTip == sha {
+				d.st.TeamReplayThrough = ""
+				d.refreshRepoFilesLocked()
+				d.signalTeamLocked()
+			}
 		})
 		return nil
 	})
@@ -314,6 +322,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.st.TeamTip = sha // a tip that isn't a commit, or holds none Murmur reads
 		d.st.TeamReplayThrough = ""
 		d.refreshRepoFilesLocked()
+		d.signalTeamLocked()
 		d.saveLocked()
 	}
 	d.mu.Unlock()
@@ -707,6 +716,10 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		}
 	}
 	d.st.TeamTip = sha
+	if tip == "" {
+		// The lease proved this device wrote the first epoch with no earlier history.
+		d.st.TeamOwnerChecked = true
+	}
 	d.saveLocked()
 	return epoch, true, nil
 }
