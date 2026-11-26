@@ -1512,6 +1512,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		v.Files = d.fileViewsLocked(e)
 		if d.refuses(&d.agentRecv, e) {
+			v.RepoFilesOff = !d.repoAllowsFiles()
 			for _, f := range e.Files {
 				v.FilesKept = append(v.FilesKept, proto.FileView{Name: f.Name, Size: f.Size})
 			}

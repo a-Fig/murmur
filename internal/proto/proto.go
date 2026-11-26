@@ -527,8 +527,9 @@ type SessionDetail struct {
 	// or "" where this device can't know. A person's are their own switches, an agent's its device's agents'.
 	// Another device's presence says whether it takes files, never whether it sends them, so
 	// SendsFiles is set for a session on this device alone.
-	SendsFiles string `json:"sendsFiles,omitempty"`
-	TakesFiles string `json:"takesFiles,omitempty"`
+	SendsFiles   string `json:"sendsFiles,omitempty"`
+	TakesFiles   string `json:"takesFiles,omitempty"`
+	RepoFilesOff bool   `json:"repoFilesOff,omitempty"`
 
 	Branch    string     `json:"branch,omitempty"`
 	Committed []string   `json:"committed,omitempty"` // branches it has committed to, most recent first
@@ -619,7 +620,8 @@ type MessageView struct {
 	// FilesKept is the files the message carries that the session doesn't get, because its user
 	// turned Receive files off for agents (#860): their names and sizes, never a Path. Files is
 	// empty then. The turn lists them, so the session can tell its user.
-	FilesKept []FileView `json:"filesKept,omitempty"`
+	FilesKept    []FileView `json:"filesKept,omitempty"`
+	RepoFilesOff bool       `json:"repoFilesOff,omitempty"` // the mesh owner's policy kept these files
 }
 
 // FileView is one file a message carries, as the session it is for is told of it: Path is where

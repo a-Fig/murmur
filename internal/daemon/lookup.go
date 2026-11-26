@@ -115,7 +115,8 @@ func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail {
 	dev, sess := bus.SplitAddr(addr)
 	byAddr := d.namesByAddrLocked()
-	det := &proto.SessionDetail{Addr: addr, Device: dev, Nick: d.nickOfLocked(dev), You: dev == d.device && sess == you}
+	det := &proto.SessionDetail{Addr: addr, Device: dev, Nick: d.nickOfLocked(dev), You: dev == d.device && sess == you,
+		RepoFilesOff: !d.repoAllowsFiles()}
 	if dev == d.device {
 		det.Local, det.Host, det.Owner = true, d.host, d.owner
 		det.Committed = d.committedLocked(sess)
