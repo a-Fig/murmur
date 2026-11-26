@@ -528,10 +528,17 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	case s.busyAt.IsZero():
 		return r.T3Thread != "" && runUnseen(s, st, inT3, read)
 	case !inT3:
-		return s.stopSeen && !d.continuationLapsedLocked(s)
+		return (s.stopSeen || endsEveryTurn(s.agent)) && !d.continuationLapsedLocked(s)
 	}
 	return runGoing(st) || !read.After(s.busyAt)
 }
+
+// endsEveryTurn says Murmur's hook reports the end of every turn of a session of agent, wherever
+// it runs, so a session at work by the hook is at work before its first Stop: Hermes', whose plugin
+// is the hook and fires Stop at each turn's end (#1259). A message during the first turn after the
+// session registered, or after this daemon restarted, is then a notice after a tool's result, not a
+// turn queued behind the one going.
+func endsEveryTurn(agent string) bool { return isAgent(agent, "hermes") }
 
 // runUnseen says T3 has a run of session s's thread going that the hook hasn't seen start, where
 // the hook has no turn of s's going: st is what T3's database last said, inT3 that it has said

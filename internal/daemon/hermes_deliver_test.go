@@ -191,6 +191,26 @@ func TestAHermesSocketThatDoesntAnswerLeavesTheMessageToNotices(t *testing.T) {
 	}
 }
 
+// A Hermes session is at work from the first prompt the hook sees, before any Stop: its plugin
+// fires one at every turn's end (#1259). A message during that first turn is a notice, not a turn
+// queued behind it, and goes in through the socket once the turn ends.
+func TestAHermesSessionIsAtWorkBeforeItsFirstStop(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	sock := useAnsweringSocket(t, func(string) string { return accepted })
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "")
+	const native = "hermes:local-first"
+	bob := hermesHello(t, b, "f7f7f7", native, sock, "tok-f").Self
+	b.piHook(proto.OpNotices, native) // the first prompt since it registered
+	b.send("aaaaaa", bob, "during the first turn", "body")
+	var r proto.Response
+	eventually(t, "the notice", func() bool { r = b.piHook(proto.OpNotices, native); return len(r.Messages) > 0 })
+	holds(t, "nothing on the socket during the first turn", time.Second, func() bool { return len(sock.lines()) == 0 })
+	hermesStop(t, b, native)
+	eventually(t, "the message as a turn once the turn ended", func() bool { return len(sock.lines()) >= 2 })
+}
+
 // hermesStop is the end of a Hermes session's turn as its plugin's hook reports it: one that keeps
 // nothing going.
 func hermesStop(t *testing.T, d *device, native string) {

@@ -153,7 +153,8 @@ only in a clone the user joined, by the same few stats as Pi's extension.
   as context. `transform_tool_result` is PostToolUse: the notice goes after the tool's result,
   under a `[Murmur]` line, the one way into a running turn Hermes gives a plugin (`agent.steer`,
   which Hermes has for its own `/steer`, isn't one). `pre_tool_call` and it bracket a `terminal`
-  call, for commit credit.
+  call, for commit credit. The plugin fires Stop at every turn's end, so a session is at work from
+  the first prompt the hook sees, before any Stop, which a Claude Code session isn't (#1259).
 - **A turn's end keeps nothing going.** `on_session_end` is Stop, but the plugin would have to put
   what is unread in with `ctx.inject_message`, which Hermes may refuse after the daemon has marked
   it read. So it stays in the inbox, and the daemon hands it over through the socket once the
