@@ -327,9 +327,9 @@
   color: var(--sidebar-foreground);
 }
 
-/* Night's layout is the v3 design's: a navy backdrop with soft blue glows, and the conversation
- * list and the conversation (or a page) as rounded glass panels floating on it. Phones keep the
- * usual sheets. */
+/* Murmur Night's layout is the v3 design's: a navy backdrop with soft blue glows, and the
+ * conversation list and the conversation (or a page) as rounded glass panels floating on it.
+ * Phones keep the usual sheets. */
 @media (min-width: 768px) {
   /* The v3 design is drawn at 16px text and roomier rows; the page's rem sizes follow. */
   :root[data-theme="night"] {
@@ -505,9 +505,9 @@
   color: var(--sidebar-foreground);
 }
 
-/* Day's layout is Night's, as the v3 design draws it in light: a butter page under blurred sky and
- * butter glows (the frame's four blobs), and the conversation list and the conversation (or a page)
- * as white glass cards floating on it. Phones keep the usual sheets. */
+/* Murmur Day's layout is Murmur Night's, as the v3 design draws it in light: a butter page under
+ * blurred sky and butter glows (the frame's four blobs), and the conversation list and the
+ * conversation (or a page) as white glass cards floating on it. Phones keep the usual sheets. */
 @media (min-width: 768px) {
   :root[data-theme="day"] {
     font-size: 17px;
@@ -535,7 +535,7 @@
     background: rgb(255 255 255 / 74%);
     box-shadow: 3px 4px 21px -8px rgb(0 0 0 / 25%);
   }
-  /* As Night's (#1129): no backdrop-filter on the panels, and the scrollbars' room kept. */
+  /* As Murmur Night's (#1129): no backdrop-filter on the panels, and the scrollbars' room kept. */
   [data-theme="day"] :is(.chat-list, .chat-thread) {
     scrollbar-gutter: stable;
   }

@@ -122,11 +122,11 @@ uses Rubik.
 The `mur ui` page opens in Dim, with a dark sidebar, a lighter list and the lightest grey behind
 the conversation. Dark and Light use T3 Code's tokens (`internal/web/static/assets/style.css`).
 
-Every theme shares the sidebar's top corner, which Murmur Night brought in (#1068, #1102): the Figma v3
-inline lockup with the fold button beside it, then the repo picker as a bordered, rounded select.
-A theme changes only its colours there. The lockup is one drawing in four fills, in
-`internal/web/static/assets/`: `lockup-white.svg` (exported from Figma) for Dark, Dim and Murmur Night,
-`lockup-ink.svg` (ink/900) for Light, `lockup-navy.svg` (Sky's `#05224D` text) for Sky and
+Every theme shares the sidebar's top corner, which Murmur Night brought in (#1068, #1102): the
+Figma v3 inline lockup with the fold button beside it, then the repo picker as a bordered, rounded
+select. A theme changes only its colours there. The lockup is one drawing in four fills, in
+`internal/web/static/assets/`: `lockup-white.svg` (exported from Figma) for Dark, Dim and Murmur
+Night, `lockup-ink.svg` (ink/900) for Light, `lockup-navy.svg` (Sky's `#05224D` text) for Sky and
 `lockup-blue.svg` (blue/500, `#258EE3`, as the v3 design's light frame draws it) for Murmur Day.
 
 Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 design (#416).
@@ -144,8 +144,8 @@ new-messages line and a copied button use light blue (`#9CCBF3`) instead. The la
 768px or wider; narrower, Murmur Night keeps the colours on the usual layout.
 
 Murmur Day (added 2026-11-23 as Day, theme id `day`) is the v3 design's light version (#1018's light
-frame), drawn as Murmur Night is: Rubik, and on screens 768px or wider the same floating layout, here
-white glass cards (white at 74%, with white edges and the frame's soft shadow) on a butter page
+frame), drawn as Murmur Night is: Rubik, and on screens 768px or wider the same floating layout,
+here white glass cards (white at 74%, with white edges and the frame's soft shadow) on a butter page
 (`#FFF6C2`) under blurred sky and butter glows, as the frame's four blobs are. The sidebar is cream
 (`#FFFDF4`) with butter (`#FFEF8C`) for the picked row, text navy (`#05224D`, quieter `#3A4F73`, 7:1
 or more). The v3 blue marks what is pressed and a person's own messages. The frame draws its bubbles
