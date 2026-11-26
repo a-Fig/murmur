@@ -237,6 +237,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		if replayThrough != "" {
 			d.mu.Lock()
 			d.st.TeamReplayThrough = ""
+			d.refreshRepoFilesLocked()
 			d.saveLocked()
 			d.mu.Unlock()
 		}
@@ -303,6 +304,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	if d.st.TeamTip != sha || d.st.TeamReplayThrough != "" {
 		d.st.TeamTip = sha // a tip that isn't a commit, or holds none Murmur reads
 		d.st.TeamReplayThrough = ""
+		d.refreshRepoFilesLocked()
 		d.saveLocked()
 	}
 	d.mu.Unlock()

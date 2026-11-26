@@ -1146,7 +1146,7 @@ func (d *Daemon) repoAllowsFiles() bool {
 
 // refreshRepoFilesLocked applies the verified policy without changing either device's settings.
 func (d *Daemon) refreshRepoFilesLocked() {
-	if d.repoFiles == nil {
+	if d.repoFiles == nil || d.checkOwnerHistoryLocked() != nil {
 		return
 	}
 	allow := d.st.TeamOwner == nil || d.st.TeamOwner.Policy.AllowFiles

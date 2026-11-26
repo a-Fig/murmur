@@ -288,7 +288,7 @@ function recentItem(m, at) {
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
       ),
       !filesOnly(m) && messageText(m),
-      m.files?.length > 0 && h("div", { class: "msg-files-line" }, icon("paperclip"), h("span", { class: "truncate" }, m.files.map((f) => f.name).join(", "))),
+      !ui.state?.repoFilesOff && m.files?.length > 0 && h("div", { class: "msg-files-line" }, icon("paperclip"), h("span", { class: "truncate" }, m.files.map((f) => f.name).join(", "))),
     ),
   );
 }

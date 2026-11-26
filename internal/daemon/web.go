@@ -255,11 +255,10 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	self.DND = d.dnd.Load()
 	st := web.State{Repo: d.repoName, Slug: d.repoSlug, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
 		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
-		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load()}
+		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load(), RepoFilesOff: !d.repoAllowsFiles()}
 	if owner := d.st.TeamOwner; owner != nil && d.checkOwnerHistoryLocked() == nil {
 		st.MeshOwner, st.OwnsMesh = owner.Device, d.isOwnerLocked()
 		st.EncryptionMode = owner.Policy.EncryptionMode
-		st.RepoFilesOff = !owner.Policy.AllowFiles
 	}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]

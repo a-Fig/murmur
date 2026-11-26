@@ -521,7 +521,7 @@ function repoPolicySection() {
   );
   return settingsSection(
     "repo-policy",
-    "Repo settings",
+    "Mesh policy",
     state.ownsMesh ? "Changes apply to everyone in this repo." : "Managed by the mesh owner, " + ownerName + ".",
     settingsRow("repo-mode", "Encryption mode", help, state.ownsMesh ? modes : h("span", null, label)),
     settingsRow(
@@ -534,8 +534,50 @@ function repoPolicySection() {
   );
 }
 
+function settingsTabs(tab) {
+  const choose = (id) => {
+    ui.settingsTab = id;
+    render();
+    root.querySelector("#settings-tab-" + id)?.focus();
+  };
+  return h(
+    "div",
+    { class: "segmented settings-tabs", role: "tablist", "aria-label": "Settings scope" },
+    [["device", "This device"], ["repo", "Repo settings"]].map(([id, label]) =>
+      h("button", {
+        id: "settings-tab-" + id,
+        "data-key": "settings-tab-" + id,
+        role: "tab",
+        "aria-selected": tab === id ? "true" : "false",
+        "aria-controls": "settings-panel",
+        tabindex: tab === id ? 0 : -1,
+        onclick: () => choose(id),
+        onkeydown: (event) => {
+          const key = event.key;
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) return;
+          event.preventDefault();
+          choose(key === "Home" ? "device" : key === "End" ? "repo" : id === "device" ? "repo" : "device");
+        },
+      }, label),
+    ),
+  );
+}
+
 function settingsPage() {
-  const sections = [repoPolicySection(), ui.state ? accountSection() : null];
+  const hasPolicy = !!ui.state?.meshOwner;
+  const tab = hasPolicy && ui.settingsTab === "repo" ? "repo" : "device";
+  const sections = tab === "repo" ? repoPolicySection() : deviceSettings();
+  return h(
+    "div",
+    { class: "page" },
+    settingsScope(tab === "device"),
+    hasPolicy && settingsTabs(tab),
+    h("div", { class: "settings-panel", id: "settings-panel", role: hasPolicy ? "tabpanel" : null, "aria-labelledby": hasPolicy ? "settings-tab-" + tab : null }, sections),
+  );
+}
+
+function deviceSettings() {
+  const sections = [ui.state ? accountSection() : null];
   if (ui.settings) {
     const set = ui.settings;
     // A session is shown by its address until its name lands, and the daemon keeps these settings
@@ -686,12 +728,12 @@ function settingsPage() {
   );
 
   sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
-  return h("div", { class: "page" }, settingsScope(), sections);
+  return sections;
 }
 
 // Which repo, and which device, the settings above the line are for: in mur app the repo picker
 // switches between repos, each with settings of its own.
-function settingsScope() {
+function settingsScope(showDevice) {
   if (!ui.state) return null;
   const self = (ui.state.devices || []).find((d) => d.self);
   return h(
@@ -699,7 +741,7 @@ function settingsScope() {
     { class: "settings-scope" },
     "For ",
     h("strong", null, repoLabel()),
-    self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
+    showDevice && self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
   );
 }
 
