@@ -256,6 +256,9 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	st := web.State{Repo: d.repoName, Slug: d.repoSlug, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
 		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
 		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load()}
+	if owner := d.st.TeamOwner; owner != nil {
+		st.MeshOwner, st.OwnsMesh = owner.Device, d.isOwnerLocked()
+	}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
 		dv := web.Device{ID: id, Host: p.pres.Host, Owner: p.pres.Owner, Nick: d.nickOfLocked(id), Reachable: !d.staleLocked(p),

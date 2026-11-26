@@ -3,10 +3,14 @@ package setup
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/daemon"
 )
 
 // RefsSet is what RefsOnly did.
@@ -16,22 +20,10 @@ type RefsSet struct {
 	Made, Had []string
 }
 
-// RefsOnly is all `mur init --refs-only` does (#830): it creates refs/murmur/names and
-// refs/murmur/team on the clone's remote in their empty state, one root commit each on the empty
-// tree (bus.NamesGenesis, bus.TeamGenesis). `mur join` looks for them. Each commit is written with
-// commit-tree and pushed as <sha>:<ref>, leased on the ref not being there: the working tree, the
-// index and every branch stay as they were, a ref already on the remote is left alone, and of two
-// inits at once, one makes each ref. The per-device refs are each daemon's to make, after its clone
-// joins.
-func RefsOnly(ctx context.Context, dir string) (RefsSet, error) { return makeRefs(ctx, dir, true) }
-
-// NamesOnly is what a default `mur init` makes before it pushes the section: the names registry
-// alone, which is enough for join. The team ref is left for the first daemon, as before #830: a
-// daemon from 0.5.3 makes the first team key only on a team ref that isn't there, and in a repo with
-// the section such a daemon can join.
-func NamesOnly(ctx context.Context, dir string) (RefsSet, error) { return makeRefs(ctx, dir, false) }
-
-func makeRefs(ctx context.Context, dir string, team bool) (RefsSet, error) {
+// RefsOnly sets up the bus without editing the index, worktree or any branch. On a fresh mesh,
+// the first leased team push chooses the owner before the names ref makes the repo joinable.
+// Existing meshes keep their team history and ownership, if any.
+func RefsOnly(ctx context.Context, dir string) (RefsSet, error) {
 	var s RefsSet
 	top, err := Top(ctx, dir)
 	if err != nil {
@@ -54,10 +46,21 @@ func makeRefs(ctx context.Context, dir string, team bool) (RefsSet, error) {
 	if err != nil {
 		return s, err
 	}
-	refs := []struct{ name, msg string }{{brand.NamesRef, names}}
-	if team {
-		refs = append(refs, struct{ name, msg string }{brand.TeamRef, bus.TeamGenesis()})
+	refs := []struct{ name, msg string }{}
+	if there[brand.TeamRef] != "" {
+		s.Had = append(s.Had, brand.TeamRef)
+	} else if !hasMesh(there) {
+		gitDir, err := client.FindGitDir(ctx, top)
+		if err != nil {
+			return s, err
+		}
+		team, err := daemon.InitialTeamRecord(ctx, gitDir)
+		if err != nil {
+			return s, err
+		}
+		refs = append(refs, struct{ name, msg string }{brand.TeamRef, team})
 	}
+	refs = append(refs, struct{ name, msg string }{brand.NamesRef, names})
 	for _, ref := range refs {
 		if _, ok := there[ref.name]; ok {
 			s.Had = append(s.Had, ref.name)
@@ -69,6 +72,9 @@ func makeRefs(ctx context.Context, dir string, team bool) (RefsSet, error) {
 		}
 		switch err := repo.Push(ctx, sha, ref.name, bus.Lease, ""); {
 		case errors.Is(err, bus.ErrRejected):
+			if tip, checkErr := repo.RemoteRef(ctx, ref.name); checkErr != nil || tip == "" {
+				return s, fmt.Errorf("creating %s: %w", ref.name, err)
+			}
 			s.Had = append(s.Had, ref.name) // made meanwhile, by another init or a daemon
 		case err != nil:
 			return s, err
@@ -77,4 +83,13 @@ func makeRefs(ctx context.Context, dir string, team bool) (RefsSet, error) {
 		}
 	}
 	return s, nil
+}
+
+func hasMesh(refs map[string]string) bool {
+	for ref := range refs {
+		if ref == brand.NamesRef || strings.HasPrefix(ref, brand.MeshPrefix) || strings.HasPrefix(ref, brand.PresencePrefix) {
+			return true
+		}
+	}
+	return false
 }

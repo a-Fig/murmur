@@ -37,8 +37,8 @@ key replaced it.
   a lease as the name registry is, so two devices can't both make the first key
   (`internal/daemon/team.go`).
   - An *epoch* publishes a team X25519 public key in the clear, its private half wrapped for its
-    writer. The first daemon to find the ref empty makes the first: absent, or at the genesis commit
-    `mur init --refs-only` writes, which it builds on ([the bus refs](joining.md#the-bus-refs-set-a-repo-up)).
+    writer. On a new mesh, `mur init` writes the first epoch. In older meshes, the first daemon
+    to find the team ref empty makes it ([the bus refs](joining.md#the-bus-refs-set-a-repo-up)).
   - A *grant* wraps every team private key its writer holds for one device. Each device's encrypted
     presence names the newest epoch it has read and the team keys it holds, and a holder of the
     current key grants to each pinned device whose presence names the current epoch and lists fewer
@@ -124,3 +124,22 @@ key replaced it.
 - **Open, for Tyler** (#156): whether the census (#199) should keep anything readable, such as
   `owner` or an event's kind (since #550 it estimates messages and sessions instead; [counting
   use](counting.md)); and when a rotation should happen without anyone running `mur rotate`.
+
+## Mesh owner
+
+For a new mesh (#1263), the clone that runs `mur init` signs the first epoch and its repo policy.
+That clone's worktrees share `.git/murmur/keys` and have the same authority. The owner must join
+and come online to grant the first key. After any teammate has the current key, that teammate
+can grant it too.
+
+A daemon pins the owner when it reads the root of the team ref for the first time. Until then, it
+trusts the remote to show the original root. Afterward, it keeps its verified history if the ref
+is deleted or rewound. The owner's epochs, rosters and policy records share a signed sequence.
+Teammates accept those records only from the pinned signing key and in sequence. Grants still
+come from devices that hold the current key. Older daemons can read an owned mesh's team key.
+They need the owner-aware update to verify who can rotate.
+
+`mur owner` shows the owner this clone has verified. `mur rotate` requires that owner's signing
+key as well as the team's key history. Older meshes did not record an owner and still allow
+rotation from any clone that holds the key history. Ownership follows the initializing clone's
+key and device ID. Losing either loses the ability to administer that mesh.

@@ -77,8 +77,11 @@ func TestInitJoinAndLeave(t *testing.T) {
 			t.Errorf("init wrote %s into the repo", name)
 		}
 	}
-	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur")) {
+	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Fatal("init touched the user's settings or started something")
+	}
+	if !exists(filepath.Join(b.clone, ".git", "murmur", "keys")) {
+		t.Fatal("the initializing clone did not keep its keys")
 	}
 
 	out = b.mustRun(b.clone, "join")
@@ -375,16 +378,15 @@ func TestJoinNeedsTheRepoSetUp(t *testing.T) {
 	b.mustRun(b.clone, "join")
 }
 
-// A default init makes the names registry, which join looks for, and leaves the team ref to the
-// first daemon, as a 0.5.3 daemon that joins through the section makes the first key only on a team
-// ref that isn't there. A registry already there is left alone (#830).
+// A default init makes the names registry and the signed first epoch. An existing registry keeps
+// its team ref, even if no daemon has created it yet.
 func TestInitPushesTheBusRefs(t *testing.T) {
 	b := newBox(t)
 	out := b.mustRun(b.clone, "init")
 	if !strings.Contains(out, "Made refs/murmur/names on origin") {
 		t.Errorf("init's output:\n%s", out)
 	}
-	if refs := strings.Fields(git(t, b.remote, "for-each-ref", "--format=%(refname)", "refs/murmur")); !slices.Equal(refs, []string{"refs/murmur/names"}) {
+	if refs := strings.Fields(git(t, b.remote, "for-each-ref", "--format=%(refname)", "refs/murmur")); !slices.Equal(refs, []string{"refs/murmur/names", "refs/murmur/team"}) {
 		t.Errorf("the remote's bus refs after init: %q", refs)
 	}
 	var names bus.NameRecord
@@ -440,7 +442,7 @@ func untouched(t *testing.T, b *box) string {
 }
 
 // init --refs-only sets the repo up by the two shared bus refs alone, each at a root commit on the
-// empty tree that reads as empty: a registry of no names, and a team ref with no key. It changes
+// empty tree: a registry of no names, and the first epoch sealed by this clone. It changes
 // no file, index or branch, makes no per-device ref, and run again changes nothing (#830).
 func TestInitRefsOnly(t *testing.T) {
 	b := newBox(t)
@@ -450,7 +452,7 @@ func TestInitRefsOnly(t *testing.T) {
 	before := untouched(t, b)
 
 	out := b.mustRun(b.clone, "init", "--refs-only")
-	if !strings.Contains(out, "made refs/murmur/names and refs/murmur/team on origin") || !strings.Contains(out, "0.5.4 or later") {
+	if !strings.Contains(out, "Made refs/murmur/names on origin") || !strings.Contains(out, "Made refs/murmur/team on origin") {
 		t.Errorf("init's output:\n%s", out)
 	}
 	if after := untouched(t, b); after != before {
@@ -476,8 +478,11 @@ func TestInitRefsOnly(t *testing.T) {
 		names.V != bus.Version || len(names.Claims()) != 0 || names.Name != "" {
 		t.Errorf("the registry's genesis isn't an empty snapshot: %+v, %v", names, err)
 	}
-	if msg := git(t, b.remote, "log", "-1", "--format=%B", "refs/murmur/team"); !bus.IsTeamGenesisMessage(msg) {
-		t.Errorf("the team ref's genesis reads:\n%s", msg)
+	msg := git(t, b.remote, "log", "-1", "--format=%B", "refs/murmur/team")
+	var epoch bus.TeamRecord
+	state, _ := bus.OpenSeal(msg, "refs/murmur/team")
+	if err := bus.Decode(msg, &epoch); err != nil || state != bus.Sealed || !epoch.Valid() || epoch.AdminSeq != 1 || epoch.Policy == nil {
+		t.Errorf("the team ref's first epoch reads:\n%s", msg)
 	}
 
 	out = b.mustRun(b.clone, "init", "--refs-only")
@@ -642,8 +647,9 @@ func eventually(t *testing.T, what string, cond func() bool) {
 func quiet(t *testing.T, b *box, what string) {
 	t.Helper()
 	time.Sleep(3 * time.Second) // longer than it waits between looks, and than a daemon takes to start
-	if exists(filepath.Join(b.clone, ".git", "murmur")) {
-		t.Errorf("%s: a daemon's directory exists", what)
+	stateDir := filepath.Join(b.clone, ".git", "murmur")
+	if exists(filepath.Join(stateDir, "daemon.json")) || exists(filepath.Join(stateDir, "daemon.log")) {
+		t.Errorf("%s: a daemon started", what)
 	}
 	if refs := strings.TrimSpace(git(t, b.clone, "for-each-ref", "refs/murmur")); refs != "" {
 		t.Errorf("%s: Murmur refs exist in the clone: %s", what, refs)

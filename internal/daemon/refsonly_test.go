@@ -2,21 +2,23 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/setup"
 )
 
-// In a repo set up by its refs alone (`mur init --refs-only`, #830), the team ref starts at a
-// genesis commit with no key on it. The first device makes epoch 1 on top of it, as a fast-forward,
-// and what the devices then write is encrypted for that key: a message goes through, and the remote
-// never holds it in the clear. On main, no device made an epoch on a team ref that was there, so a
-// send waited for a key that never came.
+// A refs-only init publishes the first team key before the owner starts its daemon. The owner can
+// come online later and grant the key to teammates, who can use it to send messages.
 func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 	remote := newRemote(t)
 	initClone := filepath.Join(t.TempDir(), "init")
@@ -26,7 +28,9 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 	}
 	genesis := strings.TrimSpace(git(t, remote, "rev-parse", "refs/murmur/team"))
 
-	a, b := newDevice(t, remote), newDevice(t, remote)
+	a := &device{t: t, gitDir: filepath.Join(initClone, ".git"), stale: testStale, poll: 100 * time.Millisecond}
+	a.start()
+	b := newDevice(t, remote)
 	a.session("aaaaaa", "")
 	bob, _ := b.session("bbbbbb", "")
 	eventually(t, "a sees b", func() bool { return a.seesSession(bob) })
@@ -49,5 +53,58 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 	}
 	if strings.Contains(remoteObjects(t, remote), "refsonly-hidden7") {
 		t.Error("the remote holds the message in the clear")
+	}
+	if r := a.do(proto.Request{Op: proto.OpOwner}); r.Note != "This clone is the mesh owner." {
+		t.Fatalf("owner sees %+v", r)
+	}
+	b.stop()
+	statePath := filepath.Join(b.gitDir, brand.StateDir, "state.json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldState map[string]json.RawMessage
+	if err := json.Unmarshal(data, &oldState); err != nil {
+		t.Fatal(err)
+	}
+	if len(oldState["teamTip"]) == 0 || len(oldState["epochs"]) == 0 {
+		t.Fatal("test needs a completed team sync before the simulated upgrade")
+	}
+	delete(oldState, "teamOwner")
+	delete(oldState, "teamOwnerChecked")
+	data, err = json.Marshal(oldState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.start()
+	if r := b.do(proto.Request{Op: proto.OpRotate, Force: true}); !strings.Contains(r.Error, "only the mesh owner") {
+		t.Fatalf("teammate rotation: %+v", r)
+	}
+	b.stop()
+	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); r.Error != "" {
+		t.Fatalf("owner rotation: %+v", r)
+	}
+	if ids := teamIDs(t, remote); len(ids) != 2 {
+		t.Fatalf("rotated team ref holds %d epochs, want 2: %q", len(ids), ids)
+	}
+	// A reader may pass over junk commits. Restoring the last valid history must still let
+	// the owner write again.
+	valid := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef))
+	repo := bus.Repo{Git: gitx.Git{Dir: remote}, Name: "test", Email: "test@example.invalid"}
+	junk, err := repo.NewCommit(t.Context(), valid, "junk record\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, remote, "update-ref", brand.TeamRef, junk, valid)
+	eventually(t, "owner reads past the junk", func() bool {
+		data, err := os.ReadFile(filepath.Join(a.gitDir, brand.StateDir, "state.json"))
+		return err == nil && strings.Contains(string(data), junk)
+	})
+	git(t, remote, "update-ref", brand.TeamRef, valid, junk)
+	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); r.Error != "" {
+		t.Fatalf("owner rotation after restoring the ref: %+v", r)
 	}
 }

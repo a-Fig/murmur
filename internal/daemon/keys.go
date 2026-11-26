@@ -17,6 +17,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/proc"
 )
 
 // The bus is encrypted (#156): every record with content goes out encrypted for the team key
@@ -41,6 +42,38 @@ type keyPin struct {
 type keyFile struct {
 	Sign string `json:"sign"` // Ed25519 seed, hex
 	Box  string `json:"box"`  // X25519 private key, hex
+}
+
+// InitialTeamRecord makes the first team epoch for the clone running init. Keeping its private
+// half in the signed record, wrapped for this clone, lets the daemon recover it even if init
+// stops just after pushing. Use the daemon lock so two worktrees can't create different keys.
+func InitialTeamRecord(ctx context.Context, gitDir string) (string, error) {
+	dir := filepath.Join(gitDir, brand.StateDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	lock, err := proc.Lock(filepath.Join(dir, "daemon.lock"))
+	if errors.Is(err, proc.ErrLocked) {
+		return "", errors.New("stop this clone's Murmur daemon before initializing its mesh")
+	}
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	if err := proc.Protect(dir); err != nil {
+		return "", err
+	}
+	device, sign, box, err := loadIdentity(dir, nil, sealedLocally(ctx, gitx.Git{Dir: gitDir}))
+	if err != nil {
+		return "", err
+	}
+	record, err := bus.NewEpoch(bus.NewBoxKey(), map[string]string{device: bus.BoxPublic(box)}, time.Now())
+	if err != nil {
+		return "", err
+	}
+	record.AdminSeq = 1
+	record.Policy = &bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}
+	return bus.EncodeSealed(record, record.Subject(), sign, device, brand.TeamRef)
 }
 
 // loadIdentity reads this clone's device ID and keys, creating what is missing. The keys are kept

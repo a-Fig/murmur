@@ -247,6 +247,7 @@ func TestOpenWaitsForAGrant(t *testing.T) {
 // are still there, and no teammate would grant again a device the ref shows as granted.
 func TestLostTeamKeysAreReadAgain(t *testing.T) {
 	d, _ := keyRig(t)
+	d.st.TeamOwnerChecked = true
 	ep := withEpoch(d, true)
 	d.st.TeamTip, d.st.TeamGranted[d.device] = "abc", []string{ep.ID}
 	if d.rereadTeamIfKeysLostLocked(); d.st.TeamTip != "abc" {
