@@ -418,7 +418,10 @@ func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 	case bus.EncryptionOff:
 		return e, nil
 	case bus.EncryptionPrivate:
-		if e.Type == bus.Message || e.Type == bus.GroupAdd {
+		if e.Type == bus.Receipt && !bus.ValidDevice(e.To) {
+			return bus.Event{}, errRepoModeChanged
+		}
+		if e.Type == bus.Message || e.Type == bus.GroupAdd || e.Type == bus.Receipt {
 			to, err := d.privateRecipientsLocked(e.To)
 			if err != nil {
 				return bus.Event{}, err

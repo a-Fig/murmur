@@ -1151,7 +1151,7 @@ type state struct {
 	// for receipts, not yet on the bus (#26, receipts.go). Sent is this device's messages that asked
 	// for them, by ID, with how far each got with each recipient: its person's, and those whose
 	// sender asked to be told (#276).
-	Marks []bus.Mark             `json:"marks,omitempty"`
+	Marks []queuedMark           `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
 	// MuteDrops is, by this device's session ID, the messages from other devices dropped on arrival
 	// as the session had muted their sender, newest last, listed in its presence; Outgoing is this

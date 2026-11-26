@@ -53,3 +53,21 @@ func TestRepoModeScopesPrivateMessagesToTheirDevices(t *testing.T) {
 		t.Fatalf("Off didn't preserve the plaintext: %+v, %v", clear, err)
 	}
 }
+
+func TestRepoModeScopesPrivateReceiptsToTheSender(t *testing.T) {
+	d, _ := keyRig(t)
+	d.st.TeamOwner = &meshOwner{Policy: bus.RepoPolicy{EncryptionMode: bus.EncryptionPrivate, AllowFiles: true}}
+	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Receipt, From: "me-0001/receipts",
+		At: time.Now().UTC(), Marks: []bus.Mark{{Msg: bus.NewID(), To: "aaaaaa", State: bus.MarkRead}}}
+	if _, err := d.encryptEventLocked(e); !errors.Is(err, errRepoModeChanged) {
+		t.Fatalf("receipt with no private routing: %v", err)
+	}
+	e.To = "peer-0001"
+	boxed, err := d.encryptEventLocked(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boxed.Box.Recipients(); !slices.Equal(got, []string{d.device, e.To}) {
+		t.Fatalf("receipt was wrapped for %v", got)
+	}
+}
