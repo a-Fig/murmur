@@ -131,10 +131,11 @@ type device struct {
 	consentPoll time.Duration
 	// The page for humans: Idle (zero: never exit), PageOpen, PageMessages and PageAddr, for the
 	// daemon's options of the same names; logTo, if set, takes the daemon's log.
-	idle, pageOpen time.Duration
-	pageMsgs       int
-	pageAddr       string
-	logTo          io.Writer
+	idle, pageOpen    time.Duration
+	pageMsgs          int
+	pageAddr          string
+	logTo             io.Writer
+	listCollaborators func(context.Context, string) ([]string, error)
 	// tail keeps the last lines of the daemon's log, across restarts, for a test that fails.
 	tail *logTail
 	// threadState, if set, stands in for T3's database (the daemon's ThreadState).
@@ -272,7 +273,7 @@ func (d *device) start() {
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, ThreadOf: d.threadOf,
-			CodexLineage: d.codexLineage, Clones: d.clones, Log: logger})
+			CodexLineage: d.codexLineage, Clones: d.clones, Log: logger, ListCollaborators: d.listCollaborators})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}

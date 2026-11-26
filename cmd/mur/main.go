@@ -12,7 +12,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -25,6 +24,7 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/collaborators"
 	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/desktop"
 	"github.com/a-Fig/murmur/internal/gitx"
@@ -720,27 +720,11 @@ func listCollaborators(ctx context.Context, gitDir string) ([]string, string) {
 		return nil, "couldn't read the remote's address"
 	}
 	addr := publicrepo.Address(strings.TrimSpace(url))
-	if addr == "" {
-		return nil, "the repo isn't on GitHub, so its collaborators can't be listed"
-	}
-	if _, err := exec.LookPath("gh"); err != nil {
-		return nil, "listing the collaborators needs the GitHub CLI, gh, which isn't installed"
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "api", "--paginate", "repos/"+strings.TrimPrefix(addr, "github.com/")+"/collaborators", "--jq", ".[] | select(.permissions.push) | .login")
-	b, err := cmd.Output()
+	list, err := collaborators.List(ctx, addr)
 	if err != nil {
-		return nil, "gh couldn't list the collaborators (is it signed in, with access to the repo?)"
+		return nil, err.Error()
 	}
-	var logins []string
-	for _, l := range strings.Fields(string(b)) {
-		logins = append(logins, strings.ToLower(l))
-	}
-	if len(logins) == 0 {
-		return nil, "gh listed no collaborators who can push"
-	}
-	return logins, ""
+	return list, ""
 }
 
 func runUninstall(ctx context.Context, args []string, out io.Writer) error {

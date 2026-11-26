@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto/ed25519"
 	"testing"
 	"time"
@@ -53,5 +54,18 @@ func TestMeshOwnerOrdersTeamAdministration(t *testing.T) {
 	apply(update, owner, "owner-0001", false)
 	if d.st.TeamOwner.Seq != 3 || len(d.st.Epochs) != 2 {
 		t.Fatalf("after rotation and replay, owner sequence %d and %d epochs", d.st.TeamOwner.Seq, len(d.st.Epochs))
+	}
+}
+
+func TestAutomaticRotationSkipsNonOwnerDevices(t *testing.T) {
+	d, _ := keyRig(t)
+	d.st.TeamOwnerChecked = true
+	d.st.TeamOwner = &meshOwner{Device: "owner-0001", Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
+	delay := d.checkForDepartures(t.Context(), func(context.Context, string) ([]string, error) {
+		t.Fatal("a teammate's daemon called GitHub to check collaborators")
+		return nil, nil
+	})
+	if delay != rotationCheck {
+		t.Fatalf("next check in %s, want %s", delay, rotationCheck)
 	}
 }

@@ -718,6 +718,8 @@ func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string
 // leaving is seen later. Someone who joined and left between two runs was never on a roster, and
 // only --force covers that. It returns what it did, for the person who asked.
 func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool) (string, error) {
+	d.rotationMu.Lock()
+	defer d.rotationMu.Unlock()
 	if err := d.pollOnce(ctx); err != nil {
 		return "", err
 	}
