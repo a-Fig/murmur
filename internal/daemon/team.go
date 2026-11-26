@@ -341,6 +341,9 @@ func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 	if r.Type == bus.TeamEpoch && d.knownEpochLocked(r.ID) || !d.acceptTeamAdminLocked(c.SHA, r, seal, root) {
 		return
 	}
+	if r.Policy != nil {
+		d.refreshRepoFilesLocked()
+	}
 	grant := func(dev string, ids []string) {
 		have := d.st.TeamGranted[dev]
 		for _, id := range ids {

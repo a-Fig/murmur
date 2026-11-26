@@ -1131,13 +1131,32 @@ func (d *Daemon) filesHere(e bus.Event) bool {
 	return true
 }
 
-// refuses says sw, a Receive files switch, refuses message e's files: it is from another device,
-// and sw is off (#765, Tyler, 2026-11-16). Its text arrives, and its files are neither fetched nor
-// shown: to this device's sessions if sw is agentRecv, on the page if pageRecv. What a session of
-// this device sends is here already, and no download.
+const teamAdminFiles = 3
+
+// refuses applies the mesh owner's policy to every message. The device's receive switch applies
+// only to another device's attachments. Text arrives in either case.
 func (d *Daemon) refuses(sw *fileSwitch, e bus.Event) bool {
 	dev, _ := bus.SplitAddr(e.From)
-	return len(e.Files) > 0 && dev != d.device && !sw.on.Load()
+	return len(e.Files) > 0 && (!d.repoAllowsFiles() || dev != d.device && !sw.on.Load())
+}
+
+func (d *Daemon) repoAllowsFiles() bool {
+	return d.repoFiles == nil || d.repoFiles.on.Load()
+}
+
+// refreshRepoFilesLocked applies the verified policy without changing either device's settings.
+func (d *Daemon) refreshRepoFilesLocked() {
+	if d.repoFiles == nil {
+		return
+	}
+	allow := d.st.TeamOwner == nil || d.st.TeamOwner.Policy.AllowFiles
+	if d.repoFiles.set(allow) {
+		if allow {
+			clear(d.fileMiss)
+		}
+		d.kickPresence()
+		d.kickFiles()
+	}
 }
 
 // errReceiveOff is why a message waiting for its files went without them: Receive files was turned
@@ -1366,13 +1385,15 @@ func (d *Daemon) holdFiles(ctx context.Context) (release func(), err error) {
 // errFetchLater unless it would stop every try: the ref isn't there, or what it holds isn't the
 // message's files. sw is the Receive files switch it fetches for: the agents' or the page's.
 func (d *Daemon) fetchFilesHeld(ctx context.Context, e bus.Event, tries int, sw *fileSwitch) error {
-	if d.filesHere(e) {
-		return nil
-	}
 	// Checked again here, after the wait for the turn, and the fetch ends if it goes off.
 	if d.refuses(sw, e) {
 		return errReceiveOff
 	}
+	if d.filesHere(e) {
+		return nil
+	}
+	ctx, stopRepo := d.repoFiles.receiving(ctx)
+	defer stopRepo()
 	if dev, _ := bus.SplitAddr(e.From); dev != d.device {
 		var stop context.CancelFunc
 		ctx, stop = sw.receiving(ctx)

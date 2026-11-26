@@ -143,7 +143,8 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		if sess == bus.PersonSession {
 			send, recv = d.pageSend.Load(), d.pageRecv.on.Load()
 		}
-		det.SendsFiles, det.TakesFiles = onOff(send), onOff(recv)
+		allowed := d.repoAllowsFiles()
+		det.SendsFiles, det.TakesFiles = onOff(send && allowed), onOff(recv && allowed)
 		recs := d.st.Commits[sess]
 		det.CommitCount = len(recs)
 		for _, r := range recs[max(len(recs)-lookupCommits, 0):] {

@@ -19,6 +19,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/setup"
 	"github.com/a-Fig/murmur/internal/view"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -247,6 +248,69 @@ func (p *page) sendFiles(to, text string, files ...web.Upload) (int, string) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body)
+}
+
+func TestSignedRepoPolicyOverridesDeviceFileSettings(t *testing.T) {
+	remote := newRemote(t)
+	clone := filepath.Join(t.TempDir(), "owner")
+	git(t, filepath.Dir(clone), "clone", "-q", remote, clone)
+	if _, err := setup.RefsOnly(t.Context(), clone); err != nil {
+		t.Fatal(err)
+	}
+	a := &device{t: t, gitDir: filepath.Join(clone, ".git"), stale: testStale, poll: 100 * time.Millisecond}
+	a.start()
+	b := newDevice(t, remote)
+	pa, pb := a.page(), b.page()
+	pa.choose("ada-lovelace")
+	pb.choose("grace-hopper")
+	b.session("bbbbbb", "")
+	eventually(t, "peer sees the owner's person", func() bool {
+		for _, d := range pb.state().Devices {
+			if d.Person != nil && d.Person.Name == "ada-lovelace" {
+				return true
+			}
+		}
+		return false
+	})
+	file := writeFile(t, "notes.txt", []byte("run notes"))
+	req := proto.Request{Op: proto.OpSend, Session: "bbbbbb", To: "ada-lovelace", Subject: "notes before policy", Files: []string{file}}
+	if r := b.do(req); r.Error != "" {
+		t.Fatalf("send before disabling files: %+v", r)
+	}
+	var m web.Message
+	eventually(t, "page sees file metadata", func() (ok bool) {
+		m, ok = pa.messageWith(req.Subject)
+		return ok && len(m.Files) == 1
+	})
+	if code, body := pb.call("PATCH", "/api/repo-policy", pb.token, `{"allowFiles":false}`); code != http.StatusConflict {
+		t.Fatalf("a teammate can change the repo policy: %d %s", code, body)
+	}
+	if code, body := pa.call("PATCH", "/api/repo-policy", pa.token, `{"allowFiles":false}`); code != http.StatusNoContent {
+		t.Fatalf("owner disabling files: %d %s", code, body)
+	}
+	eventually(t, "peer applies the signed policy", func() bool {
+		return pb.state().RepoFilesOff
+	})
+	req.Subject = "notes after policy"
+	if r := b.do(req); !strings.Contains(r.Error, "mesh owner has turned off file transfers") {
+		t.Fatalf("agent sent a file while the policy was off: %+v", r)
+	}
+	if code, body := pb.sendFiles("ada-lovelace", "notes after policy", web.Upload{Name: "notes.txt", Data: []byte("run notes")}); code == http.StatusOK || !strings.Contains(body, "mesh owner has turned off file transfers") {
+		t.Fatalf("person sent a file while the policy was off: %d %s", code, body)
+	}
+	if code, body := pa.call("GET", "/api/file?id="+m.ID+"&i=0", pa.token, ""); code != http.StatusNotFound {
+		t.Fatalf("page could fetch a file while the policy was off: %d %s", code, body)
+	}
+	if code, body := pa.call("PATCH", "/api/repo-policy", pa.token, `{"allowFiles":true}`); code != http.StatusNoContent {
+		t.Fatalf("owner enabling files: %d %s", code, body)
+	}
+	eventually(t, "peer keeps its Send files choice when the policy changes back", func() bool {
+		state := pb.state()
+		return !state.RepoFilesOff && state.SendFiles
+	})
+	if r := b.do(req); r.Error != "" {
+		t.Fatalf("send after enabling files: %+v", r)
+	}
 }
 
 // A person on the page gets an agent's files and sends their own (#570). The page lists what a

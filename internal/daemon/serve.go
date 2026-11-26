@@ -1266,9 +1266,11 @@ func (d *Daemon) sendFrom(ctx context.Context, from string, req proto.Request, s
 	// Before anything is read (#765, Tyler, 2026-11-16): an agent's files by its device's agents' Send
 	// files, the page's by its person's.
 	sends := func() bool {
-		return (len(req.Files) == 0 || d.agentSend.Load()) && (len(uploads) == 0 || d.pageSend.Load())
+		return d.repoAllowsFiles() && (len(req.Files) == 0 || d.agentSend.Load()) && (len(uploads) == 0 || d.pageSend.Load())
 	}
 	switch {
+	case (len(req.Files) > 0 || len(uploads) > 0) && !d.repoAllowsFiles():
+		return refuse(proto.RefusedSend, "The mesh owner has turned off file transfers for this repo. Send the text alone.")
 	case len(req.Files) > 0 && !d.agentSend.Load():
 		return refuse(proto.RefusedSend, "not sent: sending files is off for agents in this repo. Your user can turn on Send files, with agents too, in "+
 			brand.Product+"'s Settings; or send the text alone.")

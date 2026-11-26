@@ -692,6 +692,7 @@ type Daemon struct {
 	// agents, and for its person on the page, each its own (Tyler, 2026-11-16).
 	agentSend, pageSend atomic.Bool
 	agentRecv, pageRecv fileSwitch
+	repoFiles           *fileSwitch // signed repo policy, independent of the device switches
 	// agentsSendOff and agentsReceiveOff are the settings that keep each from the agents, as saved,
 	// for the page's state: they stand while the main switch is off too (Sol's review of #769).
 	agentsSendOff, agentsReceiveOff atomic.Bool
@@ -1514,6 +1515,8 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	}
 	d.pinSelfLocked() // nothing else runs yet
 	d.rereadTeamIfKeysLostLocked()
+	d.repoFiles = &fileSwitch{}
+	d.refreshRepoFilesLocked()
 	d.loadSettings()
 	d.settingsMove.Store(len(d.st.SettingsMoves) > 0) // a move the last daemon didn't get to
 	d.loadPersonLog()

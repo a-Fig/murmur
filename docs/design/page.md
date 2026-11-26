@@ -155,7 +155,9 @@ from it is in [a person on the page](people.md).
 - **Settings is one screen per repo, grouped by topic** (2026-11-16, #775, Tyler's choice of a
   proposal). It grew a section per feature, with rows named by scope ("Device default" twice). A
   device is one clone, so the settings are the open repo's, and the page says which repo
-  and machine at its top. The groups are You (name, nickname, colour), Messages to your sessions
+  and machine at its top. Repo settings shows the owner and the shared encryption and file
+  policy. Only the verified owner's clone can edit it. The owner badge comes from the same
+  verified identity as the controls. The other groups are You (name, nickname, colour), Messages to your sessions
   (availability, waking, what a working session is shown, and each session's own, folded until
   opened), Files and Mutes. Appearance and About follow under "For every repo". Every setting is a
   segmented control, on/off ones included (Tyler, 2026-11-17, #862).

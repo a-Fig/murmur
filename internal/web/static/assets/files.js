@@ -12,7 +12,7 @@ import { refocus } from "./picker.js";
 export {
   fetched, attached, pictureType, fileSize, trimFetched, filesOnly, followFileSwitches, FILE_SWITCHES,
   messageFiles, fileList, closeViewer, viewerDialog, sendsFiles, askToSend, turnOnSending, attach, detach,
-  pickFiles,
+  pickFiles, REPO_FILES_OFF,
 };
 
 // Files with a message (#570, docs/design/files.md).
@@ -270,18 +270,23 @@ function viewerDialog() {
 // refuse the rest only once they had been uploaded.
 // The person's Send files is on, in this repo (#765): off, a file attached, dropped or pasted asks
 // them to turn it on there, and goes on once they do (Tyler, 2026-11-16).
+const REPO_FILES_OFF = "The mesh owner has turned off file transfers for this repo.";
+
 function sendsFiles() {
-  return !!ui.settings?.sendFiles;
+  return !ui.state?.repoFilesOff && !!ui.settings?.sendFiles;
 }
 
 function askToSend(key, files) {
-  ui.fileNote = { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
+  ui.fileNote = ui.state?.repoFilesOff
+    ? { key, text: REPO_FILES_OFF }
+    : { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
   render();
 }
 
 // Turns the person's Send files on, then does what asked for it: opens the picker, in the same
 // click, or attaches what was dropped or pasted.
 function turnOnSending(key) {
+  if (ui.state?.repoFilesOff) return askToSend(key);
   const then = ui.fileNote?.turnOn;
   ui.fileNote = null;
   saveSettings({ ...ui.settings, sendFiles: true }, false, "sendFiles");

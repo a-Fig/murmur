@@ -18,6 +18,11 @@ nightly too. Once one is on, a second under it, **Agents too**, says whether it 
 as well; it is, unless turned off (`agentsSendOff`, `agentsReceiveOff`). All are kept in
 `settings.json` with the page's other settings.
 
+The mesh owner's **Allow files** policy defaults to On. Off stops file sends and downloads
+for the repo, including fetches already under way. Text still arrives. Older daemons may
+still publish their own file refs. Updated daemons skip those files. Each device keeps its
+own switches, which apply again if the mesh owner allows files.
+
 - **Send files off:** a `send` with files is refused before a file is read or anything is pushed,
   an agent's if sending is off or kept from agents, the page's if it is off, and checked again
   once the push's turn comes. An agent is told its user can turn it on. `who` doesn't say so

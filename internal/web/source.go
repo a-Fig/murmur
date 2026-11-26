@@ -24,6 +24,8 @@ type Source interface {
 	Settings(ctx context.Context) (Settings, error)
 	// SetSettings replaces them, saved so they outlast a restart, and returns them as saved.
 	SetSettings(ctx context.Context, s Settings) (Settings, error)
+	// SetRepoPolicy changes one setting in the mesh owner's signed policy.
+	SetRepoPolicy(ctx context.Context, change RepoPolicyChange) error
 	// Unmute undoes the mute by session by of session muted, both names.
 	Unmute(ctx context.Context, by, muted string) error
 	// SetTags is a human's change to the tags of the session at addr, its device/session: add, then
@@ -55,6 +57,11 @@ type Source interface {
 	Health(ctx context.Context) (Health, error)
 }
 
+type RepoPolicyChange struct {
+	EncryptionMode string `json:"encryptionMode,omitempty"`
+	AllowFiles     *bool  `json:"allowFiles,omitempty"`
+}
+
 // ErrNoUpdate is Restart's answer when no installed update is waiting.
 var ErrNoUpdate = errors.New("no update is waiting to be restarted onto")
 
@@ -64,14 +71,16 @@ type State struct {
 	Repo string `json:"repo,omitempty"`
 	// Slug is the repository's owner/name from its remote's address ("a-Fig/murmur"), which the page
 	// shows where it says which repo it is. Without an owner in the address it is Repo.
-	Slug      string   `json:"slug,omitempty"`
-	Device    string   `json:"device"` // this device's ID
-	Devices   []Device `json:"devices"`
-	Mutes     []Mute   `json:"mutes"`
-	Version   Version  `json:"version"`
-	Account   Account  `json:"account"`
-	MeshOwner string   `json:"meshOwner,omitempty"` // verified owner's device ID
-	OwnsMesh  bool     `json:"ownsMesh,omitempty"`
+	Slug           string   `json:"slug,omitempty"`
+	Device         string   `json:"device"` // this device's ID
+	Devices        []Device `json:"devices"`
+	Mutes          []Mute   `json:"mutes"`
+	Version        Version  `json:"version"`
+	Account        Account  `json:"account"`
+	MeshOwner      string   `json:"meshOwner,omitempty"` // verified owner's device ID
+	OwnsMesh       bool     `json:"ownsMesh,omitempty"`
+	EncryptionMode string   `json:"encryptionMode,omitempty"`
+	RepoFilesOff   bool     `json:"repoFilesOff,omitempty"`
 	// Receipts is, for each of the person's recent messages, by its ID, how far it got with each of
 	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
 	// the page asks for every few seconds, and not on the message.

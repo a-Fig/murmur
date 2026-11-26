@@ -8,7 +8,8 @@ import { AuthError, api } from "./api.js";
 import { saveSettings, deny, poll } from "./sync.js";
 import { announce, render } from "./render.js";
 import { versionSection } from "./sidebar.js";
-import { host } from "./sessions.js";
+import { deviceLabel, host } from "./sessions.js";
+import { REPO_FILES_OFF } from "./files.js";
 import { dmKey, deviceColor, composers, deviceMode, MODE_HELP, setMode } from "./messages.js";
 
 export { minuteEdits, cancelMinutes, settingsRow, moveToName, settingsPage };
@@ -462,18 +463,79 @@ function settingsSection(key, title, note, ...rows) {
 
 // Every setting is a segmented control, on/off ones too: one kind of control across Settings
 // (Tyler, 2026-11-17, #862). hints says what Off and On each do, on hover.
-function onOffControl(key, on, save, hints) {
+function onOffControl(key, on, save, hints, disabled = false) {
   return h(
     "div",
     { class: "segmented", role: "group" },
     [[false, "Off"], [true, "On"]].map(([v, label], i) =>
-      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), disabled, onclick: () => on !== v && save(v) }, label),
     ),
   );
 }
 
+const REPO_MODES = {
+  team: ["Team", "Every teammate can read messages sent in Team mode."],
+  private: ["Private", "Only the devices involved can read each new message."],
+  off: ["Off", "New records are readable by anyone with access to the repo."],
+};
+
+async function saveRepoPolicy(change) {
+  if (ui.repoPolicyBusy) return;
+  const token = ui.token;
+  ui.repoPolicyBusy = true;
+  ui.rowErrors["repo-policy"] = "";
+  render();
+  try {
+    await api("/api/repo-policy", { method: "PATCH", body: JSON.stringify(change) });
+    if (token === ui.token) await poll();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (token === ui.token) ui.rowErrors["repo-policy"] = e.message;
+  } finally {
+    ui.repoPolicyBusy = false;
+    render();
+  }
+}
+
+function changeRepoMode(mode) {
+  const warning = mode === "off" ? " If this repo is public, anyone on the internet can read new records." : "";
+  if (window.confirm("Switch encryption to " + REPO_MODES[mode][0] + "? " + REPO_MODES[mode][1] + warning + " Existing history keeps the protection it had when it was written.")) {
+    saveRepoPolicy({ encryptionMode: mode });
+  }
+}
+
+function repoPolicySection() {
+  const state = ui.state;
+  if (!state?.meshOwner) return null;
+  const mode = state.encryptionMode || "team";
+  const [label, help] = REPO_MODES[mode] || [mode, ""];
+  const allowFiles = !state.repoFilesOff;
+  const owner = state.devices.find((d) => d.id === state.meshOwner);
+  const ownerName = owner?.person?.name || (owner ? deviceLabel(owner) : state.meshOwner);
+  const modes = h(
+    "div",
+    { class: "segmented", role: "group", "aria-label": "Encryption mode" },
+    Object.entries(REPO_MODES).map(([value, [text, hint]]) =>
+      h("button", { "aria-pressed": mode === value ? "true" : "false", "data-key": "repo-mode-" + value, "data-tip": hint, disabled: ui.repoPolicyBusy, onclick: () => mode !== value && changeRepoMode(value) }, text),
+    ),
+  );
+  return settingsSection(
+    "repo-policy",
+    "Repo settings",
+    state.ownsMesh ? "Changes apply to everyone in this repo." : "Managed by the mesh owner, " + ownerName + ".",
+    settingsRow("repo-mode", "Encryption mode", help, state.ownsMesh ? modes : h("span", null, label)),
+    settingsRow(
+      "repo-files",
+      "Allow files",
+      allowFiles ? "People and agents can attach files when their device settings allow it." : REPO_FILES_OFF + " Older devices may still publish attachments.",
+      state.ownsMesh ? onOffControl("repo-files", allowFiles, (value) => saveRepoPolicy({ allowFiles: value }), null, ui.repoPolicyBusy) : h("span", null, allowFiles ? "On" : "Off"),
+    ),
+    ui.rowErrors["repo-policy"] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors["repo-policy"]),
+  );
+}
+
 function settingsPage() {
-  const sections = [ui.state ? accountSection() : null];
+  const sections = [repoPolicySection(), ui.state ? accountSection() : null];
   if (ui.settings) {
     const set = ui.settings;
     // A session is shown by its address until its name lands, and the daemon keeps these settings
@@ -543,7 +605,9 @@ function settingsPage() {
       }
       return rows;
     };
-    sections.push(
+    if (ui.state?.repoFilesOff) {
+      sections.push(settingsSection("files", "Files", REPO_FILES_OFF));
+    } else sections.push(
       settingsSection(
         "files",
         "Files",

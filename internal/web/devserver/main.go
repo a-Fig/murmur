@@ -796,6 +796,10 @@ func (f *fixtures) Settings(ctx context.Context) (web.Settings, error) {
 	return copySettings(f.settings), nil
 }
 
+func (f *fixtures) SetRepoPolicy(context.Context, web.RepoPolicyChange) error {
+	return fmt.Errorf("this fixture has no mesh owner")
+}
+
 func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Settings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -38,6 +38,10 @@ type fakeSource struct {
 	read      []string // the IDs given to MarkRead
 }
 
+func (f *fakeSource) SetRepoPolicy(context.Context, RepoPolicyChange) error {
+	return nil
+}
+
 func (f *fakeSource) State(ctx context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
