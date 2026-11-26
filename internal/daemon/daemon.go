@@ -29,6 +29,7 @@ import (
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proc"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/t3db"
 	"github.com/a-Fig/murmur/internal/tags"
 	"github.com/a-Fig/murmur/internal/title"
@@ -436,6 +437,9 @@ type Daemon struct {
 	// repoName is the repository's name from its remote's address; repoSlug is its owner/name
 	// (clones.SlugOf). The page shows both.
 	repoName, repoSlug string
+	// repoAddr is the remote as github.com/<owner>/<name> (publicrepo.Address), or "" when it isn't
+	// on GitHub. A registry entry's commit fingerprint is made from it (authorPrint).
+	repoAddr string
 	// page is the page's server, nil until it is made and when the page isn't served. OpPageKey
 	// asks it for a key.
 	page    atomic.Pointer[web.Server]
@@ -1488,6 +1492,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d.owner = d.repo.Config(ctx, "user.name")
 	remoteURL := d.repo.Config(ctx, "remote."+d.repo.Remote+".url")
 	d.repoName, d.repoSlug = clones.NameOf(remoteURL), clones.SlugOf(remoteURL)
+	d.repoAddr = publicrepo.Address(remoteURL)
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}

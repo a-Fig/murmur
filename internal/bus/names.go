@@ -33,6 +33,10 @@ type NameRecord struct {
 	// Used maps each name in a snapshot to the address of the session that has it, or "" where
 	// its writer didn't know.
 	Used map[string]string `json:"used,omitempty"`
+	// Author is the writing device's commit fingerprint as it was when the record was written
+	// (AuthorPrint, #1244), or "" when its remote isn't on GitHub or git has no identity for it.
+	// Only the census reads it; a daemon passes it over.
+	Author string `json:"author,omitempty"`
 }
 
 // Subject is the record as one readable line, the commit's subject.
