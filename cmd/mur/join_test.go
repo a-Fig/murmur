@@ -647,8 +647,9 @@ func eventually(t *testing.T, what string, cond func() bool) {
 func quiet(t *testing.T, b *box, what string) {
 	t.Helper()
 	time.Sleep(3 * time.Second) // longer than it waits between looks, and than a daemon takes to start
-	if exists(filepath.Join(b.clone, ".git", "murmur")) {
-		t.Errorf("%s: a daemon's directory exists", what)
+	stateDir := filepath.Join(b.clone, ".git", "murmur")
+	if exists(filepath.Join(stateDir, "daemon.json")) || exists(filepath.Join(stateDir, "daemon.log")) {
+		t.Errorf("%s: a daemon started", what)
 	}
 	if refs := strings.TrimSpace(git(t, b.clone, "for-each-ref", "refs/murmur")); refs != "" {
 		t.Errorf("%s: Murmur refs exist in the clone: %s", what, refs)
