@@ -537,7 +537,8 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	now := time.Now()
 	rotate := ask != nil && ask.rotate
 	if o := d.st.TeamOwner; o != nil && o.Seq == 0 && d.isOwnerLocked() && d.checkOwnerHistoryLocked() == nil {
-		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: &o.Policy, At: now})
+		policy := o.Policy
+		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: &policy, At: now})
 	}
 	if ask != nil && ask.transferTo != "" {
 		record, err := d.ownerTransferLocked(ask.transferTo, now)
