@@ -112,7 +112,7 @@ func TestRosterIsNotWrittenOverOneItWasNotComparedWith(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.st.Epochs[0].Roster = &r
-	_, pushed, err := d.teamWork(t.Context(), &teamAsk{collaborators: []string{"alice", "carol"}, basis: []string{"alice"}})
+	_, pushed, err := d.teamWork(t.Context(), &teamAsk{collaborators: []string{"alice", "carol"}, basis: []string{"alice"}, basisKnown: true})
 	if !errors.Is(err, errRosterMoved) || pushed {
 		t.Fatalf("pushed %v, err %v: want errRosterMoved", pushed, err)
 	}

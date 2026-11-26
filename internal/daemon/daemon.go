@@ -174,6 +174,9 @@ type Options struct {
 	Report func(context.Context)
 	// Update installs releases, then requests a safe restart.
 	Update func(context.Context, func())
+	// ListCollaborators lists GitHub collaborators for automatic rotation. Tests can supply
+	// a stand-in for the authenticated GitHub CLI.
+	ListCollaborators func(context.Context, string) ([]string, error)
 	// Version, if set, is this binary's version and what is known of a newer release, for the
 	// page (#240). The daemon adds whether an installed update is waiting. The page calls for
 	// it every few seconds, so it must not reach the network.
@@ -635,6 +638,7 @@ type Daemon struct {
 	teamKeys    bus.Keyring
 	teamChanged chan struct{}
 	teamMu      sync.Mutex
+	rotationMu  sync.Mutex // one collaborator comparison and rotation at a time
 	teamKick    chan struct{}
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
 	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
@@ -1362,6 +1366,13 @@ func Run(ctx context.Context, opt Options) error {
 			defer d.bg.Done()
 			d.teamLoop(ctx)
 		}()
+		if d.repoAddr != "" {
+			d.bg.Add(1)
+			go func() {
+				defer d.bg.Done()
+				d.autoRotate(ctx)
+			}()
+		}
 		d.bg.Add(1)
 		go func() {
 			defer d.bg.Done()
