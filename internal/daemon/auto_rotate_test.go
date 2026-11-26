@@ -45,7 +45,6 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 			t.Fatal("owner did not check collaborators at startup")
 		}
 	}
-	tip := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef))
 	a.start()
 	waitCheck()
 	// The existing key can already have reached another collaborator while gh was failing.
@@ -55,8 +54,8 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 	}
 	b.stop()
 	a.stop()
-	if got := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef)); got != tip {
-		t.Fatalf("a failed lookup moved the team ref to %s", got)
+	if subjects := git(t, remote, "log", "--format=%s", brand.TeamRef); strings.Contains(subjects, "roster for ") {
+		t.Fatal("a failed lookup wrote a roster")
 	}
 
 	listErr = nil
@@ -67,6 +66,15 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 			strings.HasPrefix(gitOK(remote, "log", "-1", "--format=%s", brand.TeamRef), "roster for ")
 	})
 	a.stop()
+
+	tip := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef))
+	listErr = errors.New("fixture API error")
+	a.start()
+	waitCheck()
+	a.stop()
+	if got := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef)); got != tip {
+		t.Fatalf("a failed lookup moved the team ref to %s", got)
+	}
 
 	collab, listErr = []string{"alice"}, nil
 	a.start()
