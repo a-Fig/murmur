@@ -28,6 +28,7 @@ func ReadTheme(path string) (string, error) {
 		return "", nil
 	}
 	theme, err := readThemeFile(path)
+	theme = migrateTheme(theme)
 	if !validTheme(theme) {
 		theme = ""
 	}
@@ -62,6 +63,7 @@ func saveTheme(path, theme string, importing bool) (string, error) {
 	defer lock.Close()
 	current, err := readThemeFile(path)
 	if err != nil || current == theme || importing && current != "" {
+		current = migrateTheme(current)
 		if !validTheme(current) {
 			current = ""
 		}

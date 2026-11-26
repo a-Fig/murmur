@@ -122,40 +122,36 @@ uses Rubik.
 The `mur ui` page opens in Dim, with a dark sidebar, a lighter list and the lightest grey behind
 the conversation. Dark and Light use T3 Code's tokens (`internal/web/static/assets/style.css`).
 
-Every theme shares the sidebar's top corner, which Night brought in (#1068, #1102): the Figma v3
-inline lockup with the fold button beside it, then the repo picker as a bordered, rounded select.
-A theme changes only its colours there. The lockup is one drawing in five fills, in
-`internal/web/static/assets/`: `lockup-white.svg` (exported from Figma) for Dark, Dim and Night,
-`lockup-ink.svg` (ink/900) for Light, `lockup-cream.svg` (cream/100) for Murmur's ink sidebar,
-`lockup-navy.svg` (Sky's `#05224D` text) for Sky and `lockup-blue.svg` (blue/500, `#258EE3`, as
-the v3 design's light frame draws it) for Day.
-
-Its fourth theme, Murmur, is the brand: a cream page, ink text, blue for what is picked or
-pressed, and butter for a person's own messages. The sidebar is ink, not blue. Cream on blue is
-5.1:1, which leaves no room for quieter text, and the sidebar is mostly quieter text; on ink the
-quiet step (`#A9B6E6`) is still 8:1. The greens, ambers and reds of session states stay Light's,
-a step darker for cream.
+Every theme shares the sidebar's top corner, which Murmur Night brought in (#1068, #1102): the
+Figma v3 inline lockup with the fold button beside it, then the repo picker as a bordered, rounded
+select. A theme changes only its colours there. The lockup is one drawing in four fills, in
+`internal/web/static/assets/`: `lockup-white.svg` (exported from Figma) for Dark, Dim and Murmur
+Night, `lockup-ink.svg` (ink/900) for Light, `lockup-navy.svg` (Sky's `#05224D` text) for Sky and
+`lockup-blue.svg` (blue/500, `#258EE3`, as the v3 design's light frame draws it) for Murmur Day.
 
 Sky takes Rubik, navy text and the sky and butter colors from the Figma v3 design (#416).
 A pale blue sidebar and conversation list frame a cream-to-sky thread, with butter for
 a person's own messages. The panes keep the desktop page's spacing and hierarchy.
 
-Night (2026-11-22) is the Figma v3 design's dark version, also in Rubik, and copies its layout
-as well as its colours: the conversation list, the thread and the other views float as rounded
-glass panels on a navy backdrop with soft blue glows. Panes are near-black navy (`#0B1321`), text white, quieter text blue-grey
-(`#A8B8CF`, `#B8C5D8` in the sidebar), and the v3 blue (`#1767B0`) marks what is pressed, the
-picked sidebar row and a person's own messages: white on it is 5.8:1. As text on the page that
-blue is 3.2:1, so the new-messages line and a copied button use light blue (`#9CCBF3`) instead.
-The layout needs the page 768px or wider; narrower, Night keeps the colours on the usual layout.
+Murmur Night (added 2026-11-22 as Night; renamed with Murmur Day on 2026-11-26 when they replaced
+the earlier cream-and-ink Murmur theme, #1182; theme id `night`) is the Figma v3 design's dark
+version, also in Rubik, and copies its layout as well as its colours: the conversation list, the
+thread and the other views float as rounded glass panels on a navy backdrop with soft blue glows.
+Panes are near-black navy (`#0B1321`), text white, quieter text blue-grey (`#A8B8CF`, `#B8C5D8` in
+the sidebar), and the v3 blue (`#1767B0`) marks what is pressed, the picked sidebar row and a
+person's own messages: white on it is 5.8:1. As text on the page that blue is 3.2:1, so the
+new-messages line and a copied button use light blue (`#9CCBF3`) instead. The layout needs the page
+768px or wider; narrower, Murmur Night keeps the colours on the usual layout.
 
-Day (2026-11-23) is the v3 design's light version (#1018's light frame), drawn as Night is: Rubik,
-and on screens 768px or wider the same floating layout, here white glass cards (white at 74%, with
-white edges and the frame's soft shadow) on a butter page (`#FFF6C2`) under blurred sky and butter
-glows, as the frame's four blobs are. The sidebar is cream (`#FFFDF4`) with butter (`#FFEF8C`) for
-the picked row, text navy (`#05224D`, quieter `#3A4F73`, 7:1 or more). The v3 blue marks what is
-pressed and a person's own messages. The frame draws its bubbles in blue/500, where cream is 3.4:1,
-so Day uses `#1767B0`, Night's blue, where cream is 5.7:1. Sky, an earlier take on the same light
-palette, keeps the usual panes, a blue sidebar and butter bubbles.
+Murmur Day (added 2026-11-23 as Day, theme id `day`) is the v3 design's light version (#1018's light
+frame), drawn as Murmur Night is: Rubik, and on screens 768px or wider the same floating layout,
+here white glass cards (white at 74%, with white edges and the frame's soft shadow) on a butter page
+(`#FFF6C2`) under blurred sky and butter glows, as the frame's four blobs are. The sidebar is cream
+(`#FFFDF4`) with butter (`#FFEF8C`) for the picked row, text navy (`#05224D`, quieter `#3A4F73`, 7:1
+or more). The v3 blue marks what is pressed and a person's own messages. The frame draws its bubbles
+in blue/500, where cream is 3.4:1, so Murmur Day uses `#1767B0`, Murmur Night's blue, where cream is
+5.7:1. Sky, an earlier take on the same light palette, keeps the usual panes, a blue sidebar and
+butter bubbles.
 
 A session's face is a ghost (#579) and a person's is their initial, both on their device's colour;
 a person has no ring (Tyler, 2026-11-15; the first version had it the other way round). A ghost is
