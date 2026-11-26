@@ -398,7 +398,6 @@ const THEME_TIPS = {
   dark: "Black page like T3 Code's dark theme",
   dim: "Soft dark-grey page, lighter than Dark",
   light: "White page with dark text",
-  murmur: "Cream page with ink text and blue accents, like the Murmur website",
   sky: "Pale blue panes with navy text, Rubik and butter message bubbles",
   night: "Near-black navy panes with white text, Rubik and blue message bubbles",
   day: "Butter page with a cream sidebar, navy text, Rubik and blue message bubbles",

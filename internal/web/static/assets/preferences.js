@@ -14,17 +14,17 @@ const THEMES = [
   ["dark", "Dark"],
   ["dim", "Dim"],
   ["light", "Light"],
-  ["murmur", "Murmur"],
   ["sky", "Sky"],
-  ["night", "Night"],
-  ["day", "Day"],
+  ["night", "Murmur Night"],
+  ["day", "Murmur Day"],
 ];
 const initialTheme = document.documentElement.dataset.theme;
 const legacyKeys = { theme: ":theme", onlyMine: ":only-mine", tagsFolded: ":tags-folded" };
 function legacyPreferences() {
   const prefs = {};
   try {
-    const t = localStorage.getItem(NAME + legacyKeys.theme);
+    const raw = localStorage.getItem(NAME + legacyKeys.theme);
+    const t = raw === "murmur" ? "dim" : raw;
     if (THEMES.some(([id]) => id === t)) prefs.theme = t;
     for (const field of ["onlyMine", "tagsFolded"]) {
       const value = localStorage.getItem(NAME + legacyKeys[field]);

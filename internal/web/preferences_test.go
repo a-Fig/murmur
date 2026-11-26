@@ -71,27 +71,97 @@ func TestFilterSaveWhenThemeFileIsUnavailable(t *testing.T) {
 	}
 }
 
-// Night, the v3 design's dark version, is a theme the page can save, and the desktop window opens
-// dark for it before the page loads.
+// Murmur Night, the v3 design's dark version, is a theme the page can save, and the desktop window
+// opens dark for it before the page loads.
 func TestNightIsADarkTheme(t *testing.T) {
 	if !validTheme("night") {
 		t.Fatal("night should be a theme the page can save")
 	}
 	if !DarkFrame("night") {
-		t.Fatal("the desktop window should open dark for Night")
+		t.Fatal("the desktop window should open dark for Murmur Night")
 	}
 	if validTheme("midnight") {
 		t.Fatal("an unknown theme should be refused")
 	}
 }
 
-// Day, the v3 design's light version, is a theme the page can save, and the desktop window opens
-// light for it before the page loads.
+// Murmur Day, the v3 design's light version, is a theme the page can save, and the desktop window
+// opens light for it before the page loads.
 func TestDayIsALightTheme(t *testing.T) {
 	if !validTheme("day") {
 		t.Fatal("day should be a theme the page can save")
 	}
 	if DarkFrame("day") {
-		t.Fatal("the desktop window should open light for Day")
+		t.Fatal("the desktop window should open light for Murmur Day")
+	}
+}
+
+// The removed Murmur theme is refused for new selections, and any saved copy (the shared theme
+// file, an older clone's preferences file, or a browser migration POST) lands on Dim (#1182).
+func TestRemovedMurmurThemeMigratesToDim(t *testing.T) {
+	if validTheme("murmur") {
+		t.Fatal("murmur should no longer be a valid theme")
+	}
+
+	dir := t.TempDir()
+	themePath := filepath.Join(dir, "app", "theme")
+	if err := os.MkdirAll(filepath.Dir(themePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(themePath, []byte("murmur\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadTheme(themePath)
+	if err != nil || got != "dim" {
+		t.Fatalf("ReadTheme(murmur) = %q, %v; want dim", got, err)
+	}
+	if !DarkFrame(got) {
+		t.Fatal("the desktop window should open dark for migrated murmur -> dim")
+	}
+
+	server := NewWithPRs(newFake(), testToken, noPRs)
+	if err := server.WithPreferences(Preferences{}, themePath, nil); err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server)
+	t.Cleanup(httpServer.Close)
+	h := &harness{t: t, srv: httpServer}
+
+	resp := h.do(http.MethodGet, "/", "", "", "")
+	html, err := io.ReadAll(resp.Body)
+	if err != nil || !strings.Contains(string(html), `data-theme="dim" data-theme-saved`) {
+		t.Fatalf("saved murmur theme should render in Dim as saved: status %d, err %v, html %q", resp.StatusCode, err, string(html))
+	}
+	if p := decode[Preferences](t, h.do(http.MethodPost, "/api/preferences", "", testToken, `{"theme":"sky"}`)); p.Theme != "dim" {
+		t.Fatalf("a stale browser import should keep migrated dim, got %+v", p)
+	}
+	if resp := h.do(http.MethodPatch, "/api/preferences", "", testToken, `{"theme":"murmur"}`); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("PATCH murmur should be refused with 400, got %d", resp.StatusCode)
+	}
+
+	// An older clone's page-preferences.json with theme "murmur" also migrates to dim.
+	cloneDir := filepath.Join(dir, "clone")
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cloneDir, PreferencesFile), []byte(`{"theme":"murmur","onlyMine":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err := ReadPreferences(cloneDir)
+	if err != nil || prefs.Theme != "dim" || prefs.OnlyMine == nil || !*prefs.OnlyMine {
+		t.Fatalf("ReadPreferences(murmur) = %+v, %v; want dim and onlyMine=true", prefs, err)
+	}
+
+	// A browser migrating legacy localStorage via POST with theme "murmur" lands on dim.
+	freshPath := filepath.Join(dir, "fresh", "theme")
+	freshServer := NewWithPRs(newFake(), testToken, noPRs)
+	if err := freshServer.WithPreferences(Preferences{}, freshPath, nil); err != nil {
+		t.Fatal(err)
+	}
+	freshHTTP := httptest.NewServer(freshServer)
+	t.Cleanup(freshHTTP.Close)
+	fh := &harness{t: t, srv: freshHTTP}
+	if p := decode[Preferences](t, fh.do(http.MethodPost, "/api/preferences", "", testToken, `{"theme":"murmur"}`)); p.Theme != "dim" {
+		t.Fatalf("POST murmur migration = %+v; want dim", p)
 	}
 }
