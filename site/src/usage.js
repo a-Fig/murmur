@@ -104,19 +104,22 @@ async function store(db, key, address, day, gh) {
       return;
     }
   }
-  // With no ID, an address some repo has had is that repo's for now: most often a clone on a
-  // renamed repo's old URL. The census asks GitHub about every repo each day, and finds a new repo
-  // made at that address then, when the clone's next look stores it.
-  if (!gh.id && await db.prepare('SELECT 1 FROM repo_names WHERE name = ?1').bind(key).first()) return;
-  const taken = await db.prepare('SELECT 1 FROM repos WHERE repo = ?1').bind(key).first();
-  if (taken && !gh.id) throw new Error(`${key} is another repo's key, and GitHub gave no ID`);
+  // With no ID, an address that a repo with no ID yet has had is that repo's: the census asks
+  // GitHub about that address each day, as the repo's own, and a new repo made there is found then.
+  // An address only a repo with an ID used to have isn't asked about again, so a new repo there
+  // could be missed for good: that waits, below, for an answer with an ID.
+  if (!gh.id && await db.prepare(
+    'SELECT 1 FROM repo_names n JOIN repos r ON r.repo = n.repo WHERE n.name = ?1 AND r.github_id IS NULL',
+  ).bind(key).first()) return;
+  const taken = await db.prepare('SELECT 1 FROM repos WHERE repo = ?1 UNION ALL SELECT 1 FROM repo_names WHERE name = ?1').bind(key).first();
+  if (taken && !gh.id) throw new Error(`${key} is another repo's address, and GitHub gave no ID`);
   const row = taken ? `gh:${gh.id}` : key;
-  // Two clones reporting a new repo at once both insert it: the second finds the row, or the ID,
-  // already there, and is answered as the first is.
-  await db.batch([
-    db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING').bind(row, name, day, gh.id ?? null),
-    ...names.map(n => alias(n, row)),
-  ]);
+  // Two clones reporting a new repo at once both insert it, by two addresses perhaps; the second
+  // finds the row, or the ID, already there. Its addresses go to whichever row holds the repo.
+  await db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
+    .bind(row, name, day, gh.id ?? null).run();
+  const held = gh.id ? (await db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(gh.id).first())?.repo ?? row : row;
+  await db.batch(names.map(n => alias(n, held)));
 }
 
 // Whether GitHub shows owner/name to someone signed out: { public: true, false, or null when GitHub

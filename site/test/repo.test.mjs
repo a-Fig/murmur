@@ -60,6 +60,7 @@ test("a repo D1 can't look up is checked with GitHub, as a new one is", async t 
         if (looked.length === 1) throw new Error('D1 is down');
         return null;
       },
+      async run() { stored.push({ sql, args }); return { success: true }; },
     }),
   });
   const db = { prepare: statement, async batch(stmts) { stored.push(...stmts); return stmts.map(() => ({ results: [] })); } };
@@ -86,6 +87,24 @@ test('a POST that is not application/json is refused before anything is read or 
   assert.equal(db.sql.prepare('SELECT COUNT(*) AS n FROM repos').get().n, 0);
   // A charset, or another case, is still JSON.
   assert.equal((await post(db, body, 'Application/JSON; charset=utf-8')).status, 200);
+});
+
+test("an old address reported while GitHub gives no ID waits for one, unless its repo has no ID either", { skip }, async t => {
+  const db = await sqliteD1();
+  // a-Fig/t4, stored with its ID, was renamed to a-Fig/murmur; old-only has no ID yet.
+  db.sql.exec(`INSERT INTO repos (repo, name, first, github_id) VALUES ('github.com/a-fig/t4', 'github.com/a-Fig/murmur', '2026-11-01', 1435080335), ('github.com/b/old-only', 'github.com/b/old-only', '2026-11-01', NULL)`);
+  db.sql.exec(`INSERT INTO repo_names (name, repo) VALUES ('github.com/a-fig/t4', 'github.com/a-fig/t4'), ('github.com/a-fig/murmur', 'github.com/a-fig/t4'), ('github.com/b/old-only', 'github.com/b/old-only'), ('github.com/b/was', 'github.com/b/old-only')`);
+  // The API can't answer; git says public, with no ID.
+  const real = globalThis.fetch;
+  globalThis.fetch = async url => (String(url).includes('api.github.com')
+    ? new Response('', { status: 403 })
+    : new Response('', { status: 200, headers: { 'Content-Type': 'application/x-git-upload-pack-advertisement' } }));
+  t.after(() => { globalThis.fetch = real; });
+  // A new repo may have taken a-Fig/t4, and nothing would ask about it again: try later.
+  assert.equal((await post(db, JSON.stringify({ repo: 'github.com/a-Fig/t4' }))).status, 503);
+  // b/was belongs to a repo the census asks about by that name each day: ok.
+  assert.equal((await post(db, JSON.stringify({ repo: 'github.com/b/was' }))).status, 200);
+  assert.equal(db.sql.prepare('SELECT COUNT(*) AS n FROM repos').get().n, 2);
 });
 
 // The real rename here: a-Fig/t4 became a-Fig/murmur, and GitHub's API answers the old name with

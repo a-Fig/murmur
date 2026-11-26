@@ -158,12 +158,11 @@ export async function identify(db, key, github) {
   const names = row => db.prepare('INSERT INTO repo_names (name, repo) VALUES (?1, ?2) ON CONFLICT DO NOTHING').bind(name.toLowerCase(), row);
   if (!same) {
     if (other) return other.repo;
-    const row = `gh:${github.id}`;
-    await db.batch([
-      db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
-        .bind(row, name, new Date().toISOString().slice(0, 10), github.id),
-      names(row),
-    ]);
+    // A report of the repo may have stored it in the meantime, so its row is found by its ID.
+    await db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
+      .bind(`gh:${github.id}`, name, new Date().toISOString().slice(0, 10), github.id).run();
+    const row = (await db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(github.id).first())?.repo ?? `gh:${github.id}`;
+    await names(row).run();
     return row;
   }
   if (other && other.repo !== key) {
