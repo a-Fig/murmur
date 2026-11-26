@@ -164,7 +164,23 @@ only in a clone the user joined, by the same few stats as Pi's extension.
   `plugins.entries.murmur.allow_gateway_injection`, which join sets; without it the plugin opens no
   socket, and the session gets notices only. The plugin learns of the grant from Hermes'
   `_gateway_injection_allowed`, as hermes-agent 8da31006 has it; a Hermes without that check gets a
-  socket either way, and loses the first message it refuses there.
+  socket either way, and refuses the first message there.
+- **Each message is answered** (#1258, 2026-11-25). The socket answers each message with a line,
+  `{"type":"accepted"}` once `inject_message` took it, else `{"type":"refused"}`, and the daemon
+  takes a message out of the inbox only on "accepted". `inject_message` only schedules the turn, so
+  the answer comes within milliseconds; the daemon waits 15 seconds for it
+  (`msgsock.SendAwaiting`). A refused message stays in the inbox, the daemon ends the session at
+  once, and the message goes in through the next socket the plugin opens for the session, or as a
+  notice. No answer, or one it doesn't know, means the turn may have gone in, so the message is
+  left to the hook's notices, as for a write that fails. Before this the daemon took a message out
+  once its write returned, and while an ACP session closed, two or more writes could land before
+  Hermes' first refusal, each of them lost.
+- **Old plugins.** The plugin says it answers with `MURMUR_HERMES_SOCKET_REPLIES` in the hook's
+  environment, which the route carries as `msgReplies`; the daemon waits for an answer only then.
+  `mur` rewrites the plugin when it updates, but a gateway runs the plugin it loaded at its start
+  until `hermes gateway restart`, so a plugin from before keeps the old way: the first message
+  Hermes refuses is lost, and the plugin closes its socket, so the rest wait. A newer plugin with an
+  older daemon writes its answer to a connection the daemon has already closed, which it ignores.
 - **Registration.** The hook registers the session at a turn's start and end, and whenever the
   plugin has a socket the daemon hasn't been told of, so the daemon knows the socket before the
   session calls a tool.
@@ -172,14 +188,15 @@ only in a clone the user joined, by the same few stats as Pi's extension.
   outside a hook only with the session's key, which the plugin keeps from the hooks (seen
   2026-11-23: a oneshot session's was refused once it had closed; an ACP session's still took a
   turn after its client went). The plugin closes the socket when the session finalizes or is
-  deleted, or Hermes refuses a turn, and the daemon holds the session while its socket answers and
-  it hasn't been idle for 8 hours (`socketHeld`).
+  deleted, or Hermes refuses a turn, and refuses whatever reaches a connection it took before the
+  close. The daemon holds the session while its socket answers and it hasn't been idle for 8 hours
+  (`socketHeld`).
 - **Seen** on Windows (2026-11-23): a message to an idle ACP session started a turn within a second;
   one sent during a 25-second `terminal` call came after the call's result, and whole as a turn
   once that turn ended; the session ended within a minute of `hermes gateway stop`.
-- **Not covered.** A message the socket takes and Hermes then refuses is lost: the daemon has
-  handed it over, and the socket can't answer. The plugin closes the socket at once, so the rest
-  wait. A session whose ACP client went without Hermes finalizing it stays live, and a message to it
+- **Not covered.** A turn Hermes accepted and then failed to run: "accepted" means
+  `inject_message` scheduled it, and the gateway checks it again when it dispatches the turn. A
+  session whose ACP client went without Hermes finalizing it stays live, and a message to it
   starts a turn nobody watches. A real model's reading of a notice after a tool's result, which
   OpenCode's model refused when it was appended to a file it had read.
 

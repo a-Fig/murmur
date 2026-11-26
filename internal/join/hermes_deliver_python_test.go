@@ -121,7 +121,8 @@ with open(sys.argv[1], "a", encoding="utf-8") as f:
     f.write(json.dumps({"argv": args, "event": p.get("hook_event_name"), "session": p.get("session_id"),
         "call": p.get("tool_use_id"), "tool": p.get("tool_name"), "prompt": p.get("prompt"), "cwd": os.path.basename(p.get("cwd") or ""),
         "interrupted": p.get("interrupted"), "socket": bool(os.environ.get("MURMUR_HERMES_SOCKET")),
-        "token": bool(os.environ.get("MURMUR_HERMES_TOKEN")), "new": bool(os.environ.get("MURMUR_HERMES_NEW_SOCKET"))}) + "\n")
+        "token": bool(os.environ.get("MURMUR_HERMES_TOKEN")), "new": bool(os.environ.get("MURMUR_HERMES_NEW_SOCKET")),
+        "replies": bool(os.environ.get("MURMUR_HERMES_SOCKET_REPLIES"))}) + "\n")
 if p.get("prompt") == "FAIL":
     sys.exit(3)  # as mur hook does when it couldn't register the session
 ev = p.get("hook_event_name")
@@ -217,12 +218,17 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 		addr, token = strings.Trim(parts[0], `"`), strings.Trim(parts[1], `"`)
 		addr = strings.ReplaceAll(addr, `\\`, `\`)
 	}
-	if err := msgsock.Send(context.Background(), addr, token, "A TURN FROM A TEAMMATE"); err != nil {
+	// The socket answers each message with whether Hermes took it (#1258), and closes once Hermes
+	// refuses one.
+	if err := msgsock.SendAwaiting(context.Background(), addr, token, "A TURN FROM A TEAMMATE"); err != nil {
 		t.Fatalf("writing to the plugin's socket: %v", err)
 	}
+	if err := msgsock.SendAwaiting(context.Background(), addr, token, "REFUSE this one"); !errors.Is(err, msgsock.ErrRefused) {
+		t.Errorf("a message Hermes refuses: %v, want the socket to say it refused it", err)
+	}
 	stdin.Write([]byte("sent\n"))
-	if v := next("socket injected:"); v != `[["A TURN FROM A TEAMMATE", "agent:main:local:dm:local-1"]]` {
-		t.Errorf("the socket's turn went in as %s", v)
+	if v := next("socket injected:"); v != `[["A TURN FROM A TEAMMATE", "agent:main:local:dm:local-1"], ["REFUSE this one", "agent:main:local:dm:local-1"]]` {
+		t.Errorf("the socket's turns went in as %s", v)
 	}
 	if v := next("finalized:"); v != `[null, null]` {
 		t.Errorf("after the session closed its socket is %s", v)
@@ -249,13 +255,13 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 	b, _ := os.ReadFile(record)
 	rec := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")) // Python's text mode on Windows
 	want := []string{
-		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-1", "call": null, "tool": null, "prompt": "hello there", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": true}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "PreToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": null, "tool": "read_file", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": false, "socket": true, "token": true, "new": false}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": true, "socket": true, "token": true, "new": false}`,
-		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-6", "call": null, "tool": null, "prompt": "FAIL", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-1", "call": null, "tool": null, "prompt": "hello there", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": true, "replies": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "PreToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false, "replies": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": "c1", "tool": "terminal", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false, "replies": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "PostToolUse", "session": "local-1", "call": null, "tool": "read_file", "prompt": null, "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": false, "replies": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": false, "socket": true, "token": true, "new": false, "replies": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "Stop", "session": "local-1", "call": null, "tool": null, "prompt": null, "cwd": "the-repo", "interrupted": true, "socket": true, "token": true, "new": false, "replies": true}`,
+		`{"argv": ["hook", "--agent", "hermes"], "event": "UserPromptSubmit", "session": "local-6", "call": null, "tool": null, "prompt": "FAIL", "cwd": "the-repo", "interrupted": null, "socket": true, "token": true, "new": true, "replies": true}`,
 	}
 	if rec != strings.Join(want, "\n") {
 		t.Errorf("mur was asked:\n%s\nwant\n%s", rec, strings.Join(want, "\n"))

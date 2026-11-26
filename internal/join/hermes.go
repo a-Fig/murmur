@@ -131,7 +131,7 @@ func hermesPluginFiles(exe string) map[string]string {
 		"{{exe}}", string(cmd), "{{state}}", brand.StateDir, "{{consent}}", consentFile,
 		// internal/mcpserver reads these (tool.go).
 		"{{sessionEnv}}", "MURMUR_HERMES_SESSION", "{{socketEnv}}", "MURMUR_HERMES_SOCKET", "{{tokenEnv}}", "MURMUR_HERMES_TOKEN",
-		"{{newSocketEnv}}", "MURMUR_HERMES_NEW_SOCKET")
+		"{{newSocketEnv}}", "MURMUR_HERMES_NEW_SOCKET", "{{repliesEnv}}", "MURMUR_HERMES_SOCKET_REPLIES")
 	return map[string]string{"plugin.yaml": r.Replace(hermesManifest), "__init__.py": r.Replace(hermesPlugin)}
 }
 

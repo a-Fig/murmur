@@ -27,16 +27,22 @@ type fakeSocket struct {
 	mu    sync.Mutex
 	got   []string
 	first time.Time
+	// answer, if set, is the line the socket answers a user line with, as Murmur's Hermes plugin's
+	// does (#1258): given the line, it returns the answer, or "" for none.
+	answer func(line string) string
 }
 
-func useFakeSocket(t *testing.T) *fakeSocket {
+func useFakeSocket(t *testing.T) *fakeSocket { t.Helper(); return useAnsweringSocket(t, nil) }
+
+// useAnsweringSocket is useFakeSocket for a socket that answers each user line with answer's line.
+func useAnsweringSocket(t *testing.T, answer func(line string) string) *fakeSocket {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "murs") // short: macOS limits the path of a unix socket
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	f := &fakeSocket{path: filepath.Join(dir, "s")}
+	f := &fakeSocket{path: filepath.Join(dir, "s"), answer: answer}
 	ln, err := net.Listen("unix", f.path)
 	if err != nil {
 		t.Skipf("no unix sockets here: %v", err)
@@ -60,6 +66,11 @@ func useFakeSocket(t *testing.T) *fakeSocket {
 					}
 					f.got = append(f.got, sc.Text())
 					f.mu.Unlock()
+					if f.answer != nil && strings.HasPrefix(sc.Text(), `{"type":"user"`) {
+						if a := f.answer(sc.Text()); a != "" {
+							conn.Write([]byte(a + "\n"))
+						}
+					}
 				}
 			}()
 		}

@@ -46,6 +46,9 @@ const (
 	// hermesNewSocketEnv says the plugin opened the socket for this hook, so the hook registers the
 	// session with it, whatever its event.
 	hermesNewSocketEnv = "MURMUR_HERMES_NEW_SOCKET"
+	// hermesRepliesEnv says the socket answers each message with whether Hermes took it (#1258),
+	// as a plugin from before doesn't.
+	hermesRepliesEnv = "MURMUR_HERMES_SOCKET_REPLIES"
 )
 
 // maxToolArgs is the most of a call's arguments read: a send's body is the largest, and the daemon
@@ -195,7 +198,7 @@ func hermesHello(id, cwd string) proto.Hello {
 	native := hook.HermesNative(id)
 	r := proto.Route{Native: native}
 	if sock, tok := os.Getenv(hermesSocketEnv), os.Getenv(hermesTokenEnv); sock != "" && tok != "" {
-		r.MsgSocket, r.MsgToken = sock, tok
+		r.MsgSocket, r.MsgToken, r.MsgReplies = sock, tok, os.Getenv(hermesRepliesEnv) != ""
 	}
 	return proto.Hello{ID: nativeID(native), Agent: hook.Hermes, Cwd: cwd, Command: true, Route: r}
 }

@@ -324,6 +324,10 @@ type Route struct {
 	// opens it (CLAUDE_CODE_MESSAGING_SOCKET, CLAUDE_CODE_MESSAGING_TOKEN).
 	MsgSocket string `json:"msgSocket,omitempty"`
 	MsgToken  string `json:"msgToken,omitempty"`
+	// MsgReplies says the socket answers each message with whether the session took it, as
+	// Murmur's Hermes plugin's does since #1258 (msgsock.SendAwaiting). Claude Code's doesn't, nor
+	// does a Hermes plugin from before, still loaded in a gateway that hasn't restarted.
+	MsgReplies bool `json:"msgReplies,omitempty"`
 	// Native is the client's own ID for the conversation where its environment doesn't have one:
 	// the thread ID Codex puts in every tool call. Outside T3 it is how the daemon finds the
 	// thread's name in Codex's state.

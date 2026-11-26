@@ -4,10 +4,12 @@
 // pipe on Windows) and CLAUDE_CODE_MESSAGING_TOKEN opens it. The protocol, as observed 2026-10-29,
 // is lines of JSON: an auth line {"type":"auth","token":...}, then a user line
 // {"type":"user","message":{"role":"user","content":...}}. The token and the address stay on the
-// device, so nothing here puts either in an error.
+// device, so nothing here puts either in an error. Murmur's Hermes plugin opens a socket that takes
+// the same lines and answers each message (SendAwaiting).
 package msgsock
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,9 +61,30 @@ func Answers(ctx context.Context, path string) bool {
 }
 
 // Send connects to the socket at path, authenticates with token and writes text as a user message.
-// It returns once the lines are written: the session is not asked whether it took them, as the
-// socket has no reply to ask for.
+// It returns once the lines are written: the session is not asked whether it took them, as
+// Claude Code's socket has no reply to ask for.
 func Send(ctx context.Context, path, token, text string) error {
+	return send(ctx, path, token, text, false)
+}
+
+// ErrRefused is what SendAwaiting's error wraps when the socket answered that the session refused
+// the message: it took none of it, so the message is still the sender's to give.
+var ErrRefused = errors.New("the session refused the message")
+
+// ReplyTimeout is how long SendAwaiting waits for the answer once its lines are written. Hermes'
+// inject_message only schedules the turn, so the plugin answers within milliseconds.
+const ReplyTimeout = 15 * time.Second
+
+// SendAwaiting is Send to a socket that answers each message with one line, {"type":"accepted"} or
+// {"type":"refused"}, as Murmur's Hermes plugin's does (#1258). It returns nil only once the socket
+// says the session took the message, and an error wrapping ErrRefused when it says the session
+// refused it. Anything else, such as no answer within ReplyTimeout, the connection closing first,
+// or a line it doesn't know, is an error that says neither: the session may have taken it.
+func SendAwaiting(ctx context.Context, path, token, text string) error {
+	return send(ctx, path, token, text, true)
+}
+
+func send(ctx context.Context, path, token, text string, await bool) error {
 	if path == "" || token == "" {
 		return errors.New("no messaging socket or token")
 	}
@@ -76,6 +99,7 @@ func Send(ctx context.Context, path, token, text string) error {
 	if len(msg) > MaxLine {
 		return fmt.Errorf("a message of %d bytes is over the %d byte limit of the messaging socket", len(msg), MaxLine)
 	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 	conn, err := dial(ctx, path)
@@ -91,7 +115,35 @@ func Send(ctx context.Context, path, token, text string) error {
 	if _, err := conn.Write(out); err != nil {
 		return clean(err, path, token)
 	}
-	return nil
+	if !await {
+		return nil
+	}
+	// The answer gets its own wait, from the end of the write, cut short only by the caller's
+	// context: a daemon that stops doesn't wait on it.
+	dl := time.Now().Add(ReplyTimeout)
+	if pdl, ok := parent.Deadline(); ok && pdl.Before(dl) {
+		dl = pdl
+	}
+	conn.SetDeadline(dl)
+	stop := context.AfterFunc(parent, func() { conn.SetDeadline(time.Now()) })
+	defer stop()
+	line, err := bufio.NewReaderSize(conn, 4096).ReadSlice('\n')
+	if err != nil {
+		return fmt.Errorf("no answer from the socket: %w", clean(err, path, token))
+	}
+	var reply struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(line, &reply); err != nil {
+		return fmt.Errorf("an answer from the socket that isn't JSON: %w", err)
+	}
+	switch reply.Type {
+	case "accepted":
+		return nil
+	case "refused":
+		return ErrRefused
+	}
+	return fmt.Errorf("an answer from the socket of an unknown type %q", reply.Type)
 }
 
 // clean strips the address and the token out of an error: the net and os packages put the address

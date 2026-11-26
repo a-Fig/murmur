@@ -94,8 +94,10 @@ class _Socket:
     """A socket for one session that takes Claude Code's messaging-socket lines, as {{product}}'s
     daemon writes them: an auth line with the token, then a user line, whose text goes into the
     session with inject_message, as a turn of its own when it is idle and its next turn when it is
-    busy. A named pipe on Windows, where Python has no unix sockets. It answers while the session
-    can take a turn, and the daemon holds the session for as long as it does."""
+    busy. It answers each user line with a line of its own, {"type":"accepted"} or
+    {"type":"refused"}, and the daemon takes the message out of the inbox only once it has
+    accepted it. A named pipe on Windows, where Python has no unix sockets. It answers while the
+    session can take a turn, and the daemon holds the session for as long as it does."""
 
     def __init__(self, ctx, sid):
         self.ctx, self.sid, self.token = ctx, sid, secrets.token_hex(16)
@@ -170,7 +172,9 @@ class _Socket:
                     continue
                 text = (msg.get("message") or {}).get("content") if msg.get("type") == "user" else None
                 if isinstance(text, str) and text:
-                    self._inject(text)
+                    # A connection taken before the socket closed is refused, not put in: the
+                    # daemon keeps the message for the session's next socket.
+                    self._reply(conn, not self.closed and self._inject(text))
         finally:
             try:
                 conn.close()
@@ -194,6 +198,19 @@ class _Socket:
             # Hermes has no turn for the session (it closed without saying so): stop answering, so
             # the daemon ends the session and keeps what comes next for it.
             _close_socket(self.sid, self)
+        return ok
+
+    def _reply(self, conn, ok):
+        """Tells the daemon whether the session took the message. A {{command}} from before #1258 has
+        hung up by now, as it waits for no answer."""
+        line = b'{"type":"accepted"}\n' if ok else b'{"type":"refused"}\n'
+        try:
+            if os.name == "nt":
+                conn.send_bytes(line)
+            else:
+                conn.sendall(line)
+        except Exception:
+            pass
 
     def _drain(self):
         """Connects to each of the pipe's instances that waits for a connection, until none is left.
@@ -294,6 +311,7 @@ def _env(ctx, sid, cwd):
         s, _ = _open_socket(ctx, sid)
         if s:
             env["{{socketEnv}}"], env["{{tokenEnv}}"] = s.addr, s.token
+            env["{{repliesEnv}}"] = "1"  # it answers each message, so the daemon waits to hear
             if not s.announced:  # so `{{command}} hook` tells the daemon of it, as it does only now and then
                 env["{{newSocketEnv}}"] = "1"
     return env
