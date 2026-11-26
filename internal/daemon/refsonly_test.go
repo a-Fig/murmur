@@ -108,3 +108,30 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 		t.Fatalf("owner rotation after restoring the ref: %+v", r)
 	}
 }
+
+func TestMeshOwnerTransfersToAVerifiedClone(t *testing.T) {
+	remote := newRemote(t)
+	initClone := filepath.Join(t.TempDir(), "init")
+	git(t, filepath.Dir(initClone), "clone", "-q", remote, initClone)
+	if _, err := setup.RefsOnly(t.Context(), initClone); err != nil {
+		t.Fatal(err)
+	}
+	a := &device{t: t, gitDir: filepath.Join(initClone, ".git"), stale: testStale, poll: 100 * time.Millisecond}
+	a.start()
+	b := newDevice(t, remote)
+	if r := b.do(proto.Request{Op: proto.OpTransferOwner, To: a.self()}); !strings.Contains(r.Error, "only the mesh owner") {
+		t.Fatalf("non-owner transfer: %+v", r)
+	}
+	if r := a.do(proto.Request{Op: proto.OpTransferOwner, To: b.self()}); r.Error != "" {
+		t.Fatalf("transfer by the mesh owner: %+v", r)
+	}
+	eventually(t, "new owner's clone sees the transfer", func() bool {
+		return b.do(proto.Request{Op: proto.OpOwner}).Note == "This clone is the mesh owner."
+	})
+	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); !strings.Contains(r.Error, "only the mesh owner") {
+		t.Fatalf("previous owner rotation: %+v", r)
+	}
+	if r := b.do(proto.Request{Op: proto.OpRotate, Force: true}); r.Error != "" {
+		t.Fatalf("new owner rotation: %+v", r)
+	}
+}

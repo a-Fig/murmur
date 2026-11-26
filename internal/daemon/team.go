@@ -488,6 +488,7 @@ func (d *Daemon) grantsDueLocked() []string {
 type teamAsk struct {
 	rotate        bool
 	collaborators []string
+	transferTo    string
 	// basis is the roster a roster written without a rotation was decided against: nobody on it had
 	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
 	basis []string
@@ -521,7 +522,14 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	var newKey *ecdh.PrivateKey
 	now := time.Now()
 	rotate := ask != nil && ask.rotate
-	if ask != nil {
+	if ask != nil && ask.transferTo != "" {
+		record, err := d.ownerTransferLocked(ask.transferTo, now)
+		if err != nil {
+			d.mu.Unlock()
+			return "", false, err
+		}
+		recs = append(recs, record)
+	} else if ask != nil {
 		if err := d.checkOwnerLocked(); err != nil {
 			d.mu.Unlock()
 			return "", false, err

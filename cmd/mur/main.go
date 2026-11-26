@@ -79,6 +79,7 @@ For humans:
                                 from a prerelease, until a newer release is out; alone, says what applies
   mur stop                      stop this clone's daemon
   mur owner                     show the mesh owner
+  mur owner transfer DEVICE     hand ownership to another device
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.
                                 First remove every other way they can push (deploy keys they added, team
@@ -654,6 +655,14 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 func runOwner(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("owner")
 	fs.Parse(args)
+	req := proto.Request{Op: proto.OpOwner}
+	switch {
+	case fs.NArg() == 0:
+	case fs.NArg() == 2 && fs.Arg(0) == "transfer":
+		req.Op, req.To = proto.OpTransferOwner, fs.Arg(1)
+	default:
+		return errors.New("use mur owner or mur owner transfer DEVICE")
+	}
 	gitDir, err := client.FindGitDir(ctx, *dir)
 	if err != nil {
 		return err
@@ -662,7 +671,7 @@ func runOwner(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	resp, err := c.Do(ctx, proto.Request{Op: proto.OpOwner})
+	resp, err := c.Do(ctx, req)
 	if err != nil {
 		return err
 	}

@@ -45,8 +45,9 @@ const (
 	OpPageKey = "pagekey"
 	// OpRotate asks for a new team key (#156): when someone in the epoch's recorded collaborators
 	// is no longer in Collaborators, or always with Force.
-	OpRotate = "rotate"
-	OpOwner  = "owner" // shows the mesh owner this device has verified
+	OpRotate        = "rotate"
+	OpOwner         = "owner" // shows the mesh owner this device has verified
+	OpTransferOwner = "owner.transfer"
 	// OpNick shows this device's nickname (#190), sets it to Nick, or with Clear takes it off.
 	OpNick = "nick"
 )
@@ -108,7 +109,8 @@ const (
 //	    is held while the socket answers (#1184). A daemon of 26 holds it for 30 idle minutes.
 //	28: OpOwner and owner-only rotation in meshes set up by a daemon that verifies signed policy
 //	    records (#1263). An older local daemon cannot enforce ownership.
-const Protocol = 28
+//	29: OpTransferOwner carries the next owner's device ID.
+const Protocol = 29
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
