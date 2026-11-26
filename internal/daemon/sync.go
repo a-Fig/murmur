@@ -2080,6 +2080,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		pres.Epoch = ep.ID
 	}
 	pres.Holds = sortedKeys(d.teamKeys)
+	mode := d.repoModeLocked()
 	team := d.teamRecipientsLocked()
 	// This presence lists every session started so far, so what waits for one that does can go
 	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
@@ -2091,9 +2092,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
-	pres, err := bus.EncryptPresence(pres, team)
-	if err != nil {
-		return err
+	if mode != bus.EncryptionOff {
+		var err error
+		pres, err = bus.EncryptPresence(pres, team)
+		if err != nil {
+			return err
+		}
 	}
 	msg, err := bus.EncodeSealed(pres, bus.PresenceSubject, d.signKey, d.device, d.presenceRef())
 	if err != nil {

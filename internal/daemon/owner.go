@@ -104,7 +104,12 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 	}
 	o.Seq, o.Tip = r.AdminSeq, sha
 	if r.Policy != nil {
+		changed := o.Policy.EncryptionMode != r.Policy.EncryptionMode
 		o.Policy = *r.Policy
+		if changed {
+			d.signalTeamLocked()
+			d.kickPresence()
+		}
 	}
 	return true
 }
@@ -152,11 +157,15 @@ func (d *Daemon) transferOwner(ctx context.Context, to string) error {
 	if !bus.ValidDevice(to) {
 		return errors.New("choose the new owner's device ID from mur who")
 	}
+	return d.writeTeamAdmin(ctx, &teamAsk{transferTo: to})
+}
+
+func (d *Daemon) writeTeamAdmin(ctx context.Context, ask *teamAsk) error {
 	for attempt := 0; attempt < 3; attempt++ {
 		if err := d.pollOnce(ctx); err != nil {
 			return err
 		}
-		_, pushed, err := d.teamWork(ctx, &teamAsk{transferTo: to})
+		_, pushed, err := d.teamWork(ctx, ask)
 		if err != nil || pushed {
 			return err
 		}
