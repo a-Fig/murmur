@@ -197,6 +197,8 @@ only in a clone the user joined, by the same few stats as Pi's extension.
   once that turn ended; the session ended within a minute of `hermes gateway stop`.
 - **Not covered.** A turn Hermes accepted and then failed to run: "accepted" means
   `inject_message` scheduled it, and the gateway checks it again when it dispatches the turn. A
+  Stop that never comes (the hook timed out after 25 seconds, or Hermes skipped `on_session_end`)
+  keeps the session at work until its next turn ends, with its messages as notices meanwhile. A
   session whose ACP client went without Hermes finalizing it stays live, and a message to it
   starts a turn nobody watches. A real model's reading of a notice after a tool's result, which
   OpenCode's model refused when it was appended to a file it had read.

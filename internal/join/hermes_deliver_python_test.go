@@ -69,10 +69,13 @@ addr, token = m._socket_of("local-1")
 say("socket:", json.dumps([addr, token]))
 sys.stdin.readline()
 for _ in range(100):
-    if injected:
+    if len(injected) >= 2:
         break
     time.sleep(0.05)
-say("socket injected:", json.dumps(injected))
+say("socket injected:", json.dumps(sorted(injected)))
+del injected[:]
+sys.stdin.readline()
+say("refused injected:", json.dumps(injected))
 del injected[:]
 h["on_session_finalize"](session_id="local-1", platform="cli")
 say("finalized:", json.dumps(m._socket_of("local-1")))
@@ -219,16 +222,24 @@ func TestHermesPluginDeliversInPython(t *testing.T) {
 		addr = strings.ReplaceAll(addr, `\\`, `\`)
 	}
 	// The socket answers each message with whether Hermes took it (#1258), and closes once Hermes
-	// refuses one.
+	// refuses one. A mur from before #1258 hangs up without reading the answer, and its message
+	// goes in all the same.
+	if err := msgsock.Send(context.Background(), addr, token, "FROM AN OLD DAEMON"); err != nil {
+		t.Fatalf("writing to the plugin's socket as an older mur: %v", err)
+	}
 	if err := msgsock.SendAwaiting(context.Background(), addr, token, "A TURN FROM A TEAMMATE"); err != nil {
 		t.Fatalf("writing to the plugin's socket: %v", err)
+	}
+	stdin.Write([]byte("sent\n"))
+	if v := next("socket injected:"); v != `[["A TURN FROM A TEAMMATE", "agent:main:local:dm:local-1"], ["FROM AN OLD DAEMON", "agent:main:local:dm:local-1"]]` {
+		t.Errorf("the socket's turns went in as %s", v)
 	}
 	if err := msgsock.SendAwaiting(context.Background(), addr, token, "REFUSE this one"); !errors.Is(err, msgsock.ErrRefused) {
 		t.Errorf("a message Hermes refuses: %v, want the socket to say it refused it", err)
 	}
-	stdin.Write([]byte("sent\n"))
-	if v := next("socket injected:"); v != `[["A TURN FROM A TEAMMATE", "agent:main:local:dm:local-1"], ["REFUSE this one", "agent:main:local:dm:local-1"]]` {
-		t.Errorf("the socket's turns went in as %s", v)
+	stdin.Write([]byte("refused\n"))
+	if v := next("refused injected:"); v != `[["REFUSE this one", "agent:main:local:dm:local-1"]]` {
+		t.Errorf("the refused turn went in as %s", v)
 	}
 	if v := next("finalized:"); v != `[null, null]` {
 		t.Errorf("after the session closed its socket is %s", v)

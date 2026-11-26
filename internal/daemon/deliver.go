@@ -1208,6 +1208,7 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 			d.releaseHoldLocked(s, false)
 			d.log.Printf("session %s, which commands registered, is done with: its plugin refused a turn", s.id)
 		}
+		d.kickPush() // a session that took this inbox over meanwhile may go now, as after errNotNow
 		return
 	}
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {

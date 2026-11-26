@@ -72,8 +72,9 @@ func Send(ctx context.Context, path, token, text string) error {
 var ErrRefused = errors.New("the session refused the message")
 
 // ReplyTimeout is how long SendAwaiting waits for the answer once its lines are written. Hermes'
-// inject_message only schedules the turn, so the plugin answers within milliseconds.
-const ReplyTimeout = 15 * time.Second
+// inject_message only schedules the turn (gateway/run_plugin_injection.py at hermes-agent 8da31006),
+// so the plugin answers within milliseconds. A variable for the tests.
+var ReplyTimeout = 15 * time.Second
 
 // SendAwaiting is Send to a socket that answers each message with one line, {"type":"accepted"} or
 // {"type":"refused"}, as Murmur's Hermes plugin's does (#1258). It returns nil only once the socket
@@ -99,7 +100,6 @@ func send(ctx context.Context, path, token, text string, await bool) error {
 	if len(msg) > MaxLine {
 		return fmt.Errorf("a message of %d bytes is over the %d byte limit of the messaging socket", len(msg), MaxLine)
 	}
-	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 	conn, err := dial(ctx, path)
@@ -118,15 +118,10 @@ func send(ctx context.Context, path, token, text string, await bool) error {
 	if !await {
 		return nil
 	}
-	// The answer gets its own wait, from the end of the write, cut short only by the caller's
-	// context: a daemon that stops doesn't wait on it.
-	dl := time.Now().Add(ReplyTimeout)
-	if pdl, ok := parent.Deadline(); ok && pdl.Before(dl) {
-		dl = pdl
-	}
-	conn.SetDeadline(dl)
-	stop := context.AfterFunc(parent, func() { conn.SetDeadline(time.Now()) })
-	defer stop()
+	// The answer gets its own wait, from the end of the write, which the caller's context doesn't
+	// cut short: once the lines are written the session has most likely taken the message, and
+	// giving up on the answer would leave it to notices too, a second telling (Opus's review).
+	conn.SetDeadline(time.Now().Add(ReplyTimeout))
 	line, err := bufio.NewReaderSize(conn, 4096).ReadSlice('\n')
 	if err != nil {
 		return fmt.Errorf("no answer from the socket: %w", clean(err, path, token))

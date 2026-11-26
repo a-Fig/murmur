@@ -193,9 +193,10 @@ func TestAnswersSaysWhetherTheSocketTakesAConnection(t *testing.T) {
 	}
 }
 
-// answering listens on a unix socket that answers each user line with answer, as Murmur's Hermes
-// plugin's does (#1258), and closes the connection after it; "" answers nothing and hangs up.
-func answering(t *testing.T, answer string) string {
+// answering listens on a unix socket that answers each user line with answer after delay, as
+// Murmur's Hermes plugin's does (#1258), and closes the connection after it; "" answers nothing
+// and hangs up.
+func answering(t *testing.T, answer string, delay time.Duration) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "murs")
 	if err != nil {
@@ -223,6 +224,7 @@ func answering(t *testing.T, answer string) string {
 						return
 					}
 					if strings.HasPrefix(line, `{"type":"user"`) {
+						time.Sleep(delay)
 						if answer != "" {
 							conn.Write([]byte(answer + "\n"))
 						}
@@ -250,7 +252,7 @@ func TestSendAwaitingSaysWhatTheSocketAnswered(t *testing.T) {
 		{`not json`, false, false},
 		{"", false, false},
 	} {
-		err := SendAwaiting(context.Background(), answering(t, c.answer), "t", "hello")
+		err := SendAwaiting(context.Background(), answering(t, c.answer, 0), "t", "hello")
 		if (err == nil) != c.ok || errors.Is(err, ErrRefused) != c.refused || errors.Is(err, ErrNotConnected) {
 			t.Errorf("answered %q: %v", c.answer, err)
 		}
@@ -269,16 +271,27 @@ func TestSendDoesntWaitForAnAnswer(t *testing.T) {
 	}
 }
 
-// A context that ends while SendAwaiting waits for its answer stops the wait.
-func TestSendAwaitingStopsWithTheContext(t *testing.T) {
+// A socket that says nothing gets ReplyTimeout, then an error that is neither accepted nor refused.
+func TestSendAwaitingGivesUpOnASilentSocket(t *testing.T) {
+	defer func(was time.Duration) { ReplyTimeout = was }(ReplyTimeout)
+	ReplyTimeout = 300 * time.Millisecond
 	_, path := unixSession(t) // reads the lines and never answers
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
 	start := time.Now()
-	if err := SendAwaiting(ctx, path, "t", "x"); err == nil || errors.Is(err, ErrRefused) {
-		t.Errorf("no answer before the context ended: %v", err)
+	if err := SendAwaiting(context.Background(), path, "t", "x"); err == nil || errors.Is(err, ErrRefused) || errors.Is(err, ErrNotConnected) {
+		t.Errorf("no answer: %v", err)
 	}
-	if took := time.Since(start); took > 3*time.Second {
-		t.Errorf("SendAwaiting waited %s past its context", took)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("SendAwaiting waited %s for a %s answer", took, ReplyTimeout)
+	}
+}
+
+// Once the lines are written, a context that ends doesn't cut the wait for the answer short: the
+// session has most likely taken the message, and giving up would tell it twice.
+func TestSendAwaitingWaitsOutTheAnswerPastItsContext(t *testing.T) {
+	path := answering(t, `{"type":"accepted"}`, 400*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if err := SendAwaiting(ctx, path, "t", "x"); err != nil {
+		t.Errorf("an answer after the context ended: %v", err)
 	}
 }
