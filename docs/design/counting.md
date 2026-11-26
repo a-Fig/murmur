@@ -109,7 +109,9 @@ would need one per commit.
   had, which #1244's fingerprint is matched under, since a clone on an old URL names the repo by
   it. After a rename GitHub lets a new repo take the old address, so an address is only where to
   look, and the ID decides: `/v1/repo` answers from D1 only for a repo's current name, and a new
-  repo at a taken address is keyed `gh:<id>`. A repo GitHub says is gone keeps its counts.
+  repo at a taken address is keyed `gh:<id>`. A row with no ID yet takes GitHub's answer for its
+  address only if that repo was made before the row was stored; a newer one is another repo, and
+  is counted on its own row. A repo GitHub says is gone keeps its counts.
 - **Machines on the latest release** (#1245), the only figure that covers private repos. Each day
   the census reads the download counts of every release's `mur-<os>-<arch>` binaries from GitHub's
   API, and the site keeps them by day. Every clone on a machine shares one binary and the updater's

@@ -104,11 +104,17 @@ async function store(db, key, address, day, gh) {
       return;
     }
   }
+  // With no ID, an address some repo has had is that repo's for now: most often a clone on a
+  // renamed repo's old URL. The census asks GitHub about every repo each day, and finds a new repo
+  // made at that address then, when the clone's next look stores it.
+  if (!gh.id && await db.prepare('SELECT 1 FROM repo_names WHERE name = ?1').bind(key).first()) return;
   const taken = await db.prepare('SELECT 1 FROM repos WHERE repo = ?1').bind(key).first();
   if (taken && !gh.id) throw new Error(`${key} is another repo's key, and GitHub gave no ID`);
   const row = taken ? `gh:${gh.id}` : key;
+  // Two clones reporting a new repo at once both insert it: the second finds the row, or the ID,
+  // already there, and is answered as the first is.
   await db.batch([
-    db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4)').bind(row, name, day, gh.id ?? null),
+    db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING').bind(row, name, day, gh.id ?? null),
     ...names.map(n => alias(n, row)),
   ]);
 }

@@ -464,28 +464,35 @@ export async function releaseDownloads({ repo = RELEASES, pages = 10 } = {}) {
   return releases.map(({ created, ...r }) => ({ ...r, latest: r.tag === latest }));
 }
 
-// Where a listed repo is now (#1250): { id, name } with its GitHub ID and current owner/name, false
-// when GitHub says there is no such public repo (deleted, private, or a name never taken), or null
-// when GitHub can't say (a rate limit, an outage). By its ID when the site has one, which never
-// changes, else by the name it was listed under: GitHub answers a renamed or transferred repo's
-// old name with a redirect to /repositories/<id>, which fetch follows, signed out too.
+// Where a listed repo is now (#1250): { id, name, created } with its GitHub ID, current owner/name
+// and when it was made, false when GitHub says there is no such public repo (deleted, private, or
+// a name never taken), or null when GitHub can't say (a rate limit, an outage). By its ID when the
+// site has one, which never changes, else by the name it was listed under: GitHub answers a
+// renamed or transferred repo's old name with a redirect to /repositories/<id>, which fetch
+// follows, signed out too. A repo gone by its ID is asked about by name too, since someone may have
+// made a new repo at its address: the site then counts that one as a repo of its own.
 export async function findRepo({ id, name }) {
   const m = REPO.exec(name ?? '');
-  const path = id ? `repositories/${id}` : m ? `repos/${m[1]}/${m[2]}` : null;
-  if (!path) return null;
   const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  try {
-    const res = await fetch(`https://api.github.com/${path}`, { headers, signal: AbortSignal.timeout(10000) });
-    if (res.status === 404) return false;
-    if (!res.ok) return null;
-    const r = await res.json();
-    if (r?.private) return false;
-    const full = typeof r?.full_name === 'string' && REPO.test('github.com/' + r.full_name);
-    return Number.isSafeInteger(r?.id) && r.id > 0 && full ? { id: r.id, name: r.full_name } : null;
-  } catch {
-    return null;
-  }
+  const ask = async path => {
+    try {
+      const res = await fetch(`https://api.github.com/${path}`, { headers, signal: AbortSignal.timeout(10000) });
+      if (res.status === 404) return false;
+      if (!res.ok) return null;
+      const r = await res.json();
+      if (r?.private) return false;
+      const full = typeof r?.full_name === 'string' && REPO.test('github.com/' + r.full_name);
+      if (!Number.isSafeInteger(r?.id) || r.id <= 0 || !full) return null;
+      return { id: r.id, name: r.full_name, ...(typeof r.created_at === 'string' && { created: r.created_at }) };
+    } catch {
+      return null;
+    }
+  };
+  const byName = () => (m ? ask(`repos/${m[1]}/${m[2]}`) : null);
+  if (!id) return byName();
+  const found = await ask(`repositories/${id}`);
+  return found === false ? byName() : found;
 }
 
 // Fetches one repo's bus and its default branch's commits into a scratch repo and counts them,
@@ -645,9 +652,13 @@ export async function main(args, { read = census, downloads = releaseDownloads, 
   if (!dry && !process.env.CENSUS_KEY) throw new Error('CENSUS_KEY is not set');
   const every = !named.length;
   let list = named.map(name => ({ name }));
+  // A site from before #1250 lists names only, and takes counts only under the name it listed, so
+  // its repos aren't looked up on GitHub.
+  let ask = find;
   if (every) {
     const listed = await call('/v1/census');
     list = listed.list ?? listed.repos.map(name => ({ name }));
+    if (!listed.list) ask = async () => null;
   }
   const names = list.map(r => r.name);
   let releasesFailed = null;
@@ -688,7 +699,7 @@ export async function main(args, { read = census, downloads = releaseDownloads, 
     const name = r.name;
     let c;
     try {
-      const gh = await find(r);
+      const gh = await ask(r);
       if (gh === false) throw new Error('GitHub has no such public repo: gone, private, or never there');
       const current = gh ? 'github.com/' + gh.name : name;
       c = await read(current, { aliases: [name, ...(r.aliases ?? [])].filter(n => n.toLowerCase() !== current.toLowerCase()) });

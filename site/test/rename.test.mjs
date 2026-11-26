@@ -88,16 +88,60 @@ test('two rows that turn out to be one repo merge: larger counts, joined sets, t
   assert.equal(n.repoList[0].name, 'github.com/a-Fig/murmur');
 });
 
+const postTo = db => c => handle(new Request('https://census.invalid/v1/census', {
+  method: 'POST', headers: { Authorization: `Bearer ${process.env.CENSUS_KEY}` }, body: JSON.stringify(c),
+}), { DB: db, CENSUS_KEY: process.env.CENSUS_KEY });
+
+test("a repo made at a deleted repo's address is counted as its own, and the old row keeps what it had", { skip }, async t => {
+  const db = await sqliteD1();
+  db.sql.exec(`INSERT INTO repos (repo, name, first, github_id) VALUES ('github.com/x/demo', 'github.com/x/demo', '2026-10-30', 5)`);
+  db.sql.exec(`INSERT INTO repo_names (name, repo) VALUES ('github.com/x/demo', 'github.com/x/demo')`);
+  db.sql.exec(`INSERT INTO repo_census (repo, records, counted) VALUES ('github.com/x/demo', 40, '2026-11-24T05:00:00Z')`);
+  site(t, db);
+  // By ID it is gone; by name GitHub answers with the new repo, made after the old row was stored.
+  const found = { id: 9, name: 'x/demo', created: '2026-11-20T00:00:00Z' };
+  for (let i = 0; i < 2; i++) await main([], { read: async name => counts(name, { records: 2 }), find: async () => found, downloads: async () => [] });
+  assert.deepEqual(rows(db, 'SELECT repo, github_id FROM repos ORDER BY repo'), [{ repo: 'gh:9', github_id: 9 }, { repo: 'github.com/x/demo', github_id: 5 }]);
+  assert.deepEqual(rows(db, 'SELECT repo, records FROM repo_census ORDER BY repo'), [{ repo: 'gh:9', records: 2 }, { repo: 'github.com/x/demo', records: 40 }]);
+});
+
+test('a row with no ID is never merged into a newer repo that took its old address', { skip }, async () => {
+  const db = await sqliteD1();
+  // a/old was renamed away, and a new repo, Y, took the address and was stored as gh:9.
+  db.sql.exec(`INSERT INTO repos (repo, name, first, github_id) VALUES ('github.com/a/old', 'github.com/a/old', '2026-10-30', NULL), ('gh:9', 'github.com/a/old', '2026-11-20', 9)`);
+  db.sql.exec(`INSERT INTO repo_names (name, repo) VALUES ('github.com/a/old', 'github.com/a/old'), ('github.com/a/old', 'gh:9')`);
+  db.sql.exec(`INSERT INTO repo_census (repo, records, counted) VALUES ('github.com/a/old', 40, '2026-11-24T05:00:00Z')`);
+  const res = await postTo(db)({ ...counts('github.com/a/old', { records: 2 }), key: 'github.com/a/old', github: { id: 9, name: 'a/old', created: '2026-11-19T00:00:00Z' } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(rows(db, 'SELECT repo, github_id FROM repos ORDER BY repo'), [{ repo: 'gh:9', github_id: 9 }, { repo: 'github.com/a/old', github_id: null }]);
+  assert.deepEqual(rows(db, 'SELECT repo, records FROM repo_census ORDER BY repo'), [{ repo: 'gh:9', records: 2 }, { repo: 'github.com/a/old', records: 40 }]);
+});
+
 test("a row GitHub already gave another ID isn't renamed by an answer about a different repo", { skip }, async () => {
   const db = await sqliteD1();
   db.sql.exec(`INSERT INTO repos (repo, name, first, github_id) VALUES ('github.com/a-fig/t4', 'github.com/a-Fig/murmur', '2026-10-30', 1435080335)`);
   db.sql.exec(`INSERT INTO repo_names (name, repo) VALUES ('github.com/a-fig/t4', 'github.com/a-fig/t4')`);
-  const res = await handle(new Request('https://census.invalid/v1/census', {
-    method: 'POST', headers: { Authorization: `Bearer ${process.env.CENSUS_KEY}` },
-    body: JSON.stringify({ ...counts('github.com/a-fig/t4'), key: 'github.com/a-fig/t4', github: { id: 7, name: 'a-Fig/t4' } }),
-  }), { DB: db, CENSUS_KEY: process.env.CENSUS_KEY });
+  const res = await postTo(db)({ ...counts('github.com/a-fig/t4'), key: 'github.com/a-fig/t4', github: { id: 7, name: 'a-Fig/t4' } });
   assert.equal(res.status, 200);
-  assert.deepEqual(rows(db, 'SELECT name, github_id FROM repos'), [{ name: 'github.com/a-Fig/murmur', github_id: 1435080335 }]);
+  // The row keeps its name and ID, and no counts; they are the other repo's.
+  assert.deepEqual(rows(db, `SELECT name, github_id FROM repos WHERE repo = 'github.com/a-fig/t4'`), [{ name: 'github.com/a-Fig/murmur', github_id: 1435080335 }]);
+  assert.equal(rows(db, `SELECT COUNT(*) AS n FROM repo_census WHERE repo = 'github.com/a-fig/t4'`)[0].n, 0);
+  assert.equal(rows(db, `SELECT COUNT(*) AS n FROM repo_census WHERE repo = 'gh:7'`)[0].n, 1);
+});
+
+test("a new census against a site from before repo IDs doesn't ask GitHub, and sends by the listed name", async t => {
+  const said = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (!init?.method) return Response.json({ repos: ['github.com/a-Fig/t4'] });
+    said.push(JSON.parse(init.body));
+    return Response.json({ ok: true });
+  });
+  t.mock.method(console, 'log', () => {});
+  let asked = 0;
+  await main([], { read: async name => counts(name), find: async () => (asked++, { id: 1, name: 'a-Fig/murmur' }), downloads: async () => null });
+  assert.equal(asked, 0);
+  assert.equal(said[0].repo, 'github.com/a-fig/t4');
+  assert.equal(said[0].github, undefined);
 });
 
 test('a repo GitHub says is gone keeps its counts, and is not read', { skip }, async t => {
@@ -133,4 +177,12 @@ test('the census asks GitHub by ID when it has one, else by name, and follows a 
   assert.equal(await findRepo({ name: 'github.com/a/gone' }), false);
   assert.equal(await findRepo({ name: 'github.com/a/busy' }), null);
   assert.deepEqual(asked.slice(0, 2), ['https://api.github.com/repositories/1435080335', 'https://api.github.com/repos/a-Fig/t4']);
+  // Gone by its ID, it is asked about by name, where a new repo may have taken its address.
+  asked.length = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    asked.push(String(url));
+    return String(url).includes('/repositories/') ? new Response('{}', { status: 404 }) : Response.json({ id: 9, full_name: 'x/demo', created_at: '2026-11-20T00:00:00Z' });
+  });
+  assert.deepEqual(await findRepo({ id: 5, name: 'github.com/x/demo' }), { id: 9, name: 'x/demo', created: '2026-11-20T00:00:00Z' });
+  assert.deepEqual(asked, ['https://api.github.com/repositories/5', 'https://api.github.com/repos/x/demo']);
 });

@@ -135,25 +135,44 @@ export async function census(request, env) {
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
 }
 
-// What GitHub told the census of the repo at `key` (#1250): its ID and current name. The row takes
-// both, and the name joins its addresses. If another row already has the ID, the two rows counted
-// one repo under two addresses, so this one is merged into it, and the counts go there: the key
-// returned. A row whose ID is already another one is left as it is: GitHub's answer was for a
-// different repo, such as one made at a renamed repo's old address.
+// What GitHub told the census of the repo at `key` (#1250): its ID, current name, and when it was
+// made. Returns the key of the row the counts the census read go to.
+//
+// GitHub's answer may be about another repo: after a rename or a deletion GitHub lets a new repo
+// take the old address, and the census, asking by that address, is told of the new one. The answer
+// is this row's repo when the row has its ID, or, for a row with none yet, when the repo was made
+// no later than the row was first stored. Otherwise the counts are the other repo's, and go to its
+// row, made now as `gh:<id>` if it has none; this row keeps what it had, and is never merged.
+//
+// When the answer is this row's repo, the row takes the ID and the name, which joins its
+// addresses. If another row already has the ID, the two counted one repo under two addresses, so
+// this one is merged into it, and the counts go there.
 export async function identify(db, key, github) {
   const name = 'github.com/' + github.name.replace(/^github\.com\//i, '');
   const [{ results: [own] }, { results: [other] }] = await db.batch([
-    db.prepare('SELECT github_id FROM repos WHERE repo = ?1').bind(key),
+    db.prepare('SELECT github_id, first FROM repos WHERE repo = ?1').bind(key),
     db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(github.id),
   ]);
-  if (own?.github_id && own.github_id !== github.id) return key;
+  const newer = typeof github.created === 'string' && own?.first && github.created.slice(0, 10) > own.first;
+  const same = own?.github_id ? own.github_id === github.id : !newer;
+  const names = row => db.prepare('INSERT INTO repo_names (name, repo) VALUES (?1, ?2) ON CONFLICT DO NOTHING').bind(name.toLowerCase(), row);
+  if (!same) {
+    if (other) return other.repo;
+    const row = `gh:${github.id}`;
+    await db.batch([
+      db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
+        .bind(row, name, new Date().toISOString().slice(0, 10), github.id),
+      names(row),
+    ]);
+    return row;
+  }
   if (other && other.repo !== key) {
     await merge(db, key, other.repo);
     key = other.repo;
   }
   await db.batch([
     db.prepare('UPDATE repos SET github_id = ?2, name = ?3 WHERE repo = ?1').bind(key, github.id, name),
-    db.prepare('INSERT INTO repo_names (name, repo) VALUES (?1, ?2) ON CONFLICT DO NOTHING').bind(name.toLowerCase(), key),
+    names(key),
   ]);
   return key;
 }
@@ -272,7 +291,8 @@ function invalid(c) {
   // The row's key and what GitHub said of the repo (#1250), which a census from before leaves out.
   if (c.key !== undefined && (typeof c.key !== 'string' || !c.key || c.key.length > 200)) return 'key';
   if (c.github !== undefined && !(c.github && Number.isSafeInteger(c.github.id) && c.github.id > 0 &&
-    typeof c.github.name === 'string' && REPO.test('github.com/' + c.github.name.replace(/^github\.com\//i, '').toLowerCase()))) return 'github';
+    typeof c.github.name === 'string' && REPO.test('github.com/' + c.github.name.replace(/^github\.com\//i, '').toLowerCase()) &&
+    (c.github.created === undefined || (typeof c.github.created === 'string' && c.github.created.length <= 40 && DAY.test(c.github.created.slice(0, 10)))))) return 'github';
   const t = c.totals;
   if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k])) || !estimates(t)) return 'totals';
   if (!(t.first_day === null || busDay(t.first_day)) || !(t.last_day === null || busDay(t.last_day))) return 'totals days';
