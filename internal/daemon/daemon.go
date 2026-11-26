@@ -645,10 +645,11 @@ type Daemon struct {
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
 	// team key the team ref doesn't show, that record and the sync it was first met in
 	// (openEventLocked). Under mu.
-	syncSeq     int64
-	teamReadSeq int64
-	teamReopen  bool // restore lost keys from verified history on the next team read
-	unknownAt   map[string]unknownKey
+	syncSeq       int64
+	teamReadSeq   int64
+	repoModeStamp atomic.Uint64 // synchronizes the send queue with encryption mode changes
+	teamReopen    bool          // restore lost keys from verified history on the next team read
+	unknownAt     map[string]unknownKey
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 

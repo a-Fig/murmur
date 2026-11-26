@@ -10,6 +10,8 @@ import (
 
 const teamAdminModes = 2
 
+var errRepoModeChanged = errors.New("the repo's encryption mode changed. Send the message again.")
+
 // A policy change names only the setting the owner asked to change. The daemon merges it with
 // the policy read at the current team tip, so a retry preserves other settings changed meanwhile.
 type repoPolicyChange struct {

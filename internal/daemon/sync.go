@@ -1511,6 +1511,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	ref := d.meshRef()
 	d.mu.Lock()
 	boxed, err := d.encryptEventLocked(e)
+	modeStamp := d.repoModeStamp.Load()
 	d.mu.Unlock()
 	if err != nil {
 		return err
@@ -1521,7 +1522,8 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	}
 	// A push carries the sends pending under it, so it goes out only if they still may: a send
 	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
-	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
+	modeStill := func() bool { return d.repoModeStamp.Load() == modeStamp }
+	stillAll := func() bool { return modeStill() && (still == nil || still()) && d.pendingStill() }
 	lease := ""
 	reconciled := false
 	for {
@@ -1538,12 +1540,17 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		} else {
 			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
 		}
-		if errors.Is(err, errSendOff) && (still == nil || still()) {
-			continue // a pending send's switch went off as this waited: build without it
+		if errors.Is(err, errSendOff) {
+			if !modeStill() {
+				return errRepoModeChanged
+			}
+			if still == nil || still() {
+				continue // a pending send's policy changed as this waited: build without it
+			}
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
-			if settle != nil && d.pendLocked(sha, settle, still, err) {
+			if settle != nil && d.pendLocked(sha, settle, still, modeStamp, err) {
 				return pendingError{err}
 			}
 		}
@@ -2015,6 +2022,10 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
+	if err := d.checkOwnerHistoryLocked(); err != nil {
+		d.mu.Unlock()
+		return err
+	}
 	for id, b := range branches {
 		if s := d.sessions[id]; s != nil && b != "" {
 			s.branch = b
@@ -2083,6 +2094,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	pres.Holds = sortedKeys(d.teamKeys)
 	mode := d.repoModeLocked()
+	modeStamp := d.repoModeStamp.Load()
 	team := d.teamRecipientsLocked()
 	// This presence lists every session started so far, so what waits for one that does can go
 	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
@@ -2110,7 +2122,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		return err
 	}
 	ref := d.presenceRef()
-	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
+	if err := d.pushFrom(ctx, d.repo, sha, ref, bus.Force, "", func() bool {
+		return d.repoModeStamp.Load() == modeStamp
+	}); err != nil {
+		if errors.Is(err, errSendOff) {
+			return errRepoModeChanged
+		}
 		return err
 	}
 	// Known at once, so the next poll doesn't fetch it back: updatePeer skips this device's own

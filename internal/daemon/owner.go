@@ -107,6 +107,7 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 		changed := o.Policy.EncryptionMode != r.Policy.EncryptionMode
 		o.Policy = *r.Policy
 		if changed {
+			d.repoModeStamp.Add(1)
 			d.signalTeamLocked()
 			d.kickPresence()
 		}
