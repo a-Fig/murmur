@@ -83,6 +83,7 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 	if r := b.do(proto.Request{Op: proto.OpRotate, Force: true}); !strings.Contains(r.Error, "only the mesh owner") {
 		t.Fatalf("teammate rotation: %+v", r)
 	}
+	b.stop()
 	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); r.Error != "" {
 		t.Fatalf("owner rotation: %+v", r)
 	}

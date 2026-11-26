@@ -196,8 +196,8 @@ func (d *Daemon) kickTeam() {
 	}
 }
 
-// processTeam reads the team ref up to sha: from where it last read, or from its root if the ref was
-// rewritten. Caller holds advMu.
+// processTeam reads the team ref up to sha. Rewritten legacy refs are read again from the root.
+// Owned refs can only rewind as far as the last verified owner action. Caller holds advMu.
 func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip := d.st.TeamTip
@@ -244,14 +244,18 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		} else {
 			ok, err = d.repo.IsAncestor(ctx, tip, sha)
 		}
-		if err != nil {
+		if err != nil && (!owned || ctx.Err() != nil) {
 			d.log.Printf("reading %s: %v", brand.TeamRef, err)
 			return
 		}
-		if !ok {
+		if !ok || err != nil {
 			if owned {
 				ok, err := d.teamContinues(ctx, ownerTip, sha)
-				if err != nil || !ok {
+				if err != nil {
+					d.log.Printf("reading %s after owner action %s: %v", brand.TeamRef, short(ownerTip), err)
+					return
+				}
+				if !ok {
 					d.log.Printf("%s was rewritten before %s; keeping the verified team history", brand.TeamRef, short(ownerTip))
 					return
 				}
