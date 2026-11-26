@@ -554,6 +554,37 @@ export async function releaseDownloads({ repo = RELEASES, pages = 10 } = {}) {
   return releases.map(({ created, ...r }) => ({ ...r, latest: r.tag === latest }));
 }
 
+// Where a listed repo is now (#1250): { id, name, created } with its GitHub ID, current owner/name
+// and when it was made, false when GitHub says there is no such public repo (deleted, private, or
+// a name never taken), or null when GitHub can't say (a rate limit, an outage). By its ID when the
+// site has one, which never changes, else by the name it was listed under: GitHub answers a
+// renamed or transferred repo's old name with a redirect to /repositories/<id>, which fetch
+// follows, signed out too. A repo gone by its ID is asked about by name too, since someone may have
+// made a new repo at its address: the site then counts that one as a repo of its own.
+export async function findRepo({ id, name }) {
+  const m = REPO.exec(name ?? '');
+  const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const ask = async path => {
+    try {
+      const res = await fetch(`https://api.github.com/${path}`, { headers, signal: AbortSignal.timeout(10000) });
+      if (res.status === 404) return false;
+      if (!res.ok) return null;
+      const r = await res.json();
+      if (r?.private) return false;
+      const full = typeof r?.full_name === 'string' && REPO.test('github.com/' + r.full_name);
+      if (!Number.isSafeInteger(r?.id) || r.id <= 0 || !full) return null;
+      return { id: r.id, name: r.full_name, ...(typeof r.created_at === 'string' && { created: r.created_at }) };
+    } catch {
+      return null;
+    }
+  };
+  const byName = () => (m ? ask(`repos/${m[1]}/${m[2]}`) : null);
+  if (!id) return byName();
+  const found = await ask(`repositories/${id}`);
+  return found === false ? byName() : found;
+}
+
 // Fetches one repo's bus and its branches' commits into a scratch repo and counts them,
 // within BUDGET. `url`, where it is fetched from, and `lookup` are for the tests.
 //
@@ -564,9 +595,15 @@ export async function releaseDownloads({ repo = RELEASES, pages = 10 } = {}) {
 // The name registry is fetched on its own, because a fetch that names a ref the remote doesn't
 // have fails whole, and a bus from before the registry has none. Without it the repo is counted as
 // before, with no estimate of its sessions; the site keeps the estimate it was last sent.
-export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, lookup = apiLookup } = {}) {
+//
+// name is the repo's current name; aliases are the other addresses it has had (#1250). A clone on
+// an old URL names the repo by its old address, so whatever matches a clone to the repo it is in
+// (#1244's commit fingerprint) is tried under every one of names.
+export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, lookup = apiLookup, aliases = [] } = {}) {
   const m = REPO.exec(name);
   if (!m) throw new Error(`not a repo: ${name}`);
+  const names = [...new Set([name, ...aliases].map(n => n.toLowerCase()))];
+  void names; // #1244 hashes each commit identity under each of these.
   const deadline = Date.now() + budget;
   url ??= `https://github.com/${m[1]}/${m[2]}.git`;
   const dir = mkdtempSync(join(tmpdir(), 'census-'));
@@ -702,12 +739,28 @@ async function call(path, init = {}) {
 // A run of every listed repo, as the schedule's is, also reads Murmur's release downloads
 // (releaseDownloads, `downloads` here for the tests) and sends them. GitHub not answering is a
 // warning, since tomorrow's run reads them again; the site refusing them fails the run.
-export async function main(args, { read = census, downloads = releaseDownloads } = {}) {
+//
+// Each repo is found on GitHub first (#1250, `find` here for the tests): by its ID when the site
+// has one, else by the name it was listed under, which follows a rename. The bus is read from its
+// current name, and the counts go back with the row's key and what GitHub said, so the site can
+// rename the row or merge two rows that turn out to be one repo. A repo GitHub says is gone keeps
+// its counts, as one that can't be read does. When GitHub can't say, it is read by the name it was
+// listed under, as before.
+export async function main(args, { read = census, downloads = releaseDownloads, find = findRepo } = {}) {
   const dry = args.includes('--dry');
-  let names = args.filter(a => !a.startsWith('--'));
+  const named = args.filter(a => !a.startsWith('--'));
   if (!dry && !process.env.CENSUS_KEY) throw new Error('CENSUS_KEY is not set');
-  const every = !names.length;
-  if (every) names = (await call('/v1/census')).repos;
+  const every = !named.length;
+  let list = named.map(name => ({ name }));
+  // A site from before #1250 lists names only, and takes counts only under the name it listed, so
+  // its repos aren't looked up on GitHub.
+  let ask = find;
+  if (every) {
+    const listed = await call('/v1/census');
+    list = listed.list ?? listed.repos.map(name => ({ name }));
+    if (!listed.list) ask = async () => null;
+  }
+  const names = list.map(r => r.name);
   let releasesFailed = null;
   if (every) {
     let releases = null;
@@ -742,10 +795,16 @@ export async function main(args, { read = census, downloads = releaseDownloads }
   write(summaryHead(names.length, new Date()));
   const tally = summaryTally(); // r is { name, kind, why, counts }, written and tallied, then let go
   const done = r => (tallied(tally, r), write(summaryRow(r)));
-  for (const name of names) {
+  for (const r of list) {
+    const name = r.name;
     let c;
     try {
-      c = await read(name);
+      const gh = await ask(r);
+      if (gh === false) throw new Error('GitHub has no such public repo: gone, private, or never there');
+      const current = gh ? 'github.com/' + gh.name : name;
+      c = await read(current, { aliases: [name, ...(r.aliases ?? [])].filter(n => n.toLowerCase() !== current.toLowerCase()) });
+      if (r.key) c.key = r.key;
+      if (gh) c.github = gh;
       const big = tooBig(c);
       if (big) throw skip(big);
     } catch (err) {

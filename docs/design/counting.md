@@ -136,6 +136,20 @@ would need one per commit.
   commit fingerprint is the lasting fix. The count from before, roughly one user per clone, stays
   on the page as the old count (Tyler, 2026-11-25), and the users charts mark each day the method
   changed, since every day's figure is worked out again by the new method.
+- **Repos by GitHub's ID** (#1250). A rename or a transfer changes a repo's address, and a clone
+  that reports the new one used to store the repo twice, splitting its counts. So a repo is one
+  GitHub repository ID: `/v1/repo` stores the ID when GitHub's API gives it, and each census run
+  asks GitHub where each repo is now (by its ID, else by the name it was listed under, which GitHub
+  redirects), reads the bus from the current name, and sends the ID and name back. The row takes
+  the new name, and two rows found to share an ID merge, taking the larger of each day's counts
+  (they counted one bus twice) and joining clones and contributors as sets. Each row keeps the key
+  it was first stored under, so no count moves; `repo_names` holds every address each repo has
+  had, which #1244's fingerprint is matched under, since a clone on an old URL names the repo by
+  it. After a rename GitHub lets a new repo take the old address, so an address is only where to
+  look, and the ID decides: `/v1/repo` answers from D1 only for a repo's current name, and a new
+  repo at a taken address is keyed `gh:<id>`. A row with no ID yet takes GitHub's answer for its
+  address only if that repo was made before the row was stored; a newer one is another repo, and
+  is counted on its own row. A repo GitHub says is gone keeps its counts.
 - **Machines on the latest release** (#1245), the only figure that covers private repos. Each day
   the census reads the download counts of every release's `mur-<os>-<arch>` binaries from GitHub's
   API, and the site keeps them by day. Every clone on a machine shares one binary and the updater's

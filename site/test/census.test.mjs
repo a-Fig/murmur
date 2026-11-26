@@ -958,3 +958,4 @@ test("reading every branch doesn't make the census apply a repo's .mailmap", asy
   const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
   assert.deepEqual(c.contributors.map(k => k.id), [hash('email:ann@example.com')]);
 });
+

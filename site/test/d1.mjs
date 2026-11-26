@@ -11,7 +11,8 @@ export function recordingD1(listed = []) {
   const statement = (sql, args = []) => ({
     sql, args,
     bind: (...a) => statement(sql, a),
-    async first() { return /FROM repos WHERE repo = \?1/.test(sql) && repos.has(args[0]) ? { 1: 1 } : null; },
+    // A listed repo, looked up by its key or its name (#1250): the stand-in's keys are the names.
+    async first() { return /FROM repos (r )?WHERE (repo|lower\(r?\.?name\)) = \?1/.test(sql) && repos.has(args[0]) ? { 1: 1, repo: args[0] } : null; },
     async all() { return { results: /SELECT name FROM repos/.test(sql) ? listed.map(name => ({ name })) : [] }; },
     async run() { return { success: true }; },
   });
@@ -20,7 +21,8 @@ export function recordingD1(listed = []) {
     prepare: sql => statement(sql),
     async batch(stmts) {
       batches.push(stmts);
-      return stmts.map(() => ({ results: [] }));
+      // The census's listing (#1250): each repo by its name, with no ID and no other names.
+      return stmts.map(s => ({ results: /SELECT repo, name, github_id FROM repos/.test(s.sql) ? listed.map(name => ({ repo: name.toLowerCase(), name, github_id: null })) : [] }));
     },
   };
 }
