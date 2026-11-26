@@ -70,8 +70,9 @@ const pushLook = 15 * time.Second
 type settleFunc func(landed, absent bool, err error)
 
 type pendingSend struct {
-	sha    string
-	settle settleFunc
+	sha       string
+	settle    settleFunc
+	modeStamp uint64
 	// still says the send may still go out: false once the Send files switch its files need went
 	// off (#765). It is nil for a send with no files.
 	still func() bool
@@ -86,14 +87,14 @@ func (e pendingError) Unwrap() error { return e.error }
 // writes after it build on it, and pendingLoop pushes it again. It says false, and leaves nothing
 // pending, if the daemon is stopping and no pendingLoop runs to push it or give it up: the send then
 // fails unsure, as before #781 (Sol's review of #818). Caller holds writeMu.
-func (d *Daemon) pendLocked(sha string, settle settleFunc, still func() bool, err error) bool {
+func (d *Daemon) pendLocked(sha string, settle settleFunc, still func() bool, modeStamp uint64, err error) bool {
 	if !d.pendRun && (d.bgCtx == nil || d.bgCtx.Err() != nil) {
 		return false
 	}
 	if len(d.pendSends) == 0 {
 		d.pendBase, d.pendFrom = d.ownTip, time.Now()
 	}
-	d.pendSends = append(d.pendSends, pendingSend{sha, settle, still})
+	d.pendSends = append(d.pendSends, pendingSend{sha: sha, settle: settle, modeStamp: modeStamp, still: still})
 	d.ownTip = sha
 	d.log.Printf("the push of a message ended unsure (%v); it is pushed again until it lands", err)
 	if !d.pendRun {
@@ -168,12 +169,18 @@ func (d *Daemon) retryPending() {
 		return
 	}
 	ref, sha := d.meshRef(), d.ownTip
-	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", d.pendingStill)
+	stamp := d.pendSends[0].modeStamp
+	still := func() bool { return d.checkRepoWriteMode(stamp) == nil && d.pendingStill() }
+	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
 	if errors.Is(err, errSendOff) {
-		// Send files went off as the push waited its turn. If the wait left no time to ask the
+		// A send's encryption mode or file policy changed while it waited. If the wait left no time to ask the
 		// remote, the next retry drops them as it starts; nothing is pushed until then.
 		if room() {
 			d.dropSwitchedOff(d.bgCtx)
+			if len(d.pendSends) > 0 && last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp &&
+				errors.Is(d.checkRepoWriteMode(stamp), errTeamHistoryPending) {
+				d.giveUpPending(errTeamHistoryPending, true)
+			}
 		}
 		return
 	}
@@ -207,7 +214,7 @@ func (d *Daemon) retryPending() {
 					}
 					// Unchecked sends stay pending, unless give-up below says time is up.
 				} else {
-					err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill)
+					err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, still)
 					if err == nil {
 						d.ownLanded(ctx, ref, sha, false)
 						return
@@ -374,6 +381,10 @@ func givenUpWhy(err error) (why, next string) {
 		return err.Error(), next
 	case errors.Is(err, errSendOff):
 		return "sending files was turned off", next
+	case errors.Is(err, errRepoModeChanged):
+		return "the repo's encryption mode changed", next
+	case errors.Is(err, errTeamHistoryPending):
+		return "Murmur is still verifying the team history", next
 	case errors.Is(err, ErrNoConsent):
 		return "this clone left " + brand.Product, next
 	case errors.Is(err, ErrInvisible):
@@ -388,14 +399,23 @@ func givenUpWhy(err error) (why, next string) {
 	return "the push kept failing", next
 }
 
-// pendingStill says every pending send may still go out: no Send files switch one's files need has
-// gone off since it was sent. Caller holds writeMu.
+// pendingStill reports whether every queued send can still be published. Caller holds writeMu.
 func (d *Daemon) pendingStill() bool {
-	return !slices.ContainsFunc(d.pendSends, func(p pendingSend) bool { return p.still != nil && !p.still() })
+	return !slices.ContainsFunc(d.pendSends, func(p pendingSend) bool { return d.pendingBlocked(p) != nil })
 }
 
-// dropSwitchedOff takes out of this device's log the first pending send whose Send files switch has
-// gone off, and every one after it, which are built on it, and gives them up: nothing pushed after
+func (d *Daemon) pendingBlocked(p pendingSend) error {
+	if d.repoModeStamp.Load() != p.modeStamp {
+		return errRepoModeChanged
+	}
+	if p.still != nil && !p.still() {
+		return errSendOff
+	}
+	return nil
+}
+
+// dropSwitchedOff takes out of this device's log the first pending send blocked by a policy
+// change, and every one after it, which are built on it, and gives them up: nothing pushed after
 // may carry it to the remote, its files' keys with it (Sol's review of rc.2). The log's next write
 // builds on what came before it. Those the remote has already, as a push that ended unsure may
 // have landed, are settled as landed first, so none is called not sent that went (Sol's re-review).
@@ -404,7 +424,7 @@ func (d *Daemon) pendingStill() bool {
 // the check completes, the sends are left for retryPending rather than dropped unchecked. Caller
 // holds writeMu.
 func (d *Daemon) dropSwitchedOff(ctx context.Context) {
-	off := func(p pendingSend) bool { return p.still != nil && !p.still() }
+	off := func(p pendingSend) bool { return d.pendingBlocked(p) != nil }
 	if !slices.ContainsFunc(d.pendSends, off) {
 		return
 	}
@@ -439,11 +459,15 @@ func (d *Daemon) dropSwitchedOff(ctx context.Context) {
 	if ctx != nil && ctx.Err() != nil {
 		return
 	}
-	i := slices.IndexFunc(d.pendSends, off)
+	var why error
+	i := slices.IndexFunc(d.pendSends, func(p pendingSend) bool {
+		why = d.pendingBlocked(p)
+		return why != nil
+	})
 	if i < 0 {
 		return
 	}
-	d.log.Printf("giving up %d message(s) whose push ended unsure: sending files went off", len(d.pendSends)-i)
+	d.log.Printf("giving up %d message(s) whose push ended unsure: %v", len(d.pendSends)-i, why)
 	dropped := d.pendSends[i:]
 	if i == 0 {
 		d.ownTip, d.pendSends = d.pendBase, nil
@@ -451,6 +475,6 @@ func (d *Daemon) dropSwitchedOff(ctx context.Context) {
 		d.ownTip, d.pendSends = d.pendSends[i-1].sha, d.pendSends[:i]
 	}
 	for _, p := range dropped {
-		p.settle(false, false, errSendOff)
+		p.settle(false, false, why)
 	}
 }

@@ -289,6 +289,14 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	if _, ok := remote[brand.NamesRef]; !ok {
 		d.processNames(first, "") // not on the remote
 	}
+	if _, onRemote := remote[brand.TeamRef]; !onRemote {
+		d.mu.Lock()
+		target := d.st.TeamReplayThrough
+		d.mu.Unlock()
+		if target != "" {
+			d.processTeam(first, target)
+		}
+	}
 	var logs []string
 	for _, ref := range readOrder(remote) {
 		sha := remote[ref]
@@ -316,7 +324,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	firstErr := first.Err()
 	cancelFirst()
 	d.mu.Lock()
-	if tip, ok := remote[brand.TeamRef]; !ok || failed[brand.TeamRef] == nil && d.st.TeamTip == tip {
+	if tip, ok := remote[brand.TeamRef]; d.checkOwnerHistoryLocked() == nil && (!ok || failed[brand.TeamRef] == nil && d.st.TeamTip == tip) {
 		d.teamReadSeq = d.syncSeq // every epoch the listing could show has been read (openEventLocked)
 	}
 	d.mu.Unlock()
@@ -1296,8 +1304,10 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		pres.TeamAdmin = 0
 	}
 	locked, opened := false, true
-	// Only what was inside the box says which epoch a device has read and which keys it holds.
-	pres.Epoch, pres.Holds = "", nil
+	// Trust epoch and key announcements in a sealed plaintext presence or inside the box.
+	if !sealed || pres.Box != nil {
+		pres.Epoch, pres.Holds = "", nil
+	}
 	if pres.Box != nil {
 		pres.Groups, pres.Receipts, pres.Files, pres.FilesOff, pres.PersonFilesOff = false, false, false, false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
@@ -1509,6 +1519,7 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	ref := d.meshRef()
 	d.mu.Lock()
 	boxed, err := d.encryptEventLocked(e)
+	modeStamp := d.repoModeStamp.Load()
 	d.mu.Unlock()
 	if err != nil {
 		return err
@@ -1519,7 +1530,9 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	}
 	// A push carries the sends pending under it, so it goes out only if they still may: a send
 	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
-	stillAll := func() bool { return (still == nil || still()) && d.pendingStill() }
+	stillAll := func() bool {
+		return d.checkRepoWriteMode(modeStamp) == nil && (still == nil || still()) && d.pendingStill()
+	}
 	lease := ""
 	reconciled := false
 	for {
@@ -1536,12 +1549,17 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 		} else {
 			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
 		}
-		if errors.Is(err, errSendOff) && (still == nil || still()) {
-			continue // a pending send's switch went off as this waited: build without it
+		if errors.Is(err, errSendOff) {
+			if blocked := d.checkRepoWriteMode(modeStamp); blocked != nil {
+				return blocked
+			}
+			if still == nil || still() {
+				continue // a pending send's policy changed as this waited: build without it
+			}
 		}
 		if err != nil && !pushRefused(err) {
 			err = unsureError{err}
-			if settle != nil && d.pendLocked(sha, settle, still, err) {
+			if settle != nil && d.pendLocked(sha, settle, still, modeStamp, err) {
 				return pendingError{err}
 			}
 		}
@@ -2013,6 +2031,10 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 
 	wake := d.wakeSnapshot() // setMu is taken alone, before mu
 	d.mu.Lock()
+	if err := d.checkOwnerHistoryLocked(); err != nil {
+		d.mu.Unlock()
+		return err
+	}
 	for id, b := range branches {
 		if s := d.sessions[id]; s != nil && b != "" {
 			s.branch = b
@@ -2020,7 +2042,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.colorAwayLocked()
 	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminTransfer,
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminModes,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
@@ -2080,6 +2102,8 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		pres.Epoch = ep.ID
 	}
 	pres.Holds = sortedKeys(d.teamKeys)
+	mode := d.repoModeLocked()
+	modeStamp := d.repoModeStamp.Load()
 	team := d.teamRecipientsLocked()
 	// This presence lists every session started so far, so what waits for one that does can go
 	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
@@ -2091,9 +2115,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
-	pres, err := bus.EncryptPresence(pres, team)
-	if err != nil {
-		return err
+	if mode != bus.EncryptionOff {
+		var err error
+		pres, err = bus.EncryptPresence(pres, team)
+		if err != nil {
+			return err
+		}
 	}
 	msg, err := bus.EncodeSealed(pres, bus.PresenceSubject, d.signKey, d.device, d.presenceRef())
 	if err != nil {
@@ -2104,7 +2131,15 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		return err
 	}
 	ref := d.presenceRef()
-	if err := d.push(ctx, sha, ref, bus.Force, ""); err != nil {
+	if err := d.pushFrom(ctx, d.repo, sha, ref, bus.Force, "", func() bool {
+		return d.checkRepoWriteMode(modeStamp) == nil
+	}); err != nil {
+		if errors.Is(err, errSendOff) {
+			if blocked := d.checkRepoWriteMode(modeStamp); blocked != nil {
+				return blocked
+			}
+			return errTeamHistoryPending
+		}
 		return err
 	}
 	// Known at once, so the next poll doesn't fetch it back: updatePeer skips this device's own

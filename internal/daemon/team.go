@@ -171,19 +171,26 @@ func (d *Daemon) signalTeamLocked() {
 	d.teamChanged = make(chan struct{})
 }
 
-// awaitEpoch waits until there is an epoch to encrypt for, or ctx ends.
+// awaitEpoch waits for a verified policy and, if needed, an epoch to encrypt for.
 func (d *Daemon) awaitEpoch(ctx context.Context) error {
 	for {
 		d.mu.Lock()
-		ep, ch := d.epochLocked(), d.teamChanged
+		ready, ch := d.epochLocked() != nil || d.repoModeLocked() == bus.EncryptionOff, d.teamChanged
+		historyErr := d.checkOwnerHistoryLocked()
 		d.mu.Unlock()
-		if ep != nil {
+		if historyErr != nil {
+			d.kickPoll()
+		} else if ready {
 			return nil
+		} else {
+			d.kickTeam()
 		}
-		d.kickTeam()
 		select {
 		case <-ch:
 		case <-ctx.Done():
+			if historyErr != nil {
+				return historyErr
+			}
 			return errNoTeamKey
 		}
 	}
@@ -201,6 +208,7 @@ func (d *Daemon) kickTeam() {
 func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip := d.st.TeamTip
+	modeStamp := d.repoModeStamp.Load()
 	owned, reopen := d.st.TeamOwner != nil, d.teamReopen
 	ownerTip := ""
 	if owned {
@@ -237,6 +245,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		if replayThrough != "" {
 			d.mu.Lock()
 			d.st.TeamReplayThrough = ""
+			d.signalTeamLocked()
 			d.saveLocked()
 			d.mu.Unlock()
 		}
@@ -280,11 +289,14 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		d.applyPageLocked(func() {
+			// Save the accepted target alongside any intermediate policy. On the final
+			// page both the cursor and the policy become usable under the same lock.
+			d.st.TeamReplayThrough = sha
 			if from == "" && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
 				if checkOwner {
+					d.repoModeStamp.Add(1)
 					d.st.TeamOwner = nil
-					d.st.TeamReplayThrough = replayThrough
 				}
 			}
 			for i, c := range commits {
@@ -292,6 +304,10 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			}
 			d.st.TeamOwnerChecked = true
 			d.st.TeamTip = commits[len(commits)-1].SHA
+			if d.st.TeamTip == sha {
+				d.st.TeamReplayThrough = ""
+				d.signalTeamLocked()
+			}
 		})
 		return nil
 	})
@@ -303,9 +319,13 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	if d.st.TeamTip != sha || d.st.TeamReplayThrough != "" {
 		d.st.TeamTip = sha // a tip that isn't a commit, or holds none Murmur reads
 		d.st.TeamReplayThrough = ""
+		d.signalTeamLocked()
 		d.saveLocked()
 	}
 	d.mu.Unlock()
+	if tip == "" || replayThrough != "" || d.repoModeStamp.Load() != modeStamp {
+		d.kickPresence()
+	}
 	d.kickTeam()
 }
 
@@ -505,6 +525,7 @@ type teamAsk struct {
 	rotate        bool
 	collaborators []string
 	transferTo    string
+	policy        *repoPolicyChange
 	// basis is the roster a roster written without a rotation was decided against: nobody on it had
 	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
 	basis []string
@@ -537,12 +558,30 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	var recs []bus.TeamRecord
 	var newKey *ecdh.PrivateKey
 	now := time.Now()
+	if ask == nil && d.checkOwnerHistoryLocked() != nil {
+		d.mu.Unlock()
+		return "", false, nil
+	}
 	rotate := ask != nil && ask.rotate
 	if o := d.st.TeamOwner; o != nil && o.Seq == 0 && d.isOwnerLocked() && d.checkOwnerHistoryLocked() == nil {
 		policy := o.Policy
 		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: &policy, At: now})
 	}
-	if ask != nil && ask.transferTo != "" {
+	var nextPolicy *bus.RepoPolicy
+	if ask != nil && ask.policy != nil {
+		policy, err := d.nextRepoPolicyLocked(*ask.policy)
+		if err != nil {
+			d.mu.Unlock()
+			return "", false, err
+		}
+		current := d.st.TeamOwner.Policy
+		if policy == current {
+			d.mu.Unlock()
+			return "", true, nil
+		}
+		nextPolicy = &policy
+		rotate = current.EncryptionMode != bus.EncryptionTeam && policy.EncryptionMode == bus.EncryptionTeam
+	} else if ask != nil && ask.transferTo != "" {
 		record, err := d.ownerTransferLocked(ask.transferTo, now)
 		if err != nil {
 			d.mu.Unlock()
@@ -599,6 +638,9 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 			return "", false, err
 		}
 		recs = append(recs, r)
+	}
+	if nextPolicy != nil {
+		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: nextPolicy, At: now})
 	}
 	if o := d.st.TeamOwner; o != nil {
 		for i := range recs {
@@ -668,6 +710,10 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		}
 	}
 	d.st.TeamTip = sha
+	if tip == "" {
+		// The lease proved this device wrote the first epoch with no earlier history.
+		d.st.TeamOwnerChecked = true
+	}
 	d.saveLocked()
 	return epoch, true, nil
 }

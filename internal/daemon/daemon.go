@@ -645,10 +645,11 @@ type Daemon struct {
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
 	// team key the team ref doesn't show, that record and the sync it was first met in
 	// (openEventLocked). Under mu.
-	syncSeq     int64
-	teamReadSeq int64
-	teamReopen  bool // restore lost keys from verified history on the next team read
-	unknownAt   map[string]unknownKey
+	syncSeq       int64
+	teamReadSeq   int64
+	repoModeStamp atomic.Uint64 // synchronizes the send queue with encryption mode changes
+	teamReopen    bool          // restore lost keys from verified history on the next team read
+	unknownAt     map[string]unknownKey
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
 
@@ -1136,7 +1137,7 @@ type state struct {
 	TeamOwner *meshOwner `json:"teamOwner,omitempty"`
 	// The old teamOwnerChecked flag predates transfer and legacy ownership.
 	TeamOwnerChecked  bool                 `json:"teamHistoryVerified,omitempty"`
-	TeamReplayThrough string               `json:"teamReplayThrough,omitempty"` // cached tip that an upgrade must reverify
+	TeamReplayThrough string               `json:"teamReplayThrough,omitempty"` // target to finish verifying before writing
 	Epochs            []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted       map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark         map[string]time.Time `json:"grantMark,omitempty"`
@@ -1150,7 +1151,7 @@ type state struct {
 	// for receipts, not yet on the bus (#26, receipts.go). Sent is this device's messages that asked
 	// for them, by ID, with how far each got with each recipient: its person's, and those whose
 	// sender asked to be told (#276).
-	Marks []bus.Mark             `json:"marks,omitempty"`
+	Marks []queuedMark           `json:"marks,omitempty"`
 	Sent  map[string]*sentRecord `json:"sent,omitempty"`
 	// MuteDrops is, by this device's session ID, the messages from other devices dropped on arrival
 	// as the session had muted their sender, newest last, listed in its presence; Outgoing is this

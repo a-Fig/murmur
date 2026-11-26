@@ -1,9 +1,30 @@
-# The bus is encrypted
+# Bus encryption
 
-Tyler's decision (2026-11-08, #156): what goes over the repo is encrypted, in every repo, public or
-private, with **no friction for users or agents**: nobody runs a command, approves anything, copies
-a key or makes a choice. An earlier design (#160, closed) had someone turn it on with `mur encrypt`,
-and that command was the friction.
+Every mesh starts in Team mode, on public and private repos (#156). Teammates can join and read
+shared Team history without exchanging keys by hand. The mesh owner can change the mode (#1264).
+
+## Repo encryption modes
+
+- **Team.** Messages use the shared team key. Devices that receive grants can read Team history,
+  including earlier conversations between other teammates.
+- **Private.** Each message and its attachments are readable by the sender's device and the
+  recipient devices selected when the message is sent. Group messages and broadcasts use the
+  devices addressed at that moment. A later join gives a device no extra access to earlier Private
+  messages. Receipts are encrypted for the original sender and the device writing the receipt.
+  Presence, session tags and group membership remain readable by teammates so they can discover
+  and address each other.
+- **Off.** Daemons write plaintext events and signed plaintext presence without a team-key grant.
+  Anyone who can read the remote can read this traffic, including anyone on the internet for a
+  public repo.
+
+`mur owner mode` shows this clone's verified setting. The owner can change it with
+`mur owner mode team`, `mur owner mode private`, or `mur owner --allow-plaintext mode off`.
+Active peers must support encryption modes before the owner can switch. A daemon applies a mode
+after it syncs the signed policy. Upgrade offline daemons before they reconnect, since older
+versions continue using Team. Existing history keeps the protection it had when written.
+Returning to Team creates a fresh team key for new traffic.
+
+## Team keys and records
 
 Tyler's decision (2026-11-10): **every device that can push, and has published its key, reads
 everything ever sent on the bus**, direct messages and history included. #257's first design
@@ -82,8 +103,8 @@ key replaced it.
   **Someone who joined and left between two runs was never on a roster, so their leaving isn't
   seen**; only `--force` covers that. When rotation should run by itself is open (Tyler, 2026-11-10:
   the structure first).
-- **Fails closed.** A daemon never writes content in the clear. A message to a device with no key is
-  refused, saying that device runs an older Murmur.
+- **Missing keys.** In Team and Private a daemon refuses a message that needs an unavailable
+  recipient key. A device can publish plaintext when the owner has chosen Off.
 - **Older daemons.** A daemon from before encryption passes over `box` events and sees an updated
   device with no sessions. An updated daemon reads plaintext events from any device, since events
   carry no signature, and plaintext presence only from a device it hasn't pinned. So for a while

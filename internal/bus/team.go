@@ -61,7 +61,15 @@ type RepoPolicy struct {
 	AllowFiles     bool   `json:"allowFiles"`
 }
 
-func (p RepoPolicy) supported() bool { return p.EncryptionMode == "team" && p.AllowFiles }
+const (
+	EncryptionTeam    = "team"
+	EncryptionPrivate = "private"
+	EncryptionOff     = "off"
+)
+
+func ValidEncryptionMode(mode string) bool {
+	return mode == EncryptionTeam || mode == EncryptionPrivate || mode == EncryptionOff
+}
 
 // teamSecret is what a team record's box holds.
 type teamSecret struct {
@@ -171,7 +179,7 @@ func (r TeamRecord) OpenRoster(keys Keyring) ([]string, error) {
 // Valid says whether a team record has the form its type needs. A record that doesn't is junk, and
 // is passed over.
 func (r TeamRecord) Valid() bool {
-	if r.V != Version || r.Policy != nil && !r.Policy.supported() {
+	if r.V != Version || r.Policy != nil && !ValidEncryptionMode(r.Policy.EncryptionMode) {
 		return false
 	}
 	if r.Type == TeamTransfer {

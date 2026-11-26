@@ -762,3 +762,33 @@ func TestRejectedRetryLeasePushUnsureChecksRemoteAtGiveUp(t *testing.T) {
 		t.Errorf("testPush called %d times, want 2 (rejected + unsure lease)", calls.Load())
 	}
 }
+
+func TestPendingSendDoesNotRetryAfterAModeChange(t *testing.T) {
+	d, _, _ := rateRig(t, Options{PendingRetry: time.Hour, PendingGiveUp: time.Hour}, false)
+	tip := d.sendFirst(t)
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	c, err := d.repo.NewCommit(t.Context(), tip, "pending draft under the old mode\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result error
+	d.pendBase, d.ownTip = tip, c
+	d.pendSends = []pendingSend{{
+		sha: c, modeStamp: d.repoModeStamp.Load(),
+		settle: func(landed, _ bool, err error) {
+			if landed {
+				t.Error("a stale pending send was reported landed")
+			}
+			result = err
+		},
+	}}
+	d.repoModeStamp.Add(1) // the owner changed modes before the next retry
+	d.retryPending()
+	if !errors.Is(result, errRepoModeChanged) || len(d.pendSends) != 0 {
+		t.Fatalf("pending result %v with %d sends left", result, len(d.pendSends))
+	}
+	if got, err := d.repo.RemoteRef(t.Context(), d.meshRef()); err != nil || got != tip {
+		t.Fatalf("old-mode draft reached the remote: %s (%v)", got, err)
+	}
+}

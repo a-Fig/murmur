@@ -404,13 +404,28 @@ func errOldDevice(dev string) error {
 		"(https://murmur.afig.dev)", dev)}
 }
 
-// encryptEventLocked returns e as this device writes it: encrypted for the current team key
-// (team.go), which every device that has pushed its key since that key was made is granted, and for
-// this device, which reads its own log to queue a message from one of its sessions to another, and
-// would otherwise stop at its own record until a teammate granted it the key. A message to a device
-// on a Murmur from before encryption, which could never read it, is refused: nothing goes out in
-// the clear. Caller holds mu.
+// encryptEventLocked encodes e under the verified repo policy. Private messages and receipts
+// use their recipients' device keys. Other encrypted events use the team key. Both include the
+// writer's device so it can read its own log before receiving a team grant. Caller holds mu.
 func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
+	if err := d.checkOwnerHistoryLocked(); err != nil {
+		return bus.Event{}, err
+	}
+	switch d.repoModeLocked() {
+	case bus.EncryptionOff:
+		return e, nil
+	case bus.EncryptionPrivate:
+		if e.Type == bus.Receipt && !bus.ValidDevice(e.To) {
+			return bus.Event{}, errRepoModeChanged
+		}
+		if e.Type == bus.Message || e.Type == bus.GroupAdd || e.Type == bus.Receipt {
+			to, err := d.privateRecipientsLocked(e.To)
+			if err != nil {
+				return bus.Event{}, err
+			}
+			return bus.EncryptEvent(e, d.device, to)
+		}
+	}
 	if e.Type == bus.Message && e.To != "" && e.To != "*" && !bus.IsGroup(e.To) {
 		dev, _ := bus.SplitAddr(e.To)
 		if pin := d.st.Pins[dev]; dev != d.device && (pin == nil || pin.Box == "") {
@@ -455,6 +470,10 @@ func (d *Daemon) openEventLocked(e bus.Event, dev, ref, sha string) (out bus.Eve
 	}
 	if !errors.Is(err, bus.ErrNotForUs) || e.Box == nil {
 		d.log.Printf("%s: ignoring %s: %v", ref, short(sha), err)
+		return bus.Event{}, false, false
+	}
+	if d.repoModeLocked() == bus.EncryptionOff && d.checkOwnerHistoryLocked() == nil {
+		// Unreadable encrypted history must not hold newer plaintext events behind a grant.
 		return bus.Event{}, false, false
 	}
 	to := e.Box.Recipients()

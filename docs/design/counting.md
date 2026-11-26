@@ -51,14 +51,15 @@ a bus log can be rewritten and a daemon deletes its presence when it stops. It r
 the Worker, because counting needs git, and a fetch of the whole bus is one request where the API
 would need one per commit.
 
-- **Estimates, for encrypted buses.** Since 0.3 each event's kind is sealed inside it
-  ([encryption](encryption.md)), so the census counts an encrypted log's records exactly but can't
+- **Estimates, for encrypted records.** In Team and Private an event's kind is sealed inside it
+  ([encryption](encryption.md)), so the census counts those records exactly but can't
   read which are messages or session starts. Tyler's decision (2026-11-13, #550): estimate them,
   since 0 is wrong and "unknown" says too little, and say which figures hold an estimate (an
   asterisk on the page, ≈ in the report). The census decrypts nothing and holds no key. It uses two
   things any reader of a public repo sees: each record's size, and the name registry. A size gives
   away roughly what kind of event a record is, never what it says.
-  - *Messages, from size.* An encrypted record's length gives the event's length exactly, and a
+  - *Messages, from size.* The encrypted payload gives the event's length exactly, independent
+    of the number of recipients. The census counts messages written in Off directly. A
     message is longer than a session's start or stop: an event 180 bytes or more longer than its
     device's ID counts as a message. Measured 2026-11-13 against the unencrypted history of two
     public repos (155 messages, 1,094 starts and stops), that cut missed 8 messages, 5%, each with

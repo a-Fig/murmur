@@ -74,6 +74,12 @@ type sentRecord struct {
 	Told    bool   `json:"told,omitempty"`
 }
 
+// queuedMark adds the sender's device for recipient-scoped receipts. It stays in local state.
+type queuedMark struct {
+	bus.Mark
+	SourceDevice string `json:"sourceDevice,omitempty"`
+}
+
 type markRecord struct {
 	State string    `json:"state"`
 	At    time.Time `json:"at"`
@@ -91,12 +97,14 @@ func (d *Daemon) markLocked(id string, e bus.Event, state string) {
 		state = bus.MarkDelivered
 	}
 	now := time.Now().UTC()
-	if dev, _ := bus.SplitAddr(e.From); dev == d.device {
+	dev, _ := bus.SplitAddr(e.From)
+	if dev == d.device {
 		d.applyMarkLocked(e.ID, bus.Addr(d.device, id), state, now)
 		return
 	}
 	for i, m := range d.st.Marks {
-		if m.Msg == e.ID && m.To == id {
+		if m.Msg == e.ID && m.To == id && (m.SourceDevice == "" || m.SourceDevice == dev) {
+			d.st.Marks[i].SourceDevice = dev
 			if bus.MarkRank(state) > bus.MarkRank(m.State) {
 				d.st.Marks[i].State, d.st.Marks[i].At = state, now
 				d.kickMarks()
@@ -104,7 +112,7 @@ func (d *Daemon) markLocked(id string, e bus.Event, state string) {
 			return
 		}
 	}
-	d.st.Marks = append(d.st.Marks, bus.Mark{Msg: e.ID, To: id, State: state, At: now})
+	d.st.Marks = append(d.st.Marks, queuedMark{Mark: bus.Mark{Msg: e.ID, To: id, State: state, At: now}, SourceDevice: dev})
 	if over := len(d.st.Marks) - maxMarksHeld; over > 0 {
 		d.st.Marks = slices.Delete(d.st.Marks, 0, over)
 	}
@@ -179,19 +187,50 @@ func (d *Daemon) receiptLoop(ctx context.Context) {
 // wrote, unless they moved on meanwhile.
 func (d *Daemon) writeMarks(ctx context.Context) error {
 	d.mu.Lock()
-	batch := slices.Clone(d.st.Marks[:min(len(d.st.Marks), bus.MaxMarks)])
+	if err := d.checkOwnerHistoryLocked(); err != nil {
+		d.mu.Unlock()
+		return err
+	}
+	modeStamp := d.repoModeStamp.Load()
+	var to string
+	if d.repoModeLocked() == bus.EncryptionPrivate {
+		// An old queued mark has no sender. It cannot be sent privately without one.
+		before := len(d.st.Marks)
+		d.st.Marks = slices.DeleteFunc(d.st.Marks, func(m queuedMark) bool { return !bus.ValidDevice(m.SourceDevice) })
+		if len(d.st.Marks) != before {
+			d.saveLocked()
+		}
+		if len(d.st.Marks) > 0 {
+			to = d.st.Marks[0].SourceDevice
+		}
+	}
+	batch := make([]queuedMark, 0, min(len(d.st.Marks), bus.MaxMarks))
+	var marks []bus.Mark
+	for _, m := range d.st.Marks {
+		if to != "" && m.SourceDevice != to {
+			continue
+		}
+		batch, marks = append(batch, m), append(marks, m.Mark)
+		if len(batch) == bus.MaxMarks {
+			break
+		}
+	}
 	d.mu.Unlock()
 	if len(batch) == 0 {
 		return nil
 	}
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Receipt, From: bus.Addr(d.device, bus.ReceiptFrom),
-		At: time.Now().UTC(), Marks: batch}
-	if err := d.appendEvent(ctx, e); err != nil {
+		At: time.Now().UTC(), To: to, Marks: marks}
+	if err := d.appendEventIf(ctx, e, func() bool { return d.repoModeStamp.Load() == modeStamp }, nil); err != nil {
+		if d.repoModeStamp.Load() != modeStamp {
+			d.kickMarks()
+			return nil // build from the same queued marks under the new mode
+		}
 		return err
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.st.Marks = slices.DeleteFunc(d.st.Marks, func(m bus.Mark) bool { return slices.Contains(batch, m) })
+	d.st.Marks = slices.DeleteFunc(d.st.Marks, func(m queuedMark) bool { return slices.Contains(batch, m) })
 	d.saveLocked()
 	if len(d.st.Marks) > 0 {
 		d.kickMarks()
