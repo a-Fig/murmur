@@ -497,6 +497,9 @@ func TestRegistryEntriesCarryTheCommitFingerprint(t *testing.T) {
 	}
 
 	d.repoAddr = "github.com/a-fig/murmur"
+	// A name too: with none, git var takes the account's full name, and a CI runner has none, so
+	// it refuses, as git commit would.
+	runGit(t, clone, "config", "user.name", "Ada")
 	runGit(t, clone, "config", "user.email", "Ada@Example.com")
 	if err := d.pushNames(ctx, nameWork{reserve: 2}); err != nil {
 		t.Fatal(err)
