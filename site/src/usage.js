@@ -59,12 +59,13 @@ export async function reportRepo(request, env) {
   const m = typeof r?.repo === 'string' ? REPO.exec(r.repo) : null;
   if (!m || m[2] === '.' || m[2] === '..') return new Response('Not a repo.\n', { status: 400 });
   const key = r.repo.toLowerCase();
-  // A repo already stored was confirmed public when it came, so it is answered from D1, without
-  // asking GitHub again or writing the row again (#299). Each repo's clones each send it once, so
-  // this is most POSTs, and they no longer spend GITHUB_TOKEN's rate limit. If D1 can't say, the
-  // repo is checked as if new.
+  // A repo stored with this address as its current name was confirmed public when it came, so it
+  // is answered from D1, without asking GitHub again or writing the row again (#299). Each repo's
+  // clones each send it once, so this is most POSTs, and they no longer spend GITHUB_TOKEN's rate
+  // limit. If D1 can't say, the repo is checked as if new. An address that is only a name a repo
+  // used to have is asked about (#1250): after a rename GitHub lets a new repo take the old address.
   try {
-    if (await env.DB.prepare('SELECT 1 FROM repos WHERE repo = ?1').bind(key).first()) {
+    if (await env.DB.prepare('SELECT 1 FROM repos WHERE lower(name) = ?1').bind(key).first()) {
       return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
     }
   } catch (err) {
@@ -73,15 +74,12 @@ export async function reportRepo(request, env) {
   // Stored only once GitHub confirms it public. When GitHub can't say, nothing is stored and the
   // daemon, told to try again, sends it again at its next look.
   const shown = await isPublic(m[1], m[2], env);
-  if (shown === false) return new Response('Not a public repo on GitHub.\n', { status: 422 });
-  if (shown === null) return new Response("GitHub couldn't confirm it is public; try again later.\n", { status: 503 });
+  if (shown.public === false) return new Response('Not a public repo on GitHub.\n', { status: 422 });
+  if (shown.public === null) return new Response("GitHub couldn't confirm it is public; try again later.\n", { status: 503 });
   const day = new Date().toISOString().slice(0, 10);
   // Stored before the answer, so a report that isn't kept fails and the daemon tries again.
   try {
-    await env.DB.prepare(
-      `INSERT INTO repos (repo, name, first) VALUES (?1, ?2, ?3)
-       ON CONFLICT (repo) DO UPDATE SET name = excluded.name`,
-    ).bind(key, r.repo, day).run();
+    await store(env.DB, key, r.repo, day, shown);
   } catch (err) {
     console.log(`storing a repo: ${err}`);
     return new Response('Not stored; try again later.\n', { status: 503 });
@@ -89,14 +87,50 @@ export async function reportRepo(request, env) {
   return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
-// Whether GitHub shows owner/name to someone signed out: true, false, or null when GitHub can't say.
+// Stores a repo GitHub showed public, reported at `address` (key is it lowercased), on `day`, with
+// what GitHub said of it (#1250): its ID and current name, when its API answered. A repo already
+// stored under that ID, by a name it had or has, only gains the address. Otherwise it is a new row,
+// keyed by the address unless that is already a key, as an old address taken by a new repo is;
+// then by its ID. With no ID (only git answered) and the address taken, nothing is stored, and the
+// daemon sends it again at its next look.
+async function store(db, key, address, day, gh) {
+  const name = gh.name ? 'github.com/' + gh.name : address;
+  const names = [...new Set([key, name.toLowerCase()])];
+  const alias = (n, repo) => db.prepare('INSERT INTO repo_names (name, repo) VALUES (?1, ?2) ON CONFLICT DO NOTHING').bind(n, repo);
+  if (gh.id) {
+    const had = await db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(gh.id).first();
+    if (had) {
+      await db.batch([db.prepare('UPDATE repos SET name = ?2 WHERE repo = ?1').bind(had.repo, name), ...names.map(n => alias(n, had.repo))]);
+      return;
+    }
+  }
+  // With no ID, an address that a repo with no ID yet has had is that repo's: the census asks
+  // GitHub about that address each day, as the repo's own, and a new repo made there is found then.
+  // An address only a repo with an ID used to have isn't asked about again, so a new repo there
+  // could be missed for good: that waits, below, for an answer with an ID.
+  if (!gh.id && await db.prepare(
+    'SELECT 1 FROM repo_names n JOIN repos r ON r.repo = n.repo WHERE n.name = ?1 AND r.github_id IS NULL',
+  ).bind(key).first()) return;
+  const taken = await db.prepare('SELECT 1 FROM repos WHERE repo = ?1 UNION ALL SELECT 1 FROM repo_names WHERE name = ?1').bind(key).first();
+  if (taken && !gh.id) throw new Error(`${key} is another repo's address, and GitHub gave no ID`);
+  const row = taken ? `gh:${gh.id}` : key;
+  // Two clones reporting a new repo at once both insert it, by two addresses perhaps; the second
+  // finds the row, or the ID, already there. Its addresses go to whichever row holds the repo.
+  await db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
+    .bind(row, name, day, gh.id ?? null).run();
+  const held = gh.id ? (await db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(gh.id).first())?.repo ?? row : row;
+  await db.batch(names.map(n => alias(n, held)));
+}
+
+// Whether GitHub shows owner/name to someone signed out: { public: true, false, or null when GitHub
+// can't say }, with the repo's ID and current owner/name when the API said (#1250).
 // The API answers first. A Worker shares Cloudflare's egress addresses, and others have usually
 // spent the API's rate limit for them (#253), so when the API can't say, git's own endpoint on github.com does.
 async function isPublic(owner, name, env) {
-  return (await publicOnApi(owner, name, env)) ?? (await publicByGit(owner, name));
+  return (await publicOnApi(owner, name, env)) ?? { public: await publicByGit(owner, name) };
 }
 
-// The API's answer, or null when it can't give one (a rate limit, an outage). GITHUB_TOKEN, if that
+// The API's answer, { public, id, name }, or null when it can't give one (a rate limit, an outage). GITHUB_TOKEN, if that
 // secret is set, only raises the rate limit: a private repo it can see answers private: true, and
 // is refused.
 async function publicOnApi(owner, name, env) {
@@ -104,9 +138,13 @@ async function publicOnApi(owner, name, env) {
   if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
   try {
     const res = await fetch(`https://api.github.com/repos/${owner}/${name}`, { headers, signal: AbortSignal.timeout(5000) });
-    if (res.status === 404) return false;
+    if (res.status === 404) return { public: false };
     if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
-    return (await res.json()).private === false;
+    // A renamed repo's old address redirects to /repositories/<id>, which fetch follows.
+    const r = await res.json();
+    if (r.private !== false) return { public: false };
+    const full = typeof r.full_name === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(r.full_name);
+    return { public: true, id: Number.isSafeInteger(r.id) && r.id > 0 ? r.id : null, name: full ? r.full_name : null };
   } catch (err) {
     console.log(`is ${owner}/${name} public, by the API: ${err}`);
     return null;

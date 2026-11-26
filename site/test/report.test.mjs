@@ -141,12 +141,12 @@ test("a repo's name is a link's label in the report, with what Markdown would re
 test('a report of one repo and one user says "repo" and "user", not "repos" and "users"', async () => {
   const { n } = await report([row('github.com/a/one', ago(2))]);
   const one = repoReport({ ...n, repos: 1, users: 1, usersBy: { account: 1, name: 0, device: 0 } }, 'https://murmur.invalid');
-  assert.match(one, /^\*\*1 public repo\*\* uses Murmur; /m);
-  assert.match(one, /About \*\*1 user\*\* has run it there;/);
+  assert.match(one, /^About \*\*1 user\*\* has run Murmur in public repos, /m);
+  assert.match(one, /\*\*1 public repo\*\* uses it;/);
   assert.match(one, /Of 1 user, 1 was matched to an account,/);
   const two = repoReport({ ...n, repos: 2, users: 2, usersBy: { account: 2, name: 0, device: 0 } }, 'https://murmur.invalid');
-  assert.match(two, /^\*\*2 public repos\*\* use Murmur; /m);
-  assert.match(two, /About \*\*2 users\*\* have run it there;/);
+  assert.match(two, /^About \*\*2 users\*\* have run Murmur in public repos, /m);
+  assert.match(two, /\*\*2 public repos\*\* use it;/);
   assert.match(two, /Of 2 users, 2 were matched to an account,/);
 
   const archive = active => archiveReport({

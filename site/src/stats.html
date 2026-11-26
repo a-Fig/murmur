@@ -132,6 +132,7 @@
   .section .why { top: 24px; }
   .tiles { grid-column: span 12; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
   .tiles.three { grid-template-columns: repeat(3, 1fr); }
+  .tiles.two { grid-template-columns: repeat(2, 1fr); }
   .tiles .card { padding: 14px 16px; }
   .tile .label { font-size: 13px; }
   .tile .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-top: 4px; }
@@ -212,12 +213,12 @@
   @media (prefers-reduced-motion: reduce) { .grow, .growx, .draw, .fade { animation: none; } }
   @media (max-width: 900px) {
     .hero, .half { grid-column: span 12; }
-    .tiles, .tiles.three { grid-template-columns: 1fr 1fr; }
+    .tiles, .tiles.three, .tiles.two { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 520px) {
     main { padding: 20px 16px 48px; }
     .hero .value { font-size: 48px; }
-    .tiles, .tiles.three { grid-template-columns: 1fr; }
+    .tiles, .tiles.three, .tiles.two { grid-template-columns: 1fr; }
     .share .item { grid-template-columns: minmax(0, 100px) 1fr auto; }
   }
 </style>
@@ -248,6 +249,20 @@
     <section class="card hero">
       <div class="top">
         <div>
+          <div class="label">Users ever<span class="star"><button type="button" aria-describedby="users-why" aria-label="Why approximate">*</button><span class="why" role="tooltip" id="users-why"></span></span></div>
+          <div class="value" id="users">–</div>
+        </div>
+        <div class="notes">
+          <div id="users-active"></div>
+          <div id="users-new"></div>
+        </div>
+      </div>
+      <div class="chart" id="c-users"></div>
+    </section>
+
+    <section class="card hero">
+      <div class="top">
+        <div>
           <div class="label">Public repos using Murmur</div>
           <div class="value" id="repos">–</div>
         </div>
@@ -258,20 +273,6 @@
       </div>
       <div class="chart" id="c-repos"></div>
       <div class="legend" id="l-repos"></div>
-    </section>
-
-    <section class="card hero">
-      <div class="top">
-        <div>
-          <div class="label">Users<span class="star"><button type="button" aria-describedby="users-why" aria-label="Why approximate">*</button><span class="why" role="tooltip" id="users-why"></span></span></div>
-          <div class="value" id="users">–</div>
-        </div>
-        <div class="notes">
-          <div id="users-new"></div>
-          <div id="users-active"></div>
-        </div>
-      </div>
-      <div class="chart" id="c-users"></div>
     </section>
 
     <section class="card wide progress">
@@ -299,6 +300,13 @@
       </div>
       <div class="figure"><span class="big" id="prog-big">–</span><span class="change" id="prog-change"></span></div>
       <div class="chart" id="c-prog"></div>
+    </section>
+
+    <h2 class="section">Other counts of users</h2>
+
+    <section class="tiles two">
+      <div class="card tile"><div class="label">Machines on the latest release<span class="star"><button type="button" aria-describedby="machines-why" aria-label="What it misses">*</button><span class="why" role="tooltip" id="machines-why"></span></span></div><div class="row"><div class="value" id="t-machines">–</div><div class="spark" id="s-machines"></div></div><div class="note" id="t-machines-note"></div></div>
+      <div class="card tile"><div class="label"><span class="def"><button type="button" aria-describedby="old-users-def">Users, old count</button><span class="why" role="tooltip" id="old-users-def">Roughly one per clone: how users were counted before clones on one machine were joined.</span></span></div><div class="row"><div class="value" id="t-old-users">–</div><div class="spark" id="s-old-users"></div></div><div class="note" id="t-old-users-note"></div></div>
     </section>
 
     <h2 class="section"><span class="def"><button type="button" aria-describedby="measured-def">Measured</button><span class="why" role="tooltip" id="measured-def">Exact, whether or not a bus is encrypted.</span></span></h2>
@@ -558,12 +566,19 @@ function crosshair(box, f, n, color, place) {
 
 // A running total over time, one series, as a step with a fading area under it. With barKey, that
 // day's count of the same thing (repos active that day) stands under it as light columns, on the
-// same axis, since it is the same unit.
-function totalChart(box, series, key, what, H = 260, { barKey, barWhat, legendBox } = {}) {
+// same axis, since it is the same unit. marks are days the way it is counted changed ({ day, what }):
+// each is a dotted line, with what changed in the tooltip on that day.
+function totalChart(box, series, key, what, H = 260, { barKey, barWhat, legendBox, marks = [] } = {}) {
   box.replaceChildren();
   const n = series.length;
   const f = frame(box, n, Math.max(1, ...series.map(d => d[key])), H, what + ' over time');
   const c = css('--series-1');
+  const markOn = new Map(marks.map(m => [m.day, m.what]));
+  series.forEach((s, i) => {
+    if (!markOn.has(s.day)) return;
+    const x = f.m.l + f.band * i;
+    f.svg.append(el('line', { x1: x, x2: x, y1: f.m.t, y2: f.H - f.m.b, stroke: css('--text-muted'), 'stroke-width': 1, 'stroke-dasharray': '1 3' }));
+  });
   if (barKey) {
     const bw = Math.max(2, Math.min(14, f.band - 2));
     series.forEach((s, i) => {
@@ -587,6 +602,7 @@ function totalChart(box, series, key, what, H = 260, { barKey, barWhat, legendBo
   crosshair(box, f, n, c, i => {
     const s = series[i], rows = [[c, fmt(s[key]), what]];
     if (barKey) rows.push([c + '55', fmt(s[barKey] || 0), barWhat]);
+    if (markOn.has(s.day)) rows.push(['transparent', '', markOn.get(s.day)]);
     return { y: f.y(s[key]), when: long(s.day), rows };
   });
   if (legendBox) {
@@ -972,7 +988,7 @@ function progressChart(box, days, values, { mode, show = fmt, what, rowsAt = () 
 // day each device first appeared.
 const PROGRESS = {
   repos: { what: 'Public repos', total: 'repos', newWhat: 'new repos' },
-  users: { what: 'Users', total: 'users', newWhat: 'new users', note: 'approximate: see the asterisk on Users' },
+  users: { what: 'Users', total: 'users', newWhat: 'new users', note: 'approximate: see the asterisk on Users ever' },
   contributors: { what: 'Contributors', total: 'contributors', newWhat: 'new contributors' },
   records: { what: 'Bus records', value: r => r.records || 0 },
   bytes: { what: 'Data', value: r => r.bytes || 0, show: size },
@@ -1133,23 +1149,38 @@ function render() {
   note('repos-new', d.newRepos ? `+${fmt(d.newRepos)}` : '0', `new in the last ${d.week} days`, d.newRepos > 0);
   note('repos-active', fmt(d.activeRepos), `active in the last ${d.week} days`);
   countUp($('users'), d.users);
-  note('users-new', d.newUsers ? `+${fmt(d.newUsers)}` : '0', `new in the last ${d.week} days`, d.newUsers > 0);
   note('users-active', fmt(d.activeUsers), `active in the last ${d.week} days`);
+  note('users-new', d.newUsers ? `+${fmt(d.newUsers)}` : '0', `new in the last ${d.week} days`, d.newUsers > 0);
   const b = d.usersBy;
-  // What the asterisk means: an estimate, and how many users were told apart each way.
-  const rows = [[b.account, 'by GitHub account'], [b.name, 'by git name only'], [b.device, 'by device only']].map(([n, how]) => {
+  // What the asterisk means: an estimate, and how far to trust it: how many users were tied to a
+  // person or a machine, and how many were counted one per clone (#1245). The report has the rest.
+  const rows = [[d.users - b.device, 'tied to a person or machine'], [b.device, 'counted one per clone']].map(([n, how]) => {
     const row = el('div', { class: 'how' });
     row.append(el('b', {}, fmt(n)), el('span', {}, how));
     return row;
   });
   $('users-why').replaceChildren(
-    el('p', {}, 'Estimated from public repos using Murmur. Each device’s git name is matched to a commit author in its repo to find their GitHub account. Without a match, the git name counts instead, or the device if no name was seen. Each person counts once:'),
+    el('p', {}, 'Estimated from public repos using Murmur. A clone is tied to its owner’s GitHub account or git name where its repo’s commits show one, and to its machine where its ID names one. Each person counts once:'),
     ...rows,
     el('p', { class: 'fine' }, 'Private repos aren’t counted.'),
   );
 
   // The tiles: the total, a sparkline of the range, and the last 7 days against the 7 before.
   const S = d.series, wk = d.week;
+  // Other counts of users (#1245): machines on the latest release, from its downloads, and the old
+  // count, roughly one per clone.
+  const rel = d.releases?.latest;
+  $('t-machines').textContent = rel ? fmt(rel.machines) : '–';
+  sparkline($('s-machines'), rel ? rel.series.map(x => x.machines) : []);
+  $('t-machines-note').textContent = rel ? `${rel.tag}${rel.published ? `, out ${date(rel.published.slice(0, 10))}` : ''}` : 'not read yet';
+  $('machines-why').replaceChildren(
+    el('p', {}, 'Each machine running Murmur downloads each release once, whatever repo it’s in, so this counts private repos too. It misses machines with updates off and installs from a package manager, and counts one person on two machines twice.'),
+    ...(rel ? [el('p', { class: 'fine' }, `${fmt(rel.os.darwin)} macOS · ${fmt(rel.os.linux)} Linux · ${fmt(rel.os.windows)} Windows`)] : []),
+  );
+  countUp($('t-old-users'), d.oldUsers ?? 0);
+  sparkline($('s-old-users'), S.slice(0, S.length - FULL).map(s => s.oldUsers ?? 0));
+  const oldNew = (S.at(-1)?.oldUsers ?? 0) - (S.at(-1 - wk)?.oldUsers ?? 0);
+  $('t-old-users-note').textContent = `${fmt(Math.max(0, oldNew))} new in the last ${wk} days`;
   // Trends use full days only, ending yesterday (FULL); the notes' own figures are the server's
   // week, which includes today.
   const full = S.slice(0, S.length - FULL);
@@ -1201,7 +1232,7 @@ function render() {
   const colors = repoColors(d.repoList);
   const dayList = S.map(s => s.day);
   totalChart($('c-repos'), S, 'repos', 'public repos', 240, { barKey: 'activeRepos', barWhat: 'Active that day', legendBox: $('l-repos') });
-  totalChart($('c-users'), S, 'users', 'users', 240);
+  totalChart($('c-users'), S, 'users', 'users', 240, { marks: d.methodChanges });
   totalChart($('c-contributors'), S, 'contributors', 'contributors');
   stackChart($('c-records'), $('l-records'), dayList, d.byRepo, 'records', 'Records', colors);
   stackChart($('c-bytes'), $('l-bytes'), dayList, d.byRepo, 'bytes', 'Data', colors, { bytes: true });

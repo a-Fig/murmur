@@ -34,7 +34,7 @@ export default {
     const { pathname } = new URL(request.url);
     if (pathname === '/v1/repo') return reportRepo(request, env);
     if (pathname === '/v1/checkin') return checkIn(request, env, ctx);
-    if (pathname === '/v1/census') return census(request, env);
+    if (pathname === '/v1/census' || pathname === '/v1/census/releases') return census(request, env);
     if (pathname === '/stats' || pathname.startsWith('/stats/')) return stats(request, env);
     const page = /^\/(setup|join|use)(?:\.md)?\/?$/.exec(pathname)?.[1];
     if (page) return agentPage(request, ctx, page, false);

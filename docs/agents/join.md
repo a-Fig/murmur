@@ -80,16 +80,16 @@ public repo is sent once in its life, however many people use it. While a repo i
 background process asks GitHub again once a day, so a repo made public later is sent then.
 
 Why: to count how many repos and people use Murmur, nothing more. Murmur is new, our goal is 100
-active users (written 2026-11-07), and Murmur's messages travel through each team's own repo, so
-they never reach us. The address tells us where to look; the rest of the count is read from the
-public repo's own `refs/murmur/` refs and commit history, which anyone can read. From them the site
-keeps counts: sessions, messages, devices and people, by day. It keeps no names, emails, messages,
-code or IP addresses. To count each device and person once, it keeps a short unsalted hash in place
-of a device's ID, its owner's git user name, and the GitHub account matched to that owner. A private
-repo is never read. https://murmur.afig.dev/privacy/ lists everything the site keeps. Each repo's
-totals show on the count's public run page in GitHub Actions; the rest is seen only by Murmur's
-maintainer and people given a key. The code is `internal/publicrepo`, and `docs/design/counting.md`
-has the design.
+users (written 2026-11-25), and Murmur's messages travel through each team's own repo, so they never
+reach us. The address tells us where to look; the rest of the count is read from the public repo's
+own `refs/murmur/` refs and commit history, which anyone can read. From them the site keeps counts:
+sessions, messages, devices and people, by day. It keeps no names, emails, messages, code or IP
+addresses. To count each device and person once, it keeps a short unsalted hash in place of a
+device's ID, the hostname an older ID begins with, its owner's git user name, and the GitHub account
+matched to that owner. A private repo is never read. https://murmur.afig.dev/privacy/ lists
+everything the site keeps. Each repo's totals show on the count's public run page in GitHub Actions;
+the rest is seen only by Murmur's maintainer and people given a key. The code is
+`internal/publicrepo`, and `docs/design/counting.md` has the design.
 
 There is no setting to turn it off: the address is already public. Murmur versions before this one
 sent a daily check-in instead; the site stopped storing those on 2026-11-08.

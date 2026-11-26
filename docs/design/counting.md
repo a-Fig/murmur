@@ -1,7 +1,9 @@
 # Counting use
 
-Tyler's goal for the project is 100 active users (2026-11-02), and the transport hides them: every
-team's traffic stays in its own repo, and release downloads count installs, not use.
+Tyler's goal for the project is 100 users ever (2026-11-25, #1245; it said 100 active users from
+2026-11-02), and the transport hides them: every team's traffic stays in its own repo, and release
+downloads count installs, not use. Maintainers count: Tyler is a user, and the goal is 100 users,
+not 100 besides us (Tyler, 2026-11-25).
 
 Tyler's rule (2026-11-08, #199): **the only thing Murmur sends us is a public repo's address.** A
 public repo's bus is readable by anyone, so once we know the address, its devices and records can be
@@ -78,8 +80,47 @@ would need one per commit.
   device wrote and how large, so the page is built around those. Bytes are each record's event as
   JSON, the event inside the box for an encrypted one, so a log weighs the same either way, and they
   grow with what agents say to each other: the exact measure of a bus's traffic. The page shows
-  repos and users first, then records, bytes, devices and contributors, then sessions and messages,
-  estimated where a bus is encrypted.
+  users ever first, with those active in the last 7 days beside them (#1245, the goal's figure),
+  then repos, then records, bytes, devices and contributors, then sessions and messages, estimated
+  where a bus is encrypted.
+- **Users.** Murmur sends nothing that names a person, and since 0.3 a clone's owner is sealed in
+  its encrypted presence, which a daemon deletes when it stops. On 2026-11-25 the page said 36
+  users, 31 of them counted one per clone; matching by hand put the real figure nearer 23 to 27.
+  So a user is the best of what the census can tie a clone to (`users()` in `site/src/repos.js`):
+  the GitHub account its owner's git name matches in the repo's commits, else that git name, and,
+  since #1245, its machine. A device ID made before 0.5 (#330) begins with a slug of the hostname,
+  which every clone on that machine shares in any repo. The census sends the slug hashed, and the
+  site joins clones that share it, except for slugs strangers share (`macbook-pro`, `ubuntu`, one a
+  network assigns, and one the old IDs may have cut short at 24 characters, `census.mjs`'s
+  `machine()`), and for a slug that would join two accounts into one user or spans more than 10
+  clones or 6 repos (`JOIN`): a wrong merge costs more than a missed one. A new
+  ID names no machine, so a clone made since counts one per clone unless its owner is seen; #1244's
+  commit fingerprint is the lasting fix. The count from before, roughly one user per clone, stays
+  on the page as the old count (Tyler, 2026-11-25), and the users charts mark each day the method
+  changed, since every day's figure is worked out again by the new method.
+- **Repos by GitHub's ID** (#1250). A rename or a transfer changes a repo's address, and a clone
+  that reports the new one used to store the repo twice, splitting its counts. So a repo is one
+  GitHub repository ID: `/v1/repo` stores the ID when GitHub's API gives it, and each census run
+  asks GitHub where each repo is now (by its ID, else by the name it was listed under, which GitHub
+  redirects), reads the bus from the current name, and sends the ID and name back. The row takes
+  the new name, and two rows found to share an ID merge, taking the larger of each day's counts
+  (they counted one bus twice) and joining clones and contributors as sets. Each row keeps the key
+  it was first stored under, so no count moves; `repo_names` holds every address each repo has
+  had, which #1244's fingerprint is matched under, since a clone on an old URL names the repo by
+  it. After a rename GitHub lets a new repo take the old address, so an address is only where to
+  look, and the ID decides: `/v1/repo` answers from D1 only for a repo's current name, and a new
+  repo at a taken address is keyed `gh:<id>`. A row with no ID yet takes GitHub's answer for its
+  address only if that repo was made before the row was stored; a newer one is another repo, and
+  is counted on its own row. A repo GitHub says is gone keeps its counts.
+- **Machines on the latest release** (#1245), the only figure that covers private repos. Each day
+  the census reads the download counts of every release's `mur-<os>-<arch>` binaries from GitHub's
+  API, and the site keeps them by day. Every clone on a machine shares one binary and the updater's
+  lock lets only one download, so each machine running Murmur downloads each release once. Every
+  binary of every release shows at least 1 download from something that fetches each file once
+  (seen 2026-11-25), so 1 comes off each. Only GitHub's latest release counts: prereleases go almost
+  only to Tyler's machines. Releases don't add up, since a machine that took two is in both. It
+  misses machines with updates off and installs from a package manager, and counts one person on
+  two machines twice. It needs nothing from clients, so #199 holds.
 - **Limits.** Each repo is counted on its own, since anyone can list one (#298), and one that can't
   be read keeps the counts it had. A repo gets 3 minutes and 2,000 device refs, so one with huge
   objects or 100,000 refs can't hold the 30-minute job. One over either is skipped with a warning

@@ -44,14 +44,30 @@ const LATE = 30 * 3600e3;
 // raised in the same way. A census from before them sends none, and they stay as they were.
 // Raising only has a cost here that it doesn't have for an exact count: if the census later
 // estimates differently and lower, what is stored stays, until someone lowers it in D1 by hand.
+//
+// /v1/census/releases, POST only, with the same key: Murmur's release downloads (#1245,
+// census.mjs's releaseDownloads()), {"releases": [{tag, published, prerelease, latest, assets:
+// [{name, downloads}]}]}, kept for today (UTC) in release_downloads.
 export async function census(request, env) {
-  const key = String(env.CENSUS_KEY || '');
+  const secret = String(env.CENSUS_KEY || '');
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('Authorization') || '')?.[1];
-  if (!key || !bearer || !(await same(bearer, key))) return new Response('Not found.\n', { status: 404 });
+  if (!secret || !bearer || !(await same(bearer, secret))) return new Response('Not found.\n', { status: 404 });
   const headers = { 'Cache-Control': 'no-store' };
+  if (new URL(request.url).pathname === '/v1/census/releases') return releases(request, env, headers);
   if (request.method === 'GET') {
-    const { results } = await env.DB.prepare('SELECT name FROM repos ORDER BY repo').all();
-    return Response.json({ repos: results.map(r => r.name) }, { headers });
+    // repos: each repo's name, as before. list (#1250): each repo's key, its name, its GitHub ID
+    // where known, and the other addresses it has had, so the census can find a renamed repo by its
+    // ID and match clones still on an old URL. Two rows can have one name for a while (a repo made
+    // at a renamed one's old address), so the census sends counts back by key.
+    const [{ results }, { results: names }] = await env.DB.batch([
+      env.DB.prepare('SELECT repo, name, github_id FROM repos ORDER BY repo'),
+      env.DB.prepare('SELECT name, repo FROM repo_names ORDER BY name'),
+    ]);
+    const list = results.map(r => ({
+      key: r.repo, name: r.name, id: r.github_id ?? null,
+      aliases: names.filter(n => n.repo === r.repo && n.name !== r.name.toLowerCase()).map(n => n.name),
+    }));
+    return Response.json({ repos: results.map(r => r.name), list }, { headers });
   }
   if (request.method !== 'POST') return new Response('Only GET and POST.\n', { status: 405, headers: { Allow: 'GET, POST' } });
   let c;
@@ -62,41 +78,42 @@ export async function census(request, env) {
   }
   const bad = invalid(c);
   if (bad) return new Response(`Not counts: ${bad}.\n`, { status: 400 });
-  const known = await env.DB.prepare('SELECT 1 FROM repos WHERE repo = ?1').bind(c.repo).first();
-  if (!known) return new Response('Not a listed repo.\n', { status: 422 });
+  // The counts go to the row the census names by its key (#1250). A census from before keys names
+  // the repo by its current name, or one it had.
+  let row = c.key
+    ? (await env.DB.prepare('SELECT repo FROM repos WHERE repo = ?1').bind(c.key).first())?.repo
+    : (await env.DB.prepare(
+      `SELECT r.repo FROM repos r WHERE lower(r.name) = ?1
+       UNION ALL SELECT n.repo FROM repo_names n WHERE n.name = ?1 LIMIT 1`,
+    ).bind(c.repo).first())?.repo;
+  if (!row) return new Response('Not a listed repo.\n', { status: 422 });
 
   const db = env.DB, t = c.totals;
+  if (c.github) row = await identify(db, row, c.github);
   const stmts = [];
-  // D1 binds at most 100 values a statement, so rows go in groups: 12 days of 8 values, 33 rows of 3.
-  const insert = (rows, width, sql, values) => {
-    const per = Math.floor(100 / width);
-    for (let i = 0; i < rows.length; i += per) {
-      const group = rows.slice(i, i + per);
-      const tuples = group.map((_, j) => `(${Array.from({ length: width }, (_, k) => `?${width * j + k + 1}`).join(', ')})`).join(', ');
-      stmts.push(db.prepare(sql.replace('$ROWS', tuples)).bind(...group.flatMap(values)));
-    }
-  };
+  const insert = inserter(db, stmts);
   insert(c.days, 8,
     `INSERT INTO repo_days (repo, day, sessions, messages, records, est_sessions, est_messages, bytes) VALUES $ROWS
      ON CONFLICT (repo, day) DO UPDATE SET
        sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
        records = MAX(records, excluded.records), bytes = MAX(bytes, excluded.bytes),
        est_sessions = MAX(est_sessions, excluded.est_sessions), est_messages = MAX(est_messages, excluded.est_messages)`,
-    d => [c.repo, d.day, d.sessions, d.messages, d.records, d.est_sessions ?? 0, d.est_messages ?? 0, d.bytes ?? 0]);
-  // An owner once seen is kept: a daemon deletes its presence when it stops. So is an account. A
-  // census from before #323 sends none.
-  insert(c.devices, 4,
-    `INSERT INTO devices (repo, device, person, account) VALUES $ROWS
+    d => [row, d.day, d.sessions, d.messages, d.records, d.est_sessions ?? 0, d.est_messages ?? 0, d.bytes ?? 0]);
+  // An owner once seen is kept: a daemon deletes its presence when it stops. So is an account, and
+  // a machine. A census from before #323 sends no account, and one from before #1245 no machine.
+  insert(c.devices, 5,
+    `INSERT INTO devices (repo, device, person, account, machine) VALUES $ROWS
      ON CONFLICT (repo, device) DO UPDATE SET
-       person = COALESCE(excluded.person, person), account = COALESCE(excluded.account, account)`,
-    v => [c.repo, v.id, v.person, v.account ?? null]);
+       person = COALESCE(excluded.person, person), account = COALESCE(excluded.account, account),
+       machine = COALESCE(excluded.machine, machine)`,
+    v => [row, v.id, v.person, v.account ?? null, v.machine ?? null]);
   insert(c.days.flatMap(d => d.devices.map(v => [d.day, v])), 3,
     `INSERT INTO device_days (repo, day, device) VALUES $ROWS ON CONFLICT DO NOTHING`,
-    ([day, v]) => [c.repo, day, v]);
+    ([day, v]) => [row, day, v]);
   insert(c.contributors, 3,
     `INSERT INTO contributors (repo, id, first) VALUES $ROWS
      ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
-    k => [c.repo, k.id, k.first]);
+    k => [row, k.id, k.first]);
   stmts.push(db.prepare(
     `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted, est_sessions, est_messages, bytes)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -107,7 +124,7 @@ export async function census(request, env) {
        first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
        last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
        counted = excluded.counted`,
-  ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString(),
+  ).bind(row, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString(),
     t.est_sessions ?? 0, t.est_messages ?? 0, t.bytes ?? 0));
   // A batch must finish within D1's 30 seconds, and a big repo makes thousands of statements, so
   // they go BATCH at a time. Each batch is its own transaction. Every write only raises a count or
@@ -116,6 +133,142 @@ export async function census(request, env) {
   // everything else is in.
   for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
+}
+
+// What GitHub told the census of the repo at `key` (#1250): its ID, current name, and when it was
+// made. Returns the key of the row the counts the census read go to.
+//
+// GitHub's answer may be about another repo: after a rename or a deletion GitHub lets a new repo
+// take the old address, and the census, asking by that address, is told of the new one. The answer
+// is this row's repo when the row has its ID, or, for a row with none yet, when the repo was made
+// no later than the row was first stored. Otherwise the counts are the other repo's, and go to its
+// row, made now as `gh:<id>` if it has none; this row keeps what it had, and is never merged.
+//
+// When the answer is this row's repo, the row takes the ID and the name, which joins its
+// addresses. If another row already has the ID, the two counted one repo under two addresses, so
+// this one is merged into it, and the counts go there.
+export async function identify(db, key, github) {
+  const name = 'github.com/' + github.name.replace(/^github\.com\//i, '');
+  const [{ results: [own] }, { results: [other] }] = await db.batch([
+    db.prepare('SELECT github_id, first FROM repos WHERE repo = ?1').bind(key),
+    db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(github.id),
+  ]);
+  const newer = typeof github.created === 'string' && own?.first && github.created.slice(0, 10) > own.first;
+  const same = own?.github_id ? own.github_id === github.id : !newer;
+  const names = row => db.prepare('INSERT INTO repo_names (name, repo) VALUES (?1, ?2) ON CONFLICT DO NOTHING').bind(name.toLowerCase(), row);
+  if (!same) {
+    if (other) return other.repo;
+    // A report of the repo may have stored it in the meantime, so its row is found by its ID.
+    await db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
+      .bind(`gh:${github.id}`, name, new Date().toISOString().slice(0, 10), github.id).run();
+    const row = (await db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(github.id).first())?.repo ?? `gh:${github.id}`;
+    await names(row).run();
+    return row;
+  }
+  if (other && other.repo !== key) {
+    await merge(db, key, other.repo);
+    key = other.repo;
+  }
+  await db.batch([
+    db.prepare('UPDATE repos SET github_id = ?2, name = ?3 WHERE repo = ?1').bind(key, github.id, name),
+    names(key),
+  ]);
+  return key;
+}
+
+// Merges the row at `from` into the row at `into`, in one batch, so a failure leaves both as they
+// were (#1250). They counted the same bus twice under two addresses, so a day's counts and the
+// totals take the larger of the two, not the sum; clones, their days and contributors are joined
+// as sets, keeping whatever either knew of a clone; the repo started on the earlier of its two
+// first days, and keeps every address both had.
+export async function merge(db, from, into) {
+  const max = cols => cols.map(k => `${k} = MAX(${k}, excluded.${k})`).join(', ');
+  const counts = ['sessions', 'messages', 'records', 'est_sessions', 'est_messages', 'bytes'];
+  await db.batch([
+    db.prepare(
+      `INSERT INTO repo_days (repo, day, ${counts.join(', ')}) SELECT ?2, day, ${counts.join(', ')} FROM repo_days WHERE repo = ?1
+       ON CONFLICT (repo, day) DO UPDATE SET ${max(counts)}`,
+    ).bind(from, into),
+    // #1244 adds author here, kept like account.
+    db.prepare(
+      `INSERT INTO devices (repo, device, person, account, machine) SELECT ?2, device, person, account, machine FROM devices WHERE repo = ?1
+       ON CONFLICT (repo, device) DO UPDATE SET person = COALESCE(person, excluded.person),
+         account = COALESCE(account, excluded.account), machine = COALESCE(machine, excluded.machine)`,
+    ).bind(from, into),
+    db.prepare('INSERT INTO device_days (repo, day, device) SELECT ?2, day, device FROM device_days WHERE repo = ?1 ON CONFLICT DO NOTHING').bind(from, into),
+    db.prepare(
+      `INSERT INTO contributors (repo, id, first) SELECT ?2, id, first FROM contributors WHERE repo = ?1
+       ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
+    ).bind(from, into),
+    db.prepare(
+      `INSERT INTO repo_census (repo, ${counts.join(', ')}, first_day, last_day, counted)
+       SELECT ?2, ${counts.join(', ')}, first_day, last_day, counted FROM repo_census WHERE repo = ?1
+       ON CONFLICT (repo) DO UPDATE SET ${max(counts)},
+         first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
+         last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
+         counted = MAX(COALESCE(counted, excluded.counted), COALESCE(excluded.counted, counted))`,
+    ).bind(from, into),
+    db.prepare('UPDATE repos SET first = MIN(first, (SELECT first FROM repos WHERE repo = ?1)) WHERE repo = ?2').bind(from, into),
+    db.prepare('INSERT INTO repo_names (name, repo) SELECT name, ?2 FROM repo_names WHERE repo = ?1 ON CONFLICT DO NOTHING').bind(from, into),
+    ...['repo_days', 'devices', 'device_days', 'contributors', 'repo_census', 'repo_names', 'repos']
+      .map(t => db.prepare(`DELETE FROM ${t} WHERE repo = ?1`).bind(from)),
+  ]);
+}
+
+// Statements that insert rows, as many to a statement as D1 binds: at most 100 values, so 12 days
+// of 8 values, 20 devices of 5, 33 rows of 3. Each goes on stmts.
+function inserter(db, stmts) {
+  return (rows, width, sql, values) => {
+    const per = Math.floor(100 / width);
+    for (let i = 0; i < rows.length; i += per) {
+      const group = rows.slice(i, i + per);
+      const tuples = group.map((_, j) => `(${Array.from({ length: width }, (_, k) => `?${width * j + k + 1}`).join(', ')})`).join(', ');
+      stmts.push(db.prepare(sql.replace('$ROWS', tuples)).bind(...group.flatMap(values)));
+    }
+  };
+}
+
+// A release's tag (v0.5.4, v0.5.5-nightly.20261125) and a binary's name (mur-darwin-arm64,
+// mur-windows-amd64.exe), as census.mjs reads them.
+const TAG = /^v[0-9A-Za-z.+-]{1,60}$/;
+const BINARY = /^mur-[a-z0-9]+-[a-z0-9]+(?:\.exe)?$/;
+
+// /v1/census/releases: today's download counts of Murmur's release binaries. A count is GitHub's
+// running total, so a day's row is only raised, as the census's counts are. Which release is the
+// latest moves with each POST.
+async function releases(request, env, headers) {
+  if (request.method !== 'POST') return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response('Not JSON.\n', { status: 400 });
+  }
+  const list = body?.releases;
+  const count = n => Number.isSafeInteger(n) && n >= 0;
+  const when = v => v === null || (typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v)));
+  const asset = a => a && typeof a.name === 'string' && BINARY.test(a.name) && count(a.downloads);
+  const release = r => r && typeof r.tag === 'string' && TAG.test(r.tag) && when(r.published) &&
+    typeof r.prerelease === 'boolean' && typeof r.latest === 'boolean' && Array.isArray(r.assets) && r.assets.length <= 20 &&
+    r.assets.every(asset) && new Set(r.assets.map(a => a.name)).size === r.assets.length;
+  const ok = Array.isArray(list) && list.length <= 2000 && list.every(release) &&
+    new Set(list.map(r => r.tag)).size === list.length && list.filter(r => r.latest).length <= 1;
+  if (!ok) return new Response('Not release downloads.\n', { status: 400 });
+  const db = env.DB, day = new Date().toISOString().slice(0, 10);
+  const stmts = [db.prepare('UPDATE releases SET latest = 0 WHERE latest = 1')];
+  const insert = inserter(db, stmts);
+  insert(list, 4,
+    `INSERT INTO releases (tag, published, prerelease, latest) VALUES $ROWS
+     ON CONFLICT (tag) DO UPDATE SET published = excluded.published, prerelease = excluded.prerelease, latest = excluded.latest`,
+    r => [r.tag, r.published, r.prerelease ? 1 : 0, r.latest ? 1 : 0]);
+  insert(list.flatMap(r => r.assets.map(a => [r.tag, a])), 4,
+    `INSERT INTO release_downloads (day, tag, asset, downloads) VALUES $ROWS
+     ON CONFLICT (day, tag, asset) DO UPDATE SET downloads = MAX(downloads, excluded.downloads)`,
+    ([tag, a]) => [day, tag, a.name, a.downloads]);
+  // One batch, so the latest release never moves without the counts that came with it. Murmur's
+  // 40-odd releases make about 15 statements.
+  await db.batch(stmts);
+  return Response.json({ ok: true, releases: list.length }, { headers });
 }
 
 // What is wrong with a census POST's body, or "" if nothing is.
@@ -134,6 +287,11 @@ function invalid(c) {
   const estimates = o => ['bytes', 'est_sessions', 'est_messages'].every(k => o[k] === undefined || count(o[k]));
   if (!c || typeof c !== 'object') return 'no object';
   if (typeof c.repo !== 'string' || !REPO.test(c.repo)) return 'repo';
+  // The row's key and what GitHub said of the repo (#1250), which a census from before leaves out.
+  if (c.key !== undefined && (typeof c.key !== 'string' || !c.key || c.key.length > 200)) return 'key';
+  if (c.github !== undefined && !(c.github && Number.isSafeInteger(c.github.id) && c.github.id > 0 &&
+    typeof c.github.name === 'string' && REPO.test('github.com/' + c.github.name.replace(/^github\.com\//i, '').toLowerCase()) &&
+    (c.github.created === undefined || (typeof c.github.created === 'string' && c.github.created.length <= 40 && DAY.test(c.github.created.slice(0, 10)))))) return 'github';
   const t = c.totals;
   if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k])) || !estimates(t)) return 'totals';
   if (!(t.first_day === null || busDay(t.first_day)) || !(t.last_day === null || busDay(t.last_day))) return 'totals days';
@@ -146,7 +304,7 @@ function invalid(c) {
   if (c.days.reduce((n, d) => n + d.devices.length, 0) > 100000) return "the days' devices";
   if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
   for (const v of c.devices) {
-    if (!v || !id(v.id) || !(v.person === null || id(v.person)) || !(v.account == null || id(v.account))) return 'a device';
+    if (!v || !id(v.id) || !(v.person === null || id(v.person)) || ![v.account, v.machine].every(k => k == null || id(k))) return 'a device';
   }
   if (!Array.isArray(c.contributors) || c.contributors.length > 100000) return 'contributors';
   for (const k of c.contributors) if (!k || !id(k.id) || !day(k.first)) return 'a contributor';
@@ -172,7 +330,7 @@ export async function repoNumbers(db, days) {
   const today = new Date().toISOString().slice(0, 10);
   const from = addDays(today, -(days - 1));
   const weekFrom = addDays(today, -(WEEK - 1));
-  const [repos, byDay, people, counted, devs] = await db.batch([
+  const [repos, byDay, people, counted, devs, latestDays, stableNow] = await db.batch([
     // Each repo, with its totals and when it started: its first day on the bus, or the day it was
     // reported if the census hasn't read it yet. A device whose owner the census has never seen is
     // a person of its own. Its week is how many of the last 7 days its devices wrote anything, presence included.
@@ -215,14 +373,28 @@ export async function repoNumbers(db, days) {
     // Every device, for users: who is behind it, and its first and last day on the bus, up to today
     // as above.
     db.prepare(
-      `SELECT v.repo, v.device, v.person, v.account, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
+      `SELECT v.repo, v.device, v.person, v.account, v.machine, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
        FROM devices v JOIN repos r ON r.repo = v.repo
          LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device AND d.day <= ?1
        GROUP BY v.repo, v.device`,
     ).bind(today),
+    // The latest release's binaries' downloads on each day the census read them (#1245).
+    db.prepare(
+      `SELECT r.tag, r.published, d.day, d.asset, d.downloads
+       FROM releases r JOIN release_downloads d ON d.tag = r.tag
+       WHERE r.latest = 1 AND d.day <= ?1 ORDER BY d.day`,
+    ).bind(today),
+    // Each stable release's binaries' downloads as last read, for the report.
+    db.prepare(
+      `SELECT r.tag, r.published, d.asset, d.downloads
+       FROM releases r JOIN release_downloads d ON d.tag = r.tag
+         AND d.day = (SELECT MAX(x.day) FROM release_downloads x WHERE x.tag = r.tag AND x.day <= ?1)
+       WHERE r.prerelease = 0`,
+    ).bind(today),
   ]);
-  const u = users(devs.results);
+  const u = users(devs.results), o = users(devs.results, { join: {} });
   const userFirsts = [...u.users.values()].map(x => x.first).sort();
+  const oldFirsts = [...o.users.values()].map(x => x.first).sort();
 
   const list = repos.results;
   const names = new Map(list.map(r => [r.repo, r.name]));
@@ -238,6 +410,7 @@ export async function repoNumbers(db, days) {
       activeRepos: on.filter(r => r.devices > 0 || r.records > 0).length,
       contributors: firsts.filter(f => f.day <= d).reduce((s, f) => s + f.n, 0),
       users: userFirsts.filter(f => f <= d).length,
+      oldUsers: oldFirsts.filter(f => f <= d).length,
       devices: sum('devices'), people: sum('people'), sessions: sum('sessions'), messages: sum('messages'), records: sum('records'),
       estSessions: sum('estSessions'), estMessages: sum('estMessages'), bytes: sum('bytes'),
     });
@@ -258,8 +431,15 @@ export async function repoNumbers(db, days) {
     newUsers: userFirsts.filter(f => f >= weekFrom).length,
     activeUsers: [...u.users.values()].filter(x => x.last && x.last >= weekFrom).length,
     // How each user was told apart, for the page's note on what users means: matched to an account,
-    // by their git name only, or by their device only.
+    // by their git name only, by their machine only, or one per clone.
     usersBy: u.by,
+    // The keys users() kept from joining clones, for the report (JOIN).
+    usersRefused: u.refused,
+    // The count from before #1245, roughly one user per clone, kept beside the new one (Tyler,
+    // 2026-11-25). It stays out of the headline.
+    oldUsers: o.users.size,
+    methodChanges: METHOD_CHANGES,
+    releases: releaseNumbers(latestDays?.results ?? [], stableNow?.results ?? []),
     devices: sumOf(list, 'devices'),
     people: sumOf(list, 'people'),
     sessions: sumOf(list, 'sessions'),
@@ -279,6 +459,41 @@ export async function repoNumbers(db, days) {
     byRepo: rows.map(r => ({ ...r, name: names.get(r.repo) ?? r.repo })),
     repoList: list.map(({ repo, ...r }) => r),
   };
+}
+
+// Machines on a release (#1245), from its binaries' download counts: { machines, os: { darwin,
+// linux, windows } }. Every binary shows at least 1 download from something that fetches each file
+// once (census.mjs, releaseDownloads()), so 1 comes off each.
+function onRelease(rows) {
+  const os = { darwin: 0, linux: 0, windows: 0 };
+  let machines = 0;
+  for (const r of rows) {
+    const n = Math.max(0, r.downloads - 1), k = /^mur-([a-z0-9]+)-/.exec(r.asset)?.[1];
+    machines += n;
+    if (k in os) os[k] += n;
+  }
+  return { machines, os };
+}
+
+// What the stats say of Murmur's releases: the latest, its machines now and on each day the census
+// read it, and every stable release's as last read, newest first. latest is null before the census
+// has read any.
+export function releaseNumbers(latestRows, stableRows) {
+  const group = rows => {
+    const by = new Map();
+    for (const r of rows) {
+      if (!by.has(r.tag)) by.set(r.tag, { tag: r.tag, published: r.published, rows: [] });
+      by.get(r.tag).rows.push(r);
+    }
+    return [...by.values()];
+  };
+  const stable = group(stableRows).map(({ rows, ...r }) => ({ ...r, ...onRelease(rows) }))
+    .sort((a, b) => (b.published ?? '').localeCompare(a.published ?? '') || b.tag.localeCompare(a.tag));
+  const [l] = group(latestRows);
+  if (!l) return { latest: null, stable };
+  const days = [...new Set(l.rows.map(r => r.day))].sort();
+  const series = days.map(day => ({ day, machines: onRelease(l.rows.filter(r => r.day === day)).machines }));
+  return { latest: { tag: l.tag, published: l.published, ...onRelease(l.rows.filter(r => r.day === days.at(-1))), series }, stable };
 }
 
 // Whether the census is keeping up, from when it last read each listed repo (repo_census.counted):
@@ -313,35 +528,116 @@ export function health(list, now) {
   };
 }
 
+// How far a key that joins clones may reach before it is taken for one that different people share
+// (#1245): a key over any limit joins nothing, and its clones are counted by their other keys.
+// - machine, the hostname an old device ID names (census.mjs, machine()): a slug is sometimes a
+//   default that strangers share, and a wrong merge costs more than a missed one. One laptop was 5
+//   clones in 4 repos on 2026-11-25. Clones that carry different accounts are different people.
+// Each limit is optional: devices and repos are how many the key's clones are and span, accounts
+// how many different accounts the users they would join already hold.
+export const JOIN = { machine: { devices: 10, repos: 6, accounts: 1 } };
+
+// The days the way users are counted changed, for a mark on the users charts. Each day's count is
+// worked out again from every device's row on each load, so the line holds no drop on that day:
+// the whole of it moves at once, and the mark says why it is lower than people remember.
+export const METHOD_CHANGES = [
+  { day: '2026-11-26', what: 'Counting changed: clones on one machine merge; earlier days recounted' },
+];
+
 // The people using Murmur, approximately (#323), from every device's row: { repo, device, person,
-// account, first, last }. Murmur sends nothing that names a person, so a user is the best of:
+// account, machine, first, last }. Murmur sends nothing that names a person, so a device starts as
+// the best of:
 // - the GitHub account the census matched the device's owner to (census.mjs, accounts());
 // - else the account an owner of the same git name was matched to in another repo, if exactly one;
 // - else the owner's git name; else the device itself.
-// Each counts once across repos, from its devices' first day to their last. by says how many users
-// were told apart each way.
-export function users(devices) {
+// Then devices that share a machine are joined into one user, within JOIN's limits (#1245). Each
+// user counts once across repos, from its devices' first day to their last.
+//
+// by says how many users were told apart each way: by an account, else by a git name, else by a
+// machine, else one per clone, a lone device that nothing ties to anyone. refused lists the keys
+// JOIN's limits kept from joining, for the report.
+//
+// With join {}, nothing is joined: that is the count from before #1245, roughly one user per clone,
+// which the stats keep showing as the old count (Tyler, 2026-11-25). A key added to JOIN later
+// takes part only when join holds it, so the old count stays as it was.
+export function users(devices, { join = JOIN } = {}) {
   const accountsOf = new Map(); // person -> Set of accounts
   for (const v of devices) {
     if (!v.person || !v.account) continue;
     if (!accountsOf.has(v.person)) accountsOf.set(v.person, new Set());
     accountsOf.get(v.person).add(v.account);
   }
-  const out = new Map(); // key -> { first, last }
-  for (const v of devices) {
+  const accountOf = v => {
     const via = accountsOf.get(v.person);
-    const account = v.account ?? (via?.size === 1 ? [...via][0] : null);
-    const key = account ? 'account:' + account : v.person ? 'person:' + v.person : `device:${v.repo}/${v.device}`;
-    const u = out.get(key);
-    if (!u) out.set(key, { first: v.first, last: v.last });
+    return v.account ?? (via?.size === 1 ? [...via][0] : null);
+  };
+  const start = v => {
+    const account = accountOf(v);
+    return account ? 'account:' + account : v.person ? 'person:' + v.person : `device:${v.repo}/${v.device}`;
+  };
+  // A union-find over the starting keys: each key's parent, a key with none is a root.
+  const parent = new Map();
+  const find = k => {
+    while (parent.has(k)) k = parent.get(k);
+    return k;
+  };
+  // The account each root's user holds, if any. A join is checked against these, not only against
+  // its own clones: two machines that each carry one account could otherwise chain two accounts
+  // into one user through a git name both share.
+  const held = new Map();
+  for (const v of devices) {
+    const k = start(v);
+    if (k.startsWith('account:')) held.set(k, k);
+  }
+  const union = (a, b) => {
+    const [x, y] = [find(a), find(b)];
+    if (x === y) return;
+    parent.set(y, x);
+    if (!held.has(x) && held.has(y)) held.set(x, held.get(y));
+  };
+  const joined = new Set(); // devices a join's key ties to someone, as repo/device
+  const refused = [];
+  for (const [kind, limit] of Object.entries(join)) {
+    const groups = new Map(); // key -> its devices
+    for (const v of devices) {
+      if (!v[kind]) continue;
+      if (!groups.has(v[kind])) groups.set(v[kind], []);
+      groups.get(v[kind]).push(v);
+    }
+    for (const [key, vs] of groups) {
+      const n = {
+        devices: vs.length, repos: new Set(vs.map(v => v.repo)).size,
+        accounts: new Set(vs.map(v => held.get(find(start(v)))).filter(Boolean)).size,
+      };
+      if (Object.entries(limit).some(([k, max]) => n[k] > max)) {
+        refused.push({ kind, key, ...n });
+        continue;
+      }
+      for (const v of vs) {
+        union(start(vs[0]), start(v));
+        joined.add(`${v.repo}/${v.device}`);
+      }
+    }
+  }
+  const out = new Map(); // root key -> { first, last, keys: Set of the starting keys joined into it, joined }
+  for (const v of devices) {
+    const k = start(v), root = find(k);
+    let u = out.get(root);
+    if (!u) out.set(root, (u = { first: v.first, last: v.last, keys: new Set(), joined: false }));
     else {
       if (v.first && (!u.first || v.first < u.first)) u.first = v.first;
       if (v.last && (!u.last || v.last > u.last)) u.last = v.last;
     }
+    u.keys.add(k);
+    if (joined.has(`${v.repo}/${v.device}`)) u.joined = true;
   }
-  const by = { account: 0, name: 0, device: 0 };
-  for (const k of out.keys()) by[k.startsWith('account:') ? 'account' : k.startsWith('person:') ? 'name' : 'device']++;
-  return { users: out, by };
+  const by = { account: 0, name: 0, machine: 0, device: 0 };
+  for (const u of out.values()) {
+    const keys = [...u.keys];
+    by[keys.some(k => k.startsWith('account:')) ? 'account' : keys.some(k => k.startsWith('person:')) ? 'name' : u.joined ? 'machine' : 'device']++;
+  }
+  for (const u of out.values()) delete u.keys, delete u.joined;
+  return { users: out, by, refused };
 }
 
 // A count with the estimate of what encryption hides added (#550): "≈170" when any of it is
@@ -368,7 +664,7 @@ export function repoReport(n, origin) {
   for (let i = n.series.length - 1; i >= 0; i -= n.week) {
     const w = n.series.slice(Math.max(0, i - n.week + 1), i + 1);
     const sum = k => w.reduce((s, d) => s + (d[k] ?? 0), 0);
-    weeks.push([n.series[i].day, n.series[i].repos, n.series[i].users, n.series[i].contributors,
+    weeks.push([n.series[i].day, n.series[i].users, n.series[i].oldUsers ?? '–', n.series[i].repos, n.series[i].contributors,
       sum('records'), size(sum('bytes')), approx(sum('sessions'), sum('estSessions')), approx(sum('messages'), sum('estMessages'))]);
   }
   const repos = n.repoList.length
@@ -378,15 +674,25 @@ export function repoReport(n, origin) {
     : 'None yet.';
   // A count with its noun, so one repo or user doesn't read as "1 public repos use".
   const count = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
+  const by = { account: 0, name: 0, machine: 0, device: 0, ...n.usersBy };
+  const latest = n.releases?.latest;
+  const os = r => `${r.os.darwin} macOS, ${r.os.linux} Linux, ${r.os.windows} Windows`;
+  const releases = n.releases?.stable?.length
+    ? table(['Release', 'Published', 'Machines', 'By system'], n.releases.stable.map(r => [r.tag, r.published?.slice(0, 10) ?? '–', r.machines, os(r)]))
+    : 'None read yet.';
+  const changes = (n.methodChanges ?? []).map(c => `${c.day} (“${c.what}”)`).join(', ');
+  const refused = (n.usersRefused ?? []).map(r => `${r.kind} ${r.key} (${count(r.devices, 'clone')} in ${count(r.repos, 'repo')}, ${count(r.accounts, 'account')} among the users it would join)`);
   return `# Public repos using Murmur, ${n.today}
 
-**${count(n.repos, 'public repo')}** ${n.repos === 1 ? 'uses' : 'use'} Murmur; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them. About **${count(n.users, 'user')}** ${n.users === 1 ? 'has' : 'have'} run it there; ${n.activeUsers} in the last ${n.week} days.
+About **${count(n.users, 'user')}** ${n.users === 1 ? 'has' : 'have'} run Murmur in public repos, ${n.activeUsers} in the last ${n.week} days. **${count(n.repos, 'public repo')}** ${n.repos === 1 ? 'uses' : 'use'} it; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them.
 
 ${table(['Measure', 'Count'], [
-    ['Public repos using Murmur', n.repos],
-    ['Users, approximately (see below)', n.users],
+    ['Users ever, approximately (see below)', n.users],
     [`Users active in the last ${n.week} days`, n.activeUsers],
     [`New users in the last ${n.week} days`, n.newUsers],
+    ['Users, old count (roughly one per clone, see below)', n.oldUsers ?? '–'],
+    [`Machines on the latest release${latest ? ` (${latest.tag})` : ''} (see below)`, latest ? latest.machines : '–'],
+    ['Public repos using Murmur', n.repos],
     [`Active repos (anything on the bus in the last ${n.week} days)`, n.activeRepos],
     ['Contributors to those repos (each person once)', n.contributors],
     [`New contributors in the last ${n.week} days`, n.newContributors],
@@ -408,9 +714,9 @@ Repos, devices, contributors, bus records and data are measured exactly, whether
 
 ## By week
 
-Each week is the ${n.week} days ending on the date shown, back over the last ${n.days} days; the newest first. Repos, users and contributors are totals as of that day.
+Each week is the ${n.week} days ending on the date shown, back over the last ${n.days} days; the newest first. Users, repos and contributors are totals as of that day, each day's worked out again by today's way of counting.
 
-${table(['Week ending', 'Repos', 'Users', 'Contributors', 'Bus records', 'Data', 'Sessions', 'Messages'], weeks)}
+${table(['Week ending', 'Users', 'Users, old count', 'Repos', 'Contributors', 'Bus records', 'Data', 'Sessions', 'Messages'], weeks)}
 
 ## Repos
 
@@ -418,11 +724,19 @@ Most active in the last ${n.week} days first.
 
 ${repos}
 
+## Releases
+
+Machines on each stable release, newest first: its binaries' downloads, less 1 each (see below). Releases don't add up, since a machine that took two is in both.
+
+${releases}
+
 ## What the numbers mean
 
 - A **repo** is listed once one of its clones reports it: Murmur sends a public repo's address, once per repo, and nothing else.
 - Everything else is read by the census from what each repo shows anyone, once a day${n.counted ? ` (last at ${n.counted})` : ''}: its bus, \`refs/murmur/*\`, and its default branch's commits.
-- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Of ${count(n.users, 'user')}, ${n.usersBy.account} ${n.usersBy.account === 1 ? 'was' : 'were'} matched to an account, ${n.usersBy.name} counted by git name, and ${n.usersBy.device} by device.
+- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Then clones on one machine are one user, in any repo: a device ID made before Murmur 0.5 begins with its machine's hostname, which the census sends hashed. A hostname that many machines have (\`macbook-pro\`, \`ubuntu\`, one a network assigns) is left out, and one that would join users holding two accounts, or spans more than ${JOIN.machine.devices} clones or ${JOIN.machine.repos} repos, joins nothing. Of ${count(n.users, 'user')}, ${by.account} ${by.account === 1 ? 'was' : 'were'} matched to an account, ${by.name} counted by git name, ${by.machine} by machine, and ${by.device} one per clone.${refused.length ? ` Kept from joining: ${refused.join('; ')}.` : ''}${changes ? ` The users charts mark each day the way of counting changed: ${changes}.` : ''}
+- **Users, old count** is the count from before clones on one machine were joined: an account, else a git name, else one per clone. It runs high, and is kept to compare.
+- **Machines on the latest release** is GitHub's download count of the latest stable release's binaries, less 1 each, since every binary of every release shows 1 download from something that fetches each file once. Every clone on a machine shares one binary and only one of them downloads an update, so it counts each machine once, whatever repo it is in, private ones too. It misses machines with updates off and installs from a package manager, and counts one person on two machines twice. Prereleases aren't counted: they go almost only to the maintainer's machines.
 - A **contributor** has committed to a repo's default branch, at any time; one person in two repos counts once. A **device** is one clone running Murmur; a **person**, one git user name among a repo's devices, as their presence shows it, so one person in two repos counts twice. A daemon deletes its presence when it stops, so a device whose owner the census never saw counts as a person of its own.
 - A **session** is an agent session, counted once on the day it started, however often its daemon restarts; a **message**, one agent's message to another. A **bus record** is anything a device wrote to its log, and **data** is the size of those records' events, as JSON, before encryption. Both are always exact, and data is the one measure of how much a bus carries that encryption doesn't hide.
 - A figure marked **≈** includes an estimate. Since Murmur 0.3 a bus is encrypted, which hides what each record is, and nothing is decrypted to count it. A message is then an encrypted record large enough to be one. Checked against the true kinds on four buses (868 messages, 1,598 other records), that missed 2% of the messages, 0 to 5% by repo, the short ones with no body, and took no other record for a message; it would take one for a session's start on a branch of about 40 characters or more, or a tags event with many tags, and those buses had neither. A session is then one that the repo's name registry, which isn't encrypted, names: with the exact count it gave 569 of those buses' 570 sessions. It also names a session that another session started, which writes no start. \`site/census/census.mjs\` has the measurements.

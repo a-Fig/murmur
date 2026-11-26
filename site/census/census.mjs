@@ -17,8 +17,9 @@
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
 // there were, how many bytes those records' events came to, and which devices wrote, each device
-// by a hash with a hash of its owner and of the GitHub account it is matched to (#323); and each
-// contributor by a hash, so one person in two repos counts once.
+// by a hash with a hash of its owner, of the GitHub account it is matched to (#323) and of the
+// machine its ID names (#1245, machine()); and each contributor by a hash, so one person in two
+// repos counts once.
 //
 // Since Murmur 0.3 every event is encrypted (#156), and its kind is sealed inside with the rest.
 // The record count and the bytes stay exact. The sessions and messages an encrypted log hides are
@@ -127,6 +128,36 @@ function identity(email, name) {
 }
 
 const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
+
+// The machine a device ran on, from its ID, or null (#1245). Before #330 a clone's ID was a slug of
+// its machine's hostname and four random hex digits (`laptop-gjlpfunp-ccf2`), so every clone on one
+// machine, in any repo, shares the slug. Encrypted presence hides who owns a clone, so the slug is
+// often the only sign that two clones are one person's. The site gets it hashed, and joins those
+// clones into one user unless they carry different accounts (src/repos.js, users()).
+//
+// Left out, as null: a new ID (`device-` and 6 or 8 hex digits) names no machine, and some slugs
+// name no one machine. A network can assign the hostname (`wifi-10-44-…`, `ip-10-0-0-1`), and a
+// default one is shared by strangers (`macbook-pro`, `users-macbook-pro`, from "User's MacBook
+// Pro", `ubuntu`, `localhost`, `codespaces-…`). A wrong merge costs more than a missed one, so the
+// list errs toward leaving a slug out.
+const OLD_ID = /^([a-z0-9][a-z0-9-]*?)-[0-9a-f]{4}$/;
+const GENERIC = new RegExp('^(?:' + [
+  'device', 'localhost', 'ubuntu', 'debian', 'fedora', 'archlinux', 'linux', 'raspberrypi', 'kali', 'pop-os',
+  'desktop', 'laptop', 'pc', 'computer', 'workstation', 'server', 'dev', 'devbox', 'vm', 'docker', 'runner',
+  // "MacBook Pro", "My MacBook Air (2)", "User's iMac", "Mac mini".
+  '(?:users?s?-|my-)?(?:macbook|imac|mac|mac-mini|mac-studio|mac-pro|mbp|mba)(?:-?pro|-?air)?(?:-\\d+)?',
+  // Hostnames a network or a cloud machine assigns.
+  'wifi-.*', 'ip-.*', 'dhcp-.*', 'codespaces-.*', 'fv-az.*', 'runnervm.*',
+].join('|') + ')$');
+//
+// The old IDs cut a slug to 24 characters (and trimmed a dash), so a slug of 23 or more may be the
+// start of a longer name that numbered machines share (`acme-corp-workstation-00` from -0042 and
+// -0043). It is left out too.
+const CUT = 23;
+export function machine(device) {
+  const slug = OLD_ID.exec(device)?.[1];
+  return slug && slug.length < CUT && !GENERIC.test(slug) ? slug : null;
+}
 
 // Estimating what encryption hides (#550)
 //
@@ -302,7 +333,10 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
       };
     }),
     // The owner's name stays here: census() hashes it, and matches it to an account, before sending.
-    devices: [...devices].sort().map(v => ({ id: hash('device:' + v), owner: owners.get(v) ?? null })),
+    devices: [...devices].sort().map(v => {
+      const m = machine(v);
+      return { id: hash('device:' + v), owner: owners.get(v) ?? null, machine: m && hash('machine:' + m) };
+    }),
     totals: {
       sessions: started.size, messages, records, bytes, est_sessions: estSessions, est_messages: estMessages,
       first_day: sorted[0] ?? null, last_day: sorted[sorted.length - 1] ?? null,
@@ -395,6 +429,72 @@ export function apiLookup(owner, name, deadline = Infinity) {
   };
 }
 
+// Murmur's own release downloads (#1245), for the stats page's machines on the latest release, the
+// one figure that covers private repos. Every clone on a machine shares one binary, and the
+// updater's lock lets only one of them download, so each machine running Murmur downloads each
+// release once, whatever repo it is in. It needs nothing from clients, so #199 holds.
+//
+// Only the binaries count (mur-<os>-<arch>), not SHA256SUMS, which each download fetches too. Every
+// binary of every release, nightlies and release candidates included, shows at least 1 download
+// from something that fetches each file once (seen 2026-11-25), so the site takes 1 off each. The
+// counts are running totals, and a machine that took two releases is in both, so releases don't add
+// up. Drafts aren't read; GitHub hides them from anyone without push access anyway.
+//
+// latest is GitHub's latest release: the newest by creation that isn't a prerelease. Prereleases
+// go almost only to Tyler's own machines, on the prerelease channel.
+const RELEASES = 'a-Fig/murmur';
+const BINARY = /^mur-[a-z0-9]+-[a-z0-9]+(?:\.exe)?$/;
+export async function releaseDownloads({ repo = RELEASES, pages = 10 } = {}) {
+  const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const all = [];
+  for (let page = 1; page <= pages; page++) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100&page=${page}`, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+    const list = await res.json();
+    if (!Array.isArray(list)) throw new Error('GitHub answered with no list');
+    all.push(...list);
+    if (list.length < 100) break;
+  }
+  const releases = all.filter(r => r && !r.draft && typeof r.tag_name === 'string').map(r => ({
+    tag: r.tag_name, published: r.published_at ?? null, prerelease: !!r.prerelease, created: String(r.created_at ?? ''),
+    assets: (r.assets ?? []).filter(a => BINARY.test(a?.name)).map(a => ({ name: a.name, downloads: a.download_count })),
+  })).filter(r => r.assets.length);
+  const latest = releases.filter(r => !r.prerelease).sort((a, b) => b.created.localeCompare(a.created))[0]?.tag;
+  return releases.map(({ created, ...r }) => ({ ...r, latest: r.tag === latest }));
+}
+
+// Where a listed repo is now (#1250): { id, name, created } with its GitHub ID, current owner/name
+// and when it was made, false when GitHub says there is no such public repo (deleted, private, or
+// a name never taken), or null when GitHub can't say (a rate limit, an outage). By its ID when the
+// site has one, which never changes, else by the name it was listed under: GitHub answers a
+// renamed or transferred repo's old name with a redirect to /repositories/<id>, which fetch
+// follows, signed out too. A repo gone by its ID is asked about by name too, since someone may have
+// made a new repo at its address: the site then counts that one as a repo of its own.
+export async function findRepo({ id, name }) {
+  const m = REPO.exec(name ?? '');
+  const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const ask = async path => {
+    try {
+      const res = await fetch(`https://api.github.com/${path}`, { headers, signal: AbortSignal.timeout(10000) });
+      if (res.status === 404) return false;
+      if (!res.ok) return null;
+      const r = await res.json();
+      if (r?.private) return false;
+      const full = typeof r?.full_name === 'string' && REPO.test('github.com/' + r.full_name);
+      if (!Number.isSafeInteger(r?.id) || r.id <= 0 || !full) return null;
+      return { id: r.id, name: r.full_name, ...(typeof r.created_at === 'string' && { created: r.created_at }) };
+    } catch {
+      return null;
+    }
+  };
+  const byName = () => (m ? ask(`repos/${m[1]}/${m[2]}`) : null);
+  if (!id) return byName();
+  const found = await ask(`repositories/${id}`);
+  return found === false ? byName() : found;
+}
+
 // Fetches one repo's bus and its default branch's commits into a scratch repo and counts them,
 // within BUDGET. `url`, where it is fetched from, and `lookup` are for the tests.
 //
@@ -405,9 +505,15 @@ export function apiLookup(owner, name, deadline = Infinity) {
 // The name registry is fetched on its own, because a fetch that names a ref the remote doesn't
 // have fails whole, and a bus from before the registry has none. Without it the repo is counted as
 // before, with no estimate of its sessions; the site keeps the estimate it was last sent.
-export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, lookup = apiLookup } = {}) {
+//
+// name is the repo's current name; aliases are the other addresses it has had (#1250). A clone on
+// an old URL names the repo by its old address, so whatever matches a clone to the repo it is in
+// (#1244's commit fingerprint) is tried under every one of names.
+export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, lookup = apiLookup, aliases = [] } = {}) {
   const m = REPO.exec(name);
   if (!m) throw new Error(`not a repo: ${name}`);
+  const names = [...new Set([name, ...aliases].map(n => n.toLowerCase()))];
+  void names; // #1244 hashes each commit identity under each of these.
   const deadline = Date.now() + budget;
   url ??= `https://github.com/${m[1]}/${m[2]}.git`;
   const dir = mkdtempSync(join(tmpdir(), 'census-'));
@@ -424,10 +530,11 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
     const commits = authors(dir, { deadline });
     const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, lookup(m[1], m[2], deadline));
-    const devices = bus.devices.map(({ id, owner }) => ({
+    const devices = bus.devices.map(({ id, owner, machine }) => ({
       id,
       person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,
       account: matched.has(owner) ? hash(matched.get(owner)) : null,
+      machine,
     }));
     return { repo: name.toLowerCase(), ...bus, devices, contributors: contributors(commits) };
   } finally {
@@ -528,21 +635,76 @@ async function call(path, init = {}) {
 //   The census sends only what the site's limits allow, so a refusal means the two disagree, or
 //   the site is down: something to fix.
 // - So does a run in which no repo could be counted at all.
-export async function main(args, { read = census } = {}) {
+//
+// A run of every listed repo, as the schedule's is, also reads Murmur's release downloads
+// (releaseDownloads, `downloads` here for the tests) and sends them. GitHub not answering is a
+// warning, since tomorrow's run reads them again; the site refusing them fails the run.
+//
+// Each repo is found on GitHub first (#1250, `find` here for the tests): by its ID when the site
+// has one, else by the name it was listed under, which follows a rename. The bus is read from its
+// current name, and the counts go back with the row's key and what GitHub said, so the site can
+// rename the row or merge two rows that turn out to be one repo. A repo GitHub says is gone keeps
+// its counts, as one that can't be read does. When GitHub can't say, it is read by the name it was
+// listed under, as before.
+export async function main(args, { read = census, downloads = releaseDownloads, find = findRepo } = {}) {
   const dry = args.includes('--dry');
-  let names = args.filter(a => !a.startsWith('--'));
+  const named = args.filter(a => !a.startsWith('--'));
   if (!dry && !process.env.CENSUS_KEY) throw new Error('CENSUS_KEY is not set');
-  if (!names.length) names = (await call('/v1/census')).repos;
+  const every = !named.length;
+  let list = named.map(name => ({ name }));
+  // A site from before #1250 lists names only, and takes counts only under the name it listed, so
+  // its repos aren't looked up on GitHub.
+  let ask = find;
+  if (every) {
+    const listed = await call('/v1/census');
+    list = listed.list ?? listed.repos.map(name => ({ name }));
+    if (!listed.list) ask = async () => null;
+  }
+  const names = list.map(r => r.name);
+  let releasesFailed = null;
+  if (every) {
+    let releases = null;
+    try {
+      releases = await downloads();
+    } catch (err) {
+      console.error(`release downloads: not read: ${err.message || err}`);
+      if (process.env.GITHUB_ACTIONS === 'true') console.log('::warning title=census::release downloads not read');
+    }
+    if (releases && dry) console.log(`release downloads: ${releases.length} releases, not sent (--dry)`);
+    else if (releases) {
+      try {
+        await call('/v1/census/releases', { method: 'POST', body: JSON.stringify({ releases }) });
+        console.log(`release downloads: ${releases.length} releases sent`);
+      } catch (err) {
+        const why = String(err.message || err).trim();
+        // A site from before release downloads has no such path. The census reads them again
+        // tomorrow, so until the site that takes them is deployed this is a warning, not a red run.
+        if (/: 404(?!\d)/.test(why)) {
+          console.error(`release downloads: not sent, the site doesn't take them yet: ${why}`);
+          if (process.env.GITHUB_ACTIONS === 'true') console.log("::warning title=census::release downloads not sent: the site doesn't take them yet");
+        } else {
+          releasesFailed = why;
+          console.error(`release downloads: not sent: ${why}`);
+        }
+      }
+    }
+  }
   let unread = 0;
   const skipped = [], unsent = [];
   const write = stepSummary();
   write(summaryHead(names.length, new Date()));
   const tally = summaryTally(); // r is { name, kind, why, counts }, written and tallied, then let go
   const done = r => (tallied(tally, r), write(summaryRow(r)));
-  for (const name of names) {
+  for (const r of list) {
+    const name = r.name;
     let c;
     try {
-      c = await read(name);
+      const gh = await ask(r);
+      if (gh === false) throw new Error('GitHub has no such public repo: gone, private, or never there');
+      const current = gh ? 'github.com/' + gh.name : name;
+      c = await read(current, { aliases: [name, ...(r.aliases ?? [])].filter(n => n.toLowerCase() !== current.toLowerCase()) });
+      if (r.key) c.key = r.key;
+      if (gh) c.github = gh;
       const big = tooBig(c);
       if (big) throw skip(big);
     } catch (err) {
@@ -587,6 +749,7 @@ export async function main(args, { read = census } = {}) {
   write(summaryEnd(tally));
   if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
   if (unread + skipped.length === names.length && names.length) throw new Error('no repo could be counted');
+  if (releasesFailed) throw new Error(`release downloads not sent: ${releasesFailed}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
