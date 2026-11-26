@@ -111,9 +111,9 @@ would need one per commit.
     Clones that commit as one email show one fingerprint in the public registry, so anyone can see
     which device IDs share an owner, which #330's random device IDs had stopped showing.
   - *A renamed or moved repo* (Opus's review of #1248). The daemon hashes the repo as its remote
-    is written, the census as GitHub names it now, so a clone still on an old URL, which GitHub
-    redirects, never matches and is counted as before. #1250 closes the gap on the census's side:
-    repos keyed by GitHub's ID, with every old name hashed too.
+    is written, which for a clone still on an old URL, which GitHub redirects, is an old address.
+    So the census hashes each commit email under every address the site has for the repo (#1250),
+    its current one first. A clone on an address the site never saw still matches nothing.
 - **What the stats page leads with** (Tyler, 2026-11-13). Encryption doesn't hide how many records a
   device wrote and how large, so the page is built around those. Bytes are each record's event as
   JSON, the event inside the box for an encrypted one, so a log weighs the same either way, and they
