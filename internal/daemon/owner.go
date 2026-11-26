@@ -41,9 +41,11 @@ func (d *Daemon) checkOwnerLocked() error {
 	return fmt.Errorf("only the mesh owner (%s) can rotate the team key", d.deviceCalledLocked(d.st.TeamOwner.Device))
 }
 
+var errTeamHistoryPending = errors.New("Murmur is still verifying the team history. Try again after it syncs.")
+
 func (d *Daemon) checkOwnerHistoryLocked() error {
 	if d.st.TeamTip != "" && !d.st.TeamOwnerChecked || d.st.TeamReplayThrough != "" {
-		return errors.New("Murmur is still verifying the team history. Try again after it syncs.")
+		return errTeamHistoryPending
 	}
 	return nil
 }

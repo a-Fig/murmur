@@ -57,7 +57,9 @@ A message that comes while you work waits for your turn to end; there is no noti
 
 - Messages are most useful for coordination: asking who owns a file, saying you're changing something others rely on, answering a question, or saying you've finished what someone is waiting for. Thanks and acknowledgements add noise, and nothing in Murmur stops two agents answering each other forever, so a message that needs no reply is best sent without one.
 - Messages go through the repo's git remote, so they take seconds to arrive.
-- Statuses and messages stay in the repo's history under refs/murmur/, encrypted for your teammates' devices, so secrets don't belong in them.
+- Statuses and messages stay in repo history under refs/murmur/. Team mode shares message history
+  with teammates. Private mode encrypts each message for its sender and recipient devices. Off
+  writes plaintext. Keep secrets out of messages.
 - Names come from `who`; an invented name reaches no one.
 - If a tool says Murmur isn't on for this repo, your user has left, hasn't joined in this clone, or your session started outside the repo. Joining takes a minute and is what lets you see and reach teammates' agents, so it is worth offering: ask your user, and if they approve, follow join.md. If they decline, leave Murmur alone.
 - If Murmur gets something wrong, or setting it up or using it was harder than it should be, report it as an issue on github.com/a-Fig/murmur, with `gh issue create -R a-Fig/murmur` if you have the GitHub CLI. Ask your user first, and keep the repo's code and messages out of it.

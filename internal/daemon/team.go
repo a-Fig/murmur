@@ -277,6 +277,14 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			}
 		}
 	}
+	// The pages may contain intermediate policies. Persist the accepted target before
+	// applying any of them so a paused read keeps writes blocked across a restart.
+	d.mu.Lock()
+	if d.st.TeamReplayThrough != sha {
+		d.st.TeamReplayThrough = sha
+		d.saveLocked()
+	}
+	d.mu.Unlock()
 	err := d.repo.Log(ctx, from, sha, d.maxRecord, func(commits []bus.Commit) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -286,7 +294,6 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 				if checkOwner {
 					d.repoModeStamp.Add(1)
 					d.st.TeamOwner = nil
-					d.st.TeamReplayThrough = replayThrough
 				}
 			}
 			for i, c := range commits {
@@ -309,6 +316,9 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
+	if tip == "" || replayThrough != "" {
+		d.kickPresence()
+	}
 	d.kickTeam()
 }
 
@@ -544,6 +554,10 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	var recs []bus.TeamRecord
 	var newKey *ecdh.PrivateKey
 	now := time.Now()
+	if ask == nil && d.checkOwnerHistoryLocked() != nil {
+		d.mu.Unlock()
+		return "", false, nil
+	}
 	rotate := ask != nil && ask.rotate
 	if o := d.st.TeamOwner; o != nil && o.Seq == 0 && d.isOwnerLocked() && d.checkOwnerHistoryLocked() == nil {
 		policy := o.Policy

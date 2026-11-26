@@ -289,6 +289,14 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	if _, ok := remote[brand.NamesRef]; !ok {
 		d.processNames(first, "") // not on the remote
 	}
+	if _, onRemote := remote[brand.TeamRef]; !onRemote {
+		d.mu.Lock()
+		target := d.st.TeamReplayThrough
+		d.mu.Unlock()
+		if target != "" {
+			d.processTeam(first, target)
+		}
+	}
 	var logs []string
 	for _, ref := range readOrder(remote) {
 		sha := remote[ref]
@@ -316,7 +324,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 	firstErr := first.Err()
 	cancelFirst()
 	d.mu.Lock()
-	if tip, ok := remote[brand.TeamRef]; !ok || failed[brand.TeamRef] == nil && d.st.TeamTip == tip {
+	if tip, ok := remote[brand.TeamRef]; d.checkOwnerHistoryLocked() == nil && (!ok || failed[brand.TeamRef] == nil && d.st.TeamTip == tip) {
 		d.teamReadSeq = d.syncSeq // every epoch the listing could show has been read (openEventLocked)
 	}
 	d.mu.Unlock()
@@ -1522,8 +1530,9 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 	}
 	// A push carries the sends pending under it, so it goes out only if they still may: a send
 	// whose Send files switch went off is taken out of the log first (dropSwitchedOff).
-	modeStill := func() bool { return d.repoModeStamp.Load() == modeStamp }
-	stillAll := func() bool { return modeStill() && (still == nil || still()) && d.pendingStill() }
+	stillAll := func() bool {
+		return d.checkRepoWriteMode(modeStamp) == nil && (still == nil || still()) && d.pendingStill()
+	}
 	lease := ""
 	reconciled := false
 	for {
@@ -1541,8 +1550,8 @@ func (d *Daemon) appendEventIf(ctx context.Context, e bus.Event, still func() bo
 			err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, lease, stillAll)
 		}
 		if errors.Is(err, errSendOff) {
-			if !modeStill() {
-				return errRepoModeChanged
+			if blocked := d.checkRepoWriteMode(modeStamp); blocked != nil {
+				return blocked
 			}
 			if still == nil || still() {
 				continue // a pending send's policy changed as this waited: build without it
@@ -2124,10 +2133,13 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	ref := d.presenceRef()
 	if err := d.pushFrom(ctx, d.repo, sha, ref, bus.Force, "", func() bool {
-		return d.repoModeStamp.Load() == modeStamp
+		return d.checkRepoWriteMode(modeStamp) == nil
 	}); err != nil {
 		if errors.Is(err, errSendOff) {
-			return errRepoModeChanged
+			if blocked := d.checkRepoWriteMode(modeStamp); blocked != nil {
+				return blocked
+			}
+			return errTeamHistoryPending
 		}
 		return err
 	}

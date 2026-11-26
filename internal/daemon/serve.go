@@ -784,6 +784,23 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpRepoMode:
+		if req.EncryptionMode != "" {
+			if req.EncryptionMode == bus.EncryptionOff && !req.AllowPlaintext {
+				return fail("Switching encryption off requires explicit confirmation. Anyone who can read the remote can read new messages.")
+			}
+			if err := d.setRepoMode(ctx, req.EncryptionMode); err != nil {
+				return fail(err.Error())
+			}
+		} else {
+			d.awaitFirstSync(ctx)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if err := d.checkOwnerHistoryLocked(); err != nil {
+			return fail(err.Error())
+		}
+		return proto.Response{OK: true, Note: "Repo encryption: " + d.repoModeLocked() + "."}
 	case proto.OpTransferOwner:
 		if err := d.transferOwner(ctx, req.To); err != nil {
 			return fail(err.Error())
