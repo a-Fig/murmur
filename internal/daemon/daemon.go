@@ -1137,7 +1137,7 @@ type state struct {
 	TeamOwner *meshOwner `json:"teamOwner,omitempty"`
 	// The old teamOwnerChecked flag predates transfer and legacy ownership.
 	TeamOwnerChecked  bool                 `json:"teamHistoryVerified,omitempty"`
-	TeamReplayThrough string               `json:"teamReplayThrough,omitempty"` // cached tip that an upgrade must reverify
+	TeamReplayThrough string               `json:"teamReplayThrough,omitempty"` // target to finish verifying before writing
 	Epochs            []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted       map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark         map[string]time.Time `json:"grantMark,omitempty"`

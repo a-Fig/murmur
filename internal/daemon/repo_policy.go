@@ -53,6 +53,16 @@ func (d *Daemon) nextRepoPolicyLocked(change repoPolicyChange) (bus.RepoPolicy, 
 	return policy, nil
 }
 
+// checkRepoWriteMode is used at the push slot, after a record was encoded.
+func (d *Daemon) checkRepoWriteMode(stamp uint64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.repoModeStamp.Load() != stamp {
+		return errRepoModeChanged
+	}
+	return d.checkOwnerHistoryLocked()
+}
+
 // repoModeLocked defaults to team encryption until this device has an owner policy.
 func (d *Daemon) repoModeLocked() string {
 	if o := d.st.TeamOwner; o != nil {

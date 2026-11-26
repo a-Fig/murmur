@@ -472,7 +472,7 @@ func (d *Daemon) openEventLocked(e bus.Event, dev, ref, sha string) (out bus.Eve
 		d.log.Printf("%s: ignoring %s: %v", ref, short(sha), err)
 		return bus.Event{}, false, false
 	}
-	if d.repoModeLocked() == bus.EncryptionOff {
+	if d.repoModeLocked() == bus.EncryptionOff && d.checkOwnerHistoryLocked() == nil {
 		// Unreadable encrypted history must not hold newer plaintext events behind a grant.
 		return bus.Event{}, false, false
 	}

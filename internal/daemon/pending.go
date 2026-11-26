@@ -169,12 +169,18 @@ func (d *Daemon) retryPending() {
 		return
 	}
 	ref, sha := d.meshRef(), d.ownTip
-	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", d.pendingStill)
+	stamp := d.pendSends[0].modeStamp
+	still := func() bool { return d.checkRepoWriteMode(stamp) == nil && d.pendingStill() }
+	err := d.pushFrom(ctx, d.repo, sha, ref, bus.FastForward, "", still)
 	if errors.Is(err, errSendOff) {
 		// A send's encryption mode or file policy changed while it waited. If the wait left no time to ask the
 		// remote, the next retry drops them as it starts; nothing is pushed until then.
 		if room() {
 			d.dropSwitchedOff(d.bgCtx)
+			if len(d.pendSends) > 0 && last && time.Since(d.pendFrom) >= d.opt.PendingGiveUp &&
+				errors.Is(d.checkRepoWriteMode(stamp), errTeamHistoryPending) {
+				d.giveUpPending(errTeamHistoryPending, true)
+			}
 		}
 		return
 	}
@@ -208,7 +214,7 @@ func (d *Daemon) retryPending() {
 					}
 					// Unchecked sends stay pending, unless give-up below says time is up.
 				} else {
-					err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, d.pendingStill)
+					err = d.pushFrom(ctx, d.repo, sha, ref, bus.Lease, tip, still)
 					if err == nil {
 						d.ownLanded(ctx, ref, sha, false)
 						return
@@ -377,6 +383,8 @@ func givenUpWhy(err error) (why, next string) {
 		return "sending files was turned off", next
 	case errors.Is(err, errRepoModeChanged):
 		return "the repo's encryption mode changed", next
+	case errors.Is(err, errTeamHistoryPending):
+		return "Murmur is still verifying the team history", next
 	case errors.Is(err, ErrNoConsent):
 		return "this clone left " + brand.Product, next
 	case errors.Is(err, ErrInvisible):
