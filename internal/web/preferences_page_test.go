@@ -50,6 +50,15 @@ async function load(getWorks, answers = true) {
   console.log("the read works: " + (await load(true)));
   console.log("the read fails: " + (await load(false)));
   console.log("no answer: " + (await load(true, false)));
+  const migrated = {
+    NAME: "Murmur",
+    THEMES: [["dark"], ["dim"], ["light"], ["sky"], ["night"], ["day"]],
+    legacyKeys: { theme: ":theme", onlyMine: ":only-mine", tagsFolded: ":tags-folded" },
+    localStorage: { getItem: (k) => (k === "Murmur:theme" ? "murmur" : null) },
+  };
+  vm.createContext(migrated);
+  vm.runInContext(src + "\nthis.legacyPreferences = legacyPreferences;", migrated);
+  console.log("legacy murmur: " + JSON.stringify(migrated.legacyPreferences()));
 })();
 `
 
@@ -78,7 +87,8 @@ func TestAFailedImportStillReadsTheSavedPreferences(t *testing.T) {
 	got := strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n"))
 	want := "the read works: POST,GET onlyMine=true tagsFolded=false theme=light/light kept=Murmur:theme,Murmur:only-mine\n" +
 		"the read fails: POST,GET onlyMine=false tagsFolded=false theme=sky/sky kept=Murmur:theme,Murmur:only-mine\n" +
-		"no answer: POST onlyMine=false tagsFolded=false theme=sky/sky kept=Murmur:theme,Murmur:only-mine"
+		"no answer: POST onlyMine=false tagsFolded=false theme=sky/sky kept=Murmur:theme,Murmur:only-mine\n" +
+		`legacy murmur: {"theme":"dim"}`
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}

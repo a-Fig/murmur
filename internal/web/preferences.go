@@ -23,15 +23,23 @@ func (p Preferences) theme() string { return cmp.Or(p.Theme, "dim") }
 
 // DarkFrame is the color scheme the desktop window uses before the page loads.
 func DarkFrame(theme string) bool {
-	return theme != "light" && theme != "murmur" && theme != "sky" && theme != "day"
+	return theme != "light" && theme != "sky" && theme != "day"
 }
 
 func validTheme(theme string) bool {
 	switch theme {
-	case "", "dark", "dim", "light", "murmur", "sky", "night", "day":
+	case "", "dark", "dim", "light", "sky", "night", "day":
 		return true
 	}
 	return false
+}
+
+// migrateTheme maps removed themes to their replacement; unknown themes stay unknown.
+func migrateTheme(theme string) string {
+	if theme == "murmur" {
+		return "dim"
+	}
+	return theme
 }
 
 // ReadPreferences reads the clone's filters and any theme saved by an older build.
@@ -48,6 +56,7 @@ func ReadPreferences(dir string) (Preferences, error) {
 		// The next successful change replaces the unreadable file with valid preferences.
 		return Preferences{}, err
 	}
+	p.Theme = migrateTheme(p.Theme)
 	if !validTheme(p.Theme) {
 		// Keep the other choices if a newer version saved a theme this build lacks.
 		p.Theme = ""
@@ -58,6 +67,7 @@ func ReadPreferences(dir string) (Preferences, error) {
 // WithPreferences sets the initial preferences and their disk writer before serving the page.
 // Without a writer, as on the devserver, changes last for the lifetime of the server.
 func (s *Server) WithPreferences(p Preferences, themePath string, save func(Preferences) error) error {
+	p.Theme = migrateTheme(p.Theme)
 	s.preferences, s.savePreferences, s.themePath = p, save, themePath
 	if themePath != "" && p.Theme != "" {
 		_, err := saveTheme(themePath, p.Theme, true)
@@ -92,13 +102,16 @@ func (s *Server) updatePreferences(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	importing := r.Method == http.MethodPost
+	if importing {
+		p.Theme = migrateTheme(p.Theme)
+	}
 	if !validTheme(p.Theme) {
 		writeError(w, http.StatusBadRequest, "unknown theme")
 		return
 	}
 	s.prefMu.Lock()
 	defer s.prefMu.Unlock()
-	importing := r.Method == http.MethodPost
 	var shared string
 	if s.themePath != "" {
 		if p.Theme == "" {

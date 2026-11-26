@@ -234,107 +234,6 @@
   --secondary-label: oklch(48% 0.016 285.938);
 }
 
-/*
- * Murmur: the website's four colors (docs/brand.md) over the same design. Cream is the page, ink
- * the text, blue what is picked or pressed, and butter a person's own messages, as the site's
- * message cards are butter. It starts from Light's tokens for what the brand has no color for:
- * the greens, ambers and reds of states.
- */
-:root[data-theme="murmur"] {
-  color-scheme: light;
-  --m-blue: #225bff;
-  --m-blue-deep: #1640bf;
-  --m-cream: #fffbea;
-  --m-cream-2: #f5f2e3;
-  --m-cream-3: #ddd7b8;
-  --m-butter: #fdee8c;
-  --m-ink: #0e1b45;
-  --m-ink-soft: #3a4670;
-  --background: var(--m-cream);
-  --foreground: var(--m-ink);
-  --card: #fffef7;
-  --popover: #fffef7;
-  --primary: var(--m-blue);
-  --primary-foreground: var(--m-cream);
-  --secondary: var(--m-cream-2);
-  --secondary-foreground: var(--m-ink);
-  --muted: var(--m-cream-2);
-  --muted-foreground: var(--m-ink-soft); /* 7:1 on a picked row too */
-  --message-surface: var(--m-butter);
-  --accent: rgb(14 27 69 / 6%);
-  --accent-foreground: var(--m-ink);
-  --destructive: var(--red-500);
-  --destructive-foreground: oklch(48% 0.2 27.518);
-  --border: rgb(14 27 69 / 13%);
-  --input: rgb(14 27 69 / 20%);
-  --info: var(--m-blue);
-  --info-foreground: var(--m-blue-deep);
-  --success-foreground: oklch(44% 0.118 165.612);
-  --warning-foreground: oklch(45% 0.163 48.998);
-  --pr-open: oklch(47% 0.118 165.612);
-  --pr-draft: var(--muted-foreground);
-  --pr-merged: oklch(47% 0.22 304);
-  --row-hover: rgb(14 27 69 / 5%);
-  --row-selected: rgb(34 91 255 / 11%);
-  --composer: #fffef7;
-  --composer-edge: rgb(14 27 69 / 13%);
-  --scrollbar-thumb: rgb(14 27 69 / 16%);
-  --scrollbar-thumb-hover: rgb(14 27 69 / 26%);
-  --scrim: rgb(14 27 69 / 40%);
-  --shadow-xs-5: 0 1px 2px 0 rgb(14 27 69 / 6%);
-  --shadow-xs-10: 0 1px 2px 0 rgb(14 27 69 / 12%);
-  --shadow-popover: 0 16px 40px -18px rgb(14 27 69 / 30%);
-  --shadow-dialog: 0 24px 64px -24px rgb(14 27 69 / 38%);
-  /* On cream, the green and amber dots a step darker than Light's, for 3:1 (WCAG 1.4.11). */
-  --success: oklch(57% 0.145 163.225);
-  --warning: oklch(53% 0.163 48.998);
-  --edge: color-mix(in oklab, var(--foreground) 55%, transparent);
-  --dot-off: var(--muted-foreground);
-}
-/* The sidebar is ink, as the terminals in the site's drawings are: cream and blue have room for one
- * step of quieter text between them and ink has room for several, and the sidebar is mostly quiet
- * text. Everything inside it takes dark tokens, its menus included, so nothing cream-on-cream. */
-[data-theme="murmur"] [data-app-sidebar] {
-  color-scheme: dark;
-  --sidebar: var(--m-ink);
-  --sidebar-foreground: var(--m-cream);
-  --sidebar-muted-foreground: #a9b6e6;
-  --sidebar-row-hover: rgb(255 251 234 / 7%);
-  --sidebar-row-active: rgb(34 91 255 / 55%);
-  --sidebar-row-selected: rgb(34 91 255 / 45%);
-  --sidebar-border: rgb(255 251 234 / 12%);
-  --sidebar-edge: transparent;
-  --secondary-label: #a9b6e6;
-  --background: var(--m-ink);
-  --foreground: var(--m-cream);
-  --card: #16265c;
-  --popover: #16265c;
-  --muted-foreground: #a9b6e6;
-  --placeholder: #a9b6e6;
-  --secondary: rgb(255 251 234 / 4%);
-  --secondary-foreground: var(--m-cream);
-  --muted: rgb(255 251 234 / 4%);
-  --accent: rgb(255 251 234 / 8%);
-  --accent-foreground: var(--m-cream);
-  --border: rgb(255 251 234 / 12%);
-  --input: rgb(255 251 234 / 18%);
-  --row-hover: rgb(255 251 234 / 7%);
-  --row-selected: rgb(34 91 255 / 45%);
-  --info-foreground: #a9b6e6;
-  --destructive-foreground: var(--red-400);
-  --success: var(--emerald-500);
-  --success-foreground: var(--emerald-400);
-  --warning: var(--amber-500);
-  --warning-foreground: var(--amber-400);
-  --pr-open: color-mix(in oklab, var(--emerald-300) 90%, transparent);
-  --pr-draft: #a9b6e6;
-  --pr-merged: var(--purple-400);
-  --edge: color-mix(in oklab, var(--foreground) 42%, transparent);
-  --dot-off: color-mix(in oklab, #a9b6e6 80%, transparent);
-  --scrollbar-thumb: rgb(255 251 234 / 14%);
-  --scrollbar-thumb-hover: rgb(255 251 234 / 22%);
-}
-
 /* Sky uses the Figma v3 palette and Rubik, with Light's status colors and the usual panes. */
 :root[data-theme="sky"] {
   --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
@@ -372,8 +271,9 @@
   background: linear-gradient(155deg, #fffdf4 10%, #f7fbff 55%, #e9f3ff);
 }
 
-/* Night is the Figma v3 design's dark version: near-black navy panes, white text, the v3 blue for
- * what is picked or pressed and a person's own messages, and light blue for quieter text. */
+/* Murmur Night (id "night") is the Figma v3 design's dark version: near-black navy panes, white
+ * text, the v3 blue for what is picked or pressed and a person's own messages, and light blue for
+ * quieter text. */
 :root[data-theme="night"] {
   --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
   --background: #0b1321;
@@ -539,10 +439,10 @@
   font-size: 1.25rem;
 }
 
-/* Day is the Figma v3 design's light version (#1018's light frame), drawn as Night is: navy text on
- * white glass over a butter page, a cream sidebar, butter for the picked sidebar row, and the v3 blue
- * for what is pressed and a person's own messages. The colours of states are Light's, a step darker,
- * as on Murmur's cream. */
+/* Murmur Day (id "day") is the Figma v3 design's light version (#1018's light frame), drawn as
+ * Murmur Night is: navy text on white glass over a butter page, a cream sidebar, butter for the
+ * picked sidebar row, and the v3 blue for what is pressed and a person's own messages. The colours
+ * of states are Light's, a step darker for cream. */
 :root[data-theme="day"] {
   --font-sans: "Rubik Variable", "Inter Variable", "Segoe UI", system-ui, sans-serif;
   --background: #fffcef; /* the v3 card, white at 74% over the butter page */
@@ -1360,9 +1260,6 @@ a.g-pr:hover {
 }
 [data-theme="light"] .brand-mark {
   content: url("/assets/lockup-ink.svg");
-}
-[data-theme="murmur"] .brand-mark {
-  content: url("/assets/lockup-cream.svg");
 }
 [data-theme="sky"] .brand-mark {
   content: url("/assets/lockup-navy.svg");
@@ -2288,6 +2185,10 @@ a.g-pr:hover {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+.row-control .segmented {
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 /* About's version row (#1114): the quiet line under the version, and its status on the right. */
 .version-note,
