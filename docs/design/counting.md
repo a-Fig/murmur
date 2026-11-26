@@ -82,14 +82,18 @@ would need one per commit.
   2026-11-25, against some 23 to 27 people by hand. So each entry a clone adds to the name registry
   carries `author`, its commit fingerprint: the first 16 hex digits of
   `sha256("murmur-owner\0" + "github.com/<owner>/<name>" + "\0" + email)`, the repo and email
-  lowercased, where the email is what `git var GIT_AUTHOR_IDENT` gives, the `user@hostname` address
-  git makes up included (`bus.AuthorPrint`, read again at each push). The registry is in the clear
+  trimmed and lowercased, where the email is what `git var GIT_AUTHOR_IDENT` gives, the
+  `user@hostname` address git makes up included (`bus.AuthorPrint`, read again at each push). A
+  bus commit's author is always its device (`bus.Repo.NewCommit` sets it in the environment, which
+  wins over `-c`), so the census reads whose a fingerprint is from it. The registry is in the clear
   and never deleted, so the fingerprint outlasts a session that starts and stops between two runs.
-  The census hashes every commit author email on every branch the same way, keeps every
-  fingerprint a clone has written (an address made up from a hostname changes with the network),
+  The census hashes every commit author email on every branch the same way, reads every
+  fingerprint a clone has written that the registry's history still holds (an address made up from
+  a hostname changes with the network; the site keeps what one matched after a repair drops it),
   and ties the clone to the identity they match: its GitHub account, else the email. It sends that
   as the device's `author`, and the site counts it as the device's account, ahead of the name match,
-  so one person's clones, machines and boxes count once, across repos.
+  so one person's clones, machines and boxes count once, across repos. Where the fingerprint finds
+  only an email no account is linked to and the owner's git name found a login, the login is sent.
   - *No opt-out.* It only ties a clone to an identity its owner already showed in that repo's
     commits, and the repo is in the hash, so a fingerprint links nothing across repos by itself.
     Nothing new is sent to us: it is on the bus, like the device IDs in the registry.
@@ -102,7 +106,13 @@ would need one per commit.
     account elsewhere) counts twice; a `user.email` linked to the account fixes it. A clone whose
     owner never commits in its repo, or that runs a version from before, is counted as before.
     Someone who guesses an email can confirm that its owner runs Murmur in a repo they have never
-    committed to.
+    committed to; a `user@hostname` address is easy to guess, and 64 bits can be tried offline.
+    Clones that commit as one email show one fingerprint in the public registry, so anyone can see
+    which device IDs share an owner, which device IDs since #330 no longer showed.
+  - *A renamed or moved repo* (Opus's review of #1248). The daemon hashes the repo as its remote
+    is written, the census as GitHub names it now, so a clone still on an old URL, which GitHub
+    redirects, never matches and is counted as before. Fixing it would mean a lookup per clone, which
+    Tyler hasn't been asked for; #1249 has the options.
 - **What the stats page leads with** (Tyler, 2026-11-13). Encryption doesn't hide how many records a
   device wrote and how large, so the page is built around those. Bytes are each record's event as
   JSON, the event inside the box for an encrypted one, so a log weighs the same either way, and they

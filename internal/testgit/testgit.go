@@ -12,4 +12,8 @@ import "os"
 func Isolate() {
 	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// Nor a git identity from the environment, which would win over a test's own config (#1244).
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		os.Unsetenv(k)
+	}
 }

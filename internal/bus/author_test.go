@@ -1,6 +1,14 @@
 package bus
 
-import "testing"
+import (
+	"context"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/a-Fig/murmur/internal/gitx"
+)
 
 // The census (site/census/census.mjs, authorPrint) must make the same hash from a commit's author
 // email, so these values are in its tests too (site/test/census.test.mjs).
@@ -33,5 +41,31 @@ func TestAuthorPrint(t *testing.T) {
 		if got := AuthorPrint(c[0], c[1]); got != "" {
 			t.Errorf("AuthorPrint(%q, %q) = %q, want none", c[0], c[1], got)
 		}
+	}
+}
+
+// A bus commit names its device as author and committer, even under an environment that sets
+// someone's identity: a daemon inherits the environment of the session that started it, and the
+// census reads a registry commit's author as the device that wrote it (#1244).
+func TestNewCommitIsTheDevicesWhateverTheEnvironment(t *testing.T) {
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(k, "someone")
+	}
+	dir := filepath.Join(t.TempDir(), "r.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	r := &Repo{Git: gitx.Git{Dir: dir}, Name: "dev-0001", Email: "dev-0001@murmur.invalid"}
+	ctx := context.Background()
+	sha, err := r.NewCommit(ctx, "", "x\n\n{}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Git.Run(ctx, "", "log", "-1", "--format=%an <%ae> %cn <%ce>", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(out), "dev-0001 <dev-0001@murmur.invalid> dev-0001 <dev-0001@murmur.invalid>"; got != want {
+		t.Fatalf("the commit is by %q, want %q", got, want)
 	}
 }

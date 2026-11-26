@@ -457,8 +457,8 @@ export const METHOD_CHANGES = [
 // user counts once across repos, from its devices' first day to their last.
 //
 // by says how many users were told apart each way: by a commit fingerprint, else by an account, else
-// by a git name, else by a machine, else one per clone, a lone device that nothing ties to anyone. refused lists the keys
-// JOIN's limits kept from joining, for the report.
+// by a git name, else by a machine, else one per clone, a lone device that nothing ties to anyone.
+// refused lists the keys JOIN's limits kept from joining, for the report.
 //
 // With join {}, nothing is joined: that is the count from before #1245, roughly one user per clone,
 // which the stats keep showing as the old count (Tyler, 2026-11-25). A key added to JOIN later

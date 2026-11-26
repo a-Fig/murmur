@@ -452,9 +452,13 @@ export async function accounts(owners, commits, lookup) {
 // Every commit author on every branch who isn't a bot or a shared identity, by the fingerprint a
 // clone committing as them writes (#1244): fingerprint -> { identity, sha }, sha one of their
 // commits, for lookup. The email is as git wrote it (%ae), not as a .mailmap would map it: the
-// clone's fingerprint is of what its git writes.
+// clone's fingerprint is of what its git writes. The branches are under BRANCHES, not refs/heads/:
+// there, one named master would give the scratch repo's HEAD a commit, and git log in a bare repo
+// would then read HEAD:.mailmap, fetching trees and blobs from the remote and mapping the
+// contributors' emails, which the census has never done (Opus's review of #1248).
+const BRANCHES = 'refs/census/heads/';
 export function printsOf(dir, repo, { deadline = Infinity } = {}) {
-  const out = git(dir, ['log', '--branches', '--format=%H%x00%ae%x00%an'], deadline);
+  const out = git(dir, ['log', `--glob=${BRANCHES}*`, '--format=%H%x00%ae%x00%an'], deadline);
   const by = new Map();
   for (const line of out.split('\n')) {
     const [sha, email, name = ''] = line.split('\x00');
@@ -578,18 +582,25 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     const bus = count(dir, { deadline, maxRefs });
     // Every branch, for the commit fingerprints (#1244), then the default branch on its own, as
     // FETCH_HEAD, for the contributors: each fetch replaces FETCH_HEAD.
-    git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, '+refs/heads/*:refs/heads/*'], deadline);
+    git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, `+refs/heads/*:${BRANCHES}*`], deadline);
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
     const commits = authors(dir, { deadline });
     const ask = lookup(m[1], m[2], deadline);
     const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, ask);
     const printed = await authorAccounts(bus.devices, printsOf(dir, name, { deadline }), ask);
+    // A fingerprint that found only an email no account is linked to gives way to the login its
+    // owner's git name matched: one clone is one person, and the login is what ties them to their
+    // clones in other repos (Opus's review of #1248).
+    const author = (id, owner) => {
+      const who = printed.get(id);
+      return who?.startsWith('email:') && matched.get(owner)?.startsWith('login:') ? matched.get(owner) : who;
+    };
     const devices = bus.devices.map(({ id, owner, machine }) => ({
       id,
       person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,
       account: matched.has(owner) ? hash(matched.get(owner)) : null,
       machine,
-      author: printed.has(id) ? hash(printed.get(id)) : null,
+      author: printed.has(id) ? hash(author(id, owner)) : null,
     }));
     return { repo: name.toLowerCase(), ...bus, devices, contributors: contributors(commits) };
   } finally {
