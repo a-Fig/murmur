@@ -71,7 +71,7 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 		t.Fatal("test needs a completed team sync before the simulated upgrade")
 	}
 	delete(oldState, "teamOwner")
-	delete(oldState, "teamOwnerChecked")
+	delete(oldState, "teamHistoryVerified")
 	data, err = json.Marshal(oldState)
 	if err != nil {
 		t.Fatal(err)
@@ -106,5 +106,70 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 	git(t, remote, "update-ref", brand.TeamRef, valid, junk)
 	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); r.Error != "" {
 		t.Fatalf("owner rotation after restoring the ref: %+v", r)
+	}
+}
+
+func TestMeshOwnerTransfersToAVerifiedClone(t *testing.T) {
+	remote := newRemote(t)
+	initClone := filepath.Join(t.TempDir(), "init")
+	git(t, filepath.Dir(initClone), "clone", "-q", remote, initClone)
+	if _, err := setup.RefsOnly(t.Context(), initClone); err != nil {
+		t.Fatal(err)
+	}
+	a := &device{t: t, gitDir: filepath.Join(initClone, ".git"), stale: testStale, poll: 100 * time.Millisecond}
+	a.start()
+	b := newDevice(t, remote)
+	eventually(t, "b sees who initialized the repo", func() bool {
+		return strings.HasPrefix(b.do(proto.Request{Op: proto.OpOwner}).Note, "Mesh owner:")
+	})
+	if r := b.do(proto.Request{Op: proto.OpTransferOwner, To: a.self()}); !strings.Contains(r.Error, "only the mesh owner") {
+		t.Fatalf("non-owner transfer: %+v", r)
+	}
+	statePath := filepath.Join(b.gitDir, brand.StateDir, "state.json")
+	var previous struct {
+		Owner json.RawMessage `json:"teamOwner"`
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &previous); err != nil || len(previous.Owner) == 0 {
+		t.Fatalf("reading cached owner before transfer: %v", err)
+	}
+	if r := a.do(proto.Request{Op: proto.OpTransferOwner, To: b.self()}); r.Error != "" {
+		t.Fatalf("transfer by the mesh owner: %+v", r)
+	}
+	eventually(t, "new owner's clone sees the transfer", func() bool {
+		return b.do(proto.Request{Op: proto.OpOwner}).Note == "This clone is the mesh owner."
+	})
+	// Simulate a daemon that advanced its cursor past a transfer it did not understand.
+	b.stop()
+	data, err = os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cached map[string]json.RawMessage
+	if err := json.Unmarshal(data, &cached); err != nil {
+		t.Fatal(err)
+	}
+	cached["teamOwner"] = previous.Owner
+	cached["teamOwnerChecked"] = json.RawMessage("true")
+	delete(cached, "teamHistoryVerified")
+	data, err = json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.start()
+	eventually(t, "the upgraded daemon replays the transfer", func() bool {
+		return b.do(proto.Request{Op: proto.OpOwner}).Note == "This clone is the mesh owner."
+	})
+	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); !strings.Contains(r.Error, "only the mesh owner") {
+		t.Fatalf("previous owner rotation: %+v", r)
+	}
+	if r := b.do(proto.Request{Op: proto.OpRotate, Force: true}); r.Error != "" {
+		t.Fatalf("new owner rotation: %+v", r)
 	}
 }

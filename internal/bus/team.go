@@ -2,7 +2,9 @@ package bus
 
 import (
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,10 +24,11 @@ import (
 
 // Team record types.
 const (
-	TeamEpoch  = "epoch"
-	TeamGrant  = "grant"
-	TeamRoster = "roster"
-	TeamPolicy = "policy"
+	TeamEpoch    = "epoch"
+	TeamGrant    = "grant"
+	TeamRoster   = "roster"
+	TeamPolicy   = "policy"
+	TeamTransfer = "owner.transfer"
 )
 
 // TeamRecord is one record on the team ref, sealed by the device that wrote it.
@@ -46,8 +49,9 @@ type TeamRecord struct {
 	At  time.Time `json:"at"`
 	// AdminSeq orders the owner's epochs, rosters and policy updates together. The initial
 	// epoch carries the initial policy and starts at 1. Grants carry no admin sequence.
-	AdminSeq uint64      `json:"adminSeq,omitempty"`
-	Policy   *RepoPolicy `json:"policy,omitempty"`
+	AdminSeq     uint64      `json:"adminSeq,omitempty"`
+	Policy       *RepoPolicy `json:"policy,omitempty"`
+	NextOwnerKey string      `json:"nextOwnerKey,omitempty"`
 }
 
 // RepoPolicy is the owner's repo-wide settings. Team encryption and file transfers are the
@@ -170,8 +174,16 @@ func (r TeamRecord) Valid() bool {
 	if r.V != Version || r.Policy != nil && !r.Policy.supported() {
 		return false
 	}
+	if r.Type == TeamTransfer {
+		key, err := base64.StdEncoding.Strict().DecodeString(r.NextOwnerKey)
+		return err == nil && len(key) == ed25519.PublicKeySize && r.AdminSeq > 1 && r.Policy == nil &&
+			r.Box == nil && r.ID == "" && r.Pub == "" && ValidDevice(r.To) && len(r.IDs) == 0
+	}
+	if r.NextOwnerKey != "" {
+		return false
+	}
 	if r.Type == TeamPolicy {
-		return r.AdminSeq > 1 && r.Policy != nil && r.Box == nil && r.ID == "" && r.Pub == "" && r.To == "" && len(r.IDs) == 0
+		return r.AdminSeq > 0 && r.Policy != nil && r.Box == nil && r.ID == "" && r.Pub == "" && r.To == "" && len(r.IDs) == 0
 	}
 	if r.Box == nil || len(r.Box.Keys) == 0 || r.Policy != nil && (r.Type != TeamEpoch || r.AdminSeq != 1) {
 		return false
@@ -200,6 +212,8 @@ func (r TeamRecord) Subject() string {
 	switch r.Type {
 	case TeamPolicy:
 		return "repo policy"
+	case TeamTransfer:
+		return "mesh owner transfer"
 	case TeamGrant:
 		return "grant to " + r.To
 	case TeamRoster:

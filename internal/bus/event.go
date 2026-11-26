@@ -471,6 +471,9 @@ type Presence struct {
 	// BoxKey is the device's public box key, which its teammates encrypt to (#156). A presence
 	// that carries one is sealed, which makes the key the device's.
 	BoxKey string `json:"boxKey,omitempty"`
+	// TeamAdmin says which signed team actions this device understands. It is visible in sealed
+	// presence even when the team key is still being granted.
+	TeamAdmin int `json:"teamAdmin,omitempty"`
 	// Box holds Host, Owner, Nick, Color, Sessions, Offline, Groups, Receipts and Files, encrypted for the team's devices; those fields
 	// are then empty. Opened, it is nil.
 	Box *Box `json:"box,omitempty"`

@@ -784,10 +784,18 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpTransferOwner:
+		if err := d.transferOwner(ctx, req.To); err != nil {
+			return fail(err.Error())
+		}
+		return proto.Response{OK: true, Note: "Transferred mesh ownership to " + req.To + "."}
 	case proto.OpOwner:
 		d.awaitFirstSync(ctx)
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if err := d.checkOwnerHistoryLocked(); err != nil {
+			return fail(err.Error())
+		}
 		if d.isOwnerLocked() {
 			return proto.Response{OK: true, Note: "This clone is the mesh owner."}
 		}

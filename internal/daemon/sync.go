@@ -1292,6 +1292,9 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		d.mu.Unlock()
 		return
 	}
+	if !sealed {
+		pres.TeamAdmin = 0
+	}
 	locked, opened := false, true
 	// Only what was inside the box says which epoch a device has read and which keys it holds.
 	pres.Epoch, pres.Holds = "", nil
@@ -1308,7 +1311,7 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 			} else {
 				d.log.Printf("%s: %s doesn't open: %v", ref, short(sha), err)
 			}
-			open = bus.Presence{V: pres.V, Device: pres.Device, At: pres.At, BoxKey: pres.BoxKey, Names: pres.Names}
+			open = bus.Presence{V: pres.V, Device: pres.Device, At: pres.At, BoxKey: pres.BoxKey, Names: pres.Names, TeamAdmin: pres.TeamAdmin}
 		}
 		pres = open
 	}
@@ -2017,7 +2020,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.colorAwayLocked()
 	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick,
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminTransfer,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()

@@ -207,6 +207,10 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		ownerTip = d.st.TeamOwner.Tip
 	}
 	checkOwner := !d.st.TeamOwnerChecked
+	replayThrough := d.st.TeamReplayThrough
+	if checkOwner && replayThrough == "" {
+		replayThrough = tip
+	}
 	d.mu.Unlock()
 	if reopen {
 		if err := d.restoreTeamKeys(ctx, tip); err != nil {
@@ -217,25 +221,30 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.teamReopen = false
 		d.mu.Unlock()
 	}
+	// An older daemon may have passed over a transfer. Replay from the root, keeping the
+	// cached tip as a floor across pages in case the remote ref has been rewound.
+	if replayThrough != "" && replayThrough != sha {
+		ok, err := d.teamContinues(ctx, replayThrough, sha)
+		if err != nil {
+			d.log.Printf("checking ownership on %s: %v", brand.TeamRef, err)
+			return
+		}
+		if !ok {
+			sha = replayThrough
+		}
+	}
 	if sha == tip && !checkOwner {
+		if replayThrough != "" {
+			d.mu.Lock()
+			d.st.TeamReplayThrough = ""
+			d.saveLocked()
+			d.mu.Unlock()
+		}
 		return
 	}
 	from := tip
 	if checkOwner {
-		// A pre-ownership daemon could have already read an owned mesh as a legacy one.
-		// Rebuild once from the root. If the ref was rewritten, check the cached history for
-		// an owner first, before trusting the new history.
 		from = ""
-		if tip != "" && tip != sha {
-			ok, err := d.teamContinues(ctx, tip, sha)
-			if err != nil {
-				d.log.Printf("checking ownership on %s: %v", brand.TeamRef, err)
-				return
-			}
-			if !ok {
-				sha = tip
-			}
-		}
 	} else if tip != "" {
 		var ok bool
 		var err error
@@ -273,6 +282,10 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.applyPageLocked(func() {
 			if from == "" && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
+				if checkOwner {
+					d.st.TeamOwner = nil
+					d.st.TeamReplayThrough = replayThrough
+				}
 			}
 			for i, c := range commits {
 				d.applyTeamRecordLocked(c, !d.st.TeamOwnerChecked && i == 0)
@@ -287,8 +300,9 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		return
 	}
 	d.mu.Lock()
-	if d.st.TeamTip != sha {
+	if d.st.TeamTip != sha || d.st.TeamReplayThrough != "" {
 		d.st.TeamTip = sha // a tip that isn't a commit, or holds none Murmur reads
+		d.st.TeamReplayThrough = ""
 		d.saveLocked()
 	}
 	d.mu.Unlock()
@@ -318,7 +332,9 @@ func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 	if bus.Decode(c.Message, &r) != nil || !r.Valid() {
 		return
 	}
-	if pin := d.st.Pins[seal.By]; pin != nil && pin.Sign != seal.Key && !(root && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil) {
+	ownedGenesis := root && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil
+	legacyGenesis := d.st.TeamOwner == nil && len(d.st.Epochs) == 0 && r.Type == bus.TeamEpoch && r.AdminSeq == 0
+	if pin := d.st.Pins[seal.By]; pin != nil && pin.Sign != seal.Key && !ownedGenesis && !legacyGenesis {
 		d.log.Printf("%s: passing over %s, sealed with a key that isn't the one pinned for %s", brand.TeamRef, short(c.SHA), seal.By)
 		return
 	}
@@ -488,6 +504,7 @@ func (d *Daemon) grantsDueLocked() []string {
 type teamAsk struct {
 	rotate        bool
 	collaborators []string
+	transferTo    string
 	// basis is the roster a roster written without a rotation was decided against: nobody on it had
 	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
 	basis []string
@@ -521,7 +538,18 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	var newKey *ecdh.PrivateKey
 	now := time.Now()
 	rotate := ask != nil && ask.rotate
-	if ask != nil {
+	if o := d.st.TeamOwner; o != nil && o.Seq == 0 && d.isOwnerLocked() && d.checkOwnerHistoryLocked() == nil {
+		policy := o.Policy
+		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: &policy, At: now})
+	}
+	if ask != nil && ask.transferTo != "" {
+		record, err := d.ownerTransferLocked(ask.transferTo, now)
+		if err != nil {
+			d.mu.Unlock()
+			return "", false, err
+		}
+		recs = append(recs, record)
+	} else if ask != nil {
 		if err := d.checkOwnerLocked(); err != nil {
 			d.mu.Unlock()
 			return "", false, err
@@ -628,7 +656,7 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		return epoch, true, nil // read past meanwhile: the sync that did has what was pushed, or will
 	}
 	if newKey != nil {
-		d.addTeamKeysLocked(bus.Keyring{recs[0].ID: newKey})
+		d.addTeamKeysLocked(bus.Keyring{epoch: newKey})
 	}
 	for i, r := range recs {
 		d.applyTeamLocked(bus.Commit{SHA: shas[i], Message: msgs[i]})
