@@ -457,19 +457,23 @@ export async function accounts(owners, commits, lookup) {
 // would then read HEAD:.mailmap, fetching trees and blobs from the remote and mapping the
 // contributors' emails, which the census has never done (Opus's review of #1248).
 //
-// repos is the repo's address, or every address it has had, its current one first (#1250): a clone
-// on a renamed repo's old URL hashes the old address. Each email is hashed under each, which can't
-// mix up two people: an address is in the hash, and these are all one repo's.
+// repos is the repo's address, or every address it has had (#1250): a clone on a renamed repo's old
+// URL hashes the old address. Each email is hashed under each, which can't mix up two people: an
+// address is in the hash, and these are all one repo's.
 const BRANCHES = 'refs/census/heads/';
 export function printsOf(dir, repos, { deadline = Infinity } = {}) {
   const out = git(dir, ['log', `--glob=${BRANCHES}*`, '--format=%H%x00%ae%x00%an'], deadline);
-  const by = new Map();
+  const emails = new Map(); // email -> its first commit's { identity, sha }
   for (const line of out.split('\n')) {
     const [sha, email, name = ''] = line.split('\x00');
     if (!sha || !email?.trim() || shared(email, name)) continue;
+    if (!emails.has(email)) emails.set(email, { identity: identity(email, name), sha });
+  }
+  const by = new Map();
+  for (const [email, who] of emails) {
     for (const repo of [repos].flat()) {
       const p = authorPrint(repo, email);
-      if (!by.has(p)) by.set(p, { identity: identity(email, name), sha });
+      if (!by.has(p)) by.set(p, who);
     }
   }
   return by;
