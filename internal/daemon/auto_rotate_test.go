@@ -48,6 +48,12 @@ func TestAutomaticRotationFollowsTheOwnersRoster(t *testing.T) {
 	tip := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef))
 	a.start()
 	waitCheck()
+	// The existing key can already have reached another collaborator while gh was failing.
+	b := newDevice(t, remote)
+	if ids := teamIDs(t, remote); len(ids) != 1 || !b.holdsTeamKey(ids[0]) {
+		t.Fatalf("fixture teammate did not receive the initial epoch: %v", ids)
+	}
+	b.stop()
 	a.stop()
 	if got := strings.TrimSpace(git(t, remote, "rev-parse", brand.TeamRef)); got != tip {
 		t.Fatalf("a failed lookup moved the team ref to %s", got)
