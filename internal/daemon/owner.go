@@ -20,6 +20,8 @@ type meshOwner struct {
 	Policy bus.RepoPolicy `json:"policy"`
 }
 
+const teamAdminTransfer = 1
+
 func (d *Daemon) canAdministerLocked() bool {
 	return d.st.TeamOwner == nil || d.isOwnerLocked()
 }
@@ -133,6 +135,15 @@ func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, e
 	pin := d.st.Pins[to]
 	if pin == nil || pin.Box == "" {
 		return bus.TeamRecord{}, errors.New("Murmur has no verified key for that device. Ask its user to come online first.")
+	}
+	for _, dev := range sortedKeys(d.peers) {
+		p := d.peers[dev]
+		if (dev == to || !d.staleLocked(p)) && p.pres.TeamAdmin < teamAdminTransfer {
+			return bus.TeamRecord{}, fmt.Errorf("update Murmur on %s before transferring ownership", d.deviceCalledLocked(dev))
+		}
+	}
+	if d.peers[to] == nil {
+		return bus.TeamRecord{}, errors.New("ask the new owner to come online in Murmur before transferring ownership")
 	}
 	return bus.TeamRecord{V: bus.Version, Type: bus.TeamTransfer, To: to, NextOwnerKey: pin.Sign, At: at}, nil
 }

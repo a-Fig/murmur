@@ -263,7 +263,7 @@ func EncryptPresence(p Presence, recipients map[string]string) (Presence, error)
 	if err != nil {
 		return Presence{}, err
 	}
-	out := Presence{V: p.V, Device: p.Device, At: p.At, Sessions: []SessionInfo{}, BoxKey: p.BoxKey}
+	out := Presence{V: p.V, Device: p.Device, At: p.At, Sessions: []SessionInfo{}, BoxKey: p.BoxKey, TeamAdmin: p.TeamAdmin}
 	for _, s := range p.Sessions {
 		// Only names the registry holds in the clear anyway: a person's (#242) isn't one.
 		if s.ID != PersonSession && names.Valid(s.Name) {

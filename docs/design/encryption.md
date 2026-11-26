@@ -144,6 +144,9 @@ key as well as the team's key history. To hand over ownership, run `mur owner tr
 with the new owner's device ID from `mur who`. That device must have published its keys.
 The current owner signs the new device's key and the next admin sequence into the team ref.
 The new owner can rotate once its clone has all the team keys.
+Before transferring, update Murmur on every device. The command checks the recipient and
+other devices it sees online. A device that was offline needs the update before returning
+to the mesh so it can follow the new owner's rotations.
 
 For a mesh created before ownership, the device that signed the first team epoch becomes owner.
 Git authors and presence labels were recorded independently, so a name match can't prove which

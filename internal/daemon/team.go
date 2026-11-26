@@ -332,7 +332,9 @@ func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 	if bus.Decode(c.Message, &r) != nil || !r.Valid() {
 		return
 	}
-	if pin := d.st.Pins[seal.By]; pin != nil && pin.Sign != seal.Key && !(root && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil) {
+	ownedGenesis := root && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil
+	legacyGenesis := d.st.TeamOwner == nil && len(d.st.Epochs) == 0 && r.Type == bus.TeamEpoch && r.AdminSeq == 0
+	if pin := d.st.Pins[seal.By]; pin != nil && pin.Sign != seal.Key && !ownedGenesis && !legacyGenesis {
 		d.log.Printf("%s: passing over %s, sealed with a key that isn't the one pinned for %s", brand.TeamRef, short(c.SHA), seal.By)
 		return
 	}
