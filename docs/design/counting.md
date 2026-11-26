@@ -122,8 +122,9 @@ would need one per commit.
   then repos, then records, bytes, devices and contributors, then sessions and messages, estimated
   where a bus is encrypted.
 - **Users.** Murmur sends nothing that names a person, and since 0.3 a clone's owner is sealed in
-  its encrypted presence, which a daemon deletes when it stops. On 2026-11-25 the page said 36
-  users, 31 of them counted one per clone; matching by hand put the real figure nearer 23 to 27.
+  its encrypted presence, which a daemon deletes when it stops. On 2026-11-25 (the 8:27 PM census)
+  the page said 31 users ever, 19 of them active in the last 7 days, and the old count said 36;
+  matching by hand put the real figure nearer 23 to 27.
   So a user is the best of what the census can tie a clone to (`users()` in `site/src/repos.js`):
   the GitHub account its owner's git name matches in the repo's commits, else that git name, and,
   since #1245, its machine. A device ID made before 0.5 (#330) begins with a slug of the hostname,
