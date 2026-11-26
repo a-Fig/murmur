@@ -80,6 +80,9 @@ For humans:
   mur stop                      stop this clone's daemon
   mur owner                     show the mesh owner
   mur owner transfer DEVICE     hand ownership to another device
+  mur owner mode [team|private|off]
+                                show or change repo encryption. To turn it off, put --allow-plaintext
+                                before mode.
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.
                                 First remove every other way they can push (deploy keys they added, team
@@ -654,14 +657,20 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 
 func runOwner(ctx context.Context, args []string, out io.Writer) error {
 	fs, dir := flags("owner")
+	allowPlaintext := fs.Bool("allow-plaintext", false, "confirm that turning encryption off writes permanent plaintext")
 	fs.Parse(args)
 	req := proto.Request{Op: proto.OpOwner}
 	switch {
 	case fs.NArg() == 0:
 	case fs.NArg() == 2 && fs.Arg(0) == "transfer":
 		req.Op, req.To = proto.OpTransferOwner, fs.Arg(1)
+	case fs.Arg(0) == "mode" && fs.NArg() <= 2:
+		req.Op, req.EncryptionMode, req.AllowPlaintext = proto.OpRepoMode, fs.Arg(1), *allowPlaintext
+		if req.EncryptionMode == bus.EncryptionOff && !req.AllowPlaintext {
+			return errors.New("Off writes permanent plaintext. Anyone with access to the remote can read it. In a public repo that includes anyone on the internet. To confirm, run mur owner --allow-plaintext mode off.")
+		}
 	default:
-		return errors.New("use mur owner or mur owner transfer DEVICE")
+		return errors.New("use mur owner, mur owner transfer DEVICE, or mur owner mode [team|private|off]")
 	}
 	gitDir, err := client.FindGitDir(ctx, *dir)
 	if err != nil {
@@ -679,6 +688,9 @@ func runOwner(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New(resp.Error)
 	}
 	fmt.Fprintln(out, resp.Note)
+	if req.Op == proto.OpRepoMode && req.EncryptionMode != "" {
+		fmt.Fprintln(out, "Existing messages keep the protection they had when written.")
+	}
 	return nil
 }
 

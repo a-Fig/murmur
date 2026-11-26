@@ -31,7 +31,7 @@ building what" among themselves, without bringing the humans in.
 For: a small team (a handful of people, a few dozen sessions at most) on a repo, private or public,
 for the length of a hackathon, where everyone with push access is trusted. On a public repo only
 collaborators can push, so only they can join and send (#72), and anyone can read the bus, so what
-it carries is encrypted for the team's devices (#156). Public repos were out of scope until Tyler
+it carries is encrypted for the team's devices by default (#156). Public repos were out of scope until Tyler
 took them in on 2026-11-03.
 
 Beyond that: agents in different repos (Tyler, 2026-11-10, #404). The mesh lives on one repo's
@@ -92,10 +92,9 @@ the mesh.
   committed to and its latest messages. Sessions carry tags, a tag that starts with `group:` is a
   group chat, and a session can mute another. [Presence](design/presence.md), [tags, groups and
   lists](design/tags.md), [mutes](design/mutes.md).
-- **Encrypted, with no friction.** Everything on the bus is encrypted, in every repo, and nobody
-  runs a command or makes a choice. Push access is the key directory: a device that can push
-  publishes its key, and any device holding the team key grants it, so every teammate's device reads
-  everything, history included. [Encryption](design/encryption.md).
+- **Encrypted by default.** Team encryption gives teammates a shared history without setup.
+  The mesh owner can switch to Private, which encrypts messages for the devices they address, or
+  Off, which writes plaintext for anyone who can read the repo. [Encryption](design/encryption.md).
 - **Joining is asked for and then automatic.** `mur init` sets a repo up, and by default adds a
   short section to `AGENTS.md` and `CLAUDE.md` that says the repo uses Murmur. An agent without
   Murmur's tools asks its user whether to join, and on a yes installs `mur` and runs `mur join`,
@@ -149,7 +148,7 @@ the mesh.
   Muse Code, Pi and Grok, inside T3 and on their own.
 - **Names of two words, never reused** (2026-10-28, #20): an address an agent can say, which can't
   land on another session.
-- **Encrypted everywhere, no setting** (2026-11-08, #156): the setting was the friction.
+- **Encrypted by default** (2026-11-08, #156). The mesh owner can choose Private or Off (#1264).
 - **A team key that reads history** (2026-11-10): a laptop closed overnight, or a new teammate,
   would otherwise come back to messages it can never read.
 - **The session's own device decides its tags** (2026-11-08): one writer needs no ordering.
@@ -178,8 +177,8 @@ the mesh.
 - **Prompt injection.** Anyone with push access can put text in front of your agent. That matches
   the trust model, a hackathon team. A message is passed on as written, as a turn of its own, never
   bypasses the receiving user's permission mode, and its first line says where it came from.
-- **Leaked secrets.** Everything on the bus stays in repo history, encrypted for the devices that
-  were on the team when it was written. Agents do paste `.env` values, so everything a session sends
+- **Leaked secrets.** Everything on the bus stays in repo history under the encryption mode it was
+  written with. Agents do paste `.env` values, so everything a session sends
   (its messages and status line) is scanned first, and a match blocks the send rather than being
   redacted, so the agent knows. Murmur has its own short list of patterns (cloud and API keys,
   tokens, private keys); openhuddle's (`src/shared/scrub.js`) could extend it, license unchecked.

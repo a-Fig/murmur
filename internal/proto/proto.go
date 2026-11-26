@@ -48,6 +48,7 @@ const (
 	OpRotate        = "rotate"
 	OpOwner         = "owner" // shows the mesh owner this device has verified
 	OpTransferOwner = "owner.transfer"
+	OpRepoMode      = "repo.mode"
 	// OpNick shows this device's nickname (#190), sets it to Nick, or with Clear takes it off.
 	OpNick = "nick"
 )
@@ -110,7 +111,8 @@ const (
 //	28: OpOwner and owner-only rotation in meshes set up by a daemon that verifies signed policy
 //	    records (#1263). An older local daemon cannot enforce ownership.
 //	29: OpTransferOwner carries the next owner's device ID.
-const Protocol = 29
+//	30: OpRepoMode and per-repo encryption modes (#1264).
+const Protocol = 30
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.
@@ -193,6 +195,10 @@ type Info struct {
 
 // Request is one call to the daemon.
 type Request struct {
+	// EncryptionMode is the signed mode OpRepoMode should set. Empty asks for the current mode.
+	EncryptionMode string `json:"encryptionMode,omitempty"`
+	AllowPlaintext bool   `json:"allowPlaintext,omitempty"`
+
 	Token   string `json:"token"`
 	Op      string `json:"op"`
 	Session string `json:"session,omitempty"` // the caller; "" is the CLI

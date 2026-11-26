@@ -404,12 +404,9 @@ func errOldDevice(dev string) error {
 		"(https://murmur.afig.dev)", dev)}
 }
 
-// encryptEventLocked returns e as this device writes it: encrypted for the current team key
-// (team.go), which every device that has pushed its key since that key was made is granted, and for
-// this device, which reads its own log to queue a message from one of its sessions to another, and
-// would otherwise stop at its own record until a teammate granted it the key. A message to a device
-// on a Murmur from before encryption, which could never read it, is refused: nothing goes out in
-// the clear. Caller holds mu.
+// encryptEventLocked encodes e under the verified repo policy. Private messages and receipts
+// use their recipients' device keys. Other encrypted events use the team key. Both include the
+// writer's device so it can read its own log before receiving a team grant. Caller holds mu.
 func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
 	if err := d.checkOwnerHistoryLocked(); err != nil {
 		return bus.Event{}, err

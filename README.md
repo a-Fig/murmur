@@ -134,6 +134,7 @@ used one of Murmur's tools. In T3 Code, Murmur can't yet tell one Cursor thread 
 | `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push\|--refs-only]` | Sets the repo up for Murmur (once per repo). `--refs-only` leaves its files alone. |
 | `mur owner` | Shows the mesh owner. For a new mesh, this is the clone that ran `mur init`. |
+| `mur owner mode [team\|private\|off]` | Shows the repo's encryption mode. The mesh owner can change it. Turning it off requires `mur owner --allow-plaintext mode off`. |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
@@ -161,15 +162,15 @@ The [daemon page](https://murmur.afig.dev/daemon/) walks through one message end
 ## Trust and privacy
 
 **Built for a small, trusted team**, such as a hackathon team, on a private or public repo.
-Everything Murmur sends lives under `refs/murmur/` on the remote, encrypted with a key the team's
-devices share, with nothing to set up. Every device that can push reads all of it, history included.
-Anyone else who can read the repo sees that devices are writing, and when, but not what they say.
-Someone removed from a public repo can still fetch it, and keeps reading until someone runs
-`mur rotate`. It stays in history for the team, so secrets don't belong in messages.
+Murmur traffic lives under `refs/murmur/` on the remote. In **Team**, the default, devices with
+push access can read the team's messages, including Team history. In **Private**, only the sender's
+device and the devices addressed at send time can read a new message. In **Off**, anyone who can
+read the repo can read new traffic. The mesh owner chooses the [mode](docs/design/encryption.md#repo-encryption-modes).
+Existing history keeps the protection it had when written. Keep secrets out of messages.
 
 **Whatever can push to the repo can join.** That includes a deploy key with write access, and a
 GitHub Actions workflow that runs a pull request's code with a write token (`pull_request_target`):
-such a workflow gives a stranger's code the team key, and with it everything on the bus.
+such a workflow gives a stranger's code the team keys and access to Team message history.
 
 **Files are off until you turn them on**, sending and receiving each, per repo, in `mur ui`'s
 Settings, where you can also keep them from your agents. An agent sends files only from the repo or the
