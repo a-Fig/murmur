@@ -190,11 +190,11 @@ export async function merge(db, from, into) {
       `INSERT INTO repo_days (repo, day, ${counts.join(', ')}) SELECT ?2, day, ${counts.join(', ')} FROM repo_days WHERE repo = ?1
        ON CONFLICT (repo, day) DO UPDATE SET ${max(counts)}`,
     ).bind(from, into),
-    // #1244 adds author here, kept like account.
     db.prepare(
-      `INSERT INTO devices (repo, device, person, account, machine) SELECT ?2, device, person, account, machine FROM devices WHERE repo = ?1
+      `INSERT INTO devices (repo, device, person, account, machine, author) SELECT ?2, device, person, account, machine, author FROM devices WHERE repo = ?1
        ON CONFLICT (repo, device) DO UPDATE SET person = COALESCE(person, excluded.person),
-         account = COALESCE(account, excluded.account), machine = COALESCE(machine, excluded.machine)`,
+         account = COALESCE(account, excluded.account), machine = COALESCE(machine, excluded.machine),
+         author = COALESCE(author, excluded.author)`,
     ).bind(from, into),
     db.prepare('INSERT INTO device_days (repo, day, device) SELECT ?2, day, device FROM device_days WHERE repo = ?1 ON CONFLICT DO NOTHING').bind(from, into),
     db.prepare(

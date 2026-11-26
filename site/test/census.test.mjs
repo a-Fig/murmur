@@ -959,3 +959,15 @@ test("reading every branch doesn't make the census apply a repo's .mailmap", asy
   assert.deepEqual(c.contributors.map(k => k.id), [hash('email:ann@example.com')]);
 });
 
+test("a clone still on a renamed repo's old address matches its commits, by the repo's aliases (#1250)", async t => {
+  const r = remote(t);
+  const as = device => ({ who: `${device} <${device}@murmur.invalid>` });
+  r.commit('refs/murmur/mesh/dev1', event({ type: 'message', from: 'dev1', at: r.at }), as('dev1'));
+  // The clone's remote still says the old address, so its fingerprint hashes that.
+  r.commit('refs/murmur/names', named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: r.at, author: authorPrint('github.com/Old/Name', 'ann@example.com') }), as('dev1'));
+  const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
+  const without = await readRepo('github.com/a/one', { url: r.url, lookup: unlinked });
+  assert.equal(without.devices[0].author, null);
+  const c = await readRepo('github.com/a/one', { url: r.url, lookup: unlinked, aliases: ['github.com/old/name'] });
+  assert.equal(c.devices[0].author, hash('email:ann@example.com'));
+});

@@ -456,15 +456,21 @@ export async function accounts(owners, commits, lookup) {
 // there, one named master would give the scratch repo's HEAD a commit, and git log in a bare repo
 // would then read HEAD:.mailmap, fetching trees and blobs from the remote and mapping the
 // contributors' emails, which the census has never done (Opus's review of #1248).
+//
+// repos is the repo's address, or every address it has had, its current one first (#1250): a clone
+// on a renamed repo's old URL hashes the old address. Each email is hashed under each, which can't
+// mix up two people: an address is in the hash, and these are all one repo's.
 const BRANCHES = 'refs/census/heads/';
-export function printsOf(dir, repo, { deadline = Infinity } = {}) {
+export function printsOf(dir, repos, { deadline = Infinity } = {}) {
   const out = git(dir, ['log', `--glob=${BRANCHES}*`, '--format=%H%x00%ae%x00%an'], deadline);
   const by = new Map();
   for (const line of out.split('\n')) {
     const [sha, email, name = ''] = line.split('\x00');
     if (!sha || !email?.trim() || shared(email, name)) continue;
-    const p = authorPrint(repo, email);
-    if (!by.has(p)) by.set(p, { identity: identity(email, name), sha });
+    for (const repo of [repos].flat()) {
+      const p = authorPrint(repo, email);
+      if (!by.has(p)) by.set(p, { identity: identity(email, name), sha });
+    }
   }
   return by;
 }
@@ -603,7 +609,6 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
   const m = REPO.exec(name);
   if (!m) throw new Error(`not a repo: ${name}`);
   const names = [...new Set([name, ...aliases].map(n => n.toLowerCase()))];
-  void names; // #1244 hashes each commit identity under each of these.
   const deadline = Date.now() + budget;
   url ??= `https://github.com/${m[1]}/${m[2]}.git`;
   const dir = mkdtempSync(join(tmpdir(), 'census-'));
@@ -624,7 +629,7 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     const commits = authors(dir, { deadline });
     const ask = lookup(m[1], m[2], deadline);
     const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, ask);
-    const printed = await authorAccounts(bus.devices, printsOf(dir, name, { deadline }), ask);
+    const printed = await authorAccounts(bus.devices, printsOf(dir, names, { deadline }), ask);
     // The fingerprint's identity stands even where it found only an email no account is linked to
     // and the owner's git name found a login: two people can share a git name, and the email is the
     // exact match. Such a clone counts apart from that login's other clones, a missed merge, which

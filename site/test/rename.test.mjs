@@ -186,3 +186,17 @@ test('the census asks GitHub by ID when it has one, else by name, and follows a 
   assert.deepEqual(await findRepo({ id: 5, name: 'github.com/x/demo' }), { id: 9, name: 'x/demo', created: '2026-11-20T00:00:00Z' });
   assert.deepEqual(asked, ['https://api.github.com/repositories/5', 'https://api.github.com/repos/x/demo']);
 });
+
+test("a merge keeps what either row knew of a clone's commit author (#1244)", { skip }, async () => {
+  const db = await sqliteD1();
+  db.sql.exec(`INSERT INTO repos (repo, name, first) VALUES ('github.com/a-fig/t4', 'github.com/a-Fig/t4', '2026-10-30'), ('github.com/a-fig/murmur', 'github.com/a-Fig/murmur', '2026-11-05')`);
+  const post = postTo(db);
+  const gh = { id: 1435080335, name: 'a-Fig/murmur' };
+  const withAuthors = (repo, authors) => ({ ...counts(repo, { devices: Object.keys(authors) }), devices: Object.entries(authors).map(([id, author]) => ({ id, person: null, author })) });
+  // The old row knew a's author and not b's; the new one knows b's.
+  const first = await post({ ...withAuthors("github.com/a-fig/t4", { [hex("a")]: hex("e"), [hex("b")]: null }), key: "github.com/a-fig/t4" });
+  assert.equal(first.status, 200, await first.clone().text());
+  assert.equal((await post({ ...withAuthors('github.com/a-fig/murmur', { [hex('a')]: null, [hex('b')]: hex('f') }), key: 'github.com/a-fig/murmur', github: gh })).status, 200);
+  assert.equal((await post({ ...counts('github.com/a-fig/murmur'), key: 'github.com/a-fig/t4', github: gh })).status, 200);
+  assert.deepEqual(rows(db, 'SELECT device, author FROM devices ORDER BY device'), [{ device: hex('a'), author: hex('e') }, { device: hex('b'), author: hex('f') }]);
+});
