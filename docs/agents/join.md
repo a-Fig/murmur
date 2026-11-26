@@ -82,10 +82,11 @@ background process asks GitHub again once a day, so a repo made public later is 
 Why: to count how many repos and people use Murmur, nothing more. Murmur is new, our goal is 100
 users (written 2026-11-25), and Murmur's messages travel through each team's own repo, so they never
 reach us. The address tells us where to look; the rest of the count is read from the public repo's
-own `refs/murmur/` refs and commit history, which anyone can read. Each name a clone registers there
-carries its commit fingerprint, a hash of the repo and the email git commits with on this clone, so
-a person's clones can be matched to their commits in the repo and counted once; it matches nothing
-where they have no commits. Anyone who reads the repo can see which clones share one. From them the
+own `refs/murmur/` refs and commit history, which anyone can read. So that one person's clones count
+once, each clone stores a hash in the repo, beside its session names, made from the repo's address
+and the email git commits with on that clone. It is never sent to us. It only ties the clone to
+commits its owner has already made public in that repo; with none there, it matches nothing, and
+since the repo's address is part of the hash, it can't link one repo to another. From these the
 site keeps counts: sessions, messages, devices and people, by day. It keeps no names, emails,
 messages, code or IP addresses. To count each device and person once, it keeps a short unsalted
 hash in place of a device's ID, the hostname an older ID begins with, its owner's git user name,
