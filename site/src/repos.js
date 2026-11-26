@@ -49,14 +49,25 @@ const LATE = 30 * 3600e3;
 // census.mjs's releaseDownloads()), {"releases": [{tag, published, prerelease, latest, assets:
 // [{name, downloads}]}]}, kept for today (UTC) in release_downloads.
 export async function census(request, env) {
-  const key = String(env.CENSUS_KEY || '');
+  const secret = String(env.CENSUS_KEY || '');
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('Authorization') || '')?.[1];
-  if (!key || !bearer || !(await same(bearer, key))) return new Response('Not found.\n', { status: 404 });
+  if (!secret || !bearer || !(await same(bearer, secret))) return new Response('Not found.\n', { status: 404 });
   const headers = { 'Cache-Control': 'no-store' };
   if (new URL(request.url).pathname === '/v1/census/releases') return releases(request, env, headers);
   if (request.method === 'GET') {
-    const { results } = await env.DB.prepare('SELECT name FROM repos ORDER BY repo').all();
-    return Response.json({ repos: results.map(r => r.name) }, { headers });
+    // repos: each repo's name, as before. list (#1250): each repo's key, its name, its GitHub ID
+    // where known, and the other addresses it has had, so the census can find a renamed repo by its
+    // ID and match clones still on an old URL. Two rows can have one name for a while (a repo made
+    // at a renamed one's old address), so the census sends counts back by key.
+    const [{ results }, { results: names }] = await env.DB.batch([
+      env.DB.prepare('SELECT repo, name, github_id FROM repos ORDER BY repo'),
+      env.DB.prepare('SELECT name, repo FROM repo_names ORDER BY name'),
+    ]);
+    const list = results.map(r => ({
+      key: r.repo, name: r.name, id: r.github_id ?? null,
+      aliases: names.filter(n => n.repo === r.repo && n.name !== r.name.toLowerCase()).map(n => n.name),
+    }));
+    return Response.json({ repos: results.map(r => r.name), list }, { headers });
   }
   if (request.method !== 'POST') return new Response('Only GET and POST.\n', { status: 405, headers: { Allow: 'GET, POST' } });
   let c;
@@ -67,10 +78,18 @@ export async function census(request, env) {
   }
   const bad = invalid(c);
   if (bad) return new Response(`Not counts: ${bad}.\n`, { status: 400 });
-  const known = await env.DB.prepare('SELECT 1 FROM repos WHERE repo = ?1').bind(c.repo).first();
-  if (!known) return new Response('Not a listed repo.\n', { status: 422 });
+  // The counts go to the row the census names by its key (#1250). A census from before keys names
+  // the repo by its current name, or one it had.
+  let row = c.key
+    ? (await env.DB.prepare('SELECT repo FROM repos WHERE repo = ?1').bind(c.key).first())?.repo
+    : (await env.DB.prepare(
+      `SELECT r.repo FROM repos r WHERE lower(r.name) = ?1
+       UNION ALL SELECT n.repo FROM repo_names n WHERE n.name = ?1 LIMIT 1`,
+    ).bind(c.repo).first())?.repo;
+  if (!row) return new Response('Not a listed repo.\n', { status: 422 });
 
   const db = env.DB, t = c.totals;
+  if (c.github) row = await identify(db, row, c.github);
   const stmts = [];
   const insert = inserter(db, stmts);
   insert(c.days, 8,
@@ -79,7 +98,7 @@ export async function census(request, env) {
        sessions = MAX(sessions, excluded.sessions), messages = MAX(messages, excluded.messages),
        records = MAX(records, excluded.records), bytes = MAX(bytes, excluded.bytes),
        est_sessions = MAX(est_sessions, excluded.est_sessions), est_messages = MAX(est_messages, excluded.est_messages)`,
-    d => [c.repo, d.day, d.sessions, d.messages, d.records, d.est_sessions ?? 0, d.est_messages ?? 0, d.bytes ?? 0]);
+    d => [row, d.day, d.sessions, d.messages, d.records, d.est_sessions ?? 0, d.est_messages ?? 0, d.bytes ?? 0]);
   // An owner once seen is kept: a daemon deletes its presence when it stops. So is an account, and
   // a machine. A census from before #323 sends no account, and one from before #1245 no machine.
   insert(c.devices, 5,
@@ -87,14 +106,14 @@ export async function census(request, env) {
      ON CONFLICT (repo, device) DO UPDATE SET
        person = COALESCE(excluded.person, person), account = COALESCE(excluded.account, account),
        machine = COALESCE(excluded.machine, machine)`,
-    v => [c.repo, v.id, v.person, v.account ?? null, v.machine ?? null]);
+    v => [row, v.id, v.person, v.account ?? null, v.machine ?? null]);
   insert(c.days.flatMap(d => d.devices.map(v => [d.day, v])), 3,
     `INSERT INTO device_days (repo, day, device) VALUES $ROWS ON CONFLICT DO NOTHING`,
-    ([day, v]) => [c.repo, day, v]);
+    ([day, v]) => [row, day, v]);
   insert(c.contributors, 3,
     `INSERT INTO contributors (repo, id, first) VALUES $ROWS
      ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
-    k => [c.repo, k.id, k.first]);
+    k => [row, k.id, k.first]);
   stmts.push(db.prepare(
     `INSERT INTO repo_census (repo, sessions, messages, records, first_day, last_day, counted, est_sessions, est_messages, bytes)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -105,7 +124,7 @@ export async function census(request, env) {
        first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
        last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
        counted = excluded.counted`,
-  ).bind(c.repo, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString(),
+  ).bind(row, t.sessions, t.messages, t.records, t.first_day, t.last_day, new Date().toISOString(),
     t.est_sessions ?? 0, t.est_messages ?? 0, t.bytes ?? 0));
   // A batch must finish within D1's 30 seconds, and a big repo makes thousands of statements, so
   // they go BATCH at a time. Each batch is its own transaction. Every write only raises a count or
@@ -114,6 +133,86 @@ export async function census(request, env) {
   // everything else is in.
   for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
+}
+
+// What GitHub told the census of the repo at `key` (#1250): its ID, current name, and when it was
+// made. Returns the key of the row the counts the census read go to.
+//
+// GitHub's answer may be about another repo: after a rename or a deletion GitHub lets a new repo
+// take the old address, and the census, asking by that address, is told of the new one. The answer
+// is this row's repo when the row has its ID, or, for a row with none yet, when the repo was made
+// no later than the row was first stored. Otherwise the counts are the other repo's, and go to its
+// row, made now as `gh:<id>` if it has none; this row keeps what it had, and is never merged.
+//
+// When the answer is this row's repo, the row takes the ID and the name, which joins its
+// addresses. If another row already has the ID, the two counted one repo under two addresses, so
+// this one is merged into it, and the counts go there.
+export async function identify(db, key, github) {
+  const name = 'github.com/' + github.name.replace(/^github\.com\//i, '');
+  const [{ results: [own] }, { results: [other] }] = await db.batch([
+    db.prepare('SELECT github_id, first FROM repos WHERE repo = ?1').bind(key),
+    db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(github.id),
+  ]);
+  const newer = typeof github.created === 'string' && own?.first && github.created.slice(0, 10) > own.first;
+  const same = own?.github_id ? own.github_id === github.id : !newer;
+  const names = row => db.prepare('INSERT INTO repo_names (name, repo) VALUES (?1, ?2) ON CONFLICT DO NOTHING').bind(name.toLowerCase(), row);
+  if (!same) {
+    if (other) return other.repo;
+    // A report of the repo may have stored it in the meantime, so its row is found by its ID.
+    await db.prepare('INSERT INTO repos (repo, name, first, github_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING')
+      .bind(`gh:${github.id}`, name, new Date().toISOString().slice(0, 10), github.id).run();
+    const row = (await db.prepare('SELECT repo FROM repos WHERE github_id = ?1').bind(github.id).first())?.repo ?? `gh:${github.id}`;
+    await names(row).run();
+    return row;
+  }
+  if (other && other.repo !== key) {
+    await merge(db, key, other.repo);
+    key = other.repo;
+  }
+  await db.batch([
+    db.prepare('UPDATE repos SET github_id = ?2, name = ?3 WHERE repo = ?1').bind(key, github.id, name),
+    names(key),
+  ]);
+  return key;
+}
+
+// Merges the row at `from` into the row at `into`, in one batch, so a failure leaves both as they
+// were (#1250). They counted the same bus twice under two addresses, so a day's counts and the
+// totals take the larger of the two, not the sum; clones, their days and contributors are joined
+// as sets, keeping whatever either knew of a clone; the repo started on the earlier of its two
+// first days, and keeps every address both had.
+export async function merge(db, from, into) {
+  const max = cols => cols.map(k => `${k} = MAX(${k}, excluded.${k})`).join(', ');
+  const counts = ['sessions', 'messages', 'records', 'est_sessions', 'est_messages', 'bytes'];
+  await db.batch([
+    db.prepare(
+      `INSERT INTO repo_days (repo, day, ${counts.join(', ')}) SELECT ?2, day, ${counts.join(', ')} FROM repo_days WHERE repo = ?1
+       ON CONFLICT (repo, day) DO UPDATE SET ${max(counts)}`,
+    ).bind(from, into),
+    // #1244 adds author here, kept like account.
+    db.prepare(
+      `INSERT INTO devices (repo, device, person, account, machine) SELECT ?2, device, person, account, machine FROM devices WHERE repo = ?1
+       ON CONFLICT (repo, device) DO UPDATE SET person = COALESCE(person, excluded.person),
+         account = COALESCE(account, excluded.account), machine = COALESCE(machine, excluded.machine)`,
+    ).bind(from, into),
+    db.prepare('INSERT INTO device_days (repo, day, device) SELECT ?2, day, device FROM device_days WHERE repo = ?1 ON CONFLICT DO NOTHING').bind(from, into),
+    db.prepare(
+      `INSERT INTO contributors (repo, id, first) SELECT ?2, id, first FROM contributors WHERE repo = ?1
+       ON CONFLICT (repo, id) DO UPDATE SET first = MIN(first, excluded.first)`,
+    ).bind(from, into),
+    db.prepare(
+      `INSERT INTO repo_census (repo, ${counts.join(', ')}, first_day, last_day, counted)
+       SELECT ?2, ${counts.join(', ')}, first_day, last_day, counted FROM repo_census WHERE repo = ?1
+       ON CONFLICT (repo) DO UPDATE SET ${max(counts)},
+         first_day = MIN(COALESCE(first_day, excluded.first_day), COALESCE(excluded.first_day, first_day)),
+         last_day = MAX(COALESCE(last_day, excluded.last_day), COALESCE(excluded.last_day, last_day)),
+         counted = MAX(COALESCE(counted, excluded.counted), COALESCE(excluded.counted, counted))`,
+    ).bind(from, into),
+    db.prepare('UPDATE repos SET first = MIN(first, (SELECT first FROM repos WHERE repo = ?1)) WHERE repo = ?2').bind(from, into),
+    db.prepare('INSERT INTO repo_names (name, repo) SELECT name, ?2 FROM repo_names WHERE repo = ?1 ON CONFLICT DO NOTHING').bind(from, into),
+    ...['repo_days', 'devices', 'device_days', 'contributors', 'repo_census', 'repo_names', 'repos']
+      .map(t => db.prepare(`DELETE FROM ${t} WHERE repo = ?1`).bind(from)),
+  ]);
 }
 
 // Statements that insert rows, as many to a statement as D1 binds: at most 100 values, so 12 days
@@ -188,6 +287,11 @@ function invalid(c) {
   const estimates = o => ['bytes', 'est_sessions', 'est_messages'].every(k => o[k] === undefined || count(o[k]));
   if (!c || typeof c !== 'object') return 'no object';
   if (typeof c.repo !== 'string' || !REPO.test(c.repo)) return 'repo';
+  // The row's key and what GitHub said of the repo (#1250), which a census from before leaves out.
+  if (c.key !== undefined && (typeof c.key !== 'string' || !c.key || c.key.length > 200)) return 'key';
+  if (c.github !== undefined && !(c.github && Number.isSafeInteger(c.github.id) && c.github.id > 0 &&
+    typeof c.github.name === 'string' && REPO.test('github.com/' + c.github.name.replace(/^github\.com\//i, '').toLowerCase()) &&
+    (c.github.created === undefined || (typeof c.github.created === 'string' && c.github.created.length <= 40 && DAY.test(c.github.created.slice(0, 10)))))) return 'github';
   const t = c.totals;
   if (!t || !['sessions', 'messages', 'records'].every(k => count(t[k])) || !estimates(t)) return 'totals';
   if (!(t.first_day === null || busDay(t.first_day)) || !(t.last_day === null || busDay(t.last_day))) return 'totals days';
