@@ -1128,11 +1128,12 @@ type state struct {
 	// The team ref as read (team.go): its tip, its epochs in order, and the team keys each device
 	// has been given, by device ID. GrantMark is, for each device a grant was read for, the time its
 	// newest presence was signed with when this daemon read the grant (grantsDueLocked).
-	TeamTip     string               `json:"teamTip,omitempty"`
-	TeamOwner   *meshOwner           `json:"teamOwner,omitempty"`
-	Epochs      []teamEpoch          `json:"epochs,omitempty"`
-	TeamGranted map[string][]string  `json:"teamGranted,omitempty"`
-	GrantMark   map[string]time.Time `json:"grantMark,omitempty"`
+	TeamTip          string               `json:"teamTip,omitempty"`
+	TeamOwner        *meshOwner           `json:"teamOwner,omitempty"`
+	TeamOwnerChecked bool                 `json:"teamOwnerChecked,omitempty"`
+	Epochs           []teamEpoch          `json:"epochs,omitempty"`
+	TeamGranted      map[string][]string  `json:"teamGranted,omitempty"`
+	GrantMark        map[string]time.Time `json:"grantMark,omitempty"`
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).

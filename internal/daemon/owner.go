@@ -13,6 +13,7 @@ type meshOwner struct {
 	Device string         `json:"device"`
 	Key    string         `json:"key"`
 	Seq    uint64         `json:"seq"`
+	Tip    string         `json:"tip"` // most recent verified owner action
 	Policy bus.RepoPolicy `json:"policy"`
 }
 
@@ -26,6 +27,9 @@ func (d *Daemon) isOwnerLocked() bool {
 }
 
 func (d *Daemon) checkOwnerLocked() error {
+	if d.st.TeamTip != "" && !d.st.TeamOwnerChecked {
+		return fmt.Errorf("Murmur is still verifying the team history. Try again after it syncs.")
+	}
 	if d.canAdministerLocked() {
 		return nil
 	}
@@ -38,20 +42,21 @@ func (d *Daemon) teamContinues(ctx context.Context, from, to string) (bool, erro
 	if from == to {
 		return true, nil
 	}
-	out, err := d.repo.Git.Run(ctx, "", "log", "--no-show-signature", "--first-parent", "--reverse", "--format=%P", to, "^"+from, "--")
+	out, err := d.repo.Git.Run(ctx, "", "log", "--no-show-signature", "--no-notes", "--no-color", "--first-parent", "--reverse", "--format=%P", to, "^"+from, "--")
 	parents := strings.Fields(strings.SplitN(out, "\n", 2)[0])
 	return len(parents) > 0 && parents[0] == from, err
 }
 
 // acceptTeamAdminLocked orders owner actions independently of grants written by teammates.
 // A replayed epoch or policy carries its original sequence inside its seal.
-func (d *Daemon) acceptTeamAdminLocked(r bus.TeamRecord, seal bus.Seal, root bool) bool {
+func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Seal, root bool) bool {
 	o := d.st.TeamOwner
 	if root && o == nil && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil {
-		d.st.TeamOwner = &meshOwner{Device: seal.By, Key: seal.Key, Seq: 1, Policy: *r.Policy}
+		d.st.TeamOwner = &meshOwner{Device: seal.By, Key: seal.Key, Seq: 1, Tip: sha, Policy: *r.Policy}
 		if pin := d.st.Pins[seal.By]; pin == nil || pin.Sign != seal.Key {
 			d.st.Pins[seal.By] = &keyPin{Sign: seal.Key}
 			delete(d.peers, seal.By)
+			delete(d.refusedSHA, seal.By)
 		}
 		return true
 	}
@@ -64,7 +69,7 @@ func (d *Daemon) acceptTeamAdminLocked(r bus.TeamRecord, seal bus.Seal, root boo
 	if r.Policy != nil && r.Type != bus.TeamPolicy || o.Device != seal.By || o.Key != seal.Key || r.AdminSeq != o.Seq+1 {
 		return false
 	}
-	o.Seq = r.AdminSeq
+	o.Seq, o.Tip = r.AdminSeq, sha
 	if r.Policy != nil {
 		o.Policy = *r.Policy
 	}

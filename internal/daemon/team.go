@@ -82,6 +82,9 @@ func (d *Daemon) rereadTeamIfKeysLostLocked() {
 	for _, id := range d.st.TeamGranted[d.device] {
 		if d.teamKeys[id] == nil {
 			d.log.Printf("a team key this device was granted isn't in %s; reading %s again for it", teamKeysPath(d.dir), brand.TeamRef)
+			if !d.st.TeamOwnerChecked {
+				return // the first owner-aware read rebuilds the team state from its root
+			}
 			if d.st.TeamOwner == nil {
 				d.st.TeamTip = ""
 			} else {
@@ -199,7 +202,11 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip := d.st.TeamTip
 	owned, reopen := d.st.TeamOwner != nil, d.teamReopen
-	uninitialized := tip == "" && !owned && len(d.st.Epochs) == 0
+	ownerTip := ""
+	if owned {
+		ownerTip = d.st.TeamOwner.Tip
+	}
+	checkOwner := !d.st.TeamOwnerChecked
 	d.mu.Unlock()
 	if reopen {
 		if err := d.restoreTeamKeys(ctx, tip); err != nil {
@@ -210,11 +217,26 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.teamReopen = false
 		d.mu.Unlock()
 	}
-	if sha == tip {
+	if sha == tip && !checkOwner {
 		return
 	}
 	from := tip
-	if tip != "" {
+	if checkOwner {
+		// A pre-ownership daemon could have already read an owned mesh as a legacy one.
+		// Rebuild once from the root. If the ref was rewritten, check the cached history for
+		// an owner first, before trusting the new history.
+		from = ""
+		if tip != "" && tip != sha {
+			ok, err := d.teamContinues(ctx, tip, sha)
+			if err != nil {
+				d.log.Printf("checking ownership on %s: %v", brand.TeamRef, err)
+				return
+			}
+			if !ok {
+				sha = tip
+			}
+		}
+	} else if tip != "" {
 		var ok bool
 		var err error
 		if owned {
@@ -228,12 +250,17 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		}
 		if !ok {
 			if owned {
-				d.log.Printf("%s was rewritten before %s; keeping the verified team history", brand.TeamRef, short(tip))
-				return
+				ok, err := d.teamContinues(ctx, ownerTip, sha)
+				if err != nil || !ok {
+					d.log.Printf("%s was rewritten before %s; keeping the verified team history", brand.TeamRef, short(ownerTip))
+					return
+				}
+				from = ownerTip
+			} else {
+				// Rewritten: read it whole again. The keys this device holds stay (teamKeysPath).
+				d.log.Printf("%s was rewritten; reading it from its start", brand.TeamRef)
+				from = ""
 			}
-			// Rewritten: read it whole again. The keys this device holds stay (teamKeysPath).
-			d.log.Printf("%s was rewritten; reading it from its start", brand.TeamRef)
-			from = ""
 		}
 	}
 	err := d.repo.Log(ctx, from, sha, d.maxRecord, func(commits []bus.Commit) error {
@@ -244,8 +271,9 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
 			}
 			for i, c := range commits {
-				d.applyTeamRecordLocked(c, uninitialized && d.st.TeamTip == "" && i == 0)
+				d.applyTeamRecordLocked(c, !d.st.TeamOwnerChecked && i == 0)
 			}
+			d.st.TeamOwnerChecked = true
 			d.st.TeamTip = commits[len(commits)-1].SHA
 		})
 		return nil
@@ -290,7 +318,7 @@ func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 		d.log.Printf("%s: passing over %s, sealed with a key that isn't the one pinned for %s", brand.TeamRef, short(c.SHA), seal.By)
 		return
 	}
-	if r.Type == bus.TeamEpoch && d.knownEpochLocked(r.ID) || !d.acceptTeamAdminLocked(r, seal, root) {
+	if r.Type == bus.TeamEpoch && d.knownEpochLocked(r.ID) || !d.acceptTeamAdminLocked(c.SHA, r, seal, root) {
 		return
 	}
 	grant := func(dev string, ids []string) {

@@ -77,8 +77,11 @@ func TestInitJoinAndLeave(t *testing.T) {
 			t.Errorf("init wrote %s into the repo", name)
 		}
 	}
-	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur")) {
+	if exists(b.claudeJSON()) || exists(b.codexConfig()) || exists(filepath.Join(b.clone, ".git", "murmur", "daemon.json")) {
 		t.Fatal("init touched the user's settings or started something")
+	}
+	if !exists(filepath.Join(b.clone, ".git", "murmur", "keys")) {
+		t.Fatal("the initializing clone did not keep its keys")
 	}
 
 	out = b.mustRun(b.clone, "join")
