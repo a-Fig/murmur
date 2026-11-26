@@ -284,6 +284,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			if from == "" && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
 				if checkOwner {
+					d.repoModeStamp.Add(1)
 					d.st.TeamOwner = nil
 					d.st.TeamReplayThrough = replayThrough
 				}
