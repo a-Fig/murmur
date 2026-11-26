@@ -833,7 +833,7 @@ func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string
 //
 // It is the email git would write on a commit made here: `git var GIT_AUTHOR_IDENT`, which takes
 // user.email, the environment, and else the user@hostname address git makes up, which is common.
-// The bus's own commits set their identity with -c on commit-tree only (bus.Repo.NewCommit), so
+// The bus's own commits set their identity on their commit-tree alone (bus.Repo.NewCommit), so
 // this reads the user's.
 func (d *Daemon) authorPrint(ctx context.Context) string {
 	if d.repoAddr == "" {

@@ -93,7 +93,8 @@ would need one per commit.
   and ties the clone to the identity they match: its GitHub account, else the email. It sends that
   as the device's `author`, and the site counts it as the device's account, ahead of the name match,
   so one person's clones, machines and boxes count once, across repos. Where the fingerprint finds
-  only an email no account is linked to and the owner's git name found a login, the login is sent.
+  only an email no account is linked to, that email stands even if the owner's git name found a
+  login: two people can share a name, and the clone counts apart from the login's other clones.
   - *No opt-out.* It only ties a clone to an identity its owner already showed in that repo's
     commits, and the repo is in the hash, so a fingerprint links nothing across repos by itself.
     Nothing new is sent to us: it is on the bus, like the device IDs in the registry.
@@ -108,7 +109,7 @@ would need one per commit.
     Someone who guesses an email can confirm that its owner runs Murmur in a repo they have never
     committed to; a `user@hostname` address is easy to guess, and 64 bits can be tried offline.
     Clones that commit as one email show one fingerprint in the public registry, so anyone can see
-    which device IDs share an owner, which device IDs since #330 no longer showed.
+    which device IDs share an owner, which #330's random device IDs had stopped showing.
   - *A renamed or moved repo* (Opus's review of #1248). The daemon hashes the repo as its remote
     is written, the census as GitHub names it now, so a clone still on an old URL, which GitHub
     redirects, never matches and is counted as before. #1250 closes the gap on the census's side:

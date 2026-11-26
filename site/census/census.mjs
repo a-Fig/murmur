@@ -588,19 +588,16 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
     const ask = lookup(m[1], m[2], deadline);
     const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, ask);
     const printed = await authorAccounts(bus.devices, printsOf(dir, name, { deadline }), ask);
-    // A fingerprint that found only an email no account is linked to gives way to the login its
-    // owner's git name matched: one clone is one person, and the login is what ties them to their
-    // clones in other repos (Opus's review of #1248).
-    const author = (id, owner) => {
-      const who = printed.get(id);
-      return who?.startsWith('email:') && matched.get(owner)?.startsWith('login:') ? matched.get(owner) : who;
-    };
+    // The fingerprint's identity stands even where it found only an email no account is linked to
+    // and the owner's git name found a login: two people can share a git name, and the email is the
+    // exact match. Such a clone counts apart from that login's other clones, a missed merge, which
+    // costs less than a wrong one (Opus's reviews of #1248).
     const devices = bus.devices.map(({ id, owner, machine }) => ({
       id,
       person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,
       account: matched.has(owner) ? hash(matched.get(owner)) : null,
       machine,
-      author: printed.has(id) ? hash(author(id, owner)) : null,
+      author: printed.has(id) ? hash(printed.get(id)) : null,
     }));
     return { repo: name.toLowerCase(), ...bus, devices, contributors: contributors(commits) };
   } finally {

@@ -928,17 +928,19 @@ test('the site refuses a device whose author is not a hash', async () => {
   assert.deepEqual([res.status, (await res.text()).trim()], [400, 'Not counts: a device.']);
 });
 
-test("a fingerprint that finds only an unlinked email gives way to the login its owner's name matched", async t => {
+test("a fingerprint that finds only an unlinked email keeps it, though the owner's name found a login", async t => {
   const r = remote(t);
   const as = device => ({ who: `${device} <${device}@murmur.invalid>` });
   r.commit('refs/murmur/mesh/dev1', event({ type: 'message', from: 'dev1', at: r.at }), as('dev1'));
   r.commit('refs/murmur/presence/dev1', event({ owner: 'Ann', at: r.at }), as('dev1'));
+  // Another Ann, or the same one: the commits can't say, and a wrong merge costs more than a missed one.
   r.commit('refs/heads/feature', 'laptop\n', { who: 'Ann <ann@laptop.local>' });
   r.commit('refs/murmur/names', named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: r.at, author: authorPrint('github.com/a/one', 'ann@laptop.local') }), as('dev1'));
   const start = r.git(['rev-parse', 'refs/heads/main']).trim();
   const c = await readRepo('github.com/a/one', { url: r.url, lookup: () => async sha => (sha === start ? 'Ann-GH' : null) });
   const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
-  assert.equal(c.devices[0].author, hash('login:ann-gh'));
+  assert.equal(c.devices[0].author, hash('email:ann@laptop.local'));
+  assert.equal(c.devices[0].account, hash('login:ann-gh'));
 });
 
 test("reading every branch doesn't make the census apply a repo's .mailmap", async t => {
@@ -948,7 +950,9 @@ test("reading every branch doesn't make the census apply a repo's .mailmap", asy
   const blob = r.git(['hash-object', '-w', '--stdin'], { input: 'Real <real@example.com> <ann@example.com>\n' }).trim();
   const tree = r.git(['mktree'], { input: `100644 blob ${blob}\t.mailmap\n` }).trim();
   const sha = r.git(['commit-tree', tree], { input: 'mailmap\n', who: 'Ann <ann@example.com>' }).trim();
+  // On master and on main, whichever git's default branch makes the scratch repo's HEAD.
   r.git(['update-ref', 'refs/heads/master', sha]);
+  r.git(['update-ref', 'refs/heads/main', sha, r.git(['rev-parse', 'refs/heads/main']).trim()]);
   r.commit('refs/murmur/mesh/dev1', event({ type: 'message', at: r.at }));
   const c = await readRepo('github.com/a/one', { url: r.url, lookup: unlinked });
   const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
