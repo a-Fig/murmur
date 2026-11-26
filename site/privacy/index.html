@@ -60,8 +60,8 @@
       <section class="fact">
         <div class="label"><h2>Updates</h2></div>
         <div class="body">
-          <p>Murmur updates itself. The daemon checks GitHub's releases hourly, and installs a newer <code>mur</code> after verifying its checksum. To turn that off:</p>
-          <div class="cmd"><code>git config --global murmur.update false</code></div>
+          <p>Murmur updates itself. The daemon checks GitHub's releases hourly, and installs a newer <code>mur</code> after verifying its checksum. To turn that off, set Updates to Off in Settings in <code>mur ui</code>, or run:</p>
+          <div class="cmd"><code>mur updates off</code></div>
           <p>It still checks GitHub, so it can tell you of a new release, and installs nothing until you ask. To stop the checks too, start the daemon with <code>MURMUR_NO_UPDATE=1</code>.</p>
         </div>
       </section>
