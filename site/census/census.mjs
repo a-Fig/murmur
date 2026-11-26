@@ -626,8 +626,10 @@ export async function main(args, { read = census, downloads = releaseDownloads }
         const why = String(err.message || err).trim();
         // A site from before release downloads has no such path. The census reads them again
         // tomorrow, so until the site that takes them is deployed this is a warning, not a red run.
-        if (/: 404(?!\d)/.test(why)) console.error(`release downloads: not sent, the site doesn't take them yet: ${why}`);
-        else {
+        if (/: 404(?!\d)/.test(why)) {
+          console.error(`release downloads: not sent, the site doesn't take them yet: ${why}`);
+          if (process.env.GITHUB_ACTIONS === 'true') console.log("::warning title=census::release downloads not sent: the site doesn't take them yet");
+        } else {
           releasesFailed = why;
           console.error(`release downloads: not sent: ${why}`);
         }
