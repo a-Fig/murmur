@@ -30,13 +30,20 @@ func (d *Daemon) isOwnerLocked() bool {
 }
 
 func (d *Daemon) checkOwnerLocked() error {
-	if d.st.TeamTip != "" && !d.st.TeamOwnerChecked {
-		return fmt.Errorf("Murmur is still verifying the team history. Try again after it syncs.")
+	if err := d.checkOwnerHistoryLocked(); err != nil {
+		return err
 	}
 	if d.canAdministerLocked() {
 		return nil
 	}
 	return fmt.Errorf("only the mesh owner (%s) can rotate the team key", d.deviceCalledLocked(d.st.TeamOwner.Device))
+}
+
+func (d *Daemon) checkOwnerHistoryLocked() error {
+	if d.st.TeamTip != "" && !d.st.TeamOwnerChecked || d.st.TeamReplayThrough != "" {
+		return errors.New("Murmur is still verifying the team history. Try again after it syncs.")
+	}
+	return nil
 }
 
 // teamContinues checks the first-parent chain that Repo.Log will read. A merge with the previous
@@ -60,10 +67,28 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 		return true
 	}
 	if o == nil {
+		if r.Type == bus.TeamEpoch && r.AdminSeq == 0 {
+			// The first legacy epoch signs the creator's device ID. A Git author name
+			// and a presence label can match without authenticating either one.
+			d.st.TeamOwner = &meshOwner{Device: seal.By, Key: seal.Key, Tip: sha,
+				Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
+			d.pinOwnerLocked(seal.By, seal.Key)
+		}
 		return r.AdminSeq == 0
 	}
 	if r.Type == bus.TeamGrant {
 		return true
+	}
+	if o.Seq == 0 {
+		// Legacy epochs and rosters precede the first policy checkpoint. The first epoch's
+		// device is the only one that can seal the checkpoint and start the admin sequence.
+		if r.AdminSeq == 0 {
+			o.Tip = sha
+			return true
+		}
+		if r.Type != bus.TeamPolicy {
+			return false
+		}
 	}
 	if r.Policy != nil && r.Type != bus.TeamPolicy || o.Device != seal.By || o.Key != seal.Key || r.AdminSeq != o.Seq+1 {
 		return false
@@ -93,6 +118,9 @@ func (d *Daemon) pinOwnerLocked(device, key string) {
 // ownerTransferLocked binds the recipient's current verified device key to the transfer.
 // The receiving daemons use that key even if they have never seen the recipient's presence.
 func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, error) {
+	if err := d.checkOwnerHistoryLocked(); err != nil {
+		return bus.TeamRecord{}, err
+	}
 	if d.st.TeamOwner == nil {
 		return bus.TeamRecord{}, errors.New("this mesh has no owner to transfer")
 	}

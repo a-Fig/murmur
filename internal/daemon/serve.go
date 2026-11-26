@@ -793,6 +793,9 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		d.awaitFirstSync(ctx)
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if err := d.checkOwnerHistoryLocked(); err != nil {
+			return fail(err.Error())
+		}
 		if d.isOwnerLocked() {
 			return proto.Response{OK: true, Note: "This clone is the mesh owner."}
 		}

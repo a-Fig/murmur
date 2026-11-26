@@ -33,7 +33,7 @@ func (d *Daemon) autoRotate(ctx context.Context) {
 
 func (d *Daemon) checkForDepartures(ctx context.Context, list func(context.Context, string) ([]string, error)) time.Duration {
 	d.mu.Lock()
-	verified := d.st.TeamOwnerChecked
+	verified := d.st.TeamOwnerChecked && d.st.TeamReplayThrough == ""
 	enabled := d.isOwnerLocked() && d.st.TeamOwner.Policy.EncryptionMode == "team"
 	d.mu.Unlock()
 	if !verified {

@@ -422,8 +422,7 @@ func TestRotateComparesCollaborators(t *testing.T) {
 	eventually(t, "the third epoch", func() bool { return len(teamIDs(t, remote)) == 3 })
 }
 
-// The roster is encrypted for the team key, not for the device that wrote it, so a teammate's device
-// compares against it too: `mur rotate` there doesn't make a new key when nobody has left.
+// A device that takes ownership can compare against the roster written by the previous owner.
 func TestRosterIsReadByEveryDevice(t *testing.T) {
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -433,6 +432,9 @@ func TestRosterIsReadByEveryDevice(t *testing.T) {
 	}
 	second := teamIDs(t, remote)[1]
 	eventually(t, "b is granted the new key", func() bool { return ringOf(t, b)[second] != nil })
+	if r := a.do(proto.Request{Op: proto.OpTransferOwner, To: b.self()}); r.Error != "" {
+		t.Fatalf("transfer: %+v", r)
+	}
 	if r := b.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice", "bob"}}); r.Error != "" ||
 		!strings.Contains(r.Note, "Nobody has left") {
 		t.Fatalf("b, with nobody gone: %+v", r)

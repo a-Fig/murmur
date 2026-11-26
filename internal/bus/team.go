@@ -183,7 +183,7 @@ func (r TeamRecord) Valid() bool {
 		return false
 	}
 	if r.Type == TeamPolicy {
-		return r.AdminSeq > 1 && r.Policy != nil && r.Box == nil && r.ID == "" && r.Pub == "" && r.To == "" && len(r.IDs) == 0
+		return r.AdminSeq > 0 && r.Policy != nil && r.Box == nil && r.ID == "" && r.Pub == "" && r.To == "" && len(r.IDs) == 0
 	}
 	if r.Box == nil || len(r.Box.Keys) == 0 || r.Policy != nil && (r.Type != TeamEpoch || r.AdminSeq != 1) {
 		return false

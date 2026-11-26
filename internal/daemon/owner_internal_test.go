@@ -69,3 +69,25 @@ func TestAutomaticRotationSkipsNonOwnerDevices(t *testing.T) {
 		t.Fatalf("next check in %s, want %s", delay, rotationCheck)
 	}
 }
+
+func TestLegacyOwnershipKeepsEarlierEpochs(t *testing.T) {
+	d, _ := keyRig(t)
+	owner := bus.Seal{By: "owner-0001", Key: bus.SignPublic(bus.NewSignKey())}
+	peer := bus.Seal{By: "peer-0001", Key: bus.SignPublic(bus.NewSignKey())}
+	epoch := bus.TeamRecord{Type: bus.TeamEpoch}
+	if !d.acceptTeamAdminLocked("first", epoch, owner, false) ||
+		!d.acceptTeamAdminLocked("rotation", epoch, peer, false) {
+		t.Fatal("legacy epochs were rejected")
+	}
+	policy := d.st.TeamOwner.Policy
+	checkpoint := bus.TeamRecord{Type: bus.TeamPolicy, AdminSeq: 1, Policy: &policy}
+	if d.acceptTeamAdminLocked("untrusted", checkpoint, peer, false) {
+		t.Fatal("a later epoch's creator sealed the legacy checkpoint")
+	}
+	if !d.acceptTeamAdminLocked("checkpoint", checkpoint, owner, false) {
+		t.Fatal("the first epoch's creator could not seal the legacy checkpoint")
+	}
+	if d.acceptTeamAdminLocked("late", epoch, peer, false) {
+		t.Fatal("accepted an unsequenced rotation after sealing ownership")
+	}
+}

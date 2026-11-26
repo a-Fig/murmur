@@ -140,9 +140,17 @@ come from devices that hold the current key. Older daemons can read an owned mes
 They need the owner-aware update to verify who can rotate.
 
 `mur owner` shows the owner this clone has verified. `mur rotate` requires that owner's signing
-key as well as the team's key history. Older meshes did not record an owner and still allow
-rotation from any clone that holds the key history. Ownership follows the initializing clone's
-key and device ID. Losing either loses the ability to administer that mesh.
+key as well as the team's key history. To hand over ownership, run `mur owner transfer DEVICE`
+with the new owner's device ID from `mur who`. That device must have published its keys.
+The current owner signs the new device's key and the next admin sequence into the team ref.
+The new owner can rotate once its clone has all the team keys.
+
+For a mesh created before ownership, the device that signed the first team epoch becomes owner.
+Git authors and presence labels were recorded independently, so a name match can't prove which
+device ran init. Existing epochs and rosters stay readable. The owner writes a signed policy
+checkpoint on its next sync, after which daemons require its signature and sequence on new
+admin records. Ownership stays with the current owner's device ID and signing key. If that clone
+loses either before a transfer, it loses the ability to administer the mesh.
 
 ### Automatic rotation
 
