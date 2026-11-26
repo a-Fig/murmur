@@ -8,6 +8,8 @@ import (
 	"github.com/a-Fig/murmur/internal/bus"
 )
 
+const teamAdminModes = 2
+
 // A policy change names only the setting the owner asked to change. The daemon merges it with
 // the policy read at the current team tip, so a retry preserves other settings changed meanwhile.
 type repoPolicyChange struct {
@@ -34,7 +36,13 @@ func (d *Daemon) nextRepoPolicyLocked(change repoPolicyChange) (bus.RepoPolicy, 
 		return bus.RepoPolicy{}, errors.New("only the mesh owner can change repo settings")
 	}
 	policy := d.st.TeamOwner.Policy
-	if change.mode != nil {
+	if change.mode != nil && *change.mode != policy.EncryptionMode {
+		for _, dev := range sortedKeys(d.peers) {
+			p := d.peers[dev]
+			if !d.staleLocked(p) && p.pres.TeamAdmin < teamAdminModes {
+				return bus.RepoPolicy{}, fmt.Errorf("update Murmur on %s before switching encryption modes", d.deviceCalledLocked(dev))
+			}
+		}
 		policy.EncryptionMode = *change.mode
 	}
 	if change.allowFiles != nil {

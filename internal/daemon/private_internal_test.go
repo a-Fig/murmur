@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 func TestRepoModeScopesPrivateMessagesToTheirDevices(t *testing.T) {
@@ -16,7 +17,7 @@ func TestRepoModeScopesPrivateMessagesToTheirDevices(t *testing.T) {
 	d.st.Pins["peer-0001"].Box = bus.BoxPublic(memberKey)
 	d.st.Pins["peer-0002"] = &keyPin{Box: bus.BoxPublic(outsiderKey)}
 	d.peers["peer-0002"] = &peer{}
-	p.pres.Sessions = []bus.SessionInfo{{ID: "bbbbbb", Tags: []string{"group:demo"}}}
+	p.pres.Sessions = []bus.SessionInfo{{ID: "bbbbbb", Tags: []tags.Tag{{Name: "group:demo"}}}}
 
 	e := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, From: "me-0001/aaaaaa", To: "peer-0001/bbbbbb",
 		Subject: "private subject", Body: "private body", At: time.Now().UTC()}
