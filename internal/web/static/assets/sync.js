@@ -68,7 +68,7 @@ async function deliver(item) {
     const sent = await api("/api/send", { method: "POST", body, keepalive });
     item.id = sent.id;
     // The message's files are these, in this order: the page has them without asking the daemon.
-    if (item.files?.length) {
+    if (!ui.state?.repoFilesOff && item.files?.length) {
       item.files.forEach((a, i) => fetched.set(sent.id + ":" + i, a));
       trimFetched(); // held to FETCHED_KEEP as fetched files are: a page that only sends would keep them all
     }
@@ -322,9 +322,10 @@ async function poll() {
         personNames.add(d.person.name);
       }
     }
+    const repoFilesWereOff = ui.state?.repoFilesOff;
     ui.state = state;
     stateAskedAt = asked;
-    followFileSwitches(state);
+    followFileSwitches(state, repoFilesWereOff);
     forgetJoins();
     // Someone else claimed this name first (#268): ask for another, once per page, unless something
     // is already being asked.

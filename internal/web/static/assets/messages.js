@@ -10,7 +10,7 @@ import { onlyMine, setOnlyMine } from "./preferences.js";
 import { AuthError, api } from "./api.js";
 import { deliver, queueSettings, saveSettings, deny, poll } from "./sync.js";
 import { announce, render, go, starRow } from "./render.js";
-import { humanTag } from "./sidebar.js";
+import { personBadges } from "./sidebar.js";
 import {
   modelOf, sessionState, dotted, statusDot, prFor, prBadge, presence, settledSessions, isSettled,
   deviceLabel, host, stateWord, emptyState,
@@ -18,7 +18,7 @@ import {
 import { groupMembers, inGroup, liveGroups, membersButton, tagsLine, profileLine } from "./tags.js";
 import {
   attached, pictureType, fileSize, filesOnly, messageFiles, fileList, sendsFiles, askToSend, turnOnSending,
-  attach, detach, pickFiles,
+  attach, detach, pickFiles, REPO_FILES_OFF,
 } from "./files.js";
 import {
   startGroup, startChat, askForName, newMessageButton, newGroupButton, openPicker, startPane,
@@ -578,7 +578,7 @@ function conversationPane(c) {
         "div",
         { class: "chat-head-text" },
         h("h2", { class: "chat-title truncate", title: c.title }, gs ? groupName(c) : o || c.title),
-        o && isPerson(o) && humanTag(),
+        o && isPerson(o) && personBadges(o),
         of && h("span", { class: "g-state g-state-" + sessionState(of.device, of.session) }, stateWord(of.device, of.session)),
         about && h("span", { class: "chat-about truncate", title: [...senders].join(", ") }, about),
       ),
@@ -773,7 +773,7 @@ function chatMessage(m, from, at, head) {
     h(
       "div",
       { class: "chat-msg-main" },
-      head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog", "data-key": "from-" + m.id }, from), m.fromPerson && humanTag(), via && h("span", { class: "chat-msg-via truncate" }, via), time),
+      head && h("div", { class: "chat-msg-head" }, h("button", { type: "button", class: "chat-msg-from truncate", "data-profile": from, "aria-haspopup": "dialog", "data-key": "from-" + m.id }, from), m.fromPerson && personBadges(from, m.fromAddr), via && h("span", { class: "chat-msg-via truncate" }, via), time),
       !filesOnly(m) && messageText(m),
       messageFiles(m),
     ),
@@ -1188,7 +1188,7 @@ function composer(c, target) {
       h(
         "div",
         { class: "composer-bar" },
-        h("button", { class: "composer-attach", title: "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => (sendsFiles() ? pickFiles(key) : askToSend(key)) }, icon("paperclip")),
+        h("button", { class: "composer-attach", title: ui.state?.repoFilesOff ? REPO_FILES_OFF : "Attach files", "aria-label": "Attach files", "data-key": "attach-" + key, onclick: () => (sendsFiles() ? pickFiles(key) : askToSend(key)) }, icon("paperclip")),
         h("button", { class: "composer-chip", title: "Message someone else", "aria-label": "To " + (c.kind === "dm" ? target.to : (c.kind === "all" ? "Everyone" : target.label) + " " + plural(target.count, "session")) + ". Message someone else", "data-key": "composer-to", onclick: () => openPicker() }, ...who, icon("chevronDown", "composer-chip-chev")),
         !NARROW.matches && h("span", { class: "composer-hint", "aria-hidden": "true" }, h("kbd", null, "Enter"), armed ? " again to send" : " to send"),
         h("button", { class: "composer-send", title: "Send", "aria-label": "Send", disabled: !el.value.trim() && !files.length, "data-key": "send-" + key, onclick: trySend }, icon("arrowUp")),

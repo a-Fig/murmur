@@ -255,9 +255,10 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	self.DND = d.dnd.Load()
 	st := web.State{Repo: d.repoName, Slug: d.repoSlug, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
 		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
-		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load()}
-	if owner := d.st.TeamOwner; owner != nil {
+		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load(), RepoFilesOff: !d.repoAllowsFiles()}
+	if owner := d.st.TeamOwner; owner != nil && d.checkOwnerHistoryLocked() == nil {
 		st.MeshOwner, st.OwnsMesh = owner.Device, d.isOwnerLocked()
+		st.EncryptionMode = owner.Policy.EncryptionMode
 	}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
@@ -572,6 +573,14 @@ func (s pageSource) Settings(ctx context.Context) (web.Settings, error) {
 		s.d.moveSettings() // so the page reads each session's choice under the name it has now
 	}
 	return s.d.settings.view(), nil
+}
+
+func (s pageSource) SetRepoPolicy(ctx context.Context, change web.RepoPolicyChange) error {
+	s.d.pageCalled(ctx)
+	if change.AllowFiles != nil {
+		return s.d.setRepoFilesAllowed(ctx, *change.AllowFiles)
+	}
+	return s.d.setRepoMode(ctx, change.EncryptionMode)
 }
 
 // SetSettings keeps the settings in memory only once they are on disk, so a failed save leaves

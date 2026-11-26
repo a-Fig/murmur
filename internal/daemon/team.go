@@ -245,6 +245,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		if replayThrough != "" {
 			d.mu.Lock()
 			d.st.TeamReplayThrough = ""
+			d.refreshRepoFilesLocked()
 			d.signalTeamLocked()
 			d.saveLocked()
 			d.mu.Unlock()
@@ -306,6 +307,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			d.st.TeamTip = commits[len(commits)-1].SHA
 			if d.st.TeamTip == sha {
 				d.st.TeamReplayThrough = ""
+				d.refreshRepoFilesLocked()
 				d.signalTeamLocked()
 			}
 		})
@@ -319,6 +321,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	if d.st.TeamTip != sha || d.st.TeamReplayThrough != "" {
 		d.st.TeamTip = sha // a tip that isn't a commit, or holds none Murmur reads
 		d.st.TeamReplayThrough = ""
+		d.refreshRepoFilesLocked()
 		d.signalTeamLocked()
 		d.saveLocked()
 	}
@@ -360,6 +363,9 @@ func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 	}
 	if r.Type == bus.TeamEpoch && d.knownEpochLocked(r.ID) || !d.acceptTeamAdminLocked(c.SHA, r, seal, root) {
 		return
+	}
+	if r.Policy != nil {
+		d.refreshRepoFilesLocked()
 	}
 	grant := func(dev string, ids []string) {
 		have := d.st.TeamGranted[dev]

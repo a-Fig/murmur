@@ -10,7 +10,7 @@ import { tagsFolded, setTagsFolded } from "./preferences.js";
 import { AuthError, api } from "./api.js";
 import { deliver, deny, stateAskedAt, poll } from "./sync.js";
 import { render, go } from "./render.js";
-import { humanTag } from "./sidebar.js";
+import { humanTag, personBadges } from "./sidebar.js";
 import {
   STATE_TIPS, PERSON_TIPS, modelOf, sessionState, deviceDot, prFor, prBadge, presence, settledSessions,
   deviceLabel, host, stateWord,
@@ -705,7 +705,7 @@ function profileCard() {
       h(
         "div",
         { class: "pc-who" },
-        h("h2", { class: "pc-name name-line" }, h("span", { class: "truncate" }, name), human && humanTag()),
+        h("h2", { class: "pc-name name-line" }, h("span", { class: "truncate" }, name), human && personBadges(name)),
         addr && h("p", { class: "pc-addr truncate", title: addr }, addr),
         h("p", { class: "pc-state truncate" }, word, where && " · " + where),
       ),

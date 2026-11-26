@@ -323,8 +323,11 @@ func files(m proto.MessageView) string {
 		if len(list) == 1 {
 			these = "this file"
 		}
-		return "Attached: " + strings.Join(list, ", ") + "\nYou can't receive " + these +
-			": receiving files is off in " + brand.Product + "'s settings.\n"
+		reason := "receiving files is off in " + brand.Product + "'s settings."
+		if m.RepoFilesOff {
+			reason = "the mesh owner has turned off file transfers for this repo."
+		}
+		return "Attached: " + strings.Join(list, ", ") + "\nYou can't receive " + these + ": " + reason + "\n"
 	}
 	if len(m.Files) == 0 {
 		return ""
@@ -891,6 +894,9 @@ func selfHookOff(devices []proto.Device) bool {
 // agent can check, as who leaves it out. Only this device knows whether a session sends them, so
 // another device's line says only whether it takes them.
 func lookupFiles(d *proto.SessionDetail) string {
+	if d.RepoFilesOff {
+		return "the mesh owner has turned off file transfers for this repo"
+	}
 	person := d.Agent == bus.AgentPerson
 	off := func(what string) string { // a person's switch is their own, and may never have been touched
 		if person {

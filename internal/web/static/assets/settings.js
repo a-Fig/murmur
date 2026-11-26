@@ -8,7 +8,8 @@ import { AuthError, api } from "./api.js";
 import { saveSettings, deny, poll } from "./sync.js";
 import { announce, render } from "./render.js";
 import { versionSection } from "./sidebar.js";
-import { host } from "./sessions.js";
+import { deviceLabel, host } from "./sessions.js";
+import { REPO_FILES_OFF } from "./files.js";
 import { dmKey, deviceColor, composers, deviceMode, MODE_HELP, setMode } from "./messages.js";
 
 export { minuteEdits, cancelMinutes, settingsRow, moveToName, settingsPage };
@@ -462,17 +463,135 @@ function settingsSection(key, title, note, ...rows) {
 
 // Every setting is a segmented control, on/off ones too: one kind of control across Settings
 // (Tyler, 2026-11-17, #862). hints says what Off and On each do, on hover.
-function onOffControl(key, on, save, hints) {
+function onOffControl(key, on, save, hints, { disabled, label } = {}) {
   return h(
     "div",
-    { class: "segmented", role: "group" },
+    { class: "segmented", role: "group", "aria-label": label },
     [[false, "Off"], [true, "On"]].map(([v, label], i) =>
-      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), onclick: () => on !== v && save(v) }, label),
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), disabled, onclick: () => on !== v && save(v) }, label),
+    ),
+  );
+}
+
+const REPO_MODES = {
+  team: ["Team", "Every teammate can read messages sent in Team mode."],
+  private: ["Private", "Only the devices involved can read each new message."],
+  off: ["Off", "New records are readable by anyone with access to the repo."],
+};
+
+async function saveRepoPolicy(change) {
+  if (ui.repoPolicyBusy) return;
+  const token = ui.token;
+  ui.repoPolicyBusy = true;
+  ui.rowErrors["repo-policy"] = "";
+  render();
+  try {
+    await api("/api/repo-policy", { method: "PATCH", body: JSON.stringify(change) });
+    if (token === ui.token) await poll();
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    if (token === ui.token) ui.rowErrors["repo-policy"] = e.message;
+  } finally {
+    ui.repoPolicyBusy = false;
+    render();
+  }
+}
+
+function repoPolicySection() {
+  const state = ui.state;
+  if (!state?.meshOwner) return null;
+  const mode = state.encryptionMode || "team";
+  const [label, help] = REPO_MODES[mode] || [mode, ""];
+  const allowFiles = !state.repoFilesOff;
+  const owner = state.devices.find((d) => d.id === state.meshOwner);
+  const ownerName = owner?.person?.name || (owner ? deviceLabel(owner) : state.meshOwner);
+  const pending = state.ownsMesh && ui.repoModeChoice !== mode ? ui.repoModeChoice : null;
+  const chooseMode = (value) => {
+    const target = value ? "repo-mode-cancel" : "repo-mode-" + (pending || mode);
+    ui.repoModeChoice = value;
+    render();
+    root.querySelector('[data-key="' + target + '"]')?.focus();
+  };
+  const modes = h(
+    "div",
+    { class: "segmented", role: "group", "aria-label": "Encryption mode" },
+    Object.entries(REPO_MODES).map(([value, [text, hint]]) =>
+      h("button", { "aria-pressed": mode === value ? "true" : "false", "data-key": "repo-mode-" + value, "data-tip": hint, disabled: ui.repoPolicyBusy, onclick: () => chooseMode(mode === value ? null : value) }, text),
+    ),
+  );
+  const confirm = pending && settingsRow(
+    "repo-mode-confirm",
+    "Switch encryption to " + REPO_MODES[pending][0] + "?",
+    REPO_MODES[pending][1] + (pending === "off" ? " On a public repo, anyone on the internet can read new records." : "") +
+      " Existing history keeps the protection it had when it was written.",
+    [
+      h("button", { class: "btn btn-outline btn-xs", "data-key": "repo-mode-cancel", onclick: () => chooseMode(null) }, "Cancel"),
+      h("button", { class: "btn btn-primary btn-xs", "data-key": "repo-mode-apply", disabled: ui.repoPolicyBusy, onclick: () => {
+        ui.repoModeChoice = null;
+        saveRepoPolicy({ encryptionMode: pending });
+      } }, "Switch mode"),
+    ],
+  );
+  return settingsSection(
+    "repo-policy",
+    "Mesh policy",
+    state.ownsMesh ? "Changes apply to everyone in this repo." : "Managed by the mesh owner, " + ownerName + ".",
+    settingsRow("repo-mode", "Encryption mode", help, state.ownsMesh ? modes : h("span", null, label)),
+    confirm,
+    settingsRow(
+      "repo-files",
+      "Allow files",
+      allowFiles ? "People and agents can attach files when their device settings allow it." : REPO_FILES_OFF + " Older devices may still publish attachments.",
+      state.ownsMesh ? onOffControl("repo-files", allowFiles, (value) => saveRepoPolicy({ allowFiles: value }), null, { disabled: ui.repoPolicyBusy, label: "Allow files" }) : h("span", null, allowFiles ? "On" : "Off"),
+    ),
+    ui.rowErrors["repo-policy"] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors["repo-policy"]),
+  );
+}
+
+function settingsTabs(tab) {
+  const choose = (id) => {
+    ui.settingsTab = id;
+    if (id !== "repo") ui.repoModeChoice = null;
+    render();
+    root.querySelector("#settings-tab-" + id)?.focus();
+  };
+  return h(
+    "div",
+    { class: "segmented settings-tabs", role: "tablist", "aria-label": "Settings scope" },
+    [["device", "This device"], ["repo", "Repo settings"]].map(([id, label]) =>
+      h("button", {
+        id: "settings-tab-" + id,
+        "data-key": "settings-tab-" + id,
+        role: "tab",
+        "aria-selected": tab === id ? "true" : "false",
+        "aria-controls": "settings-panel",
+        tabindex: tab === id ? 0 : -1,
+        onclick: () => choose(id),
+        onkeydown: (event) => {
+          const key = event.key;
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) return;
+          event.preventDefault();
+          choose(key === "Home" ? "device" : key === "End" ? "repo" : id === "device" ? "repo" : "device");
+        },
+      }, label),
     ),
   );
 }
 
 function settingsPage() {
+  const hasPolicy = !!ui.state?.meshOwner;
+  const tab = hasPolicy && ui.settingsTab === "repo" ? "repo" : "device";
+  const sections = tab === "repo" ? repoPolicySection() : deviceSettings();
+  return h(
+    "div",
+    { class: "page" },
+    settingsScope(tab === "device"),
+    hasPolicy && settingsTabs(tab),
+    h("div", { class: "settings-panel", id: "settings-panel", role: hasPolicy ? "tabpanel" : null, "aria-labelledby": hasPolicy ? "settings-tab-" + tab : null }, sections),
+  );
+}
+
+function deviceSettings() {
   const sections = [ui.state ? accountSection() : null];
   if (ui.settings) {
     const set = ui.settings;
@@ -543,7 +662,9 @@ function settingsPage() {
       }
       return rows;
     };
-    sections.push(
+    if (ui.state?.repoFilesOff) {
+      sections.push(settingsSection("files", "Files", REPO_FILES_OFF));
+    } else sections.push(
       settingsSection(
         "files",
         "Files",
@@ -622,12 +743,12 @@ function settingsPage() {
   );
 
   sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
-  return h("div", { class: "page" }, settingsScope(), sections);
+  return sections;
 }
 
 // Which repo, and which device, the settings above the line are for: in mur app the repo picker
 // switches between repos, each with settings of its own.
-function settingsScope() {
+function settingsScope(showDevice) {
   if (!ui.state) return null;
   const self = (ui.state.devices || []).find((d) => d.self);
   return h(
@@ -635,7 +756,7 @@ function settingsScope() {
     { class: "settings-scope" },
     "For ",
     h("strong", null, repoLabel()),
-    self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
+    showDevice && self ? [" on ", h("span", { class: "dev-swatch " + deviceColor(self), "aria-hidden": "true" }), h("strong", null, self.nick || host(self.id))] : null,
   );
 }
 

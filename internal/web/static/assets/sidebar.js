@@ -3,7 +3,7 @@
 import { icon } from "./icons.js";
 import { h, when, ago, plural, root } from "./dom.js";
 import {
-  NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount, repoLabel,
+  NAME, COMMAND, NARROW, ui, devices, me, myName, people, findPerson, personOnline, unreadCount, repoLabel,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
 import { deny, poll, tokenEra } from "./sync.js";
@@ -19,7 +19,7 @@ import { settingsRow } from "./settings.js";
 import { updatesRow, daemonNote } from "./updates.js";
 
 export {
-  setDrawer, pickSession, connBadge, sidebar, humanTag, restartStuck, updateInfo, versionSection,
+  setDrawer, pickSession, connBadge, sidebar, humanTag, personBadges, restartStuck, updateInfo, versionSection,
   closeRepoMenu, repoMenu, loadRepoCount,
 };
 
@@ -267,7 +267,7 @@ function sidebarFoot() {
           h("span", { class: "account-name truncate" }, a.name),
           h("span", { class: "name-taken" }, "New name"),
         )
-      : h("button", { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") }, avatar(a.name, false), h("span", { class: "account-name truncate" }, a.name))
+      : h("button", { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") }, avatar(a.name, false), h("span", { class: "account-name truncate" }, a.name), ownerBadge(ui.state?.device))
     : h("button", { class: "account-chip account-none", title: "Agents see your name, and send to it.", "data-key": "account-chip", onclick: () => askForName(null) }, h("span", { class: "avatar account-blank", "aria-hidden": "true" }, icon("user")), h("span", { class: "account-name truncate" }, "Choose your name"));
   return h(
     "div",
@@ -286,6 +286,17 @@ function sidebarFoot() {
 // does. It looks like the session tags it sits among, and can't be taken off.
 function humanTag() {
   return h("span", { class: "badge tag badge-outline tag-human", title: "A person, not an agent. " + NAME + " gives this tag to every person's account, and only to one." }, "human");
+}
+
+function ownerBadge(device) {
+  return device && device === ui.state?.meshOwner
+    ? h("span", { class: "badge tag badge-outline", title: "Mesh owner" }, "Owner")
+    : null;
+}
+
+function personBadges(name, addr) {
+  const device = addr?.split("/")[0] || (name === myName() ? ui.state?.device : findPerson(name)?.device.id);
+  return [humanTag(), ownerBadge(device)];
 }
 
 function peopleGroup() {
@@ -309,7 +320,7 @@ function peopleGroup() {
             h(
               "span",
               { class: "side-session-text" },
-              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": p.name }, p.name), humanTag()),
+              h("span", { class: "name-line" }, h("span", { class: "side-session-name truncate", "data-profile": p.name }, p.name), personBadges(p.name, p.addr)),
               h("span", { class: "side-session-doing truncate" }, personOnline(p) ? "On " + NAME + " now" : deviceLabel(p.device)),
             ),
           ),

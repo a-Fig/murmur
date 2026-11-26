@@ -12,7 +12,7 @@ import { refocus } from "./picker.js";
 export {
   fetched, attached, pictureType, fileSize, trimFetched, filesOnly, followFileSwitches, FILE_SWITCHES,
   messageFiles, fileList, closeViewer, viewerDialog, sendsFiles, askToSend, turnOnSending, attach, detach,
-  pickFiles,
+  pickFiles, REPO_FILES_OFF,
 };
 
 // Files with a message (#570, docs/design/files.md).
@@ -106,6 +106,7 @@ function trimFetched(keep) {
 }
 
 function saveFile(name, url) {
+  if (ui.state?.repoFilesOff) return;
   const a = h("a", { href: url, download: name, hidden: true });
   document.body.append(a);
   a.click();
@@ -115,12 +116,16 @@ function saveFile(name, url) {
 // A message of files alone, sent from a page, has their names for its text: the daemon gave it
 // them, since a message needs a subject. The files say as much.
 function filesOnly(m) {
-  return !!m.files?.length && m.fromPerson && personText(m) === m.files.map((f) => f.name).join(", ");
+  return !ui.state?.repoFilesOff && !!m.files?.length && m.fromPerson && personText(m) === m.files.map((f) => f.name).join(", ");
 }
 
 // The file switches as the daemon has them, changed here or on another page. Receive files off
 // drops what this page fetched from other devices, and their files aren't shown (#765).
-function followFileSwitches(state) {
+function followFileSwitches(state, repoFilesWereOff) {
+  if (state.repoFilesOff) {
+    dropFetchedFiles(false);
+    ui.viewer = null;
+  } else if (repoFilesWereOff) refetchFiles(tokenEra);
   const set = ui.settings;
   if (!set) return;
   if (settingsSaving || stateAskedAt < settingsAt) {
@@ -133,10 +138,13 @@ function followFileSwitches(state) {
   const was = receiving;
   receiving = !!state.receiveFiles;
   // Messages the page has came without their files while it was off: ask again for theirs.
-  if (receiving && was === false) refetchFiles(tokenEra);
-  if (receiving) return;
+  if (!state.repoFilesOff && !repoFilesWereOff && receiving && was === false) refetchFiles(tokenEra);
+  if (!receiving) dropFetchedFiles(true);
+}
+
+function dropFetchedFiles(remoteOnly) {
   for (const [key, f] of fetched) {
-    if (!f.remote) continue;
+    if (remoteOnly && !f.remote) continue;
     fetched.delete(key);
     f.dropped = true; // one still on its way is let go of when it comes
     if (f.url) URL.revokeObjectURL(f.url);
@@ -157,7 +165,7 @@ async function refetchFiles(era) {
   try {
     for (let pages = 0; pages < 20; pages++) {
       const r = await api("/api/messages?cursor=" + encodeURIComponent(cursor));
-      if (era !== tokenEra) return;
+      if (era !== tokenEra || ui.state?.repoFilesOff) return;
       for (const m of r.messages || []) if (m.files?.length && byId.has(m.id)) byId.get(m.id).files = m.files;
       if (!r.messages?.length || !r.cursor || r.cursor === cursor) break;
       cursor = r.cursor;
@@ -175,7 +183,7 @@ function fromElsewhere(m) {
 
 // Under a message's text: its pictures, shown, and its other files, each a button that saves it.
 function messageFiles(m) {
-  if (!m.files?.length) return null;
+  if (ui.state?.repoFilesOff || !m.files?.length) return null;
   if (fromElsewhere(m) && !ui.settings?.receiveFiles) return null;
   const remote = fromElsewhere(m);
   return fileList(m.id, m.files, (i, load, again) => {
@@ -187,6 +195,7 @@ function messageFiles(m) {
 
 // fileAt gives the entry of the file in a place: as it is, or, with load, fetched if it wasn't.
 function fileList(id, files, fileAt) {
+  if (ui.state?.repoFilesOff) return null;
   return h(
     "div",
     { class: "msg-files" },
@@ -220,6 +229,7 @@ function fileList(id, files, fileAt) {
 
 // A picture, opened: as large as the window lets it be.
 function openViewer(file, f, from) {
+  if (ui.state?.repoFilesOff || file.dropped) return;
   ui.viewer = { file, name: f.name, size: f.size, from };
   render();
   root.querySelector('[data-key="viewer-close"]')?.focus();
@@ -234,6 +244,7 @@ function closeViewer() {
 }
 
 function viewerDialog() {
+  if (ui.state?.repoFilesOff) return null;
   const v = ui.viewer;
   v.file.big ||= h("img", { class: "viewer-img", src: v.file.url, alt: v.name });
   return h(
@@ -270,18 +281,23 @@ function viewerDialog() {
 // refuse the rest only once they had been uploaded.
 // The person's Send files is on, in this repo (#765): off, a file attached, dropped or pasted asks
 // them to turn it on there, and goes on once they do (Tyler, 2026-11-16).
+const REPO_FILES_OFF = "The mesh owner has turned off file transfers for this repo.";
+
 function sendsFiles() {
-  return !!ui.settings?.sendFiles;
+  return !ui.state?.repoFilesOff && !!ui.settings?.sendFiles;
 }
 
 function askToSend(key, files) {
-  ui.fileNote = { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
+  ui.fileNote = ui.state?.repoFilesOff
+    ? { key, text: REPO_FILES_OFF }
+    : { key, text: "Sending files is off for you in this repo.", turnOn: files || "pick" };
   render();
 }
 
 // Turns the person's Send files on, then does what asked for it: opens the picker, in the same
 // click, or attaches what was dropped or pasted.
 function turnOnSending(key) {
+  if (ui.state?.repoFilesOff) return askToSend(key);
   const then = ui.fileNote?.turnOn;
   ui.fileNote = null;
   saveSettings({ ...ui.settings, sendFiles: true }, false, "sendFiles");

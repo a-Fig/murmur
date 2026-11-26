@@ -115,7 +115,8 @@ func (d *Daemon) sessionKnownLocked(dev, sess string) bool {
 func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail {
 	dev, sess := bus.SplitAddr(addr)
 	byAddr := d.namesByAddrLocked()
-	det := &proto.SessionDetail{Addr: addr, Device: dev, Nick: d.nickOfLocked(dev), You: dev == d.device && sess == you}
+	det := &proto.SessionDetail{Addr: addr, Device: dev, Nick: d.nickOfLocked(dev), You: dev == d.device && sess == you,
+		RepoFilesOff: !d.repoAllowsFiles()}
 	if dev == d.device {
 		det.Local, det.Host, det.Owner = true, d.host, d.owner
 		det.Committed = d.committedLocked(sess)
@@ -143,7 +144,8 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		if sess == bus.PersonSession {
 			send, recv = d.pageSend.Load(), d.pageRecv.on.Load()
 		}
-		det.SendsFiles, det.TakesFiles = onOff(send), onOff(recv)
+		allowed := d.repoAllowsFiles()
+		det.SendsFiles, det.TakesFiles = onOff(send && allowed), onOff(recv && allowed)
 		recs := d.st.Commits[sess]
 		det.CommitCount = len(recs)
 		for _, r := range recs[max(len(recs)-lookupCommits, 0):] {

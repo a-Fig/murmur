@@ -4,7 +4,7 @@ import { icon } from "./icons.js";
 import { h, when, plural } from "./dom.js";
 import { ui, devices, nameOf, fromName, toName } from "./state.js";
 import { render, go } from "./render.js";
-import { humanTag } from "./sidebar.js";
+import { personBadges } from "./sidebar.js";
 import { host, emptyState } from "./sessions.js";
 import { inGroup, liveGroups } from "./tags.js";
 import {
@@ -283,12 +283,12 @@ function recentItem(m, at) {
         "div",
         { class: "chat-msg-head" },
         h("span", { class: "chat-msg-from truncate", "data-profile": from }, from),
-        m.fromPerson && humanTag(),
+        m.fromPerson && personBadges(from, m.fromAddr),
         h("span", { class: "g-to" }, icon("arrowRight", "g-to-arrow"), h("span", { class: "g-to-who truncate" }, to)),
         h("span", { class: "chat-msg-time", title: messageDetail(m) }, clockTime(at)),
       ),
       !filesOnly(m) && messageText(m),
-      m.files?.length > 0 && h("div", { class: "msg-files-line" }, icon("paperclip"), h("span", { class: "truncate" }, m.files.map((f) => f.name).join(", "))),
+      !ui.state?.repoFilesOff && m.files?.length > 0 && h("div", { class: "msg-files-line" }, icon("paperclip"), h("span", { class: "truncate" }, m.files.map((f) => f.name).join(", "))),
     ),
   );
 }

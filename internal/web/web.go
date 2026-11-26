@@ -115,6 +115,7 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 	s.mux.HandleFunc("GET /api/activity", s.getActivity)
 	s.mux.HandleFunc("GET /api/settings", s.getSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.putSettings)
+	s.mux.HandleFunc("PATCH /api/repo-policy", s.patchRepoPolicy)
 	s.mux.HandleFunc("GET /api/preferences", s.getPreferences)
 	s.mux.HandleFunc("POST /api/preferences", s.updatePreferences)
 	s.mux.HandleFunc("PATCH /api/preferences", s.updatePreferences)
@@ -331,6 +332,25 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, saved)
+}
+
+func (s *Server) patchRepoPolicy(w http.ResponseWriter, r *http.Request) {
+	var change RepoPolicyChange
+	if err := readJSON(w, r, &change); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if (change.EncryptionMode == "") == (change.AllowFiles == nil) {
+		writeError(w, http.StatusBadRequest, "choose one repo setting to change")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	if err := s.src.SetRepoPolicy(ctx, change); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // CheckSettings says whether settings are ones the page may set. The API makes this check before

@@ -1283,9 +1283,11 @@ func (d *Daemon) sendFrom(ctx context.Context, from string, req proto.Request, s
 	// Before anything is read (#765, Tyler, 2026-11-16): an agent's files by its device's agents' Send
 	// files, the page's by its person's.
 	sends := func() bool {
-		return (len(req.Files) == 0 || d.agentSend.Load()) && (len(uploads) == 0 || d.pageSend.Load())
+		return d.repoAllowsFiles() && (len(req.Files) == 0 || d.agentSend.Load()) && (len(uploads) == 0 || d.pageSend.Load())
 	}
 	switch {
+	case (len(req.Files) > 0 || len(uploads) > 0) && !d.repoAllowsFiles():
+		return refuse(proto.RefusedSend, "The mesh owner has turned off file transfers for this repo. Send the text alone.")
 	case len(req.Files) > 0 && !d.agentSend.Load():
 		return refuse(proto.RefusedSend, "not sent: sending files is off for agents in this repo. Your user can turn on Send files, with agents too, in "+
 			brand.Product+"'s Settings; or send the text alone.")
@@ -1527,6 +1529,7 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
 		v.Files = d.fileViewsLocked(e)
 		if d.refuses(&d.agentRecv, e) {
+			v.RepoFilesOff = !d.repoAllowsFiles()
 			for _, f := range e.Files {
 				v.FilesKept = append(v.FilesKept, proto.FileView{Name: f.Name, Size: f.Size})
 			}

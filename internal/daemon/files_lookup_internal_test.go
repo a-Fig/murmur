@@ -17,6 +17,22 @@ import (
 	"github.com/a-Fig/murmur/internal/view"
 )
 
+func TestRepoFilePolicyKeepsDenialWhileTeamHistoryReplays(t *testing.T) {
+	d := &Daemon{repoFiles: &fileSwitch{}}
+	d.st.TeamOwnerChecked = true
+	d.st.TeamReplayThrough = "cached-tip"
+	d.st.TeamOwner = &meshOwner{Policy: bus.RepoPolicy{AllowFiles: true}}
+	d.refreshRepoFilesLocked()
+	if d.repoAllowsFiles() {
+		t.Fatal("earlier policy re-enabled files while team history was replaying")
+	}
+	d.st.TeamReplayThrough = ""
+	d.refreshRepoFilesLocked()
+	if !d.repoAllowsFiles() {
+		t.Fatal("verified policy did not re-enable files")
+	}
+}
+
 // lookupFilesOf is the files line lookup gives for the session at addr, and what it was made from.
 func (r *giveUpRig) lookupFilesOf(addr string) (string, string) {
 	r.t.Helper()

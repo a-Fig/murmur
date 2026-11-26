@@ -2279,6 +2279,15 @@ a.g-pr:hover {
   font-weight: 600;
   color: var(--foreground);
 }
+.settings-tabs {
+  align-self: flex-start;
+  margin-inline: 1rem;
+}
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
 .section-head {
   flex-wrap: wrap;
   column-gap: 0.625rem;
@@ -2333,6 +2342,9 @@ a.g-pr:hover {
   .settings-scope,
   .settings-everywhere-label {
     padding: 0 0.75rem;
+  }
+  .settings-tabs {
+    margin-inline: 0.75rem;
   }
 }
 .account-field input {

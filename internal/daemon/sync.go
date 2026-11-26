@@ -2042,9 +2042,10 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.colorAwayLocked()
 	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminModes,
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminFiles,
 		At:       d.nextPresenceAtLocked(),
-		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.agentRecv.on.Load(), PersonFilesOff: !d.pageRecv.on.Load(), DND: d.dnd.Load()}
+		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.repoAllowsFiles() || !d.agentRecv.on.Load(),
+		PersonFilesOff: !d.repoAllowsFiles() || !d.pageRecv.on.Load(), DND: d.dnd.Load()}
 	pres.Color, pres.ColorAt = d.shownColorLocked()
 	// A name is an address, so one session at most carries it here. A session in its grace whose
 	// key has come back under another ID has handed its name on: a peer sending to the name must
