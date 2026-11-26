@@ -23,7 +23,7 @@ import { loadUpdates } from "./updates.js";
 
 export {
   deliver, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
-  stateAskedAt, hasUnsent, poll, inApp, tellApp, start,
+  stateAskedAt, poll, inApp, tellApp, start,
 };
 
 async function deliver(item) {

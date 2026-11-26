@@ -6,7 +6,7 @@ import {
   NAME, COMMAND, NARROW, ui, devices, me, myName, people, personOnline, unreadCount, repoLabel,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
-import { deny, hasUnsent, poll, tokenEra } from "./sync.js";
+import { deny, poll, tokenEra } from "./sync.js";
 import { render, go } from "./render.js";
 import {
   liveSessions, quietSessions, hideButton, quietFold, deviceDot, presence, settledFold, deviceLabel, host,
@@ -543,25 +543,13 @@ async function openRepo(r) {
   const m = ui.repoMenu;
   if (r.current) return closeRepoMenu();
   if (m.opening) return;
-  // The drafts live in this page only, and the other repo's page is another page.
-  if (hasUnsent()) {
-    m.err = "Send or clear your draft first";
-    return render();
-  }
   m.opening = r.id;
   m.err = "";
   render();
   try {
     const { url } = await api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) });
-    // Starting a daemon can take a while, and the picker may have been closed and a draft begun.
-    if (ui.repoMenu !== m || hasUnsent()) {
-      if (ui.repoMenu === m) {
-        m.opening = null;
-        m.err = "Send or clear your draft first";
-        render();
-      }
-      return;
-    }
+    // Starting a daemon can take a while, and the picker may have been closed meanwhile.
+    if (ui.repoMenu !== m) return;
     location.assign(url);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
