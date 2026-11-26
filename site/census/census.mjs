@@ -424,6 +424,41 @@ export function apiLookup(owner, name, deadline = Infinity) {
   };
 }
 
+// Murmur's own release downloads (#1245), for the stats page's machines on the latest release, the
+// one figure that covers private repos. Every clone on a machine shares one binary, and the
+// updater's lock lets only one of them download, so each machine running Murmur downloads each
+// release once, whatever repo it is in. It needs nothing from clients, so #199 holds.
+//
+// Only the binaries count (mur-<os>-<arch>), not SHA256SUMS, which each download fetches too. Every
+// binary of every release, nightlies and release candidates included, shows at least 1 download
+// from something that fetches each file once (seen 2026-11-25), so the site takes 1 off each. The
+// counts are running totals, and a machine that took two releases is in both, so releases don't add
+// up. Drafts aren't read; GitHub hides them from anyone without push access anyway.
+//
+// latest is GitHub's latest release: the newest by creation that isn't a prerelease. Prereleases
+// go almost only to Tyler's own machines, on the prerelease channel.
+const RELEASES = 'a-Fig/murmur';
+const BINARY = /^mur-[a-z0-9]+-[a-z0-9]+(?:\.exe)?$/;
+export async function releaseDownloads({ repo = RELEASES, pages = 10 } = {}) {
+  const headers = { 'User-Agent': 'murmur-census', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const all = [];
+  for (let page = 1; page <= pages; page++) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100&page=${page}`, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+    const list = await res.json();
+    if (!Array.isArray(list)) throw new Error('GitHub answered with no list');
+    all.push(...list);
+    if (list.length < 100) break;
+  }
+  const releases = all.filter(r => r && !r.draft && typeof r.tag_name === 'string').map(r => ({
+    tag: r.tag_name, published: r.published_at ?? null, prerelease: !!r.prerelease, created: String(r.created_at ?? ''),
+    assets: (r.assets ?? []).filter(a => BINARY.test(a?.name)).map(a => ({ name: a.name, downloads: a.download_count })),
+  })).filter(r => r.assets.length);
+  const latest = releases.filter(r => !r.prerelease).sort((a, b) => b.created.localeCompare(a.created))[0]?.tag;
+  return releases.map(({ created, ...r }) => ({ ...r, latest: r.tag === latest }));
+}
+
 // Fetches one repo's bus and its default branch's commits into a scratch repo and counts them,
 // within BUDGET. `url`, where it is fetched from, and `lookup` are for the tests.
 //
@@ -558,11 +593,36 @@ async function call(path, init = {}) {
 //   The census sends only what the site's limits allow, so a refusal means the two disagree, or
 //   the site is down: something to fix.
 // - So does a run in which no repo could be counted at all.
-export async function main(args, { read = census } = {}) {
+//
+// A run of every listed repo, as the schedule's is, also reads Murmur's release downloads
+// (releaseDownloads, `downloads` here for the tests) and sends them. GitHub not answering is a
+// warning, since tomorrow's run reads them again; the site refusing them fails the run.
+export async function main(args, { read = census, downloads = releaseDownloads } = {}) {
   const dry = args.includes('--dry');
   let names = args.filter(a => !a.startsWith('--'));
   if (!dry && !process.env.CENSUS_KEY) throw new Error('CENSUS_KEY is not set');
-  if (!names.length) names = (await call('/v1/census')).repos;
+  const every = !names.length;
+  if (every) names = (await call('/v1/census')).repos;
+  let releasesFailed = null;
+  if (every) {
+    let releases = null;
+    try {
+      releases = await downloads();
+    } catch (err) {
+      console.error(`release downloads: not read: ${err.message || err}`);
+      if (process.env.GITHUB_ACTIONS === 'true') console.log('::warning title=census::release downloads not read');
+    }
+    if (releases && dry) console.log(`release downloads: ${releases.length} releases, not sent (--dry)`);
+    else if (releases) {
+      try {
+        await call('/v1/census/releases', { method: 'POST', body: JSON.stringify({ releases }) });
+        console.log(`release downloads: ${releases.length} releases sent`);
+      } catch (err) {
+        releasesFailed = String(err.message || err).trim();
+        console.error(`release downloads: not sent: ${releasesFailed}`);
+      }
+    }
+  }
   let unread = 0;
   const skipped = [], unsent = [];
   const write = stepSummary();
@@ -617,6 +677,7 @@ export async function main(args, { read = census } = {}) {
   write(summaryEnd(tally));
   if (unsent.length) throw new Error(`${unsent.length} of ${names.length} repos counted but not sent: ${unsent.join(', ')}`);
   if (unread + skipped.length === names.length && names.length) throw new Error('no repo could be counted');
+  if (releasesFailed) throw new Error(`release downloads not sent: ${releasesFailed}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

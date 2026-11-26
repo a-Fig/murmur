@@ -44,11 +44,16 @@ const LATE = 30 * 3600e3;
 // raised in the same way. A census from before them sends none, and they stay as they were.
 // Raising only has a cost here that it doesn't have for an exact count: if the census later
 // estimates differently and lower, what is stored stays, until someone lowers it in D1 by hand.
+//
+// /v1/census/releases, POST only, with the same key: Murmur's release downloads (#1245,
+// census.mjs's releaseDownloads()), {"releases": [{tag, published, prerelease, latest, assets:
+// [{name, downloads}]}]}, kept for today (UTC) in release_downloads.
 export async function census(request, env) {
   const key = String(env.CENSUS_KEY || '');
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('Authorization') || '')?.[1];
   if (!key || !bearer || !(await same(bearer, key))) return new Response('Not found.\n', { status: 404 });
   const headers = { 'Cache-Control': 'no-store' };
+  if (new URL(request.url).pathname === '/v1/census/releases') return releases(request, env, headers);
   if (request.method === 'GET') {
     const { results } = await env.DB.prepare('SELECT name FROM repos ORDER BY repo').all();
     return Response.json({ repos: results.map(r => r.name) }, { headers });
@@ -67,16 +72,7 @@ export async function census(request, env) {
 
   const db = env.DB, t = c.totals;
   const stmts = [];
-  // D1 binds at most 100 values a statement, so rows go in groups: 12 days of 8 values, 20 devices of
-  // 5, 33 rows of 3.
-  const insert = (rows, width, sql, values) => {
-    const per = Math.floor(100 / width);
-    for (let i = 0; i < rows.length; i += per) {
-      const group = rows.slice(i, i + per);
-      const tuples = group.map((_, j) => `(${Array.from({ length: width }, (_, k) => `?${width * j + k + 1}`).join(', ')})`).join(', ');
-      stmts.push(db.prepare(sql.replace('$ROWS', tuples)).bind(...group.flatMap(values)));
-    }
-  };
+  const insert = inserter(db, stmts);
   insert(c.days, 8,
     `INSERT INTO repo_days (repo, day, sessions, messages, records, est_sessions, est_messages, bytes) VALUES $ROWS
      ON CONFLICT (repo, day) DO UPDATE SET
@@ -118,6 +114,62 @@ export async function census(request, env) {
   // everything else is in.
   for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
   return Response.json({ ok: true, days: c.days.length, devices: c.devices.length, contributors: c.contributors.length }, { headers });
+}
+
+// Statements that insert rows, as many to a statement as D1 binds: at most 100 values, so 12 days
+// of 8 values, 20 devices of 5, 33 rows of 3. Each goes on stmts.
+function inserter(db, stmts) {
+  return (rows, width, sql, values) => {
+    const per = Math.floor(100 / width);
+    for (let i = 0; i < rows.length; i += per) {
+      const group = rows.slice(i, i + per);
+      const tuples = group.map((_, j) => `(${Array.from({ length: width }, (_, k) => `?${width * j + k + 1}`).join(', ')})`).join(', ');
+      stmts.push(db.prepare(sql.replace('$ROWS', tuples)).bind(...group.flatMap(values)));
+    }
+  };
+}
+
+// A release's tag (v0.5.4, v0.5.5-nightly.20261125) and a binary's name (mur-darwin-arm64,
+// mur-windows-amd64.exe), as census.mjs reads them.
+const TAG = /^v[0-9A-Za-z.+-]{1,60}$/;
+const BINARY = /^mur-[a-z0-9]+-[a-z0-9]+(?:\.exe)?$/;
+
+// /v1/census/releases: today's download counts of Murmur's release binaries. A count is GitHub's
+// running total, so a day's row is only raised, as the census's counts are. Which release is the
+// latest moves with each POST.
+async function releases(request, env, headers) {
+  if (request.method !== 'POST') return new Response('Only POST.\n', { status: 405, headers: { Allow: 'POST' } });
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response('Not JSON.\n', { status: 400 });
+  }
+  const list = body?.releases;
+  const count = n => Number.isSafeInteger(n) && n >= 0;
+  const when = v => v === null || (typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v)));
+  const asset = a => a && typeof a.name === 'string' && BINARY.test(a.name) && count(a.downloads);
+  const release = r => r && typeof r.tag === 'string' && TAG.test(r.tag) && when(r.published) &&
+    typeof r.prerelease === 'boolean' && typeof r.latest === 'boolean' && Array.isArray(r.assets) && r.assets.length <= 20 &&
+    r.assets.every(asset) && new Set(r.assets.map(a => a.name)).size === r.assets.length;
+  const ok = Array.isArray(list) && list.length <= 2000 && list.every(release) &&
+    new Set(list.map(r => r.tag)).size === list.length && list.filter(r => r.latest).length <= 1;
+  if (!ok) return new Response('Not release downloads.\n', { status: 400 });
+  const db = env.DB, day = new Date().toISOString().slice(0, 10);
+  const stmts = [db.prepare('UPDATE releases SET latest = 0 WHERE latest = 1')];
+  const insert = inserter(db, stmts);
+  insert(list, 4,
+    `INSERT INTO releases (tag, published, prerelease, latest) VALUES $ROWS
+     ON CONFLICT (tag) DO UPDATE SET published = excluded.published, prerelease = excluded.prerelease, latest = excluded.latest`,
+    r => [r.tag, r.published, r.prerelease ? 1 : 0, r.latest ? 1 : 0]);
+  insert(list.flatMap(r => r.assets.map(a => [r.tag, a])), 4,
+    `INSERT INTO release_downloads (day, tag, asset, downloads) VALUES $ROWS
+     ON CONFLICT (day, tag, asset) DO UPDATE SET downloads = MAX(downloads, excluded.downloads)`,
+    ([tag, a]) => [day, tag, a.name, a.downloads]);
+  // One batch, so the latest release never moves without the counts that came with it: 2,000
+  // releases of 20 binaries are about 1,700 statements.
+  await db.batch(stmts);
+  return Response.json({ ok: true, releases: list.length }, { headers });
 }
 
 // What is wrong with a census POST's body, or "" if nothing is.
@@ -174,7 +226,7 @@ export async function repoNumbers(db, days) {
   const today = new Date().toISOString().slice(0, 10);
   const from = addDays(today, -(days - 1));
   const weekFrom = addDays(today, -(WEEK - 1));
-  const [repos, byDay, people, counted, devs] = await db.batch([
+  const [repos, byDay, people, counted, devs, latestDays, stableNow] = await db.batch([
     // Each repo, with its totals and when it started: its first day on the bus, or the day it was
     // reported if the census hasn't read it yet. A device whose owner the census has never seen is
     // a person of its own. Its week is how many of the last 7 days its devices wrote anything, presence included.
@@ -221,6 +273,19 @@ export async function repoNumbers(db, days) {
        FROM devices v JOIN repos r ON r.repo = v.repo
          LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device AND d.day <= ?1
        GROUP BY v.repo, v.device`,
+    ).bind(today),
+    // The latest release's binaries' downloads on each day the census read them (#1245).
+    db.prepare(
+      `SELECT r.tag, r.published, d.day, d.asset, d.downloads
+       FROM releases r JOIN release_downloads d ON d.tag = r.tag
+       WHERE r.latest = 1 AND d.day <= ?1 ORDER BY d.day`,
+    ).bind(today),
+    // Each stable release's binaries' downloads as last read, for the report.
+    db.prepare(
+      `SELECT r.tag, r.published, d.asset, d.downloads
+       FROM releases r JOIN release_downloads d ON d.tag = r.tag
+         AND d.day = (SELECT MAX(x.day) FROM release_downloads x WHERE x.tag = r.tag AND x.day <= ?1)
+       WHERE r.prerelease = 0`,
     ).bind(today),
   ]);
   const u = users(devs.results), o = users(devs.results, { join: {} });
@@ -270,6 +335,7 @@ export async function repoNumbers(db, days) {
     // 2026-11-25). It stays out of the headline.
     oldUsers: o.users.size,
     methodChanges: METHOD_CHANGES,
+    releases: releaseNumbers(latestDays?.results ?? [], stableNow?.results ?? []),
     devices: sumOf(list, 'devices'),
     people: sumOf(list, 'people'),
     sessions: sumOf(list, 'sessions'),
@@ -289,6 +355,41 @@ export async function repoNumbers(db, days) {
     byRepo: rows.map(r => ({ ...r, name: names.get(r.repo) ?? r.repo })),
     repoList: list.map(({ repo, ...r }) => r),
   };
+}
+
+// Machines on a release (#1245), from its binaries' download counts: { machines, os: { darwin,
+// linux, windows } }. Every binary shows at least 1 download from something that fetches each file
+// once (census.mjs, releaseDownloads()), so 1 comes off each.
+function onRelease(rows) {
+  const os = { darwin: 0, linux: 0, windows: 0 };
+  let machines = 0;
+  for (const r of rows) {
+    const n = Math.max(0, r.downloads - 1), k = /^mur-([a-z0-9]+)-/.exec(r.asset)?.[1];
+    machines += n;
+    if (k in os) os[k] += n;
+  }
+  return { machines, os };
+}
+
+// What the stats say of Murmur's releases: the latest, its machines now and on each day the census
+// read it, and every stable release's as last read, newest first. latest is null before the census
+// has read any.
+export function releaseNumbers(latestRows, stableRows) {
+  const group = rows => {
+    const by = new Map();
+    for (const r of rows) {
+      if (!by.has(r.tag)) by.set(r.tag, { tag: r.tag, published: r.published, rows: [] });
+      by.get(r.tag).rows.push(r);
+    }
+    return [...by.values()];
+  };
+  const stable = group(stableRows).map(({ rows, ...r }) => ({ ...r, ...onRelease(rows) }))
+    .sort((a, b) => (b.published ?? '').localeCompare(a.published ?? '') || b.tag.localeCompare(a.tag));
+  const [l] = group(latestRows);
+  if (!l) return { latest: null, stable };
+  const days = [...new Set(l.rows.map(r => r.day))].sort();
+  const series = days.map(day => ({ day, machines: onRelease(l.rows.filter(r => r.day === day)).machines }));
+  return { latest: { tag: l.tag, published: l.published, ...onRelease(l.rows.filter(r => r.day === days.at(-1))), series }, stable };
 }
 
 // Whether the census is keeping up, from when it last read each listed repo (repo_census.counted):
@@ -446,7 +547,7 @@ export function repoReport(n, origin) {
   for (let i = n.series.length - 1; i >= 0; i -= n.week) {
     const w = n.series.slice(Math.max(0, i - n.week + 1), i + 1);
     const sum = k => w.reduce((s, d) => s + (d[k] ?? 0), 0);
-    weeks.push([n.series[i].day, n.series[i].repos, n.series[i].users, n.series[i].contributors,
+    weeks.push([n.series[i].day, n.series[i].users, n.series[i].oldUsers ?? '–', n.series[i].repos, n.series[i].contributors,
       sum('records'), size(sum('bytes')), approx(sum('sessions'), sum('estSessions')), approx(sum('messages'), sum('estMessages'))]);
   }
   const repos = n.repoList.length
@@ -456,15 +557,25 @@ export function repoReport(n, origin) {
     : 'None yet.';
   // A count with its noun, so one repo or user doesn't read as "1 public repos use".
   const count = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
+  const by = { account: 0, name: 0, machine: 0, device: 0, ...n.usersBy };
+  const latest = n.releases?.latest;
+  const os = r => `${r.os.darwin} macOS, ${r.os.linux} Linux, ${r.os.windows} Windows`;
+  const releases = n.releases?.stable?.length
+    ? table(['Release', 'Published', 'Machines', 'By system'], n.releases.stable.map(r => [r.tag, r.published?.slice(0, 10) ?? '–', r.machines, os(r)]))
+    : 'None read yet.';
+  const changes = (n.methodChanges ?? []).map(c => `${c.day}: ${c.what}`).join('; ');
+  const refused = (n.usersRefused ?? []).map(r => `${r.kind} ${r.key} (${count(r.devices, 'clone')} in ${count(r.repos, 'repo')}, ${count(r.accounts, 'account')})`);
   return `# Public repos using Murmur, ${n.today}
 
-**${count(n.repos, 'public repo')}** ${n.repos === 1 ? 'uses' : 'use'} Murmur; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them. About **${count(n.users, 'user')}** ${n.users === 1 ? 'has' : 'have'} run it there; ${n.activeUsers} in the last ${n.week} days.
+About **${count(n.users, 'user')}** ${n.users === 1 ? 'has' : 'have'} run Murmur in public repos, ${n.activeUsers} in the last ${n.week} days. **${count(n.repos, 'public repo')}** ${n.repos === 1 ? 'uses' : 'use'} it; ${n.activeRepos} had bus activity in the last ${n.week} days, and ${n.newRepos} started in them.
 
 ${table(['Measure', 'Count'], [
-    ['Public repos using Murmur', n.repos],
-    ['Users, approximately (see below)', n.users],
+    ['Users ever, approximately (see below)', n.users],
     [`Users active in the last ${n.week} days`, n.activeUsers],
     [`New users in the last ${n.week} days`, n.newUsers],
+    ['Users, old count (roughly one per clone, see below)', n.oldUsers ?? '–'],
+    [`Machines on the latest release${latest ? ` (${latest.tag})` : ''} (see below)`, latest ? latest.machines : '–'],
+    ['Public repos using Murmur', n.repos],
     [`Active repos (anything on the bus in the last ${n.week} days)`, n.activeRepos],
     ['Contributors to those repos (each person once)', n.contributors],
     [`New contributors in the last ${n.week} days`, n.newContributors],
@@ -486,9 +597,9 @@ Repos, devices, contributors, bus records and data are measured exactly, whether
 
 ## By week
 
-Each week is the ${n.week} days ending on the date shown, back over the last ${n.days} days; the newest first. Repos, users and contributors are totals as of that day.
+Each week is the ${n.week} days ending on the date shown, back over the last ${n.days} days; the newest first. Users, repos and contributors are totals as of that day, each day's worked out again by today's way of counting.
 
-${table(['Week ending', 'Repos', 'Users', 'Contributors', 'Bus records', 'Data', 'Sessions', 'Messages'], weeks)}
+${table(['Week ending', 'Users', 'Users, old count', 'Repos', 'Contributors', 'Bus records', 'Data', 'Sessions', 'Messages'], weeks)}
 
 ## Repos
 
@@ -496,11 +607,19 @@ Most active in the last ${n.week} days first.
 
 ${repos}
 
+## Releases
+
+Machines on each stable release, newest first: its binaries' downloads, less 1 each (see below). Releases don't add up, since a machine that took two is in both.
+
+${releases}
+
 ## What the numbers mean
 
 - A **repo** is listed once one of its clones reports it: Murmur sends a public repo's address, once per repo, and nothing else.
 - Everything else is read by the census from what each repo shows anyone, once a day${n.counted ? ` (last at ${n.counted})` : ''}: its bus, \`refs/murmur/*\`, and its default branch's commits.
-- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Of ${count(n.users, 'user')}, ${n.usersBy.account} ${n.usersBy.account === 1 ? 'was' : 'were'} matched to an account, ${n.usersBy.name} counted by git name, and ${n.usersBy.device} by device.
+- A **user** is approximate: Murmur sends nothing that names a person. The census matches the git user name each device's presence shows to a commit author of that name in the repo, and takes that author's GitHub account; each account counts once across repos. Where no commit matches, the git name counts instead, and where no name was ever seen, the device. Then clones on one machine are one user, in any repo: a device ID made before Murmur 0.5 begins with its machine's hostname, which the census sends hashed. A hostname that many machines have (\`macbook-pro\`, \`ubuntu\`, one a network assigns) is left out, and one whose clones carry two accounts, or span more than ${JOIN.machine.devices} clones or ${JOIN.machine.repos} repos, joins nothing. Of ${count(n.users, 'user')}, ${by.account} ${by.account === 1 ? 'was' : 'were'} matched to an account, ${by.name} counted by git name, ${by.machine} by machine, and ${by.device} one per clone.${refused.length ? ` Kept from joining: ${refused.join('; ')}.` : ''}${changes ? ` The way of counting changed on ${changes}.` : ''}
+- **Users, old count** is the count from before clones on one machine were joined: an account, else a git name, else one per clone. It runs high, and is kept to compare.
+- **Machines on the latest release** is GitHub's download count of the latest stable release's binaries, less 1 each, since every binary of every release shows 1 download from something that fetches each file once. Every clone on a machine shares one binary and only one of them downloads an update, so it counts each machine once, whatever repo it is in, private ones too. It misses machines with updates off and installs from a package manager, and counts one person on two machines twice. Prereleases aren't counted: they go almost only to the maintainer's machines.
 - A **contributor** has committed to a repo's default branch, at any time; one person in two repos counts once. A **device** is one clone running Murmur; a **person**, one git user name among a repo's devices, as their presence shows it, so one person in two repos counts twice. A daemon deletes its presence when it stops, so a device whose owner the census never saw counts as a person of its own.
 - A **session** is an agent session, counted once on the day it started, however often its daemon restarts; a **message**, one agent's message to another. A **bus record** is anything a device wrote to its log, and **data** is the size of those records' events, as JSON, before encryption. Both are always exact, and data is the one measure of how much a bus carries that encryption doesn't hide.
 - A figure marked **≈** includes an estimate. Since Murmur 0.3 a bus is encrypted, which hides what each record is, and nothing is decrypted to count it. A message is then an encrypted record large enough to be one. Checked against the true kinds on four buses (868 messages, 1,598 other records), that missed 2% of the messages, 0 to 5% by repo, the short ones with no body, and took no other record for a message; it would take one for a session's start on a branch of about 40 characters or more, or a tags event with many tags, and those buses had neither. A session is then one that the repo's name registry, which isn't encrypted, names: with the exact count it gave 569 of those buses' 570 sessions. It also names a session that another session started, which writes no start. \`site/census/census.mjs\` has the measurements.

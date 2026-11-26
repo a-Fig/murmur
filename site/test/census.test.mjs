@@ -8,7 +8,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { census as handle, repoNumbers, repoReport, size } from '../src/repos.js';
+import { census as handle, repoNumbers, repoReport, size, releaseNumbers } from '../src/repos.js';
 import { recordingD1, sqliteD1 } from './d1.mjs';
 
 // The Workers runtime adds this to Web Crypto; node has it only in node:crypto.
@@ -26,7 +26,7 @@ process.env.GIT_CONFIG_NOSYSTEM = '1';
 // Run in Actions, the tests' runs would write to the job's own summary. The tests that read one set
 // their own.
 delete process.env.GITHUB_STEP_SUMMARY;
-const { main, count, boxedSize, authors, contributors, apiLookup, tooBig, summaryHead, summaryRow, census: readRepo } = await import('../census/census.mjs');
+const { main, count, boxedSize, releaseDownloads, authors, contributors, apiLookup, tooBig, summaryHead, summaryRow, census: readRepo } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -57,7 +57,8 @@ function site(t, db, { down = new Set() } = {}) {
   return said;
 }
 
-const sent = db => db.batches.map(b => b.find(s => /INTO repo_census/.test(s.sql)).args[0]);
+// The repos whose counts reached the site, in order; a batch of release downloads is none.
+const sent = db => db.batches.map(b => b.find(s => /INTO repo_census/.test(s.sql))).filter(Boolean).map(s => s.args[0]);
 
 test('a repo the site refuses does not stop the census: the repos after it are still sent, and the job fails', async t => {
   const names = ['github.com/a/one', 'github.com/b/two', 'github.com/c/three'];
@@ -105,7 +106,7 @@ test('with no repos named, the census asks the site for its list', async t => {
   const db = recordingD1(names);
   site(t, db);
   const asked = [];
-  await main([], { read: name => (asked.push(name), counts(name)) });
+  await main([], { read: name => (asked.push(name), counts(name)), downloads: async () => [] });
   assert.deepEqual(asked, names);
   assert.deepEqual(sent(db), ['github.com/a/one', 'github.com/b/two']);
 });
@@ -780,4 +781,88 @@ test('a machine is kept once seen, and a device without one is refused only when
   assert.equal(db.sql.prepare('SELECT machine FROM devices').get().machine, 'c'.repeat(16));
   c.devices[0].machine = 'laptop-gjlpfunp';
   assert.equal((await post(db, c)).status, 400);
+});
+
+// GitHub's releases as its API lists them: a stable release, a nightly, a draft, and one from
+// before the binaries were named mur.
+const GITHUB_RELEASES = [
+  { tag_name: 'v0.5.5-nightly.20261125', prerelease: true, draft: false, created_at: '2026-11-25T05:24:34Z', published_at: '2026-11-25T18:06:35Z',
+    assets: [{ name: 'mur-darwin-arm64', download_count: 1 }, { name: 'SHA256SUMS', download_count: 2 }] },
+  { tag_name: 'v0.5.4', prerelease: false, draft: false, created_at: '2026-11-24T02:12:49Z', published_at: '2026-11-24T05:04:08Z',
+    assets: [{ name: 'mur-darwin-arm64', download_count: 9 }, { name: 'mur-linux-amd64', download_count: 3 }, { name: 'mur-windows-amd64.exe', download_count: 3 }, { name: 'mur-windows-arm64.exe', download_count: 1 }, { name: 'SHA256SUMS', download_count: 13 }] },
+  { tag_name: 'v0.5.6', prerelease: false, draft: true, created_at: '2026-11-26T00:00:00Z', published_at: null, assets: [{ name: 'mur-linux-amd64', download_count: 0 }] },
+  { tag_name: 'v0.5.3', prerelease: false, draft: false, created_at: '2026-11-23T04:20:29Z', published_at: '2026-11-23T05:06:39Z',
+    assets: [{ name: 'mur-darwin-arm64', download_count: 7 }, { name: 'mur-windows-amd64.exe', download_count: 18 }] },
+  { tag_name: 'v0.1.0-pre.3', prerelease: true, draft: false, created_at: '2026-10-31T06:13:52Z', published_at: '2026-10-31T06:18:30Z',
+    assets: [{ name: 't4-linux-amd64', download_count: 1 }] },
+];
+
+test("the census reads each release's binaries, not drafts or checksums, and marks GitHub's latest", async t => {
+  t.mock.method(globalThis, 'fetch', async url => {
+    assert.match(String(url), /^https:\/\/api\.github\.com\/repos\/a-Fig\/murmur\/releases\?per_page=100&page=1$/);
+    return Response.json(GITHUB_RELEASES);
+  });
+  const r = await releaseDownloads();
+  assert.deepEqual(r.map(x => [x.tag, x.latest, x.assets.map(a => a.name).join(' ')]), [
+    ['v0.5.5-nightly.20261125', false, 'mur-darwin-arm64'],
+    ['v0.5.4', true, 'mur-darwin-arm64 mur-linux-amd64 mur-windows-amd64.exe mur-windows-arm64.exe'],
+    ['v0.5.3', false, 'mur-darwin-arm64 mur-windows-amd64.exe'],
+  ]);
+});
+
+const fromGitHub = async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => Response.json(GITHUB_RELEASES);
+  try { return await releaseDownloads(); } finally { globalThis.fetch = real; }
+};
+
+test('a full run sends the release downloads; one by hand, for named repos, does not', async t => {
+  const db = recordingD1(['github.com/a/one']);
+  site(t, db);
+  const releases = await fromGitHub();
+  let asked = 0;
+  const downloads = async () => (asked++, releases);
+  await main([], { read: counts, downloads });
+  assert.equal(asked, 1);
+  const stmts = db.batches.flat();
+  assert.ok(stmts.some(s => /INTO release_downloads/.test(s.sql)));
+  await main(['github.com/a/one'], { read: counts, downloads });
+  assert.equal(asked, 1);
+});
+
+test("GitHub not answering leaves the run green; the site refusing the downloads fails it", async t => {
+  const db = recordingD1(['github.com/a/one']);
+  const said = site(t, db);
+  await main([], { read: counts, downloads: async () => { throw new Error('GitHub answered 502'); } });
+  assert.ok(said.error.includes('release downloads: not read: GitHub answered 502'));
+  const bad = [{ tag: 'not a tag', published: null, prerelease: false, latest: true, assets: [] }];
+  await assert.rejects(main([], { read: counts, downloads: async () => bad }), /release downloads not sent: \/v1\/census\/releases: 400 Not release downloads\./);
+});
+
+test("machines on a release are its binaries' downloads less 1 each, on the latest release and every stable one", { skip: !sqlite && 'no node:sqlite in this node' }, async () => {
+  const db = await sqliteD1();
+  const send = async releases => {
+    const res = await handle(new Request('https://census.invalid/v1/census/releases', {
+      method: 'POST', headers: { Authorization: `Bearer ${process.env.CENSUS_KEY}` }, body: JSON.stringify({ releases }),
+    }), { DB: db, CENSUS_KEY: process.env.CENSUS_KEY });
+    assert.equal(res.status, 200, await res.clone().text());
+  };
+  const releases = await fromGitHub();
+  await send(releases);
+  // A count read lower later in the day is kept at the higher one.
+  await send(releases.map(r => ({ ...r, assets: r.assets.map(a => ({ ...a, downloads: 0 })) })));
+  const n = await repoNumbers(db, 14);
+  assert.equal(n.releases.latest.tag, 'v0.5.4');
+  // 8 + 2 + 2 + 0: darwin, linux, and two Windows binaries.
+  assert.deepEqual([n.releases.latest.machines, n.releases.latest.os], [12, { darwin: 8, linux: 2, windows: 2 }]);
+  assert.deepEqual(n.releases.latest.series, [{ day: today, machines: 12 }]);
+  // Stable releases only, newest first.
+  assert.deepEqual(n.releases.stable.map(r => [r.tag, r.machines]), [['v0.5.4', 12], ['v0.5.3', 23]]);
+  const md = repoReport(n, 'https://murmur.invalid');
+  assert.match(md, /\| Machines on the latest release \(v0\.5\.4\) \(see below\) \| 12 \|/);
+  assert.match(md, /\| v0\.5\.3 \| 2026-11-23 \| 23 \| 6 macOS, 0 Linux, 17 Windows \|/);
+});
+
+test('the stats have no latest release before the census has read one', () => {
+  assert.deepEqual(releaseNumbers([], []), { latest: null, stable: [] });
 });
