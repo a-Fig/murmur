@@ -171,7 +171,7 @@ func TestTeamReadPausesWritesThroughAnInterruptedModeChange(t *testing.T) {
 		return sha
 	}
 	now := time.Now().UTC()
-	epoch, err := bus.NewEpoch(bus.NewBoxKey(), map[string]string{d.device: bus.BoxPublic(d.boxKey)}, now)
+	epoch, err := bus.NewEpoch(bus.NewBoxKey(), map[string]string{"owner-0001": bus.BoxPublic(bus.NewBoxKey())}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +189,12 @@ func TestTeamReadPausesWritesThroughAnInterruptedModeChange(t *testing.T) {
 	if d.st.TeamTip != junk || d.repoModeLocked() != bus.EncryptionOff {
 		t.Fatalf("expected the read to pause on Off: tip %s, mode %s", d.st.TeamTip, d.repoModeLocked())
 	}
+	teamMsg := bus.Event{V: bus.Version, ID: bus.NewID(), Type: bus.Message, At: now,
+		From: bus.Addr("owner-0001", "aaaaaa"), To: bus.Addr(d.device, "bbbbbb"), Subject: "needs a grant"}
+	encrypted, err := bus.EncryptEvent(teamMsg, "owner-0001", map[string]string{epoch.ID: epoch.Pub})
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertBlocked := func(d *Daemon) {
 		t.Helper()
 		if _, err := d.encryptEventLocked(bus.Event{}); !errors.Is(err, errTeamHistoryPending) {
@@ -199,6 +205,9 @@ func TestTeamReadPausesWritesThroughAnInterruptedModeChange(t *testing.T) {
 		}
 		if err := d.checkRepoWriteMode(d.repoModeStamp.Load()); !errors.Is(err, errTeamHistoryPending) {
 			t.Fatalf("push slot accepted an already encoded record: %v", err)
+		}
+		if _, ok, wait := d.openEventLocked(encrypted, "owner-0001", "mesh/owner-0001", "message"); ok || !wait {
+			t.Fatal("the intermediate Off policy skipped an event awaiting its team key")
 		}
 	}
 	assertBlocked(d)

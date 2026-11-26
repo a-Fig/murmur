@@ -201,6 +201,7 @@ func (d *Daemon) kickTeam() {
 func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip := d.st.TeamTip
+	modeStamp := d.repoModeStamp.Load()
 	owned, reopen := d.st.TeamOwner != nil, d.teamReopen
 	ownerTip := ""
 	if owned {
@@ -316,7 +317,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.saveLocked()
 	}
 	d.mu.Unlock()
-	if tip == "" || replayThrough != "" {
+	if tip == "" || replayThrough != "" || d.repoModeStamp.Load() != modeStamp {
 		d.kickPresence()
 	}
 	d.kickTeam()
