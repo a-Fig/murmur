@@ -1296,8 +1296,10 @@ func (d *Daemon) updatePeer(ctx context.Context, ref, sha string) {
 		pres.TeamAdmin = 0
 	}
 	locked, opened := false, true
-	// Only what was inside the box says which epoch a device has read and which keys it holds.
-	pres.Epoch, pres.Holds = "", nil
+	// Trust epoch and key announcements in a sealed plaintext presence or inside the box.
+	if !sealed || pres.Box != nil {
+		pres.Epoch, pres.Holds = "", nil
+	}
 	if pres.Box != nil {
 		pres.Groups, pres.Receipts, pres.Files, pres.FilesOff, pres.PersonFilesOff = false, false, false, false, false
 		open, err := bus.DecryptPresence(pres, d.keyringLocked())
@@ -2081,6 +2083,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 		pres.Epoch = ep.ID
 	}
 	pres.Holds = sortedKeys(d.teamKeys)
+	mode := d.repoModeLocked()
 	team := d.teamRecipientsLocked()
 	// This presence lists every session started so far, so what waits for one that does can go
 	// once it is pushed, or has failed: a failing remote is no reason to hold back the rest. Until
@@ -2092,9 +2095,12 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
-	pres, err := bus.EncryptPresence(pres, team)
-	if err != nil {
-		return err
+	if mode != bus.EncryptionOff {
+		var err error
+		pres, err = bus.EncryptPresence(pres, team)
+		if err != nil {
+			return err
+		}
 	}
 	msg, err := bus.EncodeSealed(pres, bus.PresenceSubject, d.signKey, d.device, d.presenceRef())
 	if err != nil {

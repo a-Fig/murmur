@@ -175,9 +175,9 @@ func (d *Daemon) signalTeamLocked() {
 func (d *Daemon) awaitEpoch(ctx context.Context) error {
 	for {
 		d.mu.Lock()
-		ep, ch := d.epochLocked(), d.teamChanged
+		ready, ch := d.epochLocked() != nil || d.repoModeLocked() == bus.EncryptionOff, d.teamChanged
 		d.mu.Unlock()
-		if ep != nil {
+		if ready {
 			return nil
 		}
 		d.kickTeam()
@@ -508,6 +508,7 @@ type teamAsk struct {
 	rotate        bool
 	collaborators []string
 	transferTo    string
+	policy        *repoPolicyChange
 	// basis is the roster a roster written without a rotation was decided against: nobody on it had
 	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
 	basis []string
@@ -545,7 +546,21 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		policy := o.Policy
 		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: &policy, At: now})
 	}
-	if ask != nil && ask.transferTo != "" {
+	var nextPolicy *bus.RepoPolicy
+	if ask != nil && ask.policy != nil {
+		policy, err := d.nextRepoPolicyLocked(*ask.policy)
+		if err != nil {
+			d.mu.Unlock()
+			return "", false, err
+		}
+		current := d.st.TeamOwner.Policy
+		if policy == current {
+			d.mu.Unlock()
+			return "", true, nil
+		}
+		nextPolicy = &policy
+		rotate = current.EncryptionMode != bus.EncryptionTeam && policy.EncryptionMode == bus.EncryptionTeam
+	} else if ask != nil && ask.transferTo != "" {
 		record, err := d.ownerTransferLocked(ask.transferTo, now)
 		if err != nil {
 			d.mu.Unlock()
@@ -602,6 +617,9 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 			return "", false, err
 		}
 		recs = append(recs, r)
+	}
+	if nextPolicy != nil {
+		recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: nextPolicy, At: now})
 	}
 	if o := d.st.TeamOwner; o != nil {
 		for i := range recs {

@@ -411,6 +411,18 @@ func errOldDevice(dev string) error {
 // on a Murmur from before encryption, which could never read it, is refused: nothing goes out in
 // the clear. Caller holds mu.
 func (d *Daemon) encryptEventLocked(e bus.Event) (bus.Event, error) {
+	switch d.repoModeLocked() {
+	case bus.EncryptionOff:
+		return e, nil
+	case bus.EncryptionPrivate:
+		if e.Type == bus.Message || e.Type == bus.GroupAdd {
+			to, err := d.privateRecipientsLocked(e.To)
+			if err != nil {
+				return bus.Event{}, err
+			}
+			return bus.EncryptEvent(e, d.device, to)
+		}
+	}
 	if e.Type == bus.Message && e.To != "" && e.To != "*" && !bus.IsGroup(e.To) {
 		dev, _ := bus.SplitAddr(e.To)
 		if pin := d.st.Pins[dev]; dev != d.device && (pin == nil || pin.Box == "") {
@@ -455,6 +467,10 @@ func (d *Daemon) openEventLocked(e bus.Event, dev, ref, sha string) (out bus.Eve
 	}
 	if !errors.Is(err, bus.ErrNotForUs) || e.Box == nil {
 		d.log.Printf("%s: ignoring %s: %v", ref, short(sha), err)
+		return bus.Event{}, false, false
+	}
+	if d.repoModeLocked() == bus.EncryptionOff {
+		// Unreadable encrypted history must not hold newer plaintext events behind a grant.
 		return bus.Event{}, false, false
 	}
 	to := e.Box.Recipients()
