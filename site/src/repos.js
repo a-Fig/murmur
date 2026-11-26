@@ -166,8 +166,8 @@ async function releases(request, env, headers) {
     `INSERT INTO release_downloads (day, tag, asset, downloads) VALUES $ROWS
      ON CONFLICT (day, tag, asset) DO UPDATE SET downloads = MAX(downloads, excluded.downloads)`,
     ([tag, a]) => [day, tag, a.name, a.downloads]);
-  // One batch, so the latest release never moves without the counts that came with it: 2,000
-  // releases of 20 binaries are about 1,700 statements.
+  // One batch, so the latest release never moves without the counts that came with it. Murmur's
+  // 40-odd releases make about 15 statements.
   await db.batch(stmts);
   return Response.json({ ok: true, releases: list.length }, { headers });
 }
@@ -430,7 +430,7 @@ export function health(list, now) {
 //   default that strangers share, and a wrong merge costs more than a missed one. One laptop was 5
 //   clones in 4 repos on 2026-11-25. Clones that carry different accounts are different people.
 // Each limit is optional: devices and repos are how many the key's clones are and span, accounts
-// how many different accounts they carry.
+// how many different accounts the users they would join already hold.
 export const JOIN = { machine: { devices: 10, repos: 6, accounts: 1 } };
 
 // The days the way users are counted changed, for a mark on the users charts. Each day's count is
@@ -477,9 +477,19 @@ export function users(devices, { join = JOIN } = {}) {
     while (parent.has(k)) k = parent.get(k);
     return k;
   };
+  // The account each root's user holds, if any. A join is checked against these, not only against
+  // its own clones: two machines that each carry one account could otherwise chain two accounts
+  // into one user through a git name both share.
+  const held = new Map();
+  for (const v of devices) {
+    const k = start(v);
+    if (k.startsWith('account:')) held.set(k, k);
+  }
   const union = (a, b) => {
     const [x, y] = [find(a), find(b)];
-    if (x !== y) parent.set(y, x);
+    if (x === y) return;
+    parent.set(y, x);
+    if (!held.has(x) && held.has(y)) held.set(x, held.get(y));
   };
   const joined = new Set(); // devices a join's key ties to someone, as repo/device
   const refused = [];
@@ -491,7 +501,10 @@ export function users(devices, { join = JOIN } = {}) {
       groups.get(v[kind]).push(v);
     }
     for (const [key, vs] of groups) {
-      const n = { devices: vs.length, repos: new Set(vs.map(v => v.repo)).size, accounts: new Set(vs.map(accountOf).filter(Boolean)).size };
+      const n = {
+        devices: vs.length, repos: new Set(vs.map(v => v.repo)).size,
+        accounts: new Set(vs.map(v => held.get(find(start(v)))).filter(Boolean)).size,
+      };
       if (Object.entries(limit).some(([k, max]) => n[k] > max)) {
         refused.push({ kind, key, ...n });
         continue;

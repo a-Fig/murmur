@@ -145,13 +145,18 @@ const GENERIC = new RegExp('^(?:' + [
   'device', 'localhost', 'ubuntu', 'debian', 'fedora', 'archlinux', 'linux', 'raspberrypi', 'kali', 'pop-os',
   'desktop', 'laptop', 'pc', 'computer', 'workstation', 'server', 'dev', 'devbox', 'vm', 'docker', 'runner',
   // "MacBook Pro", "My MacBook Air (2)", "User's iMac", "Mac mini".
-  '(?:users?s?-|my-)?(?:macbook|imac|mac|mac-mini|mac-studio|mac-pro|mbp|mba)(?:-pro|-air)?(?:-\\d+)?',
+  '(?:users?s?-|my-)?(?:macbook|imac|mac|mac-mini|mac-studio|mac-pro|mbp|mba)(?:-?pro|-?air)?(?:-\\d+)?',
   // Hostnames a network or a cloud machine assigns.
   'wifi-.*', 'ip-.*', 'dhcp-.*', 'codespaces-.*', 'fv-az.*', 'runnervm.*',
 ].join('|') + ')$');
+//
+// The old IDs cut a slug to 24 characters (and trimmed a dash), so a slug of 23 or more may be the
+// start of a longer name that numbered machines share (`acme-corp-workstation-00` from -0042 and
+// -0043). It is left out too.
+const CUT = 23;
 export function machine(device) {
   const slug = OLD_ID.exec(device)?.[1];
-  return slug && !GENERIC.test(slug) ? slug : null;
+  return slug && slug.length < CUT && !GENERIC.test(slug) ? slug : null;
 }
 
 // Estimating what encryption hides (#550)
@@ -618,8 +623,14 @@ export async function main(args, { read = census, downloads = releaseDownloads }
         await call('/v1/census/releases', { method: 'POST', body: JSON.stringify({ releases }) });
         console.log(`release downloads: ${releases.length} releases sent`);
       } catch (err) {
-        releasesFailed = String(err.message || err).trim();
-        console.error(`release downloads: not sent: ${releasesFailed}`);
+        const why = String(err.message || err).trim();
+        // A site from before release downloads has no such path. The census reads them again
+        // tomorrow, so until the site that takes them is deployed this is a warning, not a red run.
+        if (/: 404(?!\d)/.test(why)) console.error(`release downloads: not sent, the site doesn't take them yet: ${why}`);
+        else {
+          releasesFailed = why;
+          console.error(`release downloads: not sent: ${why}`);
+        }
       }
     }
   }

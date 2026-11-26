@@ -91,8 +91,9 @@ would need one per commit.
   since #1245, its machine. A device ID made before 0.5 (#330) begins with a slug of the hostname,
   which every clone on that machine shares in any repo. The census sends the slug hashed, and the
   site joins clones that share it, except for slugs strangers share (`macbook-pro`, `ubuntu`, one a
-  network assigns, `census.mjs`'s `machine()`), and for a slug whose clones carry two accounts or
-  span more than 10 clones or 6 repos (`JOIN`): a wrong merge costs more than a missed one. A new
+  network assigns, and one the old IDs may have cut short at 24 characters, `census.mjs`'s
+  `machine()`), and for a slug that would join two accounts into one user or spans more than 10
+  clones or 6 repos (`JOIN`): a wrong merge costs more than a missed one. A new
   ID names no machine, so a clone made since counts one per clone unless its owner is seen; #1244's
   commit fingerprint is the lasting fix. The count from before, roughly one user per clone, stays
   on the page as the old count (Tyler, 2026-11-25), and the users charts mark each day the method

@@ -65,3 +65,20 @@ test('a machine over the limits on clones or repos joins nothing', () => {
   assert.equal(users(crowd).users.size, devices + 1);
   assert.equal(users(crowd.slice(1)).users.size, 1);
 });
+
+test('two machines that each pass cannot chain two accounts into one user through a shared git name', () => {
+  const u = users([
+    dev('a', '1', { machine: 'm1', account: 'x' }), dev('a', '2', { machine: 'm1', person: 'p' }),
+    dev('b', '3', { machine: 'm2', account: 'y' }), dev('b', '4', { machine: 'm2', person: 'p' }),
+  ]);
+  // m1 joins x and p; m2 would then join y to x through p, so it is refused.
+  assert.equal(u.users.size, 2);
+  assert.deepEqual(u.refused.map(r => [r.key, r.accounts]), [['m2', 2]]);
+});
+
+test('a slug the old IDs may have cut short, and a Mac default without dashes, name no machine', () => {
+  assert.equal(machine('acme-corp-workstation-00-ab12'), null);
+  assert.equal(machine('acme-corp-workstation-0-ab12'), null);
+  assert.equal(machine('acme-corp-workstation-ab12'), 'acme-corp-workstation');
+  for (const id of ['macbookpro-ab12', 'macbookair-ab12', 'my-macbookpro-2-ab12']) assert.equal(machine(id), null, id);
+});

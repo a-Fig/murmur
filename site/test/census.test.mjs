@@ -866,3 +866,12 @@ test("machines on a release are its binaries' downloads less 1 each, on the late
 test('the stats have no latest release before the census has read one', () => {
   assert.deepEqual(releaseNumbers([], []), { latest: null, stable: [] });
 });
+
+test("a site that doesn't take release downloads yet is a warning, not a red run", async t => {
+  const db = recordingD1(['github.com/a/one']);
+  const said = site(t, db);
+  const real = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (url, init) => (String(url).endsWith('/v1/census/releases') ? new Response('', { status: 404 }) : real(url, init)));
+  await main([], { read: counts, downloads: async () => [] });
+  assert.ok(said.error.some(e => /^release downloads: not sent, the site doesn't take them yet: /.test(e)), said.error.join('\n'));
+});
