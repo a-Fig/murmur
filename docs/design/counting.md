@@ -42,7 +42,7 @@ release, and the rows already stored are kept at `/stats/archive`.
 
 The counts come from the census (#259), which reads what each reported repo shows anyone. Once a day
 a GitHub Action (`.github/workflows/census.yml`, `site/census/census.mjs`) fetches the commits,
-without their files, of each repo's bus refs and default branch, and sends the site counts and
+without their files, of each repo's bus refs and branches, and sends the site counts and
 hashes, never content: per UTC day, the sessions started, the messages, all records and their bytes,
 a hash of each device that wrote anything and of each device's owner, and for each contributor a
 hash of their GitHub login or email and the day of their first commit, so one person in two repos
@@ -76,6 +76,33 @@ would need one per commit.
   - Estimates are sent and kept apart from exact counts (`est_sessions`, `est_messages`), and
     `census.mjs` has the measurements. The site only raises them, so a lower estimate later needs a
     hand edit in D1.
+- **Users, by commit fingerprint** (#1244, Tyler's decisions, 2026-11-25). Since 0.3 a clone's
+  owner is sealed in its presence, which a daemon deletes when it stops, and every clone of every
+  repo has a device ID of its own, so the census counted most users one per clone: 31 of 36 on
+  2026-11-25, against some 23 to 27 people by hand. So each entry a clone adds to the name registry
+  carries `author`, its commit fingerprint: the first 16 hex digits of
+  `sha256("murmur-owner\0" + "github.com/<owner>/<name>" + "\0" + email)`, the repo and email
+  lowercased, where the email is what `git var GIT_AUTHOR_IDENT` gives, the `user@hostname` address
+  git makes up included (`bus.AuthorPrint`, read again at each push). The registry is in the clear
+  and never deleted, so the fingerprint outlasts a session that starts and stops between two runs.
+  The census hashes every commit author email on every branch the same way, keeps every
+  fingerprint a clone has written (an address made up from a hostname changes with the network),
+  and ties the clone to the identity they match: its GitHub account, else the email. It sends that
+  as the device's `author`, and the site counts it as the device's account, ahead of the name match,
+  so one person's clones, machines and boxes count once, across repos.
+  - *No opt-out.* It only ties a clone to an identity its owner already showed in that repo's
+    commits, and the repo is in the hash, so a fingerprint links nothing across repos by itself.
+    Nothing new is sent to us: it is on the bus, like the device IDs in the registry.
+  - *Never merged:* bots and shared identities (`noreply@anthropic.com` and the like, `SHARED` in
+    `census.mjs`); an address git made up still matches, as it is one machine's. And an author
+    whose clones span more than 10 repos is refused and listed in the report (`JOIN` in
+    `src/repos.js`), since a wrong merge costs more than a missed one. Clones aren't capped: one
+    person's disposable boxes are a clone each.
+  - *Costs.* One person under two identities nothing links (a laptop's made-up address, a GitHub
+    account elsewhere) counts twice; a `user.email` linked to the account fixes it. A clone whose
+    owner never commits in its repo, or that runs a version from before, is counted as before.
+    Someone who guesses an email can confirm that its owner runs Murmur in a repo they have never
+    committed to.
 - **What the stats page leads with** (Tyler, 2026-11-13). Encryption doesn't hide how many records a
   device wrote and how large, so the page is built around those. Bytes are each record's event as
   JSON, the event inside the box for an encrypted one, so a log weighs the same either way, and they

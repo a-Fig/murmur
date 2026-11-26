@@ -115,7 +115,8 @@ key replaced it.
 - **What anyone who can read a public repo still sees:** device IDs (since #330 a new one says
   nothing of the machine, but one made before begins with a slug of its hostname); when each device
   writes, how many records and how large; the team key IDs each record is encrypted for; which
-  devices each team key was granted to, and when; each device's public keys; the name registry;
+  devices each team key was granted to, and when; each device's public keys; the name registry,
+  with each clone's commit fingerprint ([counting](counting.md), #1244);
   `refs/murmur/reported`; and that some message carried files, with about how large they were
   together ([files](files.md)). Not messages, subjects, who sent what to whom, statuses, branches,
   tags, hosts, owners, agents, rosters, or a file's name, size or contents.
