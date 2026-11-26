@@ -78,6 +78,7 @@ For humans:
                                 or prereleases and nightlies too; back goes back to the latest stable
                                 from a prerelease, until a newer release is out; alone, says what applies
   mur stop                      stop this clone's daemon
+  mur owner                     show the mesh owner
   mur rotate [--force]          make a new team key if a collaborator has left the repo (listed with gh),
                                 so what is written from now on can't be read by them; --force always does.
                                 First remove every other way they can push (deploy keys they added, team
@@ -182,6 +183,8 @@ func main() {
 		err = runStop(ctx, args, os.Stdout)
 	case "rotate":
 		err = runRotate(ctx, args, os.Stdout)
+	case "owner":
+		err = runOwner(ctx, args, os.Stdout)
 	case "uninstall":
 		err = runUninstall(ctx, args, os.Stdout)
 	case "who", "send", "inbox", "status", "lookup", "tags", "mute":
@@ -482,16 +485,19 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	if *refsOnly {
 		return initRefsOnly(ctx, *dir, out)
 	}
-	// The names registry first: it is what join looks for, so a section that went to a branch for a
-	// pull request, or had no branch to go on, still leaves the repo set up (#830).
-	refs, err := setup.NamesOnly(ctx, *dir)
+	// Set up the bus before pushing the invitation, so join works even if the invitation goes to
+	// a branch for a pull request or the repo has no branches yet.
+	refs, err := setup.RefsOnly(ctx, *dir)
 	if err != nil {
 		return err
 	}
 	made := ""
 	if len(refs.Made) > 0 {
-		made = fmt.Sprintf("Made %s on %s, empty for now: `%s join` looks for it.\n",
-			strings.Join(refs.Made, " and "), refs.Remote, brand.Command)
+		var lines strings.Builder
+		for _, ref := range refs.Made {
+			fmt.Fprintf(&lines, "Made %s on %s.\n", ref, refs.Remote)
+		}
+		made = lines.String()
 	}
 	p, err := setup.Push(ctx, *dir)
 	if errors.Is(err, setup.ErrNoBranch) {
@@ -575,7 +581,7 @@ func reportPublic(ctx context.Context, dir string, out io.Writer) {
 }
 
 // initRefsOnly is `init --refs-only` (#830): the repo is set up by the shared bus refs, made in their
-// empty state, and nothing on any branch mentions Murmur.
+// own commits, and nothing on any branch mentions Murmur.
 func initRefsOnly(ctx context.Context, dir string, out io.Writer) error {
 	s, err := setup.RefsOnly(ctx, dir)
 	if err != nil {
@@ -585,7 +591,9 @@ func initRefsOnly(ctx context.Context, dir string, out io.Writer) error {
 		fmt.Fprintf(out, "Already set up: %s has %s; nothing changed.\n", s.Remote, strings.Join(s.Had, " and "))
 		return nil
 	}
-	fmt.Fprintf(out, "Set this repo up through its refs alone: made %s on %s, empty for now.\n", strings.Join(s.Made, " and "), s.Remote)
+	for _, ref := range s.Made {
+		fmt.Fprintf(out, "Made %s on %s.\n", ref, s.Remote)
+	}
 	if len(s.Had) > 0 {
 		fmt.Fprintf(out, "%s was there already and is left as it is.\n", strings.Join(s.Had, " and "))
 	}
@@ -641,6 +649,28 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	}
 	fmt.Fprint(out, report.String())
 	return err
+}
+
+func runOwner(ctx context.Context, args []string, out io.Writer) error {
+	fs, dir := flags("owner")
+	fs.Parse(args)
+	gitDir, err := client.FindGitDir(ctx, *dir)
+	if err != nil {
+		return err
+	}
+	c, err := client.Connect(ctx, gitDir, true)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Do(ctx, proto.Request{Op: proto.OpOwner})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	fmt.Fprintln(out, resp.Note)
+	return nil
 }
 
 // runRotate asks the daemon for a new team key (#156) when the repo's collaborators, listed with gh,

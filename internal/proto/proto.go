@@ -46,6 +46,7 @@ const (
 	// OpRotate asks for a new team key (#156): when someone in the epoch's recorded collaborators
 	// is no longer in Collaborators, or always with Force.
 	OpRotate = "rotate"
+	OpOwner  = "owner" // shows the mesh owner this device has verified
 	// OpNick shows this device's nickname (#190), sets it to Nick, or with Clear takes it off.
 	OpNick = "nick"
 )
@@ -105,7 +106,9 @@ const (
 //	    (#975). A daemon of 25 or less refuses it.
 //	27: such a session's route names the socket Murmur's Hermes plugin opened for it, and the session
 //	    is held while the socket answers (#1184). A daemon of 26 holds it for 30 idle minutes.
-const Protocol = 27
+//	28: OpOwner and owner-only rotation in meshes set up by a daemon that verifies signed policy
+//	    records (#1263). An older local daemon cannot enforce ownership.
+const Protocol = 28
 
 // MaxPrompt is how much of a prompt a hook sends as Request.Prompt: a turn Murmur hands over
 // begins with its sender and subject, well within it.

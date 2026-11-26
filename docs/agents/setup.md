@@ -51,8 +51,9 @@ What `mur init` does:
 - Nothing is installed on teammates' machines, and Murmur does nothing for anyone until they join.
   A teammate's agent that reads the section asks its user whether to join.
 
-`mur init --refs-only` makes that ref and `refs/murmur/team`, both empty, and nothing else. It sends
-nothing to murmur.afig.dev.
+On a fresh repo, `mur init` also writes the first team key and makes the initializing clone the
+mesh owner. It can administer the mesh once it joins. `mur init --refs-only` makes the same bus refs
+without adding the invitation or reporting the repo to murmur.afig.dev.
 
 Either way, you then join for your user. Say what joining does, from the list in step 1 of
 join.md, and what murmur.afig.dev receives and why, from "What murmur.afig.dev receives" there.

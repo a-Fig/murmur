@@ -25,6 +25,7 @@ const (
 	TeamEpoch  = "epoch"
 	TeamGrant  = "grant"
 	TeamRoster = "roster"
+	TeamPolicy = "policy"
 )
 
 // TeamRecord is one record on the team ref, sealed by the device that wrote it.
@@ -41,9 +42,22 @@ type TeamRecord struct {
 	IDs []string `json:"ids,omitempty"`
 	// Box holds the private halves (teamSecret), wrapped for each device it is for: an epoch's for
 	// its writer, a grant's for To. A roster's holds the collaborators, encrypted for team key ID.
-	Box *Box      `json:"box"`
+	Box *Box      `json:"box,omitempty"`
 	At  time.Time `json:"at"`
+	// AdminSeq orders the owner's epochs, rosters and policy updates together. The initial
+	// epoch carries the initial policy and starts at 1. Grants carry no admin sequence.
+	AdminSeq uint64      `json:"adminSeq,omitempty"`
+	Policy   *RepoPolicy `json:"policy,omitempty"`
 }
+
+// RepoPolicy is the owner's repo-wide settings. Team encryption and file transfers are the
+// original defaults. Readers support additional values as they implement those behaviors.
+type RepoPolicy struct {
+	EncryptionMode string `json:"encryptionMode"`
+	AllowFiles     bool   `json:"allowFiles"`
+}
+
+func (p RepoPolicy) supported() bool { return p.EncryptionMode == "team" && p.AllowFiles }
 
 // teamSecret is what a team record's box holds.
 type teamSecret struct {
@@ -153,14 +167,20 @@ func (r TeamRecord) OpenRoster(keys Keyring) ([]string, error) {
 // Valid says whether a team record has the form its type needs. A record that doesn't is junk, and
 // is passed over.
 func (r TeamRecord) Valid() bool {
-	if r.V != Version || r.Box == nil || len(r.Box.Keys) == 0 {
+	if r.V != Version || r.Policy != nil && !r.Policy.supported() {
+		return false
+	}
+	if r.Type == TeamPolicy {
+		return r.AdminSeq > 1 && r.Policy != nil && r.Box == nil && r.ID == "" && r.Pub == "" && r.To == "" && len(r.IDs) == 0
+	}
+	if r.Box == nil || len(r.Box.Keys) == 0 || r.Policy != nil && (r.Type != TeamEpoch || r.AdminSeq != 1) {
 		return false
 	}
 	switch r.Type {
 	case TeamEpoch:
 		return r.ID != "" && r.ID == TeamID(r.Pub) && ValidBoxKey(r.Pub) && r.To == "" && len(r.IDs) == 0
 	case TeamGrant:
-		if !ValidDevice(r.To) || len(r.IDs) == 0 || len(r.Box.Keys) != 1 || r.Box.Keys[r.To] == "" {
+		if r.AdminSeq != 0 || !ValidDevice(r.To) || len(r.IDs) == 0 || len(r.Box.Keys) != 1 || r.Box.Keys[r.To] == "" {
 			return false
 		}
 		for _, id := range r.IDs {
@@ -178,6 +198,8 @@ func (r TeamRecord) Valid() bool {
 // Subject is the commit subject a team record is written with. Only what the record shows anyway.
 func (r TeamRecord) Subject() string {
 	switch r.Type {
+	case TeamPolicy:
+		return "repo policy"
 	case TeamGrant:
 		return "grant to " + r.To
 	case TeamRoster:

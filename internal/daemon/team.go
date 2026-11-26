@@ -82,7 +82,11 @@ func (d *Daemon) rereadTeamIfKeysLostLocked() {
 	for _, id := range d.st.TeamGranted[d.device] {
 		if d.teamKeys[id] == nil {
 			d.log.Printf("a team key this device was granted isn't in %s; reading %s again for it", teamKeysPath(d.dir), brand.TeamRef)
-			d.st.TeamTip = ""
+			if d.st.TeamOwner == nil {
+				d.st.TeamTip = ""
+			} else {
+				d.teamReopen = true
+			}
 			return
 		}
 	}
@@ -194,18 +198,39 @@ func (d *Daemon) kickTeam() {
 func (d *Daemon) processTeam(ctx context.Context, sha string) {
 	d.mu.Lock()
 	tip := d.st.TeamTip
+	owned, reopen := d.st.TeamOwner != nil, d.teamReopen
+	uninitialized := tip == "" && !owned && len(d.st.Epochs) == 0
 	d.mu.Unlock()
+	if reopen {
+		if err := d.restoreTeamKeys(ctx, tip); err != nil {
+			d.log.Printf("reading %s again for team keys: %v", brand.TeamRef, err)
+			return
+		}
+		d.mu.Lock()
+		d.teamReopen = false
+		d.mu.Unlock()
+	}
 	if sha == tip {
 		return
 	}
 	from := tip
 	if tip != "" {
-		ok, err := d.repo.IsAncestor(ctx, tip, sha)
+		var ok bool
+		var err error
+		if owned {
+			ok, err = d.teamContinues(ctx, tip, sha)
+		} else {
+			ok, err = d.repo.IsAncestor(ctx, tip, sha)
+		}
 		if err != nil {
 			d.log.Printf("reading %s: %v", brand.TeamRef, err)
 			return
 		}
 		if !ok {
+			if owned {
+				d.log.Printf("%s was rewritten before %s; keeping the verified team history", brand.TeamRef, short(tip))
+				return
+			}
 			// Rewritten: read it whole again. The keys this device holds stay (teamKeysPath).
 			d.log.Printf("%s was rewritten; reading it from its start", brand.TeamRef)
 			from = ""
@@ -218,8 +243,8 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			if from == "" && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
 			}
-			for _, c := range commits {
-				d.applyTeamLocked(c)
+			for i, c := range commits {
+				d.applyTeamRecordLocked(c, uninitialized && d.st.TeamTip == "" && i == 0)
 			}
 			d.st.TeamTip = commits[len(commits)-1].SHA
 		})
@@ -242,6 +267,10 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 // device whose pinned key it was sealed with if that device is pinned, is taken; anything else is
 // junk and passed over. Caller holds mu.
 func (d *Daemon) applyTeamLocked(c bus.Commit) {
+	d.applyTeamRecordLocked(c, false)
+}
+
+func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 	if c.Oversize {
 		return
 	}
@@ -253,12 +282,15 @@ func (d *Daemon) applyTeamLocked(c bus.Commit) {
 		d.log.Printf("%s: passing over %s, which isn't sealed", brand.TeamRef, short(c.SHA))
 		return
 	}
-	if pin := d.st.Pins[seal.By]; pin != nil && pin.Sign != seal.Key {
+	var r bus.TeamRecord
+	if bus.Decode(c.Message, &r) != nil || !r.Valid() {
+		return
+	}
+	if pin := d.st.Pins[seal.By]; pin != nil && pin.Sign != seal.Key && !(root && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil) {
 		d.log.Printf("%s: passing over %s, sealed with a key that isn't the one pinned for %s", brand.TeamRef, short(c.SHA), seal.By)
 		return
 	}
-	var r bus.TeamRecord
-	if bus.Decode(c.Message, &r) != nil || !r.Valid() {
+	if r.Type == bus.TeamEpoch && d.knownEpochLocked(r.ID) || !d.acceptTeamAdminLocked(r, seal, root) {
 		return
 	}
 	grant := func(dev string, ids []string) {
@@ -272,9 +304,6 @@ func (d *Daemon) applyTeamLocked(c bus.Commit) {
 	}
 	switch r.Type {
 	case bus.TeamEpoch:
-		if d.knownEpochLocked(r.ID) {
-			return
-		}
 		ep := teamEpoch{ID: r.ID, Pub: r.Pub, By: seal.By, At: r.At}
 		for _, dev := range r.Box.Recipients() {
 			grant(dev, []string{r.ID})
@@ -318,6 +347,33 @@ func (d *Daemon) applyTeamLocked(c bus.Commit) {
 			}
 		}
 	}
+}
+
+// restoreTeamKeys opens old boxes from the history this device already verified. The cursor and
+// owner sequence stay in place even if the remote now points to an older policy.
+func (d *Daemon) restoreTeamKeys(ctx context.Context, tip string) error {
+	return d.repo.Log(ctx, "", tip, d.maxRecord, func(commits []bus.Commit) error {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for _, c := range commits {
+			state, _ := bus.OpenSeal(c.Message, brand.TeamRef)
+			var r bus.TeamRecord
+			if state != bus.Sealed || bus.Decode(c.Message, &r) != nil || !r.Valid() || r.Type != bus.TeamEpoch && r.Type != bus.TeamGrant {
+				continue
+			}
+			keys, err := r.Open(d.device, d.boxKey)
+			if err != nil {
+				continue
+			}
+			for id := range keys {
+				if !d.knownEpochLocked(id) {
+					delete(keys, id)
+				}
+			}
+			d.addTeamKeysLocked(keys)
+		}
+		return nil
+	})
 }
 
 // teamLoop makes the team ref's records: the first epoch, when there is none, and grants. It runs
@@ -433,6 +489,12 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	var newKey *ecdh.PrivateKey
 	now := time.Now()
 	rotate := ask != nil && ask.rotate
+	if ask != nil {
+		if err := d.checkOwnerLocked(); err != nil {
+			d.mu.Unlock()
+			return "", false, err
+		}
+	}
 	if rotate {
 		// Checked on the epochs this very push builds on: another device may have rotated since the
 		// request came in, and this one would then grant a history with that key missing.
@@ -457,7 +519,7 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	// fast-forward of it. Either way the push is leased on what was read, so of two devices that try
 	// at once one lands, and the other reads its epoch and makes none.
 	empty := !listed && tip == "" || genesis != "" && tip == genesis
-	if rotate || ep == nil && synced && empty {
+	if rotate || d.st.TeamOwner == nil && ep == nil && synced && empty {
 		// The epoch is wrapped for this device alone. Every other device gets it by a grant, once it
 		// has pushed a presence encrypted for this key: what a collaborator who has lost push access
 		// can't do.
@@ -477,6 +539,11 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 			return "", false, err
 		}
 		recs = append(recs, r)
+	}
+	if o := d.st.TeamOwner; o != nil {
+		for i := range recs {
+			recs[i].AdminSeq = o.Seq + uint64(i) + 1
+		}
 	}
 	for _, dev := range d.grantsDueLocked() {
 		r, err := bus.NewGrant(dev, d.st.Pins[dev].Box, d.teamKeys, now)
@@ -619,6 +686,15 @@ func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string
 // leaving is seen later. Someone who joined and left between two runs was never on a roster, and
 // only --force covers that. It returns what it did, for the person who asked.
 func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool) (string, error) {
+	if err := d.pollOnce(ctx); err != nil {
+		return "", err
+	}
+	d.mu.Lock()
+	err := d.checkOwnerLocked()
+	d.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
 	if collab != nil {
 		collab = slices.Clone(collab)
 		slices.Sort(collab)

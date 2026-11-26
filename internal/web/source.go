@@ -64,12 +64,14 @@ type State struct {
 	Repo string `json:"repo,omitempty"`
 	// Slug is the repository's owner/name from its remote's address ("a-Fig/murmur"), which the page
 	// shows where it says which repo it is. Without an owner in the address it is Repo.
-	Slug    string   `json:"slug,omitempty"`
-	Device  string   `json:"device"` // this device's ID
-	Devices []Device `json:"devices"`
-	Mutes   []Mute   `json:"mutes"`
-	Version Version  `json:"version"`
-	Account Account  `json:"account"`
+	Slug      string   `json:"slug,omitempty"`
+	Device    string   `json:"device"` // this device's ID
+	Devices   []Device `json:"devices"`
+	Mutes     []Mute   `json:"mutes"`
+	Version   Version  `json:"version"`
+	Account   Account  `json:"account"`
+	MeshOwner string   `json:"meshOwner,omitempty"` // verified owner's device ID
+	OwnsMesh  bool     `json:"ownsMesh,omitempty"`
 	// Receipts is, for each of the person's recent messages, by its ID, how far it got with each of
 	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
 	// the page asks for every few seconds, and not on the message.

@@ -784,6 +784,17 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Self: from, Events: append([]proto.EventView(nil), events...)}
 
+	case proto.OpOwner:
+		d.awaitFirstSync(ctx)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.isOwnerLocked() {
+			return proto.Response{OK: true, Note: "This clone is the mesh owner."}
+		}
+		if o := d.st.TeamOwner; o != nil {
+			return proto.Response{OK: true, Note: "Mesh owner: " + d.deviceCalledLocked(o.Device)}
+		}
+		return proto.Response{OK: true, Note: "This clone hasn't seen a mesh owner."}
 	case proto.OpRotate:
 		note, err := d.rotateRequest(ctx, req.Collaborators, req.Force)
 		if err != nil {

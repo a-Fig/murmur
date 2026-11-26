@@ -39,39 +39,21 @@ T3 Code](clients.md#any-agent-in-t3-code-the-shell-commands)).
 
 ## The bus refs set a repo up
 
-Tyler's direction (2026-11-23, #830): join looks only at the remote's `refs/murmur/*`, never at a
-file or a branch. A default `mur init` makes the names registry (`setup.NamesOnly`) before the
-section's commit, so a section that went to `murmur-init` for a pull request, or found no branch to
-go on, still leaves the repo joinable. `init --refs-only` (`setup.RefsOnly`) makes the registry and
-the team ref, and nothing else, for a repo whose files are to say nothing. `init --no-push` pushes
-nothing, so join refuses until a pushing init runs. A ref must point at a commit, so each gets a root
-commit on the empty tree, written with `commit-tree` and pushed as `<sha>:<ref>`, leased on the ref
-not being there:
+Tyler's direction (2026-11-23, #830): join looks at the remote's `refs/murmur/*`. Both
+`mur init` and `mur init --refs-only` make those refs before teammates can join. The default form
+also puts the invitation on the default branch or a branch for a pull request. `init --no-push`
+only edits local files.
 
-- `refs/murmur/names` gets a snapshot of no names (`bus.NamesGenesis`), the record a daemon writes
-  when it repairs a registry that held none. A snapshot counts on a history's root, so every daemon,
-  released ones too, reads it as an empty registry and writes the first name on top.
-- `refs/murmur/team`, from `--refs-only` only, gets an unsealed message saying there is no team key
-  yet. A daemon that finds the tip is that commit, a root on the empty tree (`Repo.IsTeamGenesis`;
-  the message alone isn't enough), and has read no epoch, makes epoch 1 on top of it, as it does on
-  a team ref that isn't there (`teamGenesisTip` in `internal/daemon/team.go`). The push is leased on
-  the genesis, so of two first daemons one lands and the other reads its epoch; one that read the
-  genesis just as another pushed epoch 1 is refused the same way. A default init leaves the team ref
-  out because a 0.5.3 daemon, which can join through the section, makes the first key only on a team
-  ref that isn't there.
+On a fresh mesh, init writes two root commits on the empty tree without touching the index or
+any branch:
 
-The per-device refs, `mesh/<deviceId>` and `presence/<deviceId>`, are each daemon's own and come
-after its clone joins. A ref already on the remote is left alone, so a rerun makes nothing new. Once
-a repo has bus refs it stays joinable: Murmur never deletes the names or team ref, and taking the
-section out no longer stops anything.
+- `refs/murmur/team` gets the first team key, sealed by the initializing clone. The first
+  push wins a lease on the empty ref and establishes the [mesh owner](encryption.md#mesh-owner).
+- `refs/murmur/names` gets an empty registry (`bus.NamesGenesis`). Once it is on the remote,
+  teammates with Murmur 0.5.4 or later can join even when the repo has no branches.
 
-**Older versions** (checked against v0.5.3, 2026-11-23; Tyler: only post-0.5.3 needs to work). In a
-repo set up the default way, 0.5.3 works as before: its join finds the section and its daemon makes
-the first key. Only a `--refs-only` repo needs 0.5.4: a 0.5.3 `mur join` looks only for the
-section, so it refuses there, and a 0.5.3 MCP server stays off. A 0.5.3 daemon that runs there
-anyway (its clone joined while the repo had the section) makes no epoch on the team genesis, so its
-presence stays encrypted for itself and its sends fail with "the team's encryption key isn't set up
-yet", until any 0.5.4 daemon makes epoch 1. It doesn't error or overwrite anything.
+Existing refs are left in place. Older meshes may have an unsealed empty team root or no team ref.
+Their first daemon still makes the first epoch if it is missing.
 
 ## What `mur join` writes
 

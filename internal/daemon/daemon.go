@@ -643,6 +643,7 @@ type Daemon struct {
 	// (openEventLocked). Under mu.
 	syncSeq     int64
 	teamReadSeq int64
+	teamReopen  bool // restore lost keys from verified history on the next team read
 	unknownAt   map[string]unknownKey
 
 	polls atomic.Int64 // the remote listings tried, so a test can see the rate
@@ -1128,6 +1129,7 @@ type state struct {
 	// has been given, by device ID. GrantMark is, for each device a grant was read for, the time its
 	// newest presence was signed with when this daemon read the grant (grantsDueLocked).
 	TeamTip     string               `json:"teamTip,omitempty"`
+	TeamOwner   *meshOwner           `json:"teamOwner,omitempty"`
 	Epochs      []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark   map[string]time.Time `json:"grantMark,omitempty"`
