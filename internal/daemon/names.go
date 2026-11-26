@@ -825,6 +825,27 @@ func (d *Daemon) pickName(used map[string]string, taken map[string]bool) (string
 	return name, err
 }
 
+// authorPrint is this clone's commit fingerprint (bus.AuthorPrint, #1244), which every registry
+// entry it writes carries, or "" when the remote isn't on GitHub or git has no identity here. It is
+// read again for each push, not once at start: an email git makes up from the hostname can change
+// with the network, and each entry should carry the identity this clone's commits have now. The
+// census keeps every fingerprint a clone has written, so commits under either address match.
+//
+// It is the email git would write on a commit made here: `git var GIT_AUTHOR_IDENT`, which takes
+// user.email, the environment, and else the user@hostname address git makes up, which is common.
+// The bus's own commits set their identity on their commit-tree alone (bus.Repo.NewCommit), so
+// this reads the user's.
+func (d *Daemon) authorPrint(ctx context.Context) string {
+	if d.repoAddr == "" {
+		return ""
+	}
+	ident, err := d.repo.Git.Run(ctx, "", "var", "GIT_AUTHOR_IDENT")
+	if err != nil {
+		return "" // no identity git can make: such a clone's commits can't be made either
+	}
+	return bus.AuthorPrint(d.repoAddr, ident)
+}
+
 // pushNames pushes w to the registry as one chain of commits on the tip last read, leased on it. It
 // lands only if no one else moved the registry since, which is what makes each fresh name in it
 // this device's. When the tip isn't a commit, or the registry needs repairing, the chain starts
@@ -857,8 +878,9 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 	d.mu.Unlock()
 
 	at := time.Now().UTC()
+	author := d.authorPrint(ctx)
 	rec := func(name, session string) bus.NameRecord {
-		return bus.NameRecord{V: bus.Version, Name: name, Device: d.device, Session: session, At: at}
+		return bus.NameRecord{V: bus.Version, Name: name, Device: d.device, Session: session, At: at, Author: author}
 	}
 	var recs []bus.NameRecord
 	for _, b := range w.binds {
@@ -911,12 +933,12 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		// joins later still knows whose they are; the rest of the used names go in the snapshot.
 		var again []bus.NameRecord
 		for _, name := range sortedKeys(aside) {
-			again = append(again, bus.NameRecord{V: bus.Version, Name: name, Device: aside[name], At: at})
+			again = append(again, bus.NameRecord{V: bus.Version, Name: name, Device: aside[name], At: at, Author: author})
 			delete(used, name)
 		}
 		recs = append(again, recs...)
 		if len(recs) == 0 {
-			recs = append(recs, bus.NameRecord{V: bus.Version, At: at}) // a repair on its own
+			recs = append(recs, bus.NameRecord{V: bus.Version, At: at, Author: author}) // a repair on its own
 		}
 		for name, addr := range people {
 			used[name] = addr // a person's claim survives a repair, as a session's name does

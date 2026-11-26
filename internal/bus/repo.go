@@ -142,7 +142,13 @@ func (r *Repo) NewCommit(ctx context.Context, parent, message string) (string, e
 		args = append(args, "-p", parent)
 	}
 	args = append(args, "-F", "-")
-	out, err := r.Git.Run(ctx, message, args...)
+	// The environment too, since it wins over -c: a daemon inherits the environment of the session
+	// that started it, and a GIT_AUTHOR_NAME there would put someone's name on the bus in place of
+	// the device's ID, which the census reads as the commit's writer (#1244).
+	g := r.Git
+	g.Env = append(slices.Clone(g.Env), "GIT_AUTHOR_NAME="+r.Name, "GIT_AUTHOR_EMAIL="+r.Email,
+		"GIT_COMMITTER_NAME="+r.Name, "GIT_COMMITTER_EMAIL="+r.Email)
+	out, err := g.Run(ctx, message, args...)
 	if err != nil {
 		return "", err
 	}

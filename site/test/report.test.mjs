@@ -143,11 +143,11 @@ test('a report of one repo and one user says "repo" and "user", not "repos" and 
   const one = repoReport({ ...n, repos: 1, users: 1, usersBy: { account: 1, name: 0, device: 0 } }, 'https://murmur.invalid');
   assert.match(one, /^About \*\*1 user\*\* has run Murmur in public repos, /m);
   assert.match(one, /\*\*1 public repo\*\* uses it;/);
-  assert.match(one, /Of 1 user, 1 was matched to an account,/);
+  assert.match(one, /Of 1 user, 0 were matched by commit fingerprint, 1 to an account by git name,/);
   const two = repoReport({ ...n, repos: 2, users: 2, usersBy: { account: 2, name: 0, device: 0 } }, 'https://murmur.invalid');
   assert.match(two, /^About \*\*2 users\*\* have run Murmur in public repos, /m);
   assert.match(two, /\*\*2 public repos\*\* use it;/);
-  assert.match(two, /Of 2 users, 2 were matched to an account,/);
+  assert.match(two, /Of 2 users, 0 were matched by commit fingerprint, 2 to an account by git name,/);
 
   const archive = active => archiveReport({
     today: '2026-11-11', checkInsEnded: '2026-11-08', goal: 100, active, activeBefore: 0, activeDays: 7, activeToday: 0,

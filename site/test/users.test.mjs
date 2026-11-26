@@ -34,7 +34,7 @@ test('clones on one machine are one user, across repos, from the first day of an
   assert.equal(u.users.size, 2);
   assert.deepEqual([...u.users.values()].find(x => x.first === '2026-11-02'), { first: '2026-11-02', last: '2026-11-24' });
   // The machine's user has a git name among its clones; the lone clone has nothing.
-  assert.deepEqual(u.by, { account: 0, name: 1, machine: 0, device: 1 });
+  assert.deepEqual(u.by, { author: 0, account: 0, name: 1, machine: 0, device: 1 });
   // The old count is one per clone, but for a git name.
   assert.equal(users(rows, { join: {} }).users.size, 4);
 });
@@ -42,11 +42,11 @@ test('clones on one machine are one user, across repos, from the first day of an
 test('a machine joins clones counted by an account to those counted by nothing', () => {
   const u = users([dev('a', '1', { machine: 'm', account: 'x' }), dev('b', '2', { machine: 'm' }), dev('c', '3', { account: 'x' })]);
   assert.equal(u.users.size, 1);
-  assert.deepEqual(u.by, { account: 1, name: 0, machine: 0, device: 0 });
+  assert.deepEqual(u.by, { author: 0, account: 1, name: 0, machine: 0, device: 0 });
 });
 
 test('a lone clone with a machine is tied to it, not counted one per clone', () => {
-  assert.deepEqual(users([dev('a', '1', { machine: 'm' }), dev('a', '2')]).by, { account: 0, name: 0, machine: 1, device: 1 });
+  assert.deepEqual(users([dev('a', '1', { machine: 'm' }), dev('a', '2')]).by, { author: 0, account: 0, name: 0, machine: 1, device: 1 });
 });
 
 test("a machine whose clones carry two accounts joins nothing, and the report hears of it", () => {
@@ -54,7 +54,7 @@ test("a machine whose clones carry two accounts joins nothing, and the report he
   assert.equal(u.users.size, 3);
   assert.deepEqual(u.refused, [{ kind: 'machine', key: 'm', devices: 3, repos: 3, accounts: 2 }]);
   // Its clones are counted as if it named no machine.
-  assert.deepEqual(u.by, { account: 2, name: 0, machine: 0, device: 1 });
+  assert.deepEqual(u.by, { author: 0, account: 2, name: 0, machine: 0, device: 1 });
 });
 
 test('a machine over the limits on clones or repos joins nothing', () => {
@@ -81,4 +81,44 @@ test('a slug the old IDs may have cut short, and a Mac default without dashes, n
   assert.equal(machine('acme-corp-workstation-0-ab12'), null);
   assert.equal(machine('acme-corp-workstation-ab12'), 'acme-corp-workstation');
   for (const id of ['macbookpro-ab12', 'macbookair-ab12', 'my-macbookpro-2-ab12']) assert.equal(machine(id), null, id);
+});
+
+// #1244: the commit identity a clone's fingerprint matched, in the same hash space as an account.
+test('clones whose fingerprints match one commit identity are one user, across repos, and join an account matched by name', () => {
+  const rows = [
+    dev('a', '1', { author: 'x' }),
+    dev('b', '2', { author: 'x', machine: 'm' }),
+    dev('c', '3', { account: 'x' }), // the same account, matched by the owner's git name
+    dev('c', '4', { machine: 'm' }),
+    dev('d', '5', { author: 'y' }),
+  ];
+  const u = users(rows);
+  assert.equal(u.users.size, 2);
+  assert.deepEqual(u.by, { author: 2, account: 0, name: 0, machine: 0, device: 0 });
+  // The old count never reads the fingerprint: one per clone, but for the account.
+  assert.equal(users(rows, { join: {} }).users.size, 5);
+});
+
+test('a fingerprint wins over the account matched by name, and lends it to the git name in other repos', () => {
+  const u = users([
+    dev('a', '1', { author: 'x', account: 'z', person: 'p' }),
+    dev('b', '2', { person: 'p' }), // the same git name, with no match of its own
+    dev('c', '3', { account: 'z' }),
+  ]);
+  assert.equal(u.users.size, 2);
+  assert.deepEqual(u.by, { author: 1, account: 1, name: 0, machine: 0, device: 0 });
+});
+
+test('a commit identity matched in more repos than JOIN allows joins nothing, and the report hears of it', () => {
+  const { repos } = JOIN.author;
+  const spread = Array.from({ length: repos + 1 }, (_, i) => dev(`r${i}`, '1', { author: 'x' }));
+  const u = users(spread);
+  assert.equal(u.users.size, repos + 1);
+  assert.deepEqual(u.refused, [{ kind: 'author', key: 'x', devices: repos + 1, repos: repos + 1 }]);
+  assert.deepEqual(u.by, { author: 0, account: 0, name: 0, machine: 0, device: repos + 1 });
+  // A refused fingerprint leaves the clone to the account its name matched.
+  assert.equal(users([...spread, dev('r0', '2', { account: 'z' }), dev('r1', '9', { author: 'x', account: 'z' })]).users.size, repos + 2);
+  // Clones are not capped: one person's disposable boxes are a clone each.
+  const boxes = Array.from({ length: 40 }, (_, i) => dev(`r${i % repos}`, String(i), { author: 'x' }));
+  assert.equal(users(boxes).users.size, 1);
 });

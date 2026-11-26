@@ -82,14 +82,18 @@ background process asks GitHub again once a day, so a repo made public later is 
 Why: to count how many repos and people use Murmur, nothing more. Murmur is new, our goal is 100
 users (written 2026-11-25), and Murmur's messages travel through each team's own repo, so they never
 reach us. The address tells us where to look; the rest of the count is read from the public repo's
-own `refs/murmur/` refs and commit history, which anyone can read. From them the site keeps counts:
-sessions, messages, devices and people, by day. It keeps no names, emails, messages, code or IP
-addresses. To count each device and person once, it keeps a short unsalted hash in place of a
-device's ID, the hostname an older ID begins with, its owner's git user name, and the GitHub account
-matched to that owner. A private repo is never read. https://murmur.afig.dev/privacy/ lists
-everything the site keeps. Each repo's totals show on the count's public run page in GitHub Actions;
-the rest is seen only by Murmur's maintainer and people given a key. The code is
-`internal/publicrepo`, and `docs/design/counting.md` has the design.
+own `refs/murmur/` refs and commit history, which anyone can read. So that one person's clones count
+once, each clone stores a hash in the repo, beside its session names, made from the repo's address
+and the email git commits with on that clone. It is never sent to us. It only ties the clone to
+commits its owner has already made public in that repo; with none there, it matches nothing, and
+since the repo's address is part of the hash, it can't link one repo to another. From these the
+site keeps counts: sessions, messages, devices and people, by day. It keeps no names, emails,
+messages, code or IP addresses. To count each device and person once, it keeps a short unsalted
+hash in place of a device's ID, the hostname an older ID begins with, its owner's git user name,
+and the GitHub account (or commit email) matched to that owner. A private repo is never read.
+https://murmur.afig.dev/privacy/ lists everything the site keeps. Each repo's totals show on the
+count's public run page in GitHub Actions; the rest is seen only by Murmur's maintainer and people
+given a key. The code is `internal/publicrepo`, and `docs/design/counting.md` has the design.
 
 There is no setting to turn it off: the address is already public. Murmur versions before this one
 sent a daily check-in instead; the site stopped storing those on 2026-11-08.

@@ -465,3 +465,56 @@ func TestGivePoolSharesNameBetweenDroppedCLIAndT3(t *testing.T) {
 		t.Errorf("pool has %d names left, want 1", len(d.st.NamePool))
 	}
 }
+
+// Every registry entry a clone writes carries its commit fingerprint as of that push (#1244), made
+// from the email git would write on its commits, so a new email shows on the next entries. A
+// remote that isn't on GitHub gets none.
+func TestRegistryEntriesCarryTheCommitFingerprint(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	ctx := context.Background()
+	clone := filepath.Dir(d.opt.GitDir)
+	authors := func() []string {
+		t.Helper()
+		var out []string
+		err := d.repo.Log(ctx, "", d.st.NamesTip, bus.MaxSnapshot, func(page []bus.Commit) error {
+			for _, c := range page {
+				var rec bus.NameRecord
+				if err := bus.Decode(c.Message, &rec); err != nil {
+					t.Fatal(err)
+				}
+				out = append(out, rec.Author)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out // oldest first
+	}
+	if got := authors(); len(got) != 1 || got[0] != "" {
+		t.Fatalf("a remote that isn't on GitHub wrote fingerprints %q", got)
+	}
+
+	d.repoAddr = "github.com/a-fig/murmur"
+	// A name too: with none, git var takes the account's full name, and a CI runner has none, so
+	// it refuses, as git commit would.
+	runGit(t, clone, "config", "user.name", "Ada")
+	runGit(t, clone, "config", "user.email", "Ada@Example.com")
+	if err := d.pushNames(ctx, nameWork{reserve: 2}); err != nil {
+		t.Fatal(err)
+	}
+	ada := bus.AuthorPrint(d.repoAddr, "x <ada@example.com> 0 +0000")
+	if got := authors(); len(got) != 3 || got[1] != ada || got[2] != ada {
+		t.Fatalf("the entries carry %q, want %q on the two new ones", got, ada)
+	}
+
+	runGit(t, clone, "config", "user.email", "grace@example.com")
+	w := nameWork{wants: []wanted{{id: "bbbbbb", key: nameKey("", "", "", "bbbbbb")}}}
+	if err := d.pushNames(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if got := authors(); len(got) != 4 || got[3] != bus.AuthorPrint(d.repoAddr, "x <grace@example.com> 0 +0000") || got[2] != ada {
+		t.Fatalf("after the email changed the entries carry %q", got)
+	}
+}

@@ -9,7 +9,8 @@ carries `device/session` on the bus, so the event format didn't change and a dae
 names routes by it all the same.
 
 - **Taking a name.** A daemon picks a random name nobody has, commits it on `refs/murmur/names` (one
-  commit per record: the name, the device, and Murmur's session ID, or none for a name set aside),
+  commit per record: the name, the device, and Murmur's session ID, or none for a name set aside,
+  and the writing clone's commit fingerprint for the census, [counting](counting.md)),
   and pushes with a lease on the registry tip it last read. The name is the device's only if that
   push lands. If another device got in first, the daemon fetches, reads what it missed and picks
   again, backing off after 5 refusals in a row, up to 5 minutes.
