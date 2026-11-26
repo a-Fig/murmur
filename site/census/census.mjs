@@ -13,13 +13,15 @@
 // - its bus, refs/murmur/mesh/*, refs/murmur/presence/* and refs/murmur/names: each device's log of
 //   events (sessions started, messages), its presence (which names the git user), and the registry
 //   of session names;
-// - its default branch's commits, without their files: who committed, and when each first did.
+// - its default branch's commits, without their files: who committed, and when each first did;
+// - every branch's commits, without their files, for who committed: a clone's commit fingerprint
+//   in the registry is matched to them (#1244, "Commit fingerprints" below).
 //
 // It sends counts and hashes, not content: per UTC day, how many sessions, messages and records
 // there were, how many bytes those records' events came to, and which devices wrote, each device
 // by a hash with a hash of its owner, of the GitHub account it is matched to (#323) and of the
-// machine its ID names (#1245, machine()); and each contributor by a hash, so one person in two
-// repos counts once.
+// machine its ID names (#1245, machine()) and of the commit identity its fingerprint matches
+// (#1244, authorAccounts()); and each contributor by a hash, so one person in two repos counts once.
 //
 // Since Murmur 0.3 every event is encrypted (#156), and its kind is sealed inside with the rest.
 // The record count and the bytes stay exact. The sessions and messages an encrypted log hides are
@@ -94,13 +96,14 @@ const latestDay = now => new Date(now + 864e5).toISOString().slice(0, 10);
 // does the census, or one commit could add gigabytes to a repo's bytes for good.
 const MAX_RECORD = 1 << 20;
 
-// Each commit on a bus ref, newest first: its hash, committer date and message. One whose message
-// is over MAX_RECORD is left out.
+// Each commit on a bus ref, newest first: its hash, committer date, author name and message. A bus
+// commit's author name is the ID of the device that wrote it (internal/bus/repo.go, NewCommit). One
+// whose message is over MAX_RECORD is left out.
 function log(dir, ref, deadline) {
-  const out = git(dir, ['log', '--format=%H%x00%cI%x00%B%x01', ref], deadline);
+  const out = git(dir, ['log', '--format=%H%x00%cI%x00%an%x00%B%x01', ref], deadline);
   return out.split('\x01').map(s => s.replace(/^\n/, '')).filter(s => s.includes('\x00') && Buffer.byteLength(s) <= MAX_RECORD).map(s => {
-    const [hash, date, msg] = s.split('\x00');
-    return { hash, date, msg };
+    const [hash, date, by, msg] = s.split('\x00');
+    return { hash, date, by, msg };
   });
 }
 
@@ -128,6 +131,42 @@ function identity(email, name) {
 }
 
 const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
+
+// Commit fingerprints (#1244)
+//
+// Each entry a clone adds to the name registry carries its commit fingerprint, `author`: a hash of
+// the repo and the email git writes on that clone's commits (`git var GIT_AUTHOR_IDENT`, which is
+// often the user@hostname address git makes up). The registry isn't encrypted and is never deleted,
+// so the census sees every fingerprint a clone has written, even one whose sessions started and
+// stopped between two runs, and keeps them all: an email made up from a hostname can change with
+// the network, and the clone's commits under either address match.
+//
+// The census hashes every commit author email in the repo, on every branch, the same way
+// (authorPrint, which must stay byte for byte alike with internal/bus/author.go, AuthorPrint). A
+// match ties the clone to that commit identity, and so to its GitHub account where GitHub links
+// one, as accounts() does for an owner's name. The site then merges clones by account, or by the
+// email where there is none, across repos (src/repos.js, users()). The repo is in the hash, so a
+// fingerprint links nothing across repos by itself: only an account or email already public on
+// commits does.
+//
+// Identities many people commit as never match: a bot's, and the shared ones in SHARED, such as the
+// address an agent signs its commits with. An email git made up from a hostname still matches: it
+// is one machine's, and it is how a clone with no user.email set is tied to its owner. The site
+// also refuses a merge that would gather clones from an unusually large number of repos, for a
+// shared identity not listed here (src/repos.js, JOIN).
+//
+// A clone that never updates writes no fingerprint, and is counted as before.
+const SHARED = new Set(['noreply@anthropic.com', 'noreply@github.com', 'root@localhost', 'review@local']);
+const PRINT = /^[0-9a-f]{16}$/;
+
+// Whether a commit identity is one many people share, so that a clone committing as it is no one's.
+export const shared = (email, name) =>
+  /\[bot\]/i.test(name) || /\[bot\]@/i.test(email) || SHARED.has(email.trim().toLowerCase());
+
+// The fingerprint a clone of `repo` (github.com/<owner>/<name>) writes when git commits there as
+// `email`.
+export const authorPrint = (repo, email) =>
+  createHash('sha256').update(`murmur-owner\0${repo.trim().toLowerCase()}\0${email.trim().toLowerCase()}`).digest('hex').slice(0, 16);
 
 // The machine a device ran on, from its ID, or null (#1245). Before #330 a clone's ID was a slug of
 // its machine's hostname and four random hex digits (`laptop-gjlpfunp-ccf2`), so every clone on one
@@ -276,6 +315,7 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
     return days.get(d);
   };
   const owners = new Map(); // device -> git user name, from its newest presence that shows one
+  const prints = new Map(); // device -> the commit fingerprints it wrote in the registry, newest first
   const started = new Map(); // session -> the first day it started
   const registered = new Map(); // session -> the first day the registry named it
   const seen = new Set();
@@ -289,6 +329,12 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
         const id = r && named(r);
         const d = id && (busDay(r.at) || busDay(c.date));
         if (d && (!registered.has(id) || d < registered.get(id))) registered.set(id, d);
+        // A fingerprint is its writer's, which the commit names: a repair writes other devices'
+        // reservations again, under their IDs.
+        if (r && typeof r.author === 'string' && PRINT.test(r.author) && NAME.test(c.by)) {
+          if (!prints.has(c.by)) prints.set(c.by, []);
+          if (!prints.get(c.by).includes(r.author)) prints.get(c.by).push(r.author);
+        }
       }
       continue;
     }
@@ -332,10 +378,11 @@ export function count(dir, { now = Date.now(), deadline = Infinity, maxRefs = MA
         devices: [...t.devices].map(v => hash('device:' + v)).sort(),
       };
     }),
-    // The owner's name stays here: census() hashes it, and matches it to an account, before sending.
+    // The owner's name and the fingerprints stay here: census() hashes the one, and matches both to
+    // an account, before sending.
     devices: [...devices].sort().map(v => {
       const m = machine(v);
-      return { id: hash('device:' + v), owner: owners.get(v) ?? null, machine: m && hash('machine:' + m) };
+      return { id: hash('device:' + v), owner: owners.get(v) ?? null, machine: m && hash('machine:' + m), prints: prints.get(v) ?? [] };
     }),
     totals: {
       sessions: started.size, messages, records, bytes, est_sessions: estSessions, est_messages: estMessages,
@@ -402,6 +449,45 @@ export async function accounts(owners, commits, lookup) {
   return out;
 }
 
+// Every commit author on every branch who isn't a bot or a shared identity, by the fingerprint a
+// clone committing as them writes (#1244): fingerprint -> { identity, sha }, sha one of their
+// commits, for lookup. The email is as git wrote it (%ae), not as a .mailmap would map it: the
+// clone's fingerprint is of what its git writes.
+export function printsOf(dir, repo, { deadline = Infinity } = {}) {
+  const out = git(dir, ['log', '--branches', '--format=%H%x00%ae%x00%an'], deadline);
+  const by = new Map();
+  for (const line of out.split('\n')) {
+    const [sha, email, name = ''] = line.split('\x00');
+    if (!sha || !email?.trim() || shared(email, name)) continue;
+    const p = authorPrint(repo, email);
+    if (!by.has(p)) by.set(p, { identity: identity(email, name), sha });
+  }
+  return by;
+}
+
+// The commit identity behind each device's fingerprints (#1244), as an account: device id ->
+// 'login:x', or 'email:y' where GitHub links the email to no account. Of a device's fingerprints
+// that match a commit author, a GitHub login wins, then the newest. An email is turned into its
+// login when lookup(sha) can say, once per email. A device none of whose fingerprints match is left
+// out, and so is one whose lookup couldn't be asked: the site keeps what it was matched to before.
+export async function authorAccounts(devices, byPrint, lookup) {
+  const looked = new Map(); // identity -> its login, or null
+  const out = new Map();
+  for (const { id, prints = [] } of devices) {
+    const hits = prints.map(p => byPrint.get(p)).filter(Boolean);
+    if (!hits.length) continue;
+    const { identity: who, sha } = hits.find(h => h.identity.startsWith('login:')) ?? hits[0];
+    if (!who.startsWith('login:') && !looked.has(who)) {
+      const login = await lookup(sha);
+      if (login === undefined) continue;
+      looked.set(who, login);
+    }
+    const login = looked.get(who);
+    out.set(id, login ? 'login:' + login.toLowerCase() : who);
+  }
+  return out;
+}
+
 // lookup for accounts, from GitHub's API: the commit author's login, null when the API answers that
 // no account is linked, or undefined when it can't be asked (a rate limit, an outage, a timeout).
 // Once rate limited it stops asking. GITHUB_TOKEN, if set, raises the limit.
@@ -464,7 +550,7 @@ export async function releaseDownloads({ repo = RELEASES, pages = 10 } = {}) {
   return releases.map(({ created, ...r }) => ({ ...r, latest: r.tag === latest }));
 }
 
-// Fetches one repo's bus and its default branch's commits into a scratch repo and counts them,
+// Fetches one repo's bus and its branches' commits into a scratch repo and counts them,
 // within BUDGET. `url`, where it is fetched from, and `lookup` are for the tests.
 //
 // Only the refs count() reads are fetched, and of them only commits: a bus commit's tree is empty
@@ -490,14 +576,20 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
       if (err.skipped) throw err;
     }
     const bus = count(dir, { deadline, maxRefs });
+    // Every branch, for the commit fingerprints (#1244), then the default branch on its own, as
+    // FETCH_HEAD, for the contributors: each fetch replaces FETCH_HEAD.
+    git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, '+refs/heads/*:refs/heads/*'], deadline);
     git(dir, ['fetch', '-q', '--no-tags', '--filter=tree:0', url, 'HEAD'], deadline);
     const commits = authors(dir, { deadline });
-    const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, lookup(m[1], m[2], deadline));
+    const ask = lookup(m[1], m[2], deadline);
+    const matched = await accounts(bus.devices.map(v => v.owner).filter(Boolean), commits, ask);
+    const printed = await authorAccounts(bus.devices, printsOf(dir, name, { deadline }), ask);
     const devices = bus.devices.map(({ id, owner, machine }) => ({
       id,
       person: owner ? hash('owner:' + owner.trim().toLowerCase()) : null,
       account: matched.has(owner) ? hash(matched.get(owner)) : null,
       machine,
+      author: printed.has(id) ? hash(printed.get(id)) : null,
     }));
     return { repo: name.toLowerCase(), ...bus, devices, contributors: contributors(commits) };
   } finally {
@@ -516,11 +608,11 @@ export async function census(name, { url, budget = BUDGET, maxRefs = MAX_REFS, l
 //
 // Sessions and Messages are the exact counts; the estimates of what encryption hides have their
 // own columns, and a repo's sessions or messages are the two together.
-const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Sessions', 'Estimated sessions', 'Messages', 'Estimated messages', 'Records', 'Bytes', 'Contributors', 'Days'];
+const COLUMNS = ['Devices', 'People', 'Matched to an account', 'Matched by commit', 'Sessions', 'Estimated sessions', 'Messages', 'Estimated messages', 'Records', 'Bytes', 'Contributors', 'Days'];
 const KINDS = ['sent', 'counted', 'skipped', 'not read', 'not sent'];
 const cells = cs => `| ${cs.join(' | ')} |\n`;
 const numbers = c => [c.devices.length, new Set(c.devices.map(v => v.person ?? v.id)).size,
-  c.devices.filter(v => v.account).length, c.totals.sessions, c.totals.est_sessions ?? 0,
+  c.devices.filter(v => v.account).length, c.devices.filter(v => v.author).length, c.totals.sessions, c.totals.est_sessions ?? 0,
   c.totals.messages, c.totals.est_messages ?? 0, c.totals.records, c.totals.bytes ?? 0, c.contributors.length, c.days.length];
 const text = s => String(s).replace(/\s+/g, ' ').trim().slice(0, 300).replace(/[\\`*_[\]<>|]/g, '\\$&');
 
@@ -666,7 +758,7 @@ export async function main(args, { read = census, downloads = releaseDownloads }
     }
     const est = n => (n ? ` and about ${n} more estimated` : '');
     const line = `${name}: ${c.devices.length} devices, ${new Set(c.devices.map(v => v.person ?? v.id)).size} people, ` +
-      `${c.devices.filter(v => v.account).length} matched to an account, ${c.totals.sessions} sessions${est(c.totals.est_sessions)}, ` +
+      `${c.devices.filter(v => v.account).length} matched to an account, ${c.devices.filter(v => v.author).length} by commit, ${c.totals.sessions} sessions${est(c.totals.est_sessions)}, ` +
       `${c.totals.messages} messages${est(c.totals.est_messages)}, ${c.totals.records} records of ${c.totals.bytes ?? 0} bytes, ` +
       `${c.contributors.length} contributors, ${c.days.length} days`;
     if (dry) {

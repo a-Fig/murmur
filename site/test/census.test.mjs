@@ -26,7 +26,7 @@ process.env.GIT_CONFIG_NOSYSTEM = '1';
 // Run in Actions, the tests' runs would write to the job's own summary. The tests that read one set
 // their own.
 delete process.env.GITHUB_STEP_SUMMARY;
-const { main, count, boxedSize, releaseDownloads, authors, contributors, apiLookup, tooBig, summaryHead, summaryRow, census: readRepo } = await import('../census/census.mjs');
+const { main, count, boxedSize, releaseDownloads, authors, contributors, apiLookup, tooBig, summaryHead, summaryRow, census: readRepo, authorPrint } = await import('../census/census.mjs');
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -432,13 +432,13 @@ test("the run's summary has a row for each repo, its counts or why it has none, 
     '',
     '4 repos to count.',
     '',
-    '| Repo | Result | Devices | People | Matched to an account | Sessions | Estimated sessions | Messages | Estimated messages | Records | Bytes | Contributors | Days |',
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
-    '| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |',
-    '| [b/two](https://github.com/b/two) | skipped: took too long to count |  |  |  |  |  |  |  |  |  |  |  |',
-    '| [c/gone](https://github.com/c/gone) | not read: remote: Repository not found. |  |  |  |  |  |  |  |  |  |  |  |',
-    '| [d/four](https://github.com/d/four) | sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 3 | 1 |',
-    '| **Total** | 2 sent | 2 | 2 | 0 | 2 | 0 | 4 | 0 | 6 | 0 | 3 | 2 |',
+    '| Repo | Result | Devices | People | Matched to an account | Matched by commit | Sessions | Estimated sessions | Messages | Estimated messages | Records | Bytes | Contributors | Days |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |',
+    '| [b/two](https://github.com/b/two) | skipped: took too long to count |  |  |  |  |  |  |  |  |  |  |  |  |',
+    '| [c/gone](https://github.com/c/gone) | not read: remote: Repository not found. |  |  |  |  |  |  |  |  |  |  |  |  |',
+    '| [d/four](https://github.com/d/four) | sent | 1 | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 3 | 1 |',
+    '| **Total** | 2 sent | 2 | 2 | 0 | 0 | 2 | 0 | 4 | 0 | 6 | 0 | 3 | 2 |',
     '',
     '4 repos: 2 sent, 1 skipped, 1 not read.',
     '',
@@ -475,8 +475,8 @@ test("a run that fails for a repo the site refused still writes its summary, wit
   await assert.rejects(main(names, { read: name => counts(name, name.endsWith('two') ? { days: early } : {}) }), /1 of 2 repos counted but not sent/);
   const out = written();
   assert.ok(out.endsWith('\n2 repos: 1 sent, 1 not sent.\n'), out);
-  assert.ok(out.includes('| [b/two](https://github.com/b/two) | not sent: /v1/census: 400 Not counts: totals days. | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |'), out);
-  assert.ok(out.includes('| **Total** | 1 sent | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |'), out);
+  assert.ok(out.includes('| [b/two](https://github.com/b/two) | not sent: /v1/census: 400 Not counts: totals days. | 1 | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |'), out);
+  assert.ok(out.includes('| **Total** | 1 sent | 1 | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |'), out);
 });
 
 test('a dry run says in its summary that it counted and sent nothing', async t => {
@@ -485,14 +485,14 @@ test('a dry run says in its summary that it counted and sent nothing', async t =
   const written = stepSummary(t);
   await main(['--dry', 'github.com/a/one'], { read: name => counts(name) });
   const out = written();
-  assert.ok(out.includes('| [a/one](https://github.com/a/one) | counted: not sent (--dry) | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |\n'), out);
-  assert.ok(out.endsWith('| **Total** | 1 counted | 1 | 1 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |\n\n1 repo: 1 counted.\n'), out);
+  assert.ok(out.includes('| [a/one](https://github.com/a/one) | counted: not sent (--dry) | 1 | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |\n'), out);
+  assert.ok(out.endsWith('| **Total** | 1 counted | 1 | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 3 | 0 | 0 | 1 |\n\n1 repo: 1 counted.\n'), out);
   assert.equal(db.batches.length, 0);
 });
 
 test("a reason in the summary stays on its line and in its cell, whatever git or the site said", () => {
   assert.equal(summaryRow({ name: 'github.com/a/one', kind: 'not read', why: 'fatal: one\n| two | <img src=x> [link](https://x) `code` **bold**' }),
-    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |  |  |  |\n');
+    '| [a/one](https://github.com/a/one) | not read: fatal: one \\| two \\| \\<img src=x\\> \\[link\\](https://x) \\`code\\` \\*\\*bold\\*\\* |  |  |  |  |  |  |  |  |  |  |  |  |\n');
   assert.equal(summaryHead(0, new Date(NOW)), '## Census, 2026-11-09 12:00 UTC\n\nNo repos listed.\n');
   // A name GitHub allows can still hold what Markdown reads: __demo__ would show as bold demo.
   assert.ok(summaryRow({ name: 'github.com/a/__demo__', kind: 'skipped', why: 'x' }).startsWith('| [a/\\_\\_demo\\_\\_](https://github.com/a/__demo__) |'));
@@ -602,7 +602,7 @@ test("the run's log and summary give the estimates beside the exact counts", asy
   c.days[0].est_sessions = 20, c.days[0].est_messages = 237, c.days[0].bytes = 4100;
   await main(['github.com/a/one'], { read: () => c });
   assert.match(said.log[0], /, 1 sessions and about 20 more estimated, 2 messages and about 237 more estimated, 3 records of 4100 bytes, /);
-  assert.ok(written().includes('| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 1 | 20 | 2 | 237 | 3 | 4100 | 0 | 1 |'), written());
+  assert.ok(written().includes('| [a/one](https://github.com/a/one) | sent | 1 | 1 | 0 | 0 | 1 | 20 | 2 | 237 | 3 | 4100 | 0 | 1 |'), written());
   const totals = db.batches.flat().find(s => /INTO repo_census/.test(s.sql));
   assert.deepEqual(totals.args.slice(-3), [20, 237, 4100]);
 });
@@ -874,4 +874,56 @@ test("a site that doesn't take release downloads yet is a warning, not a red run
   t.mock.method(globalThis, 'fetch', async (url, init) => (String(url).endsWith('/v1/census/releases') ? new Response('', { status: 404 }) : real(url, init)));
   await main([], { read: counts, downloads: async () => [] });
   assert.ok(said.error.some(e => /^release downloads: not sent, the site doesn't take them yet: /.test(e)), said.error.join('\n'));
+});
+
+// #1244. The values are internal/bus/author_test.go's: the daemon and the census must agree.
+test('the census makes the fingerprint the daemon writes', () => {
+  assert.equal(authorPrint('github.com/a-fig/murmur', 'ada@example.com'), '453bba940d78ae7d');
+  assert.equal(authorPrint(' GitHub.com/A-Fig/Murmur ', ' Ada@Example.COM '), '453bba940d78ae7d');
+});
+
+test("census() ties a clone to the commit identity its fingerprints match, on any branch, but never a shared one", async t => {
+  const r = remote(t);
+  const name = 'github.com/A/One', repoName = 'github.com/a/one';
+  const as = device => ({ who: `${device} <${device}@murmur.invalid>` });
+  for (const d of ['dev1', 'dev2', 'dev3', 'dev4']) r.commit(`refs/murmur/mesh/${d}`, event({ type: 'message', from: d, at: r.at }), as(d));
+  // Bo commits only on a feature branch, under the address git made up from the hostname, and then
+  // under another one when the network changed.
+  r.commit('refs/heads/feature', 'one\n', { who: 'Bo <bo@laptop-x.local>' });
+  r.commit('refs/heads/feature', 'two\n', { who: 'Bo <bo@wifi-10-4-1-2.uni.edu>' });
+  r.commit('refs/heads/main', 'agent\n', { who: 'Claude <noreply@anthropic.com>' });
+  const names = 'refs/murmur/names';
+  // dev1 wrote its older address and then its newer one; only the older matches a commit.
+  r.commit(names, named({ name: 'quiet-otter', device: 'dev1', session: 's1', at: r.at, author: authorPrint(repoName, 'bo@laptop-x.local') }), as('dev1'));
+  r.commit(names, named({ name: 'brisk-finch', device: 'dev1', at: r.at, author: authorPrint(repoName, 'bo@new-host.local') }), as('dev1'));
+  // dev2 commits as Ann, who is on main. A repair dev2 wrote puts dev3's reservation again, with
+  // dev2's fingerprint: it is still dev2's.
+  r.commit(names, named({ name: 'calm-heron', device: 'dev2', session: 's2', at: r.at, author: authorPrint(repoName, 'ANN@example.com') }), as('dev2'));
+  r.commit(names, named({ name: 'mild-crane', device: 'dev3', at: r.at, author: authorPrint(repoName, 'ann@example.com') }), as('dev2'));
+  // dev4 commits as an agent's shared address, which matches no one.
+  r.commit(names, named({ name: 'bold-wren', device: 'dev4', session: 's4', at: r.at, author: authorPrint(repoName, 'noreply@anthropic.com') }), as('dev4'));
+
+  const asked = [];
+  const lookup = () => async sha => (asked.push(sha), sha === r.git(['rev-parse', 'refs/heads/main~1']).trim() ? 'Ann-GH' : null);
+  const c = await readRepo(name, { url: r.url, lookup });
+  const hash = s => createHash('sha256').update(s).digest('hex').slice(0, 16);
+  const byDevice = Object.fromEntries(c.devices.map(v => [v.id, v.author]));
+  assert.deepEqual(byDevice, {
+    [hash('device:dev1')]: hash('email:bo@laptop-x.local'),
+    [hash('device:dev2')]: hash('login:ann-gh'),
+    [hash('device:dev3')]: null,
+    [hash('device:dev4')]: null,
+  });
+  // Each email is looked up once, Bo's included, and the agent's never.
+  assert.equal(asked.length, 2);
+  // The site takes it, and keeps it.
+  const res = await post(recordingD1([repoName]), c);
+  assert.equal(res.status, 200, await res.clone().text());
+});
+
+test('the site refuses a device whose author is not a hash', async () => {
+  const c = counts('github.com/a/one');
+  c.devices[0].author = 'ann@example.com';
+  const res = await post(recordingD1(['github.com/a/one']), c);
+  assert.deepEqual([res.status, (await res.text()).trim()], [400, 'Not counts: a device.']);
 });

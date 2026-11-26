@@ -80,14 +80,15 @@ export async function census(request, env) {
        records = MAX(records, excluded.records), bytes = MAX(bytes, excluded.bytes),
        est_sessions = MAX(est_sessions, excluded.est_sessions), est_messages = MAX(est_messages, excluded.est_messages)`,
     d => [c.repo, d.day, d.sessions, d.messages, d.records, d.est_sessions ?? 0, d.est_messages ?? 0, d.bytes ?? 0]);
-  // An owner once seen is kept: a daemon deletes its presence when it stops. So is an account, and
-  // a machine. A census from before #323 sends no account, and one from before #1245 no machine.
-  insert(c.devices, 5,
-    `INSERT INTO devices (repo, device, person, account, machine) VALUES $ROWS
+  // An owner once seen is kept: a daemon deletes its presence when it stops. So is an account, a
+  // machine and a commit author. A census from before #323 sends no account, one from before #1245
+  // no machine, and one from before #1244 no author.
+  insert(c.devices, 6,
+    `INSERT INTO devices (repo, device, person, account, machine, author) VALUES $ROWS
      ON CONFLICT (repo, device) DO UPDATE SET
        person = COALESCE(excluded.person, person), account = COALESCE(excluded.account, account),
-       machine = COALESCE(excluded.machine, machine)`,
-    v => [c.repo, v.id, v.person, v.account ?? null, v.machine ?? null]);
+       machine = COALESCE(excluded.machine, machine), author = COALESCE(excluded.author, author)`,
+    v => [c.repo, v.id, v.person, v.account ?? null, v.machine ?? null, v.author ?? null]);
   insert(c.days.flatMap(d => d.devices.map(v => [d.day, v])), 3,
     `INSERT INTO device_days (repo, day, device) VALUES $ROWS ON CONFLICT DO NOTHING`,
     ([day, v]) => [c.repo, day, v]);
@@ -117,7 +118,7 @@ export async function census(request, env) {
 }
 
 // Statements that insert rows, as many to a statement as D1 binds: at most 100 values, so 12 days
-// of 8 values, 20 devices of 5, 33 rows of 3. Each goes on stmts.
+// of 8 values, 16 devices of 6, 33 rows of 3. Each goes on stmts.
 function inserter(db, stmts) {
   return (rows, width, sql, values) => {
     const per = Math.floor(100 / width);
@@ -200,7 +201,7 @@ function invalid(c) {
   if (c.days.reduce((n, d) => n + d.devices.length, 0) > 100000) return "the days' devices";
   if (!Array.isArray(c.devices) || c.devices.length > 10000) return 'devices';
   for (const v of c.devices) {
-    if (!v || !id(v.id) || !(v.person === null || id(v.person)) || ![v.account, v.machine].every(k => k == null || id(k))) return 'a device';
+    if (!v || !id(v.id) || !(v.person === null || id(v.person)) || ![v.account, v.machine, v.author].every(k => k == null || id(k))) return 'a device';
   }
   if (!Array.isArray(c.contributors) || c.contributors.length > 100000) return 'contributors';
   for (const k of c.contributors) if (!k || !id(k.id) || !day(k.first)) return 'a contributor';
@@ -269,7 +270,7 @@ export async function repoNumbers(db, days) {
     // Every device, for users: who is behind it, and its first and last day on the bus, up to today
     // as above.
     db.prepare(
-      `SELECT v.repo, v.device, v.person, v.account, v.machine, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
+      `SELECT v.repo, v.device, v.person, v.account, v.machine, v.author, COALESCE(MIN(d.day), r.first) AS first, MAX(d.day) AS last
        FROM devices v JOIN repos r ON r.repo = v.repo
          LEFT JOIN device_days d ON d.repo = v.repo AND d.device = v.device AND d.day <= ?1
        GROUP BY v.repo, v.device`,
@@ -429,43 +430,63 @@ export function health(list, now) {
 // - machine, the hostname an old device ID names (census.mjs, machine()): a slug is sometimes a
 //   default that strangers share, and a wrong merge costs more than a missed one. One laptop was 5
 //   clones in 4 repos on 2026-11-25. Clones that carry different accounts are different people.
+// - author, the commit identity a clone's fingerprint matched (census.mjs, authorAccounts(), #1244):
+//   an identity many people commit as, which the census's list of shared ones misses, would gather
+//   clones from many repos. It caps repos, not clones: one person's disposable boxes are a clone
+//   each, in a few repos.
 // Each limit is optional: devices and repos are how many the key's clones are and span, accounts
 // how many different accounts the users they would join already hold.
-export const JOIN = { machine: { devices: 10, repos: 6, accounts: 1 } };
+export const JOIN = { author: { repos: 10 }, machine: { devices: 10, repos: 6, accounts: 1 } };
 
 // The days the way users are counted changed, for a mark on the users charts. Each day's count is
 // worked out again from every device's row on each load, so the line holds no drop on that day:
 // the whole of it moves at once, and the mark says why it is lower than people remember.
 export const METHOD_CHANGES = [
-  { day: '2026-11-26', what: 'Counting changed: clones on one machine merge; earlier days recounted' },
+  { day: '2026-11-26', what: 'Counting changed: clones on one machine, or committing as one person, merge; earlier days recounted' },
 ];
 
 // The people using Murmur, approximately (#323), from every device's row: { repo, device, person,
-// account, machine, first, last }. Murmur sends nothing that names a person, so a device starts as
-// the best of:
-// - the GitHub account the census matched the device's owner to (census.mjs, accounts());
+// account, machine, author, first, last }. Murmur sends nothing that names a person, so a device
+// starts as the best of:
+// - the commit identity its fingerprint matched (census.mjs, authorAccounts(), #1244): a GitHub
+//   account, or an email with none, within JOIN.author's limits;
+// - else the GitHub account the census matched the device's owner to (census.mjs, accounts());
 // - else the account an owner of the same git name was matched to in another repo, if exactly one;
 // - else the owner's git name; else the device itself.
 // Then devices that share a machine are joined into one user, within JOIN's limits (#1245). Each
 // user counts once across repos, from its devices' first day to their last.
 //
-// by says how many users were told apart each way: by an account, else by a git name, else by a
-// machine, else one per clone, a lone device that nothing ties to anyone. refused lists the keys
+// by says how many users were told apart each way: by a commit fingerprint, else by an account, else
+// by a git name, else by a machine, else one per clone, a lone device that nothing ties to anyone. refused lists the keys
 // JOIN's limits kept from joining, for the report.
 //
 // With join {}, nothing is joined: that is the count from before #1245, roughly one user per clone,
 // which the stats keep showing as the old count (Tyler, 2026-11-25). A key added to JOIN later
 // takes part only when join holds it, so the old count stays as it was.
 export function users(devices, { join = JOIN } = {}) {
+  const refused = [];
+  // A commit author is an account like the one matched by name, and wins over it, as the exact
+  // match: so it is checked against its limits first, and a refused one is as if never matched.
+  const authored = new Set(); // authors within JOIN.author's limits
+  if (join.author) {
+    const groups = new Map(); // author -> its devices
+    for (const v of devices) if (v.author) groups.set(v.author, [...(groups.get(v.author) ?? []), v]);
+    for (const [key, vs] of groups) {
+      const n = { devices: vs.length, repos: new Set(vs.map(v => v.repo)).size };
+      if (Object.entries(join.author).some(([k, max]) => n[k] > max)) refused.push({ kind: 'author', key, ...n });
+      else authored.add(key);
+    }
+  }
+  const own = v => (authored.has(v.author) ? v.author : v.account);
   const accountsOf = new Map(); // person -> Set of accounts
   for (const v of devices) {
-    if (!v.person || !v.account) continue;
+    if (!v.person || !own(v)) continue;
     if (!accountsOf.has(v.person)) accountsOf.set(v.person, new Set());
-    accountsOf.get(v.person).add(v.account);
+    accountsOf.get(v.person).add(own(v));
   }
   const accountOf = v => {
     const via = accountsOf.get(v.person);
-    return v.account ?? (via?.size === 1 ? [...via][0] : null);
+    return own(v) ?? (via?.size === 1 ? [...via][0] : null);
   };
   const start = v => {
     const account = accountOf(v);
@@ -492,8 +513,8 @@ export function users(devices, { join = JOIN } = {}) {
     if (!held.has(x) && held.has(y)) held.set(x, held.get(y));
   };
   const joined = new Set(); // devices a join's key ties to someone, as repo/device
-  const refused = [];
   for (const [kind, limit] of Object.entries(join)) {
+    if (kind === 'author') continue; // above: it joins as an account
     const groups = new Map(); // key -> its devices
     for (const v of devices) {
       if (!v[kind]) continue;
@@ -527,10 +548,11 @@ export function users(devices, { join = JOIN } = {}) {
     u.keys.add(k);
     if (joined.has(`${v.repo}/${v.device}`)) u.joined = true;
   }
-  const by = { account: 0, name: 0, machine: 0, device: 0 };
+  const byAuthor = new Set([...authored].map(a => 'account:' + a));
+  const by = { author: 0, account: 0, name: 0, machine: 0, device: 0 };
   for (const u of out.values()) {
     const keys = [...u.keys];
-    by[keys.some(k => k.startsWith('account:')) ? 'account' : keys.some(k => k.startsWith('person:')) ? 'name' : u.joined ? 'machine' : 'device']++;
+    by[keys.some(k => byAuthor.has(k)) ? 'author' : keys.some(k => k.startsWith('account:')) ? 'account' : keys.some(k => k.startsWith('person:')) ? 'name' : u.joined ? 'machine' : 'device']++;
   }
   for (const u of out.values()) delete u.keys, delete u.joined;
   return { users: out, by, refused };
