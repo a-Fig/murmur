@@ -528,10 +528,17 @@ func (d *Daemon) hookBusyLocked(id string) bool {
 	case s.busyAt.IsZero():
 		return r.T3Thread != "" && runUnseen(s, st, inT3, read)
 	case !inT3:
-		return s.stopSeen && !d.continuationLapsedLocked(s)
+		return (s.stopSeen || endsEveryTurn(s.agent)) && !d.continuationLapsedLocked(s)
 	}
 	return runGoing(st) || !read.After(s.busyAt)
 }
+
+// endsEveryTurn says Murmur's hook reports the end of every turn of a session of agent, wherever
+// it runs, so a session at work by the hook is at work before its first Stop: Hermes', whose plugin
+// is the hook and fires Stop at each turn's end (#1259). A message during the first turn after the
+// session registered, or after this daemon restarted, is then a notice after a tool's result, not a
+// turn queued behind the one going.
+func endsEveryTurn(agent string) bool { return isAgent(agent, "hermes") }
 
 // runUnseen says T3 has a run of session s's thread going that the hook hasn't seen start, where
 // the hook has no turn of s's going: st is what T3's database last said, inT3 that it has said
@@ -976,7 +983,9 @@ func (d *Daemon) batchLocked(id string, first *inMsg, via string, wake pageSetti
 // would make a repeat harmless, and the socket answers nothing, so a call that failed after it
 // started may have handed the message over, and a second one would make a second turn of it. A message
 // whose handoff failed that way is left to the hook's notice, which the agent still gets, and stays
-// so over a daemon restart (sendTurn marks it Attempted, and saves that, before the handoff).
+// so over a daemon restart (sendTurn marks it Attempted, and saves that, before the handoff). A
+// socket that answers (Route.MsgReplies, Hermes' plugin) says which, so a message it refused waits
+// in the inbox.
 func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
@@ -1004,16 +1013,18 @@ func (d *Daemon) handOver(ctx context.Context, j *pushJob) error {
 }
 
 // notReached says an attempt failed before it could have put the message anywhere: the command
-// didn't start or wasn't run, or the socket couldn't be connected to.
+// didn't start or wasn't run, the socket couldn't be connected to, or it answered that the session
+// refused the message (#1258).
 func notReached(err error) bool {
-	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, t3.ErrRefused) || errors.Is(err, msgsock.ErrNotConnected) || errors.Is(err, clientcli.ErrNotStarted)
+	return errors.Is(err, t3.ErrNotStarted) || errors.Is(err, t3.ErrRefused) || errors.Is(err, msgsock.ErrNotConnected) ||
+		errors.Is(err, clientcli.ErrNotStarted) || errors.Is(err, msgsock.ErrRefused)
 }
 
 // worthAnotherTry says a failed attempt is one handOver makes again: it reached nothing, and the
 // same call might work a moment later. One refused for what it was asked to send to would be
-// refused again.
+// refused again, and a session that refused a turn has closed its socket.
 func worthAnotherTry(err error) bool {
-	return notReached(err) && !errors.Is(err, t3.ErrRefused)
+	return notReached(err) && !errors.Is(err, t3.ErrRefused) && !errors.Is(err, msgsock.ErrRefused)
 }
 
 // sendTurn makes one attempt, by the route's way in, unless the user has left. No lock is held: it
@@ -1053,6 +1064,9 @@ func (d *Daemon) sendTurn(ctx context.Context, j *pushJob) error {
 		})
 	case viaSocket:
 		return d.attempt(j.msgs, func() error {
+			if j.route.MsgReplies {
+				return msgsock.SendAwaiting(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
+			}
 			return msgsock.Send(ctx, j.route.MsgSocket, j.route.MsgToken, j.text)
 		})
 	case viaCodex:
@@ -1182,6 +1196,19 @@ func (d *Daemon) finishPush(j *pushJob, err error) {
 			d.unsavedUntil = now.Add(d.unsavedWait)
 			time.AfterFunc(d.unsavedWait, d.kickPush)
 		}
+		return
+	}
+	if errors.Is(err, msgsock.ErrRefused) {
+		// The plugin's socket said the session refused the turn (Hermes', #1258): nothing went in,
+		// and the plugin has closed the socket, as Hermes can't start a turn in the session. The
+		// session ends now, as it would at the next check that its socket doesn't answer, so
+		// nothing more is tried there, and the message waits in the inbox for the session's next
+		// turn, or the socket its plugin opens next.
+		if s := d.sessions[j.id]; s != nil && s.hold != nil && s.route.MsgSocket == j.route.MsgSocket {
+			d.releaseHoldLocked(s, false)
+			d.log.Printf("session %s, which commands registered, is done with: its plugin refused a turn", s.id)
+		}
+		d.kickPush() // a session that took this inbox over meanwhile may go now, as after errNotNow
 		return
 	}
 	if errors.Is(err, ErrNoConsent) || errors.Is(err, errNotNow) {

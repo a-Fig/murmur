@@ -257,8 +257,9 @@ func (d *Daemon) hello(ctx context.Context, conn net.Conn, r *bufio.Reader, h *p
 		}
 		// The socket the plugin opened for it (#1184), which it opens anew where one failed: turns
 		// go to the one named last. A call that names none leaves the one it has.
-		if h.MsgSocket != "" && h.MsgToken != "" && (o.route.MsgSocket != h.MsgSocket || o.route.MsgToken != h.MsgToken) {
-			o.route.MsgSocket, o.route.MsgToken = h.MsgSocket, h.MsgToken
+		// Whether it answers each message (#1258) comes with it, from the plugin that opened it.
+		if h.MsgSocket != "" && h.MsgToken != "" && (o.route.MsgSocket != h.MsgSocket || o.route.MsgToken != h.MsgToken || o.route.MsgReplies != h.MsgReplies) {
+			o.route.MsgSocket, o.route.MsgToken, o.route.MsgReplies = h.MsgSocket, h.MsgToken, h.MsgReplies
 			d.kickPush()
 		}
 		d.touchLocked(o, time.Now())

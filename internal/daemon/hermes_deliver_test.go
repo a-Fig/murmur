@@ -21,7 +21,8 @@ func hermesHello(t *testing.T, d *device, id, native string, sock *fakeSocket, t
 	t.Helper()
 	r := proto.Route{Native: native}
 	if sock != nil {
-		r.MsgSocket, r.MsgToken = sock.path, token
+		// A socket that answers is one the plugin since #1258 opens, and says so.
+		r.MsgSocket, r.MsgToken, r.MsgReplies = sock.path, token, sock.answer != nil
 	}
 	conn, resp, err := d.c.Hello(context.Background(), proto.Hello{ID: id, Agent: "hermes", Command: true, Route: r})
 	if err != nil {
@@ -120,5 +121,101 @@ func TestAHermesSessionsLaterHelloMovesItsSocket(t *testing.T) {
 	socketTurn(t, second.lines(), "tok-2")
 	if got := first.lines(); len(got) != 0 {
 		t.Errorf("the old socket got %q", got)
+	}
+}
+
+const (
+	accepted = `{"type":"accepted"}`
+	refused  = `{"type":"refused"}`
+)
+
+// A plugin's socket that answers says whether Hermes took each message (#1258). One it refused
+// stays in the inbox, and the session ends at once, as the plugin has closed its socket: nothing
+// after it goes to that socket either. Both go in once the session has a socket again.
+func TestAHermesSessionsRefusedTurnStaysInItsInbox(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	closing := useAnsweringSocket(t, func(string) string { return refused })
+	var out syncBuf
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "")
+	const native = "hermes:local-refused"
+	bob := hermesHello(t, b, "f5f5f5", native, closing, "tok-1").Self
+	b.piHook(proto.OpNotices, native)
+	hermesStop(t, b, native)
+
+	b.send("aaaaaa", bob, "the first", "refused")
+	eventually(t, "the session to end on the refusal", func() bool { return strings.Contains(out.String(), "its plugin refused a turn") })
+	b.send("aaaaaa", bob, "the second", "after it")
+	holds(t, "nothing more on the socket that refused", time.Second, func() bool { return len(closing.lines()) == 2 })
+	if strings.Contains(out.String(), "handing a message over as a turn through the messaging socket failed") {
+		t.Error("a refusal was logged as a failed handoff, which leaves the message to notices")
+	}
+
+	open := useAnsweringSocket(t, func(string) string { return accepted })
+	hermesHello(t, b, "f5f5f5", native, open, "tok-2")
+	eventually(t, "both messages on the new socket", func() bool { return len(open.lines()) >= 4 })
+	first, second := socketTurn(t, open.lines()[:2], "tok-2"), socketTurn(t, open.lines()[2:4], "tok-2")
+	if !strings.Contains(first+second, "refused") || !strings.Contains(first+second, "after it") {
+		t.Errorf("the turns:\n%s\n%s", first, second)
+	}
+	eventually(t, "the messages marked read once accepted", func() bool {
+		return strings.Count(out.String(), "as a turn, through the messaging socket") >= 2
+	})
+}
+
+// A socket that never answers leaves the message to the hook's notice, as a handoff that may or
+// may not have gone in does: no second turn of it, and not lost.
+func TestAHermesSocketThatDoesntAnswerLeavesTheMessageToNotices(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	sock := useAnsweringSocket(t, func(string) string { return `{"type":"what"}` })
+	var out syncBuf
+	b := newDeviceWith(t, remote, func(d *device) { d.logTo = &out })
+	b.session("aaaaaa", "")
+	const native = "hermes:local-mute"
+	bob := hermesHello(t, b, "f6f6f6", native, sock, "tok-m").Self
+	b.piHook(proto.OpNotices, native)
+	hermesStop(t, b, native)
+	b.send("aaaaaa", bob, "unanswered", "body")
+	eventually(t, "the failed handoff", func() bool {
+		return strings.Contains(out.String(), "its messages show as notices through the hook instead")
+	})
+	var r proto.Response
+	eventually(t, "the notice at the next prompt", func() bool {
+		r = b.piHook(proto.OpNotices, native)
+		return len(r.Messages) > 0
+	})
+	if r.Messages[0].Subject != "unanswered" {
+		t.Errorf("the notice: %+v", r.Messages)
+	}
+}
+
+// A Hermes session is at work from the first prompt the hook sees, before any Stop: its plugin
+// fires one at every turn's end (#1259). A message during that first turn is a notice, not a turn
+// queued behind it, and goes in through the socket once the turn ends.
+func TestAHermesSessionIsAtWorkBeforeItsFirstStop(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	sock := useAnsweringSocket(t, func(string) string { return accepted })
+	b := newDevice(t, remote)
+	b.session("aaaaaa", "")
+	const native = "hermes:local-first"
+	bob := hermesHello(t, b, "f7f7f7", native, sock, "tok-f").Self
+	b.piHook(proto.OpNotices, native) // the first prompt since it registered
+	b.send("aaaaaa", bob, "during the first turn", "body")
+	var r proto.Response
+	eventually(t, "the notice", func() bool { r = b.piHook(proto.OpNotices, native); return len(r.Messages) > 0 })
+	holds(t, "nothing on the socket during the first turn", time.Second, func() bool { return len(sock.lines()) == 0 })
+	hermesStop(t, b, native)
+	eventually(t, "the message as a turn once the turn ended", func() bool { return len(sock.lines()) >= 2 })
+}
+
+// hermesStop is the end of a Hermes session's turn as its plugin's hook reports it: one that keeps
+// nothing going.
+func hermesStop(t *testing.T, d *device, native string) {
+	t.Helper()
+	if r := d.do(proto.Request{Op: proto.OpTurnEnd, Native: native}); r.Error != "" {
+		t.Fatalf("the end of its turn: %s", r.Error)
 	}
 }

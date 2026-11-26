@@ -192,3 +192,106 @@ func TestAnswersSaysWhetherTheSocketTakesAConnection(t *testing.T) {
 		t.Error("no address answers")
 	}
 }
+
+// answering listens on a unix socket that answers each user line with answer after delay, as
+// Murmur's Hermes plugin's does (#1258), and closes the connection after it; "" answers nothing
+// and hangs up.
+func answering(t *testing.T, answer string, delay time.Duration) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "murs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Skipf("no unix sockets here: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				r := bufio.NewReader(conn)
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if strings.HasPrefix(line, `{"type":"user"`) {
+						time.Sleep(delay)
+						if answer != "" {
+							conn.Write([]byte(answer + "\n"))
+						}
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return path
+}
+
+// SendAwaiting says what the socket answered: nil once it accepted the message, ErrRefused when it
+// refused it, and an error that is neither, and isn't ErrNotConnected, when it said nothing it
+// knows: the message may have gone in, so it isn't sent again.
+func TestSendAwaitingSaysWhatTheSocketAnswered(t *testing.T) {
+	for _, c := range []struct {
+		answer  string
+		refused bool
+		ok      bool
+	}{
+		{`{"type":"accepted"}`, false, true},
+		{`{"type":"refused"}`, true, false},
+		{`{"type":"maybe"}`, false, false},
+		{`not json`, false, false},
+		{"", false, false},
+	} {
+		err := SendAwaiting(context.Background(), answering(t, c.answer, 0), "t", "hello")
+		if (err == nil) != c.ok || errors.Is(err, ErrRefused) != c.refused || errors.Is(err, ErrNotConnected) {
+			t.Errorf("answered %q: %v", c.answer, err)
+		}
+	}
+}
+
+// Send doesn't wait for an answer: Claude Code's socket gives none, and keeps the connection open.
+func TestSendDoesntWaitForAnAnswer(t *testing.T) {
+	_, path := unixSession(t)
+	start := time.Now()
+	if err := Send(context.Background(), path, "t", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("Send took %s", took)
+	}
+}
+
+// A socket that says nothing gets ReplyTimeout, then an error that is neither accepted nor refused.
+func TestSendAwaitingGivesUpOnASilentSocket(t *testing.T) {
+	defer func(was time.Duration) { ReplyTimeout = was }(ReplyTimeout)
+	ReplyTimeout = 300 * time.Millisecond
+	_, path := unixSession(t) // reads the lines and never answers
+	start := time.Now()
+	if err := SendAwaiting(context.Background(), path, "t", "x"); err == nil || errors.Is(err, ErrRefused) || errors.Is(err, ErrNotConnected) {
+		t.Errorf("no answer: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("SendAwaiting waited %s for a %s answer", took, ReplyTimeout)
+	}
+}
+
+// Once the lines are written, a context that ends doesn't cut the wait for the answer short: the
+// session has most likely taken the message, and giving up would tell it twice.
+func TestSendAwaitingWaitsOutTheAnswerPastItsContext(t *testing.T) {
+	path := answering(t, `{"type":"accepted"}`, 400*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if err := SendAwaiting(ctx, path, "t", "x"); err != nil {
+		t.Errorf("an answer after the context ended: %v", err)
+	}
+}
