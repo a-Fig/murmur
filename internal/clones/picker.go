@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,6 +42,12 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 		return nil, err
 	}
 	self := ID(p.Self)
+	// A clone in the temporary folder is a test's or a demo's: anything that runs a daemon there
+	// records its clone, and a picker full of fixtures buries the real repos (#1278). A page that is
+	// itself one of them still lists them, so tests and demos see their siblings.
+	if !inTemp(p.Self) {
+		list = slices.DeleteFunc(list, func(c Clone) bool { return c.ID() != self && inTemp(c.GitDir) })
+	}
 	out := make([]web.Repo, len(list))
 	var wg sync.WaitGroup
 	for i, c := range list {
@@ -73,6 +81,35 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	}
 	wg.Wait()
 	return out, nil
+}
+
+// tempRoots are the system's temporary folder as written and with its links followed (macOS's is
+// under /private/var as well as /var). A variable, for the tests, whose own folders are all in it.
+var tempRoots = func() []string {
+	t := filepath.Clean(os.TempDir())
+	roots := []string{t}
+	if r, err := filepath.EvalSymlinks(t); err == nil && r != t {
+		roots = append(roots, r)
+	}
+	return roots
+}
+
+// inTemp says path is inside the temporary folder. Windows ignores case in paths.
+func inTemp(path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range tempRoots() {
+		if filepath.Dir(root) == root {
+			continue // a whole volume (TMPDIR=/) would hold every clone
+		}
+		rel, err := filepath.Rel(root, path)
+		if runtime.GOOS == "windows" {
+			rel, err = filepath.Rel(strings.ToLower(root), strings.ToLower(path))
+		}
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 // shortPath is path with the home directory as ~, which is how two clones of one repo are told

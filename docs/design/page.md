@@ -15,7 +15,10 @@ from it is in [a person on the page](people.md).
   clones. Each clone's daemon serves its own page, with its own port and token, and knows no others,
   so a per-user record lists them: `clones` in the user's config directory, one file per clone so
   writers never need a lock (`internal/clones`). Daemons finding each other was set aside: the
-  picker has to offer a clone whose daemon isn't running, and start it.
+  picker has to offer a clone whose daemon isn't running, and start it. Clones in the temporary
+  folder are left out unless the page is one of them (2026-11-27, #1278): anything that runs a
+  daemon there, such as a PR media script's fixtures, records its clone, and the picker filled up
+  with them.
   - *The token doesn't travel with the tab*, since the other page is another origin and a token
     mustn't go in an address. The page asks its daemon to open the clone; that daemon starts the
     other's if needed and asks it for a key (`OpPageKey`, protocol 10: random, good once, for a

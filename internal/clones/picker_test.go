@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 )
@@ -118,5 +119,47 @@ func TestThePickerRecordsASlugItHadToAskFor(t *testing.T) {
 		if c.Name == "left" && c.Slug != "" {
 			t.Errorf("a clone that left was written to the record again: %+v", c)
 		}
+	}
+}
+
+// Clones in the temporary folder are tests' and demos' fixtures, which a real page's picker leaves
+// out (#1278); a page that is one of them lists them all, so tests and demos see their siblings.
+func TestThePickerLeavesOutClonesInTheTemporaryFolder(t *testing.T) {
+	root := t.TempDir()
+	tmp := filepath.Join(root, "Temp")
+	old := tempRoots
+	tempRoots = func() []string { return []string{tmp} }
+	t.Cleanup(func() { tempRoots = old })
+	dir := filepath.Join(root, "record")
+	clone := func(top string) string {
+		gitDir := filepath.Join(top, ".git")
+		if err := os.MkdirAll(gitDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := Add(dir, Clone{GitDir: gitDir, Name: filepath.Base(top), Slug: filepath.Base(top)}); err != nil {
+			t.Fatal(err)
+		}
+		return gitDir
+	}
+	real := clone(filepath.Join(root, "work", "murmur"))
+	clone(filepath.Join(root, "work", "cue"))
+	fixture := clone(filepath.Join(tmp, "fixture", "policy-demo"))
+	joined := func(string) bool { return true }
+	names := func(self string) []string {
+		got, err := Picker{Dir: dir, Self: self, Joined: joined}.List(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range got {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+	if got := names(real); !slices.Equal(got, []string{"cue", "murmur"}) {
+		t.Errorf("a real clone's picker lists %v, want [cue murmur]", got)
+	}
+	if got := names(fixture); !slices.Equal(got, []string{"cue", "murmur", "policy-demo"}) {
+		t.Errorf("a fixture's picker lists %v, want all three", got)
 	}
 }
