@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -46,7 +45,7 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	// records its clone, and a picker full of fixtures buries the real repos (#1278). A page that is
 	// itself one of them still lists them, so tests and demos see their siblings.
 	if !inTemp(p.Self) {
-		list = slices.DeleteFunc(list, func(c Clone) bool { return c.ID() != self && inTemp(c.GitDir) })
+		list = slices.DeleteFunc(list, func(c Clone) bool { return c.ID() != self && inTemp(c.GitDir) }) // self: reached through a link or short name
 	}
 	out := make([]web.Repo, len(list))
 	var wg sync.WaitGroup
@@ -83,18 +82,26 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	return out, nil
 }
 
-// tempRoots are the system's temporary folder as written and with its links followed (macOS's is
-// under /private/var as well as /var). A variable, for the tests, whose own folders are all in it.
+// tempRoots are the temporary folders: the system's, and /tmp and /var/tmp, which scripts and
+// people use whatever TMPDIR says (macOS's is under /var/folders), each as written and with its
+// links followed (macOS's /tmp is /private/tmp). internal/join's scratch homes are found the same
+// way. A variable, for the tests, whose own folders are all in the system's.
 var tempRoots = func() []string {
-	t := filepath.Clean(os.TempDir())
-	roots := []string{t}
-	if r, err := filepath.EvalSymlinks(t); err == nil && r != t {
-		roots = append(roots, r)
+	var roots []string
+	for _, r := range []string{os.TempDir(), "/tmp", "/var/tmp"} {
+		if !filepath.IsAbs(r) { // "/tmp" on Windows
+			continue
+		}
+		roots = append(roots, filepath.Clean(r))
+		if l, err := filepath.EvalSymlinks(r); err == nil {
+			roots = append(roots, l)
+		}
 	}
 	return roots
 }
 
-// inTemp says path is inside the temporary folder. Windows ignores case in paths.
+// inTemp says path is inside a temporary folder. filepath.Rel ignores case on Windows, as its
+// paths do.
 func inTemp(path string) bool {
 	path = filepath.Clean(path)
 	for _, root := range tempRoots() {
@@ -102,9 +109,6 @@ func inTemp(path string) bool {
 			continue // a whole volume (TMPDIR=/) would hold every clone
 		}
 		rel, err := filepath.Rel(root, path)
-		if runtime.GOOS == "windows" {
-			rel, err = filepath.Rel(strings.ToLower(root), strings.ToLower(path))
-		}
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
 			return true
 		}
