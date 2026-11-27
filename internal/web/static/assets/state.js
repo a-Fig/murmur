@@ -6,7 +6,8 @@ import { when } from "./dom.js";
 export {
   NAME, COMMAND, TOKEN_KEY, POLL_MS, HIDDEN_POLL_MS, MAX_MESSAGES, MAX_OWN_MESSAGES, VIEWS, TITLES, NARROW,
   ui, devices, named, namesLearned, learn, nameOf, fromName, toName, findSession, sessionCount, HIDDEN,
-  personNames, me, myName, repoLabel, isPerson, people, findPerson, personOnline, unreadIds, unreadCount,
+  personNames, me, myName, accountOffers, usableOffers, primaryOffer, offeredNick, repoLabel, isPerson,
+  people, findPerson, personOnline, unreadIds, unreadCount,
 };
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
@@ -146,6 +147,27 @@ function me() {
 
 function myName() {
   return me()?.name || "";
+}
+
+function accountOffers() {
+  return ui.state?.account?.offers || [];
+}
+
+function usableOffers() {
+  return accountOffers().filter((o) => !o.taken && !o.problem);
+}
+
+// The top cross-repo identity that can be accepted directly in this repo (#1277).
+function primaryOffer() {
+  return usableOffers()[0] || null;
+}
+
+// The device nickname to prefill in Settings (#1277): matches primaryOffer when usable, or the
+// most recent clone's free nickname otherwise.
+function offeredNick() {
+  const p = primaryOffer();
+  if (p) return p.nick || "";
+  return accountOffers().find((o) => o.nick)?.nick || "";
 }
 
 function isPerson(name) {

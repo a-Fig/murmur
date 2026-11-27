@@ -151,7 +151,5 @@ func (s pageSource) SetNick(ctx context.Context, nick string) (web.Account, erro
 	if r := d.nick(ctx, proto.Request{Nick: nick, Clear: nick == ""}); r.Error != "" {
 		return web.Account{}, errors.New(r.Error)
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.accountLocked(), nil
+	return d.accountWithOffers(ctx), nil
 }

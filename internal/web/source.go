@@ -34,9 +34,11 @@ type Source interface {
 	// Restart restarts the daemon onto a newer binary that is installed and waiting
 	// (Version.Ready), without waiting for the page to close. It returns ErrNoUpdate if none is.
 	Restart(ctx context.Context) error
-	// SetAccount gives this device's person a name, or a new one, and returns the account. An
-	// error says why the name won't do, in words to show them.
-	SetAccount(ctx context.Context, name string) (Account, error)
+	// SetAccount gives this device's person a name, or a new one, and optionally sets this
+	// device's nickname when nick is non-nil ("" clears it, nil leaves any existing nickname as
+	// is), and returns the account. An error says why the name or nickname won't do, in words
+	// to show them.
+	SetAccount(ctx context.Context, name string, nick *string) (Account, error)
 	// SetNick gives this device a nickname (#190, #533), as `mur nickname` does, or with "" takes
 	// it off, and returns the account. An error says why the nickname won't do, in words to show.
 	SetNick(ctx context.Context, nick string) (Account, error)
@@ -158,6 +160,23 @@ type Account struct {
 	// that loses a race, or that someone made while this device was away, is given up.
 	Color     int    `json:"color,omitempty"`
 	ColorLost string `json:"colorLost,omitempty"`
+	// Offers are names and device nicknames this person chose in other joined clones on this
+	// machine (#1277), most recently active first. Empty once they pick a name here.
+	Offers []AccountOffer `json:"offers,omitempty"`
+}
+
+// AccountOffer is a person name and device nickname chosen in another joined clone on this
+// machine (#1277), offered when the person hasn't named themselves in this repo yet. It is read
+// locally and sent nowhere until they accept.
+type AccountOffer struct {
+	Name string `json:"name"`
+	// Nick is the offered device nickname, or "" when that clone used the default or NickProblem is
+	// non-empty (so clients never submit an unusable nickname by accident).
+	Nick        string `json:"nick,omitempty"`
+	Repo        string `json:"repo"`                  // owner/name slug when known, or repo name
+	Taken       string `json:"taken,omitempty"`       // device whose person already holds Name here
+	Problem     string `json:"problem,omitempty"`     // any other reason Name can't be used here
+	NickProblem string `json:"nickProblem,omitempty"` // why the other clone's nickname can't be used here
 }
 
 // Person is a person on a device.

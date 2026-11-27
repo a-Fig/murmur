@@ -663,6 +663,6 @@ function sessionCard(d, s) {
 }
 
 // A view with nothing to show, as T3 Code's empty state: a small icon, a line, and what would fill it.
-function emptyState(iconName, title, line) {
-  return h("div", { class: "empty" }, h("span", { class: "empty-ico" }, icon(iconName)), h("p", { class: "empty-title" }, title), line && h("p", { class: "empty-line" }, line));
+function emptyState(iconName, title, line, action = null) {
+  return h("div", { class: "empty" }, h("span", { class: "empty-ico" }, icon(iconName)), h("p", { class: "empty-title" }, title), line && h("p", { class: "empty-line" }, line), action);
 }

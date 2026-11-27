@@ -2,7 +2,7 @@
 
 import { icon } from "./icons.js";
 import { h, when, agoEl, plural, root } from "./dom.js";
-import { ui, me, myName, repoLabel } from "./state.js";
+import { ui, me, myName, accountOffers, primaryOffer, offeredNick, repoLabel } from "./state.js";
 import { THEMES, theme, setTheme } from "./preferences.js";
 import { AuthError, api } from "./api.js";
 import { saveSettings, deny, poll } from "./sync.js";
@@ -148,7 +148,17 @@ function settingsRow(key, title, description, control, extraClass = "") {
 
 function accountSection() {
   const a = me();
-  const value = ui.accountDraft ?? (a?.name || ui.state?.account?.suggested || "");
+  const offers = !a ? accountOffers() : [];
+  const offer = !a ? primaryOffer() : null;
+  const takenOffer = !a && !offer ? offers.find((o) => o.taken || o.problem) : null;
+  const acctNick = ui.state?.account?.nick || "";
+  const offerNick = offer ? (acctNick || offer.nick || "") : "";
+  const value = ui.accountDraft ?? (a?.name || offer?.name || ui.state?.account?.suggested || "");
+  const nameNote = a?.taken
+    ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send."
+    : takenOffer
+      ? (takenOffer.taken ? takenOffer.name + " from " + takenOffer.repo + " is already taken by " + takenOffer.taken + ". Choose another here." : takenOffer.name + " from " + takenOffer.repo + ": " + takenOffer.problem)
+      : "Teammates and their agents see it, and send to it.";
   return h(
     "section",
     { class: "section" },
@@ -156,7 +166,21 @@ function accountSection() {
     h(
       "div",
       { class: "group" },
-      settingsRow("account", "Your name", a?.taken ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send." : "Teammates and their agents see it, and send to it.", [
+      offer && settingsRow(
+        "offer",
+        "Use " + offer.name + (offerNick ? " and " + offerNick : "") + ", as in " + offer.repo + "?",
+        "Read locally on this device. Accepting shares your name with teammates here." + (offer.nickProblem && !acctNick ? " " + offer.nickProblem : ""),
+        h(
+          "button",
+          {
+            class: "btn btn-primary btn-xs",
+            "data-key": "settings-accept-offer",
+            onclick: () => acceptOffer(offer),
+          },
+          "Accept",
+        ),
+      ),
+      settingsRow("account", "Your name", nameNote, [
         h(
           "span",
           { class: "field account-field" },
@@ -253,9 +277,14 @@ function nickRow() {
   const acct = ui.state?.account;
   const nick = acct?.nick || "";
   const id = ui.state?.device || "";
-  const value = ui.nickDraft ?? nick;
+  const offers = !acct?.name ? accountOffers() : [];
+  const prefill = !acct?.name && !nick ? offeredNick() : "";
+  const sourceRepo = prefill ? (offers.find((o) => o.nick === prefill)?.repo || "") : "";
+  const nickProblem = !acct?.name && !nick && !prefill ? ((primaryOffer()?.nickProblem || offers.find((o) => o.nickProblem)?.nickProblem) || "") : "";
+  const value = ui.nickDraft ?? (nick || prefill);
   const without = acct?.name ? "Without one, they see your name, " + acct.name + "." : "";
-  return settingsRow("nick", "Device nickname", ["Shown to teammates beside this device's ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without].filter(Boolean).join(" "), [
+  const fromNote = sourceRepo ? "Prefilled from " + sourceRepo + "." : nickProblem;
+  return settingsRow("nick", "Device nickname", ["Shown to teammates beside this device's ID" + (id ? ", " + id : "") + ". Only a label: nothing is sent to it.", without, fromNote].filter(Boolean).join(" "), [
     h(
       "span",
       { class: "field account-field" },
@@ -333,18 +362,43 @@ function moveToName(was, name) {
   ui.restored = null;
 }
 
+async function acceptOffer(offer) {
+  const acct = ui.state?.account;
+  const nick = acct?.nick ? null : (offer.nick || null);
+  await putAccount(offer.name, nick, "offer");
+}
+
 async function saveAccount(name) {
+  const a = me();
+  const acct = ui.state?.account;
+  let nick = null;
+  if (!a && !acct?.nick) {
+    const rawNick = (ui.nickDraft ?? offeredNick()).trim();
+    if (rawNick) nick = rawNick;
+  }
+  await putAccount(name, nick, "account");
+}
+
+async function putAccount(name, nick, errKey) {
+  delete ui.rowErrors.offer;
   delete ui.rowErrors.account;
+  const body = nick === null ? { name } : { name, nick };
   try {
-    const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name }) });
+    const account = await api("/api/account", { method: "PUT", body: JSON.stringify(body) });
     const was = myName();
-    if (ui.state) ui.state.account = { ...ui.state.account, ...account };
+    if (ui.state) ui.state.account = { ...ui.state.account, ...account, offers: account.offers || [] };
     moveToName(was, account.name);
     ui.accountDraft = null;
+    ui.nickDraft = null;
     poll();
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
-    ui.rowErrors.account = e.message;
+    if (e.message.startsWith("claimed ")) {
+      ui.rowErrors.nick = e.message;
+    } else {
+      ui.rowErrors[errKey] = e.message;
+    }
+    poll();
   }
   render();
 }

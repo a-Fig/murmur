@@ -221,6 +221,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	if d.opt.Version != nil {
 		version = d.opt.Version()
 	}
+	offers := d.cloneOfferCandidates(ctx)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	version.Ready = d.updateReady
@@ -253,7 +254,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	colors := d.colorsLocked()
 	self.Color, self.Picked = colors[d.device].Color, colors[d.device].Picked
 	self.DND = d.dnd.Load()
-	st := web.State{Repo: d.repoName, Slug: d.repoSlug, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountLocked(),
+	st := web.State{Repo: d.repoName, Slug: d.repoSlug, Device: d.device, Devices: []web.Device{self}, Version: version, Account: d.accountWithOffersLocked(offers),
 		Mode: d.modeView(), SendFiles: d.pageSend.Load(), ReceiveFiles: d.pageRecv.on.Load(),
 		AgentsSendOff: d.agentsSendOff.Load(), AgentsReceiveOff: d.agentsReceiveOff.Load(), RepoFilesOff: !d.repoAllowsFiles()}
 	if owner := d.st.TeamOwner; owner != nil && d.checkOwnerHistoryLocked() == nil {

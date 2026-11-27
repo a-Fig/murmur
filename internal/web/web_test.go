@@ -103,13 +103,20 @@ func (f *fakeSource) Restart(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeSource) SetAccount(ctx context.Context, name string) (Account, error) {
+func (f *fakeSource) SetAccount(ctx context.Context, name string, nick *string) (Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if name == "taken" {
 		return Account{}, errors.New("taken is taken")
 	}
-	f.state.Account = Account{Name: name, Addr: "tyler-laptop-3f2a/human"}
+	if nick != nil && *nick == "taken-nick" {
+		return Account{}, errors.New("taken-nick is taken")
+	}
+	kept := f.state.Account.Nick
+	if nick != nil {
+		kept = *nick
+	}
+	f.state.Account = Account{Name: name, Addr: "tyler-laptop-3f2a/human", Nick: kept}
 	return f.state.Account, nil
 }
 
@@ -733,18 +740,52 @@ func TestAccountAndSendCalls(t *testing.T) {
 		return resp.StatusCode, string(b)
 	}
 
-	resp := h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"taken"}`)
+	f.mu.Lock()
+	f.state.Account = Account{
+		Suggested: "ada",
+		Offers:    []AccountOffer{{Name: "tyler", Nick: "tyler-laptop", Repo: "a-Fig/murmur"}},
+	}
+	f.mu.Unlock()
+	resp := h.do("GET", "/api/state", "127.0.0.1:"+h.port, testToken, "")
 	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var st State
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &st) != nil || len(st.Account.Offers) != 1 || st.Account.Offers[0].Nick != "tyler-laptop" {
+		t.Fatalf("offers in /api/state: %d %s", resp.StatusCode, b)
+	}
+
+	resp = h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"taken"}`)
+	b, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "taken is taken") {
 		t.Errorf("a refused name: %d %s", resp.StatusCode, b)
 	}
+	resp = h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"ada","nick":"taken-nick"}`)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "taken-nick is taken") {
+		t.Errorf("a refused nick: %d %s", resp.StatusCode, b)
+	}
+	resp = h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"ada","nick":" ada-mbp "}`)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var a1 Account
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &a1) != nil || a1.Name != "ada" || a1.Nick != "ada-mbp" {
+		t.Errorf("a name and nick: %d %s", resp.StatusCode, b)
+	}
 	resp = h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"ada"}`)
 	b, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
-	var a Account
-	if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &a) != nil || a.Name != "ada" {
-		t.Errorf("a name: %d %s", resp.StatusCode, b)
+	var a2 Account
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &a2) != nil || a2.Name != "ada" || a2.Nick != "ada-mbp" {
+		t.Errorf("omitting nick should preserve existing nick: %d %s", resp.StatusCode, b)
+	}
+	resp = h.do("PUT", "/api/account", "127.0.0.1:"+h.port, testToken, `{"name":"ada","nick":""}`)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var a3 Account
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &a3) != nil || a3.Name != "ada" || a3.Nick != "" {
+		t.Errorf("empty nick should clear existing nick: %d %s", resp.StatusCode, b)
 	}
 
 	code, body := send(`{"to":"quiet-otter","text":"hello there"}`)
