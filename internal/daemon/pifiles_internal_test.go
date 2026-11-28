@@ -192,6 +192,10 @@ func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
 		return map[string]*session{id1: s}
 	}
 	stoppedT3 := state{T3Routes: map[string]t3Route{id1: {CLI: "t3", Thread: "th-1"}}}
+	outside := map[string]*session{id1: {id: id1, agent: "pi", clientPID: 100, dropped: time.Now(), route: proto.Route{Native: file1}}}
+	// A T3 thread's Pi has its thread in its first hello when T3's database already maps the file
+	// to it (lookupThread), as on a restart; a new thread's row may not be written yet, and then it
+	// has none ("").
 	inThread := func(thread string) *proto.Hello {
 		h := hello(file1, 200)
 		h.Agent, h.T3CLI, h.T3Thread = "pi in T3", "t3", thread
@@ -211,6 +215,8 @@ func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
 		{"T3 route kept, Pi in another thread", nil, stoppedT3, inThread("th-2"), true},
 		{"T3 session in its grace, its thread's Pi", inT3(true), state{}, inThread("th-1"), false},
 		{"T3 session in its grace, a Pi in T3 without its thread yet", inT3(true), state{}, inThread(""), false},
+		{"session outside T3 in its grace, a T3 thread's Pi", outside, state{}, inThread("th-1"), true},
+		{"session outside T3 in its grace, a Pi in T3 without its thread yet", outside, state{}, inThread(""), true},
 	} {
 		t.Run(c.what, func(t *testing.T) {
 			d := newD(c.sessions, c.st)
@@ -243,6 +249,22 @@ func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
 			}
 			if d.st.PiFiles[file1].ID != "rec001" {
 				t.Errorf("%s: PiFiles[%s] = %q, want rec001 kept", c.what, file1, d.st.PiFiles[file1].ID)
+			}
+		}
+	})
+
+	t.Run("file's recorded ID a Pi outside T3's, in its grace, T3 thread's Pi", func(t *testing.T) {
+		for _, thread := range []string{"th-1", ""} {
+			d := newD(map[string]*session{"rec001": {id: "rec001", agent: "pi", clientPID: 100, dropped: time.Now(),
+				route: proto.Route{Native: file1}}}, state{PiFiles: map[string]piFile{file1: {ID: "rec001", At: time.Now()}}})
+			d.mu.Lock()
+			got, _ := d.piIDLocked(inThread(thread))
+			d.mu.Unlock()
+			if got != id1 {
+				t.Errorf("thread %q: got %q, want the file's own ID %q", thread, got, id1)
+			}
+			if d.st.PiFiles[file1].ID != "rec001" {
+				t.Errorf("thread %q: PiFiles[%s] = %q, want rec001 kept", thread, file1, d.st.PiFiles[file1].ID)
 			}
 		}
 	})

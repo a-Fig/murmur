@@ -279,10 +279,18 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
     file (after pruning, or after a downgrade to a daemon before #1145 dropped the field), and the
     ID the file makes is still held by another conversation's session, kept inbox, or registry name
     (`Used`), the hello gets a fresh ID instead so it neither takes over that session nor receives
-    messages sent to its name (#1187). A T3 thread's Pi is another conversation than a Pi outside
-    T3, or in another thread, on the same file, as their names have different keys: whether its
-    session is live, in its grace or stopped with its route kept, and whether it holds the ID the
-    file makes or the one recorded for the file, the other Pi takes an ID of its own (#1260).
+    messages sent to its name (#1187).
+  - *A file open in T3 and outside it* (#1260). A T3 thread's Pi and a Pi outside T3 on one file
+    are two conversations, either way round, and so are the Pis of two threads once their threads
+    are known: whichever comes second takes an ID of its own, whether the first's session is live
+    or in its grace, and whether it holds the ID the file makes or the one recorded for the file.
+    A thread's session that has stopped is told apart by the route kept for it; a stopped session
+    outside T3 leaves nothing to tell it by, and a thread's Pi starting on the file takes what it
+    had. A thread's Pi names its thread in its first hello when T3's database already has the file
+    (a restart); a new thread's row may not be written yet, and then two threads' Pis on one file
+    look alike, as one conversation. A thread's Pi is told by T3's command line, which T3's app
+    gives it and the headless `t3 serve` doesn't: one that comes back under the other kind of T3
+    is a session of its own, with a new name.
   - *Two Pi processes on one file.* They are two sessions. A `/resume` of a file another Pi has
     open, live or in its grace while its server restarts, still moves the session there, but the
     file isn't recorded as the moved session's and nothing of the other's is taken: the other Pi's

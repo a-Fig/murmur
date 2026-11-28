@@ -356,9 +356,10 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 	}
 	if f, ok := d.st.PiFiles[h.Native]; ok {
 		// The recorded ID is another conversation's while a live Pi of another process holds it,
-		// or while a T3 thread other than h's has it, live, in its grace or stopped (#1260): a Pi
-		// outside T3 on the file a T3 thread's Pi has open is a conversation of its own.
-		if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID || t3Other(d.t3ThreadOfLocked(f.ID), h) {
+		// while a T3 thread other than h's has it, live, in its grace or stopped, or while a
+		// session on the other side of T3 from h holds it (#1260): a Pi outside T3 and a T3
+		// thread's Pi on one file are two conversations, either way round.
+		if o := d.sessions[f.ID]; o != nil && (o.dropped.IsZero() && o.clientPID != h.ClientPID || t3Apart(o, h)) || t3Other(d.t3ThreadOfLocked(f.ID), h) {
 			if d.piIDOtherLocked(h) {
 				// Not recorded: the file is the other session's in PiFiles. So this second Pi on the
 				// file takes a fresh ID, and with it a new name, at each full restart (a /reload
@@ -393,8 +394,8 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 }
 
 // piIDOtherLocked says whether h.ID (proto.NativeID(h.Native)) is held by a conversation other than
-// h.Native on this device (#1187): a session (live or in its grace) on another file or client, or
-// of a T3 thread other than h's (#1260), another file's PiFiles record, a stopped T3 route for
+// h.Native on this device (#1187): a session (live or in its grace) on another file or client, of
+// a T3 thread other than h's, or on the other side of T3 from h (#1260), another file's PiFiles record, a stopped T3 route for
 // another thread, a session whose last name isn't h.Native's, or, when no last name is known, any
 // registry name in Used at this address that isn't h.Native's. Caller holds mu.
 func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
@@ -403,7 +404,7 @@ func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
 		return true
 	}
 	if o := d.sessions[id]; o != nil {
-		return o.route.Native != h.Native || o.claudeSession != ""
+		return o.route.Native != h.Native || o.claudeSession != "" || t3Apart(o, h)
 	}
 	for file, f := range d.st.PiFiles {
 		if file != h.Native && f.ID == id {
@@ -445,6 +446,15 @@ func (d *Daemon) t3ThreadOfLocked(id string) string {
 		return o.route.T3Thread
 	}
 	return d.st.T3Routes[id].Thread
+}
+
+// t3Apart says whether session o and hello h are on either side of T3: one is a T3 thread's, by its
+// T3 command line (or, for o, its agent), and the other isn't. A thread's Pi and a Pi in a terminal
+// on one file are two conversations, whether or not the thread is known yet. The price: a thread's
+// Pi that registered under `t3 serve`, which names no T3 command line, and comes back under T3's
+// app, which does, or the other way round, is a session of its own, with a new name.
+func t3Apart(o *session, h *proto.Hello) bool {
+	return (o.route.T3CLI != "" || strings.HasSuffix(o.agent, " in T3")) != (h.T3CLI != "")
 }
 
 // t3Other says whether thread, a T3 thread a session is in, is another conversation than
