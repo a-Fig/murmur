@@ -47,8 +47,14 @@ information in the request; a network failure waits quietly for the next hour. A
     clone's update, `install.ps1`, `install.sh`) it restarts onto it the same way, with updates off
     too, and its page offers the restart with the version `<binary> version` prints. Before, each
     found the file changed only at its own hourly check, and for up to an hour a machine ran two
-    versions from one file. A daemon whose updater has stopped (a binary it can't replace) and a
-    development build don't watch.
+    versions from one file. It restarts only once the file answers `version`: one that doesn't run
+    yet, as while an installer writes it, is no daemon to restart onto. A daemon whose updater has
+    stopped (a binary it can't replace) goes on watching, since there, after a sudo install to
+    `/usr/local/bin` say, only an installer puts a new binary in place. A development build doesn't
+    watch. Daemons that start together check together, and one takes the update lock: the others
+    find it held, report nothing failed, and check again 10 s later, by when the watch has usually
+    restarted them onto what it installed. On Windows the watch opens the binary sharing delete, so
+    another daemon's rename of a new one into its place is never refused meanwhile.
 - **The page's socket is handed over** (#255, decided 2026-11-09 from Sol's pre-release review). The
   old daemon passes its listening socket to the new one (descriptor 3 on Unix, the same handle on
   Windows, named by `MURMUR_PAGE_LISTENER`), with the page's address and token beside it in

@@ -155,14 +155,26 @@ func Run(ctx context.Context, o Options, restart func()) {
 	defer watch.Stop()
 	var checked time.Time
 	asked := "" // the release a person asked to install (Install), which the next check does
+	// stopped is why this updater installs nothing more until the daemon restarts: the binary's
+	// directory isn't writable, say, after a sudo install to /usr/local/bin. It still watches, as
+	// there only an installer puts a new binary in place, and that is the one to restart onto.
+	var stopped error
+	waiting := false // the binary in place hasn't answered `version` yet
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-o.Check:
-			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			if stopped == nil {
+				timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			}
 			continue
-		case asked = <-o.Install:
+		case want := <-o.Install:
+			if stopped != nil {
+				report(Status{Failed: true, Asked: true, Error: stopped.Error()})
+				continue
+			}
+			asked = want
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
 		case <-watch.C:
@@ -172,8 +184,17 @@ func Run(ctx context.Context, o Options, restart func()) {
 			if !replaced(o.Executable, original) {
 				continue
 			}
+			// Not before it runs: an installer may still be writing it, and a daemon restarted onto
+			// a binary that doesn't start is no daemon. The hourly check doesn't wait for this.
 			v := binaryVersion(o.Executable)
-			o.Log.Printf("self-update: another binary is in place (%q), from another clone's update or an installer: restarting onto it", v)
+			if v == "" {
+				if !waiting {
+					o.Log.Printf("self-update: another binary is in place, but it doesn't say its version yet; waiting for it")
+				}
+				waiting = true
+				continue
+			}
+			o.Log.Printf("self-update: another binary is in place (%s), from another clone's update or an installer: restarting onto it", v)
 			report(Status{Latest: v, Installed: true})
 			restart()
 			return
@@ -222,6 +243,13 @@ func Run(ctx context.Context, o Options, restart func()) {
 			if ctx.Err() != nil {
 				return
 			}
+			if errors.Is(err, errBusy) {
+				// Daemons that start together check together, and one wins the lock. What it puts in
+				// place the watch restarts onto; if it puts nothing, this check is soon, not in an hour.
+				asked = want
+				timer.Reset(checkGap)
+				continue
+			}
 			// Another release than the one asked for isn't a failed update: with updates on, the
 			// next check installs it, and soon. Nor is updates turned off during the download.
 			other := errors.Is(err, errNotAsked)
@@ -238,11 +266,13 @@ func Run(ctx context.Context, o Options, restart func()) {
 			}
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
-				return
+				stopped = err
+				continue // no timer: it checks no more, and watches
 			}
 			if errors.Is(err, errNoLink) {
 				o.Log.Printf("self-update disabled until restart: %v", err)
-				return
+				stopped = err
+				continue
 			}
 		}
 		timer.Reset(o.Every)
@@ -307,6 +337,9 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 // a check picked isn't the one to install by the time it has downloaded.
 var errNotAsked = errors.New("another release is out")
 
+// errBusy says another daemon's updater holds the binary's update lock: it is checking or installing.
+var errBusy = errors.New("another updater is checking")
+
 // errTurnedOff says updates were turned off while the release downloaded, so it wasn't installed.
 var errTurnedOff = errors.New("updates were turned off")
 
@@ -324,6 +357,9 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
+	if errors.Is(err, proc.ErrLocked) {
+		return false, latest, errBusy
+	}
 	if err != nil {
 		return false, latest, err
 	}
@@ -762,10 +798,12 @@ func numbered(name, prefix string) bool {
 	return ok && n != "" && strings.Trim(n, "0123456789") == ""
 }
 
-// File.Stat captures Windows file IDs now; os.Stat can defer loading the ID
-// until SameFile, by which time the path may already name the replacement.
+// Identity is the file at path, to tell later whether another has taken its place (os.SameFile).
+// File.Stat captures Windows file IDs now; os.Stat can defer loading the ID until SameFile, by
+// which time the path may already name the replacement. On Windows the file is opened so that
+// another daemon's rename of a new binary into its place isn't refused meanwhile (openIdentity).
 func Identity(path string) (os.FileInfo, error) {
-	f, err := os.Open(path)
+	f, err := openIdentity(path)
 	if err != nil {
 		return nil, err
 	}

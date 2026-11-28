@@ -15,11 +15,12 @@ import (
 
 // Another clone's updater, or an installer, puts a binary in place: every other daemon on the
 // machine restarts onto it within the watch, not at its next hourly check, with updates off too,
-// and says so, as after an install of its own (#1177).
+// and says so, as after an install of its own (#1177). It waits for the binary to say its version:
+// one that doesn't run yet, as while an installer writes it, is no daemon to restart onto.
 func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 	for _, env := range []string{"", "1"} {
 		t.Run("MURMUR_NO_UPDATE="+env, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "mur")
+			path := exeName(t.TempDir())
 			if err := os.WriteFile(path, []byte("running"), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -62,11 +63,19 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 				t.Fatal("restarted with the same binary in place")
 			default:
 			}
-			for _, err := range []error{os.WriteFile(path+".new", []byte("another clone's install"), 0o755), os.Rename(path+".new", path)} {
+			for _, err := range []error{os.WriteFile(path+".new", []byte("another clone's install, half written"), 0o755), os.Rename(path+".new", path)} {
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
+			time.Sleep(200 * time.Millisecond) // watches that find a binary that doesn't run restart nothing
+			select {
+			case <-restarted:
+				t.Fatal("restarted onto a binary that doesn't say its version")
+			default:
+			}
+			t.Setenv(standInEnv, "1.2.4")
+			standIn(t, path)
 			select {
 			case <-restarted:
 			case <-ctx.Done():
@@ -75,10 +84,10 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 			<-done
 			mu.Lock()
 			defer mu.Unlock()
-			if last := reports[len(reports)-1]; !last.Installed {
-				t.Errorf("last report %+v, want Installed", last)
+			if last := reports[len(reports)-1]; !last.Installed || last.Latest != "1.2.4" {
+				t.Errorf("last report %+v, want Installed 1.2.4", last)
 			}
-			if !bytes.Contains(logs.Bytes(), []byte("another binary is in place")) {
+			if !bytes.Contains(logs.Bytes(), []byte("another binary is in place (1.2.4)")) {
 				t.Errorf("logged %q", logs.String())
 			}
 			if n := len(checked); n > 0 {
