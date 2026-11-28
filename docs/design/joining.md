@@ -104,6 +104,9 @@ Everything it writes is outside the repo's tracked files:
   also writes no hook or allow rule when its server couldn't be registered, for any reason. Join and uninstall in
   a scratch home also refuse a home whose `mcp.json`, `hooks.json`, permissions file, record or
   skills are links to files outside the temporary folder (#995).
+- **Claude Code's and Antigravity's allow rules** (#1211, 2026-11-28) are recorded the same way, in
+  `.murmur-join.json` beside `settings.json` (Claude Code's, and Antigravity's two in `antigravity-cli/`
+  and `antigravity-acp/`).
 - **The skills** carry the judgment the tool descriptions don't: when Murmur is worth a turn, and
   how to coordinate over several messages (#206). The third, `murmur-manager`, has a session run a
   team of agents as its user's GEM, general engineering manager (#548, #779); a model may load it
