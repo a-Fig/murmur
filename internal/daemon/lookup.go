@@ -145,6 +145,7 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 					self, human = st.Self, st.Human
 				}
 				det.Tags = tags.WithDevice(tags.Effective(self, d.derivedTagsLocked(sess), human), d.device)
+				det.Muted = d.mutesOfLocked(sess) // kept by its name too, and send refuses a muted sender
 			}
 		}
 		if d.offMeshLocked(sess) {
