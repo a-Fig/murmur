@@ -101,7 +101,7 @@ async function runCase(label, accountState, fn) {
     }
   });
 
-  // 2. Usable offer: 1-click offer dialog states team visibility, submits name + nick atomically.
+  // 2. Usable offer: 1-click offer dialog states team visibility, puts Edit inside the offer card, and keeps 2 buttons in the footer.
   await runCase("usable-offer", {
     suggested: "tyler",
     offers: [{ name: "tyler", nick: "tyler-laptop", repo: "a-Fig/murmur" }],
@@ -109,8 +109,17 @@ async function runCase(label, accountState, fn) {
     c.askForName(null);
     const tree = c.setupDialog();
     const txt = textOf(tree);
-    if (!txt.includes("Use tyler and tyler-laptop, as in a-Fig/murmur?")) throw new Error("missing offer title: " + txt);
-    if (!txt.includes("Accepting shares your name with teammates in this repo.")) throw new Error("missing sharing notice: " + txt);
+    if (!txt.includes("Use your name from a-Fig/murmur?")) throw new Error("missing offer title: " + txt);
+    if (!txt.includes("Accept to share your name with this repo's team.")) throw new Error("missing sharing notice: " + txt);
+    const card = findAll(tree, (n) => n.attrs?.class === "setup-offer")[0];
+    if (!card || findAll(card, (n) => n.attrs?.["data-key"] === "setup-edit").length !== 1) {
+      throw new Error("expected setup-edit button inside .setup-offer card");
+    }
+    const actions = findAll(tree, (n) => n.attrs?.class === "dialog-actions")[0];
+    const footerBtns = findAll(actions, (n) => n.tag === "button");
+    if (footerBtns.length !== 2 || findAll(actions, (n) => n.attrs?.["data-key"] === "setup-edit").length !== 0) {
+      throw new Error("expected only 2 footer buttons without Edit, got " + footerBtns.length);
+    }
     await c.submitName();
     if (!c.calls.includes('/api/account:{"name":"tyler","nick":"tyler-laptop"}')) {
       throw new Error("calls=" + JSON.stringify(c.calls));
@@ -125,7 +134,10 @@ async function runCase(label, accountState, fn) {
   }, async (c) => {
     c.askForName(null);
     const tree = c.setupDialog();
-    if (!textOf(tree).includes("Use tyler, as in a-Fig/murmur?")) throw new Error("unexpected title: " + textOf(tree));
+    const txt = textOf(tree);
+    if (!txt.includes("Use your name from a-Fig/murmur?") || !txt.includes("tyler (default)")) {
+      throw new Error("unexpected default-nick offer text: " + txt);
+    }
     await c.submitName();
     if (!c.calls.includes('/api/account:{"name":"tyler"}')) {
       throw new Error("calls=" + JSON.stringify(c.calls));
@@ -158,7 +170,7 @@ async function runCase(label, accountState, fn) {
     c.askForName(null);
     const tree = c.setupDialog();
     const txt = textOf(tree);
-    if (!txt.includes("tyler from a-Fig/murmur is already taken by maya-mbp-91c0.")) {
+    if (!txt.includes("Someone on maya-mbp-91c0 already uses tyler here, so we can't reuse it from a-Fig/murmur.")) {
       throw new Error("missing upfront taken warning: " + txt);
     }
     if (findAll(tree, (n) => n.attrs?.["data-key"] === "setup-accept").length !== 0) {

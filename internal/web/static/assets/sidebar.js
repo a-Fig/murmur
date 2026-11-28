@@ -260,7 +260,7 @@ function sidebarFoot() {
   const a = me();
   const update = updateItem();
   const offer = !a ? primaryOffer() : null;
-  const offerTip = offer ? "Use " + offer.name + (offer.nick ? " and " + offer.nick : "") + ", as in " + offer.repo + ". Read locally; shared only if you accept." : "";
+  const offerTip = offer ? "Use " + offer.name + (offer.nick ? " (" + offer.nick + ")" : "") + " from " + offer.repo + ". Kept private until you accept." : "";
   const chip = a
     ? a.taken
       ? h(

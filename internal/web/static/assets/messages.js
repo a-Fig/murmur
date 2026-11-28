@@ -323,7 +323,7 @@ function conversationsPage() {
             "message",
             "No conversations yet",
             "Messages between sessions show here as this daemon reads them.",
-            emptyOffer && h("button", { class: "btn btn-primary btn-sm empty-action", "data-key": "empty-use-offer", onclick: () => askForName(null) }, "Use " + emptyOffer.name + (emptyOffer.nick ? " and " + emptyOffer.nick : "") + " from " + emptyOffer.repo),
+            emptyOffer && h("button", { class: "btn btn-primary btn-sm empty-action", "data-key": "empty-use-offer", onclick: () => askForName(null) }, "Use " + emptyOffer.name + (emptyOffer.nick ? " (" + emptyOffer.nick + ")" : "") + " from " + emptyOffer.repo),
           ),
         ]
       : h(

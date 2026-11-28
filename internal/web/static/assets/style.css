@@ -4413,10 +4413,10 @@ a.g-pr:hover {
 }
 .setup-offer {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.75rem;
   margin: 1rem 1.5rem 0;
-  padding: 0.75rem 0.875rem;
+  padding: 0.875rem 1rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--secondary);
@@ -4425,14 +4425,33 @@ a.g-pr:hover {
   min-width: 0;
   flex: 1;
 }
-.setup-offer-name {
-  font-size: 0.9375rem;
+.setup-offer-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 0.75rem;
+  row-gap: 0.25rem;
+}
+.setup-offer-k {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.setup-offer-v {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--foreground);
 }
-.setup-offer-meta {
-  font-size: 0.8125rem;
+.setup-offer-row2 {
+  font-weight: 500;
+}
+.setup-offer-muted {
+  font-weight: 400;
   color: var(--muted-foreground);
+}
+.setup-edit {
+  flex-shrink: 0;
 }
 .setup-others {
   display: flex;

@@ -84,8 +84,8 @@ function startChat(name) {
 function takenOfferNotice(offers) {
   const bad = offers.find((o) => o.taken || o.problem);
   if (!bad) return "";
-  if (bad.taken) return bad.name + " from " + bad.repo + " is already taken by " + bad.taken + ".";
-  return bad.name + " from " + bad.repo + ": " + bad.problem;
+  if (bad.taken) return "Someone on " + bad.taken + " already uses " + bad.name + " here, so we can't reuse it from " + bad.repo + ".";
+  return "Can't use " + bad.name + " from " + bad.repo + ": " + bad.problem;
 }
 
 function askForName(then) {
@@ -221,16 +221,16 @@ function setupDialog() {
   if (s.mode === "offer") {
     const offer = offers[s.offerIndex] || usable[0];
     const shownNick = a?.nick || offer.nick || "";
-    const title = "Use " + offer.name + (shownNick ? " and " + shownNick : "") + ", as in " + offer.repo + "?";
+    const title = "Use your name from " + offer.repo + "?";
     const blocked = offers.find((o, i) => i < s.offerIndex && (o.taken || o.problem));
     return dialog(
       title,
       close,
-      h("h2", { class: "dialog-title" }, "Use ", offer.name, shownNick ? " and " + shownNick : "", ", as in ", h("span", { class: "setup-repo" }, offer.repo), "?"),
+      h("h2", { class: "dialog-title" }, "Use your name from ", h("span", { class: "setup-repo" }, offer.repo), "?"),
       h(
         "p",
         { class: "dialog-line" },
-        "Read locally on this device. Accepting shares your name with teammates in this repo.",
+        "Kept private on your machine. Accept to share your name with this repo's team.",
       ),
       h(
         "form",
@@ -248,20 +248,46 @@ function setupDialog() {
           h(
             "div",
             { class: "setup-offer-body" },
-            h("div", { class: "setup-offer-name" }, offer.name),
             h(
               "div",
-              { class: "setup-offer-meta" },
-              shownNick ? "Device called " + shownNick : "Device called " + offer.name + " (default)",
+              { class: "setup-offer-grid" },
+              h("span", { class: "setup-offer-k" }, "Name"),
+              h("span", { class: "setup-offer-v" }, offer.name),
+              h("span", { class: "setup-offer-k" }, "Device"),
+              shownNick
+                ? h("span", { class: "setup-offer-v setup-offer-row2" }, shownNick)
+                : h("span", { class: "setup-offer-v setup-offer-row2" }, offer.name, " ", h("span", { class: "setup-offer-muted" }, "(default)")),
             ),
             !shownNick && offer.nickProblem && h("p", { class: "setup-note" }, offer.nickProblem),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              class: "btn btn-outline btn-xs setup-edit",
+              title: "Edit name or device nickname",
+              "data-key": "setup-edit",
+              disabled: s.busy,
+              onclick: () => {
+                s.mode = "edit";
+                s.name = offer.name;
+                s.nick = a?.nick || offer.nick || "";
+                s.error = "";
+                render();
+                const field = root.querySelector('[data-key="setup-name"]');
+                field?.focus();
+                field?.select();
+              },
+            },
+            icon("pencil"),
+            "Edit",
           ),
         ),
         blocked && h("p", { class: "setup-note" }, takenOfferNotice([blocked])),
         usable.length > 1 && h(
           "div",
           { class: "setup-others" },
-          h("span", { class: "setup-others-label" }, "Other repos"),
+          h("span", { class: "setup-others-label" }, "From other repos"),
           usable.map((o) => {
             const idx = offers.indexOf(o);
             const active = idx === s.offerIndex;
@@ -278,7 +304,7 @@ function setupDialog() {
                   render();
                 },
               },
-              o.name + (o.nick ? " / " + o.nick : "") + " · " + o.repo,
+              o.name + (o.nick ? " (" + o.nick + ")" : "") + " · " + o.repo,
             );
           }),
         ),
@@ -287,26 +313,6 @@ function setupDialog() {
           "div",
           { class: "dialog-actions" },
           h("button", { type: "button", class: "btn btn-ghost", "data-key": "setup-cancel", onclick: close }, "Cancel"),
-          h(
-            "button",
-            {
-              type: "button",
-              class: "btn btn-outline",
-              "data-key": "setup-edit",
-              disabled: s.busy,
-              onclick: () => {
-                s.mode = "edit";
-                s.name = offer.name;
-                s.nick = a?.nick || offer.nick || "";
-                s.error = "";
-                render();
-                const field = root.querySelector('[data-key="setup-name"]');
-                field?.focus();
-                field?.select();
-              },
-            },
-            "Edit",
-          ),
           h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-accept", disabled: s.busy }, s.busy ? "Saving…" : "Accept"),
         ),
       ),
@@ -325,9 +331,9 @@ function setupDialog() {
       taken
         ? "The person on " + taken + " chose " + me().name + " first, so messages to that name go to them. Pick another; what was sent to you before still reaches you."
         : takenNotice
-          ? takenNotice + " Accepting makes your name visible to this repo's team."
+          ? takenNotice + " Pick another name below — continuing shares it with this repo's team."
           : hasCrossRepo
-            ? "Read locally; accepting makes your name visible to this repo's team."
+            ? "Kept private on your machine. Continue to share your name with this repo's team."
             : "Agents see it, and send to it.",
     ),
     h(
@@ -399,7 +405,7 @@ function setupDialog() {
             },
           }),
         ),
-        h("p", { class: "setup-note" }, nickProblem || "Optional label beside this device's ID. Blank uses your name."),
+        h("p", { class: "setup-note" }, nickProblem || "Shown beside this device's ID. Leave blank to use your name."),
       ),
       s.error && h("p", { class: "dialog-error", id: "setup-error", role: "alert" }, s.error),
       h(

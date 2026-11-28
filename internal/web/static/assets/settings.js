@@ -157,7 +157,7 @@ function accountSection() {
   const nameNote = a?.taken
     ? "The person on " + a.taken + " chose this name first. Choose another; until you do, you can't send."
     : takenOffer
-      ? (takenOffer.taken ? takenOffer.name + " from " + takenOffer.repo + " is already taken by " + takenOffer.taken + ". Choose another here." : takenOffer.name + " from " + takenOffer.repo + ": " + takenOffer.problem)
+      ? (takenOffer.taken ? "Someone on " + takenOffer.taken + " already uses " + takenOffer.name + " here. Choose another below." : "Can't use " + takenOffer.name + " from " + takenOffer.repo + ": " + takenOffer.problem)
       : "Teammates and their agents see it, and send to it.";
   return h(
     "section",
@@ -168,8 +168,8 @@ function accountSection() {
       { class: "group" },
       offer && settingsRow(
         "offer",
-        "Use " + offer.name + (offerNick ? " and " + offerNick : "") + ", as in " + offer.repo + "?",
-        "Read locally on this device. Accepting shares your name with teammates here." + (offer.nickProblem && !acctNick ? " " + offer.nickProblem : ""),
+        "Use " + offer.name + (offerNick ? " (" + offerNick + ")" : "") + " from " + offer.repo + "?",
+        "Kept private on your machine. Accept to share your name with this repo's team." + (offer.nickProblem && !acctNick ? " " + offer.nickProblem : ""),
         h(
           "button",
           {
