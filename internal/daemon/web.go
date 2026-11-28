@@ -647,6 +647,11 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 		clear(d.fileMiss) // a fetch the switch's going off ended isn't one to wait out
 		d.mu.Unlock()
 	}
+	if agents && d.agentRecv.on.Load() {
+		d.mu.Lock()
+		d.fetchKeptLocked()
+		d.mu.Unlock()
+	}
 	if agents || page {
 		d.kickPresence() // teammates' senders, who and lookup say whether this device takes files
 	}

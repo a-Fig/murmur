@@ -41,7 +41,10 @@ own switches, which apply again if the mesh owner allows files.
   `send` says which recipients get the text alone. `who` doesn't show it, for the same reason as
   Send files (#859).
   What a session sends another on the same device is there already and fetched from nowhere, so it
-  is shown.
+  is shown. Turned on again, by a person or the mesh owner's policy, it fetches the files of the
+  messages still in an inbox that came without them (#1316), and so does a daemon starting with it
+  on. Until each is here, the session is told the path it will be saved at and that it is on its
+  way: it may not read the message again, as an inbox lets go of what it returns.
 - **`lookup` shows them, every time:** one `files:` line, so an agent can check its own name or
   another's before it tries (Tyler, 2026-11-17). For a session here it says whether it sends files
   and whether it takes them from other devices, from this device's switches, the person's own for a
