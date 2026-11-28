@@ -203,13 +203,13 @@ function tagsLine(s) {
 
 // Under a session's name in its view (#631, #1115): its state and its device, with no dot of its own
 // (the avatar beside it carries one, #1188). When it started and the branches it has committed to
-// are on the line below, with the one it is on.
+// are on the line below, with the one it is on. It wraps rather than cuts off (#1284).
 function profileLine(d, s) {
   return h(
     "p",
     { class: "g-head-status" },
     h("span", null, stateWord(d, s)),
-    h("span", { class: "truncate", title: "Device " + d.id }, d.self ? "This device" : d.nick || d.owner || host(d.id)),
+    h("span", { title: "Device " + d.id }, d.self ? "This device" : d.nick || d.owner || host(d.id)),
   );
 }
 

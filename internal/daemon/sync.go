@@ -274,6 +274,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 			d.known[ref] = remote[ref]
 		}
 	}
+	d.notePresencesListedLocked(remote) // a newer presence the fetch brought is seen too (ownerTransferLocked)
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 
@@ -2042,7 +2043,7 @@ func (d *Daemon) publishPresence(ctx context.Context) error {
 	}
 	d.colorAwayLocked()
 	built := time.Now().Round(0) // the wall clock: time asleep counts (colorAwayLocked)
-	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminFiles,
+	pres := bus.Presence{V: bus.Version, Device: d.device, Host: d.host, Owner: d.owner, Nick: d.st.Nick, TeamAdmin: teamAdminAutoRotate,
 		At:       d.nextPresenceAtLocked(),
 		Sessions: []bus.SessionInfo{}, Groups: true, Receipts: true, Files: true, FilesOff: !d.repoAllowsFiles() || !d.agentRecv.on.Load(),
 		PersonFilesOff: !d.repoAllowsFiles() || !d.pageRecv.on.Load(), DND: d.dnd.Load()}

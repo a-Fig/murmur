@@ -36,9 +36,13 @@ type fakeSource struct {
 	restarts  int
 	sends     []string // each Send: to: text
 	read      []string // the IDs given to MarkRead
+	policies  []RepoPolicyChange
 }
 
-func (f *fakeSource) SetRepoPolicy(context.Context, RepoPolicyChange) error {
+func (f *fakeSource) SetRepoPolicy(_ context.Context, change RepoPolicyChange) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.policies = append(f.policies, change)
 	return nil
 }
 
@@ -394,6 +398,25 @@ func TestHostCheck(t *testing.T) {
 	NewWithPRs(newFake(), testToken, noPRs).ServeHTTP(rec, req)
 	if rec.Code != http.StatusMisdirectedRequest {
 		t.Errorf("request with no local address: %d, want 421", rec.Code)
+	}
+}
+
+// A repo policy change names one setting (#1285 added automatic rotation to the two before it).
+func TestARepoPolicyChangeNamesOneSetting(t *testing.T) {
+	src := newFake()
+	h := start(t, src, noPRs)
+	h.ok("PATCH", "/api/repo-policy", `{"autoRotate":true}`)
+	h.ok("PATCH", "/api/repo-policy", `{"autoRotate":false}`)
+	for _, body := range []string{`{}`, `{"autoRotate":true,"allowFiles":true}`, `{"autoRotate":false,"encryptionMode":"team"}`} {
+		if resp := h.do("PATCH", "/api/repo-policy", "127.0.0.1:"+h.port, testToken, body); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("PATCH %s: %d, want 400", body, resp.StatusCode)
+		}
+	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if len(src.policies) != 2 || src.policies[0].AutoRotate == nil || !*src.policies[0].AutoRotate ||
+		src.policies[1].AutoRotate == nil || *src.policies[1].AutoRotate {
+		t.Fatalf("the source was asked for %+v", src.policies)
 	}
 }
 

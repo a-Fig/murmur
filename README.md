@@ -140,7 +140,7 @@ used one of Murmur's tools. In T3 Code, Murmur can't yet tell one Cursor thread 
 | `mur nickname [NAME]`  | Calls this clone's device NAME, such as your own name: teammates see it beside the device's ID in `who` and on the page. `--clear` takes it off. A device with none is called by the name you picked on the page. |
 | `mur updates [off\|on\|nightly\|back]` | How Murmur updates itself on this machine: off, stable releases (on, the default), or prereleases and nightlies too. `back` goes back to the latest stable release from a prerelease, until a newer release is out. Alone, it says what applies in this repo. Settings in `mur ui` has the same choices. |
 | `mur stop`             | Stops this clone's daemon. |
-| `mur rotate [--force]` | The mesh owner can make a new team key when a collaborator leaves (listed with `gh`). `--force` makes one immediately. Remove every other way the collaborator can push first, or their devices can get the new key. |
+| `mur rotate [--force]` | The mesh owner can make a new team key when a collaborator leaves (listed with `gh`). `--force` makes one immediately. Remove every other way the collaborator can push first, or their devices can get the new key. The owner can also have this checked daily: **Rotate the team key automatically** in the page's repo settings, off unless turned on. |
 | `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. It also refuses while a clone here owns its repo's mesh; `--owner-ok` goes ahead and keeps ownership in that clone. |
 
 Every command takes `-C <dir>` to act on another repository.

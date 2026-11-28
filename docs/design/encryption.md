@@ -166,14 +166,17 @@ with the new owner's device ID from `mur who`. That device must have published i
 The current owner signs the new device's key and the next admin sequence into the team ref.
 The new owner can rotate once its clone has all the team keys.
 Before transferring, update Murmur on every device. The command checks the recipient and
-other devices it sees online. A device that was offline needs the update before returning
+other devices it sees online, and the recipient must also follow the automatic rotation setting
+(below). A device that was offline needs the update before returning
 to the mesh so it can follow the new owner's rotations.
 
 For a mesh created before ownership, the device that signed the first team epoch becomes owner.
 Git authors and presence labels were recorded independently, so a name match can't prove which
 device ran init. Existing epochs and rosters stay readable. The owner writes a signed policy
 checkpoint on its next sync, after which daemons require its signature and sequence on new
-admin records. Ownership stays with the current owner's device ID and signing key. If that clone
+admin records. A daemon that makes a mesh's first epoch itself, with no `mur init`, pushes the
+checkpoint with the epoch. On its own it was a second push at startup, which could reach the
+remote ahead of a starting session's presence. Ownership stays with the current owner's device ID and signing key. If that clone
 loses either before a transfer, it loses the ability to administer the mesh.
 
 Nothing stops someone deleting that clone by hand, so Murmur says so where people look (#1287).
@@ -187,14 +190,60 @@ daemon stopped.
 
 ### Automatic rotation
 
-The mesh owner's daemon checks the GitHub collaborator roster at startup and about once a day
-(#412). If the current key has no roster, the first successful check rotates and records who can
-push. This covers collaborators who might already have lost access while the daemon had no roster.
-On later checks, a collaborator who is missing or now has read-only access triggers a new key.
-Successful checks also record new collaborators so
-their later departure can be detected. A check that fails leaves the recorded roster in place and
-is retried after an hour while the daemon is running.
+Automatic rotation is off unless the mesh owner turns it on, under **Rotate the team key
+automatically** in the page's repo settings (#1285, Tyler, 2026-11-27). It is a field of the signed
+repo policy, `autoRotate`, so only the owner can change it and every device shows the same value.
+A policy written before the field existed reads as off, so existing meshes stay off after an
+update. Off, the owner's daemon makes no collaborator lookups and no rotations of its own; `mur
+rotate` and `mur rotate --force` work as before.
 
-The owner needs GitHub CLI credentials that can list the repo's collaborators. The check runs only
-while the owner's daemon is online and the repo uses team encryption. A collaborator who joins and
-leaves between checks won't appear in the roster. The owner can still run `mur rotate --force`.
+It was on by default in nightlies (#412, #1271), and was turned off before a release because each
+rotation pauses reading for every other device until a key holder grants the new key ("A device
+waiting for a grant" above). On by default, every existing Team mesh would have rotated once, all at once,
+when its owner updated, because none had a roster yet. It also needs `gh` credentials that can
+list collaborators, and what it guards against is narrow: someone who lost push access reading
+new traffic.
+
+On, the owner's daemon checks the GitHub collaborator roster at startup, about once a day, and
+right after the setting is turned on. If the current key has no roster, the check records who
+can push and keeps the key: nobody is known to have left, and a rotation would pause the whole
+team for nothing. Someone who lost access before that first check keeps reading until the next
+rotation; `mur rotate --force` covers that case. On later checks, a collaborator who is missing
+or now has read-only access triggers a new key. Successful checks also record new collaborators
+so their later departure can be detected. A check that fails leaves the recorded roster in place
+and is retried after an hour while the daemon is running.
+
+The check runs only while the owner's daemon is online and the repo uses team encryption. A
+collaborator who joins and leaves between checks won't appear in the roster. The owner can still
+run `mur rotate --force`.
+
+A check acts only on what allowed it to start (Sol's review of #1289, 2026-11-27). It carries the
+owner, a count of changes to the owner, the mode and the setting, and once it has decided, the key
+and roster it decided on. Every write it makes is checked against them under `teamMu`, so the lease
+on the team ref refuses whatever lands after. If the owner turns the setting off, leaves Team mode
+or hands the mesh to another device during the lookup, the lookup is stopped and nothing is
+written. If the key changed, as a switch out of Team mode and back or a `mur rotate` changes it,
+the check starts again with a new lookup. The sample taken for the old key says nothing about the
+new one, so the check notes the key before it lists collaborators. Comparing an older sample with
+the roster of a key made by hand during the lookup rotated a second time (Sol's re-review).
+
+A new owner can be a grant behind: handed the mesh just after a key it hasn't been granted yet, it
+can't read that key's roster. Its check would rotate, which needs every key, so it waits for the
+grant and runs when the grant comes rather than at the hour's retry.
+
+Off holds only on an owner whose Murmur knows the setting. `v0.5.6-nightly.20261127` has #1271
+and not this setting, so it checks whenever the owner is in Team mode, and any older owner that
+signs a policy drops `autoRotate`. So ownership goes only to a device whose presence says it follows
+the setting (`teamAdmin` 4), and an owner running that nightly has to update for Off to take
+effect. A daemon that saves `state.json` without knowing the field drops it from its cached policy.
+The cache records which policy fields it was written with (`teamPolicyV`), and a daemon that finds
+fewer reads the team history again from its root, where the signed value is. The read goes at least
+to the cached tip, from the clone's own objects, so it finishes even while the remote has no team
+ref; writes, presence included, wait for it. It reads every record, grants included, and saves
+`state.json` after each page of 500 records (`bus.LogPage`), so an interrupted read resumes. That
+cost comes back each time a downgrade and upgrade drops the field; it hasn't been measured on a long
+history (2026-11-27).
+
+A transfer also goes by the recipient's latest listed presence. If a newer one is listed and not yet
+read, after a failed fetch say, the transfer is refused until it syncs: the newer one may come from
+a downgrade that no longer follows the setting.
