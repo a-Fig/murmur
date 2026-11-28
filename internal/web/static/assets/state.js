@@ -38,6 +38,7 @@ const ui = {
   recentWho: "", // or only one session's, by name
   settings: null,
   settingsError: "",
+  allRepos: null, // the settings for all repos (#816), loaded when Settings opens; false: none are kept
   updates: null, // the machine's update setting (#1045), loaded when Settings opens
   updatesBusy: false, // a change to it is on its way
   installing: false, // an Update now is on its way to the daemon

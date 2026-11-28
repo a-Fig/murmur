@@ -162,11 +162,25 @@ from it is in [a person on the page](people.md).
   file and automatic key rotation policy. Only the verified owner's clone can edit it. The owner badge comes from the
   same verified identity as the controls. **This device** groups You (name, nickname, colour), Messages to your sessions
   (availability, waking, what a working session is shown, and each session's own, folded until
-  opened), Files and Mutes. Appearance and About follow under "For every repo". Every setting is a
-  segmented control, on/off ones included (Tyler, 2026-11-17, #862).
+  opened), Files and Mutes. Every setting is a segmented control, on/off ones included (Tyler,
+  2026-11-17, #862).
   The page says "session", as the rest of it does (Tyler). Grouping by scope was turned down: device
-  and repo are nearly the same thing here, and people come with a question, not a scope. A page
-  that changes every repo at once is #816.
+  and repo are nearly the same thing here, and people come with a question, not a scope.
+- **All repos** (#816, Tyler, 2026-11-16: "changes on that page make everything comply") is a tab
+  beside This device. It holds the wake and busy defaults and the file switches, then Appearance and
+  About, which were always machine-wide. A change there is written to `all-repos.json` in the clones
+  directory (`internal/clones`), with a write count; every daemon looks every 5 s and copies what
+  was set since the last write it took into its own `settings.json`, as its page would. A clone
+  joined later takes everything there. A repo's own tab can still change a setting afterwards, and
+  that holds until All repos changes the same setting again: an All repos change overwrites, it
+  doesn't stay as a default beneath each repo's. Picking a choice again on the tab brings repos that
+  differ back to it. A save from a repo's own page names the wake and busy choices it sets (`set`,
+  as `filesSet` does for the file switches), so a page that loaded before its daemon took a change
+  can't put the old value back (Opus review). A setting never set on the tab shows no choice.
+  `mur uninstall` deletes the record with the last clone's file.
+  Availability, each session's own choices, the account and Mutes stay per repo: they are about one
+  mesh, or one repo's sessions. `web/allrepos.go` has the details. A daemon whose page has no clones
+  directory shows no tab, and Appearance and About stay under "For every repo".
 - **An open page keeps the daemon up.** The page polls every 3 s, 15 s in a hidden tab. A call with
   the token from a page someone can see counts as an open page for 2 minutes and stops the 10-minute
   idle countdown, so a daemon with nothing else to do exits about 12 minutes after its page is

@@ -18,7 +18,7 @@ import {
 import { conversationOf, composers, composing, deviceMode, namesOf } from "./messages.js";
 import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } from "./files.js";
 import { askForName } from "./picker.js";
-import { minuteEdits, cancelMinutes } from "./settings.js";
+import { minuteEdits, cancelMinutes, loadAllRepos } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 
 export {
@@ -104,7 +104,7 @@ function queueSettings(job) {
     .catch((e) => console.error(e));
 }
 
-function saveSettings(next, modeChange = false, filesChange = "") {
+function saveSettings(next, modeChange = false, filesChange = "", set = []) {
   // Each save carries the whole settings: the mode and the file switches come from the daemon's
   // state unless this save changes them, so a page whose settings were loaded before they changed
   // elsewhere can't undo it.
@@ -112,6 +112,9 @@ function saveSettings(next, modeChange = false, filesChange = "") {
   if (ui.state) for (const k of FILE_SWITCHES) if (k !== filesChange) next = { ...next, [k]: !!ui.state[k] };
   // The daemon takes only the switch this save changes, and keeps the others as it has them.
   next = { ...next, filesSet: filesChange ? [filesChange] : [] };
+  // And it takes the wake and busy choices only when named, so one taken from All repos since this
+  // page loaded them stays (#816).
+  next = { ...next, set };
   if (filesChange && ui.state) ui.state[filesChange] = !!next[filesChange]; // as setMode does
   const seq = ++settingsSeq;
   ui.settings = next;
@@ -458,7 +461,10 @@ async function start() {
   if (!ui.token) return;
   loadSettings(); // the wake-up settings say which of this device's sessions show red
   loadRepoCount();
-  if (ui.view === "settings") loadUpdates();
+  if (ui.view === "settings") {
+    loadUpdates();
+    loadAllRepos();
+  }
   poll();
 }
 

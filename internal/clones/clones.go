@@ -91,6 +91,24 @@ func DefaultDir() (string, error) {
 
 func file(dir, gitDir string) string { return filepath.Join(dir, ID(gitDir)+".json") }
 
+// AllReposFile is the machine's settings for all repos (#816, web/allrepos.go), kept in this
+// directory beside the clones' files.
+const AllReposFile = "all-repos.json"
+
+// AllReposFiles are the names in this directory that belong to AllReposFile: it, its lock, and the
+// prefix of a write not yet renamed into place.
+var AllReposFiles = []string{AllReposFile, AllReposFile + ".lock", ".all-repos-"}
+
+// IsCloneFile says name is the name of a clone's file in the record: its ID and .json.
+func IsCloneFile(name string) bool {
+	id, ok := strings.CutSuffix(name, ".json")
+	if !ok || len(id) != 16 {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
 // Add records the clone, or updates its record. A name or slug of "" keeps the one already
 // recorded: `mur join` has none to give, and the clone's daemon gives it on starting.
 func Add(dir string, c Clone) error {

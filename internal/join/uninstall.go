@@ -298,13 +298,25 @@ func removeRecord(dir string, done map[string]bool) (kept int, err error) {
 		case strings.HasPrefix(name, ".clone-"):
 		case strings.HasSuffix(name, ".json") && done[strings.TrimSuffix(name, ".json")]:
 		default:
-			if strings.HasSuffix(name, ".json") {
+			if clones.IsCloneFile(name) {
 				kept++
 			}
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return kept, err
+		}
+	}
+	// The settings for all repos (#816) are the clones', and go with the last of them: kept, a clone
+	// joined after a new install would take them.
+	if kept == 0 {
+		for _, en := range entries {
+			name := en.Name()
+			if en.Type().IsRegular() && (name == clones.AllReposFiles[0] || name == clones.AllReposFiles[1] || strings.HasPrefix(name, clones.AllReposFiles[2])) {
+				if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return kept, err
+				}
+			}
 		}
 	}
 	os.Remove(dir) // fails, and stays, while something else is in it

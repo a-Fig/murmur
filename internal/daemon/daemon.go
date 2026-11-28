@@ -1292,6 +1292,11 @@ func Run(ctx context.Context, opt Options) error {
 		if err := clones.Add(d.opt.Clones, clones.Clone{GitDir: d.opt.GitDir, Name: d.repoName, Slug: d.repoSlug}); err != nil {
 			d.log.Printf("this clone isn't on the record of this machine's clones, so other clones' pages can't switch to it: %v", err)
 		}
+		// The settings for all repos are taken before the page is served: one taken only once the
+		// first sync ends (allReposLoop) would overwrite a choice made on this repo's own tab before.
+		if err := d.takeAllRepos(); err != nil {
+			d.log.Printf("taking the settings for all repos: %v", err)
+		}
 	}
 	if pageLn != nil {
 		d.servePage(ctx, pageLn) // first, so a page key asked for at once finds the page
@@ -1418,6 +1423,13 @@ func Run(ctx context.Context, opt Options) error {
 			defer d.bg.Done()
 			d.threadLoop(ctx)
 		}()
+		if opt.Clones != "" {
+			d.bg.Add(1)
+			go func() {
+				defer d.bg.Done()
+				d.allReposLoop(ctx)
+			}()
+		}
 		if opt.Idle > 0 {
 			go d.idleLoop(ctx)
 		}
