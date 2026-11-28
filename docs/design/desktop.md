@@ -199,11 +199,18 @@ and on the macOS server (macOS 12, Intel).
   a browser already open costs its renderer, about 100 MB and 53 MB. WebView2 is Chromium, so on
   Windows the app is lighter than a browser started for it and heavier than a tab. On macOS the app
   was about 120 MB in all (mur 39 MB, WebKit's content process 69 MB, its network process 13 MB).
-- **One flag.** The app runs WebView2's GPU work in its browser process (`--in-process-gpu`, unless
+- **Two flags.** The app runs WebView2's GPU work in its browser process (`--in-process-gpu`, unless
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is already set). It took the app from 470 MB of working set
   and 310 MB private to 400 MB and 190 MB; a page of text needs no GPU process of its own. The
   variable is set only while the web view is made, so the daemons and browsers the app starts don't
   inherit it.
+  - *Software compositing* (`--disable-gpu-compositing`, #1272, 2026-11-28). With GPU compositing
+    in the browser process, the right-click menu opened and took keys but never reached the screen,
+    so spelling suggestions, Copy and Paste were all out of reach; neither a screenshot nor Desktop
+    Duplication caught it. Composited in software, the menu shows. On the page with a conversation
+    open (WebView2 158, three runs each): no flags 328 MB working set and 189 MB private; the GPU
+    flag alone 282 MB and 168 MB; both flags 286 MB and 151 MB. `--disable-gpu` alone also shows
+    the menu, at 299 MB and 139 MB, but keeps a GPU process.
 
 ## Unsigned
 
