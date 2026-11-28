@@ -67,6 +67,29 @@ func TestAllReposRecord(t *testing.T) {
 	if r, err := ReadAllRepos(path); err != nil || r.ID != "" {
 		t.Errorf("a record with a busy choice the page wouldn't save: %+v %v, want an empty one", r, err)
 	}
+	// Nor is one whose write numbers don't add up: a setting set at a write past the count would be
+	// taken again with every later write, and one with no write would show as set while no repo
+	// takes it.
+	for _, rec := range []string{
+		`{"id":"x","seq":1,"settings":{"receiveFiles":true},"set":{"receiveFiles":999}}`,
+		`{"id":"x","seq":1,"settings":{"receiveFiles":true},"set":{"receiveFiles":0}}`,
+		`{"id":"x","seq":1,"settings":{"receiveFiles":true}}`,
+		`{"id":"x","seq":2,"settings":{},"set":{"busy":1}}`,
+		`{"id":"x","seq":2,"settings":{"busy":"whole"},"set":{"busy":1,"theme":2}}`,
+	} {
+		if err := os.WriteFile(path, []byte(rec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := ReadAllRepos(path); err != nil || r.ID != "" {
+			t.Errorf("the record %s: %+v %v, want an empty one", rec, r, err)
+		}
+	}
+	if err := os.WriteFile(path, []byte(`{"id":"x","seq":2,"settings":{"busy":"whole"},"set":{"busy":2}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ReadAllRepos(path); err != nil || r.ID != "x" {
+		t.Errorf("a whole record: %+v %v", r, err)
+	}
 }
 
 func TestAllReposAPI(t *testing.T) {

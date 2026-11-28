@@ -118,10 +118,29 @@ func ReadAllRepos(path string) (AllReposRecord, error) {
 	if err != nil || b == nil {
 		return r, err
 	}
-	if json.Unmarshal(b, &r) != nil || r.Settings.check() != nil {
+	if json.Unmarshal(b, &r) != nil || r.Settings.check() != nil || !r.whole() {
 		return AllReposRecord{}, nil // a file in a shape this doesn't know sets nothing
 	}
 	return r, nil
+}
+
+// whole says each setting the record holds has the write that set it, from 1 to the record's
+// count, and it names a write for no other. A write numbered past the count would be taken again
+// with every later write, and a setting with none would show as set on the tab while no repo takes
+// it.
+func (r AllReposRecord) whole() bool {
+	var none Settings
+	named := 0
+	for _, f := range r.Settings.fields(&none) {
+		seq, ok := r.Set[f.name]
+		if f.has != ok || ok && (seq < 1 || seq > r.Seq) {
+			return false
+		}
+		if ok {
+			named++
+		}
+	}
+	return named == len(r.Set)
 }
 
 // SetAllRepos sets every setting change has, for all repos, and returns the record as written.

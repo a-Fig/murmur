@@ -58,6 +58,14 @@ func TestAllReposSettingsReachEveryClone(t *testing.T) {
 		t.Errorf("after a save naming busy alone: %+v, want the wake from All repos (never) kept and busy whole", s)
 	}
 
+	// A Do not disturb save names neither, and keeps both.
+	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"within"},"busy":"subject","mode":"dnd","set":[]}`); code != http.StatusOK {
+		t.Fatalf("a Do not disturb save: %d %s", code, body)
+	}
+	if s := settingsOf(t, pb); s.Wake.When != web.WakeNever || s.Busy != web.BusyWhole || s.Mode != web.ModeDND {
+		t.Errorf("after a Do not disturb save: %+v, want wake never and busy whole kept, and the mode dnd", s)
+	}
+
 	// b's own page changes the wake and the busy choice there.
 	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"always"},"busy":"whole","sendFiles":true}`); code != http.StatusOK {
 		t.Fatalf("b's own save: %d %s", code, body)
