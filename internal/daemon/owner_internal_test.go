@@ -175,6 +175,24 @@ func TestTransferWaitsForActiveDevicesToUnderstandIt(t *testing.T) {
 	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Try again after it syncs") {
 		t.Fatalf("transferred ownership on a superseded presence: %v", err)
 	}
+	// A presence the sync read and refused (it doesn't verify, is from a newer version, or is
+	// too large) won't be read again: the owner is told to update Murmur on it, not to try again,
+	// and the transfer still waits, as a refused presence may say less than the one before (#1293).
+	d.peers[to].writtenOf, d.peers[to].listed, d.peers[to].sha = "good", "good", "good"
+	d.sawPresence(to, "refused", true)
+	d.notePresencesListedLocked(map[string]string{brand.PresencePrefix + to: "refused"})
+	for range 2 {
+		_, err := d.ownerTransferLocked(to, time.Now())
+		if err == nil || !strings.Contains(err.Error(), "Update Murmur on it") || strings.Contains(err.Error(), "Try again") {
+			t.Fatalf("transfer on a presence the sync refused: %v", err)
+		}
+	}
+	d.peers[to].writtenOf, d.peers[to].listed, d.peers[to].sha = "good", "good", "good"
+	d.refusedSHA = map[string]string{to: "forged"}
+	d.notePresencesListedLocked(map[string]string{brand.PresencePrefix + to: "forged"})
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Update Murmur on it") {
+		t.Fatalf("transfer on a presence that isn't the device's own: %v", err)
+	}
 }
 
 type cancelOnUnsealed struct{ cancel context.CancelFunc }
