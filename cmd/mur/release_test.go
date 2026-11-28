@@ -141,10 +141,10 @@ func TestUpdateNow(t *testing.T) {
 		t.Errorf("installed with updates on: %v", err)
 	}
 
-	// Off here, or the last attempt failed: offered.
+	// Off here, or the last attempt failed: offered, with no command to run by hand (#1217).
 	for _, s := range []update.Status{{Latest: "0.3.1", Off: true}, {Latest: "0.3.1", Failed: true, Error: "download: 503"}} {
 		w.report(s)
-		if v := w.page(); !v.CanInstall {
+		if v := w.page(); !v.CanInstall || v.Install != "" {
 			t.Errorf("not offered after %+v: %+v", s, v)
 		}
 	}
@@ -192,7 +192,7 @@ func TestUpdateNow(t *testing.T) {
 		t.Errorf("an old error shown while installing again: %+v", v)
 	}
 	w.report(update.Status{Latest: "0.3.1", Installed: true, Asked: true})
-	if v := w.page(); v.Installing || v.CanInstall || v.Latest != "0.3.1" {
+	if v := w.page(); v.Installing || v.CanInstall || v.Install != "" || v.Latest != "0.3.1" {
 		t.Errorf("installed: %+v", v)
 	}
 	if err := u.InstallNow(ctx, "0.3.1"); err == nil || !strings.Contains(err.Error(), "restart onto it") {
@@ -207,8 +207,15 @@ func TestUpdateNow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.stop()
-	if v := s.page(); v.CanInstall || v.Installing || !strings.Contains(v.InstallError, "stopped") {
+	// The page can't install it now (#1217). The test binary isn't where the installers write, so
+	// the page names it rather than give a command that would install a second copy.
+	if v := s.page(); v.CanInstall || v.Installing || !strings.Contains(v.InstallError, "stopped") || v.Install != "" || v.Stuck == "" || v.Stuck != s.exe {
 		t.Errorf("after the updater stopped: %+v", v)
+	}
+	// One the installers wrote gets their command.
+	s.fromInstaller = true
+	if v := s.page(); v.Install != installLine("0.3.1") || v.Install == "" || v.Stuck != "" {
+		t.Errorf("after the updater stopped, on the installer's binary: %+v", v)
 	}
 	<-su.install
 	if err := su.InstallNow(ctx, "0.3.1"); err == nil || !strings.Contains(err.Error(), "stopped") || len(su.install) != 0 {
@@ -220,7 +227,10 @@ func TestUpdateNow(t *testing.T) {
 	e := newReleaseWatch("0.3.0", t.TempDir())
 	eu := &updateSetting{running: "0.3.0", gitDir: e.gitDir, check: make(chan struct{}, 1), install: make(chan string, 1), releases: e}
 	e.report(update.Status{Latest: "0.3.1", Off: true})
-	if v := e.page(); v.CanInstall {
+	// Nor given a command: the variable may mean a package manager has the binary.
+	e.fromInstaller = true
+	e.stop()
+	if v := e.page(); v.CanInstall || v.Install != "" || v.Stuck != "" {
 		t.Errorf("offered with MURMUR_NO_UPDATE: %+v", v)
 	}
 	if err := eu.InstallNow(ctx, "0.3.1"); err == nil || len(eu.install) != 0 {
@@ -234,7 +244,13 @@ func TestInstallLinePinsPrereleases(t *testing.T) {
 	if l := installLine("0.3.1-nightly.20261109"); !strings.Contains(l, "MURMUR_VERSION") || !strings.Contains(l, "v0.3.1-nightly.20261109") {
 		t.Errorf("prerelease: %s", l)
 	}
-	if l := installLine("0.3.1"); strings.Contains(l, "MURMUR_VERSION") {
+	if l := installLine("0.3.1"); l == "" || strings.Contains(l, "MURMUR_VERSION") {
 		t.Errorf("stable release pinned: %s", l)
+	}
+	// What isn't a release version never reaches a command a person pastes.
+	for _, bad := range []string{"0.3.2+';calc", "0.3.2-x'y", "0.3", ""} {
+		if l := installLine(bad); l != "" {
+			t.Errorf("%q: %s", bad, l)
+		}
 	}
 }

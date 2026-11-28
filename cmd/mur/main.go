@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -444,13 +445,23 @@ func noteNewer(ctx context.Context, w io.Writer) {
 		return
 	}
 	if latest := update.Newer(gitDir, version); latest != "" {
-		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\nTo update by hand, run the install again:\n  %s\n", brand.Product, latest, installLine(latest))
+		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\n", brand.Product, latest)
+		// The installer's line only where the installer would replace this binary, as the page
+		// gives it (#1217): elsewhere it would add a second copy beside this one.
+		_, fromInstaller := installerBinary()
+		if line := installLine(latest); line != "" && fromInstaller && !update.EnvOff(os.Getenv) {
+			fmt.Fprintf(w, "To update by hand, run the install again:\n  %s\n", line)
+		}
 	}
 }
 
 // installLine installs latest. A prerelease (seen on the prerelease channel) is pinned, since the
-// installers' default is the latest stable release, which is older.
+// installers' default is the latest stable release, which is older. What isn't a release version
+// (build metadata, a quote) gets no line, since it would land inside a command a person runs.
 func installLine(latest string) string {
+	if !releaseVersion.MatchString(latest) {
+		return ""
+	}
 	pin := strings.Contains(latest, "-")
 	if runtime.GOOS == "windows" {
 		if pin {
@@ -463,6 +474,8 @@ func installLine(latest string) string {
 	}
 	return "curl -fsSL " + brand.InstallSh + " | sh"
 }
+
+var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
 
 // redirectOutput sends this process's stdout and stderr to the file, appending. WMI gives a process
 // no handles, so a starter that uses it names the log file instead.

@@ -2213,6 +2213,25 @@ a.g-pr:hover {
 .version-detail {
   display: block;
 }
+.install-line {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--muted);
+}
+.install-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  color: var(--foreground);
+  scrollbar-width: none;
+}
 .version-status {
   display: inline-flex;
   align-items: center;

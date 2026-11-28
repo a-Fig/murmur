@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/names"
 	"github.com/a-Fig/murmur/internal/tags"
@@ -39,7 +40,7 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
 	taken := flag.Bool("taken", false, "start with an account named maya, a name the person on maya-mbp chose first (#268)")
-	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), or ready (installed, waiting for a restart)")
+	upd := flag.String("update", "none", "what the page is told of a newer release: none, auto (being installed), manual (updates off), stuck (this daemon's updater has stopped and the installer can, #1217), stuck-path (it has stopped on a binary the installer doesn't write), or ready (installed, waiting for a restart)")
 	updates := flag.String("updates", "on", "the machine's update setting (#1045): off, on or nightly")
 	updatesOverride := flag.Bool("updates-override", false, "act as if this repo's git config sets murmur.update false")
 	installError := flag.String("install-error", "", "Update now fails with this, as a bad download would; else it installs")
@@ -66,10 +67,14 @@ func main() {
 		src.version.Latest, src.version.Auto = "0.3.1", true
 	case "manual":
 		src.version.Latest = "0.3.1"
+	case "stuck":
+		src.version.Latest, src.version.Install = "0.3.1", "curl -fsSL "+brand.InstallSh+" | sh"
+	case "stuck-path":
+		src.version.Latest, src.version.Stuck = "0.3.1", "/usr/local/bin/mur"
 	case "ready":
 		src.version.Latest, src.version.Auto, src.version.Ready = "0.3.1", true, true
 	default:
-		log.Fatalf("-update must be none, auto, manual or ready")
+		log.Fatalf("-update must be none, auto, manual, stuck, stuck-path or ready")
 	}
 	if *taken {
 		src.account = web.Account{Name: "maya", Addr: src.self + "/human", Taken: "maya-mbp-91c0"}
