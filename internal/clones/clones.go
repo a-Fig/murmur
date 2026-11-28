@@ -1,9 +1,9 @@
 // Package clones is this user's record of the clones on this machine that joined Murmur, for the
 // page's repo picker (#348). Each clone's daemon serves its own page, on its own port with its own
 // token, and none knows of the others, so they are written down: `mur join` adds a clone, `mur
-// leave` takes it off, and a daemon adds its own clone each time it starts, which takes in clones
-// that joined before the record existed. The page lists them, and moves its tab to another's page
-// (see the web package's Repos).
+// leave` takes it off (unless it owns its mesh, #1291), and a daemon adds its own clone each time
+// it starts, which takes in clones that joined before the record existed. The page lists them, and
+// moves its tab to another's page (see the web package's Repos).
 //
 // The record is a directory with one small file per clone, so that daemons and joins writing at
 // once never need a lock: each writes or removes only its own clone's file, by rename. A clone
@@ -166,11 +166,12 @@ func Remove(dir, gitDir string) error {
 
 // List is the clones on the record that are still there and still joined, by label, then path.
 // joined says whether the user is still in Murmur in the clone with that git dir. It only reads: a
-// clone whose folder is gone, or that has left, is passed over, not taken off. Between seeing it gone
-// and removing its file, the folder could come back and `mur join` write the file again, and the
-// removal would lose that join (Sol's review, 2026-11-09). `mur leave` takes a clone off; a deleted
-// clone's file, a few dozen bytes, stays. A file that can't be read is passed over too, once a read
-// has been tried for a moment (see again), even if it seems not to be there.
+// clone whose folder is gone, or that has left, is passed over, not taken off. Between seeing it
+// gone and removing its file, the folder could come back and `mur join` write the file again, and
+// the removal would lose that join (Sol's review, 2026-11-09). `mur leave` takes a clone off,
+// unless it owns its mesh; a deleted clone's file, a few dozen bytes, stays. A file that can't be
+// read is passed over too, once a read has been tried for a moment (see again), even if it seems
+// not to be there.
 func List(dir string, joined func(gitDir string) bool) ([]Clone, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {

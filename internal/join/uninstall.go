@@ -235,10 +235,11 @@ func (e Env) leftovers() []string {
 }
 
 // leaveClone leaves clone c again, or for the first time, and reports whether that finished: a
-// leave takes the clone off the record, and one that didn't finish puts it back. A clone whose
-// working tree can't be found from its git directory, one made with --separate-git-dir whose git
-// directory isn't .git, is left from its git directory (#749). One whose git directory has gone
-// has only its daemon stopped. err is for a clone that can't be put back.
+// leave takes the clone off the record (an owning one stays, #1291), and one that didn't finish
+// puts it back. A clone whose working tree can't be found from its git directory, one made with
+// --separate-git-dir whose git directory isn't .git, is left from its git directory (#749). One
+// whose git directory has gone has only its daemon stopped. err is for a clone that can't be put
+// back.
 func (e Env) leaveClone(ctx context.Context, r *Report, record string, c clones.Clone) (ok bool, err error) {
 	p, lerr := Locate(ctx, c.Top())
 	if lerr != nil && filepath.Base(c.GitDir) != ".git" && isDir(c.GitDir) {
