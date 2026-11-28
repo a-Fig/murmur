@@ -1,5 +1,5 @@
-// The theme and the two other preferences the daemon keeps for the person (only mine, folded tags):
-// loading, saving and migrating them from the browser's own storage.
+// The theme and the other preferences the daemon keeps for the person (only mine, folded tags, the
+// star ask): loading, saving and migrating them from the browser's own storage.
 
 import { h } from "./dom.js";
 import { NAME, ui } from "./state.js";
@@ -7,7 +7,7 @@ import { AuthError, api } from "./api.js";
 import { deny, tokenEra } from "./sync.js";
 import { render } from "./render.js";
 
-export { THEMES, theme, loadPreferences, setTheme, onlyMine, setOnlyMine, tagsFolded, setTagsFolded };
+export { THEMES, theme, loadPreferences, setTheme, onlyMine, setOnlyMine, tagsFolded, setTagsFolded, starAsked, setStarAsked };
 
 // The theme is chosen in Settings. style.css reads it from <html data-theme>.
 const THEMES = [
@@ -47,6 +47,7 @@ async function loadPreferences(era) {
     document.documentElement.dataset.theme = theme;
     onlyMine = saved.onlyMine ?? false;
     tagsFolded = saved.tagsFolded ?? false;
+    starAsked = saved.starAsked ?? false;
     try {
       for (const field of fields) localStorage.removeItem(NAME + legacyKeys[field]);
     } catch {}
@@ -62,6 +63,7 @@ async function loadPreferences(era) {
     if (saved.theme) document.documentElement.dataset.theme = theme = saved.theme;
     onlyMine = saved.onlyMine ?? legacy.onlyMine ?? false;
     tagsFolded = saved.tagsFolded ?? legacy.tagsFolded ?? false;
+    starAsked = saved.starAsked ?? false;
   }
 }
 
@@ -129,4 +131,11 @@ function setTagsFolded(v) {
   tagsFolded = v;
   savePreference("tagsFolded", v);
   render();
+}
+
+// Whether the page has asked for a star on GitHub (#974), which it does once.
+let starAsked = false;
+function setStarAsked() {
+  starAsked = true;
+  savePreference("starAsked", true);
 }

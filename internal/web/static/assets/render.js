@@ -13,6 +13,7 @@ import { conversationsPage, chatScroll, restoreChatScroll, markOpenRead, fitComp
 import { viewerDialog } from "./files.js";
 import { setupDialog, pickerDialog } from "./picker.js";
 import { settingsPage } from "./settings.js";
+import { starCard } from "./star.js";
 import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
@@ -200,6 +201,7 @@ function render() {
       ui.repoMenu && repoMenu(),
       ui.profile && profileCard(),
       ui.viewer && viewerDialog(),
+      starCard(),
     ].filter(Boolean);
   } finally {
     held.el = null;

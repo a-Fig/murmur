@@ -43,6 +43,15 @@ func TestSharedThemeAcrossServers(t *testing.T) {
 	if p := get(a); p.OnlyMine == nil || !*p.OnlyMine || p.TagsFolded != nil {
 		t.Fatalf("first clone's filters: %+v", p)
 	}
+	// The star ask (#974) is the clone's, as the filters are, and a later change keeps it.
+	decode[Preferences](t, a.do(http.MethodPatch, endpoint, "", testToken, `{"starAsked":true}`))
+	decode[Preferences](t, a.do(http.MethodPatch, endpoint, "", testToken, `{"tagsFolded":true}`))
+	if p := get(a); p.StarAsked == nil || !*p.StarAsked || p.OnlyMine == nil || !*p.OnlyMine {
+		t.Fatalf("first clone after asking for a star: %+v", p)
+	}
+	if p := get(b); p.StarAsked != nil {
+		t.Fatalf("the second clone was asked too: %+v", p)
+	}
 	resp := b.do(http.MethodGet, "/", "", "", "")
 	html, err := io.ReadAll(resp.Body)
 	if err != nil || !strings.Contains(string(html), `data-theme="light"`) {

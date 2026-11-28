@@ -71,7 +71,7 @@ async function run(name, sessions, failing, then) {
     document: { hidden: false },
     window: {},
     stateAskedAt: 0, timer: 0, setTimeout: () => 0, clearTimeout: () => {},
-    render: () => {}, poll: () => {}, deny: () => {}, announce: (t) => calls.push("announce " + t),
+    render: () => {}, poll: () => {}, deny: () => {}, askForStar: () => {}, announce: (t) => calls.push("announce " + t),
     devices: () => ctx.ui.state.devices,
     fetch: async (path, init) => {
       const body = JSON.parse(init.body);
