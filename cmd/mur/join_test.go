@@ -18,6 +18,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/clones"
+	"github.com/a-Fig/murmur/internal/join"
 )
 
 func runCount(t *testing.T, b *box) int {
@@ -185,8 +186,13 @@ func TestInitJoinAndLeave(t *testing.T) {
 	if !strings.Contains(readFile(t, filepath.Join(b.clone, "AGENTS.md")), "<!-- murmur:start -->") {
 		t.Error("--leave touched the repo's files")
 	}
-	if list, _ := clones.List(record, joined); len(list) != 0 {
-		t.Errorf("the record after --leave: %+v", list)
+	// This clone ran init, so it owns its mesh and stays on the record for uninstall to see (#1291),
+	// though nothing lists it as joined.
+	if list, _ := clones.List(record, joined); len(list) != 1 {
+		t.Errorf("the record after --leave: %+v, want the owning clone kept", list)
+	}
+	if list, _ := clones.List(record, join.Joined); len(list) != 0 {
+		t.Errorf("joined clones after --leave: %+v", list)
 	}
 	if out = b.mustRun(b.clone, "join", "--leave"); !strings.Contains(out, "Nothing to undo") {
 		t.Errorf("leaving twice should say so:\n%s", out)

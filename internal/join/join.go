@@ -488,7 +488,9 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 	} else if had {
 		r.Did = append(r.Did, "Removed the record that you joined "+brand.Product+" in this clone")
 	}
-	if dir, err := clones.DefaultDir(); err == nil {
+	// An owning clone stays on the record, so that an uninstall still sees its keys (#1291): the
+	// record lists clones that are joined or not, and nothing treats a left one as joined.
+	if dir, err := clones.DefaultDir(); err == nil && !e.ownsMesh(p.GitDir) {
 		if err := clones.Remove(dir, p.GitDir); err != nil {
 			problem("taking this clone off the record of this machine's clones", err)
 		}
