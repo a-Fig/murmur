@@ -985,6 +985,10 @@ type state struct {
 	// history by then, but tags don't expire, so the tags events from here on are still to be read.
 	TagsFrom map[string]string   `json:"tagsFrom,omitempty"`
 	Inbox    map[string][]*inMsg `json:"inbox"` // session → unread messages
+	// NameInbox holds messages sent to a name that waited in a stopped session's inbox, which came
+	// back with another name (keepForNamesLocked, #847): each waits for the next session to take
+	// its name (adoptLocked), for StoppedInbox from when it arrived.
+	NameInbox map[string][]*inMsg `json:"nameInbox,omitempty"`
 	// Stopped holds the sessions that stopped, and when. Their inboxes are kept for StoppedInbox,
 	// in case the session comes back; they are the only inboxes kept for sessions not running.
 	Stopped map[string]time.Time `json:"stopped,omitempty"`
