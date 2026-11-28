@@ -292,4 +292,14 @@ func TestTheNextCheckIsAnHourFromTheAnswer(t *testing.T) {
 	if got := nextCheck(time.Time{}, time.Hour); got != time.Hour {
 		t.Errorf("no answer: next check in %s, want the hour", got)
 	}
+	// A held check goes by two answers, a recorded prerelease one and a fresh stable one: the next
+	// check is timed from the older.
+	var answered time.Time
+	o := Options{answered: &answered}
+	old := time.Now().Add(-55 * time.Minute)
+	noteAnswered(o, old)
+	noteAnswered(o, time.Now())
+	if !answered.Equal(old) {
+		t.Errorf("after a 55-minute-old answer and a fresh one, answered is %s, want the older", time.Since(answered))
+	}
 }

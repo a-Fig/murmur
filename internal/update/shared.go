@@ -89,9 +89,7 @@ func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 	if ctx.Err() != nil {
 		return rel, err // a check cut short says nothing of GitHub
 	}
-	if o.answered != nil {
-		*o.answered = time.Now()
-	}
+	noteAnswered(o, time.Now())
 	a := answer{At: time.Now().UTC(), Release: rel}
 	if err != nil {
 		a.Error = err.Error()
@@ -126,9 +124,7 @@ func recorded(o Options, all answers, key string) (rel *release, ok bool, err er
 	if a.Release != nil && !recordedAssetsOK(o.URL, a.Release) {
 		return nil, false, nil
 	}
-	if o.answered != nil {
-		*o.answered = a.At
-	}
+	noteAnswered(o, a.At)
 	if a.Error != "" {
 		return nil, true, errors.New(a.Error)
 	}
@@ -236,4 +232,14 @@ func sharedSeq(dir string) int64 {
 		return 0
 	}
 	return readAnswers(dir).Seq
+}
+
+// noteAnswered records at, when GitHub gave an answer this check went by, in o.answered: the oldest
+// of the check's answers. A held check (target) picks twice, and timing the next check from a fresh
+// stable answer left a 55-minute-old prerelease one nearly two hours old by then
+// (dandy-mulberry's re-check of 1ff0dde5).
+func noteAnswered(o Options, at time.Time) {
+	if o.answered != nil && (o.answered.IsZero() || at.Before(*o.answered)) {
+		*o.answered = at
+	}
 }

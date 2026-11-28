@@ -60,8 +60,8 @@ type Options struct {
 	// seen, if set, is the write of the shared answers the daemon has taken account of (Run),
 	// which pick moves past its own write.
 	seen *int64
-	// answered, if set, is when GitHub gave the answer the last check went by (pick): now, or when
-	// another daemon asked. Run times the next check from it.
+	// answered, if set, is when GitHub gave the oldest answer the last check went by (pick,
+	// noteAnswered): now, or when another daemon asked. Run times the next check from it.
 	answered *time.Time
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
