@@ -294,6 +294,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			d.st.TeamReplayThrough = sha
 			if from == "" && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
+				d.st.GrantReadAt = map[string]time.Time{}
 				if checkOwner {
 					d.repoModeStamp.Add(1)
 					d.st.TeamOwner = nil
@@ -394,6 +395,7 @@ func (d *Daemon) applyTeamRecordLocked(c bus.Commit, root bool) {
 		// the grant answered, or a later one.
 		if pin := d.st.Pins[r.To]; pin != nil {
 			d.st.GrantMark[r.To] = pin.At
+			d.st.GrantReadAt[r.To] = time.Now()
 		}
 		if r.To != d.device {
 			return
@@ -477,7 +479,8 @@ func (d *Daemon) teamLoop(ctx context.Context) {
 // grantReadWindow is how long after the presence a grant answered a device is given to read it: a device that
 // has just joined pushes several presences in its first seconds, a poll behind each, and a grant per presence
 // is a push and a commit on the team ref's history for nothing (#1292). A quiet device polls every 30 s, so a minute
-// covers a read; a grant that didn't open is made again on the first presence after it, a heartbeat away.
+// covers a read; a grant that didn't open is made again on the first presence after the window, so at worst
+// the window plus one heartbeat after it was read.
 const grantReadWindow = time.Minute
 
 // grantsDueLocked is the devices this one grants the team keys to now: each with a pinned box key
@@ -494,8 +497,11 @@ const grantReadWindow = time.Minute
 // grant didn't open, or carried a key under another's ID, is granted again. A device that is away
 // would be granted again on every pass, as its presence stays as it is, so a device a grant was read
 // for is granted again only on a presence signed later than the one this daemon held when it read
-// that grant (GrantMark): the device has run since, and still lacks a key. Both times are that
-// device's own, so no two clocks are compared. Caller holds mu.
+// that grant (GrantMark): the device has run since, and still lacks a key. Both presence times are
+// that device's own, so no two clocks are compared. The window runs on this daemon's clock from when
+// it read the grant (GrantReadAt), so a recipient whose clock went back isn't made to wait as long as
+// it was ahead. The window holds only if that grant carried every key this device would grant now: a
+// key the device was never sent, such as a rotation's, is granted at once. Caller holds mu.
 func (d *Daemon) grantsDueLocked() []string {
 	ep := d.epochLocked()
 	if ep == nil || d.teamKeys[ep.ID] == nil {
@@ -507,8 +513,19 @@ func (d *Daemon) grantsDueLocked() []string {
 		if dev == d.device || pin == nil || pin.Box == "" || !p.sealed || p.pres.Epoch != ep.ID {
 			continue
 		}
-		if mark, ok := d.st.GrantMark[dev]; ok && !p.pres.At.After(mark.Add(grantReadWindow)) {
-			continue
+		if mark, ok := d.st.GrantMark[dev]; ok {
+			if !p.pres.At.After(mark) {
+				continue
+			}
+			sent := true
+			for id := range d.teamKeys {
+				if !slices.Contains(d.st.TeamGranted[dev], id) {
+					sent = false
+				}
+			}
+			if at, ok := d.st.GrantReadAt[dev]; sent && ok && time.Since(at) <= grantReadWindow {
+				continue
+			}
 		}
 		lacks := false
 		// Every key held, as a grant carries them all: one for an epoch a rewritten team ref no longer

@@ -21,7 +21,7 @@ func keyRig(t *testing.T) (*Daemon, *peer) {
 		teamKeys: bus.Keyring{}, teamChanged: make(chan struct{}),
 		unknownAt: map[string]unknownKey{},
 		pollWake:  make(chan struct{}, 1), kick: make(chan struct{}, 1),
-		st: state{Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}}}
+		st: state{Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}, GrantReadAt: map[string]time.Time{}}}
 	at := time.Now().UTC()
 	d.st.Pins["peer-0001"] = &keyPin{Sign: "s", Box: bus.BoxPublic(bus.NewBoxKey()), At: at}
 	p := &peer{pres: bus.Presence{V: bus.Version, Device: "peer-0001", At: at}, sealed: true}
@@ -140,11 +140,11 @@ func TestGrantIsNotRepeatedForADeviceThatIsAway(t *testing.T) {
 	}
 	// It comes back, and its next presence still lists no key: the grant was junk to it.
 	// A presence pushed while it still polls for the grant is no sign it couldn't open it.
-	p.pres.At = p.pres.At.Add(grantReadWindow / 2)
+	p.pres.At = p.pres.At.Add(time.Second)
 	if due := d.grantsDueLocked(); len(due) != 0 {
 		t.Fatalf("granted again before the device had time to read the grant: %v", due)
 	}
-	p.pres.At = p.pres.At.Add(grantReadWindow)
+	d.st.GrantReadAt["peer-0001"] = time.Now().Add(-grantReadWindow - time.Second)
 	if due := d.grantsDueLocked(); len(due) != 1 {
 		t.Fatalf("not granted again on a later presence that still lacks the key: %v", due)
 	}
@@ -299,5 +299,42 @@ func TestOwnPresenceTimesNeverGoBack(t *testing.T) {
 	}
 	if next := d.nextPresenceAtLocked(); !next.After(first) {
 		t.Fatalf("%v isn't after %v", next, first)
+	}
+}
+
+// A rotation lands right after a grant was read: the device holds the old key and names the new
+// epoch, so it lacks the new key, which no grant has carried. It is granted at once.
+func TestGrantForANewEpochIsNotHeldBackByTheReadWindow(t *testing.T) {
+	d, p := keyRig(t)
+	old := withEpoch(d, true)
+	d.st.TeamGranted["peer-0001"] = []string{old.ID}
+	d.st.GrantMark["peer-0001"] = d.st.Pins["peer-0001"].At
+	d.st.GrantReadAt["peer-0001"] = time.Now()
+	ep := withEpoch(d, true)
+	p.pres.Epoch = ep.ID
+	p.pres.Holds = []string{old.ID}
+	p.pres.At = p.pres.At.Add(5 * time.Second)
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("new epoch's key withheld from a device granted moments earlier: %v", due)
+	}
+}
+
+// The window is timed on this daemon's clock from when it read the grant, so a device whose clock
+// ran an hour ahead and then went back is granted again once the window has passed.
+func TestGrantWindowIgnoresARecipientClockThatWentBack(t *testing.T) {
+	d, p := keyRig(t)
+	ep := withEpoch(d, true)
+	p.pres.Epoch = ep.ID
+	mark := time.Now().UTC().Add(time.Hour)
+	d.st.TeamGranted["peer-0001"] = []string{ep.ID}
+	d.st.GrantMark["peer-0001"] = mark
+	d.st.GrantReadAt["peer-0001"] = time.Now().Add(-grantReadWindow - time.Second)
+	p.pres.At = mark.Add(time.Millisecond)
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("a device whose clock went back is not granted again: %v", due)
+	}
+	p.pres.At = mark
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted again on a presence no newer than the mark: %v", due)
 	}
 }

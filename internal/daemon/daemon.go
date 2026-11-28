@@ -1132,7 +1132,8 @@ type state struct {
 	PresenceAt time.Time `json:"presenceAt,omitzero"`
 	// The team ref as read (team.go): its tip, its epochs in order, and the team keys each device
 	// has been given, by device ID. GrantMark is, for each device a grant was read for, the time its
-	// newest presence was signed with when this daemon read the grant (grantsDueLocked).
+	// newest presence was signed with when this daemon read the grant, and GrantReadAt the time on this
+	// daemon's own clock that it did (grantsDueLocked).
 	TeamTip   string     `json:"teamTip,omitempty"`
 	TeamOwner *meshOwner `json:"teamOwner,omitempty"`
 	// The old teamOwnerChecked flag predates transfer and legacy ownership.
@@ -1141,6 +1142,7 @@ type state struct {
 	Epochs            []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted       map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark         map[string]time.Time `json:"grantMark,omitempty"`
+	GrantReadAt       map[string]time.Time `json:"grantReadAt,omitempty"`
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
@@ -1806,7 +1808,7 @@ func (d *Daemon) loadState() error {
 		NameHolders: map[string]string{}, SessionNames: map[string]string{}, Commits: map[string][]commitRec{},
 		T3Routes: map[string]t3Route{}, NameBinds: map[string]string{}, Reserved: map[string]string{},
 		Tags: map[string]*tags.State{}, People: map[string]string{}, PersonClaims: map[string]string{},
-		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{},
+		Pins: map[string]*keyPin{}, TeamGranted: map[string][]string{}, GrantMark: map[string]time.Time{}, GrantReadAt: map[string]time.Time{},
 		FileRefs: map[string]time.Time{}, FilesWait: map[string]*fileWait{}, OthersFiles: map[string]othersFile{}}
 	// When the last daemon last wrote its state, read before anything here writes it.
 	var written time.Time
@@ -1893,6 +1895,9 @@ func (d *Daemon) loadState() error {
 	}
 	if d.st.GrantMark == nil {
 		d.st.GrantMark = map[string]time.Time{}
+	}
+	if d.st.GrantReadAt == nil {
+		d.st.GrantReadAt = map[string]time.Time{}
 	}
 	// V1's daemons also put notes about claims in inboxes, as from Murmur itself, which no address
 	// on the bus can be. This one writes none, and would show one as a teammate's message.

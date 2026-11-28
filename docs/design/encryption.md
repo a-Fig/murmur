@@ -73,9 +73,11 @@ key replaced it.
       presence a daemon watched arrive, and such a device got nothing.
     - **By what a device holds, not by what the ref shows**, so a grant that doesn't open is made
       again. A device away isn't granted over and over: it is granted again only on a presence
-      signed a minute or more after the one it had when the grant was read (`GrantMark`,
-      `grantReadWindow`): a device that just joined pushes several presences before it has polled once
-      (#1292).
+      signed after the one it had when the grant was read (`GrantMark`), and more than a minute
+      after this daemon read it (`grantReadWindow`, on its own clock): a device that just joined pushes
+      several presences before it has polled once (#1292). The wait applies only when that grant carried
+      every key the device would be granted now; a key it was never sent, as after a rotation, is granted
+      at once.
   - A *roster* lists the people who can push, encrypted for one epoch's team key; `mur rotate`
     writes it.
   - Granted keys are kept in `.git/murmur/team-keys` (0600), which only grows, so a rewritten team
