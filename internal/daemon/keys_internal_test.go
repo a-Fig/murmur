@@ -338,3 +338,27 @@ func TestGrantWindowIgnoresARecipientClockThatWentBack(t *testing.T) {
 		t.Fatalf("granted again on a presence no newer than the mark: %v", due)
 	}
 }
+
+// A GrantReadAt saved while this daemon's clock was ahead, and read back after it was put right,
+// holds no window; nor does a GrantMark with no GrantReadAt, as an upgraded state has (#1302 review).
+func TestGrantWindowNeedsAReadTimeInThePast(t *testing.T) {
+	d, p := keyRig(t)
+	ep := withEpoch(d, true)
+	p.pres.Epoch = ep.ID
+	mark := time.Now().UTC().Add(-time.Minute)
+	d.st.TeamGranted["peer-0001"] = []string{ep.ID}
+	d.st.GrantMark["peer-0001"] = mark
+	p.pres.At = mark.Add(time.Second)
+	d.st.GrantReadAt["peer-0001"] = time.Now().Add(time.Hour)
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("a read time in the future held the grant back: %v", due)
+	}
+	delete(d.st.GrantReadAt, "peer-0001")
+	if due := d.grantsDueLocked(); len(due) != 1 {
+		t.Fatalf("a mark with no read time held the grant back: %v", due)
+	}
+	d.st.GrantReadAt["peer-0001"] = time.Now()
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("a grant read just now didn't hold a repeat back: %v", due)
+	}
+}

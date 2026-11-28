@@ -476,9 +476,10 @@ func (d *Daemon) teamLoop(ctx context.Context) {
 	}
 }
 
-// grantReadWindow is how long after the presence a grant answered a device is given to read it: a device that
-// has just joined pushes several presences in its first seconds, a poll behind each, and a grant per presence
-// is a push and a commit on the team ref's history for nothing (#1292). A quiet device polls every 30 s, so a minute
+// grantReadWindow is how long, on this daemon's clock from when it read a grant, a device is given to read
+// that grant before it is granted again: a device that has just joined pushes several presences in its first
+// seconds, a poll behind each, and a grant per presence is a push and a commit on the team ref's history for
+// nothing (#1292). A quiet device polls every 30 s, so a minute
 // covers a read; a grant that didn't open is made again on the first presence after the window, so at worst
 // the window plus one heartbeat after it was read.
 const grantReadWindow = time.Minute
@@ -521,10 +522,16 @@ func (d *Daemon) grantsDueLocked() []string {
 			for id := range d.teamKeys {
 				if !slices.Contains(d.st.TeamGranted[dev], id) {
 					sent = false
+					break
 				}
 			}
-			if at, ok := d.st.GrantReadAt[dev]; sent && ok && time.Since(at) <= grantReadWindow {
-				continue
+			// A GrantReadAt in the future is from a clock that was ahead when it was saved and has been
+			// put right since (state.json keeps no monotonic reading): no window, rather than one as long
+			// as the clock was off.
+			if at, ok := d.st.GrantReadAt[dev]; sent && ok {
+				if el := time.Since(at); el >= 0 && el <= grantReadWindow {
+					continue
+				}
 			}
 		}
 		lacks := false
