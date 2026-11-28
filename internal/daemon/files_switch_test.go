@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -222,5 +223,41 @@ func TestADeviceWithFilesIsNeverUnknownWhileItRepublishes(t *testing.T) {
 		if len(shas) < 3 && time.Now().After(end.Add(55*time.Second)) {
 			t.Fatalf("a fetched %d of bob's presences in a minute, so this tested little", len(shas))
 		}
+	}
+}
+
+// A message that came while Receive files was off has its files fetched once the switch goes on
+// before the session reads it, and then gives their paths (#1316). Before, it listed them with no
+// path for good: it had been queued at once, with no fetch, and nothing fetched them after.
+func TestReceiveFilesTurnedOnFetchesWhatCameWithoutThem(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "the log",
+		Files: []string{writeFile(t, "build.log", []byte("a line\n"))}}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "bob to be told of the message", func() bool {
+		return len(b.do(proto.Request{Op: proto.OpNotices, Session: "bbbbbb"}).Messages) > 0
+	})
+	pb := b.page()
+	if code, body := pb.call("PUT", "/api/settings", pb.token,
+		`{"wake":{"when":"within"},"receiveFiles":true,"agentsReceiveOff":false,"filesSet":["receiveFiles","agentsReceiveOff"]}`); code != 200 {
+		t.Fatalf("turning Receive files on: %d %s", code, body)
+	}
+	eventually(t, "the file to be fetched", func() bool {
+		got, _ := filepath.Glob(filepath.Join(b.gitDir, brand.StateDir, "files", "*", "build.log"))
+		return len(got) == 1
+	})
+	m := inboxMessage(t, b, "bbbbbb")
+	if len(m.FilesKept) != 0 || len(m.Files) != 1 || m.Files[0].Path == "" || m.Files[0].Fetching {
+		t.Fatalf("bob's message, Files %+v, FilesKept %+v; want the file with its path", m.Files, m.FilesKept)
+	}
+	if got, err := os.ReadFile(m.Files[0].Path); err != nil || string(got) != "a line\n" {
+		t.Errorf("the file: %q, %v", got, err)
 	}
 }

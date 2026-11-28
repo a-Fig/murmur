@@ -1153,6 +1153,7 @@ func (d *Daemon) refreshRepoFilesLocked() {
 	if d.repoFiles.set(allow) {
 		if allow {
 			clear(d.fileMiss)
+			d.fetchKeptLocked()
 		}
 		d.kickPresence()
 		d.kickFiles()
@@ -1228,6 +1229,32 @@ func (d *Daemon) holdForFilesLocked(id string, e bus.Event) bool {
 	}
 	d.kickFiles()
 	return true
+}
+
+// fetchKeptLocked fetches the files of the messages in the inboxes that came while Receive files
+// kept them, now that it lets them in (#1316). Such a message was queued at once, with no fetch,
+// and would list its files with no path for good. It stays in the inbox as it is: only its files
+// are fetched, for no session in particular, and its view says they are on their way meanwhile.
+// Caller holds mu.
+func (d *Daemon) fetchKeptLocked() {
+	added := false
+	for id, box := range d.st.Inbox {
+		if id == bus.PersonSession {
+			continue // the page fetches a person's files as it shows them (fileOf)
+		}
+		for _, m := range box {
+			e := m.Event
+			if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) || d.st.FilesWait[e.ID] != nil || d.filesHere(e) {
+				continue
+			}
+			d.st.FilesWait[e.ID] = &fileWait{Event: e, Since: time.Now().Round(0)}
+			added = true
+		}
+	}
+	if added {
+		d.saveLocked()
+		d.kickFiles()
+	}
 }
 
 func (d *Daemon) kickFiles() {
@@ -1922,8 +1949,8 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 }
 
 // fileViewsLocked is the files of message e as a session here is told of them: each with the path
-// it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld). Caller
-// holds mu.
+// it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld),
+// and then whether it is on its way (fetchKeptLocked). Caller holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 	if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) {
 		return nil
@@ -1936,6 +1963,7 @@ func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 				v.Path = path
 			}
 		}
+		v.Fetching = v.Path == "" && f.Readable() && d.st.FilesWait[e.ID] != nil
 		views = append(views, v)
 	}
 	return views

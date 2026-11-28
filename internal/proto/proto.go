@@ -636,6 +636,9 @@ type FileView struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 	Path string `json:"path,omitempty"`
+	// Fetching says a file with no Path is on its way: Receive files was turned on after the
+	// message came without it (#1316).
+	Fetching bool `json:"fetching,omitempty"`
 }
 
 // Size is a file's size as people read one: 812 bytes, 14 KB, 2.3 MB.
