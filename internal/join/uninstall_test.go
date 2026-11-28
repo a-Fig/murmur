@@ -716,3 +716,34 @@ func TestUninstallRefusesWhereACloneOwnsItsMesh(t *testing.T) {
 		t.Errorf("the leave didn't warn:\n%s", s)
 	}
 }
+
+// A clone that owns its mesh and has already left still stops an uninstall (#1291): its keys are
+// the only ownership, and the leave must not take it off the record the uninstall reads.
+func TestUninstallRefusesWhereAnOwningCloneAlreadyLeft(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	ctx := context.Background()
+	p, _ := clone(t)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir, Name: "left-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	sb.Env.OwnsMesh = func(gitDir string) bool { return sameEntry(gitDir, p.GitDir) }
+	if r, err := Leave(ctx, sb.Env, p.Top); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+
+	_, err := Uninstall(ctx, sb.Env, false)
+	if err == nil || !strings.Contains(err.Error(), "left-owner") || !strings.Contains(err.Error(), "--owner-ok") {
+		t.Fatalf("err = %v", err)
+	}
+
+	sb.Env.OwnerOK = true
+	if r, err := Uninstall(ctx, sb.Env, false); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if list, _ := clones.List(record, func(string) bool { return true }); len(list) != 0 {
+		t.Errorf("the record still holds %v after the uninstall", list)
+	}
+}
