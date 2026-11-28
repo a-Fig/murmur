@@ -610,3 +610,69 @@ func TestAPiNamedUnderItsFilesSuffixedKeyKeepsItsID(t *testing.T) {
 	}
 	b.nameIs(x, delta)
 }
+
+// #1260: A Pi outside T3 opening the file a T3 thread's Pi has open is a conversation of its own,
+// as the two have different name keys. With PiFiles missing (no record for the file), it used to
+// make the file's ID, and take over the T3 session's address and inbox while that session was in
+// its grace. It takes a fresh ID, and the thread's Pi, back, has its own.
+func TestAPiOutsideT3DoesNotTakeOverAT3PiSessionInItsGrace(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	exe, _ := useFakeT3(t)
+	b := newTimedDevice(t, remote, time.Hour, time.Hour)
+	t3Hello := func() (string, net.Conn) {
+		conn, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: proto.NativeID(piFileA), Agent: "pi in T3",
+			ClientPID: procP, TakesSelf: true, Route: proto.Route{Native: piFileA, T3CLI: exe, T3Thread: "thread-pi"}})
+		if err != nil {
+			return "", nil
+		}
+		t.Cleanup(func() { conn.Close() })
+		return resp.Self, conn
+	}
+	inT3, conn := t3Hello()
+	if inT3 == "" {
+		t.Fatal("the T3 thread's Pi didn't register")
+	}
+	conn.Close()
+	b.dropped(inT3)
+
+	outside, _ := b.piStart(piFileA, "", procQ)
+	if outside == inT3 {
+		t.Fatalf("the Pi outside T3 took the T3 session's address %s", inT3)
+	}
+	var back string
+	eventually(t, "the T3 thread's Pi to register again", func() bool { back, _ = t3Hello(); return back != "" })
+	if back != inT3 {
+		t.Fatalf("the T3 thread's Pi came back at %s, not %s", back, inT3)
+	}
+}
+
+// #1260, the other way round (Opus's review of 475cd74e): a T3 thread's Pi opening the file a Pi
+// outside T3 has open takes an ID of its own, with its thread found or not yet, and leaves the other
+// its address while it is in its grace.
+func TestAT3PiDoesNotTakeOverAPiOutsideT3InItsGrace(t *testing.T) {
+	for _, thread := range []string{"thread-pi", ""} {
+		t.Run("thread "+thread, func(t *testing.T) {
+			t.Parallel()
+			remote := newRemote(t)
+			exe, _ := useFakeT3(t)
+			b := newTimedDevice(t, remote, time.Hour, time.Hour)
+			outside, conn := b.piStart(piFileA, "", procQ)
+			conn.Close()
+			b.dropped(outside)
+
+			c, resp, err := b.c.Hello(context.Background(), proto.Hello{ID: proto.NativeID(piFileA), Agent: "pi in T3",
+				ClientPID: procP, TakesSelf: true, Route: proto.Route{Native: piFileA, T3CLI: exe, T3Thread: thread}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { c.Close() })
+			if resp.Self == outside {
+				t.Fatalf("the T3 thread's Pi took the address %s of the Pi outside T3", outside)
+			}
+			if back, _ := b.piAgain(piFileA, "", procQ); back != outside {
+				t.Fatalf("the Pi outside T3 came back at %s, not %s", back, outside)
+			}
+		})
+	}
+}

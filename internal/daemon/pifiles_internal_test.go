@@ -182,6 +182,93 @@ func TestPiIDLockedAvoidsMisdeliveryWithoutPiFiles(t *testing.T) {
 		}
 	})
 
+	// #1260: a T3 thread's Pi on file1, in its grace or stopped with its route kept, is another
+	// conversation than a Pi outside T3 on file1, or one in another thread.
+	inT3 := func(dropped bool) map[string]*session {
+		s := &session{id: id1, agent: "pi in T3", clientPID: 100, route: proto.Route{Native: file1, T3CLI: "t3", T3Thread: "th-1"}}
+		if dropped {
+			s.dropped = time.Now()
+		}
+		return map[string]*session{id1: s}
+	}
+	stoppedT3 := state{T3Routes: map[string]t3Route{id1: {CLI: "t3", Thread: "th-1"}}}
+	outside := map[string]*session{id1: {id: id1, agent: "pi", clientPID: 100, dropped: time.Now(), route: proto.Route{Native: file1}}}
+	// A T3 thread's Pi has its thread in its first hello when T3's database already maps the file
+	// to it (lookupThread), as on a restart; a new thread's row may not be written yet, and then it
+	// has none ("").
+	inThread := func(thread string) *proto.Hello {
+		h := hello(file1, 200)
+		h.Agent, h.T3CLI, h.T3Thread = "pi in T3", "t3", thread
+		return h
+	}
+	for _, c := range []struct {
+		what     string
+		sessions map[string]*session
+		st       state
+		h        *proto.Hello
+		fresh    bool
+	}{
+		{"T3 session in its grace, Pi outside T3", inT3(true), state{}, hello(file1, 200), true},
+		{"T3 session live, Pi outside T3", inT3(false), state{}, hello(file1, 200), true},
+		{"T3 route kept, Pi outside T3", nil, stoppedT3, hello(file1, 200), true},
+		{"T3 session in its grace, Pi in another thread", inT3(true), state{}, inThread("th-2"), true},
+		{"T3 route kept, Pi in another thread", nil, stoppedT3, inThread("th-2"), true},
+		{"T3 session in its grace, its thread's Pi", inT3(true), state{}, inThread("th-1"), false},
+		{"T3 session in its grace, a Pi in T3 without its thread yet", inT3(true), state{}, inThread(""), false},
+		{"session outside T3 in its grace, a T3 thread's Pi", outside, state{}, inThread("th-1"), true},
+		{"session outside T3 in its grace, a Pi in T3 without its thread yet", outside, state{}, inThread(""), true},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			d := newD(c.sessions, c.st)
+			d.mu.Lock()
+			got, _ := d.piIDLocked(c.h)
+			d.mu.Unlock()
+			if c.fresh && (got == id1 || got == "") || !c.fresh && got != id1 {
+				t.Fatalf("got %q, want fresh ID: %v", got, c.fresh)
+			}
+		})
+	}
+
+	t.Run("file's recorded ID a T3 thread's, Pi outside T3", func(t *testing.T) {
+		for _, c := range []struct {
+			what     string
+			sessions map[string]*session
+			st       state
+		}{
+			{"in its grace", map[string]*session{"rec001": {id: "rec001", clientPID: 100, dropped: time.Now(),
+				route: proto.Route{Native: file1, T3CLI: "t3", T3Thread: "th-1"}}}, state{}},
+			{"stopped, route kept", nil, state{T3Routes: map[string]t3Route{"rec001": {CLI: "t3", Thread: "th-1"}}}},
+		} {
+			c.st.PiFiles = map[string]piFile{file1: {ID: "rec001", At: time.Now()}}
+			d := newD(c.sessions, c.st)
+			d.mu.Lock()
+			got, _ := d.piIDLocked(hello(file1, 200))
+			d.mu.Unlock()
+			if got != id1 {
+				t.Errorf("%s: got %q, want the file's own ID %q", c.what, got, id1)
+			}
+			if d.st.PiFiles[file1].ID != "rec001" {
+				t.Errorf("%s: PiFiles[%s] = %q, want rec001 kept", c.what, file1, d.st.PiFiles[file1].ID)
+			}
+		}
+	})
+
+	t.Run("file's recorded ID a Pi outside T3's, in its grace, T3 thread's Pi", func(t *testing.T) {
+		for _, thread := range []string{"th-1", ""} {
+			d := newD(map[string]*session{"rec001": {id: "rec001", agent: "pi", clientPID: 100, dropped: time.Now(),
+				route: proto.Route{Native: file1}}}, state{PiFiles: map[string]piFile{file1: {ID: "rec001", At: time.Now()}}})
+			d.mu.Lock()
+			got, _ := d.piIDLocked(inThread(thread))
+			d.mu.Unlock()
+			if got != id1 {
+				t.Errorf("thread %q: got %q, want the file's own ID %q", thread, got, id1)
+			}
+			if d.st.PiFiles[file1].ID != "rec001" {
+				t.Errorf("thread %q: PiFiles[%s] = %q, want rec001 kept", thread, file1, d.st.PiFiles[file1].ID)
+			}
+		}
+	})
+
 	t.Run("Pi in T3 restarting without thread keeps its derived ID", func(t *testing.T) {
 		d := newD(nil, state{
 			NameKeys:     map[string]string{"t3:th-1": "calm-otter"},
