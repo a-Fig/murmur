@@ -106,12 +106,15 @@ can be called something else, such as its owner's name.
   whose presence had gone. Agents address each other by session name anyway, so the address was cut
   (Tyler, 2026-11-11) rather than guarded.
 - **Shared, and set by the device's own user**, with `mur nickname <name>` or on the page's Settings
-  (#533). It is kept in `state.json` and travels in presence, inside the box, so every teammate sees
-  the same name. Labels of one's own for other people's devices were left out: nobody has asked for
-  two names for one device.
+  (#533), or offered alongside a name copied from another joined clone on this machine (#1277). It
+  is kept in `state.json` and travels in presence, inside the box, so every teammate sees the same
+  name. Labels of one's own for other people's devices were left out: nobody has asked for two names
+  for one device.
 - **The default is the person's name**, the one chosen on the page ([a person on the
-  page](people.md)), worked out by readers from presence. The git `user.name` wasn't used: it is the
-  same on all of one person's clones.
+  page](people.md)), worked out by readers from presence. If another repo on this machine had no
+  explicit nickname (`""`), accepting its name in a new repo preserves this default. If its nickname
+  conflicts with another person or device ID in the new repo, only the person's name is offered. The
+  git `user.name` wasn't used: it is the same on all of one person's clones.
 - **Not unique.** One person may want both their machines called `tyler`, and the ID sits beside it.
   A nickname is refused only when it is a device's ID or another device's person's name, which would
   read as someone else. Any device can still say any nickname in its presence, so a nickname is no

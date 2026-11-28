@@ -187,6 +187,9 @@ type Options struct {
 	// daemon adds its clone there as it starts, so a clone that joined before the record existed
 	// is on it too. Tests leave it unset.
 	Clones string
+	// Joined, if set, reports whether a clone on Clones is still in Murmur (join.Joined), so left
+	// clones aren't offered on the page (#1277). Nil means all recorded clones count.
+	Joined func(gitDir string) bool
 	// Repos, if set, lets the page list this machine's clones and switch to another's page (#348).
 	Repos web.Repos
 	// ThemePath is the user's theme file shared across clones.
@@ -758,6 +761,11 @@ type Daemon struct {
 	// written to it; presenceFetches counts those fetches (publishPresence).
 	presenceCopied  bool
 	presenceFetches uint64
+	// hasPerson caches d.st.Person != "" so State() skips reading peer clones once named (#1277);
+	// offerMu guards offerCache, which caches parsed state of other joined clones by (modTime, size).
+	hasPerson  atomic.Bool
+	offerMu    sync.Mutex
+	offerCache map[string]offerCacheEntry
 }
 
 type session struct {
@@ -1527,6 +1535,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	if err := d.loadState(); err != nil {
 		return nil, err
 	}
+	d.hasPerson.Store(d.st.Person != "")
 	d.pinSelfLocked() // nothing else runs yet
 	d.rereadTeamIfKeysLostLocked()
 	d.repoFiles = &fileSwitch{}

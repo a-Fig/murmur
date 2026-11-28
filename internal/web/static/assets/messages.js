@@ -4,7 +4,7 @@ import { icon } from "./icons.js";
 import { h, when, ago, stamp, agoEl, plural, root } from "./dom.js";
 import {
   NAME, POLL_MS, NARROW, ui, devices, nameOf, fromName, toName, findSession, sessionCount, me, myName,
-  isPerson, findPerson, personOnline, unreadIds,
+  primaryOffer, isPerson, findPerson, personOnline, unreadIds,
 } from "./state.js";
 import { onlyMine, setOnlyMine } from "./preferences.js";
 import { AuthError, api } from "./api.js";
@@ -310,13 +310,22 @@ function conversationsPage() {
   const open = list.find((c) => c.key === ui.conversation);
   ui.conversationAnchor = open?.messages[open.messages.length - 1]?.id;
   if (ui.newMark && ui.newMark.key !== ui.conversation) ui.newMark = null;
+  const emptyOffer = every.length === 0 && !ui.filter && !me() ? primaryOffer() : null;
   return h(
     "div",
     { class: "page chat-page" },
     // A picked session keeps its header, and so its tags, before it has any messages. With an
     // account, the list stays, with who you could talk to beside it.
     every.length === 0 && !ui.filter && !me()
-      ? [starRow(), emptyState("message", "No conversations yet", "Messages between sessions show here as this daemon reads them.")]
+      ? [
+          starRow(),
+          emptyState(
+            "message",
+            "No conversations yet",
+            "Messages between sessions show here as this daemon reads them.",
+            emptyOffer && h("button", { class: "btn btn-primary btn-sm empty-action", "data-key": "empty-use-offer", onclick: () => askForName(null) }, "Use " + emptyOffer.name + (emptyOffer.nick ? " (" + emptyOffer.nick + ")" : "") + " from " + emptyOffer.repo),
+          ),
+        ]
       : h(
           "div",
           { class: "chat" + (open ? " chat-open" : "") },
@@ -1119,7 +1128,8 @@ function paneFoot(c) {
     );
   const target = targetOf(c);
   if (target) return composer(c, target);
-  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, "Choose a name")));
+  const offer = primaryOffer();
+  if (c.kind !== "dm") return h("div", { class: "pane-foot" }, h("div", { class: "pane-foot-card" }, h("span", { class: "pane-foot-note" }, offer ? "Use " + offer.name + (offer.nick ? " (" + offer.nick + ")" : "") + " from " + offer.repo + " to write here." : "Choose a name to write to " + (c.kind === "all" ? "everyone" : groupName(c).replace(/^This device$/, "this device")) + "."), h("button", { class: "btn btn-outline btn-sm", "data-key": "foot-name", onclick: () => askForName(render) }, offer ? "Use " + offer.name + "?" : "Choose a name")));
   const running = c.pair.filter((n) => findSession(n) || findPerson(n));
   if (!running.length) return null;
   // Two running sessions can be put in a group chat with you: a group is a tag, which a person

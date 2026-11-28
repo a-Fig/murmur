@@ -407,7 +407,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		logger.Printf("couldn't find the shared theme file: %v", err)
 	}
 	err = run(ctx, daemon.Options{GitDir: *gitDir, Poll: *poll, Idle: *idle, PageListener: inherited,
-		Clones: record, Repos: repos, ThemePath: themePath,
+		Clones: record, Joined: join.Joined, Repos: repos, ThemePath: themePath,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
 			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report, Check: updates.check, Install: updates.install}, restart)

@@ -46,6 +46,7 @@ func main() {
 	running := flag.String("running", "0.3.0", "the daemon's version; a prerelease, like 0.3.1-nightly.20261121, offers going back to stable")
 	repo := flag.String("repo", "", "the repo this page is a clone of, as owner/name (a-Fig/murmur) or a name alone, which a remote with no owner gives (#1126)")
 	repos := flag.String("repos", "", "comma-separated repos, each owner/name or a name alone: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
+	offer := flag.String("offer", "", "semicolon-separated cross-repo account offers as name[:nick]@repo (for #1277 screenshots/testing)")
 	owner := flag.Bool("owner", false, "this device owns the mesh, so Repo settings can change the repo policy: team encryption, files allowed, automatic rotation off")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
@@ -83,6 +84,9 @@ func main() {
 	}
 	src.version.CanInstall = canInstall(src.version)
 	src.repo, src.slug = splitRepo(*repo)
+	if *offer != "" {
+		src.account.Offers = parseOffers(*offer, src.devices)
+	}
 	if *owner {
 		src.policy = &bus.RepoPolicy{EncryptionMode: bus.EncryptionTeam, AllowFiles: true}
 	}
@@ -632,8 +636,9 @@ func (f *fixtures) SetNick(ctx context.Context, nick string) (web.Account, error
 	return f.account, nil
 }
 
-// SetAccount takes a name the way the daemon does, refusing the other person's.
-func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, error) {
+// SetAccount takes a name and optional device nickname the way the daemon does, refusing the
+// other person's name or nickname.
+func (f *fixtures) SetAccount(ctx context.Context, name string, nick *string) (web.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !bus.ValidPerson(name) {
@@ -642,13 +647,60 @@ func (f *fixtures) SetAccount(ctx context.Context, name string) (web.Account, er
 	if name == "maya" || name == "jordan" {
 		return web.Account{}, fmt.Errorf("%s is taken, by the person on %s.", name, strings.TrimSuffix(personAddr(f.devices, name), "/human"))
 	}
-	f.account.Name, f.account.Addr, f.account.Suggested, f.account.Taken = name, f.self+"/human", "", ""
+	if nick != nil && *nick != "" {
+		if !bus.ValidNick(*nick) {
+			return web.Account{}, fmt.Errorf("%q can't be a nickname. Use 2 to %d lowercase letters and digits, with single dashes between words, and not a session's name.", *nick, names.MaxPerson)
+		}
+		if *nick == "maya" || *nick == "jordan" {
+			return web.Account{}, fmt.Errorf("%s is the name of the person on %s.", *nick, strings.TrimSuffix(personAddr(f.devices, *nick), "/human"))
+		}
+		if *nick == f.self {
+			return web.Account{}, fmt.Errorf("%s is already a device ID.", *nick)
+		}
+	}
+	if nick != nil {
+		f.account.Nick = *nick
+	}
+	f.account.Name, f.account.Addr, f.account.Suggested, f.account.Taken, f.account.Offers = name, f.self+"/human", "", "", nil
 	for i := range f.devices {
 		if f.devices[i].Self {
 			f.devices[i].Person = &web.Person{Name: name, Addr: f.account.Addr, LastActive: time.Now(), Tags: tags.Person()}
+			f.devices[i].Nick = cmp.Or(f.account.Nick, name)
 		}
 	}
 	return f.account, nil
+}
+
+func parseOffers(spec string, devices []web.Device) []web.AccountOffer {
+	var out []web.AccountOffer
+	for raw := range strings.SplitSeq(spec, ";") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		left, right, ok := strings.Cut(raw, "@")
+		if !ok || left == "" || right == "" {
+			log.Fatalf("-offer entry %q must be name[:nick]@repo", raw)
+		}
+		name, nick, _ := strings.Cut(left, ":")
+		repo, takenBy, _ := strings.Cut(right, ":")
+		if (name == "maya" || name == "jordan") && takenBy == "" {
+			takenBy = strings.TrimSuffix(personAddr(devices, name), "/human")
+		}
+		var nickProblem string
+		if nick == "maya" || nick == "jordan" {
+			nickProblem = fmt.Sprintf("%s is the name of the person on %s.", nick, strings.TrimSuffix(personAddr(devices, nick), "/human"))
+			nick = ""
+		}
+		out = append(out, web.AccountOffer{
+			Name:        name,
+			Nick:        nick,
+			Repo:        repo,
+			Taken:       takenBy,
+			NickProblem: nickProblem,
+		})
+	}
+	return out
 }
 
 // Send takes as long as a push does, refuses what scrub would, and has the session answer a few
