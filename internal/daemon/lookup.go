@@ -43,6 +43,8 @@ func (d *Daemon) lookup(you string, req proto.Request) proto.Response {
 	det := d.detailLocked(addr, you, limit)
 	if dev, sess := bus.SplitAddr(addr); det.Running && det.Reachable {
 		det.NoWake = d.peerNoWakeLocked(dev, sess, wake)
+	} else if det.IdleInT3 {
+		det.NoWake = d.noWakeLocked(sess, wake)
 	}
 	return proto.Response{OK: true, Self: bus.Addr(d.device, you), Lookup: det}
 }
@@ -133,6 +135,18 @@ func (d *Daemon) detailLocked(addr, you string, limit int) *proto.SessionDetail 
 		} else {
 			det.Name = d.st.SessionNames[sess]
 			det.StoppedAt = d.st.Stopped[sess]
+			// A T3 thread T3 stopped while it was idle is woken by a message through its route, as
+			// send says (#669). Its kept tags show, so do not disturb does (#1340).
+			if r, ok := d.st.T3Routes[sess]; ok && r.Thread != "" && !det.StoppedAt.IsZero() {
+				det.IdleInT3 = true
+				var self []string
+				var human map[string]tags.Mark
+				if st := d.st.Tags[d.tagKeyLocked(sess)]; st != nil {
+					self, human = st.Self, st.Human
+				}
+				det.Tags = tags.WithDevice(tags.Effective(self, d.derivedTagsLocked(sess), human), d.device)
+				det.Muted = d.mutesOfLocked(sess) // kept by its name too, and send refuses a muted sender
+			}
 		}
 		if d.offMeshLocked(sess) {
 			det.Offline, det.Reachable = true, false

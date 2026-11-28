@@ -793,6 +793,10 @@ func Lookup(r proto.Response) string {
 		b.WriteString("  OFFLINE: its T3 thread is settled, so it takes no messages until someone opens it again\n")
 	case d.Offline:
 		b.WriteString("  OFFLINE: it takes no messages (its T3 thread is settled, or another thread started it)\n")
+	case d.IdleInT3 && d.NoWake == "" && !tags.Has(d.Tags, tags.DoNotDisturb):
+		fmt.Fprintf(&b, "  idle in T3: T3 stopped its process %s, and a message wakes it\n", Ago(d.StoppedAt))
+	case d.IdleInT3:
+		fmt.Fprintf(&b, "  idle in T3: T3 stopped its process %s\n", Ago(d.StoppedAt))
 	case !d.Running && !d.StoppedAt.IsZero():
 		fmt.Fprintf(&b, "  NOT RUNNING: it stopped %s; a message to it waits in its inbox until it returns\n", Ago(d.StoppedAt))
 	case !d.Running:

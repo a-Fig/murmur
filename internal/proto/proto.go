@@ -555,6 +555,10 @@ type SessionDetail struct {
 	DeviceSeen time.Time `json:"deviceSeen,omitzero"`
 	LastActive time.Time `json:"lastActive,omitzero"`
 	StoppedAt  time.Time `json:"stoppedAt,omitzero"` // a session of this device that has stopped
+	// IdleInT3 says a stopped session of this device is a T3 thread T3 stopped while it was idle:
+	// a message still wakes it through its route, unless NoWake or do not disturb says otherwise,
+	// as send says (#669, #1340).
+	IdleInT3 bool `json:"idleInT3,omitempty"`
 	// Offline says the session is off the mesh, and a message to it is refused: its T3 thread is
 	// settled, archived or deleted (#189), or another thread started it (#188). DelegateOf, for a
 	// session of this device that another thread started, names the session to message instead,

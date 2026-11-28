@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/view"
 )
 
 // A T3 thread idle long enough has its process stopped by T3, and its session with it, but a
@@ -46,5 +47,25 @@ func TestASenderIsToldAnIdleT3ThreadWakes(t *testing.T) {
 	}
 	if r := a.send("aaaaaa", carol, "are you there?", ""); !strings.Contains(r.Note, "has stopped") {
 		t.Errorf("the note for a stopped session with no route is %q, want that it has stopped", r.Note)
+	}
+
+	// lookup says what send says (#1340): the murmur-pro skill has an agent look up a session
+	// that went quiet, and "NOT RUNNING ... until it returns" read as gone.
+	look := func(name string) string {
+		t.Helper()
+		r := a.do(proto.Request{Op: proto.OpLookup, Session: "aaaaaa", Name: name})
+		if r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		return view.Lookup(r)
+	}
+	if got := look(bob); !strings.Contains(got, "idle in T3: T3 stopped its process") || !strings.Contains(got, "a message wakes it") || strings.Contains(got, "NOT RUNNING") {
+		t.Errorf("lookup of an idle T3 thread a message wakes:\n%s", got)
+	}
+	if got := look(dan); !strings.Contains(got, "idle in T3") || strings.Contains(got, "a message wakes it") || !strings.Contains(got, "do not disturb:") {
+		t.Errorf("lookup of an idle T3 thread on do not disturb:\n%s", got)
+	}
+	if got := look(carol); !strings.Contains(got, "NOT RUNNING: it stopped") || strings.Contains(got, "idle in T3") {
+		t.Errorf("lookup of a stopped session with no route:\n%s", got)
 	}
 }
