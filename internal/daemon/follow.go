@@ -355,9 +355,12 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 		return h.ID, false
 	}
 	if f, ok := d.st.PiFiles[h.Native]; ok {
-		if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID {
+		// The recorded ID is another conversation's while a live Pi of another process holds it,
+		// or while a T3 thread other than h's has it, live, in its grace or stopped (#1260): a Pi
+		// outside T3 on the file a T3 thread's Pi has open is a conversation of its own.
+		if o := d.sessions[f.ID]; o != nil && o.dropped.IsZero() && o.clientPID != h.ClientPID || t3Other(d.t3ThreadOfLocked(f.ID), h) {
 			if d.piIDOtherLocked(h) {
-				// Not recorded: the file is the live session's in PiFiles. So this second Pi on the
+				// Not recorded: the file is the other session's in PiFiles. So this second Pi on the
 				// file takes a fresh ID, and with it a new name, at each full restart (a /reload
 				// finds its session through ofProcess), where it had kept the file's ID before. A
 				// new name each time is the price of not taking another conversation's address.
@@ -390,17 +393,17 @@ func (d *Daemon) piIDLocked(h *proto.Hello) (string, bool) {
 }
 
 // piIDOtherLocked says whether h.ID (proto.NativeID(h.Native)) is held by a conversation other than
-// h.Native on this device (#1187): a session (live or in its grace) on another file or client,
-// another file's PiFiles record, a stopped T3 route for another thread, a session whose last name
-// isn't h.Native's, or, when no last name is known, any registry name in Used at this address that
-// isn't h.Native's. Caller holds mu.
+// h.Native on this device (#1187): a session (live or in its grace) on another file or client, or
+// of a T3 thread other than h's (#1260), another file's PiFiles record, a stopped T3 route for
+// another thread, a session whose last name isn't h.Native's, or, when no last name is known, any
+// registry name in Used at this address that isn't h.Native's. Caller holds mu.
 func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
 	id := h.ID
+	if t3Other(d.t3ThreadOfLocked(id), h) {
+		return true
+	}
 	if o := d.sessions[id]; o != nil {
 		return o.route.Native != h.Native || o.claudeSession != ""
-	}
-	if r := d.st.T3Routes[id]; r.Thread != "" && (h.T3CLI == "" || h.T3Thread != "" && r.Thread != h.T3Thread) {
-		return true
 	}
 	for file, f := range d.st.PiFiles {
 		if file != h.Native && f.ID == id {
@@ -433,6 +436,22 @@ func (d *Daemon) piIDOtherLocked(h *proto.Hello) bool {
 		}
 	}
 	return false
+}
+
+// t3ThreadOfLocked is the T3 thread of the session at id: its own route's, or, where it has none
+// (stopped, or a server that hasn't found its thread yet), the route kept for it. Caller holds mu.
+func (d *Daemon) t3ThreadOfLocked(id string) string {
+	if o := d.sessions[id]; o != nil && o.route.T3Thread != "" {
+		return o.route.T3Thread
+	}
+	return d.st.T3Routes[id].Thread
+}
+
+// t3Other says whether thread, a T3 thread a session is in, is another conversation than
+// h's: h is outside T3, or in T3 and names another thread. A Pi in T3 that hasn't found its thread
+// yet may be that thread's, back after a restart, so it is not taken as another.
+func t3Other(thread string, h *proto.Hello) bool {
+	return thread != "" && (h.T3CLI == "" || h.T3Thread != "" && thread != h.T3Thread)
 }
 
 // freshPiIDLocked picks a random 6-hex session ID not held by any session, stopped inbox, PiFiles

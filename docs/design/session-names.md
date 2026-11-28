@@ -279,7 +279,10 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
     file (after pruning, or after a downgrade to a daemon before #1145 dropped the field), and the
     ID the file makes is still held by another conversation's session, kept inbox, or registry name
     (`Used`), the hello gets a fresh ID instead so it neither takes over that session nor receives
-    messages sent to its name (#1187).
+    messages sent to its name (#1187). A T3 thread's Pi is another conversation than a Pi outside
+    T3, or in another thread, on the same file, as their names have different keys: whether its
+    session is live, in its grace or stopped with its route kept, and whether it holds the ID the
+    file makes or the one recorded for the file, the other Pi takes an ID of its own (#1260).
   - *Two Pi processes on one file.* They are two sessions. A `/resume` of a file another Pi has
     open, live or in its grace while its server restarts, still moves the session there, but the
     file isn't recorded as the moved session's and nothing of the other's is taken: the other Pi's
