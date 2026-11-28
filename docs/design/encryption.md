@@ -174,7 +174,9 @@ For a mesh created before ownership, the device that signed the first team epoch
 Git authors and presence labels were recorded independently, so a name match can't prove which
 device ran init. Existing epochs and rosters stay readable. The owner writes a signed policy
 checkpoint on its next sync, after which daemons require its signature and sequence on new
-admin records. Ownership stays with the current owner's device ID and signing key. If that clone
+admin records. A daemon that makes a mesh's first epoch itself, with no `mur init`, pushes the
+checkpoint with the epoch. On its own it was a second push at startup, which could reach the
+remote ahead of a starting session's presence. Ownership stays with the current owner's device ID and signing key. If that clone
 loses either before a transfer, it loses the ability to administer the mesh.
 
 ### Automatic rotation

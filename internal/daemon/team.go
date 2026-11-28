@@ -660,6 +660,13 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		}
 		recs = append(recs, r)
 		rosterID, rosterPub, epoch = r.ID, r.Pub, r.ID
+		if ask == nil && d.st.TeamOwner == nil {
+			// The first policy rides in the same push, with the default a first epoch is read with
+			// (acceptTeamAdminLocked). Alone, it was a second push right after this one, which went
+			// to the remote ahead of a starting session's presence (TestSessionStartPushesPresenceFirst).
+			policy := bus.RepoPolicy{EncryptionMode: bus.EncryptionTeam, AllowFiles: true}
+			recs = append(recs, bus.TeamRecord{V: bus.Version, Type: bus.TeamPolicy, Policy: &policy, AdminSeq: 1, At: now})
+		}
 	}
 	if ask != nil && ask.collaborators != nil && rosterID != "" {
 		r, err := bus.NewRoster(rosterID, rosterPub, ask.collaborators, now)
