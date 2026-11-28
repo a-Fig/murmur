@@ -37,8 +37,9 @@ type Git struct {
 	// For a command run from a terminal that must not wait on anyone, such as join's look at
 	// the remote (#830); the daemon runs detached already.
 	NoTerminal bool
-	// Stderr, if set, gets what each command prints to stderr as well, as a push's lines from the
-	// remote ("remote: ..."), which a command that succeeds otherwise leaves unread.
+	// Stderr, if set, gets what each command Run starts prints to stderr as well (RunTree and
+	// NewReader leave it out), as a push's lines from the remote ("remote: ..."), which a command
+	// that succeeds otherwise leaves unread.
 	Stderr io.Writer
 }
 

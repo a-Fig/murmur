@@ -241,6 +241,7 @@ func TestHostLink(t *testing.T) {
 		"To example.invalid:team/proj.git\n * [new branch] murmur-init -> murmur-init\n":    "",
 		"remote: Visit https://example.invalid/team/proj/compare/main...other\n":            "",
 		"remote: see javascript:alert(1)/murmur-init\n":                                     "",
+		"remote:   https://gitlab.com@evil.example/x?murmur-init\n":                         "",
 		"remote: https://example.invalid/murmur-init\x1b]8;;evil\n":                         "",
 		"https://example.invalid/team/proj/compare/main...murmur-init (not from remote:)\n": "",
 	} {

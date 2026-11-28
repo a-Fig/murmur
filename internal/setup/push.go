@@ -384,7 +384,8 @@ func fallback(ctx context.Context, g gitx.Git, repo *bus.Repo, p *Pushed) error 
 // pull or merge request from it, "" if it offered none. GitHub, GitLab, Bitbucket and Gitea each
 // print one ("remote: To create a merge request for murmur-init, visit: ..."), and a remote that
 // isn't GitHub has no address init could build. Only an http or https address naming the branch,
-// of printable characters, is taken: the remote chooses the text, and it goes to the terminal.
+// of printable characters and with no user in it, is taken: the remote chooses the text, and it
+// goes to the terminal, where https://gitlab.com@evil.example/ would read as gitlab.com's.
 func hostLink(said, branch string) string {
 	for _, line := range strings.Split(said, "\n") {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "remote:")
@@ -397,7 +398,7 @@ func hostLink(said, branch string) string {
 				continue
 			}
 			u, err := url.Parse(f)
-			if err != nil || u.Host == "" {
+			if err != nil || u.Host == "" || u.User != nil {
 				continue
 			}
 			if unescaped, err := url.QueryUnescape(f); err == nil && strings.Contains(unescaped, branch) {
