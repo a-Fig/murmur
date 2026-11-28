@@ -71,3 +71,15 @@ func exeName(dir string) string {
 	}
 	return filepath.Join(dir, "mur")
 }
+
+// holdRunning keeps the file at path alive after another is renamed over it, as the process
+// running a binary does. A file nothing holds is freed by the rename, and ext4 (GitHub's runners'
+// /tmp) often gives the next new file its inode number, so the stand-in put in its place looked
+// like the same file to os.SameFile and no watch restarted onto it (dandy-mulberry's review of
+// #1314; btrfs, the box's, doesn't reuse them so soon).
+func holdRunning(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Link(path, path+".running"); err != nil {
+		t.Fatal(err)
+	}
+}
