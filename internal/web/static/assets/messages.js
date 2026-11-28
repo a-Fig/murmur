@@ -360,11 +360,17 @@ function conversationList(list) {
       // with how it is under them, what it is doing, what it runs on, and its tags.
       name
         ? [
+            // The way back, and Message across from it: up here it leaves the name its whole row (#1284).
             h(
-              "button",
-              { class: "g-back", "data-key": "head-back", onclick: () => ((ui.filter = null), (ui.conversation = null), go("messages")) },
-              icon("chevronRight"),
-              "All conversations",
+              "div",
+              { class: "g-head-nav" },
+              h(
+                "button",
+                { class: "g-back", "data-key": "head-back", onclick: () => ((ui.filter = null), (ui.conversation = null), go("messages")) },
+                icon("chevronRight"),
+                "All conversations",
+              ),
+              f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
             ),
             h(
               "div",
@@ -373,12 +379,11 @@ function conversationList(list) {
               h(
                 "div",
                 { class: "g-head-id" },
-                // Its whole name, wrapped if it must (#1284): it is who the session is, and this view exists to show it.
+                // Its whole name on one line (#1284): it is who the session is, and this view exists to show it.
                 h("h2", null, name),
                 // Its profile (#631): how it is now, where it runs, and since when.
                 f ? profileLine(f.device, f.session) : h("p", { class: "g-head-status" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
               ),
-              f && h("button", { class: "btn btn-outline btn-xs g-head-msg", "data-key": "head-msg", onclick: () => startChat(name) }, icon("message"), "Message"),
             ),
             f && f.session.doing && h("p", { class: "g-head-doing" }, f.session.doing),
             f && headMeta(f.session),
