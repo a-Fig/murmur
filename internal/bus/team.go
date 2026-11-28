@@ -56,9 +56,12 @@ type TeamRecord struct {
 
 // RepoPolicy is the owner's repo-wide settings. Team encryption and file transfers are the
 // original defaults. Readers support additional values as they implement those behaviors.
+// AutoRotate is off unless the owner turns it on (#1285), so a policy written before it existed
+// reads as off.
 type RepoPolicy struct {
 	EncryptionMode string `json:"encryptionMode"`
 	AllowFiles     bool   `json:"allowFiles"`
+	AutoRotate     bool   `json:"autoRotate,omitempty"`
 }
 
 const (

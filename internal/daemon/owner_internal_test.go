@@ -65,9 +65,27 @@ func TestMeshOwnerOrdersTeamAdministration(t *testing.T) {
 func TestAutomaticRotationSkipsNonOwnerDevices(t *testing.T) {
 	d, _ := keyRig(t)
 	d.st.TeamOwnerChecked = true
-	d.st.TeamOwner = &meshOwner{Device: "owner-0001", Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
+	d.st.TeamOwner = &meshOwner{Device: "owner-0001", Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true, AutoRotate: true}}
 	delay := d.checkForDepartures(t.Context(), func(context.Context, string) ([]string, error) {
 		t.Fatal("a teammate's daemon called GitHub to check collaborators")
+		return nil, nil
+	})
+	if delay != rotationCheck {
+		t.Fatalf("next check in %s, want %s", delay, rotationCheck)
+	}
+}
+
+// With automatic rotation off (#1285), the owner's own daemon doesn't call GitHub either.
+func TestAutomaticRotationOffSkipsTheOwner(t *testing.T) {
+	d, _ := keyRig(t)
+	d.signKey = bus.NewSignKey()
+	d.st.TeamOwnerChecked = true
+	d.st.TeamOwner = &meshOwner{Device: d.device, Key: bus.SignPublic(d.signKey), Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
+	if !d.isOwnerLocked() {
+		t.Fatal("fixture device doesn't own the mesh")
+	}
+	delay := d.checkForDepartures(t.Context(), func(context.Context, string) ([]string, error) {
+		t.Fatal("the owner's daemon called GitHub with automatic rotation off")
 		return nil, nil
 	})
 	if delay != rotationCheck {

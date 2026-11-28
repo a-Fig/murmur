@@ -46,6 +46,7 @@ func main() {
 	running := flag.String("running", "0.3.0", "the daemon's version; a prerelease, like 0.3.1-nightly.20261121, offers going back to stable")
 	repo := flag.String("repo", "", "the repo this page is a clone of, as owner/name (a-Fig/murmur) or a name alone, which a remote with no owner gives (#1126)")
 	repos := flag.String("repos", "", "comma-separated repos, each owner/name or a name alone: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
+	owner := flag.Bool("owner", false, "this device owns the mesh, so Repo settings can change the repo policy: team encryption, files allowed, automatic rotation off")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || (host != "127.0.0.1" && host != "localhost") {
@@ -82,6 +83,9 @@ func main() {
 	}
 	src.version.CanInstall = canInstall(src.version)
 	src.repo, src.slug = splitRepo(*repo)
+	if *owner {
+		src.policy = &bus.RepoPolicy{EncryptionMode: bus.EncryptionTeam, AllowFiles: true}
+	}
 	go src.run()
 	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
 	page.WithUpdates(&devUpdates{src: src, choice: *updates, override: *updatesOverride, installError: *installError})
@@ -225,6 +229,8 @@ type fixtures struct {
 	picks map[string]bus.ColorPick
 	// files is the files each message carries (#570), by the message's ID.
 	files map[string][]web.Upload
+	// policy is the repo policy when -owner makes this device the mesh owner; nil, there is none.
+	policy *bus.RepoPolicy
 }
 
 // attach gives the message last added these files. Caller holds mu, or is still building f.
@@ -547,6 +553,10 @@ func (f *fixtures) State(ctx context.Context) (web.State, error) {
 	st.Mode = f.settings.Mode
 	st.SendFiles, st.ReceiveFiles = f.settings.SendFiles, f.settings.ReceiveFiles
 	st.AgentsSendOff, st.AgentsReceiveOff = f.settings.AgentsSendOff, f.settings.AgentsReceiveOff
+	if p := f.policy; p != nil {
+		st.MeshOwner, st.OwnsMesh = f.self, true
+		st.EncryptionMode, st.RepoFilesOff, st.AutoRotate = p.EncryptionMode, !p.AllowFiles, p.AutoRotate
+	}
 	for _, d := range f.devices {
 		d.Sessions = append([]web.Session(nil), d.Sessions...)
 		if d.Self {
@@ -796,8 +806,24 @@ func (f *fixtures) Settings(ctx context.Context) (web.Settings, error) {
 	return copySettings(f.settings), nil
 }
 
-func (f *fixtures) SetRepoPolicy(context.Context, web.RepoPolicyChange) error {
-	return fmt.Errorf("this fixture has no mesh owner")
+func (f *fixtures) SetRepoPolicy(_ context.Context, change web.RepoPolicyChange) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.policy == nil {
+		return fmt.Errorf("this fixture has no mesh owner; start it with -owner")
+	}
+	switch {
+	case change.EncryptionMode != "":
+		if !bus.ValidEncryptionMode(change.EncryptionMode) {
+			return fmt.Errorf("%q is not a repo encryption mode", change.EncryptionMode)
+		}
+		f.policy.EncryptionMode = change.EncryptionMode
+	case change.AllowFiles != nil:
+		f.policy.AllowFiles = *change.AllowFiles
+	case change.AutoRotate != nil:
+		f.policy.AutoRotate = *change.AutoRotate
+	}
+	return nil
 }
 
 func (f *fixtures) SetSettings(ctx context.Context, s web.Settings) (web.Settings, error) {

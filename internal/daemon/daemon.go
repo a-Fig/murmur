@@ -640,6 +640,7 @@ type Daemon struct {
 	teamMu      sync.Mutex
 	rotationMu  sync.Mutex // one collaborator comparison and rotation at a time
 	teamKick    chan struct{}
+	rotateKick  chan struct{} // wakes autoRotate when the owner or its AutoRotate setting changes
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
 	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
@@ -1492,7 +1493,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, msgKeys: map[string]bool{}, idOwner: map[string]string{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
-		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
+		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1), rotateKick: make(chan struct{}, 1),
 	}
 	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {

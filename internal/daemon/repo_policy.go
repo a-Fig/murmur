@@ -17,6 +17,7 @@ var errRepoModeChanged = errors.New("the repo's encryption mode changed. Send th
 type repoPolicyChange struct {
 	mode       *string
 	allowFiles *bool
+	autoRotate *bool
 }
 
 func (d *Daemon) setRepoMode(ctx context.Context, mode string) error {
@@ -28,6 +29,10 @@ func (d *Daemon) setRepoMode(ctx context.Context, mode string) error {
 
 func (d *Daemon) setRepoFilesAllowed(ctx context.Context, allow bool) error {
 	return d.writeTeamAdmin(ctx, &teamAsk{policy: &repoPolicyChange{allowFiles: &allow}})
+}
+
+func (d *Daemon) setRepoAutoRotate(ctx context.Context, on bool) error {
+	return d.writeTeamAdmin(ctx, &teamAsk{policy: &repoPolicyChange{autoRotate: &on}})
 }
 
 func (d *Daemon) nextRepoPolicyLocked(change repoPolicyChange) (bus.RepoPolicy, error) {
@@ -49,6 +54,9 @@ func (d *Daemon) nextRepoPolicyLocked(change repoPolicyChange) (bus.RepoPolicy, 
 	}
 	if change.allowFiles != nil {
 		policy.AllowFiles = *change.allowFiles
+	}
+	if change.autoRotate != nil {
+		policy.AutoRotate = *change.autoRotate
 	}
 	return policy, nil
 }

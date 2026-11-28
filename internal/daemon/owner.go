@@ -103,10 +103,14 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 		}
 		o.Device, o.Key = r.To, r.NextOwnerKey
 		d.pinOwnerLocked(o.Device, o.Key)
+		d.kickAutoRotate()
 	}
 	o.Seq, o.Tip = r.AdminSeq, sha
 	if r.Policy != nil {
 		changed := o.Policy.EncryptionMode != r.Policy.EncryptionMode
+		if changed || o.Policy.AutoRotate != r.Policy.AutoRotate {
+			d.kickAutoRotate()
+		}
 		o.Policy = *r.Policy
 		if changed {
 			d.repoModeStamp.Add(1)

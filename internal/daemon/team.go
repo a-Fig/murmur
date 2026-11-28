@@ -534,7 +534,9 @@ type teamAsk struct {
 	policy        *repoPolicyChange
 	// basis is the roster a roster written without a rotation was decided against: nobody on it had
 	// left. If the roster is another by the time of the push, the push isn't made (errRosterMoved).
-	basis []string
+	// firstRoster says the current epoch had no roster at all when that was decided.
+	basis       []string
+	firstRoster bool
 }
 
 // errRosterMoved says the current epoch's roster is no longer the one a request compared against:
@@ -610,7 +612,12 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 			}
 		}
 	}
-	if ask != nil && !rotate && ask.collaborators != nil {
+	if ask != nil && !rotate && ask.collaborators != nil && ask.firstRoster {
+		if ep == nil || ep.Roster != nil {
+			d.mu.Unlock()
+			return "", false, errRosterMoved
+		}
+	} else if ask != nil && !rotate && ask.collaborators != nil {
 		if cur, ok := d.rosterLocked(); !ok || !slices.Equal(cur, ask.basis) {
 			d.mu.Unlock()
 			return "", false, errRosterMoved
@@ -775,8 +782,18 @@ func (d *Daemon) rosterLocked() ([]string, bool) {
 // recordRoster writes a roster of collaborators for the current epoch, in place of basis, and waits
 // for it to land. It fails with errRosterMoved if the roster is no longer basis.
 func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string) error {
+	return d.writeRoster(ctx, &teamAsk{collaborators: collaborators, basis: basis})
+}
+
+// recordFirstRoster writes a roster for a current epoch that has none, and fails with
+// errRosterMoved if one was written, or the key rotated, meanwhile.
+func (d *Daemon) recordFirstRoster(ctx context.Context, collaborators []string) error {
+	return d.writeRoster(ctx, &teamAsk{collaborators: collaborators, firstRoster: true})
+}
+
+func (d *Daemon) writeRoster(ctx context.Context, ask *teamAsk) error {
 	for attempt := 0; attempt < 3; attempt++ {
-		_, pushed, err := d.teamWork(ctx, &teamAsk{collaborators: collaborators, basis: basis})
+		_, pushed, err := d.teamWork(ctx, ask)
 		if err != nil {
 			return err
 		}
@@ -797,7 +814,11 @@ func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string
 // nobody has left and someone has joined, the roster is written again with them on it, so that their
 // leaving is seen later. Someone who joined and left between two runs was never on a roster, and
 // only --force covers that. It returns what it did, for the person who asked.
-func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool) (string, error) {
+//
+// auto is the owner's automatic check (auto_rotate.go). An epoch with no roster at all then gets
+// one recorded instead of a new key: nobody is known to have left, and a rotation would pause
+// reading for the whole team (#1285).
+func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto bool) (string, error) {
 	d.rotationMu.Lock()
 	defer d.rotationMu.Unlock()
 	if err := d.pollOnce(ctx); err != nil {
@@ -832,6 +853,22 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool)
 		}
 		if collab == nil {
 			return "", errors.New("couldn't list the repo's collaborators, so there is nothing to compare; --force makes a new team key anyway")
+		}
+		if !known && auto && collab != nil {
+			d.mu.Lock()
+			ep := d.epochLocked()
+			none := ep != nil && ep.Roster == nil
+			d.mu.Unlock()
+			if none {
+				err := d.recordFirstRoster(ctx, collab)
+				if errors.Is(err, errRosterMoved) && attempt < 3 {
+					continue
+				}
+				if err != nil {
+					return "", err
+				}
+				return "The team key had no roster yet, so it stays as it is. Recorded who can push.", nil
+			}
 		}
 		if !known || len(gone) > 0 {
 			break

@@ -178,14 +178,29 @@ loses either before a transfer, it loses the ability to administer the mesh.
 
 ### Automatic rotation
 
-The mesh owner's daemon checks the GitHub collaborator roster at startup and about once a day
-(#412). If the current key has no roster, the first successful check rotates and records who can
-push. This covers collaborators who might already have lost access while the daemon had no roster.
-On later checks, a collaborator who is missing or now has read-only access triggers a new key.
-Successful checks also record new collaborators so
-their later departure can be detected. A check that fails leaves the recorded roster in place and
-is retried after an hour while the daemon is running.
+Automatic rotation is off unless the mesh owner turns it on, under **Rotate the team key
+automatically** in the page's repo settings (#1285, Tyler, 2026-11-27). It is a field of the signed
+repo policy, `autoRotate`, so only the owner can change it and every device shows the same value.
+A policy written before the field existed reads as off, so existing meshes stay off after an
+update. Off, the owner's daemon makes no collaborator lookups and no rotations of its own; `mur
+rotate` and `mur rotate --force` work as before.
 
-The owner needs GitHub CLI credentials that can list the repo's collaborators. The check runs only
-while the owner's daemon is online and the repo uses team encryption. A collaborator who joins and
-leaves between checks won't appear in the roster. The owner can still run `mur rotate --force`.
+It was on by default in nightlies (#412, #1271), and was turned off before a release because each
+rotation pauses reading for every other device until a key holder grants the new key ("A device
+waiting for a grant" above). On by default, every existing Team mesh would have rotated once, all at once,
+when its owner updated, because none had a roster yet. It also needs `gh` credentials that can
+list collaborators, and what it guards against is narrow: someone who lost push access reading
+new traffic.
+
+On, the owner's daemon checks the GitHub collaborator roster at startup, about once a day, and
+right after the setting is turned on. If the current key has no roster, the check records who
+can push and keeps the key: nobody is known to have left, and a rotation would pause the whole
+team for nothing. Someone who lost access before that first check keeps reading until the next
+rotation; `mur rotate --force` covers that case. On later checks, a collaborator who is missing
+or now has read-only access triggers a new key. Successful checks also record new collaborators
+so their later departure can be detected. A check that fails leaves the recorded roster in place
+and is retried after an hour while the daemon is running.
+
+The check runs only while the owner's daemon is online and the repo uses team encryption. A
+collaborator who joins and leaves between checks won't appear in the roster. The owner can still
+run `mur rotate --force`.
