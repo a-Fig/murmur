@@ -6,6 +6,22 @@ daemon start and hourly, with updates off too (it then installs nothing), and wi
 information in the request; a network failure waits quietly for the next hour. A development build
 (`-dev`) never updates itself. Versions from before the updater need one manual install to get it.
 
+- **One check per machine** (#1177). Every daemon on the machine checks on that schedule, but the
+  first to check in an hour asks GitHub, under a lock in the machine's clone-record directory
+  (`internal/clones`), and records its answer there (`releases.json`): the release on its channel,
+  with its assets, or why the ask failed. Every other daemon takes that answer while it is younger
+  than its own hour, so the machine asks once an hour, not once per clone, and every page says the
+  same. A failed ask is taken for 5 minutes only, so one blip at GitHub doesn't hold every clone
+  back for the hour. Daemons that start together check together: one that finds the lock held
+  waits up to 30 s for the other's answer, then takes what is recorded or asks GitHub itself,
+  unrecorded. A check a person asks for (a changed setting, Update now) asks GitHub all the same.
+  The record counts its writes, and a daemon that sees another's write checks within seconds,
+  taking the answer and reading the setting again, so the daemons' hours fall together. A recorded
+  release names the URLs its binary and `SHA256SUMS` come from, and whoever can write the record
+  (`MURMUR_CLONES_DIR` moves it) could name others, so one whose assets aren't
+  `https://github.com/a-Fig/murmur/releases/download/<tag>/<name>` is no answer. A failed install
+  isn't shared: it shows on the page of the daemon that tried, and the next daemon to check tries
+  it again.
 - **Download and install.** The daemon downloads its `mur-<os>-<arch>[.exe]` asset and the release's
   `SHA256SUMS`, checks the hash, and stages the file beside the running binary's resolved target.
   The downloads never leave https (2026-11-09), since whoever could serve the binary over plain http
@@ -114,8 +130,9 @@ information in the request; a network failure waits quietly for the next hour. A
   `murmur.channel prerelease` (#244, so a release runs on our own machines before a stable tag
   sends it to everyone, `docs/releasing.md`), and On is neither. Both
   are read on each check, so a change needs no restart; the page's change also asks its daemon for a
-  check within seconds (at least 10 s apart, against GitHub's hourly allowance per address), while
-  other clones' daemons and `mur updates` wait for the hourly one.
+  check within seconds (at least 10 s apart, against GitHub's hourly allowance per address), and
+  that check's answer, recorded for the machine, has every other clone's daemon check within
+  seconds too (#1177). `mur updates` waits for the hourly one.
   - *Overrides.* A repo's own git config, the system's, and `MURMUR_NO_UPDATE=1` on the daemon
     still win, as git's order has them. The page and `mur updates` show the machine's choice and,
     under it, what applies here and why ("Off here: this repo's git config sets murmur.update"),
