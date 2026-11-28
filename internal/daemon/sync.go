@@ -274,6 +274,7 @@ func (d *Daemon) pollOnce(ctx context.Context) (err error) {
 			d.known[ref] = remote[ref]
 		}
 	}
+	d.notePresencesListedLocked(remote) // a newer presence the fetch brought is seen too (ownerTransferLocked)
 	d.mu.Unlock()
 	d.clearOwnJunk(listed)
 

@@ -150,9 +150,11 @@ func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, e
 	if pin == nil || pin.Box == "" {
 		return bus.TeamRecord{}, errors.New("Murmur has no verified key for that device. Ask its user to come online first.")
 	}
-	if rp := d.peers[to]; rp != nil && rp.writtenOf != rp.listed {
+	if rp := d.peers[to]; rp != nil && (rp.writtenOf != rp.listed || d.presenceListed[to].sha != "" && d.presenceListed[to].sha != rp.writtenOf) {
 		// What the recipient can do is what its latest presence says. A newer one listed but not
-		// read yet may say less, after a downgrade (Sol's re-review of #1289).
+		// read yet may say less, after a downgrade (Sol's re-review of #1289). presenceListed is
+		// the newest a sync has seen, which a background sync can note after this transfer's own
+		// sync and before this device reads it (Sol's third review).
 		return bus.TeamRecord{}, fmt.Errorf("Murmur hasn't read the latest presence of %s yet. Try again after it syncs.", d.deviceCalledLocked(to))
 	}
 	for _, dev := range sortedKeys(d.peers) {

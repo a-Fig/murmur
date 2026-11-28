@@ -158,6 +158,17 @@ func TestTransferWaitsForActiveDevicesToUnderstandIt(t *testing.T) {
 	if _, err := d.ownerTransferLocked(to, time.Now()); err != nil {
 		t.Fatalf("transfer after the active device updates: %v", err)
 	}
+	// A sync, not this transfer's own, can list a newer presence from the recipient before this
+	// device reads it: the one read is superseded once it is listed (Sol's third review of #1289).
+	d.peers[to].writtenOf, d.peers[to].listed = "read", "read"
+	d.notePresencesListedLocked(map[string]string{brand.PresencePrefix + to: "listed"})
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Try again after it syncs") {
+		t.Fatalf("transferred ownership on a presence a listing superseded: %v", err)
+	}
+	d.peers[to].writtenOf, d.peers[to].listed = "listed", "listed"
+	if _, err := d.ownerTransferLocked(to, time.Now()); err != nil {
+		t.Fatalf("transfer once the listed presence is read: %v", err)
+	}
 	// A newer presence from the recipient, listed but not read (its fetch failed), may say it went
 	// back to an older version: what the one before said isn't taken for it (Sol's re-review of #1289).
 	d.sawPresence(to, "newer", false)
