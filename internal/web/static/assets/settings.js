@@ -545,6 +545,18 @@ function repoPolicySection() {
       state.ownsMesh ? onOffControl("repo-files", allowFiles, (value) => saveRepoPolicy({ allowFiles: value }), null, { disabled: ui.repoPolicyBusy, label: "Allow files" }) : h("span", null, allowFiles ? "On" : "Off"),
     ),
     ui.rowErrors["repo-policy"] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors["repo-policy"]),
+    state.ownsMesh && ownerCloneRow(),
+  );
+}
+
+// Ownership is this clone's keys in .git/murmur, so deleting the clone first strands the mesh (#1287).
+function ownerCloneRow() {
+  return settingsRow(
+    "repo-owner-clone",
+    "This clone owns the mesh",
+    "If this clone or its .git/murmur folder is deleted, nobody can change these settings, rotate the team key or hand ownership on. " +
+      "Reading and sending keep working. Before you remove it, run mur owner transfer DEVICE, with another device's ID from mur who.",
+    null,
   );
 }
 

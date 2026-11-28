@@ -12,6 +12,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
+	"github.com/a-Fig/murmur/internal/daemon"
 	"github.com/a-Fig/murmur/internal/gitx"
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/setup"
@@ -54,7 +55,7 @@ func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
 	if strings.Contains(remoteObjects(t, remote), "refsonly-hidden7") {
 		t.Error("the remote holds the message in the clear")
 	}
-	if r := a.do(proto.Request{Op: proto.OpOwner}); r.Note != "This clone is the mesh owner." {
+	if r := a.do(proto.Request{Op: proto.OpOwner}); r.Note != daemon.OwnerNote {
 		t.Fatalf("owner sees %+v", r)
 	}
 	b.stop()
@@ -140,7 +141,7 @@ func TestMeshOwnerTransfersToAVerifiedClone(t *testing.T) {
 		t.Fatalf("transfer by the mesh owner: %+v", r)
 	}
 	eventually(t, "new owner's clone sees the transfer", func() bool {
-		return b.do(proto.Request{Op: proto.OpOwner}).Note == "This clone is the mesh owner."
+		return b.do(proto.Request{Op: proto.OpOwner}).Note == daemon.OwnerNote
 	})
 	// Simulate a daemon that advanced its cursor past a transfer it did not understand.
 	b.stop()
@@ -164,7 +165,7 @@ func TestMeshOwnerTransfersToAVerifiedClone(t *testing.T) {
 	}
 	b.start()
 	eventually(t, "the upgraded daemon replays the transfer", func() bool {
-		return b.do(proto.Request{Op: proto.OpOwner}).Note == "This clone is the mesh owner."
+		return b.do(proto.Request{Op: proto.OpOwner}).Note == daemon.OwnerNote
 	})
 	if r := a.do(proto.Request{Op: proto.OpRotate, Force: true}); !strings.Contains(r.Error, "only the mesh owner") {
 		t.Fatalf("previous owner rotation: %+v", r)
