@@ -183,14 +183,14 @@ func TestTransferWaitsForActiveDevicesToUnderstandIt(t *testing.T) {
 	d.notePresencesListedLocked(map[string]string{brand.PresencePrefix + to: "refused"})
 	for range 2 {
 		_, err := d.ownerTransferLocked(to, time.Now())
-		if err == nil || !strings.Contains(err.Error(), "Update Murmur on it") || strings.Contains(err.Error(), "Try again") {
+		if err == nil || !strings.Contains(err.Error(), "Update Murmur on both devices") || strings.Contains(err.Error(), "Try again") {
 			t.Fatalf("transfer on a presence the sync refused: %v", err)
 		}
 	}
 	d.peers[to].writtenOf, d.peers[to].listed, d.peers[to].sha = "good", "good", "good"
 	d.refusedSHA = map[string]string{to: "forged"}
 	d.notePresencesListedLocked(map[string]string{brand.PresencePrefix + to: "forged"})
-	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Update Murmur on it") {
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Update Murmur on both devices") {
 		t.Fatalf("transfer on a presence that isn't the device's own: %v", err)
 	}
 }

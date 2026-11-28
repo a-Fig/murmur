@@ -220,7 +220,7 @@ func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, e
 				// The sync is done with it and won't read it again, so trying again changes nothing.
 				// It stays pending: taking it for read would trust what an older presence said
 				// (#1293).
-				return bus.TeamRecord{}, fmt.Errorf("Murmur can't read the latest presence of %s. Update Murmur on it.", name)
+				return bus.TeamRecord{}, fmt.Errorf("Murmur can't read the latest presence of %s. Update Murmur on both devices.", name)
 			}
 			return bus.TeamRecord{}, fmt.Errorf("Murmur hasn't read the latest presence of %s yet. Try again after it syncs.", name)
 		}
