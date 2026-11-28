@@ -114,6 +114,28 @@ function setTheme(t) {
   render();
 }
 
+// Pointing at a theme in Settings shows the whole page in it, and pointing away puts back the one
+// chosen (#1131): the page itself is the preview, so there is nothing to keep in step with the CSS.
+// A short wait first, so sweeping across the row doesn't flash every theme. By document, as the
+// page's DOM is rebuilt under the pointer; a touch chooses on tap, as before.
+const PREVIEW_MS = 120;
+let previewTimer = 0;
+function showTheme(t) {
+  if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t;
+}
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const t = e.target.closest?.("[data-theme-preview]")?.dataset.themePreview || theme;
+  clearTimeout(previewTimer);
+  if (t === theme) showTheme(theme);
+  else previewTimer = setTimeout(() => showTheme(t), PREVIEW_MS);
+});
+// Leaving the window passes over nothing else on the way.
+document.documentElement.addEventListener("mouseleave", () => {
+  clearTimeout(previewTimer);
+  showTheme(theme);
+});
+
 // Whether the conversation list shows only the conversations you are in, remembered like the
 // sidebar.
 let onlyMine = false;
