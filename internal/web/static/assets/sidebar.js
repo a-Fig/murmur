@@ -7,7 +7,7 @@ import {
   repoLabel,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
-import { deny, poll, tokenEra } from "./sync.js";
+import { deny, poll, tokenEra, waitingSends } from "./sync.js";
 import { render, go } from "./render.js";
 import {
   liveSessions, quietSessions, hideButton, quietFold, deviceDot, presence, settledFold, deviceLabel, host,
@@ -497,7 +497,7 @@ function repoButton() {
       onclick: (e) => {
         if (ui.repoMenu) return closeRepoMenu();
         const r = e.currentTarget.getBoundingClientRect();
-        ui.repoMenu = { x: r.left, top: r.bottom + 4, repos: null, opening: null, err: "" };
+        ui.repoMenu = { x: r.left, top: r.bottom + 4, repos: null, opening: null, err: "", sending: 0 };
         render();
         focusRepoMenu();
         loadRepos();
@@ -563,9 +563,14 @@ async function openRepo(r) {
   m.err = "";
   render();
   try {
-    const { url } = await api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) });
+    const [{ url }, sent] = await Promise.all([api("/api/repos/open", { method: "POST", body: JSON.stringify({ id: r.id }) }), allSent(m)]);
     // Starting a daemon can take a while, and the picker may have been closed meanwhile.
     if (ui.repoMenu !== m) return;
+    if (!sent) {
+      m.opening = null;
+      m.err = "Not switched: a message didn't send.";
+      return render();
+    }
     location.assign(url);
   } catch (e) {
     if (e instanceof AuthError) return deny(e.token);
@@ -575,6 +580,23 @@ async function openRepo(r) {
     if (/isn't joined/.test(e.message)) ui.repos = m.repos = (m.repos || []).filter((x) => x.id !== r.id);
     render();
   }
+}
+
+// Waits until no message is on its way that leaving would drop (#1257), and says whether they all
+// went. The picker says how many it waits for. False too if the picker closes meanwhile.
+async function allSent(m) {
+  const seen = new Set();
+  for (let w = waitingSends(); w.length; w = waitingSends()) {
+    for (const item of w) seen.add(item);
+    if (m.sending !== w.length) {
+      m.sending = w.length;
+      render();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    if (ui.repoMenu !== m) return false;
+  }
+  m.sending = 0;
+  return ![...seen].some((item) => item.status === "failed");
 }
 
 // Each path cut down to its last folders, as few as tell it from the others (#1280): their shared
@@ -638,6 +660,7 @@ function repoMenu() {
         ),
       ),
     ),
+    m.sending > 0 && h("p", { class: "tm-none", "data-announce": "" }, "Sending " + plural(m.sending, "message") + " first"),
     m.err && h("p", { class: "tm-err", "data-announce": "" }, m.err),
   );
   // Placed through the CSSOM: the page's CSP refuses style attributes.

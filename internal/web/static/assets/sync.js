@@ -22,7 +22,7 @@ import { minuteEdits, cancelMinutes } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 
 export {
-  deliver, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
+  deliver, waitingSends, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
   stateAskedAt, poll, inApp, tellApp, start,
 };
 
@@ -259,6 +259,13 @@ let loadedAt = 0; // when that first fetch came
 let heldIds = null; // see poll
 let scrolledAt = 0;
 let stateAskedAt = 0; // when the state in hand was asked for
+
+// The messages still on their way, which a switch to another repo waits for (#1257). One handed to
+// the daemon with keepalive would still go (#613), but the daemon can refuse it, as for a secret,
+// and the person would never see why.
+function waitingSends() {
+  return ui.outbox.filter((item) => item.status === "sending");
+}
 
 function hasUnsent() {
   return ui.outbox.length > 0 || attached.size > 0 || [...composers.values()].some((el) => el.value.trim());
