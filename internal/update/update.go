@@ -51,6 +51,12 @@ type Options struct {
 	// that release, the one the person saw: if the check finds another, it fails and says which.
 	// It doesn't turn updates on, and MURMUR_NO_UPDATE still refuses it. Nil: none is asked for.
 	Install <-chan string
+	// Shared is the directory of the machine's record of GitHub's answers, shared by every daemon
+	// on it (#1177): the clone record's (internal/clones). "" asks GitHub at every check.
+	Shared string
+	// fresh says this check asks GitHub, whatever another daemon heard within the hour: a person
+	// asked for it (Check, Install). Set by Run for each check.
+	fresh bool
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -154,12 +160,17 @@ func Run(ctx context.Context, o Options, restart func()) {
 	watch := time.NewTicker(o.Watch)
 	defer watch.Stop()
 	var checked time.Time
-	asked := "" // the release a person asked to install (Install), which the next check does
+	asked := ""        // the release a person asked to install (Install), which the next check does
+	requested := false // a person asked for the next check (Check), which asks GitHub
+	// seen is when the machine's shared answers were written, as this daemon last saw them: another
+	// daemon's write since asks for a check, which takes its answer (shared.go).
+	seen := sharedChanged(o.Shared)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-o.Check:
+			requested = true
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
 		case asked = <-o.Install:
@@ -170,6 +181,10 @@ func Run(ctx context.Context, o Options, restart func()) {
 			// the machine runs one version. The check below restarts onto it as well, but only
 			// hourly.
 			if !replaced(o.Executable, original) {
+				if m := sharedChanged(o.Shared); !m.Equal(seen) {
+					seen = m
+					timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+				}
 				continue
 			}
 			v := binaryVersion(o.Executable)
@@ -186,6 +201,8 @@ func Run(ctx context.Context, o Options, restart func()) {
 		cleanup(o.Executable, o.OS)
 		want, now := asked, asked != ""
 		asked = ""
+		o := o
+		o.fresh, requested = requested || now, false
 		if off := Off(ctx, o.Getenv, o.GitDir); off && envOff(o.Getenv) {
 			// The environment's opt-out may mean the binary is managed by something else, so it
 			// asks GitHub nothing, and refuses Update now.
@@ -245,6 +262,7 @@ func Run(ctx context.Context, o Options, restart func()) {
 				return
 			}
 		}
+		seen = sharedChanged(o.Shared) // this check's own answer, if it asked GitHub
 		timer.Reset(o.Every)
 	}
 }
@@ -361,7 +379,7 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 		}
 		return false, "", nil
 	}
-	recordLatest(o.GitDir, rel.Tag)
+	recordRelease(o.GitDir, rel)
 	latest = strings.TrimPrefix(rel.Tag, "v")
 	// A release from before the hold would install this prerelease again wherever the channel
 	// still reads "prerelease" to it (#1212). Back refuses that; this is for an override made since,
@@ -484,7 +502,7 @@ func look(ctx context.Context, o Options) (latest string, err error) {
 	if err != nil || rel == nil {
 		return "", err
 	}
-	recordLatest(o.GitDir, rel.Tag)
+	recordRelease(o.GitDir, rel)
 	return strings.TrimPrefix(rel.Tag, "v"), nil
 }
 
@@ -536,6 +554,8 @@ func takeHoldOff(ctx context.Context, o Options) {
 }
 
 type release struct {
+	// checked is when GitHub said this was the release: now, or when another daemon asked (pick).
+	checked    time.Time
 	Tag        string `json:"tag_name"`
 	Draft      bool   `json:"draft"`
 	Prerelease bool   `json:"prerelease"`
@@ -545,14 +565,14 @@ type release struct {
 	} `json:"assets"`
 }
 
-// pick returns the release to compare against the running version, or nil if there is none. The
-// stable channel asks for GitHub's latest release, which is never a prerelease. The prerelease
+// fetch returns the release to compare against the running version, or nil if there is none, as
+// GitHub says now (pick may take another daemon's answer instead). The stable channel asks for GitHub's latest release, which is never a prerelease. The prerelease
 // channel lists every release and takes the highest version, not the newest date, so a stable
 // release published after a higher prerelease doesn't pull the channel back. It reads every page,
 // since an old candidate can outrank the newest releases; old nightlies are pruned, so that is
 // usually one request. A failed page, or more than ten, fails the check rather than choosing from
 // part of the list.
-func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
+func fetch(ctx context.Context, o Options, prerelease bool) (*release, error) {
 	if !prerelease {
 		b, err := get(ctx, o, o.URL+"/latest", 1<<20)
 		if err != nil {
@@ -795,6 +815,15 @@ func recordLatest(gitDir, tag string) {
 	tmp := path + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		os.Rename(tmp, path)
+	}
+}
+
+// recordRelease records rel as the latest, as of when GitHub said so, which may be another
+// daemon's ask: About's "Checked" says when (#1114).
+func recordRelease(gitDir string, rel *release) {
+	recordLatest(gitDir, rel.Tag)
+	if !rel.checked.IsZero() && gitDir != "" {
+		os.Chtimes(latestPath(gitDir), rel.checked, rel.checked)
 	}
 }
 

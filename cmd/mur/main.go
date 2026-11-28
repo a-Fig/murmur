@@ -410,7 +410,7 @@ func runDaemonWith(ctx context.Context, args []string, run func(context.Context,
 		Clones: record, Joined: join.Joined, Repos: repos, ThemePath: themePath,
 		Consent: func() bool { return join.Joined(*gitDir) }, Log: logger,
 		Update: func(ctx context.Context, restart func()) {
-			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Report: releases.report, Check: updates.check, Install: updates.install}, restart)
+			update.Run(ctx, update.Options{Version: version, GitDir: *gitDir, Log: logger, Running: running, Shared: record, Report: releases.report, Check: updates.check, Install: updates.install}, restart)
 			releases.stop()
 		},
 		Version: releases.page,
