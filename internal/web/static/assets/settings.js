@@ -10,7 +10,9 @@ import { announce, render } from "./render.js";
 import { versionSection } from "./sidebar.js";
 import { deviceLabel, host } from "./sessions.js";
 import { REPO_FILES_OFF } from "./files.js";
-import { dmKey, deviceColor, composers, deviceMode, MODE_HELP, setMode } from "./messages.js";
+import { dmKey } from "./messages.js";
+import { deviceColor } from "./faces.js";
+import { composers, deviceMode, MODE_HELP, setMode } from "./composer.js";
 
 export { minuteEdits, cancelMinutes, settingsRow, moveToName, settingsPage };
 

@@ -7,9 +7,9 @@ import { render, go } from "./render.js";
 import { personBadges } from "./sidebar.js";
 import { host, emptyState } from "./sessions.js";
 import { inGroup, liveGroups } from "./tags.js";
-import {
-  messageDetail, conversationOf, avatar, nameButton, messageText, dayLabel, clockTime,
-} from "./messages.js";
+import { messageDetail, conversationOf } from "./messages.js";
+import { avatar, nameButton } from "./faces.js";
+import { messageText, dayLabel, clockTime } from "./chat.js";
 import { filesOnly } from "./files.js";
 
 export { recentPage };

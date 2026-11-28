@@ -11,7 +11,8 @@ import { deny } from "./sync.js";
 import { render, go } from "./render.js";
 import { pickSession } from "./sidebar.js";
 import { shownSessions, tagChips, tagButton, openTagMenu } from "./tags.js";
-import { conversations, avatar } from "./messages.js";
+import { conversations } from "./messages.js";
+import { avatar } from "./faces.js";
 import { startChat } from "./picker.js";
 
 export {
