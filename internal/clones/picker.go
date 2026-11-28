@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,6 +41,12 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 		return nil, err
 	}
 	self := ID(p.Self)
+	// A clone in the temporary folder is a test's or a demo's: anything that runs a daemon there
+	// records its clone, and a picker full of fixtures buries the real repos (#1278). A page that is
+	// itself one of them still lists them, so tests and demos see their siblings.
+	if !inTemp(p.Self) {
+		list = slices.DeleteFunc(list, func(c Clone) bool { return c.ID() != self && inTemp(c.GitDir) }) // self: reached through a link or short name
+	}
 	out := make([]web.Repo, len(list))
 	var wg sync.WaitGroup
 	for i, c := range list {
@@ -73,6 +80,40 @@ func (p Picker) List(ctx context.Context) ([]web.Repo, error) {
 	}
 	wg.Wait()
 	return out, nil
+}
+
+// tempRoots are the temporary folders: the system's, and /tmp and /var/tmp, which scripts and
+// people use whatever TMPDIR says (macOS's is under /var/folders), each as written and with its
+// links followed (macOS's /tmp is /private/tmp). internal/join's scratch homes are found the same
+// way. A variable, for the tests, whose own folders are all in the system's.
+var tempRoots = func() []string {
+	var roots []string
+	for _, r := range []string{os.TempDir(), "/tmp", "/var/tmp"} {
+		if !filepath.IsAbs(r) { // "/tmp" on Windows
+			continue
+		}
+		roots = append(roots, filepath.Clean(r))
+		if l, err := filepath.EvalSymlinks(r); err == nil {
+			roots = append(roots, l)
+		}
+	}
+	return roots
+}
+
+// inTemp says path is inside a temporary folder. filepath.Rel ignores case on Windows, as its
+// paths do.
+func inTemp(path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range tempRoots() {
+		if filepath.Dir(root) == root {
+			continue // a whole volume (TMPDIR=/) would hold every clone
+		}
+		rel, err := filepath.Rel(root, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 // shortPath is path with the home directory as ~, which is how two clones of one repo are told
