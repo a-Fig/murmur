@@ -640,7 +640,7 @@ type Daemon struct {
 	teamMu      sync.Mutex
 	rotationMu  sync.Mutex // one collaborator comparison and rotation at a time
 	teamKick    chan struct{}
-	rotateKick  chan struct{} // wakes autoRotate when the owner or its AutoRotate setting changes
+	rotateKick  chan struct{}   // wakes autoRotate when the owner or its AutoRotate setting changes
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
 	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
