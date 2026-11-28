@@ -213,8 +213,14 @@ owner, a count of changes to the owner, the mode and the setting, and once it ha
 and roster it decided on. Every write it makes is checked against them under `teamMu`, so the lease
 on the team ref refuses whatever lands after. If the owner turns the setting off, leaves Team mode
 or hands the mesh to another device during the lookup, the lookup is stopped and nothing is
-written. If the key changed, as a switch out of Team mode and back changes it, the check starts
-again with a new lookup. The sample taken for the old key says nothing about the new one.
+written. If the key changed, as a switch out of Team mode and back or a `mur rotate` changes it,
+the check starts again with a new lookup. The sample taken for the old key says nothing about the
+new one, so the check notes the key before it lists collaborators. Comparing an older sample with
+the roster of a key made by hand during the lookup rotated a second time (Sol's re-review).
+
+A new owner can be a grant behind: handed the mesh just after a key it hasn't been granted yet, it
+can't read that key's roster. Its check would rotate, which needs every key, so it waits for the
+grant and runs when the grant comes rather than at the hour's retry.
 
 Off holds only on an owner whose Murmur knows the setting. `v0.5.6-nightly.20261127` has #1271
 and not this setting, so it checks whenever the owner is in Team mode, and any older owner that
@@ -222,4 +228,13 @@ signs a policy drops `autoRotate`. So ownership goes only to a device whose pres
 the setting (`teamAdmin` 4), and an owner running that nightly has to update for Off to take
 effect. A daemon that saves `state.json` without knowing the field drops it from its cached policy.
 The cache records which policy fields it was written with (`teamPolicyV`), and a daemon that finds
-fewer reads the team history again from its root, where the signed value is.
+fewer reads the team history again from its root, where the signed value is. The read goes at least
+to the cached tip, from the clone's own objects, so it finishes even while the remote has no team
+ref; writes, presence included, wait for it. It reads every record, grants included, and saves
+`state.json` after each page of 500 records (`bus.LogPage`), so an interrupted read resumes. That
+cost comes back each time a downgrade and upgrade drops the field; it hasn't been measured on a long
+history (2026-11-27).
+
+A transfer also goes by the recipient's latest listed presence. If a newer one is listed and not yet
+read, after a failed fetch say, the transfer is refused until it syncs: the newer one may come from
+a downgrade that no longer follows the setting.

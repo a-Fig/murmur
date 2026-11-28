@@ -38,7 +38,8 @@ func (l *logBook) count(s string) int {
 
 // An automatic check follows what the owner does while it runs (Sol's review of #1289). A lookup
 // held open while the owner turns the setting off, switches out of Team mode, or hands the mesh to
-// another device writes nothing when it returns, even with someone gone from it. After a switch out
+// another device writes nothing when it returns, even with someone gone from it. One held open while
+// the owner makes a key by hand is taken again for the new key. After a switch out
 // of Team mode and back, the new key gets a fresh lookup of its own, not the sample taken for the
 // old one. And a cache saved by a daemon that didn't know the setting doesn't turn it off.
 func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
@@ -200,6 +201,23 @@ func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
 	eventually(t, "a check once the history is verified", func() bool { return la.count(same) == 1 })
 	settled("after an older daemon's cache", 5, 2, 2)
 
+	// A key made by hand while a lookup is out: the lookup was a sample for the key before it, so the
+	// check starts again with a fresh one, and doesn't hold the old sample against the new roster.
+	h = holdNext()
+	a.stop()
+	a.start()
+	waitHeld()
+	if r := a.do(proto.Request{Op: proto.OpRotate, Collaborators: []string{"alice"}, Force: true}); r.Error != "" {
+		t.Fatalf("rotate: %+v", r)
+	}
+	h <- []string{} // alice gone from the old sample
+	if <-stopped {
+		t.Fatal("a rotation by hand stopped the lookup; it should be compared, then taken again")
+	}
+	eventually(t, "the check starts again", func() bool { return la.count(stale) == 3 })
+	eventually(t, "the fresh lookup finds nobody gone", func() bool { return la.count(same) == 2 })
+	settled("rotated by hand during a lookup", 7, 3, 2)
+
 	// Handed to b while a lookup is out: a writes nothing, though nobody is left in what it gets.
 	h = holdNext()
 	a.stop()
@@ -213,9 +231,55 @@ func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
 	}
 	eventually(t, "the new owner checks", func() bool { return lb.count(same) == 1 })
 	release(h, []string{})
-	eventually(t, "the old owner's check starts again", func() bool { return la.count(stale) == 3 })
-	settled("transferred during a lookup", 6, 2, 2)
+	eventually(t, "the old owner's check starts again", func() bool { return la.count(stale) == 4 })
+	settled("transferred during a lookup", 8, 3, 2)
 	if n := bListed.Load(); n != 1 {
 		t.Fatalf("the new owner looked up collaborators %d times, want 1", n)
 	}
+}
+
+// A cache from a daemon that didn't know every policy field is read again from the team history's
+// root. With the remote's team ref gone, that read goes to the cached tip, from the objects the
+// clone still has, and writes resume: presence included (Sol's re-review of #1289).
+func TestAnOlderCacheIsReadAgainWithTheTeamRefGone(t *testing.T) {
+	remote := newRemote(t)
+	dir := filepath.Join(t.TempDir(), "owner")
+	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
+	if _, err := setup.RefsOnly(t.Context(), dir); err != nil {
+		t.Fatal(err)
+	}
+	a := &device{t: t, gitDir: filepath.Join(dir, ".git"), stale: testStale, poll: 100 * time.Millisecond}
+	a.start()
+	eventually(t, "the owner verifies its mesh", func() bool { return a.page().state().MeshOwner != "" })
+	presence := brand.PresencePrefix + a.self()
+	a.stop()
+	if teamIDs(t, remote) == nil {
+		t.Fatal("no team history on the remote to remove")
+	}
+	git(t, remote, "update-ref", "-d", brand.TeamRef)
+	statePath := filepath.Join(a.gitDir, brand.StateDir, "state.json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st map[string]any
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st["teamPolicyV"] == nil || st["teamTip"] == nil {
+		t.Fatalf("the cache didn't hold the team tip and the policy version: %s", data)
+	}
+	delete(st, "teamPolicyV")
+	if data, err = json.Marshal(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := gitOK(remote, "rev-parse", "--verify", "-q", presence)
+	a.start()
+	eventually(t, "presence is pushed again", func() bool {
+		after := gitOK(remote, "rev-parse", "--verify", "-q", presence)
+		return after != "" && after != before
+	})
 }

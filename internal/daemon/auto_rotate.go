@@ -61,7 +61,7 @@ func (d *Daemon) checkForDepartures(ctx context.Context, list func(context.Conte
 		if !errors.Is(err, errAutoStale) {
 			return next
 		}
-		d.log.Print("automatic team key check: the owner or the repo settings changed during the check, so it starts again")
+		d.log.Print("automatic team key check: the owner, the repo settings or the team key changed during the check, so it starts again")
 		if attempt == 2 {
 			return rotationRetry
 		}
@@ -78,8 +78,12 @@ func (d *Daemon) checkOnce(ctx context.Context, list func(context.Context, strin
 	verified := d.st.TeamOwnerChecked && d.st.TeamReplayThrough == ""
 	check, enabled := d.autoCheckLocked()
 	if !verified {
-		d.autoDeferred = true // teamVerifiedLocked wakes the loop once the history is verified
+		d.autoDeferred = true // autoResumeLocked wakes the loop once the history is verified
 	}
+	// The lookup is a sample of who can push for this key. A key made while it runs, by hand with
+	// mur rotate say, starts the check again (Sol's re-review of #1289): its roster was taken later,
+	// and comparing an older sample with it rotated a second time.
+	check.epoch, _ = d.epochRefLocked()
 	lookup, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if enabled {
@@ -122,9 +126,10 @@ func (d *Daemon) checkOnce(ctx context.Context, list func(context.Context, strin
 }
 
 // autoCheck is what one automatic check was authorized by: the owner it ran as, and autoRev, which
-// moves whenever the owner, the encryption mode or AutoRotate changes. Once it has decided, epoch and
-// roster are the current epoch and its roster record (epochRefLocked) it decided on (Sol's review
-// of #1289: a decision taken for one epoch was applied to the next, made by a mode change).
+// moves whenever the owner, the encryption mode or AutoRotate changes. epoch is the key the lookup
+// was started for; once the check has decided, roster is that epoch's roster record
+// (epochRefLocked) it decided on (Sol's review of #1289: a decision taken for one epoch was applied
+// to the next, made by a mode change).
 type autoCheck struct {
 	owner, key    string
 	rev           uint64
@@ -132,7 +137,7 @@ type autoCheck struct {
 }
 
 // errAutoStale says what an automatic check was authorized by, or decided on, no longer holds.
-var errAutoStale = errors.New("the owner or the repo settings changed during the automatic check")
+var errAutoStale = errors.New("the owner, the repo settings or the team key changed during the automatic check")
 
 // autoCheckLocked is the authorization for an automatic check, if one may run now: the team history
 // is verified, and this device owns a mesh in Team mode with AutoRotate on. Caller holds mu.
@@ -184,10 +189,13 @@ func (d *Daemon) autoRotateChangedLocked() {
 	d.kickAutoRotate()
 }
 
-// teamVerifiedLocked is called when the team history has been verified to its tip. A check put
-// off meanwhile runs now: the wake-up that would have started it can come, and be spent, between
-// two pages of the replay (Sol's review of #1289). Caller holds mu.
-func (d *Daemon) teamVerifiedLocked() {
+// autoResumeLocked is called when the team history has been verified to its tip, and when this
+// device is granted team keys. A check put off for either runs now. The wake-up that would have
+// started it after verification can come, and be spent, between two pages of the replay (Sol's
+// review of #1289). And a new owner, just handed the mesh, can be a grant behind the key it was
+// made for: its check can't read that key's roster, would rotate, and can't without every key, so
+// it waits for the grant, not for the hour's retry (test-linux on 8034d2c9). Caller holds mu.
+func (d *Daemon) autoResumeLocked() {
 	if d.autoDeferred {
 		d.autoDeferred = false
 		d.kickAutoRotate()

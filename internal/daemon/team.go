@@ -129,6 +129,7 @@ func (d *Daemon) addTeamKeysLocked(keys bus.Keyring) bool {
 	}
 	d.kickPoll()
 	d.kickPresence() // its presence lists the keys it holds, which teammates grant by
+	d.autoResumeLocked()
 	return true
 }
 
@@ -247,7 +248,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			d.st.TeamReplayThrough = ""
 			d.refreshRepoFilesLocked()
 			d.signalTeamLocked()
-			d.teamVerifiedLocked()
+			d.autoResumeLocked()
 			d.saveLocked()
 			d.mu.Unlock()
 		}
@@ -315,7 +316,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 				d.st.TeamReplayThrough = ""
 				d.refreshRepoFilesLocked()
 				d.signalTeamLocked()
-				d.teamVerifiedLocked()
+				d.autoResumeLocked()
 			}
 		})
 		return nil
@@ -330,7 +331,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.st.TeamReplayThrough = ""
 		d.refreshRepoFilesLocked()
 		d.signalTeamLocked()
-		d.teamVerifiedLocked()
+		d.autoResumeLocked()
 		d.saveLocked()
 	}
 	d.mu.Unlock()
@@ -624,6 +625,10 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 		// request came in, and this one would then grant a history with that key missing.
 		for _, e := range d.st.Epochs {
 			if d.teamKeys[e.ID] == nil {
+				if ask.auto != nil {
+					// Under mu with the look at the keys, so a grant after it wakes the check.
+					d.autoDeferred = true
+				}
 				d.mu.Unlock()
 				return "", false, errKeysMissing
 			}
@@ -750,7 +755,7 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	if tip == "" {
 		// The lease proved this device wrote the first epoch with no earlier history.
 		d.st.TeamOwnerChecked = true
-		d.teamVerifiedLocked()
+		d.autoResumeLocked()
 	}
 	d.saveLocked()
 	return epoch, true, nil
@@ -875,10 +880,11 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool,
 		none := ep != nil && ep.Roster == nil
 		if auto != nil {
 			// A roster written meanwhile is decided again; a new key is not, as the lookup was a
-			// sample for the key it started on.
+			// sample for the key it started on (auto.epoch, taken before it).
 			c := *auto
-			c.epoch, c.roster = d.epochRefLocked()
-			if check != nil && c.epoch != check.epoch {
+			var epoch string
+			epoch, c.roster = d.epochRefLocked()
+			if epoch != auto.epoch {
 				d.mu.Unlock()
 				return "", errAutoStale
 			}

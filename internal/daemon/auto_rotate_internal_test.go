@@ -152,17 +152,50 @@ func TestACheckPutOffDuringVerificationRunsAfterIt(t *testing.T) {
 	default:
 	}
 	d.st.TeamReplayThrough = ""
-	d.teamVerifiedLocked()
+	d.autoResumeLocked()
 	select {
 	case <-d.rotateKick:
 	default:
 		t.Fatal("the check put off during verification wasn't woken")
 	}
-	d.teamVerifiedLocked()
+	d.autoResumeLocked()
 	select {
 	case <-d.rotateKick:
 		t.Fatal("woken twice for one check put off")
 	default:
+	}
+}
+
+// A check that would rotate before this device holds every team key is woken by the grant that
+// brings them, not left for the hour's retry: a new owner, just handed the mesh, can be a grant
+// behind the newest key (test-linux on 8034d2c9).
+func TestACheckWaitingForTheTeamKeysRunsWhenTheyCome(t *testing.T) {
+	d := autoRig(t)
+	k := bus.NewBoxKey()
+	ep := teamEpoch{ID: bus.TeamID(bus.BoxPublic(k)), Pub: bus.BoxPublic(k), By: d.device, At: time.Now().UTC()}
+	d.st.Epochs = append(d.st.Epochs, ep)
+	d.mu.Lock()
+	c, ok := d.autoCheckLocked()
+	c.epoch, c.roster = d.epochRefLocked()
+	d.mu.Unlock()
+	if !ok {
+		t.Fatal("the fixture can't run an automatic check")
+	}
+	if _, pushed, err := d.teamWork(t.Context(), &teamAsk{rotate: true, auto: &c}); !errors.Is(err, errKeysMissing) || pushed {
+		t.Fatalf("pushed %v, %v; want errKeysMissing", pushed, err)
+	}
+	select {
+	case <-d.rotateKick:
+		t.Fatal("woken before the key came")
+	default:
+	}
+	d.mu.Lock()
+	d.addTeamKeysLocked(bus.Keyring{ep.ID: k})
+	d.mu.Unlock()
+	select {
+	case <-d.rotateKick:
+	default:
+		t.Fatal("the check waiting for the team keys wasn't woken by the grant")
 	}
 }
 

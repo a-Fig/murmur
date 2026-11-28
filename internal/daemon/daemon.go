@@ -644,7 +644,8 @@ type Daemon struct {
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
 	// What the automatic check (auto_rotate.go) runs by, under mu: autoRev counts changes of owner,
 	// mode and AutoRotate, autoCancel stops the collaborator lookup in flight, and autoDeferred says
-	// a check was put off while the team history was being verified.
+	// a check was put off while the team history was being verified, or until this device holds
+	// every team key.
 	autoRev      uint64
 	autoCancel   context.CancelFunc
 	autoDeferred bool
@@ -1848,6 +1849,12 @@ func (d *Daemon) loadState() error {
 			d.st.TeamOwnerChecked = false
 		}
 		d.st.TeamPolicyV = teamPolicyVersion
+	}
+	if d.st.TeamTip != "" && !d.st.TeamOwnerChecked && d.st.TeamReplayThrough == "" {
+		// The read from the root goes to the cached tip at least. With it named as the target, a
+		// sync reads it even while the remote has no team ref: without one, nothing did, and writes
+		// waited on "still verifying the team history" for good (Sol's re-review of #1289).
+		d.st.TeamReplayThrough = d.st.TeamTip
 	}
 	defer d.stopKilledLocked(written) // once the maps below are there
 	if d.st.Processed == nil {
