@@ -544,6 +544,17 @@ function repoPolicySection() {
       allowFiles ? "People and agents can attach files when their device settings allow it." : REPO_FILES_OFF + " Older devices may still publish attachments.",
       state.ownsMesh ? onOffControl("repo-files", allowFiles, (value) => saveRepoPolicy({ allowFiles: value }), null, { disabled: ui.repoPolicyBusy, label: "Allow files" }) : h("span", null, allowFiles ? "On" : "Off"),
     ),
+    settingsRow(
+      "repo-rotate",
+      "Rotate the team key automatically",
+      (state.ownsMesh ? "When on, this device" : "When on, the owner's device") +
+        " checks GitHub daily and makes a new team key if someone lost push access." +
+        " The first check only records who can push." +
+        (state.ownsMesh ? " If someone lost access before then, run mur rotate --force." : " For someone who lost access before then, the owner runs mur rotate --force.") +
+        " Each new key pauses reading for teammates until a device that has it syncs. Needs gh signed in." +
+        (mode === "team" ? "" : " Runs only with Team encryption."),
+      state.ownsMesh ? onOffControl("repo-rotate", !!state.autoRotate, (value) => saveRepoPolicy({ autoRotate: value }), null, { disabled: ui.repoPolicyBusy, label: "Rotate the team key automatically" }) : h("span", null, state.autoRotate ? "On" : "Off"),
+    ),
     ui.rowErrors["repo-policy"] && h("p", { class: "row-error", role: "alert" }, ui.rowErrors["repo-policy"]),
   );
 }

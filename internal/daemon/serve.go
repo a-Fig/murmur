@@ -821,7 +821,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 		}
 		return proto.Response{OK: true, Note: "This clone hasn't seen a mesh owner."}
 	case proto.OpRotate:
-		note, err := d.rotateRequest(ctx, req.Collaborators, req.Force)
+		note, err := d.rotateRequest(ctx, req.Collaborators, req.Force, nil)
 		if err != nil {
 			return fail(err.Error())
 		}

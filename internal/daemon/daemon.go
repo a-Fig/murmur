@@ -640,7 +640,16 @@ type Daemon struct {
 	teamMu      sync.Mutex
 	rotationMu  sync.Mutex // one collaborator comparison and rotation at a time
 	teamKick    chan struct{}
+	rotateKick  chan struct{}   // wakes autoRotate when the owner or its AutoRotate setting changes
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
+	// What the automatic check (auto_rotate.go) runs by, under mu: autoRev counts changes of owner,
+	// mode and AutoRotate, and autoCancel stops the collaborator lookup in flight. autoWaitVerify
+	// says a check was put off while the team history was being verified, and autoWaitKeys that one
+	// is waiting until this device holds every team key: each wait ends only by what it waits for.
+	autoRev        uint64
+	autoCancel     context.CancelFunc
+	autoWaitVerify bool
+	autoWaitKeys   bool
 	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
 	// team key the team ref doesn't show, that record and the sync it was first met in
@@ -1142,6 +1151,10 @@ type state struct {
 	Epochs            []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted       map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark         map[string]time.Time `json:"grantMark,omitempty"`
+	// TeamPolicyV is the RepoPolicy fields TeamOwner was cached with (teamPolicyVersion). A daemon
+	// from before a field drops it, and this, when it saves, so the next one reads the team history
+	// again for the signed value instead of trusting a cache that lost it.
+	TeamPolicyV int `json:"teamPolicyV,omitempty"`
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
@@ -1492,7 +1505,7 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 		threads: map[threadKey]t3db.State{}, threadRead: map[threadKey]time.Time{}, threadWarned: map[threadKey]bool{},
 		handedTo: map[threadKey][]handed{}, handing: map[handing]bool{}, quit: make(chan struct{}), msgIDs: map[string]bool{}, msgKeys: map[string]bool{}, idOwner: map[string]string{}, brackets: map[string]*bracket{},
 		refused: map[string]time.Time{}, refusedSHA: map[string]string{},
-		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1),
+		waitWarned: map[string]bool{}, unknownAt: map[string]unknownKey{}, teamChanged: make(chan struct{}), teamKick: make(chan struct{}, 1), rotateKick: make(chan struct{}, 1),
 	}
 	device, signKey, boxKey, err := loadIdentity(dir, opt.Log, sealedLocally(ctx, gitx.Git{Dir: opt.GitDir}))
 	if err != nil {
@@ -1818,6 +1831,7 @@ func (d *Daemon) loadState() error {
 	}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
+		d.st.TeamPolicyV = teamPolicyVersion
 		return nil
 	}
 	if err != nil {
@@ -1826,6 +1840,22 @@ func (d *Daemon) loadState() error {
 	if err := json.Unmarshal(b, &d.st); err != nil {
 		d.log.Printf("state.json unreadable, starting fresh: %v", err)
 		d.st = state{}
+	}
+	if d.st.TeamPolicyV < teamPolicyVersion {
+		// The policy was cached by a daemon that didn't know every field, and dropped what it didn't
+		// know: AutoRotate, say, after a downgrade and upgrade (Sol's review of #1289). The team
+		// history holds the signed policy, so it is read again from its root, as after an upgrade
+		// from before ownership, and writes wait for that read.
+		if d.st.TeamOwner != nil {
+			d.st.TeamOwnerChecked = false
+		}
+		d.st.TeamPolicyV = teamPolicyVersion
+	}
+	if d.st.TeamTip != "" && !d.st.TeamOwnerChecked && d.st.TeamReplayThrough == "" {
+		// The read from the root goes to the cached tip at least. With it named as the target, a
+		// sync reads it even while the remote has no team ref: without one, nothing did, and writes
+		// waited on "still verifying the team history" for good (Sol's re-review of #1289).
+		d.st.TeamReplayThrough = d.st.TeamTip
 	}
 	defer d.stopKilledLocked(written) // once the maps below are there
 	if d.st.Processed == nil {

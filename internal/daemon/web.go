@@ -259,6 +259,7 @@ func (s pageSource) State(ctx context.Context) (web.State, error) {
 	if owner := d.st.TeamOwner; owner != nil && d.checkOwnerHistoryLocked() == nil {
 		st.MeshOwner, st.OwnsMesh = owner.Device, d.isOwnerLocked()
 		st.EncryptionMode = owner.Policy.EncryptionMode
+		st.AutoRotate = owner.Policy.AutoRotate
 	}
 	for _, id := range sortedKeys(d.peers) {
 		p := d.peers[id]
@@ -579,6 +580,9 @@ func (s pageSource) SetRepoPolicy(ctx context.Context, change web.RepoPolicyChan
 	s.d.pageCalled(ctx)
 	if change.AllowFiles != nil {
 		return s.d.setRepoFilesAllowed(ctx, *change.AllowFiles)
+	}
+	if change.AutoRotate != nil {
+		return s.d.setRepoAutoRotate(ctx, *change.AutoRotate)
 	}
 	return s.d.setRepoMode(ctx, change.EncryptionMode)
 }

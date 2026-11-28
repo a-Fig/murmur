@@ -60,6 +60,7 @@ type Source interface {
 type RepoPolicyChange struct {
 	EncryptionMode string `json:"encryptionMode,omitempty"`
 	AllowFiles     *bool  `json:"allowFiles,omitempty"`
+	AutoRotate     *bool  `json:"autoRotate,omitempty"`
 }
 
 // ErrNoUpdate is Restart's answer when no installed update is waiting.
@@ -81,6 +82,7 @@ type State struct {
 	OwnsMesh       bool     `json:"ownsMesh,omitempty"`
 	EncryptionMode string   `json:"encryptionMode,omitempty"`
 	RepoFilesOff   bool     `json:"repoFilesOff,omitempty"`
+	AutoRotate     bool     `json:"autoRotate,omitempty"` // the owner's automatic team key rotation
 	// Receipts is, for each of the person's recent messages, by its ID, how far it got with each of
 	// its recipients (#26). It changes after the message is sent, so it rides on the state, which
 	// the page asks for every few seconds, and not on the message.
