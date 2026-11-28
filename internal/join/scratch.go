@@ -216,7 +216,7 @@ func (e Env) keepToScratch(byAgent [][]agentHome, readT3, skippedT3 bool, cmd st
 	}
 	for i, a := range agents {
 		for j, h := range byAgent[i] {
-			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) && (a.driver != "kiro" || kiroPathsInTemp(h.Dir)) && (a.driver != "cursor" || cursorPathsInTemp(h)) {
+			if h.Dir == "" || inTemp(h.Dir, false) && (h.JSON == "" || inTemp(h.JSON, false)) && (a.driver != "kiro" || kiroPathsInTemp(h.Dir)) && (a.driver != "cursor" || cursorPathsInTemp(h)) && (a.driver != "claudeAgent" && a.driver != "antigravity" || rulePathsInTemp(a.driver, h)) {
 				continue
 			}
 			left = append(left, h.Label+" in "+h.Dir+" (from "+e.homeFrom(a, h, readT3)+")")
@@ -229,6 +229,20 @@ func (e Env) keepToScratch(byAgent [][]agentHome, readT3, skippedT3 bool, cmd st
 	return "Left these alone, because your home, " + scratch + ", is in the temporary folder, as a test's is, and they are outside it: " +
 		strings.Join(left, "; ") + ". To test in that home alone, unset the variables named here or point them into it. " +
 		"To change these anyway, run `" + brand.Command + " " + cmd + " --outside-home`."
+}
+
+// rulePathsInTemp says the permissions files join and uninstall write in a Claude Code or
+// Antigravity home, and the records of the rules in them, resolve inside the temporary folder (#1211).
+func rulePathsInTemp(driver string, h agentHome) bool {
+	files := []string{filepath.Join(h.Dir, "settings.json")}
+	if driver == "antigravity" {
+		files = []string{filepath.Join(h.Dir, antigravityCLI, "settings.json"), filepath.Join(h.Dir, antigravityACP, "settings.json")}
+	}
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f, ruleRecordPath(f))
+	}
+	return pathsInTemp(paths)
 }
 
 // pathsInTemp says every path resolves into the temporary folder (inTemp).

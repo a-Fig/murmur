@@ -479,9 +479,15 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 	if err != nil || text == "" {
 		return did, nil, err
 	}
-	out, allowed, err := jsonedit.RemoveIn(text, []string{"permissions", "allow"}, allowRule)
+	out, found, err := jsonedit.RemoveIn(text, []string{"permissions", "allow"}, allowRule)
 	if err != nil {
 		return did, nil, fmt.Errorf("%s: %w", path, err)
+	}
+	// Only a rule join recorded adding is taken out; one without a record is the user's (#1211).
+	allowed := found && joinAddedRule(path, allowRule)
+	if found && !allowed {
+		out = text
+		notes = append(notes, keptRuleNote(h.Label, path, allowRule))
 	}
 	// The notice hook join wrote here (#422).
 	hooked := false
@@ -493,10 +499,13 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 		out, hooked = string(b), true
 	}
 	if !allowed && !hooked {
-		return did, nil, nil
+		if !found {
+			err = forgetRule(path, allowRule)
+		}
+		return did, notes, err
 	}
 	if err := writeJSONConfig(path, out, 0o644); err != nil {
-		return did, nil, err
+		return did, notes, err
 	}
 	if allowed {
 		did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+path+")")
@@ -504,7 +513,10 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 	if hooked {
 		did = append(did, h.Label+": removed "+brand.Product+"'s notice hook ("+path+")")
 	}
-	return did, nil, nil
+	if !found || allowed {
+		err = forgetRule(path, allowRule)
+	}
+	return did, notes, err
 }
 
 // unregisterCodexAt takes Murmur's server, hook and the hook's trust out of a Codex home.

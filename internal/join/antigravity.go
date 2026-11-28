@@ -29,7 +29,7 @@ import (
 const (
 	antigravityCLI = "antigravity-cli"
 	antigravityACP = "antigravity-acp"
-	// Uninstall removes Murmur's allow rule, including one added by hand.
+	// Uninstall removes it only where join recorded adding it (ruleowned.go).
 	antigravityAllowRule = "mcp(" + brand.MCPServer + "/*)"
 )
 
@@ -223,7 +223,15 @@ func allowAntigravityTools(path string) (bool, error) {
 	if err := parses(out); err != nil {
 		return false, err
 	}
-	return true, writeAtomic(path, []byte(out), 0o600)
+	// Recorded first, so a rule is never in the file that join can't say it added (ruleowned.go).
+	if err := recordRule(path, antigravityAllowRule); err != nil {
+		return false, err
+	}
+	if err := writeAtomic(path, []byte(out), 0o600); err != nil {
+		_ = forgetRule(path, antigravityAllowRule)
+		return false, err
+	}
+	return true, nil
 }
 
 // antigravityHook is join's entry in hooks.json. PreInvocation brings notices before each model
@@ -348,7 +356,7 @@ func antigravityRemoval(_ Env, h agentHome) string {
 	for _, dir := range []string{antigravityCLI, antigravityACP} {
 		path := filepath.Join(h.Dir, dir, "settings.json")
 		if text, err := readConfig(path); err == nil && text != "" {
-			if _, found, _ := jsonedit.RemoveIn(text, antigravityAllowPath, antigravityAllowRule); found {
+			if _, found, _ := jsonedit.RemoveIn(text, antigravityAllowPath, antigravityAllowRule); found && joinAddedRule(path, antigravityAllowRule) {
 				steps = append(steps, "delete \""+antigravityAllowRule+"\" from permissions.allow in "+path)
 			}
 		}
@@ -370,8 +378,6 @@ func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, no
 	}{
 		{filepath.Join("config", "mcp_config.json"), []func(string) (string, bool, error){deleteStep("mcpServers", brand.MCPServer), emptyStep("mcpServers")}, "the " + brand.MCPServer + " MCP server"},
 		{filepath.Join("config", "hooks.json"), []func(string) (string, bool, error){deleteStep(antigravityHookName)}, brand.Product + "'s hook"},
-		{filepath.Join(antigravityCLI, "settings.json"), []func(string) (string, bool, error){removeAntigravityAllow}, "the rule that allowed " + brand.Product + "'s tools"},
-		{filepath.Join(antigravityACP, "settings.json"), []func(string) (string, bool, error){removeAntigravityAllow}, "the rule that allowed " + brand.Product + "'s tools"},
 	} {
 		path := filepath.Join(h.Dir, f.file)
 		text, err := readConfig(path)
@@ -394,6 +400,19 @@ func (e Env) unregisterAntigravityAt(_ context.Context, hs []agentHome) (did, no
 			continue
 		}
 		did = append(did, h.Label+": removed "+f.what+" ("+path+")")
+	}
+	// The allow rule goes only where join recorded adding it (#1211).
+	for _, dir := range []string{antigravityCLI, antigravityACP} {
+		path := filepath.Join(h.Dir, dir, "settings.json")
+		removed, note, err := takeOutAddedRuleMode(h.Label, path, antigravityAllowRule, 0o600, removeAntigravityAllow)
+		switch {
+		case err != nil:
+			problems = append(problems, err)
+		case removed:
+			did = append(did, h.Label+": removed the rule that allowed "+brand.Product+"'s tools ("+path+")")
+		case note != "":
+			notes = append(notes, note)
+		}
 	}
 	return did, notes, errors.Join(problems...)
 }

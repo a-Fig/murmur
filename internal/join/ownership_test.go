@@ -283,3 +283,109 @@ func TestACorruptRuleRecordDoesntStopUninstall(t *testing.T) {
 		t.Errorf("err=%v notes=%q\n%s", err, notes, read(t, sb.CursorConfig))
 	}
 }
+
+// recordJoinAdded notes in the record beside path that join added rule to it, as a join of this
+// version does, for a test that writes the file by hand.
+func recordJoinAdded(t *testing.T, path, rule string) {
+	t.Helper()
+	if err := recordRule(path, rule); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// #1211: Claude Code's and Antigravity's joins record the rule they add, as Cursor's and Kiro's do,
+// and uninstall takes out only a recorded one.
+
+func TestClaudeUninstallKeepsAnAllowRuleJoinDidntAdd(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "claude"), JSON: filepath.Join(sb.root, "claude.json"), Label: "Claude Code"}
+	settings := filepath.Join(h.Dir, "settings.json")
+	write(t, settings, `{"permissions": {"allow": ["mcp__murmur"]}}`)
+
+	if allowed, err := allowClaudeTools(h.Dir); err != nil || allowed {
+		t.Fatalf("join: allowed=%v err=%v", allowed, err)
+	}
+	if _, err := os.Stat(ruleRecordPath(settings)); !os.IsNotExist(err) {
+		t.Errorf("join recorded a rule it didn't add (%v)", err)
+	}
+	did, notes, err := sb.unregisterClaudeAt(context.Background(), []agentHome{h})
+	if err != nil || strings.Contains(strings.Join(did, "\n"), "allowed") {
+		t.Fatalf("uninstall: did=%q err=%v", did, err)
+	}
+	if !strings.Contains(read(t, settings), "mcp__murmur") || !strings.Contains(strings.Join(notes, "\n"), settings) {
+		t.Errorf("uninstall dropped the user's rule or didn't say it kept it: notes=%q\n%s", notes, read(t, settings))
+	}
+}
+
+func TestClaudeUninstallRemovesTheRuleJoinAdded(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "claude"), JSON: filepath.Join(sb.root, "claude.json"), Label: "Claude Code"}
+	settings := filepath.Join(h.Dir, "settings.json")
+	write(t, settings, `{"permissions": {"allow": ["Bash(ls)"]}}`)
+	if allowed, err := allowClaudeTools(h.Dir); err != nil || !allowed {
+		t.Fatalf("join: allowed=%v err=%v", allowed, err)
+	}
+	if !joinAddedRule(settings, allowRule) {
+		t.Fatal("join didn't record the rule it added")
+	}
+	did, notes, err := sb.unregisterClaudeAt(context.Background(), []agentHome{h})
+	if err != nil || len(notes) != 0 || !strings.Contains(strings.Join(did, "\n"), "allowed") {
+		t.Fatalf("uninstall: did=%q notes=%q err=%v", did, notes, err)
+	}
+	if got := read(t, settings); strings.Contains(got, "mcp__murmur") || !strings.Contains(got, "Bash(ls)") {
+		t.Errorf("settings.json after uninstall:\n%s", got)
+	}
+	if _, err := os.Stat(ruleRecordPath(settings)); !os.IsNotExist(err) {
+		t.Errorf("the record of the rule is still there (%v)", err)
+	}
+}
+
+func TestAntigravityUninstallKeepsAnAllowRuleJoinDidntAdd(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "gemini"), Label: "Antigravity", T3Own: true}
+	cli := filepath.Join(h.Dir, "antigravity-cli", "settings.json")
+	acp := filepath.Join(h.Dir, "antigravity-acp", "settings.json")
+	write(t, cli, `{"permissions": {"allow": ["mcp(murmur/*)"]}}`)
+
+	if allowed, err := allowAntigravityTools(cli); err != nil || allowed {
+		t.Fatalf("join: allowed=%v err=%v", allowed, err)
+	}
+	if rem := antigravityRemoval(sb.Env, h); strings.Contains(rem, "mcp(murmur") {
+		t.Errorf("removal advice names a rule join didn't add: %q", rem)
+	}
+	// The ACP file's rule is recorded, the CLI file's isn't: only the ACP one goes.
+	write(t, acp, `{"permissions": {"allow": ["mcp(murmur/*)"]}}`)
+	recordJoinAdded(t, acp, antigravityAllowRule)
+	did, notes, err := sb.unregisterAntigravityAt(context.Background(), []agentHome{h})
+	if err != nil || len(did) != 1 || !strings.Contains(did[0], acp) {
+		t.Fatalf("uninstall: did=%q err=%v", did, err)
+	}
+	if !strings.Contains(read(t, cli), "mcp(murmur/*)") || !strings.Contains(strings.Join(notes, "\n"), cli) {
+		t.Errorf("uninstall dropped the user's rule or didn't say it kept it: notes=%q\n%s", notes, read(t, cli))
+	}
+	if strings.Contains(read(t, acp), "murmur") {
+		t.Errorf("the recorded rule stayed:\n%s", read(t, acp))
+	}
+}
+
+func TestAntigravityUninstallRemovesTheRuleJoinAdded(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "gemini"), Label: "Antigravity", T3Own: true}
+	cli := filepath.Join(h.Dir, "antigravity-cli", "settings.json")
+	write(t, cli, `{"model": "mine"}`)
+	if allowed, err := allowAntigravityTools(cli); err != nil || !allowed {
+		t.Fatalf("join: allowed=%v err=%v", allowed, err)
+	}
+	if rem := antigravityRemoval(sb.Env, h); !strings.Contains(rem, "mcp(murmur/*)") {
+		t.Errorf("removal advice omits the rule join added: %q", rem)
+	}
+	if _, notes, err := sb.unregisterAntigravityAt(context.Background(), []agentHome{h}); err != nil || len(notes) != 0 {
+		t.Fatalf("uninstall: notes=%q err=%v", notes, err)
+	}
+	if got := read(t, cli); strings.Contains(got, "murmur") || !strings.Contains(got, `"model": "mine"`) {
+		t.Errorf("settings.json after uninstall:\n%s", got)
+	}
+	if _, err := os.Stat(ruleRecordPath(cli)); !os.IsNotExist(err) {
+		t.Errorf("the record of the rule is still there (%v)", err)
+	}
+}

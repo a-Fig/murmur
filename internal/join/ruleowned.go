@@ -11,8 +11,8 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 )
 
-// An allow rule is a string or an entry in a permissions file the user also writes, and Cursor and
-// Kiro rewrite those files themselves, so nothing in the rule says who added it. A rule that was
+// An allow rule is a string or an entry in a permissions file the user also writes, and the agent
+// rewrites those files itself (Cursor, Kiro, Claude Code, Antigravity), so nothing in the rule says who added it. A rule that was
 // there before join is the user's, and uninstall must leave it (#1199). So join records each rule it
 // adds, in a small file beside the permissions file, and uninstall takes out only a rule that is
 // recorded. A rule an older mur added has no record, and stays too, with a note that says how to
@@ -111,6 +111,17 @@ func writeRuleRecord(configFile string, rec ruleRecord) error {
 // that is there without a record is the user's, and comes back as a note. A record of a rule that
 // is gone is dropped.
 func takeOutAddedRule(label, path, rule string, remove func(text string) (string, bool, error)) (removed bool, note string, err error) {
+	return takeOutAddedRuleMode(label, path, rule, 0o644, remove)
+}
+
+// keptRuleNote says uninstall left rule in path because join didn't record adding it.
+func keptRuleNote(label, path, rule string) string {
+	return label + ": left the rule " + rule + " in " + path + " alone: " + brand.Command +
+		" didn't record adding it, so it is yours (or an older mur's); delete it by hand if you don't want it"
+}
+
+// takeOutAddedRuleMode is takeOutAddedRule writing the file with mode perm.
+func takeOutAddedRuleMode(label, path, rule string, perm os.FileMode, remove func(text string) (string, bool, error)) (removed bool, note string, err error) {
 	text, err := readConfig(path)
 	if err != nil {
 		return false, "", err
@@ -125,10 +136,9 @@ func takeOutAddedRule(label, path, rule string, remove func(text string) (string
 	case !found:
 		return false, "", forgetRule(path, rule)
 	case !joinAddedRule(path, rule):
-		return false, label + ": left the rule " + rule + " in " + path + " alone: " + brand.Command +
-			" didn't record adding it, so it is yours (or an older mur's); delete it by hand if you don't want it", nil
+		return false, keptRuleNote(label, path, rule), nil
 	}
-	if err := writeJSONConfig(path, out, 0o644); err != nil {
+	if err := writeJSONConfig(path, out, perm); err != nil {
 		return false, "", err
 	}
 	return true, "", forgetRule(path, rule)

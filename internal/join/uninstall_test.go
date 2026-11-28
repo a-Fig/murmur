@@ -151,6 +151,8 @@ func TestUnregisterAntigravityRemovesToolApprovalFromBothSettings(t *testing.T) 
 	acp := filepath.Join(h.Dir, "antigravity-acp", "settings.json")
 	write(t, cli, `{"permissions":{"allow":["mcp(murmur/*)", "mcp(murmur/*)"]}, "model":"mine"}`)
 	write(t, acp, `{"permissions":{"allow":["mcp(other/*)", "mcp(murmur/*)"], "deny":["mcp(blocked/*)"]}}`)
+	recordJoinAdded(t, cli, antigravityAllowRule)
+	recordJoinAdded(t, acp, antigravityAllowRule)
 	if got := antigravityRemoval(sb.Env, h); !strings.Contains(got, cli) || !strings.Contains(got, acp) || strings.Count(got, `"mcp(murmur/*)"`) != 2 {
 		t.Errorf("manual removal: %q", got)
 	}
@@ -182,6 +184,7 @@ func TestUnregisterAntigravityContinuesAfterMalformedFiles(t *testing.T) {
 	write(t, cli, `{`)
 	write(t, mcp, `{`)
 	write(t, acp, `{"permissions":{"allow":["mcp(murmur/*)"]}}`)
+	recordJoinAdded(t, acp, antigravityAllowRule)
 	write(t, hook, `{"murmur":{}, "other":{}}`)
 	did, _, err := (Env{}).unregisterAntigravityAt(t.Context(), []agentHome{h})
 	if err == nil || !strings.Contains(err.Error(), cli) || !strings.Contains(err.Error(), mcp) || len(did) != 2 {

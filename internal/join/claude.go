@@ -149,10 +149,15 @@ func allowClaudeTools(dir string) (bool, error) {
 	}
 	perms.Set("allow", append(allow, allowRule))
 	out, err := jsonedit.Format(cfg, raw)
-	if err == nil {
-		err = writeAtomic(path, out, 0o644)
-	}
 	if err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	// Recorded first, so a rule is never in the file that join can't say it added (ruleowned.go).
+	if err := recordRule(path, allowRule); err != nil {
+		return false, err
+	}
+	if err := writeAtomic(path, out, 0o644); err != nil {
+		_ = forgetRule(path, allowRule)
 		return false, fmt.Errorf("%s: %w", path, err)
 	}
 	return true, nil
