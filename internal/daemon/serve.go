@@ -1527,8 +1527,9 @@ func (d *Daemon) messageViewsLocked(msgs []*inMsg, withBody bool) []proto.Messag
 		}
 		v := proto.MessageView{ID: e.ID, From: e.From, FromName: name, FromAgent: agent, FromBranch: branch,
 			FromOwner: d.ownerOfLocked(e.From), FromDevice: device, To: e.To, Subject: e.Subject, At: e.At}
-		v.Files = d.fileViewsLocked(e)
-		if d.refuses(&d.agentRecv, e) {
+		refused := d.refuses(&d.agentRecv, e) // read once: a switch flipped between reads would give both lists or neither (#1200)
+		v.Files = d.fileViewsLocked(e, refused)
+		if refused {
 			v.RepoFilesOff = !d.repoAllowsFiles()
 			for _, f := range e.Files {
 				v.FilesKept = append(v.FilesKept, proto.FileView{Name: f.Name, Size: f.Size})
