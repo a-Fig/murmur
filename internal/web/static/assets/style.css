@@ -5622,3 +5622,55 @@ button.pc-talked-one:hover > .truncate {
   width: 1rem;
   height: 1rem;
 }
+
+/* The one ask for a star on GitHub (#974): a small card at the top right, under the header row, over
+ * the page but not blocking it, that slides in once. Lower down it would cover the composer's send
+ * button just after a send. */
+.star-ask {
+  position: fixed;
+  top: 4.5rem;
+  right: 1rem;
+  z-index: 50;
+  display: flex;
+  gap: 0.75rem;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: 0.875rem 1rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--radius-xl);
+  background: var(--popover);
+  box-shadow: var(--shadow-popover);
+  animation: star-ask-in 0.3s var(--ease);
+}
+@keyframes star-ask-in {
+  from {
+    opacity: 0;
+    translate: 0 -0.5rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-ask {
+    animation: none;
+  }
+}
+.star-ask-ico .icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.125rem;
+}
+.star-ask-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.star-ask-title {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.star-ask-actions {
+  display: flex;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}

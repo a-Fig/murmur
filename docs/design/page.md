@@ -87,6 +87,12 @@ from it is in [a person on the page](people.md).
   two minutes at most. Tags with a meaning show as that meaning: `model:` beside the agent,
   `do-not-disturb` as the red dot, `hidden` as the fold, `human` on a person. There is no grouping
   by tag: a session can carry several, so groups would repeat it.
+- **Asking for a star** (2026-11-28, #974, Tyler's request, after T3 Code's ask). A "Star us on
+  GitHub" link sits in the top bar (#1233). Once, the page also asks: right after a person's message
+  goes, if they have sent five or more, a small card at the top right says "Enjoying Murmur?" with
+  Star on GitHub (a link; the page has no GitHub login to star with) and No thanks. Showing it
+  counts as asking, so it never comes back. The answer is kept in the clone's page preferences
+  (`starAsked`), shared by the app and the browser, and never goes on the bus.
 - **A profile card** (2026-11-15, #689, Tyler's request). Clicking a face, or a sender's name in a
   conversation, opens a card beside it, as a chat app does: the name and address, the state, agent,
   model and tags, the status and branch, what you have in common (the groups you have posted in that

@@ -20,6 +20,7 @@ import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } fro
 import { askForName } from "./picker.js";
 import { minuteEdits, cancelMinutes } from "./settings.js";
 import { loadUpdates } from "./updates.js";
+import { askForStar } from "./star.js";
 
 export {
   deliver, waitingSends, settingsSaving, settingsAt, queueSettings, saveSettings, loadSettings, deny, tokenEra,
@@ -76,6 +77,7 @@ async function deliver(item) {
     else if (sent.note) ui.notes.set(item.key, { id: sent.id, text: sent.note });
     else ui.notes.delete(item.key);
     item.status = "sent";
+    askForStar();
     announce(missed.length ? "Sent, but not to " + namesOf(missed) + "." : "Sent.");
     clearTimeout(timer);
     timer = setTimeout(poll, 100); // what was sent is among the messages by now
