@@ -290,7 +290,9 @@ Each client keeps and changes that ID at different moments. Researched 2026-10-2
     (a restart); a new thread's row may not be written yet, and then two threads' Pis on one file
     look alike, as one conversation. A thread's Pi is told by T3's command line, which T3's app
     gives it and the headless `t3 serve` doesn't: one that comes back under the other kind of T3
-    is a session of its own, with a new name.
+    is a session of its own, with a new name. The app gives that command line to a Pi run from the
+    thread's terminal too, so such a Pi opening the thread's own file while the thread's Pi is in its
+    grace counts as the thread's, and takes its session (#1320).
   - *Two Pi processes on one file.* They are two sessions. A `/resume` of a file another Pi has
     open, live or in its grace while its server restarts, still moves the session there, but the
     file isn't recorded as the moved session's and nothing of the other's is taken: the other Pi's
