@@ -527,6 +527,7 @@ func TestUnwritableInstallLogsOnceAndWatches(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	holdRunning(t, path)
 	lockPath := path + ".update.lock"
 	if err := os.WriteFile(lockPath, nil, 0444); err != nil {
 		t.Fatal(err)

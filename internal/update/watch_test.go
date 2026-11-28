@@ -25,6 +25,7 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 			if err := os.WriteFile(path, []byte("running"), 0o755); err != nil {
 				t.Fatal(err)
 			}
+			holdRunning(t, path)
 			checked := make(chan struct{}, 8)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				checked <- struct{}{}
