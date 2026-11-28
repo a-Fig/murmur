@@ -142,9 +142,20 @@ func TestFailedListingKeepsWhatWasKnown(t *testing.T) {
 func TestARemoteGhDoesntKnowIsAskedHourly(t *testing.T) {
 	bin := t.TempDir()
 	said := "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`"
-	name, script := "gh", "#!/bin/sh\necho x >> \"$(dirname \"$0\")/calls.txt\"\necho '"+said+"' >&2\nexit 1\n"
+	name, script := "gh", "#!/bin/sh\necho '"+said+"' >&2\nexit 1\n"
 	if runtime.GOOS == "windows" {
-		name, script = "gh.cmd", "@echo off\r\necho x>>\"%~dp0calls.txt\"\r\necho "+strings.ReplaceAll(said, "`", "")+" 1>&2\r\nexit /b 1\r\n"
+		name, script = "gh.cmd", "@echo off\r\necho "+strings.ReplaceAll(said, "`", "")+" 1>&2\r\nexit /b 1\r\n"
+	}
+	// gh's other words for it, with GH_HOST or a token in the environment (cli/cli,
+	// remote_resolver.go), and one that isn't it.
+	for stderr, want := range map[string]bool{
+		"none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable.": true,
+		"set the GH_HOST environment variable to specify which GitHub host to use":                                                                                       true,
+		"HTTP 401: Bad credentials (https://api.github.com/graphql)":                                                                                                     false,
+	} {
+		if got := notGitHub([]byte(stderr)); got != want {
+			t.Errorf("notGitHub(%q) = %v, want %v", stderr, got, want)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
 		t.Fatal(err)

@@ -180,7 +180,7 @@ type ghCache struct {
 
 	mu       sync.Mutex
 	events   []GitHubEvent
-	fetched  time.Time
+	fetched  time.Time // as prCache's
 	inflight bool
 	closed   bool
 }
