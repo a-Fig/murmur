@@ -11,9 +11,15 @@ information in the request; a network failure waits quietly for the next hour. A
   (`internal/clones`), and records its answer there (`releases.json`): the release on its channel,
   with its assets, or why the ask failed. Every other daemon takes that answer while it is younger
   than its own hour, so the machine asks once an hour, not once per clone, and every page says the
-  same, a failed check included. A check a person asks for (a changed setting, Update now) asks
-  GitHub all the same. A daemon that sees the record change checks within seconds, taking the
-  answer and reading the setting again, so the daemons' hours fall together. A failed install
+  same. A failed ask is taken for 5 minutes only, so one blip at GitHub doesn't hold every clone
+  back for the hour. Daemons that start together check together: one that finds the lock held
+  waits up to 30 s for the other's answer, then takes what is recorded or asks GitHub itself,
+  unrecorded. A check a person asks for (a changed setting, Update now) asks GitHub all the same.
+  The record counts its writes, and a daemon that sees another's write checks within seconds,
+  taking the answer and reading the setting again, so the daemons' hours fall together. A recorded
+  release names the URLs its binary and `SHA256SUMS` come from, and whoever can write the record
+  (`MURMUR_CLONES_DIR` moves it) could name others, so one whose assets aren't
+  `https://github.com/a-Fig/murmur/releases/download/<tag>/<name>` is no answer. A failed install
   isn't shared: it shows on the page of the daemon that tried, and the next daemon to check tries
   it again.
 - **Download and install.** The daemon downloads its `mur-<os>-<arch>[.exe]` asset and the release's
@@ -57,8 +63,14 @@ information in the request; a network failure waits quietly for the next hour. A
     clone's update, `install.ps1`, `install.sh`) it restarts onto it the same way, with updates off
     too, and its page offers the restart with the version `<binary> version` prints. Before, each
     found the file changed only at its own hourly check, and for up to an hour a machine ran two
-    versions from one file. A daemon whose updater has stopped (a binary it can't replace) and a
-    development build don't watch.
+    versions from one file. It restarts only once the file answers `version`: one that doesn't run
+    yet, as while an installer writes it, is no daemon to restart onto. A daemon whose updater has
+    stopped (a binary it can't replace) goes on watching, since there, after a sudo install to
+    `/usr/local/bin` say, only an installer puts a new binary in place. A development build doesn't
+    watch. Daemons that start together check together, and one takes the update lock: the others
+    find it held, report nothing failed, and check again 10 s later, by when the watch has usually
+    restarted them onto what it installed. On Windows the watch opens the binary sharing delete, so
+    another daemon's rename of a new one into its place is never refused meanwhile.
 - **The page's socket is handed over** (#255, decided 2026-11-09 from Sol's pre-release review). The
   old daemon passes its listening socket to the new one (descriptor 3 on Unix, the same handle on
   Windows, named by `MURMUR_PAGE_LISTENER`), with the page's address and token beside it in
