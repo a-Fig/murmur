@@ -1,13 +1,14 @@
 package update
 
 import (
-	"bytes"
 	"context"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,12 +36,12 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 			var mu sync.Mutex
 			var reports []Status
 			restarted := make(chan struct{})
-			var logs bytes.Buffer
+			logs := &lockedBuf{}
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
 				Run(ctx, Options{Version: "1.2.3", GitDir: repo(t), Executable: path, URL: srv.URL, Client: srv.Client(),
-					Every: time.Hour, Watch: 20 * time.Millisecond, Log: log.New(&logs, "", 0),
+					Every: time.Hour, Watch: 20 * time.Millisecond, Log: log.New(logs, "", 0),
 					Getenv: func(k string) string {
 						if k == noUpdate {
 							return env
@@ -63,10 +64,11 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 				t.Fatal("restarted with the same binary in place")
 			default:
 			}
-			for _, err := range []error{os.WriteFile(path+".new", []byte("another clone's install, half written"), 0o755), os.Rename(path+".new", path)} {
-				if err != nil {
-					t.Fatal(err)
-				}
+			if err := os.WriteFile(path+".new", []byte("another clone's install, half written"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := renameRetried(path+".new", path); err != nil {
+				t.Fatal(err)
 			}
 			time.Sleep(200 * time.Millisecond) // watches that find a binary that doesn't run restart nothing
 			select {
@@ -79,7 +81,8 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 			select {
 			case <-restarted:
 			case <-ctx.Done():
-				t.Fatal("no restart onto the binary in place")
+				out, err := exec.Command(path, "version").CombinedOutput()
+				t.Fatalf("no restart onto the binary in place; logged %q; `version` said %q, %v", logs.String(), out, err)
 			}
 			<-done
 			mu.Lock()
@@ -87,7 +90,7 @@ func TestAnotherBinaryInPlaceRestartsTheDaemon(t *testing.T) {
 			if last := reports[len(reports)-1]; !last.Installed || last.Latest != "1.2.4" {
 				t.Errorf("last report %+v, want Installed 1.2.4", last)
 			}
-			if !bytes.Contains(logs.Bytes(), []byte("another binary is in place (1.2.4)")) {
+			if !strings.Contains(logs.String(), "another binary is in place (1.2.4)") {
 				t.Errorf("logged %q", logs.String())
 			}
 			if n := len(checked); n > 0 {

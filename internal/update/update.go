@@ -651,7 +651,31 @@ type files struct {
 	rename, link func(oldname, newname string) error
 }
 
-var osFiles = files{os.Rename, os.Link}
+var osFiles = files{renameRetried, os.Link}
+
+// renameRetried is os.Rename, tried again for up to renameTries on Windows while the file it
+// replaces is open. Every daemon on the machine looks at the binary every few seconds (watch.go),
+// and Windows refuses to rename a file over one that any process has open, whatever it shares:
+// another daemon's install that met a look failed, and waited an hour for its next check.
+// Antivirus opens a new binary to scan it as well.
+func renameRetried(from, to string) error {
+	err := os.Rename(from, to)
+	for deadline := time.Now().Add(renameTries); err != nil && runtime.GOOS == "windows" && busy(err) && time.Now().Before(deadline); {
+		time.Sleep(50 * time.Millisecond)
+		err = os.Rename(from, to)
+	}
+	return err
+}
+
+// renameTries is how long renameRetried tries a rename Windows refuses while a file is open.
+const renameTries = 5 * time.Second
+
+// busy says err is Windows refusing a file another process has open: ERROR_ACCESS_DENIED (5),
+// which a rename over an open file gets, or ERROR_SHARING_VIOLATION (32).
+func busy(err error) bool {
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == 5 || errno == 32)
+}
 
 // errNoLink says the binary's volume can't give it a second name, which Windows needs before it
 // lets a new binary take its place, so updates there would always fail.
@@ -798,12 +822,10 @@ func numbered(name, prefix string) bool {
 	return ok && n != "" && strings.Trim(n, "0123456789") == ""
 }
 
-// Identity is the file at path, to tell later whether another has taken its place (os.SameFile).
-// File.Stat captures Windows file IDs now; os.Stat can defer loading the ID until SameFile, by
-// which time the path may already name the replacement. On Windows the file is opened so that
-// another daemon's rename of a new binary into its place isn't refused meanwhile (openIdentity).
+// File.Stat captures Windows file IDs now; os.Stat can defer loading the ID
+// until SameFile, by which time the path may already name the replacement.
 func Identity(path string) (os.FileInfo, error) {
-	f, err := openIdentity(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
