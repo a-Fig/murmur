@@ -440,3 +440,14 @@ func TestLeaveInACloneThatNeverJoined(t *testing.T) {
 		t.Errorf("leave advice: %q", got)
 	}
 }
+
+// A remote join can't reach gets an error that names the askpass-only ssh key, whose passphrase
+// join never asks for although `git fetch` does (#1218).
+func TestSetUpUnreachableRemoteNamesTheAskpassCase(t *testing.T) {
+	p, _ := clone(t)
+	git(t, p.GitDir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+	err := setUp(context.Background(), p.GitDir)
+	if err == nil || !strings.Contains(err.Error(), "ssh-agent") {
+		t.Fatalf("setUp error = %v, want one that says to load the key into ssh-agent", err)
+	}
+}
