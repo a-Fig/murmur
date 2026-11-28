@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -521,40 +522,61 @@ func TestRegistryEntriesCarryTheCommitFingerprint(t *testing.T) {
 }
 
 // A T3 thread that turns on do not disturb and mutes someone while its name is pending keeps both
-// by its ID, and may stop before the name lands. The name is then its last (noteStoppedNameLocked),
-// and what it kept goes with it: left under the ID, the next message woke the thread and its mute
-// was gone (#1333).
+// by its ID, or by the name its conversation had if the clone lost its keys (NamesLeft, #827), and
+// may stop before the name lands. The name is then its last (noteStoppedNameLocked), and what it
+// kept goes with it: left behind, the next message woke the thread and its mute was gone (#1333).
 func TestAStoppedSessionKeepsItsTagsWhenItsNameLandsLate(t *testing.T) {
 	t.Parallel()
-	d, _ := namedDaemon(t)
 	const id = "dddddd"
-	key := nameKey("thread-dan", "", "", id)
-	d.mu.Lock()
-	d.st.Tags[tagKeyOf("", id)] = &tags.State{Self: []string{tags.DoNotDisturb}}
-	if d.st.Mutes == nil {
-		d.st.Mutes = map[string]map[string]time.Time{}
-	}
-	d.st.Mutes[tagKeyOf("", id)] = map[string]time.Time{"loud-crow": time.Now()}
-	d.st.Stopped[id] = time.Now()
-	d.stoppedKeys = map[string]string{id: key} // its grace ran out while the push was out
-	d.mu.Unlock()
+	for _, keptBy := range []string{tagKeyOf("", id), "old-name"} {
+		t.Run(keptBy, func(t *testing.T) {
+			t.Parallel()
+			d, _ := namedDaemon(t)
+			key := nameKey("thread-dan", "", "", id)
+			explainedBy := keptBy
+			d.mu.Lock()
+			if keptBy == "old-name" {
+				if d.st.NamesLeft == nil {
+					d.st.NamesLeft = map[string]string{}
+				}
+				d.st.NamesLeft[key] = keptBy
+			} else {
+				explainedBy = "conv:" + key
+			}
+			d.st.Tags[keptBy] = &tags.State{Self: []string{tags.DoNotDisturb}}
+			if d.st.Mutes == nil {
+				d.st.Mutes = map[string]map[string]time.Time{}
+			}
+			d.st.Mutes[keptBy] = map[string]time.Time{"loud-crow": time.Now()}
+			if d.st.Explained == nil {
+				d.st.Explained = map[string][]string{}
+			}
+			d.st.Explained[explainedBy] = []string{"group:ui"}
+			d.st.Stopped[id] = time.Now()
+			d.stoppedKeys = map[string]string{id: key} // its grace ran out while the push was out
+			d.mu.Unlock()
 
-	if err := d.pushNames(context.Background(), nameWork{wants: []wanted{{id: id, key: key, agent: "t3"}}}); err != nil {
-		t.Fatal(err)
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	name := d.st.SessionNames[id]
-	if name == "" || d.st.NameKeys[key] != name {
-		t.Fatalf("the stopped session's last name is %q, and its key's %q", name, d.st.NameKeys[key])
-	}
-	if !d.ownDNDLocked(id) {
-		t.Errorf("the stopped session %s is off do not disturb; kept: %+v", name, d.st.Tags)
-	}
-	if _, ok := d.st.Mutes[name]["loud-crow"]; !ok {
-		t.Errorf("the stopped session %s dropped its mute; kept: %+v", name, d.st.Mutes)
-	}
-	if d.st.Tags[tagKeyOf("", id)] != nil || d.st.Mutes[tagKeyOf("", id)] != nil {
-		t.Errorf("what it kept by its ID is still there")
+			if err := d.pushNames(context.Background(), nameWork{wants: []wanted{{id: id, key: key, agent: "t3"}}}); err != nil {
+				t.Fatal(err)
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			name := d.st.SessionNames[id]
+			if name == "" || d.st.NameKeys[key] != name {
+				t.Fatalf("the stopped session's last name is %q, and its key's %q", name, d.st.NameKeys[key])
+			}
+			if !d.ownDNDLocked(id) {
+				t.Errorf("the stopped session %s is off do not disturb; kept: %+v", name, d.st.Tags)
+			}
+			if _, ok := d.st.Mutes[name]["loud-crow"]; !ok {
+				t.Errorf("the stopped session %s dropped its mute; kept: %+v", name, d.st.Mutes)
+			}
+			if !slices.Contains(d.st.Explained[name], "group:ui") {
+				t.Errorf("the stopped session %s forgot whom it was told of; kept: %+v", name, d.st.Explained)
+			}
+			if d.st.Tags[keptBy] != nil || d.st.Mutes[keptBy] != nil || d.st.Explained[explainedBy] != nil || d.st.NamesLeft[key] != "" {
+				t.Errorf("what it kept as %s is still there", keptBy)
+			}
+		})
 	}
 }
