@@ -2,7 +2,9 @@
 
 import { icon } from "./icons.js";
 import { h, when, plural, root } from "./dom.js";
-import { NAME, ui, devices, me, myName, people, personOnline } from "./state.js";
+import {
+  NAME, ui, devices, me, myName, accountOffers, usableOffers, primaryOffer, people, personOnline,
+} from "./state.js";
 import { AuthError, api } from "./api.js";
 import { deny, poll } from "./sync.js";
 import { render, go, setView, starRow } from "./render.js";
@@ -79,9 +81,44 @@ function startChat(name) {
   focusComposer();
 }
 
+function takenOfferNotice(offers) {
+  const bad = offers.find((o) => o.taken || o.problem);
+  if (!bad) return "";
+  if (bad.taken) return "Someone on " + bad.taken + " already uses " + bad.name + " here, so we can't reuse it from " + bad.repo + ".";
+  return "Can't use " + bad.name + " from " + bad.repo + ": " + bad.problem;
+}
+
 function askForName(then) {
   const a = ui.state?.account;
-  ui.setup = { name: (a?.taken && a.name) || a?.suggested || "", error: "", busy: false, then, from: document.activeElement?.dataset?.key || null };
+  const offers = !a?.name ? accountOffers() : [];
+  const offer = !a?.name ? primaryOffer() : null;
+  const from = document.activeElement?.dataset?.key || null;
+  if (offer) {
+    ui.setup = {
+      mode: "offer",
+      offerIndex: offers.indexOf(offer),
+      name: offer.name,
+      nick: a?.nick || offer.nick || "",
+      error: "",
+      busy: false,
+      then,
+      from,
+    };
+    render();
+    root.querySelector('[data-key="setup-accept"]')?.focus();
+    return;
+  }
+  const offerNick = !a?.name && !a?.nick ? (offers.find((o) => o.nick)?.nick || "") : "";
+  ui.setup = {
+    mode: "edit",
+    offerIndex: -1,
+    name: (a?.taken && a.name) || a?.suggested || "",
+    nick: a?.nick || offerNick,
+    error: "",
+    busy: false,
+    then,
+    from,
+  };
   render();
   const field = root.querySelector('[data-key="setup-name"]');
   field?.focus();
@@ -91,13 +128,25 @@ function askForName(then) {
 async function submitName() {
   const setup = ui.setup;
   if (!setup || setup.busy) return;
+  const a = ui.state?.account;
+  const offers = !a?.name ? accountOffers() : [];
+  const offer = setup.mode === "offer" ? offers[setup.offerIndex] || primaryOffer() : null;
+  const name = (offer ? offer.name : setup.name).trim();
+  const payload = { name };
+  const existingNick = a?.nick || "";
+  if (setup.mode === "offer" && offer) {
+    if (!existingNick && offer.nick) payload.nick = offer.nick;
+  } else if (offers.length > 0 && !a?.taken) {
+    const trimmedNick = setup.nick.trim();
+    if (trimmedNick !== existingNick) payload.nick = trimmedNick;
+  }
   setup.busy = true;
   setup.error = "";
   render();
   try {
     const was = myName();
-    const account = await api("/api/account", { method: "PUT", body: JSON.stringify({ name: setup.name.trim() }) });
-    ui.state.account = { ...ui.state.account, ...account };
+    const account = await api("/api/account", { method: "PUT", body: JSON.stringify(payload) });
+    ui.state.account = { ...ui.state.account, ...account, offers: account.offers || [] };
     moveToName(was, account.name); // asked for a new name, they may have drafts under the old one
     ui.setup = null;
     poll();
@@ -108,6 +157,13 @@ async function submitName() {
     if (e instanceof AuthError) return deny(e.token);
     setup.busy = false;
     setup.error = e.message;
+    if (setup.mode === "offer") {
+      // Switch to edit mode if the offer raced or failed validation so they can pick another name.
+      setup.mode = "edit";
+      setup.name = a?.suggested || name;
+      setup.nick = existingNick || offer?.nick || offers.find((o) => o.nick)?.nick || "";
+      poll();
+    }
     render();
     root.querySelector('[data-key="setup-name"]')?.focus();
   }
@@ -139,12 +195,132 @@ function dialog(label, close, ...kids) {
 
 function setupDialog() {
   const s = ui.setup;
+  const a = ui.state?.account;
   const taken = me()?.taken || "";
+  const offers = !a?.name ? accountOffers() : [];
+  const usable = !a?.name ? usableOffers() : [];
+  if (s.mode === "offer") {
+    const current = offers[s.offerIndex];
+    if (!current || current.taken || current.problem) {
+      if (usable.length) {
+        s.offerIndex = offers.indexOf(usable[0]);
+        s.name = usable[0].name;
+        s.nick = a?.nick || usable[0].nick || "";
+      } else {
+        s.mode = "edit";
+        s.name = a?.suggested || "";
+        s.nick = a?.nick || offers.find((o) => o.nick)?.nick || "";
+      }
+    }
+  }
   const close = () => {
     ui.setup = null;
     render();
     refocus(s.from);
   };
+  if (s.mode === "offer") {
+    const offer = offers[s.offerIndex] || usable[0];
+    const shownNick = a?.nick || offer.nick || "";
+    const title = "Use your name from " + offer.repo + "?";
+    const blocked = offers.find((o, i) => i < s.offerIndex && (o.taken || o.problem));
+    return dialog(
+      title,
+      close,
+      h("h2", { class: "dialog-title" }, "Use your name from ", h("span", { class: "setup-repo" }, offer.repo), "?"),
+      h(
+        "p",
+        { class: "dialog-line" },
+        "Kept private on your machine. Accept to share your name with this repo's team.",
+      ),
+      h(
+        "form",
+        {
+          class: "setup-form",
+          onsubmit: (e) => {
+            e.preventDefault();
+            submitName();
+          },
+        },
+        h(
+          "div",
+          { class: "setup-offer" },
+          h("span", { class: "setup-face" }, faceOf(offer.name)),
+          h(
+            "div",
+            { class: "setup-offer-body" },
+            h(
+              "div",
+              { class: "setup-offer-grid" },
+              h("span", { class: "setup-offer-k" }, "Name"),
+              h("span", { class: "setup-offer-v" }, offer.name),
+              h("span", { class: "setup-offer-k" }, "Device"),
+              shownNick
+                ? h("span", { class: "setup-offer-v setup-offer-row2" }, shownNick)
+                : h("span", { class: "setup-offer-v setup-offer-row2" }, offer.name, " ", h("span", { class: "setup-offer-muted" }, "(default)")),
+            ),
+            !shownNick && offer.nickProblem && h("p", { class: "setup-note" }, offer.nickProblem),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              class: "btn btn-outline btn-xs setup-edit",
+              title: "Edit name or device nickname",
+              "data-key": "setup-edit",
+              disabled: s.busy,
+              onclick: () => {
+                s.mode = "edit";
+                s.name = offer.name;
+                s.nick = a?.nick || offer.nick || "";
+                s.error = "";
+                render();
+                const field = root.querySelector('[data-key="setup-name"]');
+                field?.focus();
+                field?.select();
+              },
+            },
+            icon("pencil"),
+            "Edit",
+          ),
+        ),
+        blocked && h("p", { class: "setup-note" }, takenOfferNotice([blocked])),
+        usable.length > 1 && h(
+          "div",
+          { class: "setup-others" },
+          h("span", { class: "setup-others-label" }, "From other repos"),
+          usable.map((o) => {
+            const idx = offers.indexOf(o);
+            const active = idx === s.offerIndex;
+            return h(
+              "button",
+              {
+                type: "button",
+                class: "btn btn-xs " + (active ? "btn-outline" : "btn-ghost"),
+                "data-key": "setup-pick-" + idx,
+                onclick: () => {
+                  s.offerIndex = idx;
+                  s.name = o.name;
+                  s.nick = a?.nick || o.nick || "";
+                  render();
+                },
+              },
+              o.name + (o.nick ? " (" + o.nick + ")" : "") + " · " + o.repo,
+            );
+          }),
+        ),
+        s.error && h("p", { class: "dialog-error", id: "setup-error", role: "alert" }, s.error),
+        h(
+          "div",
+          { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn btn-ghost", "data-key": "setup-cancel", onclick: close }, "Cancel"),
+          h("button", { type: "submit", class: "btn btn-primary", "data-key": "setup-accept", disabled: s.busy }, s.busy ? "Saving…" : "Accept"),
+        ),
+      ),
+    );
+  }
+  const hasCrossRepo = offers.length > 0 && !taken;
+  const takenNotice = hasCrossRepo ? takenOfferNotice(offers) : "";
+  const nickProblem = hasCrossRepo ? (offers.find((o) => o.nickProblem)?.nickProblem || "") : "";
   return dialog(
     taken ? "Choose a new name" : "Choose your name",
     close,
@@ -154,7 +330,11 @@ function setupDialog() {
       { class: "dialog-line" },
       taken
         ? "The person on " + taken + " chose " + me().name + " first, so messages to that name go to them. Pick another; what was sent to you before still reaches you."
-        : "Agents see it, and send to it.",
+        : takenNotice
+          ? takenNotice + " Pick another name below — continuing shares it with this repo's team."
+          : hasCrossRepo
+            ? "Kept private on your machine. Continue to share your name with this repo's team."
+            : "Agents see it, and send to it.",
     ),
     h(
       "form",
@@ -165,14 +345,16 @@ function setupDialog() {
           submitName();
         },
       },
+      hasCrossRepo && h("label", { class: "setup-label", for: "setup-name" }, "Your name"),
       h(
         "div",
-        { class: "setup-row" },
+        { class: "setup-row" + (hasCrossRepo ? " setup-row-labeled" : "") },
         h("span", { class: "setup-face" }, faceOf(s.name)),
         h(
           "span",
           { class: "field setup-field" + (s.error ? " field-bad" : "") },
           h("input", {
+            id: "setup-name",
             type: "text",
             value: s.name,
             maxlength: 32,
@@ -196,6 +378,34 @@ function setupDialog() {
             },
           }),
         ),
+      ),
+      hasCrossRepo && h(
+        "div",
+        { class: "setup-nick-block" },
+        h("label", { class: "setup-label", for: "setup-nick" }, "Device nickname"),
+        h(
+          "span",
+          { class: "field setup-field" },
+          h("input", {
+            id: "setup-nick",
+            type: "text",
+            value: s.nick,
+            maxlength: 32,
+            placeholder: s.name ? "Default (" + s.name + ")" : "Same as your name",
+            autocomplete: "off",
+            autocapitalize: "none",
+            spellcheck: "false",
+            "aria-label": "Device nickname",
+            "data-key": "setup-nick",
+            oninput: (e) => {
+              s.nick = e.target.value.toLowerCase().replace(/[\s_]+/g, "-");
+              s.error = "";
+              if (e.target.value !== s.nick) e.target.value = s.nick;
+              root.querySelector(".dialog-error")?.remove();
+            },
+          }),
+        ),
+        h("p", { class: "setup-note" }, nickProblem || "Shown beside this device's ID. Leave blank to use your name."),
       ),
       s.error && h("p", { class: "dialog-error", id: "setup-error", role: "alert" }, s.error),
       h(

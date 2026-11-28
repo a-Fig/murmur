@@ -3,7 +3,8 @@
 import { icon } from "./icons.js";
 import { h, when, ago, plural, root } from "./dom.js";
 import {
-  NAME, COMMAND, NARROW, ui, devices, me, myName, people, findPerson, personOnline, unreadCount, repoLabel,
+  NAME, COMMAND, NARROW, ui, devices, me, myName, primaryOffer, people, findPerson, personOnline, unreadCount,
+  repoLabel,
 } from "./state.js";
 import { AuthError, api } from "./api.js";
 import { deny, poll, tokenEra } from "./sync.js";
@@ -258,6 +259,8 @@ function deviceGroup(d) {
 function sidebarFoot() {
   const a = me();
   const update = updateItem();
+  const offer = !a ? primaryOffer() : null;
+  const offerTip = offer ? "Use " + offer.name + (offer.nick ? " (" + offer.nick + ")" : "") + " from " + offer.repo + ". Kept private until you accept." : "";
   const chip = a
     ? a.taken
       ? h(
@@ -268,7 +271,9 @@ function sidebarFoot() {
           h("span", { class: "name-taken" }, "New name"),
         )
       : h("button", { class: "account-chip", title: "Your account", "data-key": "account-chip", onclick: () => go("settings") }, avatar(a.name, false), h("span", { class: "account-name truncate" }, a.name), ownerBadge(ui.state?.device))
-    : h("button", { class: "account-chip account-none", title: "Agents see your name, and send to it.", "data-key": "account-chip", onclick: () => askForName(null) }, h("span", { class: "avatar account-blank", "aria-hidden": "true" }, icon("user")), h("span", { class: "account-name truncate" }, "Choose your name"));
+    : offer
+      ? h("button", { class: "account-chip account-offer", title: offerTip, "data-key": "account-chip", onclick: () => askForName(null) }, h("span", { class: "avatar account-blank account-offer-ico", "aria-hidden": "true" }, offer.name[0].toUpperCase()), h("span", { class: "account-name truncate" }, "Use " + offer.name + "?"))
+      : h("button", { class: "account-chip account-none", title: "Agents see your name, and send to it.", "data-key": "account-chip", onclick: () => askForName(null) }, h("span", { class: "avatar account-blank", "aria-hidden": "true" }, icon("user")), h("span", { class: "account-name truncate" }, "Choose your name"));
   return h(
     "div",
     { class: "sidebar-foot" },

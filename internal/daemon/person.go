@@ -402,17 +402,29 @@ func (d *Daemon) claimPersonName(ctx context.Context, name string) error {
 }
 
 // SetAccount gives this device's person a name, or a new one, once it is claimed in the names
-// registry. The name they had still reaches them: it stays theirs in the registry, and in People
-// here and on every device that saw it.
-func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, error) {
+// registry, optionally setting this device's nickname when nick is non-nil ("" clears it). The
+// name they had still reaches them: it stays theirs in the registry, and in People here and on
+// every device that saw it.
+func (s pageSource) SetAccount(ctx context.Context, name string, nick *string) (web.Account, error) {
 	d := s.d
 	d.mu.Lock()
 	d.pageSeenLocked(ctx, time.Now())
-	why := d.personNameProblemLocked(name)
-	d.mu.Unlock()
-	if why != "" {
+	if nick != nil && *nick != "" {
+		d.mu.Unlock()
+		d.awaitFirstSync(ctx) // know peers and people before validating nick (#190, #1277)
+		d.mu.Lock()
+	}
+	if why := d.personNameProblemLocked(name); why != "" {
+		d.mu.Unlock()
 		return web.Account{}, errors.New(why)
 	}
+	if nick != nil && *nick != "" {
+		if why := d.nickProblemLocked(*nick); why != "" {
+			d.mu.Unlock()
+			return web.Account{}, errors.New(why)
+		}
+	}
+	d.mu.Unlock()
 	if err := d.claimPersonName(ctx, name); err != nil {
 		return web.Account{}, err
 	}
@@ -423,8 +435,24 @@ func (s pageSource) SetAccount(ctx context.Context, name string) (web.Account, e
 	}
 	d.st.Person = name
 	d.st.People[name] = d.personAddr()
+	d.hasPerson.Store(true)
+	var nickErr error
+	if nick != nil {
+		if *nick == "" {
+			d.st.Nick = ""
+		} else if why := d.nickProblemLocked(*nick); why != "" {
+			// The name claim on the remote already succeeded; persist it rather than leaving local
+			// state out of sync with refs/murmur/names, and report the new nickname collision.
+			nickErr = fmt.Errorf("claimed %s, but %s", name, why)
+		} else {
+			d.st.Nick = *nick
+		}
+	}
 	d.saveLocked()
 	d.kickPresence()
+	if nickErr != nil {
+		return web.Account{}, nickErr
+	}
 	return d.accountLocked(), nil
 }
 
