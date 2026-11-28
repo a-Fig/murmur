@@ -1418,6 +1418,13 @@ func Run(ctx context.Context, opt Options) error {
 			defer d.bg.Done()
 			d.threadLoop(ctx)
 		}()
+		if opt.Clones != "" {
+			d.bg.Add(1)
+			go func() {
+				defer d.bg.Done()
+				d.allReposLoop(ctx)
+			}()
+		}
 		if opt.Idle > 0 {
 			go d.idleLoop(ctx)
 		}

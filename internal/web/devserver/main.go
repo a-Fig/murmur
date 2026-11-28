@@ -93,9 +93,11 @@ func main() {
 	go src.run()
 	page := web.NewWithGitHub(src, token, fixturePRs, fixtureGitHub(time.Now()))
 	page.WithUpdates(&devUpdates{src: src, choice: *updates, override: *updatesOverride, installError: *installError})
+	srcs, pages := []*fixtures{src}, []*web.Server{page}
 	if *repos != "" {
-		serveRepos(strings.Split(*repos, ","), ln, src, page)
+		srcs, pages = serveRepos(strings.Split(*repos, ","), ln, src, page)
 	}
+	withAllRepos(srcs, pages)
 	fmt.Printf("http://%s/#token=%s\n", ln.Addr(), token)
 	srv := &http.Server{Handler: page, ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
@@ -153,8 +155,9 @@ func (r devRepos) Open(ctx context.Context, id string) (string, error) {
 
 // serveRepos serves a page for each name after the first, which is the page on ln, and gives them
 // all the picker. Each repo after the first has fewer devices and messages, so the switch shows.
-func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web.Server) {
+func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web.Server) ([]*fixtures, []*web.Server) {
 	all := make([]*devRepo, len(names))
+	srcs := make([]*fixtures, len(names))
 	for i, name := range names {
 		name, at, _ := strings.Cut(name, "@")
 		name, slug := splitRepo(name)
@@ -182,11 +185,14 @@ func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web
 		src.mu.Lock()
 		src.repo, src.slug = name, slug
 		src.mu.Unlock()
-		all[i] = d
+		all[i], srcs[i] = d, src
 	}
+	pages := make([]*web.Server, len(all))
 	for i, d := range all {
 		d.page.WithRepos(devRepos{all: all, self: i})
+		pages[i] = d.page
 	}
+	return srcs, pages
 }
 
 // splitRepo is a repo's name and its slug from owner/name or a name alone, as the daemon has them
@@ -239,6 +245,9 @@ type fixtures struct {
 	files map[string][]web.Upload
 	// policy is the repo policy when -owner makes this device the mesh owner; nil, there is none.
 	policy *bus.RepoPolicy
+	// allID and allSeq are the newest write of the settings for all repos taken in (allrepos.go).
+	allID  string
+	allSeq int64
 }
 
 // attach gives the message last added these files. Caller holds mu, or is still building f.

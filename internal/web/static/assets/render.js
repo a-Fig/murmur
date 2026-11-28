@@ -12,7 +12,7 @@ import { sessionByAddr, tagMenu, placeProfile, profileCard } from "./tags.js";
 import { conversationsPage, chatScroll, restoreChatScroll, markOpenRead, fitComposers } from "./messages.js";
 import { viewerDialog } from "./files.js";
 import { setupDialog, pickerDialog } from "./picker.js";
-import { settingsPage } from "./settings.js";
+import { settingsPage, loadAllRepos } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
@@ -387,6 +387,7 @@ function setView(view) {
   ui.view = VIEWS.includes(view) ? view : "messages";
   if (ui.view === "settings") {
     loadSettings();
+    loadAllRepos();
     loadUpdates();
   }
   render();

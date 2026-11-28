@@ -155,6 +155,9 @@ func (d *Daemon) servePage(ctx context.Context, ln net.Listener) {
 	if d.opt.Updates != nil {
 		page.WithUpdates(d.opt.Updates)
 	}
+	if d.opt.Clones != "" {
+		page.WithAllRepos(d.allReposPath(), d.takeAllRepos)
+	}
 	d.page.Store(page)
 	// Any local user can connect, and a connection Go keeps open costs the daemon a file descriptor:
 	// one that sends a request and then sits idle would be kept for good, and enough of them would
@@ -508,6 +511,9 @@ type pageSettings struct {
 	// Away is when the device last left online for another mode, kept so that going back
 	// releases what arrived since (mode.go), across restarts too.
 	Away time.Time `json:"away,omitzero"`
+	// AllID and AllSeq are the newest write of the settings for all repos taken in (allrepos.go).
+	AllID  string `json:"allID,omitempty"`
+	AllSeq int64  `json:"allSeq,omitempty"`
 }
 
 // defaultSettings are what stands with no settings.json, and what one from before a setting
@@ -596,6 +602,14 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if err := web.CheckSettings(set); err != nil {
 		return web.Settings{}, err
 	}
+	d.setMu.Lock()
+	defer d.setMu.Unlock()
+	return d.setSettingsLocked(set, d.settings.AllID, d.settings.AllSeq)
+}
+
+// setSettingsLocked is SetSettings, noting allID and allSeq as the settings for all repos taken in.
+// Caller holds setMu.
+func (d *Daemon) setSettingsLocked(set web.Settings, allID string, allSeq int64) (web.Settings, error) {
 	next := pageSettings{Wake: set.Wake, SessionWake: maps.Clone(set.SessionWake),
 		Busy: cmp.Or(set.Busy, web.BusySubject), SessionBusy: maps.Clone(set.SessionBusy), Mode: set.Mode,
 		SendFiles: set.SendFiles, ReceiveFiles: set.ReceiveFiles, AgentsSendOff: set.AgentsSendOff, AgentsReceiveOff: set.AgentsReceiveOff}
@@ -608,8 +622,7 @@ func (s pageSource) SetSettings(ctx context.Context, set web.Settings) (web.Sett
 	if len(next.SessionBusy) == 0 {
 		next.SessionBusy = nil
 	}
-	d.setMu.Lock()
-	defer d.setMu.Unlock()
+	next.AllID, next.AllSeq = allID, allSeq
 	if d.settingsMove.Load() {
 		d.moveSettings()
 	}

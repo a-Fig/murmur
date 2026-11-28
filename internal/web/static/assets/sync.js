@@ -18,7 +18,7 @@ import {
 import { conversationOf, composers, composing, deviceMode, namesOf } from "./messages.js";
 import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } from "./files.js";
 import { askForName } from "./picker.js";
-import { minuteEdits, cancelMinutes } from "./settings.js";
+import { minuteEdits, cancelMinutes, loadAllRepos } from "./settings.js";
 import { loadUpdates } from "./updates.js";
 
 export {
@@ -458,7 +458,10 @@ async function start() {
   if (!ui.token) return;
   loadSettings(); // the wake-up settings say which of this device's sessions show red
   loadRepoCount();
-  if (ui.view === "settings") loadUpdates();
+  if (ui.view === "settings") {
+    loadUpdates();
+    loadAllRepos();
+  }
   poll();
 }
 

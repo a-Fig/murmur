@@ -71,6 +71,9 @@ type Server struct {
 	themePath       string
 
 	updates Updates // nil: the page shows no update setting
+
+	allRepos        string // the record of settings for all repos (allrepos.go); "": none
+	allReposChanged func()
 }
 
 // New returns the page's handler. token is the page's own, not the one that opens the daemon to
@@ -115,6 +118,8 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 	s.mux.HandleFunc("GET /api/activity", s.getActivity)
 	s.mux.HandleFunc("GET /api/settings", s.getSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.putSettings)
+	s.mux.HandleFunc("GET /api/settings/all", s.getAllRepos)
+	s.mux.HandleFunc("PUT /api/settings/all", s.putAllRepos)
 	s.mux.HandleFunc("PATCH /api/repo-policy", s.patchRepoPolicy)
 	s.mux.HandleFunc("GET /api/preferences", s.getPreferences)
 	s.mux.HandleFunc("POST /api/preferences", s.updatePreferences)
