@@ -139,7 +139,12 @@ func TestGrantIsNotRepeatedForADeviceThatIsAway(t *testing.T) {
 		t.Fatalf("granted again on the presence the grant answered: %v", due)
 	}
 	// It comes back, and its next presence still lists no key: the grant was junk to it.
-	p.pres.At = p.pres.At.Add(time.Minute)
+	// A presence pushed while it still polls for the grant is no sign it couldn't open it.
+	p.pres.At = p.pres.At.Add(grantReadWindow / 2)
+	if due := d.grantsDueLocked(); len(due) != 0 {
+		t.Fatalf("granted again before the device had time to read the grant: %v", due)
+	}
+	p.pres.At = p.pres.At.Add(grantReadWindow)
 	if due := d.grantsDueLocked(); len(due) != 1 {
 		t.Fatalf("not granted again on a later presence that still lacks the key: %v", due)
 	}
