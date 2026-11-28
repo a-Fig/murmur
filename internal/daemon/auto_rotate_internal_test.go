@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"errors"
 	"strings"
@@ -152,13 +153,13 @@ func TestACheckPutOffDuringVerificationRunsAfterIt(t *testing.T) {
 	default:
 	}
 	d.st.TeamReplayThrough = ""
-	d.autoResumeLocked()
+	d.autoVerifiedLocked()
 	select {
 	case <-d.rotateKick:
 	default:
 		t.Fatal("the check put off during verification wasn't woken")
 	}
-	d.autoResumeLocked()
+	d.autoVerifiedLocked()
 	select {
 	case <-d.rotateKick:
 		t.Fatal("woken twice for one check put off")
@@ -196,6 +197,90 @@ func TestACheckWaitingForTheTeamKeysRunsWhenTheyCome(t *testing.T) {
 	case <-d.rotateKick:
 	default:
 		t.Fatal("the check waiting for the team keys wasn't woken by the grant")
+	}
+}
+
+// A check waiting for a team key is woken by that key, and by nothing else on the team ref: a replay
+// to a new tip that brings this device no key, a grant to another device say, left it to look up
+// the collaborators again, and fail again, on every update of a busy ref. Turning the setting off
+// ends the wait, so the key coming after it wakes nothing (Sol's third review of #1289). Each wake
+// is one collaborator lookup in autoRotate, so the lookups are counted here as wakes.
+func TestACheckWaitingForAKeyWakesOnlyForIt(t *testing.T) {
+	d := autoRig(t)
+	woken := func() bool {
+		select {
+		case <-d.rotateKick:
+			return true
+		default:
+			return false
+		}
+	}
+	holdBack := func() (string, *ecdh.PrivateKey) {
+		t.Helper()
+		k := bus.NewBoxKey()
+		ep := teamEpoch{ID: bus.TeamID(bus.BoxPublic(k)), Pub: bus.BoxPublic(k), By: d.device, At: time.Now().UTC()}
+		d.st.Epochs = append(d.st.Epochs, ep)
+		d.mu.Lock()
+		c, ok := d.autoCheckLocked()
+		c.epoch, c.roster = d.epochRefLocked()
+		d.mu.Unlock()
+		if !ok {
+			t.Fatal("the fixture can't run an automatic check")
+		}
+		if _, pushed, err := d.teamWork(t.Context(), &teamAsk{rotate: true, auto: &c}); !errors.Is(err, errKeysMissing) || pushed {
+			t.Fatalf("pushed %v, %v; want errKeysMissing", pushed, err)
+		}
+		return ep.ID, k
+	}
+	id, k := holdBack()
+	for range 3 {
+		// A grant to another device: the replay reaches its new tip and brings no key for this one.
+		d.mu.Lock()
+		d.autoVerifiedLocked()
+		d.addTeamKeysLocked(bus.Keyring{bus.TeamID(bus.BoxPublic(bus.NewBoxKey())): bus.NewBoxKey()})
+		d.mu.Unlock()
+		if woken() {
+			t.Fatal("woken by a team update that didn't bring the missing key")
+		}
+	}
+	// The grant comes in a replay of the team ref, and the check runs once the replay reaches its tip.
+	d.mu.Lock()
+	d.st.TeamReplayThrough = "target"
+	d.addTeamKeysLocked(bus.Keyring{id: k})
+	d.mu.Unlock()
+	if woken() {
+		t.Fatal("woken before the replay that brought the key was verified")
+	}
+	d.mu.Lock()
+	d.st.TeamReplayThrough = ""
+	d.autoVerifiedLocked()
+	d.mu.Unlock()
+	if !woken() {
+		t.Fatal("the check waiting for the missing key wasn't woken by it")
+	}
+
+	id, k = holdBack()
+	off := d.st.TeamOwner.Policy
+	off.AutoRotate = false
+	d.mu.Lock()
+	ownerRecord(t, d, bus.TeamRecord{Type: bus.TeamPolicy, Policy: &off})
+	d.mu.Unlock()
+	// The change wakes the loop once, and the check it starts looks nothing up.
+	if !woken() {
+		t.Fatal("turning the setting off didn't wake the loop")
+	}
+	if delay := d.checkForDepartures(t.Context(), func(context.Context, string) ([]string, error) {
+		t.Fatal("looked up collaborators with the setting off")
+		return nil, nil
+	}); delay != rotationCheck {
+		t.Fatalf("next check in %s, want %s", delay, rotationCheck)
+	}
+	d.mu.Lock()
+	d.autoVerifiedLocked()
+	d.addTeamKeysLocked(bus.Keyring{id: k})
+	d.mu.Unlock()
+	if woken() {
+		t.Fatal("the key woke a check the setting no longer allows")
 	}
 }
 

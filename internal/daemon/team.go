@@ -129,7 +129,7 @@ func (d *Daemon) addTeamKeysLocked(keys bus.Keyring) bool {
 	}
 	d.kickPoll()
 	d.kickPresence() // its presence lists the keys it holds, which teammates grant by
-	d.autoResumeLocked()
+	d.autoKeysLocked()
 	return true
 }
 
@@ -248,7 +248,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			d.st.TeamReplayThrough = ""
 			d.refreshRepoFilesLocked()
 			d.signalTeamLocked()
-			d.autoResumeLocked()
+			d.autoVerifiedLocked()
 			d.saveLocked()
 			d.mu.Unlock()
 		}
@@ -316,7 +316,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 				d.st.TeamReplayThrough = ""
 				d.refreshRepoFilesLocked()
 				d.signalTeamLocked()
-				d.autoResumeLocked()
+				d.autoVerifiedLocked()
 			}
 		})
 		return nil
@@ -331,7 +331,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.st.TeamReplayThrough = ""
 		d.refreshRepoFilesLocked()
 		d.signalTeamLocked()
-		d.autoResumeLocked()
+		d.autoVerifiedLocked()
 		d.saveLocked()
 	}
 	d.mu.Unlock()
@@ -623,15 +623,13 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	if rotate {
 		// Checked on the epochs this very push builds on: another device may have rotated since the
 		// request came in, and this one would then grant a history with that key missing.
-		for _, e := range d.st.Epochs {
-			if d.teamKeys[e.ID] == nil {
-				if ask.auto != nil {
-					// Under mu with the look at the keys, so a grant after it wakes the check.
-					d.autoDeferred = true
-				}
-				d.mu.Unlock()
-				return "", false, errKeysMissing
+		if d.missingTeamKeyLocked() {
+			if ask.auto != nil {
+				// Under mu with the look at the keys, so a grant after it wakes the check (autoKeysLocked).
+				d.autoWaitKeys = true
 			}
+			d.mu.Unlock()
+			return "", false, errKeysMissing
 		}
 	}
 	if ask != nil && !rotate && ask.collaborators != nil && ask.firstRoster {
@@ -755,7 +753,7 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	if tip == "" {
 		// The lease proved this device wrote the first epoch with no earlier history.
 		d.st.TeamOwnerChecked = true
-		d.autoResumeLocked()
+		d.autoVerifiedLocked()
 	}
 	d.saveLocked()
 	return epoch, true, nil

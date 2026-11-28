@@ -643,12 +643,13 @@ type Daemon struct {
 	rotateKick  chan struct{}   // wakes autoRotate when the owner or its AutoRotate setting changes
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
 	// What the automatic check (auto_rotate.go) runs by, under mu: autoRev counts changes of owner,
-	// mode and AutoRotate, autoCancel stops the collaborator lookup in flight, and autoDeferred says
-	// a check was put off while the team history was being verified, or until this device holds
-	// every team key.
-	autoRev      uint64
-	autoCancel   context.CancelFunc
-	autoDeferred bool
+	// mode and AutoRotate, and autoCancel stops the collaborator lookup in flight. autoWaitVerify
+	// says a check was put off while the team history was being verified, and autoWaitKeys that one
+	// is waiting until this device holds every team key: each wait ends only by what it waits for.
+	autoRev        uint64
+	autoCancel     context.CancelFunc
+	autoWaitVerify bool
+	autoWaitKeys   bool
 	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
 	// team key the team ref doesn't show, that record and the sync it was first met in

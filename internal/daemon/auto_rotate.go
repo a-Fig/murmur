@@ -78,7 +78,7 @@ func (d *Daemon) checkOnce(ctx context.Context, list func(context.Context, strin
 	verified := d.st.TeamOwnerChecked && d.st.TeamReplayThrough == ""
 	check, enabled := d.autoCheckLocked()
 	if !verified {
-		d.autoDeferred = true // autoResumeLocked wakes the loop once the history is verified
+		d.autoWaitVerify = true // autoVerifiedLocked wakes the loop once the history is verified
 	}
 	// The lookup is a sample of who can push for this key. A key made while it runs, by hand with
 	// mur rotate say, starts the check again (Sol's re-review of #1289): its roster was taken later,
@@ -179,9 +179,11 @@ func (d *Daemon) epochRefLocked() (epoch, roster string) {
 
 // autoRotateChangedLocked is called when the owner, the encryption mode or AutoRotate changes. A
 // check in flight was authorized by what was there before: its lookup is stopped, and its writes
-// will be refused, and the loop is woken to check again by what is there now. Caller holds mu.
+// will be refused, and the loop is woken to check again by what is there now. A check waiting for
+// keys waits no longer: the check this wakes waits again if it still needs them. Caller holds mu.
 func (d *Daemon) autoRotateChangedLocked() {
 	d.autoRev++
+	d.autoWaitKeys = false
 	if d.autoCancel != nil {
 		d.autoCancel()
 		d.autoCancel = nil
@@ -189,15 +191,45 @@ func (d *Daemon) autoRotateChangedLocked() {
 	d.kickAutoRotate()
 }
 
-// autoResumeLocked is called when the team history has been verified to its tip, and when this
-// device is granted team keys. A check put off for either runs now. The wake-up that would have
-// started it after verification can come, and be spent, between two pages of the replay (Sol's
-// review of #1289). And a new owner, just handed the mesh, can be a grant behind the key it was
-// made for: its check can't read that key's roster, would rotate, and can't without every key, so
-// it waits for the grant, not for the hour's retry (test-linux on 8034d2c9). Caller holds mu.
-func (d *Daemon) autoResumeLocked() {
-	if d.autoDeferred {
-		d.autoDeferred = false
+// autoVerifiedLocked is called when the team history has been verified to its tip. A check put off
+// for that runs now, if one may: the wake-up that would have started it can come, and be spent,
+// between two pages of the replay (Sol's review of #1289). Caller holds mu.
+func (d *Daemon) autoVerifiedLocked() {
+	if d.autoWaitVerify {
+		d.autoWaitVerify = false
+		if _, ok := d.autoCheckLocked(); ok {
+			d.kickAutoRotate()
+		}
+	}
+}
+
+// autoKeysLocked is called when this device is granted team keys. A check that would have rotated
+// without every key runs now, if this device holds them all and a check may still run: a new owner,
+// just handed the mesh, can be a grant behind the key it was made for, and waits for that grant, not
+// the hour's retry (test-linux on 8034d2c9). Only keys end that wait. A replay of anything else on
+// the team ref, a grant to another device say, leaves it, or a busy ref looked up the collaborators
+// again on every grant while the key was missing (Sol's third review of #1289). Caller holds mu.
+func (d *Daemon) autoKeysLocked() {
+	if !d.autoWaitKeys || d.missingTeamKeyLocked() {
+		return
+	}
+	d.autoWaitKeys = false
+	if !d.st.TeamOwnerChecked || d.st.TeamReplayThrough != "" {
+		d.autoWaitVerify = true // a grant comes in a replay, and the check waits for its end
+		return
+	}
+	if _, ok := d.autoCheckLocked(); ok {
 		d.kickAutoRotate()
 	}
+}
+
+// missingTeamKeyLocked says this device lacks the key of some epoch in the team history, so it can't
+// rotate: the new key's grants would leave that one out. Caller holds mu.
+func (d *Daemon) missingTeamKeyLocked() bool {
+	for _, e := range d.st.Epochs {
+		if d.teamKeys[e.ID] == nil {
+			return true
+		}
+	}
+	return false
 }
