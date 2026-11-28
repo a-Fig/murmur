@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/proc"
+	"github.com/a-Fig/murmur/internal/termtext"
 )
 
 // Git runs commands against one repository's git directory.
@@ -38,7 +39,9 @@ type Git struct {
 	NoTerminal bool
 }
 
-// Error is a failed git command, with what it printed to stderr.
+// Error is a failed git command, with what it printed to stderr. Error() gives that text cleaned
+// for a terminal (termtext): a remote chooses its "remote:" lines, and the message reaches people's
+// terminals (#1332). Stderr keeps it as git printed it, for code that reads it.
 type Error struct {
 	Args   []string
 	Stderr string
@@ -46,7 +49,7 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	msg := strings.TrimSpace(e.Stderr)
+	msg := strings.TrimSpace(termtext.Clean(e.Stderr))
 	if msg == "" {
 		msg = e.Err.Error()
 	}
