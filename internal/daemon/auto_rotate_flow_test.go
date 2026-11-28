@@ -43,6 +43,7 @@ func (l *logBook) count(s string) int {
 // of Team mode and back, the new key gets a fresh lookup of its own, not the sample taken for the
 // old one. And a cache saved by a daemon that didn't know the setting doesn't turn it off.
 func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	dir := filepath.Join(t.TempDir(), "owner")
 	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
@@ -245,6 +246,7 @@ func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
 // root. With the remote's team ref gone, that read goes to the cached tip, from the objects the
 // clone still has, and writes resume: presence included (Sol's re-review of #1289).
 func TestAnOlderCacheIsReadAgainWithTheTeamRefGone(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	dir := filepath.Join(t.TempDir(), "owner")
 	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)
@@ -280,6 +282,7 @@ func TestAnOlderCacheIsReadAgainWithTheTeamRefGone(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := gitOK(remote, "rev-parse", "--verify", "-q", presence)
+	a.noKey = true // the team ref is gone, so no key shows on the remote for start to wait a minute for
 	a.start()
 	eventually(t, "presence is pushed again", func() bool {
 		after := gitOK(remote, "rev-parse", "--verify", "-q", presence)

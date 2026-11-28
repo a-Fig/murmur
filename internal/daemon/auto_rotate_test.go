@@ -19,6 +19,7 @@ import (
 // records who can push without making a new key, so turning it on doesn't pause the team; a later
 // check that finds someone gone rotates, as `mur rotate` would.
 func TestAutomaticRotationIsTheOwnersOptIn(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	dir := filepath.Join(t.TempDir(), "owner")
 	git(t, filepath.Dir(dir), "clone", "-q", remote, dir)

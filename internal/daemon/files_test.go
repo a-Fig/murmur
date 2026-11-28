@@ -251,6 +251,7 @@ func (p *page) sendFiles(to, text string, files ...web.Upload) (int, string) {
 }
 
 func TestSignedRepoPolicyOverridesDeviceFileSettings(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	clone := filepath.Join(t.TempDir(), "owner")
 	git(t, filepath.Dir(clone), "clone", "-q", remote, clone)

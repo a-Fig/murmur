@@ -38,6 +38,7 @@ func hasAct(acts []web.Activity, kind, addr string, ok func(web.Activity) bool) 
 // A session's start, its status changing and its stop each show, on its own device's page and on
 // another's, under the session's name. The status it starts with isn't a change.
 func TestThePageIsToldWhatSessionsDid(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	// A short grace, so the session whose connection closes is stopped within the test.
 	a, b := newTimedDevice(t, remote, 300*time.Millisecond, time.Hour), newDevice(t, remote)
@@ -90,6 +91,7 @@ func TestThePageIsToldWhatSessionsDid(t *testing.T) {
 
 // A tag a session takes or drops shows as a change of its tags.
 func TestThePageIsToldOfTagChanges(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -120,6 +122,7 @@ func TestThePageIsToldOfTagChanges(t *testing.T) {
 // The commits one tool call made show as one activity on the session's own device, with their
 // count and the last one's subject; another device learns only the branch, from presence.
 func TestThePageIsToldOfCommits(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	wt := a.linkedTree("wt-feed", "feat-feed")

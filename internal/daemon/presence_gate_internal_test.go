@@ -62,6 +62,7 @@ func TestPresenceGateHoldsWhileSending(t *testing.T) {
 // comes to the gate waits, and once the push is done the gate is let go and cleared. A presence that
 // fails lets go of its gate too.
 func TestPublishPresenceHoldsItsGateUntilPushed(t *testing.T) {
+	t.Parallel()
 	d, _, clone := rateRig(t, Options{}, false)
 	remote := filepath.Join(filepath.Dir(clone), "remote.git")
 	hold := "#!/bin/sh\ncat >/dev/null\nsleep 2\nexit 0\n"

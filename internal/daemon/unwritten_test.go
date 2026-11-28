@@ -62,6 +62,7 @@ func startShown(t *testing.T, d, on *device, addr string) {
 }
 
 func TestAStartThatFailedToPushIsWrittenOnceItCanBe(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")
@@ -73,6 +74,7 @@ func TestAStartThatFailedToPushIsWrittenOnceItCanBe(t *testing.T) {
 }
 
 func TestAStartThatFailedToPushIsWrittenByTheNextRun(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	bob, _ := b.session("bbbbbb", "")

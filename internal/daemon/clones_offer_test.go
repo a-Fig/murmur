@@ -139,6 +139,7 @@ func TestCrossRepoOfferWithoutNickKeepsDefaultDeviceName(t *testing.T) {
 }
 
 func TestCrossRepoOfferTakenFallsBackAndFiltersConflictingNick(t *testing.T) {
+	t.Parallel()
 	clonesDir := t.TempDir()
 	r1 := newRemote(t)
 	r2 := newRemote(t)
