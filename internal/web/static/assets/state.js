@@ -7,7 +7,7 @@ export {
   NAME, COMMAND, TOKEN_KEY, POLL_MS, HIDDEN_POLL_MS, MAX_MESSAGES, MAX_OWN_MESSAGES, VIEWS, TITLES, NARROW,
   ui, devices, named, namesLearned, learn, nameOf, fromName, toName, findSession, sessionCount, HIDDEN,
   personNames, me, myName, accountOffers, usableOffers, primaryOffer, offeredNick, repoLabel, isPerson,
-  people, findPerson, personOnline, unreadIds, unreadCount,
+  people, findPerson, personOnline, unreadIds, unreadCount, hasLeft,
 };
 
 const NAME = document.querySelector('meta[name="app-name"]').content;
@@ -43,6 +43,8 @@ const ui = {
   installing: false, // an Update now is on its way to the daemon
   preferenceError: "",
   rowErrors: {},
+  leaving: null, // the group chat the person is leaving (#1267)
+  leaveError: "",
   filter: null, // a session name
   conversation: null, // the open conversation's key
   conversationAnchor: null, // a message in it
@@ -147,6 +149,12 @@ function me() {
 
 function myName() {
   return me()?.name || "";
+}
+
+// A person is in a group chat they have written in, until they leave it (#1267); writing in it again
+// takes them back, and the daemon then drops it from the list.
+function hasLeft(group) {
+  return !!me()?.left?.includes(group);
 }
 
 function accountOffers() {

@@ -36,6 +36,7 @@ type fakeSource struct {
 	restarts  int
 	sends     []string // each Send: to: text
 	read      []string // the IDs given to MarkRead
+	left      []string // the groups given to LeaveGroup
 	policies  []RepoPolicyChange
 }
 
@@ -171,6 +172,13 @@ func (f *fakeSource) Send(ctx context.Context, to, text string, files []Upload) 
 		return Sent{}, errors.New("not sent: it looks like a secret")
 	}
 	return Sent{ID: "abc123", Note: "a note"}, nil
+}
+
+func (f *fakeSource) LeaveGroup(ctx context.Context, group string) (Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.left = append(f.left, group)
+	return Account{Name: "ada", Left: f.left}, nil
 }
 
 func (f *fakeSource) MarkRead(ctx context.Context, ids []string) error {
@@ -842,6 +850,14 @@ func TestAccountAndSendCalls(t *testing.T) {
 	if !reflect.DeepEqual(read, []string{"m1", "m2"}) {
 		t.Errorf("marked read: %q", read)
 	}
+
+	resp = h.do("POST", "/api/groups/leave", "127.0.0.1:"+h.port, testToken, `{"group":"group:ui"}`)
+	var acct Account
+	json.NewDecoder(resp.Body).Decode(&acct)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !reflect.DeepEqual(acct.Left, []string{"group:ui"}) {
+		t.Errorf("leaving a group: %d, account left %q", resp.StatusCode, acct.Left)
+	}
 }
 
 // The page sets and clears this device's nickname (#533); a refused one says why.
@@ -902,6 +918,7 @@ func TestAccountCallsNeedTheToken(t *testing.T) {
 		{"PUT", "/api/color", `{"color":2}`},
 		{"POST", "/api/send", `{"to":"*","text":"hi"}`},
 		{"POST", "/api/read", `{"ids":["m1"]}`},
+		{"POST", "/api/groups/leave", `{"group":"group:ui"}`},
 	} {
 		resp := h.do(c.method, c.path, "127.0.0.1:"+h.port, "", c.body)
 		resp.Body.Close()

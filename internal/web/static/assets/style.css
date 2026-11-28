@@ -4348,6 +4348,21 @@ a.g-pr:hover {
   font-size: 0.6875rem;
   color: var(--muted-foreground);
 }
+.g-mp-leave {
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.g-mp-leave .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-inline: 0.3125rem; /* under the avatars above */
+}
+.g-mp-leave:hover {
+  color: var(--foreground);
+}
 .g-mp-posted {
   flex-shrink: 0;
   font-size: 0.6875rem;

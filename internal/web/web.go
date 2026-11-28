@@ -132,6 +132,7 @@ func NewWithGitHub(src Source, token string, prs LookupPRs, events LookupGitHub)
 	s.mux.HandleFunc("POST /api/send", s.postSend)
 	s.mux.HandleFunc("GET /api/file", s.getFile)
 	s.mux.HandleFunc("POST /api/read", s.postRead)
+	s.mux.HandleFunc("POST /api/groups/leave", s.postLeaveGroup)
 	s.mux.HandleFunc("GET /api/repos", s.getRepos)
 	s.mux.HandleFunc("POST /api/repos/open", s.postOpenRepo)
 	s.mux.HandleFunc("GET /api/health", s.getHealth)
@@ -670,6 +671,27 @@ func (s *Server) postRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type leaveRequest struct {
+	Group string `json:"group"`
+}
+
+// postLeaveGroup takes the person out of a group chat (#1267).
+func (s *Server) postLeaveGroup(w http.ResponseWriter, r *http.Request) {
+	var req leaveRequest
+	if err := readJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), sourceTimeout)
+	defer cancel()
+	account, err := s.src.LeaveGroup(ctx, req.Group)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, account)
 }
 
 // SplitText makes a person's message into what the bus carries: a subject of one line and a body.

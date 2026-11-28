@@ -53,6 +53,8 @@ console.log("on, a session picked: " + keys(ctx.onlyYours(list)));
 ctx.ui.filter = null;
 ctx.ui.state.account = {};
 console.log("no account: " + keys(ctx.onlyYours(list)));
+ctx.ui.state.account = { name: "ann", addr: "laptop/human", left: ["group:ui"] }; // ann left it (#1267)
+console.log("on, left one: " + keys(ctx.onlyYours(list)));
 ctx.ui.state.account = { name: "ann", addr: "laptop/human" };
 ctx.onlyMine = false;
 ctx.ui.conversation = "tag:group:db";
@@ -72,6 +74,7 @@ console.log("toggled off: " + ctx.onlyMine + " " + ctx.ui.conversation);
 // conversation opened from elsewhere stays while open; turning the toggle on closes one that isn't
 // theirs, so the pane and the list agree. One with a send waiting or failed is theirs too. It
 // narrows all conversations, not a picked session's; with no account there is nothing to filter by.
+// A group chat the person left isn't theirs (#1267).
 func TestOnlyYoursConversations(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -85,7 +88,7 @@ func TestOnlyYoursConversations(t *testing.T) {
 		}
 	}
 	write(src, pageFunctions(t, "me", "myName", "nameOf", "fromName", "toName", "conversationOf", "groupConversation", "dmKey",
-		"draftConversation", "myMessages", "yourKeys", "onlyYours", "mineToggle"))
+		"draftConversation", "myMessages", "hasLeft", "yourKeys", "onlyYours", "mineToggle"))
 	harness := filepath.Join(dir, "harness.js")
 	write(harness, onlyMineHarness)
 	b, err := exec.Command(node, harness, src).CombinedOutput()
@@ -100,6 +103,7 @@ func TestOnlyYoursConversations(t *testing.T) {
 		`on, one failed: dm:["ann","otter"] tag:group:ui tag:group:db dm:["ann","wren"]`,
 		`on, a session picked: dm:["ann","otter"] dm:["heron","otter"] tag:group:ui tag:group:db tag:group:quiet dm:["ann","wren"]`,
 		`no account: dm:["ann","otter"] dm:["heron","otter"] tag:group:ui tag:group:db tag:group:quiet dm:["ann","wren"]`,
+		`on, left one: dm:["ann","otter"] dm:["ann","wren"]`,
 		`toggled on over another's: true null`,
 		`toggled on over ann's: true tag:group:ui`,
 		`toggled off: false tag:group:db`,
