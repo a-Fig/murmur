@@ -331,3 +331,35 @@ func TestTitlesAreReadNoMoreOftenThanTitleEvery(t *testing.T) {
 		return got == ""
 	})
 }
+
+// A Pi session outside T3 shows the name Pi keeps in its session file, the last session_info
+// entry's, wherever in the file it was set, and none once it is cleared (#1146).
+func TestPiNameOutsideT3(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "2026-11-28_a.jsonl")
+	write := func(lines ...string) {
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		for _, l := range lines {
+			if _, err := f.WriteString(l + "\n"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(`{"type":"session","version":3,"id":"s1"}`,
+		`{"type":"session_info","id":"a1","parentId":null,"name":"Refactor auth module"}`)
+	turn := `{"type":"message","id":"m1","message":{"role":"assistant","content":"` + strings.Repeat("x", 4096) + `"}}`
+	for range 64 { // well past the 128 KB of a transcript's end that Claude Code's title is read from
+		write(turn)
+	}
+	a := newDevice(t, newRemote(t))
+	pi, _ := a.piStart(file, "", procP)
+	a.waitDoing(idOf(pi), pi, "Refactor auth module")
+	write(`{"type":"session_info","id":"a2","parentId":"m1","name":"Fix the login bug"}`)
+	a.waitDoing(idOf(pi), pi, "Fix the login bug")
+	write(`{"type":"session_info","id":"a3","parentId":"a2","name":""}`)
+	a.waitDoing(idOf(pi), pi, "")
+}

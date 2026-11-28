@@ -96,8 +96,9 @@ func (d *Daemon) refreshTitles(ctx context.Context) {
 }
 
 // readTitle reads the title of the conversation a session is in. known is false when the session
-// gives nothing to find it by: not in T3 with its thread found, no Codex thread ID, no transcript.
-// Outside T3 the title of an agent other than Claude Code or Codex isn't read.
+// gives nothing to find it by: not in T3 with its thread found, no Codex thread ID or Pi session
+// file, no transcript. Outside T3 the title of an agent other than Claude Code, Codex or Pi isn't
+// read.
 // A session in T3 is read from T3 only: its own client's name for the conversation is another
 // title, and the two would take turns showing.
 func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err error) {
@@ -111,6 +112,10 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 		if errors.Is(err, t3db.ErrNotFound) {
 			return "", true, nil // T3 has the thread's row not yet, or no more: no title
 		}
+		return raw, true, err
+	case r.Native != "" && isPi(j.agent):
+		// Pi's own ID for the session is its session file, which holds the name (#1146).
+		raw, err = title.Pi(r.Native)
 		return raw, true, err
 	case r.Native != "" && !ownTitleUnread(j.agent):
 		// The session's own home, as its MCP server has it: CODEX_HOME, which join forwards to the
@@ -127,10 +132,10 @@ func readTitle(ctx context.Context, j titleJob) (raw string, known bool, err err
 }
 
 // ownTitleUnread says whether agent is one that gives the daemon its own ID for the conversation
-// but whose own name for it Murmur doesn't read: OpenCode, Muse, Pi, Grok, Antigravity, Cursor, Kiro and Hermes. Codex is the one whose
-// ID is read, in Codex's state.
+// but whose own name for it Murmur doesn't read: OpenCode, Muse, Grok, Antigravity, Cursor, Kiro and
+// Hermes. Codex's ID is read in Codex's state, and Pi's is its session file (readTitle).
 func ownTitleUnread(agent string) bool {
-	for _, a := range []string{"opencode", "muse", "pi", "grok", "antigravity", "cursor", "kiro", "hermes"} {
+	for _, a := range []string{"opencode", "muse", "grok", "antigravity", "cursor", "kiro", "hermes"} {
 		if agent == a || strings.HasPrefix(agent, a+" ") {
 			return true
 		}

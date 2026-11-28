@@ -31,11 +31,15 @@ that mattered.
   | In T3 | `orchestration_v2_projection_threads.title` for the thread, in T3's `statev2.sqlite` | The client's own name for the conversation: T3 doesn't copy its title there, and the two would take turns |
   | Codex outside T3 | The thread's explicit name: `threads.name` in `state_N.sqlite` (the highest N) of the `CODEX_HOME` the session's MCP server names (#88), else `thread_name` in `session_index.jsonl` | `threads.title` and `threads.preview`, which hold the opening message |
   | Claude Code outside T3 | The last `custom-title` line in the session's transcript (the name the user gave it), else the last `ai-title` line (the one Claude Code made up) | The first prompt: a session with neither has no title |
+  | Pi outside T3 (#1146) | The `name` of the last `session_info` line in the session file (`/name`, `--name`, `pi.setSessionName()`); an empty one clears it, as in Pi | |
 
   The transcript is the hook's `transcript_path`. Claude Code rewrites the title lines near the end
   of the file, so the last 128 KB is read (in the 300 largest transcripts on the laptop, 2026-10-30,
   the last `ai-title` was within 31 KB of the end). A new path, as after `/clear`, is a new
-  conversation and drops the old title.
+  conversation and drops the old title. Pi writes `session_info` where the name was set, and a
+  session file grows with every turn, so the whole file is read once, and after that only what was
+  appended (`title.Pi`). A file that is shorter, or whose bytes before the last read's end changed
+  (Pi rewrites a file whole to migrate it), is read again from the start.
 - **It goes out as presence**, in the session's `doing` field, where a status goes, so the bus
   format is unchanged and an older daemon shows the title as a status. **A conversation's title is
   therefore shown to every teammate who can read the bus, unless the agent sets a status**; it is

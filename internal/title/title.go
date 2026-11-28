@@ -19,6 +19,7 @@
 //     {"type":"ai-title","aiTitle":...} for the one Claude Code made up. Claude Code rewrites them
 //     near the end of the file, so the last 128 KB is enough; a session with neither has no title,
 //     and the first prompt is not used in its place.
+//   - Pi outside T3: the last session_info entry in the session file (pi.go).
 package title
 
 import (
