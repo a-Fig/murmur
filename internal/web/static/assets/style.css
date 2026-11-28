@@ -1360,9 +1360,19 @@ a.g-pr:hover {
   flex: 1;
   min-width: 0;
 }
+.repo-row:has(.repo-path) {
+  padding-block: 0.25rem;
+}
+/* A path too long for the row loses its start, not the end that tells it apart (#1280). */
 .repo-path {
+  direction: rtl;
+  text-align: left;
   font-size: 0.6875rem;
   color: var(--muted-foreground);
+}
+.repo-path > span {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 .conn-badge {
   display: inline-flex;
@@ -3338,7 +3348,44 @@ a.g-pr:hover {
   gap: 1px;
   overflow-y: auto;
 }
+/* A list too long for its menu fades out at an edge with more rows past it, so it shows it scrolls
+ * (#1280). The scroll drives the fade; a list that fits has no scroll, so no fade. */
+@property --list-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --list-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes list-edges {
+  from {
+    --list-top: 0px;
+    --list-bottom: 2rem;
+  }
+  10% {
+    --list-top: 2rem;
+  }
+  90% {
+    --list-bottom: 2rem;
+  }
+  to {
+    --list-top: 2rem;
+    --list-bottom: 0px;
+  }
+}
+@supports (animation-timeline: scroll()) {
+  .tag-menu-list {
+    mask-image: linear-gradient(transparent, #000 var(--list-top), #000 calc(100% - var(--list-bottom)), transparent);
+    animation: list-edges linear both;
+    animation-timeline: scroll(self);
+  }
+}
+/* Rows keep their height in a full list, which scrolls instead of squeezing them together (#1280). */
 .tag-menu-row {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
