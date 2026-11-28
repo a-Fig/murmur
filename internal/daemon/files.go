@@ -1924,8 +1924,8 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 // fileViewsLocked is the files of message e as a session here is told of them: each with the path
 // it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld). Caller
 // holds mu.
-func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
-	if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) {
+func (d *Daemon) fileViewsLocked(e bus.Event, refused bool) []proto.FileView {
+	if len(e.Files) == 0 || refused {
 		return nil
 	}
 	views := make([]proto.FileView, 0, len(e.Files))
