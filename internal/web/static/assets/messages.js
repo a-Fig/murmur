@@ -373,7 +373,8 @@ function conversationList(list) {
               h(
                 "div",
                 { class: "g-head-id" },
-                h("h2", { class: "truncate" }, name),
+                // Its whole name, wrapped if it must (#1284): it is who the session is, and this view exists to show it.
+                h("h2", null, name),
                 // Its profile (#631): how it is now, where it runs, and since when.
                 f ? profileLine(f.device, f.session) : h("p", { class: "g-head-status" }, "Settled · " + ago(settledSessions().find((r) => r.name === name)?.last || 0)),
               ),

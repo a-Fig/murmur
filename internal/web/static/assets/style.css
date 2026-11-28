@@ -2889,26 +2889,30 @@ a.g-pr:hover {
   gap: 0.125rem;
   min-width: 0;
 }
+/* The name and the line under it wrap rather than cut off (#1284): a name like windswept-xylophone
+ * breaks after its hyphen beside the Message button. */
 .g-head-who.g-profile .g-head-id > h2 {
   font-size: 1.25rem;
   font-weight: 600;
+  line-height: 1.25;
   letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
 }
 .g-head-status {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
   min-width: 0;
   font-size: 0.75rem;
+  line-height: 1rem;
   color: var(--muted-foreground);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
-.g-head-status > .truncate {
-  min-width: 2rem;
+/* Each part wraps as a whole, the dot staying with the part before it. */
+.g-head-status > span {
+  display: inline-block;
+  max-width: 100%;
 }
-.g-head-status > span + span::before {
+.g-head-status > span:not(:last-child)::after {
   content: "·";
-  margin-right: 0.375rem;
+  margin: 0 0.375rem;
 }
 .g-profile .g-head-msg {
   flex-shrink: 0;
