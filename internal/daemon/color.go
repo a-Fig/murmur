@@ -174,11 +174,12 @@ func (s pageSource) SetColor(ctx context.Context, color int) (web.Account, error
 		d.awaitFirstSync(ctx)
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if color != d.st.Color {
 		for id, c := range d.colorsLocked() {
 			if id != d.device && c.Picked && c.Color == color-1 {
-				return web.Account{}, fmt.Errorf("%s has that colour", d.deviceCalledLocked(id))
+				called := d.deviceCalledLocked(id)
+				d.mu.Unlock()
+				return web.Account{}, fmt.Errorf("%s has that colour", called)
 			}
 		}
 		d.st.Color, d.st.ColorAt, d.st.ColorLostTo = color, time.Time{}, ""
@@ -191,5 +192,6 @@ func (s pageSource) SetColor(ctx context.Context, color int) (web.Account, error
 		d.st.ColorLostTo = "" // seen: picking Auto again takes the note away
 		d.saveLocked()
 	}
-	return d.accountLocked(), nil
+	d.mu.Unlock()
+	return d.accountWithOffers(ctx), nil
 }

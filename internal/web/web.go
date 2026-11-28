@@ -466,7 +466,8 @@ func (s *Server) postTags(w http.ResponseWriter, r *http.Request) {
 }
 
 type accountRequest struct {
-	Name string `json:"name"`
+	Name string  `json:"name"`
+	Nick *string `json:"nick,omitempty"`
 }
 
 func (s *Server) putAccount(w http.ResponseWriter, r *http.Request) {
@@ -475,9 +476,14 @@ func (s *Server) putAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var nick *string
+	if a.Nick != nil {
+		trimmed := strings.TrimSpace(*a.Nick)
+		nick = &trimmed
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), sendTimeout) // a name is claimed on the remote, as a message is sent there
 	defer cancel()
-	account, err := s.src.SetAccount(ctx, a.Name)
+	account, err := s.src.SetAccount(ctx, a.Name, nick)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

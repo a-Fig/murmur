@@ -4,11 +4,18 @@ Added 2026-11-08 (#242). Someone with the page open can talk to agents, and agen
 way they answer each other. Before, a person could only watch, and reached an agent by typing in its
 own session.
 
-- **An account is a name** a person picks for this clone, offered from `git config user.name`. It
-  has no password and proves nothing: whoever can open the page is already at that keyboard, and
-  anyone who can push to the repo can write anything on the bus. A person's message gets no more
-  authority than an agent's. Verified identity is left out, and so is one person on two devices,
-  which is two accounts for now.
+- **An account is a name** a person picks for this clone. In a second repo on this machine
+  (#1277), the daemon reads the person's name and device nickname from other joined clones'
+  `.git/murmur/state.json` (most recently active first, via the clones record) and offers to reuse
+  them in one click. Those names stay local until the person accepts; accepting claims the name in
+  the new repo's `refs/murmur/names` registry and makes it visible to that repo's team. If the
+  offered name is already taken or invalid here, the page warns upfront and falls back to `git
+  config user.name`, while still offering a free device nickname from the other clone. Without
+  other joined clones, setup starts directly from `git config user.name`. An account has no
+  password and proves nothing: whoever can open the page is already at that keyboard, and anyone who
+  can push to the repo can write anything on the bus. A person's message gets no more authority
+  than an agent's. Verified identity is left out, and so is one person on two devices, which is two
+  accounts for now.
 - **The address is `device/human`.** Presence lists the person as a session whose agent is `person`,
   so an older daemon still shows them in `who`. The only new field on the bus is `Event.Person`, the
   name on a person's own messages. They carry the `human` tag ([tags](tags.md)).

@@ -149,6 +149,8 @@ type device struct {
 	tellWait time.Duration
 	// clones is the daemon's Clones, the record of this machine's clones; "" leaves it unset.
 	clones string
+	// joined, if set, is Joined, saying which clones on clones count as joined.
+	joined func(string) bool
 	// noKey starts the device without waiting for it to hold the team key (awaitTeamKey), for a test
 	// about a device that doesn't, or can't, hold it.
 	noKey bool
@@ -273,7 +275,7 @@ func (d *device) start() {
 			ReceiptGather: 200 * time.Millisecond, ReceiptGap: 200 * time.Millisecond, TellWait: d.tellWait,
 			Consent: d.consent, ConsentPoll: d.consentPoll,
 			PageOpen: d.pageOpen, PageMessages: d.pageMsgs, PageAddr: d.pageAddr, SnapshotTimeout: snapshot, TitleEvery: titleEvery, ThreadState: d.threadState, ThreadOf: d.threadOf,
-			CodexLineage: d.codexLineage, Clones: d.clones, Log: logger, ListCollaborators: d.listCollaborators})
+			CodexLineage: d.codexLineage, Clones: d.clones, Joined: d.joined, Log: logger, ListCollaborators: d.listCollaborators})
 		if err != nil {
 			d.t.Errorf("daemon: %v", err)
 		}
