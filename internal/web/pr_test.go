@@ -136,3 +136,83 @@ func TestFailedListingKeepsWhatWasKnown(t *testing.T) {
 		t.Errorf("after a failed listing: %+v, want what was known", got)
 	}
 }
+
+// In a clone whose remote isn't on a GitHub host, gh says so (gh 2.105.0, against a Gitea, #926),
+// and the page asks again hourly, not every minute: each ask started a gh for nothing.
+func TestARemoteGhDoesntKnowIsAskedHourly(t *testing.T) {
+	bin := t.TempDir()
+	said := "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`"
+	name, script := "gh", "#!/bin/sh\necho '"+said+"' >&2\nexit 1\n"
+	if runtime.GOOS == "windows" {
+		name, script = "gh.cmd", "@echo off\r\necho "+strings.ReplaceAll(said, "`", "")+" 1>&2\r\nexit /b 1\r\n"
+	}
+	// gh's other words for it, with GH_HOST or a token in the environment (cli/cli,
+	// remote_resolver.go), and one that isn't it.
+	for stderr, want := range map[string]bool{
+		"none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable.": true,
+		"set the GH_HOST environment variable to specify which GitHub host to use":                                                                                       true,
+		"HTTP 401: Bad credentials (https://api.github.com/graphql)":                                                                                                     false,
+	} {
+		if got := notGitHub([]byte(stderr)); got != want {
+			t.Errorf("notGitHub(%q) = %v, want %v", stderr, got, want)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := GH(t.TempDir())(context.Background()); !errors.Is(err, errNotGitHub) {
+		t.Fatalf("pull requests: %v, want errNotGitHub", err)
+	}
+	if _, err := GHEvents(t.TempDir())(context.Background()); !errors.Is(err, errNotGitHub) {
+		t.Fatalf("events: %v, want errNotGitHub", err)
+	}
+
+	var calls atomic.Int32
+	fail := errNotGitHub
+	c := newPRCache(func(ctx context.Context) (map[string]PR, error) {
+		calls.Add(1)
+		return nil, fail
+	})
+	defer c.close()
+	settle := func() {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			c.mu.Lock()
+			done := !c.inflight
+			c.mu.Unlock()
+			if done {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the listing never ended")
+			}
+		}
+	}
+	c.get([]string{"feat"})
+	settle()
+	c.mu.Lock()
+	wait := time.Until(c.fetched.Add(prTTL))
+	c.mu.Unlock()
+	if wait < notGitHubWait-time.Minute || wait > notGitHubWait {
+		t.Errorf("the next listing is due in %s, want about %s", wait, notGitHubWait)
+	}
+	c.get([]string{"feat"})
+	settle()
+	if n := calls.Load(); n != 1 {
+		t.Errorf("%d listings, want the one", n)
+	}
+	// Any other failure, as offline, is asked again at the usual time.
+	fail = errors.New("gh: offline")
+	c.mu.Lock()
+	c.fetched = time.Time{}
+	c.mu.Unlock()
+	c.get([]string{"feat"})
+	settle()
+	c.mu.Lock()
+	wait = time.Until(c.fetched.Add(prTTL))
+	c.mu.Unlock()
+	if wait > prTTL {
+		t.Errorf("after another failure the next listing is due in %s, want within %s", wait, prTTL)
+	}
+}

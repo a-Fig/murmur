@@ -180,7 +180,7 @@ type ghCache struct {
 
 	mu       sync.Mutex
 	events   []GitHubEvent
-	fetched  time.Time
+	fetched  time.Time // as prCache's
 	inflight bool
 	closed   bool
 }
@@ -220,7 +220,7 @@ func (c *ghCache) refresh() {
 	if err == nil { // gh missing, logged out, offline: what was known stays
 		c.events = events
 	}
-	c.fetched, c.inflight = time.Now(), false
+	c.fetched, c.inflight = nextListing(err, ghTTL), false
 }
 
 type activityResponse struct {

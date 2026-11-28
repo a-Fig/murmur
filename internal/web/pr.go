@@ -1,8 +1,10 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,6 +68,9 @@ func ghJSON(ctx context.Context, dir string, v any, args ...string) error {
 	cmd.WaitDelay = 2 * time.Second
 	hideWindow(cmd)
 	out, err := cmd.Output()
+	if ee := (*exec.ExitError)(nil); errors.As(err, &ee) && notGitHub(ee.Stderr) {
+		return fmt.Errorf("%w: %s", errNotGitHub, bytes.TrimSpace(ee.Stderr))
+	}
 	if err != nil {
 		return err
 	}
@@ -73,6 +78,34 @@ func ghJSON(ctx context.Context, dir string, v any, args ...string) error {
 		return fmt.Errorf("gh %s list: %w", args[0], err)
 	}
 	return nil
+}
+
+// errNotGitHub is gh saying the clone's remote isn't on a GitHub host it knows: a GitLab, Gitea
+// or bare remote, or a GitHub Enterprise host nobody has logged in to (`gh auth login`). gh 2.105.0
+// says "none of the git remotes configured for this repository point to a known GitHub host"
+// (2026-11-28, #926); with GH_HOST set, that the remotes don't "correspond to the GH_HOST
+// environment variable"; and with a token in the environment, to "set the GH_HOST environment
+// variable to specify which GitHub host to use" (cli/cli, remote_resolver.go). Asking again every
+// minute or two, as the page did, started a gh for nothing each time while the page was open:
+// after it, the page asks hourly, so a login to an Enterprise host still shows within the hour.
+var errNotGitHub = errors.New("the remote isn't on a GitHub host gh knows")
+
+// notGitHub is whether gh's stderr is one of errNotGitHub's answers.
+func notGitHub(stderr []byte) bool {
+	return bytes.Contains(stderr, []byte("none of the git remotes configured for this repository")) ||
+		bytes.Contains(stderr, []byte("set the GH_HOST environment variable to specify which GitHub host"))
+}
+
+// notGitHubWait is how long after errNotGitHub the next listing waits.
+const notGitHubWait = time.Hour
+
+// nextListing is when the listing after one that ended now with err is due, as a time for
+// fetched: ttl after it, or notGitHubWait after it when the remote isn't GitHub's.
+func nextListing(err error, ttl time.Duration) time.Time {
+	if errors.Is(err, errNotGitHub) {
+		return time.Now().Add(notGitHubWait - ttl)
+	}
+	return time.Now()
 }
 
 const (
@@ -95,7 +128,7 @@ type prCache struct {
 
 	mu       sync.Mutex
 	prs      map[string]PR // by the branch each heads
-	fetched  time.Time     // zero until the first listing ends
+	fetched  time.Time     // zero until the first listing ends; later than it ended after errNotGitHub (nextListing)
 	inflight bool
 	closed   bool
 }
@@ -155,5 +188,5 @@ func (c *prCache) refresh() {
 	if err == nil { // gh missing, logged out, offline: what was known stays
 		c.prs = prs
 	}
-	c.fetched, c.inflight = time.Now(), false
+	c.fetched, c.inflight = nextListing(err, prTTL), false
 }
