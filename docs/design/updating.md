@@ -69,8 +69,9 @@ information in the request; a network failure waits quietly for the next hour. A
     `/usr/local/bin` say, only an installer puts a new binary in place. A development build doesn't
     watch. Daemons that start together check together, and one takes the update lock: the others
     find it held, report nothing failed, and check again 10 s later, by when the watch has usually
-    restarted them onto what it installed. On Windows the watch opens the binary sharing delete, so
-    another daemon's rename of a new one into its place is never refused meanwhile.
+    restarted them onto what it installed. Windows refuses a rename over a file any process has
+    open, whatever it shares, and each watch has the binary open for a moment (antivirus a new
+    one too), so an install's rename into place is tried again for up to 5 s.
 - **The page's socket is handed over** (#255, decided 2026-11-09 from Sol's pre-release review). The
   old daemon passes its listening socket to the new one (descriptor 3 on Unix, the same handle on
   Windows, named by `MURMUR_PAGE_LISTENER`), with the page's address and token beside it in

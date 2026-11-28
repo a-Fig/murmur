@@ -35,7 +35,7 @@ const standInEnv = "MUR_UPDATE_TEST_STAND_IN"
 
 // standIn puts at path a binary that runs, a copy of this test binary, which prints
 // "mur <version>" for `version` as a release does, by t.Setenv(standInEnv, version). It goes in
-// beside path and is renamed into place, as an installer does.
+// beside path and is renamed into place, as an updater does.
 func standIn(t *testing.T, path string) {
 	t.Helper()
 	self, err := os.Executable()
@@ -57,7 +57,7 @@ func standIn(t *testing.T, path string) {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = renameRetried(tmp, path)
 	}
 	if err != nil {
 		t.Fatal(err)
