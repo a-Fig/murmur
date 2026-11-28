@@ -39,7 +39,7 @@ function cancelMinutes(key) {
   minuteEdits.delete(key);
 }
 
-function wakeControl(key, wake, onChange, withDefault) {
+function wakeControl(key, wake, onChange, withDefault, again = false) {
   const def = ui.settings?.defaultMinutes || 5;
   const choices = withDefault ? [["default", "Default"], ...WAKE_CHOICES] : WAKE_CHOICES;
   const current = wake ? wake.when : "default";
@@ -54,7 +54,7 @@ function wakeControl(key, wake, onChange, withDefault) {
           "data-tip": WAKE_TIPS[v],
           "data-key": key + "-" + v,
           onclick: () => {
-            if (v === current) return;
+            if (v === current && !again) return;
             cancelMinutes(key);
             delete ui.rowErrors[key];
             onChange(v === "default" ? null : { when: v, minutes: v === "within" ? wake?.minutes || 0 : 0 });
@@ -108,7 +108,7 @@ const BUSY_TIPS = {
   whole: "While it is mid-turn, show it the arriving message's whole text",
 };
 
-function busyControl(key, busy, onChange, withDefault) {
+function busyControl(key, busy, onChange, withDefault, again = false) {
   const choices = withDefault ? [["default", "Default"], ...BUSY_CHOICES] : BUSY_CHOICES;
   const current = busy || "default";
   return h(
@@ -122,7 +122,7 @@ function busyControl(key, busy, onChange, withDefault) {
           "data-tip": BUSY_TIPS[v],
           "data-key": key + "-" + v,
           onclick: () => {
-            if (v !== current) onChange(v === "default" ? null : v);
+            if (v !== current || again) onChange(v === "default" ? null : v);
           },
         },
         label,
@@ -517,12 +517,12 @@ function settingsSection(key, title, note, ...rows) {
 
 // Every setting is a segmented control, on/off ones too: one kind of control across Settings
 // (Tyler, 2026-11-17, #862). hints says what Off and On each do, on hover.
-function onOffControl(key, on, save, hints, { disabled, label } = {}) {
+function onOffControl(key, on, save, hints, { disabled, label, again } = {}) {
   return h(
     "div",
     { class: "segmented", role: "group", "aria-label": label },
     [[false, "Off"], [true, "On"]].map(([v, label], i) =>
-      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), disabled, onclick: () => on !== v && save(v) }, label),
+      h("button", { "aria-pressed": on === v ? "true" : "false", "data-tip": hints?.[i], "data-key": key + (v ? "-on" : "-off"), disabled, onclick: () => (on !== v || again) && save(v) }, label),
     ),
   );
 }
@@ -719,9 +719,9 @@ function deviceSettings() {
           "wake",
           "Wake an idle session",
           "When another session's message may start an idle session's turn. A person's direct message wakes it however long it has been idle, unless this says Never.",
-          wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }), false),
+          wakeControl("wake", set.wake, (w) => saveSettings({ ...ui.settings, wake: w || { when: "within" } }, false, "", ["wake"]), false),
         ),
-        settingsRow("busy", "While a session is working", "What it is shown when a message arrives mid-turn.", busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }), false)),
+        settingsRow("busy", "While a session is working", "What it is shown when a message arrives mid-turn.", busyControl("busy", set.busy || "subject", (b) => saveSettings({ ...ui.settings, busy: b }, false, "", ["busy"]), false)),
         perSessionFold(
           local.map((s) => sessionSettingsRow(s, wakeOver[s.name] || null, busyOver[s.name] || null, saveWake, saveBusy)),
           own,
@@ -810,7 +810,7 @@ function deviceSettings() {
   );
 
   // With an All repos tab, the theme and About are there, as they are every repo's.
-  if (!ui.allRepos) sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
+  if (ui.allRepos === false) sections.push(h("div", { class: "settings-everywhere" }, h("p", { class: "settings-everywhere-label" }, "For every repo"), themeSection(), versionSection()));
   return sections;
 }
 
@@ -818,14 +818,14 @@ function deviceSettings() {
 // Each way, a main setting for the person and their agents, and once it is on, one that keeps it
 // from the agents (Tyler, 2026-11-16). save(prop, value) saves one switch. A switch that is
 // neither on nor off (All repos, not set there) has neither pressed.
-function filesRows(save, key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp, hints, agentsHints) {
-  const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => save(prop, v), hints))];
+function filesRows(save, key, title, on, onText, offText, prop, agentsOff, agentsOnText, agentsOffText, agentsProp, hints, agentsHints, again = false) {
+  const rows = [settingsRow(key, title, on ? onText : offText, onOffControl(key, on, (v) => save(prop, v), hints, { again }))];
   if (on) {
     const sub = settingsRow(
       "agents-" + key,
       "Agents too",
       agentsOff ? agentsOffText : agentsOnText,
-      onOffControl("agents-" + key, agentsOff === undefined ? undefined : !agentsOff, (v) => save(agentsProp, !v), agentsHints),
+      onOffControl("agents-" + key, agentsOff === undefined ? undefined : !agentsOff, (v) => save(agentsProp, !v), agentsHints, { again }),
     );
     sub.classList.add("row-sub");
     rows.push(sub);
@@ -834,42 +834,50 @@ function filesRows(save, key, title, on, onText, offText, prop, agentsOff, agent
 }
 
 // Settings for all repos (#816): a change on this tab is made in every repo on this device, and in
-// repos joined later. Each repo's own tab can change it there afterwards. Only the defaults for
-// sessions and the file switches are here; web/allrepos.go says why.
-let allReposSeq = 0;
+// repos joined later. Each repo's own tab can change it there afterwards, and a choice clicked
+// again here brings every repo back to it. Only the defaults for sessions and the file switches are
+// here; web/allrepos.go says why. Changes go one at a time, so the last answer is the record as the
+// last change left it. Until the first load, neither the tab nor the old footer shows; a daemon that
+// keeps no record (404), or a load that fails, shows the footer.
+let allReposQueue = Promise.resolve();
+let allReposSaves = 0; // changes asked for and not yet answered
 
-async function loadAllRepos() {
+function loadAllRepos() {
   const token = ui.token;
-  const seq = allReposSeq;
-  try {
-    const got = await api("/api/settings/all");
-    if (token === ui.token && seq === allReposSeq) ui.allRepos = got || {};
-  } catch (e) {
-    if (e instanceof AuthError) return deny(e.token);
-    if (token === ui.token && e.status === 404) ui.allRepos = false;
-  }
-  render();
+  allReposQueue = allReposQueue.then(async () => {
+    try {
+      const got = await api("/api/settings/all");
+      if (token === ui.token && !allReposSaves) ui.allRepos = got || {};
+    } catch (e) {
+      if (e instanceof AuthError) return deny(e.token);
+      if (token === ui.token && !ui.allRepos) ui.allRepos = false;
+    }
+    render();
+  });
 }
 
-async function saveAllRepos(change) {
+function saveAllRepos(change) {
   const token = ui.token;
-  const seq = ++allReposSeq;
   ui.allRepos = { ...ui.allRepos, ...change };
   delete ui.rowErrors["all-repos"];
   render();
-  try {
-    const saved = await api("/api/settings/all", { method: "PUT", body: JSON.stringify(change) });
-    if (token !== ui.token) return;
-    if (seq === allReposSeq) ui.allRepos = saved || {};
-    loadSettings(); // this repo took the change as it was saved
-    poll(); // the file switches show in the state
-  } catch (e) {
-    if (e instanceof AuthError) return deny(e.token);
-    if (token !== ui.token) return;
-    ui.rowErrors["all-repos"] = e.message;
-    loadAllRepos();
-  }
-  render();
+  allReposSaves++;
+  allReposQueue = allReposQueue.then(async () => {
+    try {
+      const saved = await api("/api/settings/all", { method: "PUT", body: JSON.stringify(change) });
+      if (token !== ui.token) return;
+      if (allReposSaves === 1) ui.allRepos = saved || {};
+      loadSettings(); // this repo took the change as it was saved
+      poll(); // the file switches show in the state
+    } catch (e) {
+      if (e instanceof AuthError) return deny(e.token);
+      if (token === ui.token) ui.rowErrors["all-repos"] = e.message;
+    } finally {
+      allReposSaves--;
+    }
+    if (ui.rowErrors["all-repos"] && !allReposSaves) loadAllRepos();
+    render();
+  });
 }
 
 const ALL_UNSET = "Each repo keeps its own.";
@@ -886,9 +894,9 @@ function allReposSettings() {
         "all-wake",
         "Wake an idle session",
         all.wake ? "When another session's message may start an idle session's turn." : ALL_UNSET,
-        wakeControl("all-wake", all.wake || null, (w) => saveAllRepos({ wake: w || { when: "within" } }), false),
+        wakeControl("all-wake", all.wake || null, (w) => saveAllRepos({ wake: w || { when: "within" } }), false, true),
       ),
-      settingsRow("all-busy", "While a session is working", all.busy ? "What it is shown when a message arrives mid-turn." : ALL_UNSET, busyControl("all-busy", all.busy || null, (b) => saveAllRepos({ busy: b }), false)),
+      settingsRow("all-busy", "While a session is working", all.busy ? "What it is shown when a message arrives mid-turn." : ALL_UNSET, busyControl("all-busy", all.busy || null, (b) => saveAllRepos({ busy: b }), false, true)),
     ),
     settingsSection(
       "all-files",
@@ -908,6 +916,7 @@ function allReposSettings() {
         "agentsSendOff",
         ["Send no files from any repo on this device", "Let you attach files in every repo on this device"],
         ["Agents may not send files from any repo", "Agents may send files, only from their repo or the temp folder"],
+        true,
       ),
       filesRows(
         save,
@@ -923,6 +932,7 @@ function allReposSettings() {
         "agentsReceiveOff",
         ["Download no files in any repo; senders are told", "Download files sent here in every repo"],
         ["Only you receive files; agents get messages without them", "Agents receive files sent to them as well"],
+        true,
       ),
     ),
     ui.rowErrors["all-repos"] && h("p", { class: "row-error section-head", "data-announce": "" }, ui.rowErrors["all-repos"]),
@@ -935,7 +945,7 @@ function allReposSettings() {
 // switches between repos, each with settings of its own.
 function settingsScope(tab) {
   if (!ui.state) return null;
-  if (tab === "all") return h("p", { class: "settings-scope" }, "For every repo on this device, and repos you join later");
+  if (tab === "all") return h("p", { class: "settings-scope" }, "For every repo on this device, and repos you join later. Pick a choice again to undo a repo's own change.");
   const showDevice = tab === "device";
   const self = (ui.state.devices || []).find((d) => d.self);
   return h(

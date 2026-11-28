@@ -49,6 +49,15 @@ func TestAllReposSettingsReachEveryClone(t *testing.T) {
 		return s.Wake.When == web.WakeNever && s.SendFiles
 	})
 
+	// A page that loaded b's settings before it took them saves a change of the busy choice alone,
+	// with the old wake beside it: the wake taken from All repos stays.
+	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"within"},"busy":"whole","set":["busy"]}`); code != http.StatusOK {
+		t.Fatalf("a save naming busy: %d %s", code, body)
+	}
+	if s := settingsOf(t, pb); s.Wake.When != web.WakeNever || s.Busy != web.BusyWhole {
+		t.Errorf("after a save naming busy alone: %+v, want the wake from All repos (never) kept and busy whole", s)
+	}
+
 	// b's own page changes the wake and the busy choice there.
 	if code, body := pb.call("PUT", "/api/settings", pb.token, `{"wake":{"when":"always"},"busy":"whole","sendFiles":true}`); code != http.StatusOK {
 		t.Fatalf("b's own save: %d %s", code, body)

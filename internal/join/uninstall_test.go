@@ -441,6 +441,28 @@ func TestRemoveRecordKeepsWhatIsUnfinished(t *testing.T) {
 	}
 }
 
+// The settings for all repos (#816) aren't a clone kept on the record, and go with the last clone.
+func TestRemoveRecordTakesTheSettingsForAllReposWithTheLastClone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "clones")
+	a, b := clones.Clone{GitDir: filepath.Join(dir, "a", ".git")}, clones.Clone{GitDir: filepath.Join(dir, "b", ".git")}
+	for _, c := range []clones.Clone{a, b} {
+		if err := clones.Add(dir, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{clones.AllReposFile, clones.AllReposFile + ".lock", ".all-repos-123"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if kept, err := removeRecord(dir, map[string]bool{a.ID(): true}); err != nil || kept != 1 || !exists(filepath.Join(dir, clones.AllReposFile)) {
+		t.Fatalf("with b left: kept %d, err %v, settings there %v; want 1 kept and the settings there", kept, err, exists(filepath.Join(dir, clones.AllReposFile)))
+	}
+	if kept, err := removeRecord(dir, map[string]bool{b.ID(): true}); err != nil || kept != 0 || exists(dir) {
+		t.Errorf("with the last clone gone: kept %d, err %v; the folder is still there: %v", kept, err, exists(dir))
+	}
+}
+
 // A clone that left without finishing (its hook stayed) and is still on the record is left again,
 // which takes the hook out, and only then comes off the record (Sol's second review of #409).
 func TestUninstallFinishesALeaveThatDidNot(t *testing.T) {

@@ -73,7 +73,7 @@ type Server struct {
 	updates Updates // nil: the page shows no update setting
 
 	allRepos        string // the record of settings for all repos (allrepos.go); "": none
-	allReposChanged func()
+	allReposChanged func() error
 }
 
 // New returns the page's handler. token is the page's own, not the one that opens the daemon to
@@ -388,6 +388,11 @@ func CheckSettings(set Settings) error {
 	}
 	if set.Busy != "" && !validBusy(set.Busy) {
 		return errors.New("busy: must be subject or whole")
+	}
+	for _, name := range set.Set {
+		if name != "wake" && name != "busy" {
+			return errors.New("set: names wake or busy")
+		}
 	}
 	if len(set.SessionBusy) > maxOverrides {
 		return errors.New("too many session overrides")

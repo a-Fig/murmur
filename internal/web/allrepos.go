@@ -26,9 +26,6 @@ import (
 // the file switches. A session's own choices are its repo's, as the session is; availability is
 // for one repo at a time; the account, nick and color are what one mesh's teammates see.
 
-// AllReposFile is the record's name in the clones directory.
-const AllReposFile = "all-repos.json"
-
 // AllRepos are the settings someone set for every repo. A nil one was never set that way, and
 // each repo keeps its own.
 type AllRepos struct {
@@ -85,12 +82,13 @@ func (a *AllRepos) fields(s *Settings) []allField {
 
 // Since copies into s what the record set after write seq of the record id (every setting it holds
 // when id is another file's), and says whether it copied anything. FilesSet names the file
-// switches it copied, as a save from the page does, so the daemon takes those and no others.
+// switches it copied, as a save from the page does, so the daemon takes those and no others; Set is
+// left nil, so it takes the wake and busy choices as they are in s.
 func (r AllReposRecord) Since(s *Settings, id string, seq int64) bool {
 	if r.ID != id {
 		seq = 0
 	}
-	s.FilesSet = nil
+	s.FilesSet, s.Set = nil, nil
 	any := false
 	for _, f := range r.Settings.fields(s) {
 		if !f.has || r.Set[f.name] <= seq {
@@ -223,7 +221,7 @@ func retryShared(op func() error) error {
 
 // WithAllRepos lets the page set settings for all repos, in the record at path. changed is called
 // after each write, so this clone's daemon takes it at once rather than at its next look.
-func (s *Server) WithAllRepos(path string, changed func()) *Server {
+func (s *Server) WithAllRepos(path string, changed func() error) *Server {
 	s.allRepos, s.allReposChanged = path, changed
 	return s
 }
@@ -261,7 +259,10 @@ func (s *Server) putAllRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.allReposChanged != nil {
-		s.allReposChanged()
+		if err := s.allReposChanged(); err != nil {
+			writeError(w, http.StatusInternalServerError, "saved for all repos, but this repo didn't take it: "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, rec.Settings)
 }

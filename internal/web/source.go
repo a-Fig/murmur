@@ -325,6 +325,11 @@ type Settings struct {
 	// keeps the rest as they are, so a page that hasn't yet seen another's change can't undo it
 	// (Sol's review of #769). Only a save carries it.
 	FilesSet []string `json:"filesSet,omitempty"`
+	// Set names which of the device-wide wake and busy choices ("wake", "busy") a save sets, and the
+	// daemon keeps the other as it has it: a page that loaded its settings before the daemon took a
+	// change for all repos (#816) would otherwise put back the old one with any save, such as a
+	// session's own choice. nil sets both, for a client that doesn't name them; the page always does.
+	Set []string `json:"set,omitempty"`
 	// DefaultMinutes is what Wake.Minutes 0 stands for: 5, or the prompt-cache length if known.
 	// The source reports it; SetSettings ignores it.
 	DefaultMinutes int `json:"defaultMinutes"`

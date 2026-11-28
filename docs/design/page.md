@@ -173,7 +173,11 @@ from it is in [a person on the page](people.md).
   was set since the last write it took into its own `settings.json`, as its page would. A clone
   joined later takes everything there. A repo's own tab can still change a setting afterwards, and
   that holds until All repos changes the same setting again: an All repos change overwrites, it
-  doesn't stay as a default beneath each repo's. A setting never set on the tab shows no choice.
+  doesn't stay as a default beneath each repo's. Picking a choice again on the tab brings repos that
+  differ back to it. A save from a repo's own page names the wake and busy choices it sets (`set`,
+  as `filesSet` does for the file switches), so a page that loaded before its daemon took a change
+  can't put the old value back (Opus review). A setting never set on the tab shows no choice.
+  `mur uninstall` deletes the record with the last clone's file.
   Availability, each session's own choices, the account and Mutes stay per repo: they are about one
   mesh, or one repo's sessions. `web/allrepos.go` has the details. A daemon whose page has no clones
   directory shows no tab, and Appearance and About stay under "For every repo".

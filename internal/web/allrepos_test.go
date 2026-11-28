@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func startAllRepos(t *testing.T, path string, changed func()) *harness {
+func startAllRepos(t *testing.T, path string, changed func() error) *harness {
 	t.Helper()
 	page := NewWithPRs(newFake(), testToken, noPRs)
 	if path != "" {
@@ -25,7 +25,7 @@ func startAllRepos(t *testing.T, path string, changed func()) *harness {
 // The All repos tab's record (#816): each write sets only what it names, counts, and says which
 // write set each setting, so a daemon takes what was set since the last write it took.
 func TestAllReposRecord(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "clones", AllReposFile)
+	path := filepath.Join(t.TempDir(), "clones", "all-repos.json")
 	if r, err := ReadAllRepos(path); err != nil || r.ID != "" {
 		t.Fatalf("no record: %+v %v, want an empty one", r, err)
 	}
@@ -73,9 +73,9 @@ func TestAllReposAPI(t *testing.T) {
 	if resp := startAllRepos(t, "", nil).do("GET", "/api/settings/all", "", testToken, ""); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("a page without a record: %d, want 404, so it shows no All repos tab", resp.StatusCode)
 	}
-	path := filepath.Join(t.TempDir(), AllReposFile)
+	path := filepath.Join(t.TempDir(), "all-repos.json")
 	changed := 0
-	h := startAllRepos(t, path, func() { changed++ })
+	h := startAllRepos(t, path, func() error { changed++; return nil })
 	if got := decode[AllRepos](t, h.ok("GET", "/api/settings/all", "")); got != (AllRepos{}) {
 		t.Errorf("before any change: %+v, want nothing set", got)
 	}

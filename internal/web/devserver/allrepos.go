@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/web"
 )
 
@@ -15,16 +16,16 @@ func withAllRepos(srcs []*fixtures, pages []*web.Server) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	path := filepath.Join(dir, web.AllReposFile)
-	take := func() {
+	path := filepath.Join(dir, clones.AllReposFile)
+	take := func() error {
 		rec, err := web.ReadAllRepos(path)
 		if err != nil {
-			log.Printf("reading the settings for all repos: %v", err)
-			return
+			return err
 		}
 		for _, f := range srcs {
 			f.takeAllRepos(rec)
 		}
+		return nil
 	}
 	for _, p := range pages {
 		p.WithAllRepos(path, take)

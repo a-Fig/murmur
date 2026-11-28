@@ -623,6 +623,14 @@ func (d *Daemon) setSettingsLocked(set web.Settings, allID string, allSeq int64)
 		next.SessionBusy = nil
 	}
 	next.AllID, next.AllSeq = allID, allSeq
+	if set.Set != nil { // the wake and busy choices this save doesn't name stay as they are
+		if !slices.Contains(set.Set, "wake") {
+			next.Wake = d.settings.Wake
+		}
+		if !slices.Contains(set.Set, "busy") {
+			next.Busy = d.settings.Busy
+		}
+	}
 	if d.settingsMove.Load() {
 		d.moveSettings()
 	}
