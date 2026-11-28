@@ -158,6 +158,12 @@ func TestTransferWaitsForActiveDevicesToUnderstandIt(t *testing.T) {
 	if _, err := d.ownerTransferLocked(to, time.Now()); err != nil {
 		t.Fatalf("transfer after the active device updates: %v", err)
 	}
+	// A newer presence from the recipient, listed but not read (its fetch failed), may say it went
+	// back to an older version: what the one before said isn't taken for it (Sol's re-review of #1289).
+	d.sawPresence(to, "newer", false)
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Try again after it syncs") {
+		t.Fatalf("transferred ownership on a superseded presence: %v", err)
+	}
 }
 
 type cancelOnUnsealed struct{ cancel context.CancelFunc }

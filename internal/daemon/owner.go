@@ -150,6 +150,11 @@ func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, e
 	if pin == nil || pin.Box == "" {
 		return bus.TeamRecord{}, errors.New("Murmur has no verified key for that device. Ask its user to come online first.")
 	}
+	if rp := d.peers[to]; rp != nil && rp.writtenOf != rp.listed {
+		// What the recipient can do is what its latest presence says. A newer one listed but not
+		// read yet may say less, after a downgrade (Sol's re-review of #1289).
+		return bus.TeamRecord{}, fmt.Errorf("Murmur hasn't read the latest presence of %s yet. Try again after it syncs.", d.deviceCalledLocked(to))
+	}
 	for _, dev := range sortedKeys(d.peers) {
 		p := d.peers[dev]
 		if (dev == to || !d.staleLocked(p)) && p.pres.TeamAdmin < teamAdminTransfer {
