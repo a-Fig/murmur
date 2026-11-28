@@ -642,6 +642,12 @@ type Daemon struct {
 	teamKick    chan struct{}
 	rotateKick  chan struct{}   // wakes autoRotate when the owner or its AutoRotate setting changes
 	waitWarned  map[string]bool // logs already said to be waiting for the team key; under mu
+	// What the automatic check (auto_rotate.go) runs by, under mu: autoRev counts changes of owner,
+	// mode and AutoRotate, autoCancel stops the collaborator lookup in flight, and autoDeferred says
+	// a check was put off while the team history was being verified.
+	autoRev      uint64
+	autoCancel   context.CancelFunc
+	autoDeferred bool
 	// syncSeq counts the syncs that got a listing, and teamReadSeq is the last of them that read the
 	// team ref up to what it listed. unknownAt is, for each log stopped at a record encrypted for a
 	// team key the team ref doesn't show, that record and the sync it was first met in
@@ -1143,6 +1149,10 @@ type state struct {
 	Epochs            []teamEpoch          `json:"epochs,omitempty"`
 	TeamGranted       map[string][]string  `json:"teamGranted,omitempty"`
 	GrantMark         map[string]time.Time `json:"grantMark,omitempty"`
+	// TeamPolicyV is the RepoPolicy fields TeamOwner was cached with (teamPolicyVersion). A daemon
+	// from before a field drops it, and this, when it saves, so the next one reads the team history
+	// again for the signed value instead of trusting a cache that lost it.
+	TeamPolicyV int `json:"teamPolicyV,omitempty"`
 	// Explained is, for each of this device's sessions, by its name as Tags is, the people whose
 	// first message to it said in full that they see only what the session sends (#345); their
 	// later messages end with the line an agent's do (see explained.go).
@@ -1819,6 +1829,7 @@ func (d *Daemon) loadState() error {
 	}
 	b, err := os.ReadFile(d.statePath())
 	if errors.Is(err, os.ErrNotExist) {
+		d.st.TeamPolicyV = teamPolicyVersion
 		return nil
 	}
 	if err != nil {
@@ -1827,6 +1838,16 @@ func (d *Daemon) loadState() error {
 	if err := json.Unmarshal(b, &d.st); err != nil {
 		d.log.Printf("state.json unreadable, starting fresh: %v", err)
 		d.st = state{}
+	}
+	if d.st.TeamPolicyV < teamPolicyVersion {
+		// The policy was cached by a daemon that didn't know every field, and dropped what it didn't
+		// know: AutoRotate, say, after a downgrade and upgrade (Sol's review of #1289). The team
+		// history holds the signed policy, so it is read again from its root, as after an upgrade
+		// from before ownership, and writes wait for that read.
+		if d.st.TeamOwner != nil {
+			d.st.TeamOwnerChecked = false
+		}
+		d.st.TeamPolicyV = teamPolicyVersion
 	}
 	defer d.stopKilledLocked(written) // once the maps below are there
 	if d.st.Processed == nil {

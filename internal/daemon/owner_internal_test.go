@@ -149,6 +149,12 @@ func TestTransferWaitsForActiveDevicesToUnderstandIt(t *testing.T) {
 		t.Fatal("transferred ownership with an older device online")
 	}
 	d.peers[old].pres.TeamAdmin = teamAdminTransfer
+	// The recipient also has to follow the automatic rotation setting: as owner, an older version
+	// would rotate with it off, and drop it when it signs the next policy (Sol's review of #1289).
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "automatic key rotation") {
+		t.Fatalf("transferred ownership to a device that ignores the rotation setting: %v", err)
+	}
+	d.peers[to].pres.TeamAdmin = teamAdminAutoRotate
 	if _, err := d.ownerTransferLocked(to, time.Now()); err != nil {
 		t.Fatalf("transfer after the active device updates: %v", err)
 	}
@@ -230,6 +236,8 @@ func TestTeamReadPausesWritesThroughAnInterruptedModeChange(t *testing.T) {
 	}
 	assertBlocked(d)
 
+	// The rig's state.json has no teamPolicyV, so the restart reads the history again from its root,
+	// one commit a page, past the cached tip: only the first page starts the state over.
 	restarted, _ := keyRig(t)
 	restarted.dir, restarted.repo, restarted.maxRecord = d.dir, d.repo, d.maxRecord
 	if err := restarted.loadState(); err != nil {

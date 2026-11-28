@@ -166,7 +166,8 @@ with the new owner's device ID from `mur who`. That device must have published i
 The current owner signs the new device's key and the next admin sequence into the team ref.
 The new owner can rotate once its clone has all the team keys.
 Before transferring, update Murmur on every device. The command checks the recipient and
-other devices it sees online. A device that was offline needs the update before returning
+other devices it sees online, and the recipient must also follow the automatic rotation setting
+(below). A device that was offline needs the update before returning
 to the mesh so it can follow the new owner's rotations.
 
 For a mesh created before ownership, the device that signed the first team epoch becomes owner.
@@ -204,3 +205,19 @@ and is retried after an hour while the daemon is running.
 The check runs only while the owner's daemon is online and the repo uses team encryption. A
 collaborator who joins and leaves between checks won't appear in the roster. The owner can still
 run `mur rotate --force`.
+
+A check acts only on what allowed it to start (Sol's review of #1289, 2026-11-27). It carries the
+owner, a count of changes to the owner, the mode and the setting, and once it has decided, the key
+and roster it decided on. Every write it makes is checked against them under `teamMu`, so the lease
+on the team ref refuses whatever lands after. If the owner turns the setting off, leaves Team mode
+or hands the mesh to another device during the lookup, the lookup is stopped and nothing is
+written. If the key changed, as a switch out of Team mode and back changes it, the check starts
+again with a new lookup. The sample taken for the old key says nothing about the new one.
+
+Off holds only on an owner whose Murmur knows the setting. `v0.5.6-nightly.20261127` has #1271
+and not this setting, so it checks whenever the owner is in Team mode, and any older owner that
+signs a policy drops `autoRotate`. So ownership goes only to a device whose presence says it follows
+the setting (`teamAdmin` 4), and an owner running that nightly has to update for Off to take
+effect. A daemon that saves `state.json` without knowing the field drops it from its cached policy.
+The cache records which policy fields it was written with (`teamPolicyV`), and a daemon that finds
+fewer reads the team history again from its root, where the signed value is.

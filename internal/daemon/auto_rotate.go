@@ -2,8 +2,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/collaborators"
 )
 
@@ -47,28 +52,144 @@ func (d *Daemon) kickAutoRotate() {
 	}
 }
 
+// checkForDepartures runs one automatic check, and says when the next is due. A check whose
+// authorization or epoch moved under it (errAutoStale) starts again with a fresh lookup, as its
+// sample of who can push was taken for a key or a setting that no longer holds.
 func (d *Daemon) checkForDepartures(ctx context.Context, list func(context.Context, string) ([]string, error)) time.Duration {
+	for attempt := 0; ; attempt++ {
+		next, err := d.checkOnce(ctx, list)
+		if !errors.Is(err, errAutoStale) {
+			return next
+		}
+		d.log.Print("automatic team key check: the owner or the repo settings changed during the check, so it starts again")
+		if attempt == 2 {
+			return rotationRetry
+		}
+	}
+}
+
+func (d *Daemon) checkOnce(ctx context.Context, list func(context.Context, string) ([]string, error)) (time.Duration, error) {
+	// A wake-up sent before this check reads the state is answered by it, not by another lookup.
+	select {
+	case <-d.rotateKick:
+	default:
+	}
 	d.mu.Lock()
 	verified := d.st.TeamOwnerChecked && d.st.TeamReplayThrough == ""
-	enabled := d.isOwnerLocked() && d.st.TeamOwner.Policy.EncryptionMode == "team" && d.st.TeamOwner.Policy.AutoRotate
+	check, enabled := d.autoCheckLocked()
+	if !verified {
+		d.autoDeferred = true // teamVerifiedLocked wakes the loop once the history is verified
+	}
+	lookup, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if enabled {
+		d.autoCancel = cancel
+	}
 	d.mu.Unlock()
 	if !verified {
-		return rotationRetry
+		return rotationRetry, nil
 	}
 	if !enabled {
-		return rotationCheck
+		return rotationCheck, nil
 	}
-	logins, err := list(ctx, d.repoAddr)
+	logins, err := list(lookup, d.repoAddr)
+	d.mu.Lock()
+	d.autoCancel = nil
+	d.mu.Unlock()
+	if ctx.Err() != nil {
+		return rotationRetry, ctx.Err()
+	}
+	if lookup.Err() != nil {
+		// autoRotateChangedLocked stopped the lookup. Whatever it returned was asked for under
+		// settings that no longer hold.
+		return 0, errAutoStale
+	}
 	if err == nil {
 		var note string
-		note, err = d.rotateRequest(ctx, logins, false, true)
+		note, err = d.rotateRequest(ctx, logins, false, &check)
+		if errors.Is(err, errAutoStale) {
+			return 0, err
+		}
 		if err == nil {
 			d.log.Print("automatic team key check: " + note)
-			return rotationCheck
+			return rotationCheck, nil
 		}
 	}
 	if ctx.Err() == nil {
 		d.log.Printf("automatic team key check failed: %v", err)
 	}
-	return rotationRetry
+	return rotationRetry, err
+}
+
+// autoCheck is what one automatic check was authorized by: the owner it ran as, and autoRev, which
+// moves whenever the owner, the encryption mode or AutoRotate changes. Once it has decided, epoch and
+// roster are the current epoch and its roster record (epochRefLocked) it decided on (Sol's review
+// of #1289: a decision taken for one epoch was applied to the next, made by a mode change).
+type autoCheck struct {
+	owner, key    string
+	rev           uint64
+	epoch, roster string
+}
+
+// errAutoStale says what an automatic check was authorized by, or decided on, no longer holds.
+var errAutoStale = errors.New("the owner or the repo settings changed during the automatic check")
+
+// autoCheckLocked is the authorization for an automatic check, if one may run now: the team history
+// is verified, and this device owns a mesh in Team mode with AutoRotate on. Caller holds mu.
+func (d *Daemon) autoCheckLocked() (autoCheck, bool) {
+	o := d.st.TeamOwner
+	if !d.st.TeamOwnerChecked || d.st.TeamReplayThrough != "" || !d.isOwnerLocked() ||
+		o.Policy.EncryptionMode != bus.EncryptionTeam || !o.Policy.AutoRotate {
+		return autoCheck{}, false
+	}
+	return autoCheck{owner: o.Device, key: o.Key, rev: d.autoRev}, true
+}
+
+// autoAuthHoldsLocked says c's authorization is still the current one. Caller holds mu.
+func (d *Daemon) autoAuthHoldsLocked(c autoCheck) bool {
+	cur, ok := d.autoCheckLocked()
+	return ok && cur.owner == c.owner && cur.key == c.key && cur.rev == c.rev
+}
+
+// autoCheckHoldsLocked says c's authorization, and the epoch and roster it decided on, still hold.
+// teamWork asks before every automatic write. Caller holds mu.
+func (d *Daemon) autoCheckHoldsLocked(c autoCheck) bool {
+	epoch, roster := d.epochRefLocked()
+	return d.autoAuthHoldsLocked(c) && epoch == c.epoch && roster == c.roster
+}
+
+// epochRefLocked names the current epoch and its roster record, "" for none. Caller holds mu.
+func (d *Daemon) epochRefLocked() (epoch, roster string) {
+	ep := d.epochLocked()
+	if ep == nil {
+		return "", ""
+	}
+	if ep.Roster != nil {
+		b, _ := json.Marshal(ep.Roster)
+		sum := sha256.Sum256(b)
+		roster = hex.EncodeToString(sum[:])
+	}
+	return ep.ID, roster
+}
+
+// autoRotateChangedLocked is called when the owner, the encryption mode or AutoRotate changes. A
+// check in flight was authorized by what was there before: its lookup is stopped, and its writes
+// will be refused, and the loop is woken to check again by what is there now. Caller holds mu.
+func (d *Daemon) autoRotateChangedLocked() {
+	d.autoRev++
+	if d.autoCancel != nil {
+		d.autoCancel()
+		d.autoCancel = nil
+	}
+	d.kickAutoRotate()
+}
+
+// teamVerifiedLocked is called when the team history has been verified to its tip. A check put
+// off meanwhile runs now: the wake-up that would have started it can come, and be spent, between
+// two pages of the replay (Sol's review of #1289). Caller holds mu.
+func (d *Daemon) teamVerifiedLocked() {
+	if d.autoDeferred {
+		d.autoDeferred = false
+		d.kickAutoRotate()
+	}
 }

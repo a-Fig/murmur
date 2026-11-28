@@ -247,6 +247,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			d.st.TeamReplayThrough = ""
 			d.refreshRepoFilesLocked()
 			d.signalTeamLocked()
+			d.teamVerifiedLocked()
 			d.saveLocked()
 			d.mu.Unlock()
 		}
@@ -286,6 +287,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			}
 		}
 	}
+	firstPage := true
 	err := d.repo.Log(ctx, from, sha, d.maxRecord, func(commits []bus.Commit) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -293,22 +295,27 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 			// Save the accepted target alongside any intermediate policy. On the final
 			// page both the cursor and the policy become usable under the same lock.
 			d.st.TeamReplayThrough = sha
-			if from == "" && d.st.TeamTip == tip {
+			// Only the first page starts the state over. A later page can begin where the cached
+			// tip was, and starting over there dropped the owner read from the root.
+			if from == "" && firstPage && d.st.TeamTip == tip {
 				d.st.Epochs, d.st.TeamGranted, d.st.GrantMark = nil, map[string][]string{}, map[string]time.Time{}
 				if checkOwner {
 					d.repoModeStamp.Add(1)
 					d.st.TeamOwner = nil
+					d.autoRotateChangedLocked()
 				}
 			}
 			for i, c := range commits {
 				d.applyTeamRecordLocked(c, !d.st.TeamOwnerChecked && i == 0)
 			}
 			d.st.TeamOwnerChecked = true
+			firstPage = false
 			d.st.TeamTip = commits[len(commits)-1].SHA
 			if d.st.TeamTip == sha {
 				d.st.TeamReplayThrough = ""
 				d.refreshRepoFilesLocked()
 				d.signalTeamLocked()
+				d.teamVerifiedLocked()
 			}
 		})
 		return nil
@@ -323,6 +330,7 @@ func (d *Daemon) processTeam(ctx context.Context, sha string) {
 		d.st.TeamReplayThrough = ""
 		d.refreshRepoFilesLocked()
 		d.signalTeamLocked()
+		d.teamVerifiedLocked()
 		d.saveLocked()
 	}
 	d.mu.Unlock()
@@ -537,6 +545,9 @@ type teamAsk struct {
 	// firstRoster says the current epoch had no roster at all when that was decided.
 	basis       []string
 	firstRoster bool
+	// auto is the automatic check this write is for, if it is one: what authorized it, and the
+	// epoch and roster it decided on. teamWork refuses the write if either moved (errAutoStale).
+	auto *autoCheck
 }
 
 // errRosterMoved says the current epoch's roster is no longer the one a request compared against:
@@ -569,6 +580,12 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	if ask == nil && d.checkOwnerHistoryLocked() != nil {
 		d.mu.Unlock()
 		return "", false, nil
+	}
+	// Under teamMu, so no policy or transfer from this device lands between here and the push, and
+	// the lease refuses one from anywhere else.
+	if ask != nil && ask.auto != nil && !d.autoCheckHoldsLocked(*ask.auto) {
+		d.mu.Unlock()
+		return "", false, errAutoStale
 	}
 	rotate := ask != nil && ask.rotate
 	if o := d.st.TeamOwner; o != nil && o.Seq == 0 && d.isOwnerLocked() && d.checkOwnerHistoryLocked() == nil {
@@ -726,6 +743,7 @@ func (d *Daemon) teamWork(ctx context.Context, ask *teamAsk) (epoch string, push
 	if tip == "" {
 		// The lease proved this device wrote the first epoch with no earlier history.
 		d.st.TeamOwnerChecked = true
+		d.teamVerifiedLocked()
 	}
 	d.saveLocked()
 	return epoch, true, nil
@@ -751,9 +769,9 @@ func (d *Daemon) teamGenesisTip(ctx context.Context) string {
 
 // rotate makes a new epoch now, with a roster of collaborators if there is a list, and waits for it
 // to land. Only a device that holds every team key may (errKeysMissing).
-func (d *Daemon) rotate(ctx context.Context, collaborators []string) (string, error) {
+func (d *Daemon) rotate(ctx context.Context, collaborators []string, auto *autoCheck) (string, error) {
 	for attempt := 0; attempt < 3; attempt++ {
-		id, pushed, err := d.teamWork(ctx, &teamAsk{rotate: true, collaborators: collaborators})
+		id, pushed, err := d.teamWork(ctx, &teamAsk{rotate: true, collaborators: collaborators, auto: auto})
 		if err != nil {
 			return "", err
 		}
@@ -781,14 +799,14 @@ func (d *Daemon) rosterLocked() ([]string, bool) {
 
 // recordRoster writes a roster of collaborators for the current epoch, in place of basis, and waits
 // for it to land. It fails with errRosterMoved if the roster is no longer basis.
-func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string) error {
-	return d.writeRoster(ctx, &teamAsk{collaborators: collaborators, basis: basis})
+func (d *Daemon) recordRoster(ctx context.Context, collaborators, basis []string, auto *autoCheck) error {
+	return d.writeRoster(ctx, &teamAsk{collaborators: collaborators, basis: basis, auto: auto})
 }
 
 // recordFirstRoster writes a roster for a current epoch that has none, and fails with
 // errRosterMoved if one was written, or the key rotated, meanwhile.
-func (d *Daemon) recordFirstRoster(ctx context.Context, collaborators []string) error {
-	return d.writeRoster(ctx, &teamAsk{collaborators: collaborators, firstRoster: true})
+func (d *Daemon) recordFirstRoster(ctx context.Context, collaborators []string, auto *autoCheck) error {
+	return d.writeRoster(ctx, &teamAsk{collaborators: collaborators, firstRoster: true, auto: auto})
 }
 
 func (d *Daemon) writeRoster(ctx context.Context, ask *teamAsk) error {
@@ -815,10 +833,11 @@ func (d *Daemon) writeRoster(ctx context.Context, ask *teamAsk) error {
 // leaving is seen later. Someone who joined and left between two runs was never on a roster, and
 // only --force covers that. It returns what it did, for the person who asked.
 //
-// auto is the owner's automatic check (auto_rotate.go). An epoch with no roster at all then gets
-// one recorded instead of a new key: nobody is known to have left, and a rotation would pause
-// reading for the whole team (#1285).
-func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto bool) (string, error) {
+// auto, if set, is the owner's automatic check (auto_rotate.go). An epoch with no roster at all then
+// gets one recorded instead of a new key: nobody is known to have left, and a rotation would pause
+// reading for the whole team (#1285). Every write it makes carries the epoch and roster it was
+// decided on, and fails with errAutoStale if they, or what authorized the check, have moved.
+func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force bool, auto *autoCheck) (string, error) {
 	d.rotationMu.Lock()
 	defer d.rotationMu.Unlock()
 	if err := d.pollOnce(ctx); err != nil {
@@ -826,6 +845,9 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto
 	}
 	d.mu.Lock()
 	err := d.checkOwnerLocked()
+	if err == nil && auto != nil && !d.autoAuthHoldsLocked(*auto) {
+		err = errAutoStale
+	}
 	d.mu.Unlock()
 	if err != nil {
 		return "", err
@@ -836,11 +858,25 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto
 		collab = slices.Compact(collab)
 	}
 	var gone []string
+	var check *autoCheck
 	// Decided again if the roster changes before a roster-only write is pushed: a teammate's device
 	// may have recorded someone this one never saw, who has since left.
 	for attempt := 0; ; attempt++ {
 		d.mu.Lock()
 		prev, known := d.rosterLocked()
+		ep := d.epochLocked()
+		none := ep != nil && ep.Roster == nil
+		if auto != nil {
+			// A roster written meanwhile is decided again; a new key is not, as the lookup was a
+			// sample for the key it started on.
+			c := *auto
+			c.epoch, c.roster = d.epochRefLocked()
+			if check != nil && c.epoch != check.epoch {
+				d.mu.Unlock()
+				return "", errAutoStale
+			}
+			check = &c
+		}
 		d.mu.Unlock()
 		gone = nil
 		for _, login := range prev {
@@ -854,21 +890,15 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto
 		if collab == nil {
 			return "", errors.New("couldn't list the repo's collaborators, so there is nothing to compare; --force makes a new team key anyway")
 		}
-		if !known && auto && collab != nil {
-			d.mu.Lock()
-			ep := d.epochLocked()
-			none := ep != nil && ep.Roster == nil
-			d.mu.Unlock()
-			if none {
-				err := d.recordFirstRoster(ctx, collab)
-				if errors.Is(err, errRosterMoved) && attempt < 3 {
-					continue
-				}
-				if err != nil {
-					return "", err
-				}
-				return "The team key had no roster yet, so it stays as it is. Recorded who can push.", nil
+		if !known && auto != nil && none {
+			err := d.recordFirstRoster(ctx, collab, check)
+			if errors.Is(err, errRosterMoved) && attempt < 3 {
+				continue
 			}
+			if err != nil {
+				return "", err
+			}
+			return "The team key had no roster yet, so it stays as it is. Recorded who can push.", nil
 		}
 		if !known || len(gone) > 0 {
 			break
@@ -876,7 +906,7 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto
 		if slices.Equal(prev, collab) {
 			return "Nobody has left since the team key was made, so it stays as it is.", nil
 		}
-		err := d.recordRoster(ctx, collab, prev)
+		err := d.recordRoster(ctx, collab, prev, check)
 		if errors.Is(err, errRosterMoved) && attempt < 3 {
 			continue
 		}
@@ -885,7 +915,7 @@ func (d *Daemon) rotateRequest(ctx context.Context, collab []string, force, auto
 		}
 		return "Nobody has left since the team key was made, so it stays as it is. Recorded who has joined.", nil
 	}
-	id, err := d.rotate(ctx, collab)
+	id, err := d.rotate(ctx, collab, check)
 	if err != nil {
 		return "", err
 	}

@@ -68,6 +68,7 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 	if root && o == nil && r.Type == bus.TeamEpoch && r.AdminSeq == 1 && r.Policy != nil {
 		d.st.TeamOwner = &meshOwner{Device: seal.By, Key: seal.Key, Seq: 1, Tip: sha, Policy: *r.Policy}
 		d.pinOwnerLocked(seal.By, seal.Key)
+		d.autoRotateChangedLocked()
 		return true
 	}
 	if o == nil {
@@ -77,6 +78,7 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 			d.st.TeamOwner = &meshOwner{Device: seal.By, Key: seal.Key, Tip: sha,
 				Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
 			d.pinOwnerLocked(seal.By, seal.Key)
+			d.autoRotateChangedLocked()
 		}
 		return r.AdminSeq == 0
 	}
@@ -103,13 +105,13 @@ func (d *Daemon) acceptTeamAdminLocked(sha string, r bus.TeamRecord, seal bus.Se
 		}
 		o.Device, o.Key = r.To, r.NextOwnerKey
 		d.pinOwnerLocked(o.Device, o.Key)
-		d.kickAutoRotate()
+		d.autoRotateChangedLocked()
 	}
 	o.Seq, o.Tip = r.AdminSeq, sha
 	if r.Policy != nil {
 		changed := o.Policy.EncryptionMode != r.Policy.EncryptionMode
 		if changed || o.Policy.AutoRotate != r.Policy.AutoRotate {
-			d.kickAutoRotate()
+			d.autoRotateChangedLocked()
 		}
 		o.Policy = *r.Policy
 		if changed {
@@ -156,6 +158,10 @@ func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, e
 	}
 	if d.peers[to] == nil {
 		return bus.TeamRecord{}, errors.New("ask the new owner to come online in Murmur before transferring ownership")
+	}
+	if d.peers[to].pres.TeamAdmin < teamAdminAutoRotate {
+		// An owner from before the setting would rotate on its own with it off, or drop it on.
+		return bus.TeamRecord{}, fmt.Errorf("update Murmur on %s before transferring ownership: its version doesn't follow the automatic key rotation setting", d.deviceCalledLocked(to))
 	}
 	return bus.TeamRecord{V: bus.Version, Type: bus.TeamTransfer, To: to, NextOwnerKey: pin.Sign, At: at}, nil
 }
