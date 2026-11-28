@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 	"github.com/a-Fig/murmur/internal/gitx"
 )
@@ -366,7 +367,8 @@ func beforeHold(running string) bool {
 
 // unheld names where a release from before the hold would still read murmur.channel prerelease
 // with the global one held, if going back from running may land on one: in this clone, or in
-// another on this machine's record (internal/clones), as v0.5.3's updater reads it there (`git
+// another joined one on this machine's record (internal/clones; a clone that left, which stays on it
+// if it owns its mesh, has no daemon to install anything), as v0.5.3's updater reads it there (`git
 // config --get`, in that clone). One binary serves them all, so a daemon of the old release in
 // any of them would install the prerelease again. "" if nowhere, or the release gone back to
 // knows the hold. here says it is this clone's own config, which `git config --unset` changes.
@@ -385,7 +387,7 @@ func unheld(ctx context.Context, gitDir, running string, globalHeld bool) (at st
 	}
 	dirs := []string{gitDir}
 	if dir, err := clones.DefaultDir(); err == nil {
-		list, _ := clones.List(dir, func(string) bool { return true })
+		list, _ := clones.List(dir, client.Joined)
 		for _, c := range list {
 			if filepath.Clean(c.GitDir) != filepath.Clean(gitDir) {
 				dirs = append(dirs, c.GitDir)

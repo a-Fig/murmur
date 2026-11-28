@@ -19,7 +19,7 @@ import (
 
 // consentFile is kept in the clone's murmur directory inside .git, which no commit, checkout or
 // other user's clone has: joining is this user's, in this clone.
-const consentFile = "joined.json"
+const consentFile = client.ConsentFile
 
 // Place is a clone, as seen from one of its working trees.
 type Place struct {
@@ -47,11 +47,7 @@ func (p Place) consentPath() string { return filepath.Join(client.StateDir(p.Git
 // remote, so the record is the proof that the repo was set up too (#830). It is read from a file
 // alone, so it is cheap to ask again and again: the MCP server asks it every 2 seconds.
 func (p Place) Joined() bool {
-	if p.GitDir == "" {
-		return false // no clone: the path below would be relative to wherever the process is
-	}
-	_, err := os.Stat(p.consentPath())
-	return err == nil
+	return client.Joined(p.GitDir)
 }
 
 // Joined reports whether the user joined Murmur in the clone with this git common dir. The daemon

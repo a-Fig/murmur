@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/clones"
@@ -714,6 +715,43 @@ func TestUninstallRefusesWhereACloneOwnsItsMesh(t *testing.T) {
 	}
 	if s := r.String(); !strings.Contains(s, "owns its repo's mesh") || !strings.Contains(s, "owner transfer") {
 		t.Errorf("the leave didn't warn:\n%s", s)
+	}
+}
+
+// A leave reads who owns the mesh once, after the daemon has stopped, and the record and the
+// warning both go by it (#1298). An owner saved while the daemon shuts down used to make them
+// disagree: the clone came off the record, and the warning still said its keys stayed.
+func TestLeaveReadsOwnershipOnceAfterTheStop(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	ctx := context.Background()
+	p, _ := clone(t)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir, Name: "late-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	stopped, calls := false, 0
+	prev := waitGone
+	waitGone = func(ctx context.Context, gitDir string, d time.Duration) (bool, error) {
+		stopped = true // the daemon saves a new owner as it shuts down
+		return prev(ctx, gitDir, d)
+	}
+	t.Cleanup(func() { waitGone = prev })
+	sb.Env.OwnsMesh = func(gitDir string) bool { calls++; return stopped }
+
+	r, err := Leave(ctx, sb.Env, p.Top)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if calls != 1 {
+		t.Errorf("ownership was read %d times, want once", calls)
+	}
+	if !strings.Contains(r.String(), "owns its repo's mesh") {
+		t.Errorf("the leave didn't warn:\n%s", r)
+	}
+	if list, _ := clones.List(record, func(string) bool { return true }); len(list) != 1 {
+		t.Errorf("the owning clone came off the record: %v", list)
 	}
 }
 

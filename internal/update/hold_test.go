@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/a-Fig/murmur/internal/client"
 	"github.com/a-Fig/murmur/internal/clones"
 )
 
@@ -19,6 +20,39 @@ import (
 func globalValues(path, key string) string {
 	out, _ := exec.Command("git", "config", "--file", path, "--get-all", key).Output()
 	return strings.TrimSpace(string(out))
+}
+
+// markJoined writes the consent record of a clone that joined.
+func markJoined(t *testing.T, gitDir string) {
+	t.Helper()
+	if err := os.MkdirAll(client.StateDir(gitDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(client.StateDir(gitDir), client.ConsentFile), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A clone that left, which an owning one stays on the record as, sets murmur.channel prerelease
+// without a daemon to install it: going back isn't refused for it (#1298).
+func TestBackIgnoresACloneThatLeft(t *testing.T) {
+	const bad = "0.5.3-nightly.20261108"
+	ctx := context.Background()
+	gitDir := repo(t)
+	left := repo(t)
+	gitConfig(t, "--file", filepath.Join(left, "config"), "murmur.channel", "prerelease")
+	dir := t.TempDir()
+	t.Setenv(clones.DirEnv, dir)
+	if err := clones.Add(dir, clones.Clone{GitDir: left}); err != nil {
+		t.Fatal(err)
+	}
+	if where, _ := unheld(ctx, gitDir, bad, false); where != "" {
+		t.Fatalf("unheld named a clone that left: %q", where)
+	}
+	markJoined(t, left)
+	if where, _ := unheld(ctx, gitDir, bad, false); !strings.Contains(where, left) {
+		t.Fatalf("unheld = %q, want the joined clone %s", where, left)
+	}
 }
 
 // An updater that picked a nightly before a return to stable from that very nightly, made in
@@ -91,6 +125,7 @@ func TestBackRefusesAChannelV053WouldStillRead(t *testing.T) {
 	if err := clones.Add(dir, clones.Clone{GitDir: other}); err != nil {
 		t.Fatal(err)
 	}
+	markJoined(t, other)
 	if _, err := Back(ctx, noEnv, gitDir, bad); err == nil || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "take it out there") {
 		t.Fatalf("Back with another clone's prerelease: %v", err)
 	}
