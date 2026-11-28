@@ -661,8 +661,12 @@ func (d *Daemon) nameForKeyLocked(s *session, key string) string {
 // (piIDOtherLocked, Opus's review of cfa13f91). Only for a session that stopped on the key the name
 // was asked for (stoppedKeys): one that moved on, or back to a file that has a name, has its last
 // conversation elsewhere (Sol's and Opus's review of c9639dca). The name's holder is recorded only
-// if it has none. Caller holds mu.
-func (d *Daemon) noteStoppedNameLocked(id, name string) {
+// if it has none. What the session kept by its ID, or by the name its conversation had on a clone
+// that lost its keys (NamesLeft), goes to the name, as setNameLocked moves it: from
+// here on tagKeyLocked finds the session by the name, and a T3 thread that set do not disturb and
+// stopped before its name landed was woken by the next message, its tags left behind (#1333).
+// Caller holds mu.
+func (d *Daemon) noteStoppedNameLocked(id, key, name string) {
 	if d.st.SessionNames == nil {
 		d.st.SessionNames = map[string]string{}
 	}
@@ -677,6 +681,11 @@ func (d *Daemon) noteStoppedNameLocked(id, name string) {
 	if d.st.NameHolders[name] == "" {
 		d.st.NameHolders[name] = id
 	}
+	gone := &session{id: id, key: key, name: name}
+	d.adoptLeftLocked(gone) // first, as in setNameLocked: what it kept on a clone that lost its keys
+	d.adoptTagsLocked(gone)
+	d.adoptMutesLocked(gone)
+	d.adoptExplainedLocked(gone)
 }
 
 // givePoolLocked gives names from the pool to the sessions that have none, which started while the
@@ -1031,7 +1040,7 @@ func (d *Daemon) pushNames(ctx context.Context, w nameWork) error {
 		if o := d.sessions[s.id]; o != nil && o.name == "" && d.st.NameKeys[o.key] == name {
 			d.setNameLocked(o, name)
 		} else if o == nil && d.st.NameKeys[s.key] == name && stoppedKeys[s.id] == s.key {
-			d.noteStoppedNameLocked(s.id, name)
+			d.noteStoppedNameLocked(s.id, s.key, name)
 		}
 	}
 	for _, name := range person {
