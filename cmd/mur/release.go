@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,10 +37,40 @@ type releaseWatch struct {
 	// stopped says this daemon's updater has returned (a binary it can't replace, a build from
 	// source), so nothing it is asked for happens until the daemon restarts. It is set under mu.
 	stopped atomic.Bool
+	// exe is the running binary, links resolved, as the updater replaces it; fromInstaller says
+	// it is where both installers put it (~/.local/bin), so running one replaces it.
+	exe           string
+	fromInstaller bool
 }
 
 func newReleaseWatch(running, gitDir string) *releaseWatch {
-	return &releaseWatch{running: running, gitDir: gitDir, interval: time.Minute, envOff: update.EnvOff(os.Getenv)}
+	w := &releaseWatch{running: running, gitDir: gitDir, interval: time.Minute, envOff: update.EnvOff(os.Getenv)}
+	w.exe, w.fromInstaller = installerBinary()
+	return w
+}
+
+// installerBinary is the running binary, and whether it is the one install.sh and install.ps1
+// write, in ~/.local/bin.
+func installerBinary() (string, bool) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return exe, false
+	}
+	dir := filepath.Join(home, ".local", "bin")
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	if runtime.GOOS == "windows" {
+		return exe, strings.EqualFold(filepath.Dir(exe), dir)
+	}
+	return exe, filepath.Dir(exe) == dir
 }
 
 // report is the updater's Report.
@@ -126,12 +158,18 @@ func (w *releaseWatch) page() web.Version {
 		v.InstallError = w.installErr // an error about another release would mislead
 	}
 	// Updates won't install Latest (off here, or the last attempt failed), so a person can, from
-	// the page if this daemon's updater can do it, else by hand (#1217): it has stopped, as on a
-	// binary it can't replace, or MURMUR_NO_UPDATE refuses it.
+	// the page if this daemon's updater can do it. Once it has stopped, as on a binary it can't
+	// replace, it is done by hand (#1217): with the installer when that writes the binary running
+	// here, else where the binary lives, which the page names. MURMUR_NO_UPDATE may mean a package
+	// manager or Nix has the binary, so it gets neither.
 	manual := v.Latest != "" && !w.last.Installed && !v.Auto && !w.installing
 	v.CanInstall = manual && !w.envOff && !w.stopped.Load()
-	if manual && !v.CanInstall {
-		v.Install = installLine(v.Latest)
+	if manual && !w.envOff && w.stopped.Load() {
+		if w.fromInstaller {
+			v.Install = installLine(v.Latest)
+		} else {
+			v.Stuck = w.exe
+		}
 	}
 	return v
 }

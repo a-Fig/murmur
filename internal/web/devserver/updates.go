@@ -25,9 +25,9 @@ type devUpdates struct {
 }
 
 // canInstall is the daemon's Version.CanInstall: a newer release that updates won't install, and
-// that this daemon's updater can (-update stuck gives a command to run instead).
+// that this daemon's updater can (-update stuck and stuck-path have it done by hand instead).
 func canInstall(v web.Version) bool {
-	return v.Latest != "" && !v.Ready && !v.Auto && !v.Installing && v.Install == ""
+	return v.Latest != "" && !v.Ready && !v.Auto && !v.Installing && v.Install == "" && v.Stuck == ""
 }
 
 func (u *devUpdates) setting() web.UpdateSetting {

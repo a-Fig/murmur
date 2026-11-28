@@ -374,8 +374,8 @@ function updateInfo() {
   if (!v.latest) return null;
   if (v.installing || ui.installing) return { kind: "busy", text: "Installing " + v.latest, title: NAME + " is installing it, as asked." };
   if (v.auto) return { kind: "auto", text: "Updating to " + v.latest, title: NAME + " installs it on its own." };
-  // One this daemon can't install (#1217) is installed by hand, with the command Settings gives.
-  const how = v.install ? " Settings has the command that installs it." : " Settings can install it.";
+  // One this daemon can't install (#1217) is installed by hand, as Settings says.
+  const how = v.install || v.stuck ? " Settings says how to install it." : " Settings can install it.";
   return { kind: "manual", text: v.latest + " is out", title: (v.off ? "Updates are off here." : "The last update failed here.") + how, act: () => go("settings") };
 }
 
@@ -469,10 +469,13 @@ function versionSection() {
     if (v.canInstall) {
       button = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
     } else if (v.install) {
-      // This daemon's updater can't install it (#1217): it stopped, as on a folder it can't write
-      // to, or MURMUR_NO_UPDATE is set. The installer can.
+      // This daemon's updater has stopped (#1217), on a binary the installer writes, so the
+      // installer can. The daemon then needs a restart to run it.
       detail = [detail, "To install it, run:"].filter(Boolean).join(" ");
-      install = installLine(v.install);
+      install = [installLine(v.install), h("span", { class: "version-detail" }, "Then run " + COMMAND + " stop to restart.")];
+    } else if (v.stuck) {
+      // The binary is somewhere the updater can't replace and the installer doesn't write.
+      detail = [detail, "Can't replace " + v.stuck + ". Update it there, or delete it and reinstall."].filter(Boolean).join(" ");
     }
   }
   const status = h(
@@ -481,7 +484,7 @@ function versionSection() {
     h("span", { class: "version-dot " + (v.latest ? "warn" : "ok"), "aria-hidden": "true" }),
     v.latest ? v.latest + " available" : "Up to date",
   );
-  const note = [daemonNote(), detail && h("span", { class: "version-detail" }, detail), install];
+  const note = [daemonNote(), detail && h("span", { class: "version-detail" }, detail), ...(install || [])];
   const row = settingsRow("version", COMMAND + " " + v.running, note.some(Boolean) ? note : null, [status, button]);
   return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row, updatesRow()));
 }
