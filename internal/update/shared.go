@@ -6,8 +6,9 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"time"
 
 	"github.com/a-Fig/murmur/internal/proc"
@@ -88,6 +89,9 @@ func pick(ctx context.Context, o Options, prerelease bool) (*release, error) {
 	if ctx.Err() != nil {
 		return rel, err // a check cut short says nothing of GitHub
 	}
+	if o.answered != nil {
+		*o.answered = time.Now()
+	}
 	a := answer{At: time.Now().UTC(), Release: rel}
 	if err != nil {
 		a.Error = err.Error()
@@ -119,43 +123,62 @@ func recorded(o Options, all answers, key string) (rel *release, ok bool, err er
 	if age >= o.Every || a.Error != "" && age >= sharedFailLife {
 		return nil, false, nil
 	}
+	if a.Release != nil && !recordedAssetsOK(o.URL, a.Release) {
+		return nil, false, nil
+	}
+	if o.answered != nil {
+		*o.answered = a.At
+	}
 	if a.Error != "" {
 		return nil, true, errors.New(a.Error)
 	}
 	if a.Release != nil {
-		if !recordedAssetsOK(o.URL, a.Release) {
-			return nil, false, nil
-		}
 		a.Release.checked = a.At
 	}
 	return a.Release, true, nil
 }
 
+// recordedTag is the only shape of tag a recorded release may have: a release version, with no
+// build metadata. version() drops what follows a "+", so a tag such as
+// v99.0.0+/../../../../../evil/repo/releases/download/v1 passed it, and its assets' URLs, built on
+// it, matched exactly; GitHub resolves the dot segments and redirects to the other repo's asset
+// (dandy-mulberry's re-check of #1315).
+var recordedTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
 // recordedAssetsOK says every asset of a release from the record downloads from where GitHub
 // serves that release's assets: https://github.com/a-Fig/murmur/releases/download/<tag>/<name>.
 // A releases API a test names instead serves them from its own host.
 func recordedAssetsOK(api string, rel *release) bool {
-	if _, _, ok := version(strings.TrimPrefix(rel.Tag, "v")); !ok {
+	if !recordedTag.MatchString(rel.Tag) {
 		return false
 	}
-	prefix := "https://github.com/a-Fig/murmur/releases/download/" + rel.Tag + "/"
+	scheme, host, dir := "https", "github.com", "/a-Fig/murmur/releases/download/"+rel.Tag+"/"
 	if api != githubReleases {
 		u, err := url.Parse(api)
 		if err != nil || u.Host == "" {
 			return false
 		}
-		prefix = u.Scheme + "://" + u.Host + "/"
+		scheme, host, dir = u.Scheme, u.Host, ""
 	}
 	for _, a := range rel.Assets {
-		if a.Name == "" || a.Name == "." || a.Name == ".." || strings.ContainsAny(a.Name, "/\\?#%") {
+		if a.Name == "" || a.Name == "." || a.Name == ".." || !recordedName.MatchString(a.Name) {
 			return false
 		}
-		if api == githubReleases && a.URL != prefix+a.Name || !strings.HasPrefix(a.URL, prefix) {
+		u, err := url.Parse(a.URL)
+		if err != nil || u.Scheme != scheme || u.Host != host || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+			u.ForceQuery || u.RawPath != "" || path.Clean(u.Path) != u.Path {
+			return false
+		}
+		if dir != "" && u.Path != dir+a.Name {
 			return false
 		}
 	}
 	return true
 }
+
+// recordedName is the shape of a recorded asset's name: Murmur's are mur-<os>-<arch>[.exe] and
+// SHA256SUMS, and nothing in one is escaped in its URL.
+var recordedName = regexp.MustCompile(`^[0-9A-Za-z._-]+$`)
 
 // waitLock takes the lock at path, waiting up to wait while another process holds it.
 func waitLock(ctx context.Context, path string, wait time.Duration) (*proc.Held, error) {
@@ -200,9 +223,11 @@ func writeAnswers(dir string, all answers) bool {
 	if err != nil {
 		return false
 	}
-	path := filepath.Join(dir, sharedFile)
-	tmp := path + ".tmp"
-	return os.WriteFile(tmp, b, 0o600) == nil && os.Rename(tmp, path) == nil
+	file := filepath.Join(dir, sharedFile)
+	tmp := file + ".tmp"
+	// Every daemon on the machine reads the file every few seconds, and Windows refuses a rename
+	// over a file that is open (renameRetried).
+	return os.WriteFile(tmp, b, 0o600) == nil && renameRetried(tmp, file) == nil
 }
 
 // sharedSeq is the count of writes of the shared answers, zero if never or with no Shared.

@@ -60,6 +60,9 @@ type Options struct {
 	// seen, if set, is the write of the shared answers the daemon has taken account of (Run),
 	// which pick moves past its own write.
 	seen *int64
+	// answered, if set, is when GitHub gave the answer the last check went by (pick): now, or when
+	// another daemon asked. Run times the next check from it.
+	answered *time.Time
 	// Report, if set, hears the outcome of every check, so the page for humans can say whether
 	// this version is out of date and what will happen about it (#240).
 	Report func(Status)
@@ -173,6 +176,8 @@ func Run(ctx context.Context, o Options, restart func()) {
 	// past this daemon's own write, unless another's came first.
 	seen := sharedSeq(o.Shared)
 	o.seen = &seen
+	var answered time.Time
+	o.answered = &answered
 	// stopped is why this updater installs nothing more until the daemon restarts: the binary's
 	// directory isn't writable, say, after a sudo install to /usr/local/bin. It still watches, as
 	// there only an installer puts a new binary in place, and that is the one to restart onto.
@@ -224,6 +229,7 @@ func Run(ctx context.Context, o Options, restart func()) {
 		case <-timer.C:
 		}
 		checked = time.Now()
+		answered = time.Time{}
 		// At every check, not only as the daemon starts: a backup stays while a process still runs
 		// it, an MCP server for days, and went only at the next daemon start after that process
 		// ended, which an update's restart is the usual cause of (#1171).
@@ -300,8 +306,18 @@ func Run(ctx context.Context, o Options, restart func()) {
 				continue
 			}
 		}
-		timer.Reset(o.Every)
+		timer.Reset(nextCheck(answered, o.Every))
 	}
+}
+
+// nextCheck is how long after a check the next one waits: every, from when GitHub gave the answer
+// it went by. One taken from another daemon's record is up to every old already, and waiting a
+// whole every after it left what the daemon knew up to two old (dandy-mulberry's re-check of #1315).
+func nextCheck(answered time.Time, every time.Duration) time.Duration {
+	if answered.IsZero() {
+		return every
+	}
+	return min(every, max(checkGap, time.Until(answered.Add(every))))
 }
 
 func assetName(goos, arch string) string {

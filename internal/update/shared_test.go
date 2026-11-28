@@ -215,6 +215,19 @@ func TestARecordedReleaseDownloadsOnlyFromItsRelease(t *testing.T) {
 		{githubReleases, rel("v1.2.3", "https://github.com/someone/murmur/releases/download/v1.2.3/mur-linux-amd64"), false},
 		{githubReleases, rel("v1.2.3", "http://github.com/a-Fig/murmur/releases/download/v1.2.3/mur-linux-amd64"), false},
 		{githubReleases, rel("../x", "https://github.com/a-Fig/murmur/releases/download/../x/mur-linux-amd64"), false},
+		// The probe from dandy-mulberry's re-check: a tag version() took, its build metadata a path to
+		// another repo's release, and assets built on it exactly.
+		{githubReleases, rel("v99.0.0+/../../../../../evil/repo/releases/download/v1", "https://github.com/a-Fig/murmur/releases/download/v99.0.0+/../../../../../evil/repo/releases/download/v1/mur-linux-amd64",
+			"https://github.com/a-Fig/murmur/releases/download/v99.0.0+/../../../../../evil/repo/releases/download/v1/SHA256SUMS"), false},
+		{githubReleases, rel("v1.2.3+build", "https://github.com/a-Fig/murmur/releases/download/v1.2.3+build/mur-linux-amd64"), false},
+		{githubReleases, rel("v1.2.3?x", "https://github.com/a-Fig/murmur/releases/download/v1.2.3?x/mur-linux-amd64"), false},
+		{githubReleases, rel("v1.2.3#x", "https://github.com/a-Fig/murmur/releases/download/v1.2.3#x/mur-linux-amd64"), false},
+		{githubReleases, rel("v1.2.3", base+"mur-linux-amd64?redirect=elsewhere"), false},
+		{githubReleases, rel("v1.2.3", base+"mur-linux-amd64#x"), false},
+		{githubReleases, rel("v1.2.3", "https://github.com/a-Fig/murmur/releases/download/v1.2.3/%2e%2e/mur-linux-amd64"), false},
+		{githubReleases, rel("v1.2.3", "https://someone@github.com/a-Fig/murmur/releases/download/v1.2.3/mur-linux-amd64"), false},
+		{githubReleases, rel("v1.2.3-rc.1", "https://github.com/a-Fig/murmur/releases/download/v1.2.3-rc.1/mur-linux-amd64"), true},
+		{"http://127.0.0.1:5555/releases", rel("v1.2.3", "http://127.0.0.1:5555/binary/../../mur-linux-amd64"), false},
 		{"http://127.0.0.1:5555/releases", rel("v1.2.3", "http://127.0.0.1:5555/binary/mur-linux-amd64"), true},
 		{"http://127.0.0.1:5555/releases", rel("v1.2.3", "http://127.0.0.1:6666/binary/mur-linux-amd64"), false},
 	} {
@@ -257,5 +270,26 @@ func TestAnotherDaemonsWriteDuringACheckIsSeen(t *testing.T) {
 	}
 	if seen != 1 || sharedSeq(shared) != 3 {
 		t.Errorf("after another's write and its own: seen %d, record %d; want 1, 3", seen, sharedSeq(shared))
+	}
+}
+
+// The next check is an hour from when GitHub gave the answer the last one went by, which another
+// daemon may have asked for most of an hour ago, not an hour from the check itself.
+func TestTheNextCheckIsAnHourFromTheAnswer(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		ago      time.Duration
+		min, max time.Duration
+	}{
+		{0, 59 * time.Minute, time.Hour},
+		{50 * time.Minute, 9 * time.Minute, 10 * time.Minute},
+		{2 * time.Hour, checkGap, checkGap},
+	} {
+		if got := nextCheck(time.Now().Add(-c.ago), time.Hour); got < c.min || got > c.max {
+			t.Errorf("answered %s ago: next check in %s, want %s to %s", c.ago, got, c.min, c.max)
+		}
+	}
+	if got := nextCheck(time.Time{}, time.Hour); got != time.Hour {
+		t.Errorf("no answer: next check in %s, want the hour", got)
 	}
 }
