@@ -205,12 +205,25 @@ func (d *Daemon) ownerTransferLocked(to string, at time.Time) (bus.TeamRecord, e
 	if pin == nil || pin.Box == "" {
 		return bus.TeamRecord{}, errors.New("Murmur has no verified key for that device. Ask its user to come online first.")
 	}
-	if rp := d.peers[to]; rp != nil && (rp.writtenOf != rp.listed || d.presenceListed[to].sha != "" && d.presenceListed[to].sha != rp.writtenOf) {
-		// What the recipient can do is what its latest presence says. A newer one listed but not
-		// read yet may say less, after a downgrade (Sol's re-review of #1289). presenceListed is
-		// the newest a sync has seen, which a background sync can note after this transfer's own
-		// sync and before this device reads it (Sol's third review).
-		return bus.TeamRecord{}, fmt.Errorf("Murmur hasn't read the latest presence of %s yet. Try again after it syncs.", d.deviceCalledLocked(to))
+	if rp := d.peers[to]; rp != nil {
+		newest := rp.listed
+		if l := d.presenceListed[to].sha; l != "" && l != rp.writtenOf {
+			newest = l
+		}
+		if rp.writtenOf != newest {
+			// What the recipient can do is what its latest presence says. A newer one listed but not
+			// read yet may say less, after a downgrade (Sol's re-review of #1289). presenceListed is
+			// the newest a sync has seen, which a background sync can note after this transfer's own
+			// sync and before this device reads it (Sol's third review).
+			name := d.deviceCalledLocked(to)
+			if d.refusedSHA[to] == newest || rp.sha == newest {
+				// The sync is done with it and won't read it again, so trying again changes nothing.
+				// It stays pending: taking it for read would trust what an older presence said
+				// (#1293).
+				return bus.TeamRecord{}, fmt.Errorf("Murmur can't read the latest presence of %s. Update Murmur on both devices.", name)
+			}
+			return bus.TeamRecord{}, fmt.Errorf("Murmur hasn't read the latest presence of %s yet. Try again after it syncs.", name)
+		}
 	}
 	for _, dev := range sortedKeys(d.peers) {
 		p := d.peers[dev]
