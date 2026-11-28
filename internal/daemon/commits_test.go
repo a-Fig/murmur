@@ -653,6 +653,10 @@ func TestPiToolHooksCreditCommits(t *testing.T) {
 	run(file, "PreToolUse", "bash", "call_2")
 	run(other, "PreToolUse", "bash", "call_2")
 	run(other, "PostToolUse", "bash", "call_2")
+	// The end is answered at once and judged in the background, which snapshots the worktree again.
+	// A commit made before that snapshot is inside the other session's window, so wait for it (lookup
+	// settles ended calls). Without this the test is a race with the daemon under load (#1208).
+	a.look("bbbbbb", names[1])
 	second := commitFile(t, wt, "during.txt")
 	run(file, "PostToolUse", "bash", "call_2")
 	if got := commitSHAs(a.look("aaaaaa", names[0])); !slices.Equal(got, []string{first, second}) {
