@@ -472,10 +472,12 @@ function versionSection() {
       // This daemon's updater has stopped (#1217), on a binary the installer writes, so the
       // installer can. The daemon then needs a restart to run it.
       detail = [detail, "To install it, run:"].filter(Boolean).join(" ");
-      install = [installLine(v.install), h("span", { class: "version-detail" }, "Then run " + COMMAND + " stop to restart.")];
+      install = [installLine(v.install), h("span", { class: "version-detail" }, "Then run " + COMMAND + " stop, then " + COMMAND + " ui.")];
     } else if (v.stuck) {
-      // The binary is somewhere the updater can't replace and the installer doesn't write.
-      detail = [detail, "Can't replace " + v.stuck + ". Update it there, or delete it and reinstall."].filter(Boolean).join(" ");
+      // The binary is somewhere the updater can't replace and the installer doesn't write. It is
+      // updated there: agents' MCP entries and hooks name that path (mur join), so deleting it
+      // for the installer's copy would leave them pointing at nothing.
+      detail = [detail, "Can't replace " + v.stuck + ". Update it there."].filter(Boolean).join(" ");
     }
   }
   const status = h(

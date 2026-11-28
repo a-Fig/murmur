@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,14 +62,13 @@ func installerBinary() (string, bool) {
 	if err != nil {
 		return exe, false
 	}
-	dir := filepath.Join(home, ".local", "bin")
-	if r, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = r
+	// The same folder, however spelled: case doesn't count on Windows or macOS (Opus review).
+	want, err := os.Stat(filepath.Join(home, ".local", "bin"))
+	if err != nil {
+		return exe, false
 	}
-	if runtime.GOOS == "windows" {
-		return exe, strings.EqualFold(filepath.Dir(exe), dir)
-	}
-	return exe, filepath.Dir(exe) == dir
+	got, err := os.Stat(filepath.Dir(exe))
+	return exe, err == nil && os.SameFile(got, want)
 }
 
 // report is the updater's Report.

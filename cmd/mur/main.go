@@ -446,7 +446,10 @@ func noteNewer(ctx context.Context, w io.Writer) {
 	}
 	if latest := update.Newer(gitDir, version); latest != "" {
 		fmt.Fprintf(w, "%s %s is out. Murmur updates automatically while its daemon runs, unless disabled.\n", brand.Product, latest)
-		if line := installLine(latest); line != "" {
+		// The installer's line only where the installer would replace this binary, as the page
+		// gives it (#1217): elsewhere it would add a second copy beside this one.
+		_, fromInstaller := installerBinary()
+		if line := installLine(latest); line != "" && fromInstaller && !update.EnvOff(os.Getenv) {
 			fmt.Fprintf(w, "To update by hand, run the install again:\n  %s\n", line)
 		}
 	}
