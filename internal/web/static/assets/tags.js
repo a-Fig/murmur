@@ -17,6 +17,7 @@ import {
 } from "./sessions.js";
 import { dmKey, avatar, deviceColor, deviceOfName } from "./messages.js";
 import { startChat, askForName } from "./picker.js";
+import { openFullView } from "./profile.js";
 
 export {
   groupMembers, inGroup, liveGroups, isGroupTag, membersButton, tagsLine, profileLine, validTag, tagWanted,
@@ -710,6 +711,7 @@ function profileCard() {
         h("p", { class: "pc-state truncate" }, word, where && " · " + where),
       ),
     ),
+    h("button", { class: "pc-full", "data-key": "pc-full", onclick: () => openFullView(name) }, "Open full view", icon("arrowRight")),
     (badges.length > 0 || tags.length > 0) && h("div", { class: "pc-badges" }, badges.map((b) => h("span", { class: "pc-badge" }, b)), tags.map((n) => h("span", { class: "stag", title: n }, n))),
     s &&
       (s.doing || s.branch) &&

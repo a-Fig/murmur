@@ -5622,3 +5622,161 @@ button.pc-talked-one:hover > .truncate {
   width: 1rem;
   height: 1rem;
 }
+
+/* The profile card's way to the full view (#716): a small pill on its banner, top right. */
+.pc-full {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--popover) 85%, transparent);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.pc-full:hover {
+  background: var(--popover);
+}
+.pc-full .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+/* A session's or a person's full view (#716): its face and name large, how it is, then what it has
+ * been doing and who it works with, in the boxes Settings uses. */
+.g-full {
+  gap: 1.25rem;
+}
+.g-full-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.g-full-head .pres-wrap .avatar,
+.g-full-face.avatar {
+  width: 3.5rem;
+  height: 3.5rem;
+  font-size: 1.25rem;
+}
+.g-full-id {
+  flex: 1;
+  min-width: 0;
+}
+.g-full-id h1 {
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.g-full-id .g-head-status {
+  margin-top: 0.125rem;
+  font-size: 0.8125rem;
+}
+.g-full-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.g-full-about {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.g-full-doing {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.g-full-about .g-head-meta {
+  font-size: 0.75rem;
+}
+.g-full-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+}
+.g-full-box {
+  padding: 0.75rem 1rem;
+}
+.g-full-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.375rem 1rem;
+  font-size: 0.8125rem;
+}
+.g-full-facts dt {
+  color: var(--muted-foreground);
+}
+.g-full-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.g-full-host,
+.g-full-path {
+  color: var(--muted-foreground);
+}
+.g-full-mates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.g-full-mate {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0 -0.375rem;
+  padding: 0.25rem 0.375rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  text-align: left;
+}
+.g-full-mate:hover {
+  background: var(--accent);
+}
+.g-full-mate .avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.6875rem;
+}
+.g-full-mate .truncate {
+  flex: 1;
+}
+.g-full-n {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.g-full-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+.g-full-none {
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.g-full-more {
+  align-self: flex-start;
+  margin-top: 0.5rem;
+}
+.g-full-more .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+@media (max-width: 767px) {
+  .g-full-head {
+    flex-wrap: wrap;
+  }
+  .g-full-actions {
+    width: 100%;
+  }
+}

@@ -12,7 +12,7 @@ import {
 } from "./messages.js";
 import { filesOnly } from "./files.js";
 
-export { recentPage };
+export { recentPage, feedOf };
 
 // Recent: what agents have been doing, newest first, as much as a render can build quickly (#448).
 // A message opens its conversation. Between the messages are the things sessions did: joined or
@@ -118,16 +118,7 @@ function recentPage() {
   if (ui.recentWho && !names.includes(ui.recentWho)) names.push(ui.recentWho);
   const shown = all.filter((e) => (ui.recentKind === "all" || e.group === ui.recentKind) && (!ui.recentWho || e.who.includes(ui.recentWho)));
   const list = shown.sort((a, b) => b.t - a.t).slice(0, RECENT_MAX);
-  const out = [];
-  let day = null;
-  for (const e of list) {
-    const d = e.t && new Date(e.t).toDateString();
-    if (d && d !== day) {
-      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(e.t))));
-      day = d;
-    }
-    out.push(e.m ? openable(recentItem(e.m, when(e.m.at)), e.m, when(e.m.at)) : e.a ? activityItem(e) : githubItem(e));
-  }
+  const out = feedItems(list);
   const count = (kind) => all.filter((e) => kind === "all" || e.group === kind).length;
   const filtered = ui.recentKind !== "all" || !!ui.recentWho;
   return h(
@@ -192,6 +183,28 @@ function recentPage() {
         ? emptyState("clock", "Nothing matches", "Show everything, or pick another session.")
         : emptyState("clock", "Nothing yet", "Messages between sessions, and what the sessions do, show here as this daemon learns of them."),
   );
+}
+
+// The feed's lines for these entries, newest first, with a line for each day.
+function feedItems(list) {
+  const out = [];
+  let day = null;
+  for (const e of list) {
+    const d = e.t && new Date(e.t).toDateString();
+    if (d && d !== day) {
+      out.push(h("div", { class: "chat-day" }, h("span", null, dayLabel(e.t))));
+      day = d;
+    }
+    out.push(e.m ? openable(recentItem(e.m, when(e.m.at)), e.m, when(e.m.at)) : e.a ? activityItem(e) : githubItem(e));
+  }
+  return out;
+}
+
+// What one session or person did, as Recent shows it narrowed to them (#716): the newest max lines,
+// and how many there are in all.
+function feedOf(name, max) {
+  const mine = recentEntries().filter((e) => e.who.includes(name));
+  return { items: feedItems(mine.sort((a, b) => b.t - a.t).slice(0, max)), total: mine.length };
 }
 
 // One line of activity: an icon where a message has its sender's face, who, what, and when. tone

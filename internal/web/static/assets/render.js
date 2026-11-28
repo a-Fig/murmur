@@ -3,7 +3,7 @@
 
 import { icon } from "./icons.js";
 import { h, root, held } from "./dom.js";
-import { NAME, COMMAND, VIEWS, TITLES, NARROW, ui, nameOf, unreadCount } from "./state.js";
+import { NAME, COMMAND, TITLES, NARROW, ui, nameOf, unreadCount, viewOf } from "./state.js";
 import { loadSettings, tellApp } from "./sync.js";
 import { setDrawer, connBadge, sidebar, updateInfo, repoMenu } from "./sidebar.js";
 import { sessionsPage } from "./sessions.js";
@@ -13,6 +13,7 @@ import { conversationsPage, chatScroll, restoreChatScroll, markOpenRead, fitComp
 import { viewerDialog } from "./files.js";
 import { setupDialog, pickerDialog } from "./picker.js";
 import { settingsPage } from "./settings.js";
+import { profilePage } from "./profile.js";
 import { loadUpdates } from "./updates.js";
 import { refreshTip } from "./tips.js";
 
@@ -265,6 +266,7 @@ function showTopbar() {
 }
 
 function viewTitle() {
+  if (ui.view === "profile") return ui.profileOf;
   if (ui.view !== "messages") return TITLES[ui.view];
   return ui.filter ? nameOf(ui.filter, ui.filter) : TITLES.messages;
 }
@@ -372,6 +374,7 @@ function page() {
   if (ui.view === "sessions") return sessionsPage();
   if (ui.view === "recent") return recentPage();
   if (ui.view === "settings") return settingsPage();
+  if (ui.view === "profile") return profilePage();
   return conversationsPage();
 }
 
@@ -384,7 +387,7 @@ function go(view) {
 }
 
 function setView(view) {
-  ui.view = VIEWS.includes(view) ? view : "messages";
+  ui.view = viewOf(view);
   if (ui.view === "settings") {
     loadSettings();
     loadUpdates();
