@@ -89,6 +89,8 @@ type fakeDaemon struct {
 	helloReply func(proto.Hello) (refusal, id string)
 	// accepted counts every connection made to the daemon, pings included.
 	accepted atomic.Int32
+	// protocol, if set, is the protocol the daemon speaks; proto.Protocol if not.
+	protocol int
 
 	mu       sync.Mutex
 	hellos   []proto.Hello
@@ -138,6 +140,14 @@ func (f *fakeDaemon) serveAt(t *testing.T, gitDir string) string {
 	return gitDir
 }
 
+// speaks is the protocol the daemon answers with.
+func (f *fakeDaemon) speaks() int {
+	if f.protocol != 0 {
+		return f.protocol
+	}
+	return proto.Protocol
+}
+
 func (f *fakeDaemon) handle(conn net.Conn) {
 	r := bufio.NewReader(conn)
 	line, err := r.ReadBytes('\n')
@@ -155,7 +165,7 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		conn.Write(append(b, '\n'))
 	}
 	if req.Op == proto.OpPing && req.Nonce != "" { // the daemon's proof (#371)
-		reply(proto.Response{OK: true, Protocol: proto.Protocol, Proof: proto.Proof("tok", conn.LocalAddr().String(), req.Nonce)})
+		reply(proto.Response{OK: true, Protocol: f.speaks(), Proof: proto.Proof("tok", conn.LocalAddr().String(), req.Nonce)})
 		if line, err = r.ReadBytes('\n'); err != nil {
 			conn.Close()
 			return
@@ -190,7 +200,7 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 				id = given
 			}
 		}
-		reply(proto.Response{OK: true, Self: "dev/" + id, ClaudeSession: live, Protocol: proto.Protocol,
+		reply(proto.Response{OK: true, Self: "dev/" + id, ClaudeSession: live, Protocol: f.speaks(),
 			ThreadUnread: f.threadUnread != nil && req.Hello.T3Thread != "" && f.threadUnread(req.Hello.Route)})
 		return // the connection stays open until the test drops it
 	}
@@ -217,7 +227,7 @@ func (f *fakeDaemon) handle(conn net.Conn) {
 		return
 	}
 	unread := req.Op == proto.OpRoute && req.Route != nil && req.Route.T3Thread != "" && f.threadUnread != nil && f.threadUnread(*req.Route)
-	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: proto.Protocol, ThreadUnread: unread})
+	reply(proto.Response{OK: true, Self: "dev/" + req.Session, ClaudeSession: live, Protocol: f.speaks(), ThreadUnread: unread})
 }
 
 func (f *fakeDaemon) requestCount() int {
