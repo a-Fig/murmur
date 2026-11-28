@@ -42,6 +42,20 @@ func FindGitDir(ctx context.Context, dir string) (string, error) {
 // StateDir is the daemon's directory for a git common dir.
 func StateDir(gitDir string) string { return filepath.Join(gitDir, brand.StateDir) }
 
+// ConsentFile is the record that the user joined, in the clone's state directory (join writes it).
+const ConsentFile = "joined.json"
+
+// Joined reports whether the user joined in the clone with this git common dir: whether its consent
+// record exists. It lives here, below both internal/join and internal/update, which can't import
+// each other.
+func Joined(gitDir string) bool {
+	if gitDir == "" {
+		return false // no clone: the path below would be relative to wherever the process is
+	}
+	_, err := os.Stat(filepath.Join(StateDir(gitDir), ConsentFile))
+	return err == nil
+}
+
 // Client talks to one clone's daemon. It is safe for concurrent use.
 type Client struct {
 	GitDir string

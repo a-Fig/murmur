@@ -488,13 +488,6 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 	} else if had {
 		r.Did = append(r.Did, "Removed the record that you joined "+brand.Product+" in this clone")
 	}
-	// An owning clone stays on the record, so that an uninstall still sees its keys (#1291): the
-	// record lists clones that are joined or not, and nothing treats a left one as joined.
-	if dir, err := clones.DefaultDir(); err == nil && !e.ownsMesh(p.GitDir) {
-		if err := clones.Remove(dir, p.GitDir); err != nil {
-			problem("taking this clone off the record of this machine's clones", err)
-		}
-	}
 	if p.Top != "" {
 		trees, notes, err := removeHooks(ctx, p, e.claudeSettings())
 		r.Notes = append(r.Notes, notes...)
@@ -529,6 +522,17 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 		}
 	}
 
+	// Ownership is read once, now that the daemon has stopped: one that was still running could save
+	// a new owner meanwhile, and the record and the warning below would disagree.
+	owns := e.ownsMesh(p.GitDir)
+	// An owning clone stays on the record, so that an uninstall still sees its keys (#1291): the
+	// record lists clones that are joined or not, and nothing treats a left one as joined.
+	if dir, err := clones.DefaultDir(); err == nil && !owns {
+		if err := clones.Remove(dir, p.GitDir); err != nil {
+			problem("taking this clone off the record of this machine's clones", err)
+		}
+	}
+
 	if len(r.Did) == 0 && len(r.Problems) == 0 {
 		r.Did = []string{"Nothing to undo: this clone hadn't joined " + brand.Product}
 	}
@@ -539,7 +543,7 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
 			"To remove them by hand: " + e.removal() + ".",
 	}
-	if e.ownsMesh(p.GitDir) {
+	if owns {
 		// A leave keeps the keys, so a join again gets everything back: a warning is enough here.
 		// The refusal is uninstall's, which also takes away the command that would transfer.
 		r.Tell = append([]string{"This clone owns its repo's mesh, and its keys stay in .git/" + brand.StateDir + ". " +
