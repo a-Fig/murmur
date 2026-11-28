@@ -154,6 +154,7 @@ func TestAHookNamesItsSessionAChild(t *testing.T) {
 // route told later, before the call that brought it. Codex's state isn't needed. Inside T3 it is
 // T3's to say.
 func TestACodexCallThatSaysSubagentMakesAChildAtOnce(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, _ := useFakeT3(t)
 	a := newDevice(t, remote)

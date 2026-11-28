@@ -40,6 +40,7 @@ func threadHello(d *device, id, claude string, pid int, t3cli, thread string, by
 // so W's message is the thread's on the other device too, after W's server has gone, and its
 // address is still found.
 func TestAProviderSwitchKeepsTheThreadsAddress(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
 	exe, calls := useFakeT3(t)

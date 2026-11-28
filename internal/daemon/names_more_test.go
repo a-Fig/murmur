@@ -585,8 +585,11 @@ func TestNameOnlyInPresenceIsWrittenBack(t *testing.T) {
 
 			work, _ := junkTree(t)
 			git(t, work, "push", "-q", remote, ":refs/murmur/presence/"+b.self())
+			// Not waiting for the team key: with a stopped and b unable to push, no device is there
+			// to grant it, and the minute start would wait for it is no part of the name c takes.
 			c := newDeviceWith(t, remote, func(d *device) {
 				d.names = offering(seededNames(seed+1), pick) // would pick b's name first
+				d.noKey = true
 			})
 			carol, _ := c.session("cccccc", "claude-carol")
 			if got := c.named(carol); got == pick.name {

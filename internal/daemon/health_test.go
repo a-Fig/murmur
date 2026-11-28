@@ -45,6 +45,7 @@ func moveDir(t *testing.T, from, to string) {
 // failed, how many in a row, and why, and that the presence pushes fail too; once it is back, the
 // syncs work again and the last error is kept, dated, for whoever looks after the fact.
 func TestHealthReportsAFailingSyncAndItsRecovery(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	d := newDevice(t, remote)
 	d.session("aaaaaa", "")
@@ -98,6 +99,7 @@ func TestHealthReportsAFailingSyncAndItsRecovery(t *testing.T) {
 // server, apart from refusals because the ref had moved, and count again as pushed once the hook
 // lets them through.
 func TestHealthCountsRefusedPushes(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	d := newDevice(t, remote)
 	p := d.page()

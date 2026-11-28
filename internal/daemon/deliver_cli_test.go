@@ -18,6 +18,7 @@ import (
 // A message for a Codex session outside T3 runs `codex queue` for its thread, in its Codex home,
 // with the message framed as a turn. It is then no longer unread.
 func TestMessageForACodexSessionGoesThroughItsQueue(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -65,6 +66,7 @@ func TestMessageForACodexSessionGoesThroughItsQueue(t *testing.T) {
 // in the state directory its shared server is registered in, with a body that holds the turn and
 // asks for it to wait behind a running one.
 func TestMessageForAnOpenCodeSessionGoesThroughItsServer(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	var out syncBuf
@@ -101,6 +103,7 @@ func TestMessageForAnOpenCodeSessionGoesThroughItsServer(t *testing.T) {
 // session's MCP server is connected: a Codex thread nobody has open would keep the message in its
 // queue, out of the inbox, until it is next resumed.
 func TestClientCommandLineNeedsItsConversationAndARunningSession(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newTimedDevice(t, remote, 300*time.Millisecond, time.Hour)
@@ -147,6 +150,7 @@ func TestSessionInT3IsNotReachedByItsClientCommandLine(t *testing.T) {
 // One device (#1010): the sender is a session beside bob, as nothing here turns on where a
 // message came from. deliver_repeat_test.go says why that is enough.
 func TestFailedClientCommandFallsBackToTheNotice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	setFakeT3(t, exe, fakeT3Fail, "1")

@@ -28,6 +28,17 @@ and 1,015 s with 55 parallel, on an 8-core Mac that other work was loading heavi
 (2026-11-11, main at 3c275e4); with 53, on main at 6c1ca2e and as loaded, it took 1,352 s, so the
 gain on a quiet machine is still to be measured, in CI's timings.
 
+A serial test costs the run all of its time, and a parallel one about a sixth of it, so a test
+with no reason to be serial is a cost: 41 that had none, 1 to 14 s each, were made parallel in
+#1323, taking the serial tests from 323 s to 164 s of a 579 s run on a box (2026-11-28, main at
+a17034d3, `go test -json -count=1 ./internal/daemon`), 387 s in all after.
+
+A device a test starts waits, before the test goes on, until it holds the team key, for up to a
+minute (`awaitTeamKey`). A test whose device can't get one, such as one that deleted the team ref,
+or one started while no other device is running to grant it, waits the whole minute for nothing,
+and says `noKey` to skip it. `MURMUR_TEST_NOKEY_LOG=<file>` writes the name of each test that waited
+the minute out; after #1323 a full run writes none.
+
 The package runs at most 6 of its parallel tests at once, where `go test` would run one per
 processor (`maxParallel` in `deliver_test.go`, #1036). On a 16-processor laptop with 15 GB, 16 at
 once started about 1,400 git processes a minute, and a few tests gave up their waits, different

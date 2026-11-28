@@ -21,6 +21,7 @@ import (
 // A refs-only init publishes the first team key before the owner starts its daemon. The owner can
 // come online later and grant the key to teammates, who can use it to send messages.
 func TestFirstEpochOnARefsOnlyInit(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	initClone := filepath.Join(t.TempDir(), "init")
 	git(t, filepath.Dir(initClone), "clone", "-q", remote, initClone)

@@ -637,6 +637,7 @@ func TestANameHeldFromBeforeIsClaimedOnce(t *testing.T) {
 // claims it with their current one, so no one else can choose it once a gone presence no longer
 // holds it, and messages to it still reach them.
 func TestANameFromARenameBeforeClaimsIsClaimed(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	selfA := a.self()

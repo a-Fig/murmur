@@ -13,6 +13,7 @@ import (
 // A device is a group (#463): every agent's session on it has group:device-<id>, which nobody sets
 // or takes off, who lists it and searches by it, and a message to it is a message to the device.
 func TestADeviceIsAGroup(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")

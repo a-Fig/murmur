@@ -33,6 +33,7 @@ func (d *device) piHook(op, file string) proto.Response {
 // One device (#1010): the sender is a session beside bob, as nothing here turns on where a
 // message came from. deliver_repeat_test.go says why that is enough.
 func TestPiSessionGetsNoticesWhileBusyAndTurnsWhenIdle(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	sock := useFakeSocket(t)
 	b := newDevice(t, remote)

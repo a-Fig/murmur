@@ -135,6 +135,7 @@ func (d *device) awaitDrop(id string) {
 // and hands its copy over at once, and the new one's copy is not handed over again when the route
 // moves to it. A message for the new session alone is another event, and still goes in.
 func TestMessageForEveryoneBeforeTheThreadIsFoundReachesItOnce(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	b := newTimedDevice(t, remote, 20*time.Second, time.Hour)

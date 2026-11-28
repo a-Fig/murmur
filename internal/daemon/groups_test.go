@@ -29,6 +29,7 @@ func (d *device) inGroup(sess, addr, group string) bool {
 }
 
 func TestAnAgentStartsAGroupAndItsMembersTalk(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -90,6 +91,7 @@ func TestAnAgentStartsAGroupAndItsMembersTalk(t *testing.T) {
 }
 
 func TestAnAddFollowedAtOnceByAMessageReachesTheSessionAdded(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -114,6 +116,7 @@ func TestAnAddFollowedAtOnceByAMessageReachesTheSessionAdded(t *testing.T) {
 }
 
 func TestAnAddPastASessionsTagsIsRefusedToTheAdder(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -133,6 +136,7 @@ func TestAnAddPastASessionsTagsIsRefusedToTheAdder(t *testing.T) {
 }
 
 func TestOnlyAGroupCanBeGivenAndNoneTakenAway(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -168,6 +172,7 @@ func TestOnlyAGroupCanBeGivenAndNoneTakenAway(t *testing.T) {
 }
 
 func TestAHumansChoiceStandsOverAnAgentsAdd(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -230,6 +235,7 @@ func TestAnAddForASessionHereGoesByWhatItsDeviceKeeps(t *testing.T) {
 // as its device counts them; a tag a person gave it isn't one (#524). The adder is told that device
 // can still refuse it, for what presence doesn't show.
 func TestAnAddForASessionElsewhereCountsTheTagsItSetItself(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -259,6 +265,7 @@ func TestAnAddForASessionElsewhereCountsTheTagsItSetItself(t *testing.T) {
 // answer and how to leave; later ones from that group end with one short line (Tyler, 2026-11-12).
 // A second group explains itself afresh, and inbox goes by the same record as a turn.
 func TestAGroupExplainsItselfOnce(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	exe, calls := useFakeT3(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
@@ -310,6 +317,7 @@ func TestAGroupExplainsItselfOnce(t *testing.T) {
 // mark. Each member is told that removing the tag leaves the group, and it does, for a member on
 // the page's device and one on another; a human's other marks still stand over the session.
 func TestASessionLeavesAGroupAPersonStarted(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	alice, _ := a.session("aaaaaa", "")
@@ -364,6 +372,7 @@ func TestASessionLeavesAGroupAPersonStarted(t *testing.T) {
 // session's tags now: one that left lists only what it said there, and a stopped one still lists
 // the group's messages by the tags kept for its name.
 func TestLookupListsTheGroupMessagesASessionGot(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDeviceWith(t, remote, func(d *device) { d.grace = 300 * time.Millisecond }) // alice stops at the end
 	b := newDevice(t, remote)

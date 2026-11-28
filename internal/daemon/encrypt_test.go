@@ -52,6 +52,7 @@ func (d *device) doing(addr string) (string, bool) {
 // Three devices, one joining after the others are talking: each reads the others' presence and
 // messages, and the remote holds none of what they said or are doing.
 func TestBusIsEncrypted(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newOwnedDevice(t, remote, "Alice Hiddenowner7")
 	b := newOwnedDevice(t, remote, "Bob Hiddenowner7")
@@ -218,6 +219,7 @@ func (w *syncWriter) String() string {
 // sealed at all, is refused once the device's own key is pinned, and messages go on being encrypted
 // to the device's own key.
 func TestKeySwapIsRefused(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	logs := &syncWriter{}
 	dir := filepath.Join(t.TempDir(), "clone")
@@ -346,6 +348,7 @@ func TestLaterDeviceReadsHistory(t *testing.T) {
 // written after; a device that can push gets it, and the old keys with it. Once the device can push
 // again, it is granted the new key too.
 func TestRotationLeavesOutADeviceThatCantPush(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b, c := newDevice(t, remote), newDevice(t, remote), newDevice(t, remote)
 	eventually(t, "b and c hold the team key", func() bool {
@@ -424,6 +427,7 @@ func TestRotateComparesCollaborators(t *testing.T) {
 
 // A device that takes ownership can compare against the roster written by the previous owner.
 func TestRosterIsReadByEveryDevice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	eventually(t, "the first epoch", func() bool { return len(teamIDs(t, remote)) == 1 })
@@ -450,6 +454,7 @@ func TestRosterIsReadByEveryDevice(t *testing.T) {
 // A clone whose keys are lost while its device ID stays takes a new ID: its teammates would refuse
 // a new key under the old one.
 func TestLostKeysTakeANewDevice(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a := newDevice(t, remote)
 	first := a.self()
@@ -537,6 +542,7 @@ func TestLostKeysGiveNewNames(t *testing.T) {
 // groups, still on do not disturb, and still has its mutes (#827): they were kept by the old
 // name, which stayed on the old device.
 func TestLostKeysKeepASessionsTagsAndMutes(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	a, b := newDevice(t, remote), newDevice(t, remote)
 	addr, conn := a.session("aaaaaa", "claude-kept")

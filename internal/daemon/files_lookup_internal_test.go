@@ -202,6 +202,7 @@ func TestAPresenceFetchedButNotReadInTime(t *testing.T) {
 // or unknown (#859, Sol's review). The remote's upload-pack holds every request after the sync's
 // listing, a fetch's retry too, until the test lets them go.
 func TestAPresenceBeingFetched(t *testing.T) {
+	t.Parallel()
 	for _, b := range before {
 		t.Run(b.name, func(t *testing.T) {
 			r := newGiveUpRig(t)

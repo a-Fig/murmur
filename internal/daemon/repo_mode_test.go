@@ -13,6 +13,7 @@ import (
 )
 
 func TestRepoModeChangesAcrossDevices(t *testing.T) {
+	t.Parallel()
 	remote := newRemote(t)
 	clone := filepath.Join(t.TempDir(), "owner")
 	git(t, filepath.Dir(clone), "clone", "-q", remote, clone)
