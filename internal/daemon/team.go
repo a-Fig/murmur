@@ -489,6 +489,12 @@ func (d *Daemon) teamLoop(ctx context.Context) {
 	}
 }
 
+// grantReadWindow is how long after the presence a grant answered a device is given to read it: a device that
+// has just joined pushes several presences in its first seconds, a poll behind each, and a grant per presence
+// is a push and a commit on the team ref's history for nothing (#1292). A quiet device polls every 30 s, so a minute
+// covers a read; a grant that didn't open is made again on the first presence after it, a heartbeat away.
+const grantReadWindow = time.Minute
+
 // grantsDueLocked is the devices this one grants the team keys to now: each with a pinned box key
 // whose sealed presence names the current epoch and lists fewer team keys than this device could
 // give it (#156, 2026-11-10). Only a device that holds the current key grants.
@@ -516,7 +522,7 @@ func (d *Daemon) grantsDueLocked() []string {
 		if dev == d.device || pin == nil || pin.Box == "" || !p.sealed || p.pres.Epoch != ep.ID {
 			continue
 		}
-		if mark, ok := d.st.GrantMark[dev]; ok && !p.pres.At.After(mark) {
+		if mark, ok := d.st.GrantMark[dev]; ok && !p.pres.At.After(mark.Add(grantReadWindow)) {
 			continue
 		}
 		lacks := false
