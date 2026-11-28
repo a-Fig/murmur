@@ -36,6 +36,7 @@ import (
 	"github.com/a-Fig/murmur/internal/proto"
 	"github.com/a-Fig/murmur/internal/publicrepo"
 	"github.com/a-Fig/murmur/internal/setup"
+	"github.com/a-Fig/murmur/internal/termtext"
 	"github.com/a-Fig/murmur/internal/update"
 	"github.com/a-Fig/murmur/internal/web"
 )
@@ -215,7 +216,9 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", brand.Command, err)
+		// An error can carry text a git remote or GitHub chose; none of it may act on the terminal
+		// (#1332).
+		fmt.Fprintf(os.Stderr, "%s: %s\n", brand.Command, termtext.Clean(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -541,10 +544,10 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 		reportPublic(ctx, *dir, out)
 		return nil
 	case p.Pending:
-		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, p.Refused)
+		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, termtext.Clean(p.Refused))
 		fmt.Fprintf(out, "Its branch %s already has the section (%s) from an earlier init; nothing pushed.\n", p.Fallback, short)
 	case p.Fallback != "":
-		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, p.Refused)
+		fmt.Fprintf(out, "%s refused the push to %s: %s\n", p.Remote, p.Branch, termtext.Clean(p.Refused))
 		fmt.Fprintf(out, "Pushed %s to a new branch on %s, %s, instead:\n", short, p.Remote, p.Fallback)
 		list()
 	default:

@@ -15,6 +15,7 @@ import (
 
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/termtext"
 )
 
 // ErrRejected means the remote refused a push because the ref wasn't what the push expected:
@@ -528,7 +529,8 @@ func (r *Repo) pushOnce(ctx context.Context, sha, ref string, mode PushMode, exp
 	var refused string
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "!\t") {
-			refused = strings.TrimSpace(line)
+			// The reason in it is the remote's, and goes to people's terminals (#1332).
+			refused = strings.TrimSpace(termtext.Clean(line))
 		}
 	}
 	if err == nil && refused == "" {

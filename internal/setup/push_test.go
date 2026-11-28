@@ -204,6 +204,75 @@ func TestPushRefusedFallsBackToABranch(t *testing.T) {
 	}
 }
 
+// The remote chooses the reason it refuses main for, and what its hooks print; init prints both,
+// and neither may act on the terminal (#1332). A proc-receive hook gives the reason, with an OSC 8
+// link whose text and target differ and a line clear in it.
+func TestPushRefusalTextHasNoTerminalEscapes(t *testing.T) {
+	remote, _, clone := remoteWithClone(t)
+	report := `#!/bin/sh
+size() {
+	size=$(dd bs=1 count=4 2>/dev/null)
+	[ -n "$size" ] && [ "$size" != 0000 ]
+}
+data() { line=$(dd bs=1 count=$((0x$size - 4)) 2>/dev/null); }
+skip() { dd bs=1 count=$((0x$size - 4)) >/dev/null 2>&1; }
+say() { printf '%04x%s' $((${#1} + 4)) "$1"; }
+e=$(printf '\033')
+while size; do skip; done
+say "version=1"
+printf 0000
+refs=
+while size; do
+	data
+	set -- $line
+	refs="$refs $3"
+done
+for r in $refs; do say "ng $r ${e}]8;;https://evil.example/${e}\\main is protected${e}]8;;${e}\\${e}[2K"; done
+printf 0000
+`
+	if err := os.WriteFile(filepath.Join(remote, "hooks", "proc-receive"), []byte(report), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g(t, remote, "config", "receive.procReceiveRefs", "refs/heads/main")
+	p := push(t, clone)
+	if p.Fallback != FallbackBranch || !strings.Contains(p.Refused, "main is protected") {
+		t.Fatalf("pushed %+v, want main refused as protected and the commit on %s", p, FallbackBranch)
+	}
+	if strings.ContainsRune(p.Refused, 0x1b) || strings.Contains(p.Refused, "evil.example") {
+		t.Errorf("the refusal keeps the remote's escapes: %q", p.Refused)
+	}
+
+	// And when the fallback push fails too, the error says so without the remote's escapes.
+	_, _, clone = remoteWithClone(t)
+	remote = filepath.Join(filepath.Dir(clone), "remote.git")
+	hook := "#!/bin/sh\nprintf '\\033[1A\\033[2K\\033]0;pwned\\007no pushes here\\n' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(remote, "hooks", "update"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Push(context.Background(), clone)
+	if err == nil {
+		t.Fatal("a remote that refuses every push took init's")
+	}
+	if msg := err.Error(); strings.ContainsAny(msg, "\x1b\x07") || !strings.Contains(msg, FallbackBranch) {
+		t.Errorf("the error: %q, want the failed push to %s without the remote's escapes", msg, FallbackBranch)
+	}
+}
+
+// The remote chooses its default branch's name, and init prints it. git allows a C1 control such
+// as U+009B (CSI) in one, so a name a terminal would act on is refused, not printed (#1332).
+func TestPushRefusesADefaultBranchNamedWithEscapes(t *testing.T) {
+	remote, _, clone := remoteWithClone(t)
+	g(t, remote, "update-ref", "refs/heads/main\u009b31m", "main")
+	g(t, remote, "symbolic-ref", "HEAD", "refs/heads/main\u009b31m")
+	_, err := Push(context.Background(), clone)
+	if err == nil {
+		t.Fatal("init pushed to a default branch named with a CSI in it")
+	}
+	if msg := err.Error(); strings.ContainsRune(msg, 0x9b) || !strings.Contains(msg, "main\\u009b31m") {
+		t.Errorf("the error: %q, want the name with its CSI written out, not raw", msg)
+	}
+}
+
 // A CLAUDE.md that is a link to AGENTS.md stays a link, and the section goes into AGENTS.md once.
 func TestPushFollowsALinkInTheCommit(t *testing.T) {
 	remote, seed, clone := remoteWithClone(t)

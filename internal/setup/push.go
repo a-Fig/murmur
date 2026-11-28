@@ -14,6 +14,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/gitx"
+	"github.com/a-Fig/murmur/internal/termtext"
 )
 
 // FallbackBranch is where init pushes its commit when the server refuses it on the default branch,
@@ -122,8 +123,20 @@ func Push(ctx context.Context, dir string) (Pushed, error) {
 }
 
 // defaultBranch is the branch the remote's HEAD points at, or, if the remote doesn't say, the one
-// this clone's refs/remotes/<remote>/HEAD points at (which git clone sets).
+// this clone's refs/remotes/<remote>/HEAD points at (which git clone sets). The remote chooses the
+// name, and init prints it: git allows a bidi override or a C1 control such as U+009B (CSI) in one,
+// so a name a terminal would act on is refused rather than printed (#1332). Cleaning it instead
+// would name, and push to, a branch the remote doesn't have.
 func defaultBranch(ctx context.Context, g gitx.Git, remote string) (string, error) {
+	b, err := remoteDefault(ctx, g, remote)
+	if err == nil && termtext.Clean(b) != b {
+		return "", fmt.Errorf("%s's default branch, %q, has characters in its name that a terminal acts on; "+
+			"init doesn't push to it", remote, b)
+	}
+	return b, err
+}
+
+func remoteDefault(ctx context.Context, g gitx.Git, remote string) (string, error) {
 	out, err := g.Run(ctx, "", "ls-remote", "--symref", remote, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("can't reach %s to find its default branch: %w", remote, err)
