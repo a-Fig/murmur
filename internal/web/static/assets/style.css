@@ -4865,7 +4865,7 @@ a.g-pr:hover {
   outline-offset: 3px;
 }
 
-/* A session's face (#579): a ghost, and maybe an accessory, over its device's color. Nothing clips
+/* A session's face (#579): a ghost and an accessory over its device's color. Nothing clips
  * it: a hat or a speech bubble may reach past the round tile. */
 .avatar.avatar-ghost > img {
   position: absolute;

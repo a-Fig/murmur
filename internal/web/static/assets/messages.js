@@ -181,11 +181,10 @@ function personFace(name, cls) {
   return h("span", { class: cls + " avatar-person", "aria-hidden": "true" }, (name[0] || "?").toUpperCase());
 }
 
-// A session's ghost (#579): its name picks one of 16 ghosts and one of 15 accessories or none, so
-// it wears the same one everywhere. The files are drawn by scripts/ghosts.py, which these lists
-// follow; a ghost has no tile of its own, so it sits on its device's color.
+// A session's name picks one of 16 ghosts and one of 16 accessories. These lists follow
+// scripts/ghosts.py. The moon clip takes the old empty slot to preserve other assignments.
 const GHOSTS = ["murmur", "hush", "whisper", "mumble", "chatter", "babble", "rumor", "echo", "chirp", "coo", "hum", "psst", "sigh", "jabber", "natter", "buzz"];
-const GHOST_ACCESSORIES = ["", "bow", "glasses", "specs", "shades", "bubble", "headset", "beanie", "party", "crown", "halo", "flower", "sprout", "tophat", "cat", "propeller"];
+const GHOST_ACCESSORIES = ["moon", "bow", "glasses", "specs", "shades", "bubble", "headset", "beanie", "party", "crown", "halo", "flower", "sprout", "tophat", "cat", "propeller"];
 
 function ghostOf(name) {
   let n = 2166136261; // FNV-1a
@@ -199,7 +198,7 @@ function ghostFace(name, cls) {
     "span",
     { class: cls + " avatar-ghost", "aria-hidden": "true" },
     h("img", { src: "/assets/ghosts/ghost-" + ghost + ".svg", alt: "", draggable: "false" }),
-    accessory && h("img", { src: "/assets/ghosts/acc-" + accessory + ".svg", alt: "", draggable: "false" }),
+    h("img", { src: "/assets/ghosts/acc-" + accessory + ".svg", alt: "", draggable: "false" }),
   );
 }
 
