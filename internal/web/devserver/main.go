@@ -45,7 +45,7 @@ func main() {
 	installError := flag.String("install-error", "", "Update now fails with this, as a bad download would; else it installs")
 	running := flag.String("running", "0.3.0", "the daemon's version; a prerelease, like 0.3.1-nightly.20261121, offers going back to stable")
 	repo := flag.String("repo", "", "the repo this page is a clone of, as owner/name (a-Fig/murmur) or a name alone, which a remote with no owner gives (#1126)")
-	repos := flag.String("repos", "", "comma-separated repos, each owner/name or a name alone: each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
+	repos := flag.String("repos", "", "comma-separated repos, each owner/name or a name alone, and @path after one to set its folder (two clones of one repo, #1280): each is served on a port of its own, and the page's picker switches between them (#348); the last starts stopped")
 	owner := flag.Bool("owner", false, "this device owns the mesh, so Repo settings can change the repo policy: team encryption, files allowed, automatic rotation off")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
@@ -152,8 +152,12 @@ func (r devRepos) Open(ctx context.Context, id string) (string, error) {
 func serveRepos(names []string, ln net.Listener, first *fixtures, firstPage *web.Server) {
 	all := make([]*devRepo, len(names))
 	for i, name := range names {
+		name, at, _ := strings.Cut(name, "@")
 		name, slug := splitRepo(name)
-		d := &devRepo{name: name, slug: slug, path: "~/code/" + name, running: i == 0 || i < len(names)-1}
+		if at = strings.TrimSpace(at); at == "" {
+			at = "~/code/" + name
+		}
+		d := &devRepo{name: name, slug: slug, path: at, running: i == 0 || i < len(names)-1}
 		src := first
 		if i == 0 {
 			d.addr, d.page = ln.Addr().String(), firstPage
