@@ -707,9 +707,12 @@ func TestAnotherDeviceCantSpeakAsAPerson(t *testing.T) {
 	pa := a.page()
 	pa.choose("ada")
 	ada := a.self() + "/" + bus.PersonSession
+	// Lookup knows ada from the names registry before b has read a's presence with her in it, and
+	// the who checks below need that presence: b's view of a's device has no sessions until then.
 	eventually(t, "b to know ada", func() bool {
 		r := b.do(proto.Request{Op: proto.OpLookup, Name: "ada"})
-		return r.Lookup != nil && r.Lookup.Addr == ada && a.seesSession(bob)
+		name, listed, _ := b.whoShows(ada)
+		return r.Lookup != nil && r.Lookup.Addr == ada && a.seesSession(bob) && listed && name == "ada"
 	})
 
 	at := time.Now().UTC().Format(time.RFC3339Nano)
