@@ -4,7 +4,7 @@
 
 import { when } from "./dom.js";
 import {
-  NAME, TOKEN_KEY, POLL_MS, HIDDEN_POLL_MS, MAX_MESSAGES, MAX_OWN_MESSAGES, VIEWS, NARROW, ui, devices,
+  NAME, TOKEN_KEY, POLL_MS, HIDDEN_POLL_MS, MAX_MESSAGES, MAX_OWN_MESSAGES, viewOf, NARROW, ui, devices,
   named, learn, fromName, personNames, me, myName, personOnline, unreadCount,
 } from "./state.js";
 import { loadPreferences } from "./preferences.js";
@@ -453,7 +453,7 @@ async function start() {
     if (token) await loadPreferences(era);
     if (era !== tokenEra) return;
   }
-  ui.view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "messages";
+  ui.view = viewOf(location.hash);
   render();
   if (!ui.token) return;
   loadSettings(); // the wake-up settings say which of this device's sessions show red

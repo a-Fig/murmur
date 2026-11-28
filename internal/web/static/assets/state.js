@@ -6,7 +6,7 @@ import { when } from "./dom.js";
 export {
   NAME, COMMAND, TOKEN_KEY, POLL_MS, HIDDEN_POLL_MS, MAX_MESSAGES, MAX_OWN_MESSAGES, VIEWS, TITLES, NARROW,
   ui, devices, named, namesLearned, learn, nameOf, fromName, toName, findSession, sessionCount, HIDDEN,
-  personNames, me, myName, accountOffers, usableOffers, primaryOffer, offeredNick, repoLabel, isPerson,
+  viewOf, personNames, me, myName, accountOffers, usableOffers, primaryOffer, offeredNick, repoLabel, isPerson,
   people, findPerson, personOnline, unreadIds, unreadCount,
 };
 
@@ -17,8 +17,23 @@ const POLL_MS = 3000;
 const HIDDEN_POLL_MS = 15000;
 const MAX_MESSAGES = 2000; // the page's limit for what isn't the person's own
 const MAX_OWN_MESSAGES = 2000; // and for what is, as the daemon keeps it (maxPersonLog)
-const VIEWS = ["sessions", "messages", "recent", "settings"];
-const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings" };
+const VIEWS = ["sessions", "messages", "recent", "settings", "profile"];
+// The view an address names (#view), and for a full view (#716) whose: #profile/quiet-otter. One
+// with no name, or a view that doesn't exist, is Conversations.
+function viewOf(hash) {
+  const [view, name] = hash.replace(/^#/, "").split("/");
+  if (view === "profile") {
+    try {
+      ui.profileOf = decodeURIComponent(name || "");
+    } catch {
+      ui.profileOf = "";
+    }
+    if (!ui.profileOf) return "messages";
+  }
+  return VIEWS.includes(view) ? view : "messages";
+}
+
+const TITLES = { sessions: "Sessions", messages: "Conversations", recent: "Recent", settings: "Settings", profile: "Profile" };
 const NARROW = window.matchMedia("(max-width: 767px)"); // style.css's mobile width
 
 const ui = {

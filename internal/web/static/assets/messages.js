@@ -29,7 +29,7 @@ export {
   messageDetail, conversationOf, groupConversation, conversations, dmKey, avatar, nameButton, personFace,
   deviceColor, deviceOfName, conversationsPage, personText, messageText, dayLabel, clockTime, copyText,
   chatScroll, restoreChatScroll, markOpenRead, composers, composing, fitComposers, focusComposer, deviceMode,
-  MODE_HELP, modeNote, setMode, namesOf,
+  MODE_HELP, modeNote, setMode, namesOf, headMeta,
 };
 
 // Messages.

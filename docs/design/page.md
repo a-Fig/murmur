@@ -98,8 +98,12 @@ from it is in [a person on the page](people.md).
   message (`quiet-otter`). Names in a picker, in sessions being picked to tag, and in a
   conversation's row keep that control's action. Read receipts list names in a tooltip, which
   holds no controls, so they don't open it. Tyler chose the banner
-  look over a compact one. It has no way to a fuller view yet (#716): the session's conversations,
-  which #656 headed with its details, hold little more than the card does.
+  look over a compact one.
+- **A full view** (2026-11-28, #716), from the card's "Open full view": a session's or a person's
+  page, at `#profile/<name>` so Back and a reload keep it. Over the card it adds Recent's feed
+  narrowed to them, who they have direct messages with and how many, their groups, when it started
+  and was last active, its folder and a hook that isn't running, and the actions (Message, its
+  conversations, tags, hide). Like the card it reads only presence, messages and Recent's feed.
 - **Themes** are palettes over the same design. Dim is the default (#939). The daemon includes
   its saved theme in the page's HTML so it can paint in that palette before JavaScript runs.
 - **Page preferences** (#941). The theme lives in `murmur/app/theme` in the user's config directory.
