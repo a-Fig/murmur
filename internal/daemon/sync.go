@@ -2290,6 +2290,18 @@ func (d *Daemon) pruneInboxes() {
 			d.saveLocked()
 		}
 	}
+	// What waits for a name in no session's inbox goes as a stopped session's inbox does.
+	for name, box := range d.st.NameInbox {
+		kept := slices.DeleteFunc(box, func(m *inMsg) bool { return time.Since(m.Arrived) > d.opt.StoppedInbox })
+		if len(kept) != len(box) {
+			if len(kept) == 0 {
+				delete(d.st.NameInbox, name)
+			} else {
+				d.st.NameInbox[name] = kept
+			}
+			d.saveLocked()
+		}
+	}
 	// Credited commits are kept as long as the session's inbox is.
 	for id := range d.st.Commits {
 		if _, stopped := d.st.Stopped[id]; d.sessions[id] == nil && !stopped {

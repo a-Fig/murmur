@@ -190,8 +190,14 @@ names routes by it all the same.
   to the next session to take the name it carries. A daemon from before that ignores the field and
   goes by the address, as it did. It stays at the address when no other session has taken the name
   since. The sending device's mute, offline and do-not-disturb checks still look at the address's
-  session. A session that comes back under its own ID still takes its whole inbox, messages for a
-  name it left among them (#847).
+  session. A session that comes back under its own ID from its stop, with another name than the
+  one those messages carry, leaves them for that name (#847, 2026-11-28): it takes only what was
+  sent to the name it comes back with or to its address, and the rest waits in the state file
+  (`NameInbox`) for the next session to take each name, for `StoppedInbox` from its arrival, or
+  goes at once to a session here that holds the name. Before, the conversation it came back as was
+  handed another's message, and that one's next session found nothing. A running session that
+  `/clear`s still keeps its unread messages for the name it left, and a send to that name still
+  reaches it, as above.
 - **A long-gone session's name is forgotten after 30 days** (#747, 2026-11-16). The daemon keeps the
   name each of its sessions took last, to label a stopped session and to pass a message for an old
   address on to the name's holder. T3 makes a new session for a thread each time its MCP server

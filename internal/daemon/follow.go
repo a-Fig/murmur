@@ -672,6 +672,18 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 		seen[m.Event.ID] = true
 	}
 	var from []string
+	// What waited for the name in no session's inbox (keepForNamesLocked), under the mutes of the
+	// name it was sent to, which is this one.
+	if kept := d.st.NameInbox[name]; len(kept) > 0 {
+		delete(d.st.NameInbox, name)
+		for _, m := range kept {
+			if !seen[m.Event.ID] {
+				seen[m.Event.ID] = true
+				box = append(box, m)
+			}
+		}
+		from = append(from, "the name")
+	}
 	for _, id := range sortedKeys(d.st.Stopped) {
 		if id == s.id || d.sessions[id] != nil || !d.keptLocked(id) {
 			continue
@@ -725,6 +737,50 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	d.noteConversationLocked() // messages waiting for a conversation reached its live session
 	d.log.Printf("session %s, taking the name %s, took what was kept for it at %v", bus.Addr(d.device, s.id), name, from)
 	return true
+}
+
+// keepForNamesLocked moves out of session s's inbox, as s comes back from its stop with the name it
+// takes now, what was sent to another name s had before it stopped (toName, #45), as after a
+// /clear. A message in a kept inbox waits for the next session to take the name it carries
+// (adoptLocked); left with s, the conversation s came back as was handed another's message, and the
+// next session of the one it was for found nothing (#847). A session here that holds that name now
+// takes it at once. A message that names no name, from a daemon before #45 or sent to the address,
+// stays with s. Caller holds mu.
+func (d *Daemon) keepForNamesLocked(s *session) {
+	if s.name == "" {
+		return
+	}
+	var mine []*inMsg
+	moved := map[string]bool{}
+	for _, m := range d.st.Inbox[s.id] {
+		to := m.Event.ToName
+		if to == "" || to == s.name {
+			mine = append(mine, m)
+			continue
+		}
+		if d.st.NameInbox == nil {
+			d.st.NameInbox = map[string][]*inMsg{}
+		}
+		d.st.NameInbox[to] = append(d.st.NameInbox[to], m)
+		moved[to] = true
+	}
+	if len(moved) == 0 {
+		return
+	}
+	if len(mine) == 0 {
+		delete(d.st.Inbox, s.id)
+	} else {
+		d.st.Inbox[s.id] = mine
+	}
+	for _, name := range sortedKeys(moved) {
+		d.log.Printf("session %s, back as %s, left what was sent to %s for that name's next session",
+			bus.Addr(d.device, s.id), s.name, name)
+		if h := d.sessions[d.st.NameHolders[name]]; h != nil && h != s && h.name == name {
+			d.adoptLocked(h, name)
+			d.kickPush()
+		}
+	}
+	d.saveLocked()
 }
 
 // hookSessionsLocked finds the live sessions a hook speaks for, given the Claude Code session ID it

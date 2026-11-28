@@ -1620,6 +1620,7 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 		d.st.Registered = map[string]bool{}
 	}
 	d.st.Registered[h.ID] = true
+	back := false // from a stop whose inbox is kept
 	if at, ok := d.st.Stopped[h.ID]; ok {
 		if d.stopSpentLocked(h.ID, at) {
 			d.dropStoppedLocked(h.ID)
@@ -1627,11 +1628,15 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 			delete(d.st.Stopped, h.ID)
 			delete(d.st.Downed, h.ID)
 			s.since = at
+			back = true
 		}
 	}
 	d.saveLocked()
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
 	d.setNameLocked(s, d.nameForKeyLocked(s, key))
+	if back {
+		d.keepForNamesLocked(s)
+	}
 	d.sessions[h.ID] = s
 	d.noteConversationLocked() // a session starts: its agent is about to look around, and may send
 	return s
