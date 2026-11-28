@@ -33,10 +33,14 @@ const OwnerNote = "This clone is the mesh owner. Before you delete it or its .gi
 
 // OwnsMesh says whether the clone with this git directory owns its mesh, as its daemon last saved,
 // read from its files so a leave or an uninstall can ask with the daemon stopped. A clone whose files
-// can't be read says no.
+// can't be read says no: a missing or corrupt state.json reads as not owning, though its device and
+// keys still own the mesh and its daemon finds that again on its next start. A no never blocks
+// anyone, so the cost of a wrong no is a missed warning. It reads the saved owner as is, without
+// the history-verification flags `mur owner` waits on, so a daemon stopped partway through its first
+// owner-aware replay can leave an earlier owner here (narrow, and it errs toward a warning).
 func OwnsMesh(gitDir string) bool {
 	dir := filepath.Join(gitDir, brand.StateDir)
-	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	b, err := readStateRetry(filepath.Join(dir, "state.json"))
 	if err != nil {
 		return false
 	}
@@ -56,6 +60,21 @@ func OwnsMesh(gitDir string) bool {
 	}
 	sign, _, ok := parseKeys(keys)
 	return ok && bus.SignPublic(sign) == st.TeamOwner.Key
+}
+
+// readStateRetry reads a running daemon's state.json. On Windows the daemon saves it by renaming a
+// new file over it, which fails while another process has it open, and a read during that rename
+// fails too; a few short tries ride out the gap (Fable's review of #1290).
+func readStateRetry(path string) ([]byte, error) {
+	var b []byte
+	var err error
+	for i := 0; i < 4; i++ {
+		if b, err = os.ReadFile(path); err == nil || errors.Is(err, os.ErrNotExist) {
+			return b, err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return b, err
 }
 
 func (d *Daemon) canAdministerLocked() bool {
