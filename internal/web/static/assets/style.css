@@ -2858,14 +2858,19 @@ a.g-pr:hover {
 /* A picked session's profile at the top of its conversations, as #1018 drew it (#1115): the way
  * back, a large face with its name and how it is beside it, then what it is doing, what it runs on
  * and its tags. The face is the page's own; only its size changes. */
-.g-head:has(> .g-back) {
+.g-head:has(> .g-head-nav) {
   gap: 0.625rem;
   padding: 0.25rem 0.625rem 0.75rem;
+}
+.g-head-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 .g-back {
   display: inline-flex;
   align-items: center;
-  align-self: flex-start;
   gap: 0.25rem;
   margin-left: -0.125rem;
   border-radius: var(--radius-sm);
@@ -2900,42 +2905,52 @@ a.g-pr:hover {
   gap: 0.125rem;
   min-width: 0;
 }
-.g-head-who.g-profile .g-head-id > h2 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+/* The name is never cut off or wrapped (#1284): it has its row to itself beside the face, the
+ * Message button having moved up beside the way back. At 1.125rem the widest generated name
+ * (homegrown-megaphone, about 11.8em) fits the 224px the column's normal 320px leaves it; at
+ * 1.25rem it was 235px. In a narrower column it shrinks to fit rather than overflow. The line
+ * under it wraps. */
+.g-head-who.g-profile .g-head-id {
+  container-type: inline-size;
 }
-.g-head-status {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
+.g-head-who.g-profile .g-head-id > h2 {
+  font-size: min(1.125rem, 8.2cqi);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
   white-space: nowrap;
 }
-.g-head-status > .truncate {
-  min-width: 2rem;
+.g-head-status {
+  min-width: 0;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
-.g-head-status > span + span::before {
+/* Each part wraps as a whole, the dot staying with the part before it. */
+.g-head-status > span {
+  display: inline-block;
+  max-width: 100%;
+}
+.g-head-status > span:not(:last-child)::after {
   content: "·";
-  margin-right: 0.375rem;
+  margin: 0 0.375rem;
 }
-.g-profile .g-head-msg {
+.g-head-nav .g-head-msg {
   flex-shrink: 0;
   border-radius: 999px;
 }
-.g-head:has(> .g-back) > .g-head-doing {
+.g-head:has(> .g-head-nav) > .g-head-doing {
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.25rem;
   color: var(--foreground);
 }
-.g-head:has(> .g-back) > .g-head-meta {
+.g-head:has(> .g-head-nav) > .g-head-meta {
   gap: 0.25rem 0.5rem;
   font-size: 0.75rem;
 }
-.g-head:has(> .g-back) .g-branch {
+.g-head:has(> .g-head-nav) .g-branch {
   font-size: 0.75rem;
 }
 .g-pr-chip {
@@ -2945,11 +2960,11 @@ a.g-pr:hover {
   font-size: 0.75rem;
 }
 /* Its tags as filled chips, and adding one as a dashed one. */
-.g-head:has(> .g-back) > .session-tags {
+.g-head:has(> .g-head-nav) > .session-tags {
   gap: 0.375rem;
   margin-top: 0;
 }
-.g-head:has(> .g-back) .badge.tag {
+.g-head:has(> .g-head-nav) .badge.tag {
   height: auto;
   padding: 0.1875rem 0.25rem 0.1875rem 0.5rem;
   border: 0;
@@ -2959,7 +2974,7 @@ a.g-pr:hover {
   font-size: 0.75rem;
   font-weight: 500;
 }
-.g-head:has(> .g-back) .session-tags > .btn {
+.g-head:has(> .g-head-nav) .session-tags > .btn {
   height: auto;
   padding: 0.125rem 0.5rem;
   border: 1px dashed color-mix(in oklab, var(--foreground) 22%, transparent);

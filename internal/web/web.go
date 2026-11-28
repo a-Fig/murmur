@@ -340,7 +340,13 @@ func (s *Server) patchRepoPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if (change.EncryptionMode == "") == (change.AllowFiles == nil) {
+	named := 0
+	for _, set := range []bool{change.EncryptionMode != "", change.AllowFiles != nil, change.AutoRotate != nil} {
+		if set {
+			named++
+		}
+	}
+	if named != 1 {
 		writeError(w, http.StatusBadRequest, "choose one repo setting to change")
 		return
 	}

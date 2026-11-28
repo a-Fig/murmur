@@ -48,6 +48,13 @@ Every issue carries at least a kind label.
 
 - `bug` / `Feature` / `Task` / `question`: the kind, spelled exactly so. `question` is an open
   design question.
+- `area: <name>`: one or two subsystems — `area: daemon` (daemon, bus/git transport, sync,
+  delivery, session lifecycle), `area: cli` (`mur` commands, `join`/`init`/`uninstall`, installers),
+  `area: mcp` (MCP tools, agent-facing output, skills), `area: ui` (`mur ui`, desktop/mobile apps,
+  themes, settings), `area: harnesses` (harness adapters and hooks), `area: security` (encryption,
+  keys, mesh ownership, secret scrubbing, signing), `area: update` (self-updater, channels,
+  rollback, release pipeline), `area: site` (website, census/stats), `area: docs` (docs, guides,
+  README).
 - `priority:` has two scales, and an open issue carries one label, from either: whoever files it
   picks the scale that says more about it (Tyler, 2026-11-16, #751).
   - `priority: now` / `soon` / `future` / `maybe never`: when it should be done.

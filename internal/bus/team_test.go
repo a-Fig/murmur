@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -98,5 +99,25 @@ func TestTeamRecordValid(t *testing.T) {
 	g.To = "dev-0003"
 	if g.Valid() {
 		t.Fatal("a grant wrapped for a device other than its To is valid")
+	}
+}
+
+// A policy written before automatic rotation was a setting has no autoRotate field, and reads as
+// off: an existing mesh doesn't start rotating when its owner updates (#1285). Off is left out of
+// what is written, so an older reader sees the policy it knew.
+func TestAPolicyWithoutAutoRotateReadsOff(t *testing.T) {
+	var p RepoPolicy
+	if err := json.Unmarshal([]byte(`{"encryptionMode":"team","allowFiles":true}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p != (RepoPolicy{EncryptionMode: EncryptionTeam, AllowFiles: true}) {
+		t.Fatalf("read %+v", p)
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"encryptionMode":"team","allowFiles":true}` {
+		t.Fatalf("wrote %s", b)
 	}
 }

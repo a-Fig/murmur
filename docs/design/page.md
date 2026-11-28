@@ -15,7 +15,10 @@ from it is in [a person on the page](people.md).
   clones. Each clone's daemon serves its own page, with its own port and token, and knows no others,
   so a per-user record lists them: `clones` in the user's config directory, one file per clone so
   writers never need a lock (`internal/clones`). Daemons finding each other was set aside: the
-  picker has to offer a clone whose daemon isn't running, and start it.
+  picker has to offer a clone whose daemon isn't running, and start it. Clones in the temporary
+  folder are left out unless the page is one of them (2026-11-27, #1278): anything that runs a
+  daemon there, such as a PR media script's fixtures, records its clone, and the picker filled up
+  with them.
   - *The token doesn't travel with the tab*, since the other page is another origin and a token
     mustn't go in an address. The page asks its daemon to open the clone; that daemon starts the
     other's if needed and asks it for a key (`OpPageKey`, protocol 10: random, good once, for a
@@ -155,8 +158,8 @@ from it is in [a person on the page](people.md).
 - **Settings is scoped to the open repo** (2026-11-16, #775, Tyler's choice of a
   proposal). It grew a section per feature, with rows named by scope ("Device default" twice). A
   device is one clone, so the settings are the open repo's, and the page says which repo
-  and machine at its top. The **Repo settings** tab shows the owner and the shared encryption
-  and file policy. Only the verified owner's clone can edit it. The owner badge comes from the
+  and machine at its top. The **Repo settings** tab shows the owner and the shared encryption,
+  file and automatic key rotation policy. Only the verified owner's clone can edit it. The owner badge comes from the
   same verified identity as the controls. **This device** groups You (name, nickname, colour), Messages to your sessions
   (availability, waking, what a working session is shown, and each session's own, folded until
   opened), Files and Mutes. Appearance and About follow under "For every repo". Every setting is a

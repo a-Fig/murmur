@@ -65,9 +65,27 @@ func TestMeshOwnerOrdersTeamAdministration(t *testing.T) {
 func TestAutomaticRotationSkipsNonOwnerDevices(t *testing.T) {
 	d, _ := keyRig(t)
 	d.st.TeamOwnerChecked = true
-	d.st.TeamOwner = &meshOwner{Device: "owner-0001", Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
+	d.st.TeamOwner = &meshOwner{Device: "owner-0001", Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true, AutoRotate: true}}
 	delay := d.checkForDepartures(t.Context(), func(context.Context, string) ([]string, error) {
 		t.Fatal("a teammate's daemon called GitHub to check collaborators")
+		return nil, nil
+	})
+	if delay != rotationCheck {
+		t.Fatalf("next check in %s, want %s", delay, rotationCheck)
+	}
+}
+
+// With automatic rotation off (#1285), the owner's own daemon doesn't call GitHub either.
+func TestAutomaticRotationOffSkipsTheOwner(t *testing.T) {
+	d, _ := keyRig(t)
+	d.signKey = bus.NewSignKey()
+	d.st.TeamOwnerChecked = true
+	d.st.TeamOwner = &meshOwner{Device: d.device, Key: bus.SignPublic(d.signKey), Policy: bus.RepoPolicy{EncryptionMode: "team", AllowFiles: true}}
+	if !d.isOwnerLocked() {
+		t.Fatal("fixture device doesn't own the mesh")
+	}
+	delay := d.checkForDepartures(t.Context(), func(context.Context, string) ([]string, error) {
+		t.Fatal("the owner's daemon called GitHub with automatic rotation off")
 		return nil, nil
 	})
 	if delay != rotationCheck {
@@ -131,8 +149,31 @@ func TestTransferWaitsForActiveDevicesToUnderstandIt(t *testing.T) {
 		t.Fatal("transferred ownership with an older device online")
 	}
 	d.peers[old].pres.TeamAdmin = teamAdminTransfer
+	// The recipient also has to follow the automatic rotation setting: as owner, an older version
+	// would rotate with it off, and drop it when it signs the next policy (Sol's review of #1289).
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "automatic key rotation") {
+		t.Fatalf("transferred ownership to a device that ignores the rotation setting: %v", err)
+	}
+	d.peers[to].pres.TeamAdmin = teamAdminAutoRotate
 	if _, err := d.ownerTransferLocked(to, time.Now()); err != nil {
 		t.Fatalf("transfer after the active device updates: %v", err)
+	}
+	// A sync, not this transfer's own, can list a newer presence from the recipient before this
+	// device reads it: the one read is superseded once it is listed (Sol's third review of #1289).
+	d.peers[to].writtenOf, d.peers[to].listed = "read", "read"
+	d.notePresencesListedLocked(map[string]string{brand.PresencePrefix + to: "listed"})
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Try again after it syncs") {
+		t.Fatalf("transferred ownership on a presence a listing superseded: %v", err)
+	}
+	d.peers[to].writtenOf, d.peers[to].listed = "listed", "listed"
+	if _, err := d.ownerTransferLocked(to, time.Now()); err != nil {
+		t.Fatalf("transfer once the listed presence is read: %v", err)
+	}
+	// A newer presence from the recipient, listed but not read (its fetch failed), may say it went
+	// back to an older version: what the one before said isn't taken for it (Sol's re-review of #1289).
+	d.sawPresence(to, "newer", false)
+	if _, err := d.ownerTransferLocked(to, time.Now()); err == nil || !strings.Contains(err.Error(), "Try again after it syncs") {
+		t.Fatalf("transferred ownership on a superseded presence: %v", err)
 	}
 }
 
@@ -212,6 +253,8 @@ func TestTeamReadPausesWritesThroughAnInterruptedModeChange(t *testing.T) {
 	}
 	assertBlocked(d)
 
+	// The rig's state.json has no teamPolicyV, so the restart reads the history again from its root,
+	// one commit a page, past the cached tip: only the first page starts the state over.
 	restarted, _ := keyRig(t)
 	restarted.dir, restarted.repo, restarted.maxRecord = d.dir, d.repo, d.maxRecord
 	if err := restarted.loadState(); err != nil {
