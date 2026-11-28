@@ -373,9 +373,9 @@ const setUpWait = 15 * time.Second
 //
 // Join runs in the user's terminal, so the ls-remote runs with none (gitx.Git.NoTerminal): an ssh
 // key with a passphrase and no agent would otherwise ask for it there, and could still be asking
-// after the limit ended git. For the same reason it never uses an askpass helper (a window may
-// open on a desktop nobody is at, when an agent runs join), so a key that only an askpass helper
-// unlocks fails here though `git fetch` works; the error says to load it into ssh-agent (#1218).
+// after the limit ended git. So an ssh key with a passphrase and no agent fails here though
+// `git fetch` works, where the user types the passphrase; the error says to add the key to
+// ssh-agent (#1218).
 func setUp(ctx context.Context, gitDir string) error {
 	ctx, cancel := context.WithTimeout(ctx, setUpWait)
 	defer cancel()
@@ -390,9 +390,17 @@ func setUp(ctx context.Context, gitDir string) error {
 		return fmt.Errorf("%s didn't answer within %d s, so join couldn't see whether this repo is set up for %s; run `%s join` again",
 			remote, int(setUpWait/time.Second), brand.Product, brand.Command)
 	case err != nil:
-		return fmt.Errorf("couldn't reach %s to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again. "+
-			"If your ssh key's passphrase comes from an askpass helper, load the key into ssh-agent first (`ssh-add`): join can't ask for it",
-			remote, brand.Product, remote, brand.Command)
+		said := err.Error()
+		var ge *gitx.Error
+		if errors.As(err, &ge) {
+			said = strings.TrimSpace(ge.Stderr)
+		}
+		if sshAuthFailed(said) {
+			return fmt.Errorf("ssh didn't let join into %s. If your ssh key has a passphrase, add it to ssh-agent first (`ssh-add`): join can't ask for it. Then run `%s join` again",
+				remote, brand.Command)
+		}
+		return fmt.Errorf("couldn't reach %s to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again. git said: %s",
+			remote, brand.Product, remote, brand.Command, said)
 	case len(refs) == 0:
 		// A repo whose section was pushed without the refs (by an older init, or a --no-push one) lands
 		// here too, and join doesn't read the files to tell: the sentence covers it.
@@ -402,6 +410,11 @@ func setUp(ctx context.Context, gitDir string) error {
 			brand.Product, brand.Command, brand.SetupDoc, remote, brand.RefRoot)
 	}
 	return nil
+}
+
+// sshAuthFailed reports whether git's stderr says ssh couldn't authenticate.
+func sshAuthFailed(stderr string) bool {
+	return strings.Contains(stderr, "Permission denied (publickey") || strings.Contains(stderr, "passphrase")
 }
 
 // How long a join may take in all, and how long one step runs before the join says it is still on

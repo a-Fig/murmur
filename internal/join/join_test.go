@@ -441,13 +441,32 @@ func TestLeaveInACloneThatNeverJoined(t *testing.T) {
 	}
 }
 
-// A remote join can't reach gets an error that names the askpass-only ssh key, whose passphrase
-// join never asks for although `git fetch` does (#1218).
-func TestSetUpUnreachableRemoteNamesTheAskpassCase(t *testing.T) {
+// When ssh refuses the key, join says to add it to ssh-agent: its ls-remote has no terminal to
+// ask for a passphrase on, although `git fetch` does (#1218). Another failure gets git's own
+// words and not that advice.
+func TestSetUpSshRefusalAdvisesSshAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake ssh is a shell script")
+	}
+	fake := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/bin/sh" + "\n" + "echo 'git@example.invalid: Permission denied (publickey).' >&2" + "\n" + "exit 255" + "\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_SSH_COMMAND", fake)
+	p, _ := clone(t)
+	git(t, p.GitDir, "remote", "set-url", "origin", "ssh://git@example.invalid/x.git")
+	err := setUp(context.Background(), p.GitDir)
+	if err == nil || !strings.Contains(err.Error(), "ssh-agent") || strings.Contains(err.Error(), "git fetch") {
+		t.Fatalf("setUp error = %v, want ssh-agent advice and no `git fetch` line", err)
+	}
+}
+
+func TestSetUpOtherFailureShowsGitsError(t *testing.T) {
 	p, _ := clone(t)
 	git(t, p.GitDir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
 	err := setUp(context.Background(), p.GitDir)
-	if err == nil || !strings.Contains(err.Error(), "ssh-agent") {
-		t.Fatalf("setUp error = %v, want one that says to load the key into ssh-agent", err)
+	if err == nil || strings.Contains(err.Error(), "ssh-agent") || !strings.Contains(err.Error(), "does not appear to be a git repository") {
+		t.Fatalf("setUp error = %v, want git's error and no ssh-agent advice", err)
 	}
 }
