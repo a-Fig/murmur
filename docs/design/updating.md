@@ -41,6 +41,21 @@ information in the request; a network failure waits quietly for the next hour. A
   reconnect through the grace. Running MCP servers keep their loaded binary until their sessions
   restart. The protocol number ([daemon](daemon.md)) still handles clients and daemons that can't
   talk; release versions are not a second protocol.
+  - *Another binary in place* (#1177, Tyler, 2026-11-23: the daemons on a machine behave as one
+    application). One binary serves every clone, and each clone's daemon has its own updater. Each
+    looks at its executable every 5 s (`Options.Watch`), and once another file is there (another
+    clone's update, `install.ps1`, `install.sh`) it restarts onto it the same way, with updates off
+    too, and its page offers the restart with the version `<binary> version` prints. Before, each
+    found the file changed only at its own hourly check, and for up to an hour a machine ran two
+    versions from one file. It restarts only once the file answers `version`: one that doesn't run
+    yet, as while an installer writes it, is no daemon to restart onto. A daemon whose updater has
+    stopped (a binary it can't replace) goes on watching, since there, after a sudo install to
+    `/usr/local/bin` say, only an installer puts a new binary in place. A development build doesn't
+    watch. Daemons that start together check together, and one takes the update lock: the others
+    find it held, report nothing failed, and check again 10 s later, by when the watch has usually
+    restarted them onto what it installed. Windows refuses a rename over a file any process has
+    open, whatever it shares, and each watch has the binary open for a moment (antivirus a new
+    one too), so an install's rename into place is tried again for up to 5 s.
 - **The page's socket is handed over** (#255, decided 2026-11-09 from Sol's pre-release review). The
   old daemon passes its listening socket to the new one (descriptor 3 on Unix, the same handle on
   Windows, named by `MURMUR_PAGE_LISTENER`), with the page's address and token beside it in

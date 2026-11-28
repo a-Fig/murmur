@@ -40,6 +40,9 @@ type Options struct {
 	Getenv   func(string) string
 	Log      *log.Logger
 	Every    time.Duration
+	// Watch is how often the executable is looked at for another binary in its place: another
+	// clone's updater, or an installer, put a release there (#1177). Zero takes watchEvery.
+	Watch time.Duration
 	// Check asks for a check soon, as when a person changes the update setting: at once, or
 	// checkGap after the last one. Nil: only the hourly ones.
 	Check <-chan struct{}
@@ -119,6 +122,9 @@ func Run(ctx context.Context, o Options, restart func()) {
 	if o.Every == 0 {
 		o.Every = time.Hour
 	}
+	if o.Watch == 0 {
+		o.Watch = watchEvery
+	}
 	var err error
 	if o.Executable == "" {
 		o.Executable, err = os.Executable()
@@ -145,18 +151,53 @@ func Run(ctx context.Context, o Options, restart func()) {
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	watch := time.NewTicker(o.Watch)
+	defer watch.Stop()
 	var checked time.Time
 	asked := "" // the release a person asked to install (Install), which the next check does
+	// stopped is why this updater installs nothing more until the daemon restarts: the binary's
+	// directory isn't writable, say, after a sudo install to /usr/local/bin. It still watches, as
+	// there only an installer puts a new binary in place, and that is the one to restart onto.
+	var stopped error
+	waiting := false // the binary in place hasn't answered `version` yet
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-o.Check:
+			if stopped == nil {
+				timer.Reset(max(0, time.Until(checked.Add(checkGap))))
+			}
+			continue
+		case want := <-o.Install:
+			if stopped != nil {
+				report(Status{Failed: true, Asked: true, Error: stopped.Error()})
+				continue
+			}
+			asked = want
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
-		case asked = <-o.Install:
-			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
-			continue
+		case <-watch.C:
+			// With updates off too: a binary in place is one a person or another clone chose, and
+			// the machine runs one version. The check below restarts onto it as well, but only
+			// hourly.
+			if !replaced(o.Executable, original) {
+				continue
+			}
+			// Not before it runs: an installer may still be writing it, and a daemon restarted onto
+			// a binary that doesn't start is no daemon. The hourly check doesn't wait for this.
+			v := binaryVersion(o.Executable)
+			if v == "" {
+				if !waiting {
+					o.Log.Printf("self-update: another binary is in place, but it doesn't say its version yet; waiting for it")
+				}
+				waiting = true
+				continue
+			}
+			o.Log.Printf("self-update: another binary is in place (%s), from another clone's update or an installer: restarting onto it", v)
+			report(Status{Latest: v, Installed: true})
+			restart()
+			return
 		case <-timer.C:
 		}
 		checked = time.Now()
@@ -190,12 +231,24 @@ func Run(ctx context.Context, o Options, restart func()) {
 		} else {
 			done, latest, err := install(ctx, o, original, want)
 			if done {
+				// The binary in place says which release a restart starts: another may have put
+				// one in, not the release this check found, or none it read.
+				if v := binaryVersion(o.Executable); v != "" {
+					latest = v
+				}
 				report(Status{Latest: latest, Installed: true, Asked: now})
 				restart()
 				return
 			}
 			if ctx.Err() != nil {
 				return
+			}
+			if errors.Is(err, errBusy) {
+				// Daemons that start together check together, and one wins the lock. What it puts in
+				// place the watch restarts onto; if it puts nothing, this check is soon, not in an hour.
+				asked = want
+				timer.Reset(checkGap)
+				continue
 			}
 			// Another release than the one asked for isn't a failed update: with updates on, the
 			// next check installs it, and soon. Nor is updates turned off during the download.
@@ -213,11 +266,13 @@ func Run(ctx context.Context, o Options, restart func()) {
 			}
 			if errors.Is(err, os.ErrPermission) {
 				o.Log.Printf("self-update disabled until restart: binary directory is not writable: %v", err)
-				return
+				stopped = err
+				continue // no timer: it checks no more, and watches
 			}
 			if errors.Is(err, errNoLink) {
 				o.Log.Printf("self-update disabled until restart: %v", err)
-				return
+				stopped = err
+				continue
 			}
 		}
 		timer.Reset(o.Every)
@@ -282,6 +337,9 @@ func keepHTTPS(req *http.Request, via []*http.Request) error {
 // a check picked isn't the one to install by the time it has downloaded.
 var errNotAsked = errors.New("another release is out")
 
+// errBusy says another daemon's updater holds the binary's update lock: it is checking or installing.
+var errBusy = errors.New("another updater is checking")
+
 // errTurnedOff says updates were turned off while the release downloaded, so it wasn't installed.
 var errTurnedOff = errors.New("updates were turned off")
 
@@ -299,6 +357,9 @@ func install(ctx context.Context, o Options, original os.FileInfo, want string) 
 	// Serialize daemons from different clones sharing this install. Never replace a binary
 	// another updater has already installed with a release selected by this older process.
 	lock, err := proc.Lock(o.Executable + ".update.lock")
+	if errors.Is(err, proc.ErrLocked) {
+		return false, latest, errBusy
+	}
 	if err != nil {
 		return false, latest, err
 	}
@@ -590,7 +651,31 @@ type files struct {
 	rename, link func(oldname, newname string) error
 }
 
-var osFiles = files{os.Rename, os.Link}
+var osFiles = files{renameRetried, os.Link}
+
+// renameRetried is os.Rename, tried again for up to renameTries on Windows while the file it
+// replaces is open. Every daemon on the machine looks at the binary every few seconds (watch.go),
+// and Windows refuses to rename a file over one that any process has open, whatever it shares:
+// another daemon's install that met a look failed, and waited an hour for its next check.
+// Antivirus opens a new binary to scan it as well.
+func renameRetried(from, to string) error {
+	err := os.Rename(from, to)
+	for deadline := time.Now().Add(renameTries); err != nil && runtime.GOOS == "windows" && busy(err) && time.Now().Before(deadline); {
+		time.Sleep(50 * time.Millisecond)
+		err = os.Rename(from, to)
+	}
+	return err
+}
+
+// renameTries is how long renameRetried tries a rename Windows refuses while a file is open.
+const renameTries = 5 * time.Second
+
+// busy says err is Windows refusing a file another process has open: ERROR_ACCESS_DENIED (5),
+// which a rename over an open file gets, or ERROR_SHARING_VIOLATION (32).
+func busy(err error) bool {
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == 5 || errno == 32)
+}
 
 // errNoLink says the binary's volume can't give it a second name, which Windows needs before it
 // lets a new binary take its place, so updates there would always fail.

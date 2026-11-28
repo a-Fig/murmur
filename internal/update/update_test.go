@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -513,16 +514,20 @@ func TestFailedChecksArePeriodicAndQuiet(t *testing.T) {
 	}
 }
 
-func TestUnwritableInstallLogsOnceAndStops(t *testing.T) {
+// An updater that can't write the binary's directory logs it once and checks no more, but goes on
+// watching: there, after a sudo install to /usr/local/bin say, only an installer puts a new binary
+// in place, and the daemon restarts onto it as any other does. A person's Update now is refused.
+func TestUnwritableInstallLogsOnceAndWatches(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("request from unwritable install")
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
-	path := filepath.Join(t.TempDir(), "mur")
+	path := exeName(t.TempDir())
 	if err := os.WriteFile(path, []byte("old"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	holdRunning(t, path)
 	lockPath := path + ".update.lock"
 	if err := os.WriteFile(lockPath, nil, 0444); err != nil {
 		t.Fatal(err)
@@ -537,17 +542,106 @@ func TestUnwritableInstallLogsOnceAndStops(t *testing.T) {
 	if !errors.Is(err, os.ErrPermission) {
 		t.Fatal(err)
 	}
-	var logs bytes.Buffer
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	logs := &lockedBuf{}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	Run(ctx, Options{Version: "1.2.3", GitDir: repo(t), Executable: path, URL: srv.URL, Client: srv.Client(), Every: time.Millisecond, Getenv: func(string) string { return "" }, Log: log.New(&logs, "", 0)}, func() { t.Error("restarted") })
-	if ctx.Err() != nil {
-		t.Fatal("retried until context expired")
+	install := make(chan string, 1)
+	reports := make(chan Status, 16)
+	restarted := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(ctx, Options{Version: "1.2.3", GitDir: repo(t), Executable: path, URL: srv.URL, Client: srv.Client(), Every: time.Millisecond,
+			Watch: 20 * time.Millisecond, Install: install, Getenv: func(string) string { return "" }, Log: log.New(logs, "", 0),
+			Report: func(s Status) { reports <- s }}, func() { close(restarted) })
+	}()
+	for !strings.Contains(logs.String(), "disabled until restart") {
+		if ctx.Err() != nil {
+			t.Fatal("never stopped")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if strings.Count(logs.String(), "disabled until restart") != 1 {
-		t.Fatalf("log: %s", &logs)
+	if s := <-reports; !s.Failed {
+		t.Errorf("the failed check reported %+v", s)
+	}
+	install <- "1.2.4"
+	if s := <-reports; !s.Failed || !s.Asked || s.Error == "" {
+		t.Errorf("Update now while stopped reported %+v", s)
+	}
+	time.Sleep(100 * time.Millisecond) // an hourly check every millisecond would have run by now
+	t.Setenv(standInEnv, "1.2.4")
+	standIn(t, path)
+	select {
+	case <-restarted:
+	case <-ctx.Done():
+		t.Fatal("no restart onto the binary an installer put in place")
+	}
+	<-done
+	if n := strings.Count(logs.String(), "disabled until restart"); n != 1 {
+		t.Fatalf("logged it %d times: %s", n, logs)
 	}
 }
+
+// Daemons that restart together check together. The one that loses the update lock to another
+// reports no failure and doesn't wait an hour: it checks again soon (#1177).
+func TestAHeldUpdateLockIsNoFailedCheck(t *testing.T) {
+	was := checkGap
+	checkGap = 50 * time.Millisecond
+	t.Cleanup(func() { checkGap = was })
+	asked := make(chan struct{}, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked <- struct{}{}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	path := filepath.Join(t.TempDir(), "mur")
+	if err := os.WriteFile(path, []byte("running"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := proc.Lock(path + ".update.lock") // another daemon's updater
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	reports := make(chan Status, 16)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(ctx, Options{Version: "1.2.3", GitDir: repo(t), Executable: path, URL: srv.URL, Client: srv.Client(), Every: time.Hour,
+			Getenv: func(string) string { return "" }, Report: func(s Status) { reports <- s }}, func() { t.Error("restarted") })
+	}()
+	time.Sleep(4 * checkGap) // a few checks, each finding the lock held
+	select {
+	case s := <-reports:
+		t.Fatalf("reported %+v while another updater held the lock", s)
+	default:
+	}
+	lock.Close()
+	select {
+	case <-asked:
+	case <-ctx.Done():
+		t.Fatal("no check once the lock was free")
+	}
+	if s := <-reports; !s.Failed {
+		t.Errorf("the check GitHub failed reported %+v", s)
+	}
+	cancel()
+	<-done
+}
+
+// lockedBuf is a log's buffer that a test can read while the logger writes.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 func TestManualReinstallDuringDownload(t *testing.T) {
 	for _, goos := range []string{"linux", "windows"} {
