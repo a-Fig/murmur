@@ -40,6 +40,9 @@ type Options struct {
 	Getenv   func(string) string
 	Log      *log.Logger
 	Every    time.Duration
+	// Watch is how often the executable is looked at for another binary in its place: another
+	// clone's updater, or an installer, put a release there (#1177). Zero takes watchEvery.
+	Watch time.Duration
 	// Check asks for a check soon, as when a person changes the update setting: at once, or
 	// checkGap after the last one. Nil: only the hourly ones.
 	Check <-chan struct{}
@@ -119,6 +122,9 @@ func Run(ctx context.Context, o Options, restart func()) {
 	if o.Every == 0 {
 		o.Every = time.Hour
 	}
+	if o.Watch == 0 {
+		o.Watch = watchEvery
+	}
 	var err error
 	if o.Executable == "" {
 		o.Executable, err = os.Executable()
@@ -145,6 +151,8 @@ func Run(ctx context.Context, o Options, restart func()) {
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	watch := time.NewTicker(o.Watch)
+	defer watch.Stop()
 	var checked time.Time
 	asked := "" // the release a person asked to install (Install), which the next check does
 	for {
@@ -157,6 +165,18 @@ func Run(ctx context.Context, o Options, restart func()) {
 		case asked = <-o.Install:
 			timer.Reset(max(0, time.Until(checked.Add(checkGap))))
 			continue
+		case <-watch.C:
+			// With updates off too: a binary in place is one a person or another clone chose, and
+			// the machine runs one version. The check below restarts onto it as well, but only
+			// hourly.
+			if !replaced(o.Executable, original) {
+				continue
+			}
+			v := binaryVersion(o.Executable)
+			o.Log.Printf("self-update: another binary is in place (%q), from another clone's update or an installer: restarting onto it", v)
+			report(Status{Latest: v, Installed: true})
+			restart()
+			return
 		case <-timer.C:
 		}
 		checked = time.Now()
@@ -190,6 +210,11 @@ func Run(ctx context.Context, o Options, restart func()) {
 		} else {
 			done, latest, err := install(ctx, o, original, want)
 			if done {
+				// The binary in place says which release a restart starts: another may have put
+				// one in, not the release this check found, or none it read.
+				if v := binaryVersion(o.Executable); v != "" {
+					latest = v
+				}
 				report(Status{Latest: latest, Installed: true, Asked: now})
 				restart()
 				return
