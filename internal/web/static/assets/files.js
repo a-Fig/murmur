@@ -6,7 +6,8 @@ import { NARROW, ui } from "./state.js";
 import { AuthError, api } from "./api.js";
 import { settingsSaving, settingsAt, saveSettings, deny, tokenEra, stateAskedAt } from "./sync.js";
 import { render } from "./render.js";
-import { personText, composers } from "./messages.js";
+import { personText } from "./chat.js";
+import { composers } from "./composer.js";
 import { refocus } from "./picker.js";
 
 export {

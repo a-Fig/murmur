@@ -15,7 +15,8 @@ import {
   STATE_TIPS, PERSON_TIPS, modelOf, sessionState, deviceDot, prFor, prBadge, presence, settledSessions,
   deviceLabel, host, stateWord,
 } from "./sessions.js";
-import { dmKey, avatar, deviceColor, deviceOfName } from "./messages.js";
+import { dmKey } from "./messages.js";
+import { avatar, deviceColor, deviceOfName } from "./faces.js";
 import { startChat, askForName } from "./picker.js";
 
 export {

@@ -14,7 +14,8 @@ import {
   allConversations, sideSessionBody,
 } from "./sessions.js";
 import { tagsOf, shownSessions, tagsGroup, tagButton } from "./tags.js";
-import { avatar, deviceColor, modeNote } from "./messages.js";
+import { avatar, deviceColor } from "./faces.js";
+import { modeNote } from "./composer.js";
 import { startChat, askForName } from "./picker.js";
 import { settingsRow } from "./settings.js";
 import { updatesRow, daemonNote } from "./updates.js";

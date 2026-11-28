@@ -15,7 +15,8 @@ import {
   inGroup, isGroupTag, tagWanted, sessionByAddr, tagQueues, groupJoins, groupMisses, tagSessions,
   forgetJoins,
 } from "./tags.js";
-import { conversationOf, composers, composing, deviceMode, namesOf } from "./messages.js";
+import { conversationOf } from "./messages.js";
+import { composers, composing, deviceMode, namesOf } from "./composer.js";
 import { fetched, attached, trimFetched, followFileSwitches, FILE_SWITCHES } from "./files.js";
 import { askForName } from "./picker.js";
 import { minuteEdits, cancelMinutes } from "./settings.js";

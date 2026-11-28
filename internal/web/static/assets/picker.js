@@ -11,7 +11,9 @@ import { render, go, setView, starRow } from "./render.js";
 import { humanTag } from "./sidebar.js";
 import { sessionState, isHidden, presence, host } from "./sessions.js";
 import { inGroup, liveGroups, isGroupTag, validTag, sessionByAddr, tagSessions } from "./tags.js";
-import { groupConversation, dmKey, personFace, deviceColor, focusComposer } from "./messages.js";
+import { groupConversation, dmKey } from "./messages.js";
+import { personFace, deviceColor } from "./faces.js";
+import { focusComposer } from "./composer.js";
 import { moveToName } from "./settings.js";
 
 export {

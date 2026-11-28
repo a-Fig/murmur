@@ -9,7 +9,8 @@ import { setDrawer, connBadge, sidebar, updateInfo, repoMenu } from "./sidebar.j
 import { sessionsPage } from "./sessions.js";
 import { recentPage } from "./recent.js";
 import { sessionByAddr, tagMenu, placeProfile, profileCard } from "./tags.js";
-import { conversationsPage, chatScroll, restoreChatScroll, markOpenRead, fitComposers } from "./messages.js";
+import { conversationsPage, chatScroll, restoreChatScroll, markOpenRead } from "./messages.js";
+import { fitComposers } from "./composer.js";
 import { viewerDialog } from "./files.js";
 import { setupDialog, pickerDialog } from "./picker.js";
 import { settingsPage } from "./settings.js";
