@@ -673,3 +673,46 @@ func TestUninstallLeavesALinkedFolder(t *testing.T) {
 		t.Errorf("report:\n%s", s)
 	}
 }
+
+// A clone that owns its mesh stops an uninstall until --owner-ok, and a leave there warns (#1287):
+// the mesh needs that clone's keys, and the uninstall's report says the daemon's folder can go.
+func TestUninstallRefusesWhereACloneOwnsItsMesh(t *testing.T) {
+	sb, record := uninstallSandbox(t)
+	ctx := context.Background()
+	p, _ := clone(t)
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clones.Add(record, clones.Clone{GitDir: p.GitDir, Name: "owned-repo"}); err != nil {
+		t.Fatal(err)
+	}
+	sb.Env.OwnsMesh = func(gitDir string) bool { return sameEntry(gitDir, p.GitDir) }
+
+	_, err := Uninstall(ctx, sb.Env, true)
+	if err == nil || !strings.Contains(err.Error(), "owned-repo") || !strings.Contains(err.Error(), "owner transfer") || !strings.Contains(err.Error(), "--owner-ok") {
+		t.Fatalf("err = %v", err)
+	}
+	if !p.Joined() {
+		t.Fatal("a refused uninstall left the clone")
+	}
+
+	sb.Env.OwnerOK = true
+	if r, err := Uninstall(ctx, sb.Env, true); err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if p.Joined() {
+		t.Error("the clone is still joined")
+	}
+
+	// A leave keeps the keys, and a join again gets everything back, so it only warns.
+	if _, err := p.RecordConsent(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Leave(ctx, sb.Env, p.Top)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, r)
+	}
+	if s := r.String(); !strings.Contains(s, "owns its repo's mesh") || !strings.Contains(s, "owner transfer") {
+		t.Errorf("the leave didn't warn:\n%s", s)
+	}
+}

@@ -179,6 +179,15 @@ checkpoint with the epoch. On its own it was a second push at startup, which cou
 remote ahead of a starting session's presence. Ownership stays with the current owner's device ID and signing key. If that clone
 loses either before a transfer, it loses the ability to administer the mesh.
 
+Nothing stops someone deleting that clone by hand, so Murmur says so where people look (#1287).
+`mur owner` in the owning clone and the page's repo settings say what deleting it costs.
+`mur join --leave` there warns, since a leave keeps the keys and a join again restores
+everything. `mur uninstall` refuses while a clone on the machine's record of clones owns its mesh (a leave
+takes a clone off the record, after its warning), unless
+`--owner-ok` is passed: its report says the daemon's folder is no longer read, and it removes the
+command a transfer needs. The check reads the clone's saved state and keys, so it works with the
+daemon stopped.
+
 ### Automatic rotation
 
 Automatic rotation is off unless the mesh owner turns it on, under **Rotate the team key

@@ -42,6 +42,9 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 	if err != nil {
 		return r, fmt.Errorf("reading the record of this machine's clones (%s): %w", record, err)
 	}
+	if err := e.refuseOwners(record); err != nil {
+		return r, err
+	}
 	if len(joined) > 0 && !leave {
 		var b strings.Builder
 		fmt.Fprintf(&b, "%s is still joined in %d %s on this machine:\n", brand.Product, len(joined), plural(len(joined), "clone", "clones"))
@@ -145,6 +148,30 @@ func Uninstall(ctx context.Context, e Env, leave bool) (Report, error) {
 	return r, nil
 }
 
+// refuseOwners stops an uninstall while a clone on the record owns its repo's mesh, unless OwnerOK
+// says to go ahead (#1287). Uninstalling keeps the clone's keys, but its report says the daemon's
+// folder can go, and it takes away the command that would hand ownership on; so it asks first,
+// where a leave only warns.
+func (e Env) refuseOwners(record string) error {
+	if e.OwnerOK || e.OwnsMesh == nil {
+		return nil
+	}
+	owners, err := clones.List(record, e.OwnsMesh)
+	if err != nil || len(owners) == 0 {
+		return nil // the uninstall reads the record again, and says what is wrong with it
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s on this machine %s the mesh of %s repo:\n", plural(len(owners), "A clone", "Clones"), plural(len(owners), "owns", "own"), plural(len(owners), "its", "their"))
+	for _, c := range owners {
+		fmt.Fprintf(&b, "  - %s (%s)\n", c.Label(), c.Top())
+	}
+	fmt.Fprintf(&b, "Ownership is the clone's keys in .git/%s. If the clone or that folder is deleted, %s. "+
+		"To hand ownership on first, run `%s owner transfer DEVICE` in the clone, with another device's ID from `%[3]s who`. "+
+		"To uninstall anyway and keep ownership where it is, add --owner-ok",
+		brand.StateDir, ownerLoss, brand.Command)
+	return errors.New(b.String())
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one
@@ -201,6 +228,7 @@ func (e Env) leftovers() []string {
 	}
 	return append(out,
 		"In each clone that joined, the daemon's folder (.git/"+brand.StateDir+") and the bus's local refs (refs/"+brand.Name+"/), which nothing reads any more. "+
+			"Keep the folder in a clone that owns its mesh: its keys are the ownership. "+
 			"`git for-each-ref --format='delete %(refname)' refs/"+brand.Name+"/ | git update-ref --no-deref --stdin` removes the refs.",
 		"The "+brand.Product+" section in a repo's AGENTS.md and CLAUDE.md, which is the team's: it stays, and asks an agent there whether to join again.",
 		"Agent sessions already open keep "+brand.Product+"'s server running until they end, and it does nothing; new ones don't start it.")

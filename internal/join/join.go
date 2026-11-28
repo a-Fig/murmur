@@ -66,7 +66,17 @@ type Env struct {
 	// OutsideHome lets join and uninstall change configurations outside a home in the temporary
 	// folder, which they otherwise leave alone as a test's (scratch.go, #995).
 	OutsideHome bool
+	// OwnsMesh says whether the clone with a git directory owns its repo's mesh (daemon.OwnsMesh),
+	// so that a leave warns and an uninstall refuses before that clone's keys are left behind
+	// (#1287); nil, as tests leave it, says no. OwnerOK lets an uninstall go ahead all the same.
+	OwnsMesh func(gitDir string) bool
+	OwnerOK  bool
 }
+
+// ownerLoss is what a mesh loses with its owner's keys.
+const ownerLoss = "nobody can rotate the team key, change the repo's settings or transfer ownership again"
+
+func (e Env) ownsMesh(gitDir string) bool { return e.OwnsMesh != nil && e.OwnsMesh(gitDir) }
 
 // EnvFromProcess is the environment of the running process.
 func EnvFromProcess() (Env, error) {
@@ -526,6 +536,13 @@ func (e Env) leavePlace(ctx context.Context, p Place) (Report, error) {
 			"each skill costs every session of those agents a line of context, in any repo. " +
 			"`" + brand.Command + " uninstall` removes them, and the rest of " + brand.Product + ", from this machine once no repo here is joined. " +
 			"To remove them by hand: " + e.removal() + ".",
+	}
+	if e.ownsMesh(p.GitDir) {
+		// A leave keeps the keys, so a join again gets everything back: a warning is enough here.
+		// The refusal is uninstall's, which also takes away the command that would transfer.
+		r.Tell = append([]string{"This clone owns its repo's mesh, and its keys stay in .git/" + brand.StateDir + ". " +
+			"If the clone or that folder is deleted, " + ownerLoss + ". To hand ownership on first, join again and run `" +
+			brand.Command + " owner transfer DEVICE`, with another device's ID from `" + brand.Command + " who`."}, r.Tell...)
 	}
 	if len(r.Problems) > 0 {
 		return r, errors.New("not everything worked; see above")

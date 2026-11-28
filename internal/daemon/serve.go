@@ -814,7 +814,7 @@ func (d *Daemon) handle(ctx context.Context, req proto.Request) proto.Response {
 			return fail(err.Error())
 		}
 		if d.isOwnerLocked() {
-			return proto.Response{OK: true, Note: "This clone is the mesh owner."}
+			return proto.Response{OK: true, Note: OwnerNote}
 		}
 		if o := d.st.TeamOwner; o != nil {
 			return proto.Response{OK: true, Note: "Mesh owner: " + d.deviceCalledLocked(o.Device)}

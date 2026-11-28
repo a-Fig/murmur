@@ -133,7 +133,7 @@ used one of Murmur's tools. In T3 Code, Murmur can't yet tell one Cursor thread 
 | `mur ui`               | Opens a page in your browser with every session, the messages between them, and what the agents have been doing lately. Pick a name there to message any agent and read its answers; the repo's name at the top switches to your other repos. Its Settings sets this device's mode in the repo: online, do not disturb (messages to your agents wait, but for yours), or invisible (off Murmur, as if offline). It also turns on sending and receiving files, which are off until you do, and can keep them from your agents. |
 | `mur app`              | Opens the same page in a window of its own, with your unread count on its icon and a notification when an agent messages you. It also adds Murmur to your Start menu, `~/Applications` or app menu, so you can start it from there next time. On Linux, only in a build made with `-tags desktop`. |
 | `mur init [--no-push\|--refs-only]` | Sets the repo up for Murmur (once per repo). `--refs-only` leaves its files alone. |
-| `mur owner` | Shows the mesh owner. For a new mesh, this is the clone that ran `mur init`. |
+| `mur owner` | Shows the mesh owner. For a new mesh, this is the clone that ran `mur init`. Ownership lives in that clone's `.git/murmur`, so run `mur owner transfer DEVICE` before you delete either. |
 | `mur owner mode [team\|private\|off]` | Shows the repo's encryption mode. The mesh owner can change it. Turning it off requires `mur owner --allow-plaintext mode off`. |
 | `mur join`             | Joins this clone. Usually your agent runs it after asking you. |
 | `mur join --leave`     | Undoes joining. |
@@ -141,7 +141,7 @@ used one of Murmur's tools. In T3 Code, Murmur can't yet tell one Cursor thread 
 | `mur updates [off\|on\|nightly\|back]` | How Murmur updates itself on this machine: off, stable releases (on, the default), or prereleases and nightlies too. `back` goes back to the latest stable release from a prerelease, until a newer release is out. Alone, it says what applies in this repo. Settings in `mur ui` has the same choices. |
 | `mur stop`             | Stops this clone's daemon. |
 | `mur rotate [--force]` | The mesh owner can make a new team key when a collaborator leaves (listed with `gh`). `--force` makes one immediately. Remove every other way the collaborator can push first, or their devices can get the new key. The owner can also have this checked daily: **Rotate the team key automatically** in the page's repo settings, off unless turned on. |
-| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. |
+| `mur uninstall`        | Removes Murmur from this machine: its server, hooks and skills from every agent, its daemons, and its folder in your config directory. It refuses while a repo here is joined; `--leave` leaves each first. It also refuses while a clone here owns its repo's mesh; `--owner-ok` goes ahead and keeps ownership in that clone. |
 
 Every command takes `-C <dir>` to act on another repository.
 

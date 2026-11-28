@@ -59,9 +59,11 @@ Setup:
   mur join [--leave]            join Murmur in this repo, after the user agreed (an agent runs this); needs
                                 the ref mur init makes; the agent's session joins too, even one that
                                 started outside the repo; --leave undoes it
-  mur uninstall [--leave]       remove Murmur from this machine for you: its server, hooks and skills from
+  mur uninstall [--leave] [--owner-ok]
+                                remove Murmur from this machine for you: its server, hooks and skills from
                                 every agent, its daemons, its folder in your config directory; refuses
-                                while a repo here is joined, unless --leave leaves each first
+                                while a repo here is joined, unless --leave leaves each first, and while
+                                a clone here owns its mesh, unless --owner-ok
 
 For humans:
   mur ui [--no-open]            open the page in a browser, to see sessions and messages and to message
@@ -78,7 +80,7 @@ For humans:
                                 or prereleases and nightlies too; back goes back to the latest stable
                                 from a prerelease, until a newer release is out; alone, says what applies
   mur stop                      stop this clone's daemon
-  mur owner                     show the mesh owner
+  mur owner                     show the mesh owner; in the owning clone, transfer before you delete it
   mur owner transfer DEVICE     hand ownership to another device
   mur owner mode [team|private|off]
                                 show or change repo encryption. To turn it off, put --allow-plaintext
@@ -643,6 +645,7 @@ func runJoin(ctx context.Context, args []string, out io.Writer) error {
 	env.OutsideHome = *outside
 	env.Version = version
 	env.Progress = os.Stderr // a line while a step is slow, or a leave waits for the daemon; stdout is the report
+	env.OwnsMesh = daemon.OwnsMesh
 	do := join.Join
 	if *leave {
 		do = join.Leave
@@ -752,9 +755,10 @@ func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet(brand.Command+" uninstall", flag.ExitOnError)
 	leave := fs.Bool("leave", false, "leave every repo on this machine that is still joined, first")
 	outside := fs.Bool("outside-home", false, "change agent settings outside a home in the temporary folder, which uninstall otherwise leaves alone as a test's")
+	ownerOK := fs.Bool("owner-ok", false, "uninstall even where a clone owns its repo's mesh, which keeps ownership in that clone")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
-		return errors.New("uninstall takes no arguments, only --leave and --outside-home")
+		return errors.New("uninstall takes no arguments, only --leave, --owner-ok and --outside-home")
 	}
 	env, err := join.EnvFromProcess()
 	if err != nil {
@@ -764,6 +768,7 @@ func runUninstall(ctx context.Context, args []string, out io.Writer) error {
 	env.Version = version
 	env.Progress = os.Stderr // a line while a leave waits for a daemon; stdout is the report
 	env.RemoveApp = uninstallApp
+	env.OwnsMesh, env.OwnerOK = daemon.OwnsMesh, *ownerOK
 	report, err := join.Uninstall(ctx, env, *leave)
 	fmt.Fprint(out, report.String())
 	return err
