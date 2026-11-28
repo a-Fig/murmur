@@ -599,12 +599,31 @@ async function allSent(m) {
   return ![...seen].some((item) => item.status === "failed");
 }
 
+// Each path cut down to its last folders, as few as tell it from the others (#1280): their shared
+// start, a long temp folder say, would fill the row and push the difference out of sight.
+function pathTails(paths) {
+  const parts = paths.map((p) => p.split(/(?<=[\\/])/));
+  const end = (s, k) => s.slice(-k).map((x) => x.replace(/[\\/]$/, "")).join("/");
+  return parts.map((s, i) => {
+    for (let k = 1; k < s.length; k++) {
+      const mine = end(s, k);
+      if (parts.every((o, j) => j === i || end(o, k) !== mine)) return "…" + s[s.length - k - 1].slice(-1) + s.slice(-k).join("");
+    }
+    return paths[i];
+  });
+}
+
 function repoMenu() {
   const m = ui.repoMenu;
   const repos = m.repos || [{ id: "", name: repoLabel(), current: true, running: true }];
   // A path tells two clones of one repo apart; one alone goes by its name.
   const named = new Map();
-  for (const r of repos) named.set(repoLabel(r), (named.get(repoLabel(r)) || 0) + 1);
+  for (const r of repos) if (r.path) named.set(repoLabel(r), [...(named.get(repoLabel(r)) || []), r]);
+  const tails = new Map();
+  for (const same of named.values()) {
+    if (same.length < 2) continue;
+    pathTails(same.map((r) => r.path)).forEach((t, i) => tails.set(same[i], t));
+  }
   const menu = h(
     "div",
     {
@@ -636,7 +655,7 @@ function repoMenu() {
             onclick: () => openRepo(r),
           },
           h("span", { class: "dot" + (r.running ? " ok" : ""), role: "img", "aria-label": r.running ? "Running" : "Not running" }),
-          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, repoLabel(r)), named.get(repoLabel(r)) > 1 && r.path && h("span", { class: "repo-path truncate" }, r.path)),
+          h("span", { class: "repo-row-text" }, h("span", { class: "tm-name truncate" }, repoLabel(r)), tails.has(r) && h("span", { class: "repo-path truncate" }, h("span", null, tails.get(r)))),
           m.opening === r.id ? icon("rotateCw", "spin") : r.current && icon("check"),
         ),
       ),
