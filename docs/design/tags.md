@@ -150,6 +150,12 @@ free-form, Tyler chose the smaller thing: any tag that starts with `group:` is a
   an add to such a device is refused.
 - **On the page** a group is a conversation a person can write to. A mute covers a group (#27;
   [mutes](mutes.md)).
+- **A person is in a group chat they have written in** (#1267, 2026-11-28). A person holds no tags
+  but `human`, and gets no group message as unread, so nothing on the bus says they are in one: the
+  page counts them a member, and the chat theirs, by their posts. Leave group, at the foot of its
+  members, stops that: their daemon keeps the groups they left (`state.json`, at most 100) and the
+  page leaves their posts there out, until they write in it again. Others' pages still count them by
+  their posts, since nothing on the bus carries the leave.
 - **A device is a group** (#463, Tyler, 2026-11-12; built 2026-11-15): every agent's session on a
   device has `group:device-<its ID>`, so there is one way to name several sessions. An ID that
   starts with `device-` already, as those made since #330 do, gives `group:<its ID>`, which starts

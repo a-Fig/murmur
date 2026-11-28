@@ -4,7 +4,7 @@ import { icon } from "./icons.js";
 import { h, when, ago, stamp, agoEl, plural, root } from "./dom.js";
 import {
   NAME, POLL_MS, NARROW, ui, devices, nameOf, fromName, toName, findSession, sessionCount, me, myName,
-  isPerson, findPerson, personOnline, unreadIds,
+  isPerson, findPerson, personOnline, unreadIds, hasLeft,
 } from "./state.js";
 import { onlyMine, setOnlyMine } from "./preferences.js";
 import { AuthError, api } from "./api.js";
@@ -279,7 +279,10 @@ let chatMoved = false; // the open conversation has just changed key, and is sti
 // The open conversation stays, as one opened from Recent has to; turning the toggle on closes one
 // that isn't yours (mineToggle), so the pane never shows what the list has left out.
 function yourKeys() {
-  return new Set([...myMessages().map((m) => conversationOf(m).key), ...ui.outbox.map((item) => item.key)]);
+  const mine = myMessages()
+    .map(conversationOf)
+    .filter((c) => c.kind !== "group" || !hasLeft(c.title)); // #1267
+  return new Set([...mine.map((c) => c.key), ...ui.outbox.map((item) => item.key)]);
 }
 
 function onlyYours(list) {

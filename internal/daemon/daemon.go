@@ -1013,7 +1013,10 @@ type state struct {
 	ColorAt time.Time `json:"colorAt,omitzero"`
 	// ColorLostTo is what the device that took this one's picked colour is called, "" if none
 	// did since its person last picked.
-	ColorLostTo string            `json:"colorLostTo,omitempty"`
+	ColorLostTo string `json:"colorLostTo,omitempty"`
+	// Left is the group chats this device's person has left on the page (#1267), oldest first, at
+	// most maxLeft. Writing to one again takes it off.
+	Left        []string          `json:"left,omitempty"`
 	PersonSince time.Time         `json:"personSince,omitzero"`
 	People      map[string]string `json:"people,omitempty"`
 	// PersonClaims is every person's name in the names registry, to the address that claimed it

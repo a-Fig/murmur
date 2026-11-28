@@ -340,7 +340,7 @@ func (d *Daemon) accountLocked() web.Account {
 	if d.st.Person == "" {
 		return web.Account{Suggested: d.suggestedNameLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
 	}
-	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo}
+	a := web.Account{Name: d.st.Person, Addr: d.personAddr(), Taken: d.nameTakenByLocked(), Nick: d.st.Nick, Color: d.st.Color, ColorLost: d.st.ColorLostTo, Left: d.st.Left}
 	for _, m := range d.st.Inbox[bus.PersonSession] {
 		a.Unread = append(a.Unread, d.pageIDOfLocked(m.Event)) // as the page knows the message
 	}
@@ -469,6 +469,15 @@ func (s pageSource) Send(ctx context.Context, to, text string, files []web.Uploa
 	if r.Error != "" {
 		return web.Sent{}, errors.New(r.Error)
 	}
+	if bus.IsGroup(to) {
+		// Writing in a group chat they left puts them back in it (#1267).
+		d.mu.Lock()
+		if i := slices.Index(d.st.Left, to); i >= 0 {
+			d.st.Left = slices.Delete(slices.Clone(d.st.Left), i, i+1)
+			d.saveLocked()
+		}
+		d.mu.Unlock()
+	}
 	sent := web.Sent{Note: r.Note}
 	if len(r.Messages) > 0 {
 		sent.ID = r.Messages[0].ID
@@ -480,6 +489,33 @@ func (s pageSource) Send(ctx context.Context, to, text string, files []web.Uploa
 func (s pageSource) File(ctx context.Context, id string, index int) (string, []byte, error) {
 	s.d.pageCalled(ctx)
 	return s.d.fileOf(ctx, id, index)
+}
+
+// maxLeft caps State.Left: past it, the group left longest ago is dropped, and counts as theirs
+// again if they wrote in it.
+const maxLeft = 100
+
+// LeaveGroup takes this device's person out of a group chat (#1267). A person is in one because
+// they wrote in it: nothing on the bus says so, and a person gets no group message as unread, so
+// leaving is only this: the page stops counting their posts there, which drops the chat from their
+// own and them from its members, until they write in it again.
+func (s pageSource) LeaveGroup(ctx context.Context, group string) (web.Account, error) {
+	if !bus.IsGroup(group) {
+		return web.Account{}, fmt.Errorf("%q isn't a group", group)
+	}
+	d := s.d
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.pageSeenLocked(ctx, time.Now())
+	if d.st.Person == "" {
+		return web.Account{}, errors.New("choose a name first")
+	}
+	if !slices.Contains(d.st.Left, group) {
+		left := append(slices.Clone(d.st.Left), group)
+		d.st.Left = left[max(0, len(left)-maxLeft):]
+		d.saveLocked()
+	}
+	return d.accountLocked(), nil
 }
 
 // MarkRead takes the messages with these IDs out of the person's unread.

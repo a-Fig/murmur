@@ -53,6 +53,9 @@ type Source interface {
 	File(ctx context.Context, id string, index int) (name string, data []byte, err error)
 	// MarkRead takes these messages out of the person's unread.
 	MarkRead(ctx context.Context, ids []string) error
+	// LeaveGroup takes the person out of a group chat they wrote in (#1267), and returns the
+	// account. Sending to the group puts them back.
+	LeaveGroup(ctx context.Context, group string) (Account, error)
 	// Health is how this device is doing with the remote and its sessions (health.go).
 	Health(ctx context.Context) (Health, error)
 }
@@ -160,6 +163,9 @@ type Account struct {
 	// that loses a race, or that someone made while this device was away, is given up.
 	Color     int    `json:"color,omitempty"`
 	ColorLost string `json:"colorLost,omitempty"`
+	// Left is the group chats they have left (#1267): their posts there no longer make the chat
+	// theirs or them a member, until they write in it again.
+	Left []string `json:"left,omitempty"`
 }
 
 // Person is a person on a device.

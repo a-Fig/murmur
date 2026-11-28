@@ -943,3 +943,50 @@ func TestAPersonIsTaggedHuman(t *testing.T) {
 		t.Errorf("lookup of a person whose daemon has gone: %+v, %q", r.Lookup, r.Error)
 	}
 }
+
+// #1267. A person leaves a group chat they wrote in: the account lists it, writing in it again
+// takes it off, and a restart keeps it.
+func TestAPersonLeavesAGroupChat(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	alice, _ := a.session("aaaaaa", "")
+	pa := a.page()
+	pa.choose("ada-lovelace")
+	if code, body := pa.call("POST", "/api/tags", pa.token, `{"addr":"`+alice+`","add":["group:wolf-pack"]}`); code != http.StatusOK && code != http.StatusNoContent {
+		t.Fatalf("putting alice in the group: %d %s", code, body)
+	}
+	eventually(t, "alice in the group", func() bool { return a.inGroup("aaaaaa", alice, "group:wolf-pack") })
+	pa.sendText("group:wolf-pack", "hello pack")
+
+	leave := func(group string) (int, web.Account, string) {
+		t.Helper()
+		code, body := pa.call("POST", "/api/groups/leave", pa.token, `{"group":"`+group+`"}`)
+		var acct web.Account
+		json.Unmarshal([]byte(body), &acct)
+		return code, acct, body
+	}
+	for _, bad := range []string{"wolf-pack", "group:a/b", ""} {
+		if code, _, body := leave(bad); code != http.StatusBadRequest {
+			t.Errorf("leaving %q: %d %s, want a refusal", bad, code, body)
+		}
+	}
+	if code, acct, body := leave("group:wolf-pack"); code != http.StatusOK || !slices.Equal(acct.Left, []string{"group:wolf-pack"}) {
+		t.Fatalf("leaving: %d %s", code, body)
+	}
+	if _, acct, _ := leave("group:wolf-pack"); !slices.Equal(acct.Left, []string{"group:wolf-pack"}) {
+		t.Errorf("leaving twice lists it %q", acct.Left)
+	}
+
+	pa.sendText("group:wolf-pack", "back again")
+	if got := pa.state().Account.Left; len(got) != 0 {
+		t.Errorf("after writing in the group again the account has left %q", got)
+	}
+
+	leave("group:wolf-pack")
+	a.restart()
+	pa = a.page()
+	if got := pa.state().Account.Left; !slices.Equal(got, []string{"group:wolf-pack"}) {
+		t.Errorf("after a restart the account has left %q", got)
+	}
+}

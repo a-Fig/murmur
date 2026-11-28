@@ -684,6 +684,7 @@ func (f *fixtures) Send(ctx context.Context, to, text string, files []web.Upload
 		m.To, m.ToAddr, m.ToKind = "*", "*", web.ToAll
 	default:
 		if tags.IsGroup(to) {
+			f.account.Left = slices.DeleteFunc(slices.Clone(f.account.Left), func(g string) bool { return g == to })
 			m.To, m.ToAddr, m.ToKind = to, to, web.ToGroup
 			break
 		}
@@ -798,6 +799,18 @@ func (f *fixtures) MarkRead(ctx context.Context, ids []string) error {
 	defer f.mu.Unlock()
 	f.account.Unread = slices.DeleteFunc(f.account.Unread, func(id string) bool { return slices.Contains(ids, id) })
 	return nil
+}
+
+func (f *fixtures) LeaveGroup(ctx context.Context, group string) (web.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !tags.IsGroup(group) {
+		return web.Account{}, fmt.Errorf("%q isn't a group", group)
+	}
+	if !slices.Contains(f.account.Left, group) {
+		f.account.Left = append(slices.Clone(f.account.Left), group)
+	}
+	return f.account, nil
 }
 
 func (f *fixtures) Settings(ctx context.Context) (web.Settings, error) {

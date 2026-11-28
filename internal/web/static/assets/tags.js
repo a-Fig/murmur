@@ -4,7 +4,7 @@
 import { icon } from "./icons.js";
 import { h, ago, plural, root } from "./dom.js";
 import {
-  ui, devices, fromName, toName, findSession, HIDDEN, me, myName, isPerson, findPerson, personOnline,
+  ui, devices, fromName, toName, findSession, HIDDEN, me, myName, isPerson, findPerson, personOnline, hasLeft,
 } from "./state.js";
 import { tagsFolded, setTagsFolded } from "./preferences.js";
 import { AuthError, api } from "./api.js";
@@ -25,7 +25,8 @@ export {
 };
 
 // Everyone reaches every session in the repo; a device's chat reaches every session on it, and a
-// group's every session that has its tag (#184). Anyone who has posted is in it too, running or not.
+// group's every session that has its tag (#184). Anyone who has posted is in it too, running or not,
+// but for this page's person once they have left a group (#1267).
 function groupMembers(c) {
   const posted = new Map();
   const addrs = new Map(); // where each sender posted from, for one that isn't running
@@ -41,6 +42,7 @@ function groupMembers(c) {
       rows.push({ name: s.name, d, s, posted: posted.get(s.name) || 0 });
     }
   }
+  if (c.kind === "group" && hasLeft(c.title)) posted.delete(myName());
   for (const [name, n] of posted) if (!rows.some((r) => r.name === name)) rows.push({ name, addr: addrs.get(name), d: findPerson(name)?.device || null, s: null, posted: n, person: isPerson(name) });
   return rows;
 }
@@ -78,6 +80,7 @@ function membersButton(c) {
         onclick: (e) => {
           e.stopPropagation();
           ui.membersOpen = !ui.membersOpen;
+          ui.leaveError = "";
           render();
         },
       },
@@ -126,7 +129,36 @@ function membersPanel(c, rows) {
         ),
       ),
     ]),
+    c.kind === "group" &&
+      rows.some((r) => r.person && r.name === myName()) &&
+      h(
+        "button",
+        { class: "g-mp-row g-mp-leave", "data-key": "mp-leave", disabled: ui.leaving === c.title, onclick: () => leaveGroup(c.title) },
+        icon("logOut"),
+        "Leave group",
+      ),
+    ui.leaveError && h("p", { class: "tm-err", "data-announce": "" }, ui.leaveError),
   );
+}
+
+// The person leaves a group chat (#1267). Sessions are in one by its tag, a person by having written
+// in it, so this only stops their posts counting: nothing on the bus changes, and writing again
+// takes them back.
+async function leaveGroup(group) {
+  ui.leaving = group;
+  ui.leaveError = "";
+  render();
+  try {
+    const account = await api("/api/groups/leave", { method: "POST", body: JSON.stringify({ group }) });
+    if (ui.state) ui.state.account = { ...ui.state.account, ...account, left: account.left || [] };
+    ui.membersOpen = false;
+  } catch (e) {
+    if (e instanceof AuthError) return deny(e.token);
+    ui.leaveError = e.message;
+  } finally {
+    ui.leaving = null;
+  }
+  render();
 }
 document.addEventListener("click", () => {
   if (ui.membersOpen) {
