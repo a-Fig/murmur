@@ -555,7 +555,7 @@ func runInit(ctx context.Context, args []string, out io.Writer) error {
 	if p.Fallback != "" {
 		if p.PullURL != "" {
 			fmt.Fprintf(out, "\nThe repo can be joined now. Teammates' agents see the section once it is merged: open a pull\n"+
-				"request from it, for someone who may merge into %s: %s\n", p.Branch, p.PullURL)
+				"request (a merge request, on some hosts) from it, for someone who may merge into %s:\n  %s\n", p.Branch, p.PullURL)
 		} else {
 			fmt.Fprintf(out, "\nThe repo can be joined now. Teammates' agents see the section once %s is merged into %s;\n"+
 				"someone who may push to %s can merge it.\n", p.Fallback, p.Branch, p.Branch)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,9 @@ type Git struct {
 	// For a command run from a terminal that must not wait on anyone, such as join's look at
 	// the remote (#830); the daemon runs detached already.
 	NoTerminal bool
+	// Stderr, if set, gets what each command prints to stderr as well, as a push's lines from the
+	// remote ("remote: ..."), which a command that succeeds otherwise leaves unread.
+	Stderr io.Writer
 }
 
 // Error is a failed git command, with what it printed to stderr.
@@ -57,7 +61,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Run runs git with the given stdin and returns its stdout.
 func (g Git) Run(ctx context.Context, stdin string, args ...string) (string, error) {
-	return run(ctx, "", stdin, g.Env, g.NoTerminal, append(g.dirArgs(), args...)...)
+	return run(ctx, "", stdin, g.Env, g.NoTerminal, g.Stderr, append(g.dirArgs(), args...)...)
 }
 
 // dirArgs are the options every command run against Dir starts with: Dir itself, and a hooks
@@ -81,7 +85,7 @@ func (g Git) dirArgs() []string {
 // a repository or a session's current branch. The one write that goes through it is `mur init`
 // fast-forwarding the checkout it was run in, which a person asked for.
 func RunIn(ctx context.Context, dir string, args ...string) (string, error) {
-	return run(ctx, dir, "", nil, false, args...)
+	return run(ctx, dir, "", nil, false, nil, args...)
 }
 
 // startLimit is how long git may take to start (proc.StartWithin). It takes milliseconds: under the
@@ -119,19 +123,19 @@ func subcommand(args []string) string {
 // slow (#513).
 var Observe func(subcommand string, start time.Time, took time.Duration)
 
-func run(ctx context.Context, dir, stdin string, env []string, noTerminal bool, args ...string) (string, error) {
+func run(ctx context.Context, dir, stdin string, env []string, noTerminal bool, stderr io.Writer, args ...string) (string, error) {
 	if Observe != nil {
 		began := time.Now()
 		defer func() { Observe(subcommand(args), began, time.Since(began)) }()
 	}
-	out, err := runOnce(ctx, dir, stdin, env, noTerminal, args...)
+	out, err := runOnce(ctx, dir, stdin, env, noTerminal, stderr, args...)
 	if errors.Is(err, proc.ErrStartHung) && ctx.Err() == nil {
-		out, err = runOnce(ctx, dir, stdin, env, noTerminal, args...)
+		out, err = runOnce(ctx, dir, stdin, env, noTerminal, stderr, args...)
 	}
 	return out, err
 }
 
-func runOnce(ctx context.Context, dir, stdin string, env []string, noTerminal bool, args ...string) (string, error) {
+func runOnce(ctx context.Context, dir, stdin string, env []string, noTerminal bool, stderr io.Writer, args ...string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -156,6 +160,9 @@ func runOnce(ctx context.Context, dir, stdin string, env []string, noTerminal bo
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
+	if stderr != nil {
+		cmd.Stderr = io.MultiWriter(&errb, stderr)
+	}
 	start := cmd.Start
 	if lateSafe[subcommand(args)] {
 		start = func() error { return proc.StartWithin(cmd, startLimit, cancel) }

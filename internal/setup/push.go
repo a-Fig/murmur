@@ -34,7 +34,8 @@ type Pushed struct {
 	Changed        []string // what the commit changes, one line per file
 	// Fallback is set when the server refused the commit on the default branch, with git's reason
 	// in Refused: the commit went to FallbackBranch instead, unless Pending says that branch already
-	// had the section from an earlier run. PullURL opens a pull request from it on GitHub.
+	// had the section from an earlier run. PullURL opens a pull request from it: GitHub's, or the
+	// page the remote offered as the push made the branch (hostLink), "" if neither.
 	Fallback, Refused, PullURL string
 	Pending                    bool
 	// Checkout says what became of the checkout init ran in: FastForwarded to the commit, or left
@@ -366,11 +367,45 @@ func fallback(ctx context.Context, g gitx.Git, repo *bus.Repo, p *Pushed) error 
 		return fmt.Errorf("%s refused the push to %s (%s), and %s already has a branch %s without the section; "+
 			"delete or rename that branch, then run init again", p.Remote, p.Branch, p.Refused, p.Remote, FallbackBranch)
 	}
-	if err := repo.Push(ctx, p.SHA, ref, bus.Lease, ""); err != nil {
+	var said strings.Builder
+	pusher := &bus.Repo{Git: repo.Git, Remote: repo.Remote}
+	pusher.Git.Stderr = &said
+	if err := pusher.Push(ctx, p.SHA, ref, bus.Lease, ""); err != nil {
 		return fmt.Errorf("%s refused the push to %s (%s), and the push to a new branch %s failed too: %w",
 			p.Remote, p.Branch, p.Refused, FallbackBranch, err)
 	}
+	if p.PullURL == "" {
+		p.PullURL = hostLink(said.String(), FallbackBranch)
+	}
 	return nil
+}
+
+// hostLink is the page the remote offered, in what it printed as a push made branch, for opening a
+// pull or merge request from it, "" if it offered none. GitHub, GitLab, Bitbucket and Gitea each
+// print one ("remote: To create a merge request for murmur-init, visit: ..."), and a remote that
+// isn't GitHub has no address init could build. Only an http or https address naming the branch,
+// of printable characters, is taken: the remote chooses the text, and it goes to the terminal.
+func hostLink(said, branch string) string {
+	for _, line := range strings.Split(said, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "remote:")
+		if !ok {
+			continue
+		}
+		for _, f := range strings.Fields(rest) {
+			if !strings.HasPrefix(f, "https://") && !strings.HasPrefix(f, "http://") ||
+				strings.IndexFunc(f, func(r rune) bool { return r < '!' || r > '~' }) >= 0 {
+				continue
+			}
+			u, err := url.Parse(f)
+			if err != nil || u.Host == "" {
+				continue
+			}
+			if unescaped, err := url.QueryUnescape(f); err == nil && strings.Contains(unescaped, branch) {
+				return f
+			}
+		}
+	}
+	return ""
 }
 
 // pullURL is the page that opens a pull request from head into base, when the remote is on GitHub;

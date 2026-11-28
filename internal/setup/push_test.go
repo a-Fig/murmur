@@ -204,6 +204,52 @@ func TestPushRefusedFallsBackToABranch(t *testing.T) {
 	}
 }
 
+// A remote that isn't GitHub, and refuses main, gets its own page for a merge request from the
+// branch, the one it printed as the push made it (#926): Gitea's words here, from a run on a local
+// Gitea 1.24.6 (2026-11-28).
+func TestPushRefusedTakesTheHostsOwnLink(t *testing.T) {
+	remote, _, clone := remoteWithClone(t)
+	hooks := filepath.Join(remote, "hooks")
+	refuse := "#!/bin/sh\nif [ \"$1\" = refs/heads/main ]; then echo 'main is protected' >&2; exit 1; fi\nexit 0\n"
+	offer := "#!/bin/sh\nwhile read old new ref; do\n\tcase $ref in refs/heads/murmur-init)\n" +
+		"\t\techo \"Create a new pull request for 'murmur-init':\"\n" +
+		"\t\techo '  http://git.example.invalid/team/proj/compare/main...murmur-init'\n\tesac\ndone\n"
+	for name, body := range map[string]string{"update": refuse, "post-receive": offer} {
+		if err := os.WriteFile(filepath.Join(hooks, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := push(t, clone)
+	if p.Fallback != FallbackBranch {
+		t.Fatalf("pushed %+v", p)
+	}
+	if want := "http://git.example.invalid/team/proj/compare/main...murmur-init"; p.PullURL != want {
+		t.Errorf("the link is %q, want the remote's %q", p.PullURL, want)
+	}
+}
+
+// What a push printed gives the link a host offered for the branch, and nothing else.
+func TestHostLink(t *testing.T) {
+	for said, want := range map[string]string{
+		// GitLab, GitHub and Bitbucket Cloud, as their documentation and pushes show them.
+		"remote: \nremote: To create a merge request for murmur-init, visit:\n" +
+			"remote:   https://gitlab.com/team/proj/-/merge_requests/new?merge_request%5Bsource_branch%5D=murmur-init\nremote: \n": "https://gitlab.com/team/proj/-/merge_requests/new?merge_request%5Bsource_branch%5D=murmur-init",
+		"remote: Create a pull request for 'murmur-init' on GitHub by visiting:\n" +
+			"remote:      https://github.com/team/proj/pull/new/murmur-init\n": "https://github.com/team/proj/pull/new/murmur-init",
+		"remote: Create pull request for murmur-init:\nremote:   https://bitbucket.org/team/proj/pull-requests/new?source=murmur-init&t=1\n": "https://bitbucket.org/team/proj/pull-requests/new?source=murmur-init&t=1",
+		// None offered, or not for this branch, or not an address to show.
+		"To example.invalid:team/proj.git\n * [new branch] murmur-init -> murmur-init\n":    "",
+		"remote: Visit https://example.invalid/team/proj/compare/main...other\n":            "",
+		"remote: see javascript:alert(1)/murmur-init\n":                                     "",
+		"remote: https://example.invalid/murmur-init\x1b]8;;evil\n":                         "",
+		"https://example.invalid/team/proj/compare/main...murmur-init (not from remote:)\n": "",
+	} {
+		if got := hostLink(said, "murmur-init"); got != want {
+			t.Errorf("hostLink(%q) = %q, want %q", said, got, want)
+		}
+	}
+}
+
 // A CLAUDE.md that is a link to AGENTS.md stays a link, and the section goes into AGENTS.md once.
 func TestPushFollowsALinkInTheCommit(t *testing.T) {
 	remote, seed, clone := remoteWithClone(t)
