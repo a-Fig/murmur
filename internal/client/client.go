@@ -291,6 +291,14 @@ func (c *Client) mayStart() bool {
 	return c.Spawn && (c.MaySpawn == nil || c.MaySpawn())
 }
 
+// Protocol is the protocol number of the daemon that last answered: 0 for none yet, or for one from
+// before the number.
+func (c *Client) Protocol() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.protocol
+}
+
 // Outdated reports whether the daemon that last answered speaks an older protocol than this binary:
 // one that Connect found and, without permission to start daemons, left running.
 func (c *Client) Outdated() bool {

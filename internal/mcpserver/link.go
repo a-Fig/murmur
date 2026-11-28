@@ -424,6 +424,12 @@ func (l *link) run(ctx context.Context) {
 				l.warn("%s, so it is kept rather than replaced; starting this session again runs the installed %s", why, brand.Command)
 			}
 		}
+		// A daemon from before #1145 ignores From and registers the server Pi started after a move
+		// as a new session, though the link is up (#1214). Only a first registration says so: once
+		// one has registered, later hellos are reconnections, which no daemon moves.
+		if p := l.c.Protocol(); h.From != "" && !h.Reconnect && p < proto.FromProtocol {
+			l.warn("this clone's daemon speaks protocol %d, too old to follow Pi's move from %s (%d or later can), so this session registered as a new one: it has a new address and name, and messages to its earlier name stay with the session it left", p, h.From, proto.FromProtocol)
+		}
 		l.mu.Lock()
 		l.noteReadLocked(h.Route, resp)
 		// A retry belongs to one registration (#1000). One used before this hello was told to a

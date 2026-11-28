@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/a-Fig/murmur/internal/client"
+	"github.com/a-Fig/murmur/internal/proto"
 )
 
 // More tests of how the server finds its T3 thread (#57), across the server's turning on and off.
@@ -122,5 +124,50 @@ func TestARefusedRouteIsLoggedOnce(t *testing.T) {
 	defer mu.Unlock()
 	if len(lines) != 1 || !strings.Contains(lines[0], "route") {
 		t.Errorf("logged %q, want one line about the route", lines)
+	}
+}
+
+// A Pi server started after a move, on a daemon too old to follow it, registers as a new session
+// with the link up (#1214). It logs that once, and a reconnect doesn't log it again. On a daemon
+// that follows moves it logs nothing.
+func TestAPiMoveAnOlderDaemonCantFollowIsLoggedOnce(t *testing.T) {
+	for _, c := range []struct {
+		protocol int
+		lines    int
+	}{{proto.FromProtocol - 1, 1}, {proto.FromProtocol, 0}} {
+		t.Run(fmt.Sprint("protocol ", c.protocol), func(t *testing.T) {
+			t.Setenv("MURMUR_PI_SESSION_FILE", "/s/b.jsonl")
+			t.Setenv("MURMUR_PI_PREVIOUS_SESSION_FILE", "/s/a.jsonl")
+			f := &fakeDaemon{protocol: c.protocol}
+			gitDir := f.serve(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+
+			var mu sync.Mutex
+			var lines []string
+			l := &link{c: &client.Client{GitDir: gitDir}, hello: helloFor("pi", "/work"), changed: make(chan struct{}),
+				logf: func(format string, args ...any) {
+					mu.Lock()
+					defer mu.Unlock()
+					lines = append(lines, fmt.Sprintf(format, args...))
+				}}
+			go l.run(ctx)
+			if _, err := l.wait(ctx, 10*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			if h := f.lastHello(); h.From != "/s/a.jsonl" || h.Reconnect {
+				t.Fatalf("first hello: %+v", h)
+			}
+			f.dropConnections()
+			waitFor(t, "the reconnect", func() bool { return f.helloCount() >= 2 })
+			if _, err := l.wait(ctx, 10*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(lines) != c.lines || c.lines == 1 && !strings.Contains(lines[0], "Pi's move from /s/a.jsonl") {
+				t.Errorf("logged %q, want %d line(s) about the move", lines, c.lines)
+			}
+		})
 	}
 }

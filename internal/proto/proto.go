@@ -121,6 +121,10 @@ const MaxPrompt = 4096
 // ProofProtocol is the first protocol whose daemon proves itself (Proof).
 const ProofProtocol = 12
 
+// FromProtocol is the first protocol whose daemon follows a Pi move (Hello.From, #1145). An older
+// one registers the moved server as a new session.
+const FromProtocol = 25
+
 // NotRegistered is the daemon's refusal of a request from a session it doesn't have live. It is
 // answered before the request does anything, so a shell command makes the request again after a
 // new hello (#953).

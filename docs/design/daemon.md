@@ -150,7 +150,9 @@ old daemon lets its background work finish for up to 20 s and then deletes its p
 15, holding the clone's lock throughout, so the client waits 40 s for the lock (`proto.ShutdownMax`;
 15 s until #83), then fails with an error that names the old daemon's pid. A session whose daemon
 refuses its route (an older one that couldn't be replaced) works, with its messages as notices, and
-its MCP server logs why once. The number goes up with any change to a request or a reply that an
+its MCP server logs why once. So does a Pi session's server whose move a daemon older than
+`proto.FromProtocol` couldn't follow: the session is a new one there, under a new name (#1214).
+The number goes up with any change to a request or a reply that an
 older daemon can't serve.
 
 ## The log
