@@ -736,15 +736,21 @@ func TestSplitText(t *testing.T) {
 		{"  trimmed  \n", "trimmed", ""},
 		{"first\nsecond\n\nthird", "first", "second\n\nthird"},
 		{"first\r\nsecond", "first", "second"},
-		{long, strings.TrimSpace(long[:115]) + "…", strings.TrimSpace(long)},
-		{long + "\nmore", strings.TrimSpace(long[:115]) + "…", long + "\nmore"},
-		{strings.Repeat("é", 200), strings.Repeat("é", 119) + "…", strings.Repeat("é", 200)},
+		// Cut where the last word before MaxSubject ends: "word " repeats, so 3 runes back.
+		{long, strings.Repeat("word ", 13) + "word…", strings.TrimSpace(long)},
+		{long + "\nmore", strings.Repeat("word ", 13) + "word…", long + "\nmore"},
+		// The last space is 8 runes in: no place to cut, so the cut stays mid-word.
+		{"abcdefgh " + strings.Repeat("é", 100), "abcdefgh " + strings.Repeat("é", 62) + "…", "abcdefgh " + strings.Repeat("é", 100)},
+		// Multi-byte text: the last space is 20 runes in but 40 bytes in, and a byte count would
+		// call it past half and cut there.
+		{strings.Repeat("é", 20) + " " + strings.Repeat("é", 100), strings.Repeat("é", 20) + " " + strings.Repeat("é", 50) + "…", strings.Repeat("é", 20) + " " + strings.Repeat("é", 100)},
+		{strings.Repeat("é", 200), strings.Repeat("é", MaxSubject-1) + "…", strings.Repeat("é", 200)},
 	} {
 		subject, body := SplitText(c.in)
 		if subject != c.subject || body != c.body {
 			t.Errorf("SplitText(%q) = %q, %q; want %q, %q", c.in, subject, body, c.subject, c.body)
 		}
-		if n := len([]rune(subject)); n > maxSubject {
+		if n := len([]rune(subject)); n > MaxSubject {
 			t.Errorf("SplitText(%q): a subject of %d runes", c.in, n)
 		}
 	}

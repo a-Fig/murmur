@@ -178,7 +178,7 @@ func (s *server) tools(srv *mcp.Server) {
 		"each file's text is checked for secrets as the body is, but nothing compressed, as an image or a zip, is unpacked to check. Message to coordinate, not to chat.",
 		InputSchema: objectSchema(map[string]*jsonschema.Schema{
 			"to":      {Type: "string", Description: "a session's name from who (quiet-otter); device/session works too; a group (group:ui) for every session with that tag, a device's group (group:device-…, from who) for all its sessions, or * for everyone; or several names separated by commas (quiet-otter, brisk-finch), each sent the message on its own"},
-			"subject": {Type: "string", Description: "one line that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},
+			"subject": {Type: "string", Description: "one line of at most 72 characters that stands on its own: it is the first thing the recipient reads, and all they see if the message comes as a notice"},
 			"body":    {Type: "string", Description: "the rest of the message"},
 			"tell_me": {Type: "string", Description: "read or delivered, to be told once, in your inbox, when every recipient has read the message (or been told of it), or after 30 minutes with where it is; not for a message to everyone. Leave it out unless you need to know, as when handing off work"},
 			"files":   listArgSchema("paths of files to send with it, such as a screenshot or a log, in this repo or the temp folder: at most 8, 10 MB each, 20 MB together. An array, or the same list as a string."),

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/a-Fig/murmur/internal/brand"
 )
@@ -43,9 +44,10 @@ const (
 	// daemon may have to fetch it first.
 	maxUpload   = 21 << 20
 	fileTimeout = 2 * time.Minute
-	// maxSubject is how much of a person's first line the subject takes (bus.OneLine's limit for
-	// a message's).
-	maxSubject   = 120
+	// MaxSubject is how much of a person's first line the subject takes: what fits on one line of
+	// a message in the app's default window (#876). The bus takes up to 120, which older senders
+	// still write. The agents' tools cut to it too (mcpserver).
+	MaxSubject   = 72
 	maxNameLen   = 64
 	maxOverrides = 1000
 	maxCursor    = 256
@@ -681,14 +683,25 @@ func SplitText(text string) (subject, body string) {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	first, rest, _ := strings.Cut(text, "\n")
 	first = strings.TrimSpace(first)
-	if runes := []rune(first); len(runes) > maxSubject {
-		cut := string(runes[:maxSubject-1])
-		if i := strings.LastIndexByte(cut, ' '); i > maxSubject/2 {
-			cut = cut[:i]
-		}
-		return strings.TrimSpace(cut) + "…", text
+	if subject = CutSubject(first); subject != first {
+		return subject, text
 	}
 	return first, strings.TrimSpace(rest)
+}
+
+// CutSubject is a line cut to MaxSubject runes at a word, with "…" at the end,
+// or the line itself if it fits. A last space in the first half is no place to cut: the cut then
+// keeps more of the text, mid-word.
+func CutSubject(line string) string {
+	runes := []rune(line)
+	if len(runes) <= MaxSubject {
+		return line
+	}
+	cut := string(runes[:MaxSubject-1])
+	if i := strings.LastIndexByte(cut, ' '); i >= 0 && utf8.RuneCountInString(cut[:i]) > MaxSubject/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimSpace(cut) + "…"
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) error {
