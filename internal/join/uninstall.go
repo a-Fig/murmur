@@ -476,8 +476,11 @@ func (e Env) unregisterClaudeAt(ctx context.Context, hs []agentHome) (did, notes
 
 	path := filepath.Join(h.Dir, "settings.json")
 	text, err = readConfig(path)
-	if err != nil || text == "" {
+	if err != nil {
 		return did, nil, err
+	}
+	if text == "" { // settings.json deleted since join: no rule to take out, so no record to keep
+		return did, nil, forgetRule(path, allowRule)
 	}
 	out, found, err := jsonedit.RemoveIn(text, []string{"permissions", "allow"}, allowRule)
 	if err != nil {

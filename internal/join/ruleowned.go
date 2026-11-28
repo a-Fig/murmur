@@ -12,11 +12,11 @@ import (
 )
 
 // An allow rule is a string or an entry in a permissions file the user also writes, and the agent
-// rewrites those files itself (Cursor, Kiro, Claude Code, Antigravity), so nothing in the rule says who added it. A rule that was
-// there before join is the user's, and uninstall must leave it (#1199). So join records each rule it
-// adds, in a small file beside the permissions file, and uninstall takes out only a rule that is
-// recorded. A rule an older mur added has no record, and stays too, with a note that says how to
-// remove it by hand.
+// rewrites those files itself (Cursor, Kiro, Claude Code, Antigravity), so nothing in the rule says
+// who added it. A rule that was there before join is the user's, and uninstall must leave it
+// (#1199). So join records each rule it adds, in a small file beside the permissions file, and
+// uninstall takes out only a rule that is recorded. A rule an older mur added has no record, and
+// stays too, with a note that says how to remove it by hand.
 
 // ruleRecordName is the record's file name, in the folder of the permissions file it concerns.
 const ruleRecordName = ".murmur-join.json"

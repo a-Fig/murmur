@@ -340,6 +340,26 @@ func TestClaudeUninstallRemovesTheRuleJoinAdded(t *testing.T) {
 	}
 }
 
+// A settings.json deleted after join leaves no rule to take out, so its record goes too, as
+// takeOutAddedRuleMode does for the other agents.
+func TestClaudeUninstallDropsTheRecordOfADeletedSettingsFile(t *testing.T) {
+	sb := newSandbox(t, false)
+	h := agentHome{Dir: filepath.Join(sb.root, "claude"), JSON: filepath.Join(sb.root, "claude.json"), Label: "Claude Code"}
+	settings := filepath.Join(h.Dir, "settings.json")
+	if allowed, err := allowClaudeTools(h.Dir); err != nil || !allowed {
+		t.Fatalf("join: allowed=%v err=%v", allowed, err)
+	}
+	if err := os.Remove(settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sb.unregisterClaudeAt(context.Background(), []agentHome{h}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, err := os.Stat(ruleRecordPath(settings)); !os.IsNotExist(err) {
+		t.Errorf("the record of the rule is still there (%v)", err)
+	}
+}
+
 func TestAntigravityUninstallKeepsAnAllowRuleJoinDidntAdd(t *testing.T) {
 	sb := newSandbox(t, false)
 	h := agentHome{Dir: filepath.Join(sb.root, "gemini"), Label: "Antigravity", T3Own: true}
