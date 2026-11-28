@@ -129,15 +129,17 @@ func TestARefusedRouteIsLoggedOnce(t *testing.T) {
 
 // A Pi server started after a move, on a daemon too old to follow it, registers as a new session
 // with the link up (#1214). It logs that once, and a reconnect doesn't log it again. On a daemon
-// that follows moves it logs nothing.
+// that follows moves it logs nothing, and nor does a /resume of the file already open, which Pi
+// also reports as a previous file.
 func TestAPiMoveAnOlderDaemonCantFollowIsLoggedOnce(t *testing.T) {
 	for _, c := range []struct {
 		protocol int
+		prev     string
 		lines    int
-	}{{proto.FromProtocol - 1, 1}, {proto.FromProtocol, 0}} {
-		t.Run(fmt.Sprint("protocol ", c.protocol), func(t *testing.T) {
+	}{{proto.FromProtocol - 1, "/s/a.jsonl", 1}, {proto.FromProtocol, "/s/a.jsonl", 0}, {proto.FromProtocol - 1, "/s/b.jsonl", 0}} {
+		t.Run(fmt.Sprint("protocol ", c.protocol, " from ", c.prev), func(t *testing.T) {
 			t.Setenv("MURMUR_PI_SESSION_FILE", "/s/b.jsonl")
-			t.Setenv("MURMUR_PI_PREVIOUS_SESSION_FILE", "/s/a.jsonl")
+			t.Setenv("MURMUR_PI_PREVIOUS_SESSION_FILE", c.prev)
 			f := &fakeDaemon{protocol: c.protocol}
 			gitDir := f.serve(t)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -155,7 +157,7 @@ func TestAPiMoveAnOlderDaemonCantFollowIsLoggedOnce(t *testing.T) {
 			if _, err := l.wait(ctx, 10*time.Second); err != nil {
 				t.Fatal(err)
 			}
-			if h := f.lastHello(); h.From != "/s/a.jsonl" || h.Reconnect {
+			if h := f.lastHello(); h.From != c.prev || h.Reconnect {
 				t.Fatalf("first hello: %+v", h)
 			}
 			f.dropConnections()
