@@ -113,16 +113,18 @@ type winNative struct {
 
 // beforeWindow runs WebView2's GPU work in its browser process rather than a process of its own:
 // about 120 MB less private memory at idle (measured 2026-11-15, docs/design/desktop.md), and a page
-// of text and a few images needs no isolated GPU. Someone who sets the variable themselves is left
-// to it. The runtime reads it as the web view is made; what it returns puts it back, so the
-// daemons and browsers the app starts don't inherit it.
+// of text and a few images needs no isolated GPU. Compositing is done in software with it: with GPU
+// compositing in the browser process, the right-click menu never reaches the screen (#1272), though
+// it opens and takes keys. Someone who sets the variable themselves is left to it. The runtime
+// reads it as the web view is made; what it returns puts it back, so the daemons and browsers the
+// app starts don't inherit it.
 func beforeWindow() (after func()) {
 	setProcessAppID() // the Start menu shortcut's (launcher_windows.go)
 	const env = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 	if _, set := os.LookupEnv(env); set {
 		return func() {}
 	}
-	os.Setenv(env, "--in-process-gpu")
+	os.Setenv(env, "--in-process-gpu --disable-gpu-compositing")
 	return func() { os.Unsetenv(env) }
 }
 
