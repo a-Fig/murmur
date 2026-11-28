@@ -371,8 +371,13 @@ func TestSendWithABodyKeepsALongSubject(t *testing.T) {
 		t.Errorf("a subject that fits: %q, %q, %v", s, b, err)
 	}
 	full := strings.Repeat("b", bus.MaxBody-10)
-	if s, b, err := subjectAndBody(long, full); err != nil || b != full || utf8.RuneCountInString(s) != maxSubject {
-		t.Errorf("a body near the cap: %d runes, %d bytes, %v", utf8.RuneCountInString(s), len(b), err)
+	if s, b, err := subjectAndBody(long, full); err != nil || b != full || s != "Re: PR for a theme setting: my user has me on Figma only right now, so…" {
+		t.Errorf("a body near the cap: %q, %d bytes, %v", s, len(b), err)
+	}
+	// The same fallback for a subject with no room for the rest in the body, cut at a word too.
+	words := strings.Repeat("word ", 40)
+	if s, b, err := subjectAndBody(words, full); err != nil || b != full || s != strings.Repeat("word ", 13)+"word…" {
+		t.Errorf("a many-worded subject, a body near the cap: %q, %d bytes, %v", s, len(b), err)
 	}
 }
 
@@ -412,7 +417,7 @@ func TestSubjectAndBodyKeepsEverything(t *testing.T) {
 		"Done...\nDone and dusted",
 	} {
 		s, b, err := subjectFor(text)
-		if err != nil || utf8.RuneCountInString(s) > 120 {
+		if err != nil || utf8.RuneCountInString(s) > maxSubject {
 			t.Errorf("subjectFor(%q): %q, %v", text, s, err)
 			continue
 		}

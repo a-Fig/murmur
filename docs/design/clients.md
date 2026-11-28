@@ -415,7 +415,8 @@ in between is met the same way. The daemon refuses that
   which now mean what they say here. The send tool's
   subject-only call goes through `subjectFor` too, so a subject a model writes (#1023) would change
   that function alone.
-- **Subject length** (#876, 2026-11-28). A subject Murmur makes is at most 72 characters: a
+- **Subject length** (#876, 2026-11-28). A subject Murmur makes of a message from a person or an agent is at most 72 characters (the
+  daemon's own notices quote subjects and are not cut): a
   person's first line (`web.SplitText`), and an agent's subject or one text (`subjectAndBody`,
   `subjectFor`). That is what fits on one line of a message on the page in the app's default
   window, 1280 px wide: 72 to 82 characters of three ordinary subjects, measured in Chromium.

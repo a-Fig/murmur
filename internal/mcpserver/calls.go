@@ -269,7 +269,7 @@ func text(s string) *mcp.CallToolResult {
 // still, to maxSubject.
 func oneLine(s string) string { return bus.OneLine(s, maxLine) }
 
-func subjectLine(s string) string { return bus.OneLine(s, maxSubject) }
+func subjectLine(s string) string { return web.CutSubject(bus.OneLine(s, math.MaxInt)) }
 
 // statusLine is the status a session sets, cut to the line the daemon keeps (oneLine), after it
 // is checked for secrets as written: only the cleaned line goes to the daemon, and dropping a
@@ -376,7 +376,7 @@ func subjectFor(text string) (subject, body string, err error) {
 // in the app's default window (#876), as web.SplitText cuts a person's. maxLine is the longest
 // line the daemon keeps, of a status or a subject, which older senders' subjects still reach.
 const (
-	maxSubject = 72
+	maxSubject = web.MaxSubject
 	maxLine    = 120
 )
 
