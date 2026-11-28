@@ -390,17 +390,21 @@ func setUp(ctx context.Context, gitDir string) error {
 		return fmt.Errorf("%s didn't answer within %d s, so join couldn't see whether this repo is set up for %s; run `%s join` again",
 			remote, int(setUpWait/time.Second), brand.Product, brand.Command)
 	case err != nil:
-		said := err.Error()
 		var ge *gitx.Error
+		stderr := ""
 		if errors.As(err, &ge) {
-			said = strings.TrimSpace(ge.Stderr)
+			stderr = ge.Stderr
 		}
-		if sshAuthFailed(said) {
-			return fmt.Errorf("ssh didn't let join into %s. If your ssh key has a passphrase, add it to ssh-agent first (`ssh-add`): join can't ask for it. Then run `%s join` again",
-				remote, brand.Command)
+		if sshAuthFailed(stderr) {
+			return fmt.Errorf("ssh didn't let join into %s. If `git fetch %s` works, your ssh key has a passphrase: add it to ssh-agent (`ssh-add`), since join can't ask for it. Then run `%s join` again",
+				remote, remote, brand.Command)
 		}
-		return fmt.Errorf("couldn't reach %s to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again. git said: %s",
-			remote, brand.Product, remote, brand.Command, said)
+		said := firstFatal(stderr)
+		if said == "" {
+			said = err.Error()
+		}
+		return fmt.Errorf("couldn't reach %s (%s) to see whether this repo is set up for %s; check that `git fetch %s` works, then run `%s join` again",
+			remote, said, brand.Product, remote, brand.Command)
 	case len(refs) == 0:
 		// A repo whose section was pushed without the refs (by an older init, or a --no-push one) lands
 		// here too, and join doesn't read the files to tell: the sentence covers it.
@@ -412,9 +416,30 @@ func setUp(ctx context.Context, gitDir string) error {
 	return nil
 }
 
-// sshAuthFailed reports whether git's stderr says ssh couldn't authenticate.
+// sshAuthFailed reports whether git's stderr says ssh couldn't authenticate with a key.
 func sshAuthFailed(stderr string) bool {
-	return strings.Contains(stderr, "Permission denied (publickey") || strings.Contains(stderr, "passphrase")
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.Contains(line, "Permission denied (") && strings.Contains(line, "publickey") {
+			return true
+		}
+	}
+	return strings.Contains(stderr, "passphrase")
+}
+
+// firstFatal is the line of git's stderr that says what went wrong: its first "fatal:" line, or
+// else its first line that isn't a warning, such as ssh's "Permanently added ...". "" if none.
+func firstFatal(stderr string) string {
+	first := ""
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "fatal:"):
+			return line
+		case first == "" && line != "" && !strings.HasPrefix(strings.ToLower(line), "warning:"):
+			first = line
+		}
+	}
+	return first
 }
 
 // How long a join may take in all, and how long one step runs before the join says it is still on

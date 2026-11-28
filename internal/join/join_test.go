@@ -457,8 +457,8 @@ func TestSetUpSshRefusalAdvisesSshAgent(t *testing.T) {
 	p, _ := clone(t)
 	git(t, p.GitDir, "remote", "set-url", "origin", "ssh://git@example.invalid/x.git")
 	err := setUp(context.Background(), p.GitDir)
-	if err == nil || !strings.Contains(err.Error(), "ssh-agent") || strings.Contains(err.Error(), "git fetch") {
-		t.Fatalf("setUp error = %v, want ssh-agent advice and no `git fetch` line", err)
+	if err == nil || !strings.Contains(err.Error(), "ssh-agent") || strings.Contains(err.Error(), "check that") {
+		t.Fatalf("setUp error = %v, want ssh-agent advice and no \"check that `git fetch` works\"", err)
 	}
 }
 
@@ -468,5 +468,33 @@ func TestSetUpOtherFailureShowsGitsError(t *testing.T) {
 	err := setUp(context.Background(), p.GitDir)
 	if err == nil || strings.Contains(err.Error(), "ssh-agent") || !strings.Contains(err.Error(), "does not appear to be a git repository") {
 		t.Fatalf("setUp error = %v, want git's error and no ssh-agent advice", err)
+	}
+}
+
+func TestSSHAuthFailed(t *testing.T) {
+	for stderr, want := range map[string]bool{
+		"git@github.com: Permission denied (publickey).":                      true,
+		"user@host: Permission denied (publickey,password).":                  true,
+		"user@host: Permission denied (password,publickey).":                  true,
+		"Load key \"/home/u/.ssh/id_ed25519\": incorrect passphrase supplied": true,
+		"fatal: './gone.git' does not appear to be a git repository":          false,
+		"user@host: Permission denied (password).":                            false,
+	} {
+		if got := sshAuthFailed(stderr); got != want {
+			t.Errorf("sshAuthFailed(%q) = %v, want %v", stderr, got, want)
+		}
+	}
+}
+
+func TestFirstFatal(t *testing.T) {
+	for stderr, want := range map[string]string{
+		"Warning: Permanently added 'h' (ED25519) to the list of known hosts.\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights": "fatal: Could not read from remote repository.",
+		"fatal: './gone.git' does not appear to be a git repository\nfatal: Could not read from remote repository.":                                                                  "fatal: './gone.git' does not appear to be a git repository",
+		"error: something odd\n": "error: something odd",
+		"":                       "",
+	} {
+		if got := firstFatal(stderr); got != want {
+			t.Errorf("firstFatal(%q) = %q, want %q", stderr, got, want)
+		}
 	}
 }
