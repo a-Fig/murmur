@@ -483,6 +483,7 @@ function themeSection() {
                 tabindex: theme === id ? 0 : -1,
                 "data-tip": THEME_TIPS[id],
                 "data-key": "theme-" + id,
+                "data-theme-preview": id,
                 onclick: () => setTheme(id),
                 onkeydown: (e) => {
                   const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
