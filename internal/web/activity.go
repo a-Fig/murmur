@@ -220,7 +220,7 @@ func (c *ghCache) refresh() {
 	if err == nil { // gh missing, logged out, offline: what was known stays
 		c.events = events
 	}
-	c.fetched, c.inflight = time.Now(), false
+	c.fetched, c.inflight = nextListing(err, ghTTL), false
 }
 
 type activityResponse struct {
