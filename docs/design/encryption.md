@@ -43,7 +43,16 @@ key replaced it.
   records what a ref points at, not who pushed it. An outsider who gets one push through such a
   workflow is granted every team key, history included, and a rotation changes nothing while the
   workflow is there; such a workflow can already push code. Opening a pull request can't do it: that
-  writes only `refs/pull/*`. Checking who pushed, through GitHub's activity API, is open in #397.
+  writes only `refs/pull/*`. Checking who pushed can't help: GitHub's activity API lists branch
+  pushes only, not `refs/murmur/*` (checked 2026-11-28, #397).
+- **Push access can also post as any teammate, with no grant.** Events aren't signed. An encrypted
+  one is bound to its device only as associated data (`eventAAD`), the team public key is readable
+  by anyone, and a reader takes an event from a device's log if its sender names that device. So
+  whatever can push can append a message to another device's log, as its person or its sessions,
+  and every reader shows it as theirs. Presence is sealed and pinned, so it can't be changed this
+  way. In Private mode such a token reads only what is addressed to devices it adds: broadcasts,
+  and groups it tags itself into; not earlier history or others' direct messages. Signing events
+  with the device key would close this; whether to is open in #397 (2026-11-28).
 - **Pinning.** A reader pins a device's signing key in `state.json` the first time it reads a sealed
   presence from it, and from then on takes a presence as that device's only if it is sealed with
   that key (`internal/daemon/keys.go`); one that fails is refused and logged, and nobody is asked
