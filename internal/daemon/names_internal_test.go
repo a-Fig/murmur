@@ -12,6 +12,7 @@ import (
 	"github.com/a-Fig/murmur/internal/brand"
 	"github.com/a-Fig/murmur/internal/bus"
 	"github.com/a-Fig/murmur/internal/proto"
+	"github.com/a-Fig/murmur/internal/tags"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -516,5 +517,44 @@ func TestRegistryEntriesCarryTheCommitFingerprint(t *testing.T) {
 	}
 	if got := authors(); len(got) != 4 || got[3] != bus.AuthorPrint(d.repoAddr, "x <grace@example.com> 0 +0000") || got[2] != ada {
 		t.Fatalf("after the email changed the entries carry %q", got)
+	}
+}
+
+// A T3 thread that turns on do not disturb and mutes someone while its name is pending keeps both
+// by its ID, and may stop before the name lands. The name is then its last (noteStoppedNameLocked),
+// and what it kept goes with it: left under the ID, the next message woke the thread and its mute
+// was gone (#1333).
+func TestAStoppedSessionKeepsItsTagsWhenItsNameLandsLate(t *testing.T) {
+	t.Parallel()
+	d, _ := namedDaemon(t)
+	const id = "dddddd"
+	key := nameKey("thread-dan", "", "", id)
+	d.mu.Lock()
+	d.st.Tags[tagKeyOf("", id)] = &tags.State{Self: []string{tags.DoNotDisturb}}
+	if d.st.Mutes == nil {
+		d.st.Mutes = map[string]map[string]time.Time{}
+	}
+	d.st.Mutes[tagKeyOf("", id)] = map[string]time.Time{"loud-crow": time.Now()}
+	d.st.Stopped[id] = time.Now()
+	d.stoppedKeys = map[string]string{id: key} // its grace ran out while the push was out
+	d.mu.Unlock()
+
+	if err := d.pushNames(context.Background(), nameWork{wants: []wanted{{id: id, key: key, agent: "t3"}}}); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	name := d.st.SessionNames[id]
+	if name == "" || d.st.NameKeys[key] != name {
+		t.Fatalf("the stopped session's last name is %q, and its key's %q", name, d.st.NameKeys[key])
+	}
+	if !d.ownDNDLocked(id) {
+		t.Errorf("the stopped session %s is off do not disturb; kept: %+v", name, d.st.Tags)
+	}
+	if _, ok := d.st.Mutes[name]["loud-crow"]; !ok {
+		t.Errorf("the stopped session %s dropped its mute; kept: %+v", name, d.st.Mutes)
+	}
+	if d.st.Tags[tagKeyOf("", id)] != nil || d.st.Mutes[tagKeyOf("", id)] != nil {
+		t.Errorf("what it kept by its ID is still there")
 	}
 }
