@@ -14,7 +14,7 @@ import {
   allConversations, sideSessionBody,
 } from "./sessions.js";
 import { tagsOf, shownSessions, tagsGroup, tagButton } from "./tags.js";
-import { avatar, deviceColor, modeNote } from "./messages.js";
+import { avatar, deviceColor, modeNote, copyText } from "./messages.js";
 import { startChat, askForName } from "./picker.js";
 import { settingsRow } from "./settings.js";
 import { updatesRow, daemonNote } from "./updates.js";
@@ -374,7 +374,9 @@ function updateInfo() {
   if (!v.latest) return null;
   if (v.installing || ui.installing) return { kind: "busy", text: "Installing " + v.latest, title: NAME + " is installing it, as asked." };
   if (v.auto) return { kind: "auto", text: "Updating to " + v.latest, title: NAME + " installs it on its own." };
-  return { kind: "manual", text: v.latest + " is out", title: (v.off ? "Updates are off here." : "The last update failed here.") + " Settings can install it.", act: () => go("settings") };
+  // One this daemon can't install (#1217) is installed by hand, with the command Settings gives.
+  const how = v.install ? " Settings has the command that installs it." : " Settings can install it.";
+  return { kind: "manual", text: v.latest + " is out", title: (v.off ? "Updates are off here." : "The last update failed here.") + how, act: () => go("settings") };
 }
 
 function updateIcon(info) {
@@ -451,6 +453,7 @@ function versionSection() {
   if (!v?.running) return null;
   let detail = null;
   let button = null;
+  let install = null;
   if (ui.restarting) {
     detail = restartStuck() ? "Run " + COMMAND + " ui again to reopen the page." : "Restarting onto " + (v.latest || "the update") + ".";
   } else if (v.ready) {
@@ -465,6 +468,11 @@ function versionSection() {
     detail = [v.off ? "" : "The last update failed here.", v.installError && "Couldn't install it: " + v.installError + "."].filter(Boolean).join(" ") || null;
     if (v.canInstall) {
       button = h("button", { class: "btn btn-outline btn-xs", title: "Install " + v.latest + " now. Updates stay as they are", "data-key": "version-install", onclick: installNow }, "Update now");
+    } else if (v.install) {
+      // This daemon's updater can't install it (#1217): it stopped, as on a folder it can't write
+      // to, or MURMUR_NO_UPDATE is set. The installer can.
+      detail = [detail, "To install it, run:"].filter(Boolean).join(" ");
+      install = installLine(v.install);
     }
   }
   const status = h(
@@ -473,9 +481,19 @@ function versionSection() {
     h("span", { class: "version-dot " + (v.latest ? "warn" : "ok"), "aria-hidden": "true" }),
     v.latest ? v.latest + " available" : "Up to date",
   );
-  const note = [daemonNote(), detail && h("span", { class: "version-detail" }, detail)];
+  const note = [daemonNote(), detail && h("span", { class: "version-detail" }, detail), install];
   const row = settingsRow("version", COMMAND + " " + v.running, note.some(Boolean) ? note : null, [status, button]);
   return h("section", { class: "section" }, h("div", { class: "section-head" }, h("h2", { class: "section-title" }, "About")), h("div", { class: "group" }, row, updatesRow()));
+}
+
+// A command to copy, in a box of its own under the version.
+function installLine(command) {
+  return h(
+    "span",
+    { class: "install-line" },
+    h("code", null, command),
+    h("button", { class: "btn btn-ghost btn-icon-xs", title: "Copy", "aria-label": "Copy the command", "data-key": "copy-install", onclick: () => copyText(command) }, icon("copy")),
+  );
 }
 
 // The repo picker (#348): this machine's clones that joined, each served by its own daemon. Picking

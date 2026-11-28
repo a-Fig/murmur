@@ -125,8 +125,14 @@ func (w *releaseWatch) page() web.Version {
 	if w.installFor == v.Latest {
 		v.InstallError = w.installErr // an error about another release would mislead
 	}
-	// Updates won't install Latest (off here, or the last attempt failed), so a person can.
-	v.CanInstall = v.Latest != "" && !w.last.Installed && !v.Auto && !w.installing && !w.envOff && !w.stopped.Load()
+	// Updates won't install Latest (off here, or the last attempt failed), so a person can, from
+	// the page if this daemon's updater can do it, else by hand (#1217): it has stopped, as on a
+	// binary it can't replace, or MURMUR_NO_UPDATE refuses it.
+	manual := v.Latest != "" && !w.last.Installed && !v.Auto && !w.installing
+	v.CanInstall = manual && !w.envOff && !w.stopped.Load()
+	if manual && !v.CanInstall {
+		v.Install = installLine(v.Latest)
+	}
 	return v
 }
 

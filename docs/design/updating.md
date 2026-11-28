@@ -84,6 +84,9 @@ information in the request; a network failure waits quietly for the next hour. A
     after a change), while an update waits for its restart, once this daemon's updater has
     stopped (a binary it can't replace), since nothing would act on it, or while
     `MURMUR_NO_UPDATE` is set on the daemon, which may mean something else manages the binary.
+    In those last two About gives the installer's one line, with a copy button, instead
+    (`Version.Install`, #1217, 2026-11-28), and the sidebar's "X is out" says Settings has the
+    command. Without it a person learned the last update failed and found nothing to press.
   - *With updates off* (#1099, 2026-11-22), the updater still checks on the same schedule: at
     start, hourly, and when the page asks, at least 10 s apart. An Off check reads which release a
     check with updates on would install, records it (`latest.json`) and reports it, and stops

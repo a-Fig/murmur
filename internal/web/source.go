@@ -133,6 +133,9 @@ type Version struct {
 	// updates won't, since they are off here or the last attempt failed, and this daemon's updater
 	// is running to do it.
 	CanInstall bool `json:"canInstall,omitempty"`
+	// Install is the command that installs Latest by hand, for this OS (#1217), when updates won't
+	// and the page can't either: this daemon's updater has stopped or MURMUR_NO_UPDATE is set.
+	Install string `json:"install,omitempty"`
 	// Installing says a person asked for Latest to be installed and the daemon is at it.
 	Installing bool `json:"installing,omitempty"`
 	// InstallError is why the install a person last asked for failed, in words to show.
