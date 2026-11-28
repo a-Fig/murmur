@@ -915,9 +915,66 @@
   #security .sec-links a { color: var(--butter); text-decoration-color: color-mix(in srgb, var(--butter) 45%, transparent); }
   #security .sec-links a:hover { text-decoration-color: var(--butter); }
   @media (max-width: 759px) { #how .route h2.eyebrow { margin: 0 8px 4px; } }
+  /* ---------- The bar (#996) ---------- */
+  /* A way around the page, with Set up always one click away. Over the hero it is clear, beside the
+     hero's own mark; once the hero has scrolled away it is a frosted cream bar with the mark of its own.
+     On a phone it is the mark and Set up only, and only past the hero, which has its own button. */
+  html { scroll-padding-top: 72px; }
+  .topnav { position: fixed; top: 0; left: 0; right: 0; z-index: 50; display: flex; align-items: center; gap: 8px;
+    height: 56px; padding: 0 20px 0 24px; color: var(--cream);
+    transition: background-color .25s ease, color .25s ease, box-shadow .25s ease, transform .25s ease; }
+  .topnav a { color: inherit; text-decoration: none; }
+  .topnav .tn-logo { display: flex; opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility .2s; }
+  .topnav .tn-logo svg { display: block; fill: currentColor; }
+  .topnav .tn-links { display: flex; gap: 2px; margin: 0 0 0 auto; padding: 0; list-style: none; }
+  .topnav:not(.on) { text-shadow: 0 1px 12px rgba(14, 27, 69, .45); }
+  .topnav .tn-links a { display: block; padding: 7px 12px; border-radius: 999px; font-size: 14px; font-weight: 500; letter-spacing: -.005em;
+    opacity: .86; transition: opacity .15s ease, background-color .15s ease; }
+  .topnav .tn-links a:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+  .topnav .tn-links a[aria-current="true"] { opacity: 1; background: color-mix(in srgb, currentColor 9%, transparent); }
+  .topnav .tn-cta { margin-left: 10px; padding: 7px 16px; border-radius: 999px; font-size: 14px; font-weight: 600;
+    border: 1px solid color-mix(in srgb, var(--cream) 55%, transparent); transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+  .topnav .tn-cta:hover { background: color-mix(in srgb, var(--cream) 14%, transparent); border-color: var(--cream); }
+  .topnav a:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  .topnav.on { color: var(--ink); background: color-mix(in srgb, var(--cream) 82%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
+    box-shadow: 0 1px 0 var(--rule), 0 8px 24px -18px rgba(14, 27, 69, .35); }
+  .topnav.on .tn-logo { opacity: 1; visibility: visible; }
+  .topnav.on .tn-logo:hover { color: var(--blue); }
+  .topnav.on .tn-cta { color: var(--cream); background: var(--blue); border-color: var(--blue); }
+  .topnav.on .tn-cta:hover { background: var(--blue-deep); border-color: var(--blue-deep); }
+  /* Over the hero, the hero's own mark is in the corner, and the bar's waits for its place. */
+  @media (min-width: 1000px) { .topnav:not(.on) { padding-left: 92px; } .topnav:not(.on) .tn-logo { display: none; } }
+  @media (max-width: 999px) { .topnav:not(.on) .tn-logo { display: none; } }
+  @media (max-width: 759px) {
+    .topnav .tn-links { display: none; }
+    .topnav .tn-cta { margin-left: auto; }
+    .topnav:not(.on) { visibility: hidden; transform: translateY(-100%); }
+  }
+  @media (prefers-reduced-motion: reduce) { .topnav, .topnav * { transition: none !important; } }
+
+  /* ---------- Built with itself (#996) ---------- */
+  /* The one number that says Murmur is used: its own history, which anyone can check. */
+  .proof { display: flex; align-items: center; justify-content: center; gap: 18px; max-width: 760px; margin: 40px auto 0; text-align: left; }
+  .proof b { flex: none; font-size: clamp(44px, 5vw, 64px); font-weight: 700; letter-spacing: -.035em; line-height: 1; color: var(--blue); font-variant-numeric: tabular-nums; }
+  .proof p { margin: 0; font-size: 17px; line-height: 1.5; text-wrap: pretty; color: var(--ink-soft); }
+  .proof a { color: var(--ink); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); text-underline-offset: 4px; }
+  .proof a:hover { text-decoration-color: var(--ink); }
+  @media (max-width: 759px) { .proof { flex-direction: column; align-items: flex-start; gap: 6px; margin: 32px 8px 0; } }
 </style>
 </head>
 <body>
+<nav class="topnav" aria-label="Page">
+  <a class="tn-logo" href="/" aria-label="Murmur"><svg viewBox="0 0 170.9 105.44" width="36" height="22.2" aria-hidden="true"><mask id="tn-logo-eyes" maskUnits="userSpaceOnUse" x="-40" y="-40" width="250.9" height="185.44"><rect x="-40" y="-40" width="250.9" height="185.44" fill="#fff"/><g class="st-eye"><path fill="#000" d="M47.56 30.83C44.59 30.26 41.51 33.35 40.67 37.72C39.84 42.09 41.56 46.09 44.53 46.66C47.49 47.23 50.58 44.14 51.41 39.77C52.25 35.4 50.52 31.39 47.56 30.83ZM64.3 30.83C61.33 30.26 58.25 33.34 57.41 37.72C56.58 42.09 58.3 46.09 61.27 46.66C64.24 47.23 67.32 44.14 68.15 39.77C68.99 35.4 67.26 31.39 64.3 30.83Z"/></g><g class="st-eye"><path fill="#000" d="M129.5 49.07C127.85 48.68 124.24 50.55 123.44 53.89C122.36 58.41 122.53 61.12 126.16 61.42C129.06 61.42 129.21 60.05 129.6 57.12C129.72 56.17 130.02 55.26 130.36 54.38C131.42 51.68 131.59 49.57 129.5 49.07ZM139.83 49.07C138.18 48.68 134.57 50.55 133.77 53.89C132.7 58.41 132.86 61.12 136.5 61.42C139.4 61.42 139.54 60.05 139.93 57.12C140.06 56.17 140.35 55.26 140.7 54.38C141.76 51.68 141.92 49.57 139.83 49.07Z"/></g></mask><path mask="url(#tn-logo-eyes)" d="M46.6 0.04C77.91 -1.51 85.04 42.2 100.85 42.2C110.15 42.2 121.93 24.53 136.19 24.53C177.73 24.53 174.01 105.44 165.33 105.44H100.85C100.81 105.44 96.19 105.42 94.96 101.41C93.72 97.38 93.72 93.97 90.93 93.97C88.14 93.97 87.83 97.38 86.59 101.41C85.35 105.44 81.01 105.44 81.01 105.44C80.91 105.44 17.76 105.44 4.13 105.44C-9.51 105.44 12.18 1.74 46.6 0.04Z"/></svg></a>
+  <ul class="tn-links">
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#uses">Tools</a></li>
+    <li><a href="#see">For humans</a></li>
+    <li><a href="#security">Security</a></li>
+    <li><a href="#faq">Questions</a></li>
+  </ul>
+  <a class="tn-cta" href="#setup">Set up</a>
+</nav>
 <main class="st st-trim">
 <style>
   /* ---------- Light behind the glass ---------- */
@@ -1204,6 +1261,7 @@ void main() {
       <source media="(max-aspect-ratio: 1/1), (max-width: 999px)" src="/how-tall.mp4" type="video/mp4">
       <source src="/how-wide.mp4" type="video/mp4">
     </video><button class="film-btn" id="filmBtn" type="button" hidden>Play</button></div>
+    <div class="proof"><b>525</b><p>pull requests merged in Murmur's first month, most written by coding agents that coordinate over it. <a href="https://github.com/a-Fig/murmur/pulls?q=is%3Apr+is%3Amerged">See them on GitHub</a></p></div>
     <p class="more"><a href="/daemon">Want to learn how the Murmur daemon <span class="nw">works?<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></p>
   </div></div>
 </section>
@@ -1698,6 +1756,26 @@ void main() {
       setTimeout(() => { b.textContent = 'Copy'; }, 1400);
     });
   });
+})();
+</script>
+<script>
+(() => {
+  // The bar (#996): frosted once the hero has scrolled away, and the link of the section in view marked.
+  const nav = document.querySelector('.topnav');
+  const hero = document.querySelector('main.st');
+  if (!nav || !hero || !('IntersectionObserver' in window)) return;
+  new IntersectionObserver(([e]) => nav.classList.toggle('on', !e.isIntersecting), { rootMargin: '-56px 0px 0px 0px' }).observe(hero);
+  const links = new Map([...nav.querySelectorAll('.tn-links a')].map(a => [a.hash.slice(1), a]));
+  const shown = new Set();
+  const mark = () => {
+    const id = [...links.keys()].find(k => shown.has(k));
+    for (const [k, a] of links) k === id ? a.setAttribute('aria-current', 'true') : a.removeAttribute('aria-current');
+  };
+  const io = new IntersectionObserver(es => {
+    for (const e of es) e.isIntersecting ? shown.add(e.target.id) : shown.delete(e.target.id);
+    mark();
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  for (const id of links.keys()) { const el = document.getElementById(id); if (el) io.observe(el); }
 })();
 </script>
 </body>
