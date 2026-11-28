@@ -31,7 +31,7 @@ func TestAPageMessageIsReadOnce(t *testing.T) {
 		"CRLF":                  long + "\r\nsecond line",
 		"multi-byte at the cut": strings.Repeat("é", 60) + strings.Repeat("日本", 40),
 		"emoji at the cut":      strings.Repeat("🚀", 130),
-		"no space to cut at":    strings.Repeat("x", 200),
+		"no space to cut at":    strings.Repeat("x", 100) + strings.Repeat("y", 100), // not one run, or the stem fits in it twice
 	}
 	for name, text := range cases {
 		m := fromPage(text)
@@ -97,7 +97,7 @@ func TestAThreeDotCutIsLeftOut(t *testing.T) {
 // The hook gives a message whole as its turn reads, so it reads the first line once too; its
 // notices print the subject alone, never the body, so there is nothing there to repeat.
 func TestTheHookReadsAPageMessageOnce(t *testing.T) {
-	m := fromPage(strings.Repeat("word ", 40) + "end")
+	m := fromPage(strings.Repeat("word ", 20) + "end") // longer than a subject, and too short to hold its stem twice
 	stem := strings.TrimSuffix(m.Subject, "…")
 	if got := Hook([]proto.MessageView{m}, nil, 0); strings.Count(got, stem) != 1 {
 		t.Errorf("the hook's whole message:\n%s", got)

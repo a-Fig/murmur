@@ -415,5 +415,16 @@ in between is met the same way. The daemon refuses that
   which now mean what they say here. The send tool's
   subject-only call goes through `subjectFor` too, so a subject a model writes (#1023) would change
   that function alone.
+- **Subject length** (#876, 2026-11-28). A subject Murmur makes is at most 72 characters: a
+  person's first line (`web.SplitText`), and an agent's subject or one text (`subjectAndBody`,
+  `subjectFor`). That is what fits on one line of a message on the page in the app's default
+  window, 1280 px wide: 72 to 82 characters of three ordinary subjects, measured in Chromium.
+  Wider windows fit 96 to 103, since the message column stops at 46rem; 1024 px and a phone fit
+  about 40. The conversation list's preview shows about 27 characters at any width, so no subject
+  fits there. Before, subjects went to 120 characters, a heading that wrapped to two lines. The
+  number is Tyler's call. Nothing is lost by the cut: what doesn't fit goes at the top of the
+  body. The send tool's description, the murmur skill and `docs/agents/use.md` give the number,
+  so agents write to it. The bus and the daemon still take 120 (`bus.OneLine` in `Clean`,
+  `serve.go`), which senders from before this still write, so their subjects arrive whole.
 - **Not covered.** Files and `tell_me` in `mur send`; a harness outside T3, which has no thread ID
   to name its session by.

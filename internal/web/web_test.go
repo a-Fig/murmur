@@ -736,9 +736,10 @@ func TestSplitText(t *testing.T) {
 		{"  trimmed  \n", "trimmed", ""},
 		{"first\nsecond\n\nthird", "first", "second\n\nthird"},
 		{"first\r\nsecond", "first", "second"},
-		{long, strings.TrimSpace(long[:115]) + "…", strings.TrimSpace(long)},
-		{long + "\nmore", strings.TrimSpace(long[:115]) + "…", long + "\nmore"},
-		{strings.Repeat("é", 200), strings.Repeat("é", 119) + "…", strings.Repeat("é", 200)},
+		// Cut where the last word before maxSubject ends: "word " repeats, so 3 runes back.
+		{long, strings.TrimSpace(long[:maxSubject-3]) + "…", strings.TrimSpace(long)},
+		{long + "\nmore", strings.TrimSpace(long[:maxSubject-3]) + "…", long + "\nmore"},
+		{strings.Repeat("é", 200), strings.Repeat("é", maxSubject-1) + "…", strings.Repeat("é", 200)},
 	} {
 		subject, body := SplitText(c.in)
 		if subject != c.subject || body != c.body {

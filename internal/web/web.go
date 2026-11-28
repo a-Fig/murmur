@@ -43,9 +43,10 @@ const (
 	// daemon may have to fetch it first.
 	maxUpload   = 21 << 20
 	fileTimeout = 2 * time.Minute
-	// maxSubject is how much of a person's first line the subject takes (bus.OneLine's limit for
-	// a message's).
-	maxSubject   = 120
+	// maxSubject is how much of a person's first line the subject takes: what fits on one line of
+	// a message in the app's default window (#876). The bus takes up to 120, which older senders
+	// still write.
+	maxSubject   = 72
 	maxNameLen   = 64
 	maxOverrides = 1000
 	maxCursor    = 256

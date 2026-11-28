@@ -257,7 +257,7 @@ func TestSendKeepsALongTextWhole(t *testing.T) {
 	if got.Body != strings.TrimSpace(long) {
 		t.Errorf("body %q, want the whole text", got.Body)
 	}
-	if n := utf8.RuneCountInString(got.Subject); n > 120 || !strings.HasPrefix(got.Subject, "word word") || !strings.HasSuffix(got.Subject, "…") {
+	if n := utf8.RuneCountInString(got.Subject); n > maxSubject || !strings.HasPrefix(got.Subject, "word word") || !strings.HasSuffix(got.Subject, "…") {
 		t.Errorf("subject %q (%d runes)", got.Subject, n)
 	}
 	got, err = commandRequest("send", []string{"a", "--subject", long}, strings.NewReader(""), io.Discard)
@@ -282,7 +282,7 @@ func TestSubjectAndBodyEdges(t *testing.T) {
 			t.Errorf("subjectAndBody(%q, %q) = %q, %q; want %q, %q", c.subject, c.body, s, b, c.wantSubject, c.wantBody)
 		}
 	}
-	if s, b, _ := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > 120 {
+	if s, b, _ := subjectAndBody(long, "\u200b"); b != strings.TrimSpace(long) || utf8.RuneCountInString(s) > maxSubject {
 		t.Errorf("invisible body: %q, %q", s, b)
 	}
 	// A body past the daemon's cap whose text starts late is still a body: judged whole, not cut.

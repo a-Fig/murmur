@@ -263,10 +263,13 @@ func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
 
-// oneLine cuts a subject or a status to what the daemon keeps of it (bus.OneLine at 120). The
-// daemon reads a request's line only up to a cap, before its token is checked, so a subject far
-// longer than it keeps could otherwise make a send of a full body too long to be read at all.
-func oneLine(s string) string { return bus.OneLine(s, maxSubject) }
+// oneLine cuts a status to what the daemon keeps of it (bus.OneLine at 120). The daemon reads a
+// request's line only up to a cap, before its token is checked, so a line far longer than it keeps
+// could otherwise make a request too long to be read at all. subjectLine cuts a subject shorter
+// still, to maxSubject.
+func oneLine(s string) string { return bus.OneLine(s, maxLine) }
+
+func subjectLine(s string) string { return bus.OneLine(s, maxSubject) }
 
 // statusLine is the status a session sets, cut to the line the daemon keeps (oneLine), after it
 // is checked for secrets as written: only the cleaned line goes to the daemon, and dropping a
@@ -280,7 +283,7 @@ func statusLine(doing string) (string, error) {
 }
 
 // subjectAndBody is what a send carries of the subject and body an agent gave. A subject is cut
-// to one line of 120 characters, so a send with no body and a longer subject, or one of several
+// to one line of maxSubject characters, so a send with no body and a longer subject, or one of several
 // lines, would lose the rest without a word (#1021). It is taken as the whole text instead, and
 // subjectFor makes it a subject and body. A send with a body would lose the rest of such a subject
 // the same way (#1049), so what subjectFor leaves of the subject goes at the top of the body, where
@@ -301,9 +304,9 @@ func subjectAndBody(subject, body string) (string, string, error) {
 		if err := scrub.Check(subject); err != nil {
 			return "", "", err
 		}
-		return oneLine(subject), body, nil
+		return subjectLine(subject), body, nil
 	}
-	if oneLine(subject) == strings.TrimSpace(subject) {
+	if subjectLine(subject) == strings.TrimSpace(subject) {
 		return cut()
 	}
 	if blank {
@@ -369,8 +372,13 @@ func subjectFor(text string) (subject, body string, err error) {
 	return subject, body, nil
 }
 
-// maxSubject is the longest a subject is: oneLine's cut.
-const maxSubject = 120
+// maxSubject is the longest subject a send makes: what fits on one line of a message on the page
+// in the app's default window (#876), as web.SplitText cuts a person's. maxLine is the longest
+// line the daemon keeps, of a status or a subject, which older senders' subjects still reach.
+const (
+	maxSubject = 72
+	maxLine    = 120
+)
 
 // cutLine cuts s at its first line break, of any kind bus.Text reads as one.
 func cutLine(s string) (line, rest string) {

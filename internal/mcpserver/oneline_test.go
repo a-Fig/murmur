@@ -10,9 +10,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// A subject or a status goes to the daemon cut to what it keeps of either, 120 characters. The
-// daemon reads a request's line only up to a cap, so a subject far longer than that beside a full
-// body would otherwise make the send too long to be read at all (Sol review of #313, 2026-11-09).
+// A subject or a status goes to the daemon cut: a subject to maxSubject (#876), a status to what
+// the daemon keeps of it, 120 characters. The daemon reads a request's line only up to a cap, so
+// a subject far longer than that beside a full body would otherwise make the send too long to be
+// read at all (Sol review of #313, 2026-11-09).
 func TestSubjectAndStatusAreCutBeforeTheyAreSent(t *testing.T) {
 	f := &fakeDaemon{}
 	p := repo(t, true, f)
@@ -36,8 +37,8 @@ func TestSubjectAndStatusAreCutBeforeTheyAreSent(t *testing.T) {
 	if len(f.requests) != 2 {
 		t.Fatalf("the daemon saw %d requests, want 2", len(f.requests))
 	}
-	if n := utf8.RuneCountInString(f.requests[0].Subject); n != 120 {
-		t.Errorf("the subject went as %d characters, want 120", n)
+	if n := utf8.RuneCountInString(f.requests[0].Subject); n != maxSubject {
+		t.Errorf("the subject went as %d characters, want %d", n, maxSubject)
 	}
 	if n := utf8.RuneCountInString(f.requests[1].Doing); n != 120 {
 		t.Errorf("the status went as %d characters, want 120", n)
