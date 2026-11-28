@@ -339,8 +339,8 @@ func files(m proto.MessageView) string {
 		b.WriteString("Files, saved on this machine:\n")
 	}
 	for _, f := range m.Files {
-		if f.Path == "" && f.Fetching {
-			fmt.Fprintf(&b, "- %s (%s): on its way. Read your inbox again in a minute for where it is saved.\n", f.Name, proto.Size(f.Size))
+		if f.Fetching {
+			fmt.Fprintf(&b, "- %s (%s): on its way, there once its fetch ends.\n", f.Path, proto.Size(f.Size))
 			continue
 		}
 		if f.Path == "" {

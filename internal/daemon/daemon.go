@@ -1541,6 +1541,9 @@ func open(ctx context.Context, opt Options, dir string) (*Daemon, error) {
 	d.repoFiles = &fileSwitch{}
 	d.refreshRepoFilesLocked()
 	d.loadSettings()
+	// With the switches read: refreshRepoFilesLocked, before them, refused every message. A daemon
+	// from before #1316 left one that came while Receive files was off without its files for good.
+	d.fetchKeptLocked()
 	d.settingsMove.Store(len(d.st.SettingsMoves) > 0) // a move the last daemon didn't get to
 	d.loadPersonLog()
 	wall := now.Round(0)

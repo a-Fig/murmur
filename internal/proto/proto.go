@@ -631,13 +631,14 @@ type MessageView struct {
 }
 
 // FileView is one file a message carries, as the session it is for is told of it: Path is where
-// it is saved on this machine, "" if it isn't (it couldn't be fetched, or was kept its time).
+// it is saved on this machine, or will be while Fetching, "" if it isn't (it couldn't be fetched,
+// or was kept its time).
 type FileView struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 	Path string `json:"path,omitempty"`
-	// Fetching says a file with no Path is on its way: Receive files was turned on after the
-	// message came without it (#1316).
+	// Fetching says the file is on its way to Path: Receive files was turned on after the message
+	// came without it (#1316).
 	Fetching bool `json:"fetching,omitempty"`
 }
 

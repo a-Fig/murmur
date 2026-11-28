@@ -1949,8 +1949,10 @@ func (d *Daemon) fileOf(ctx context.Context, id string, index int) (string, []by
 }
 
 // fileViewsLocked is the files of message e as a session here is told of them: each with the path
-// it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld),
-// and then whether it is on its way (fetchKeptLocked). Caller holds mu.
+// it is saved at, or none if it isn't here (it couldn't be fetched, or is past FileKeep or FilesHeld).
+// A file on its way (fetchKeptLocked) has the path it will be saved at: the session may never read
+// this message again, as its inbox lets go of what it returns, and saveFile renames the file into
+// place whole. Caller holds mu.
 func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 	if len(e.Files) == 0 || d.refuses(&d.agentRecv, e) {
 		return nil
@@ -1959,11 +1961,13 @@ func (d *Daemon) fileViewsLocked(e bus.Event) []proto.FileView {
 	for _, f := range e.Files {
 		v := proto.FileView{Name: f.Name, Size: f.Size}
 		if f.Readable() && e.FilesAt != "" {
-			if path := filepath.Join(d.filesDir(e), f.Name); fileExists(path) {
+			switch path := filepath.Join(d.filesDir(e), f.Name); {
+			case fileExists(path):
 				v.Path = path
+			case d.st.FilesWait[e.ID] != nil:
+				v.Path, v.Fetching = path, true
 			}
 		}
-		v.Fetching = v.Path == "" && f.Readable() && d.st.FilesWait[e.ID] != nil
 		views = append(views, v)
 	}
 	return views

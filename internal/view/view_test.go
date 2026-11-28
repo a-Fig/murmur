@@ -460,12 +460,12 @@ func TestLookupSaysWhetherASessionSendsAndTakesFiles(t *testing.T) {
 // A file on its way (#1316) says so, apart from one that couldn't be fetched.
 func TestAFileOnItsWayIsNotOneThatCouldntBeFetched(t *testing.T) {
 	m := proto.MessageView{From: "dev/aaaaaa", FromName: "quiet-otter", Subject: "the log", Files: []proto.FileView{
-		{Name: "build.log", Size: 7, Fetching: true},
+		{Name: "build.log", Size: 7, Path: "/g/murmur/files/x/build.log", Fetching: true},
 		{Name: "old.log", Size: 9},
 		{Name: "here.log", Size: 5, Path: "/g/murmur/files/x/here.log"},
 	}}
 	want := "Files, saved on this machine:\n" +
-		"- build.log (7 bytes): on its way. Read your inbox again in a minute for where it is saved.\n" +
+		"- /g/murmur/files/x/build.log (7 bytes): on its way, there once its fetch ends.\n" +
 		"- old.log (9 bytes): not here. It couldn't be fetched, or was sent more than a week ago.\n" +
 		"- /g/murmur/files/x/here.log (5 bytes)\n"
 	if got := files(m); got != want {

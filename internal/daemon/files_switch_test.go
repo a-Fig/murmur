@@ -261,3 +261,33 @@ func TestReceiveFilesTurnedOnFetchesWhatCameWithoutThem(t *testing.T) {
 		t.Errorf("the file: %q, %v", got, err)
 	}
 }
+
+// A daemon that starts with Receive files on, and a message in an inbox that came while it was off,
+// fetches its files, as a daemon from before #1316 left such a message for good. Its switches are
+// read after the first look at the inboxes, which refused everything.
+func TestReceiveFilesOnAtStartFetchesWhatCameWithoutThem(t *testing.T) {
+	t.Parallel()
+	remote := newRemote(t)
+	a := newDevice(t, remote)
+	b := newDeviceWith(t, remote, func(d *device) { d.filesOff = true })
+	a.session("aaaaaa", "")
+	bob, _ := b.session("bbbbbb", "")
+	eventually(t, "a to see bob", func() bool { return a.seesSession(bob) })
+	if r := a.do(proto.Request{Op: proto.OpSend, Session: "aaaaaa", To: bob, Subject: "the log",
+		Files: []string{writeFile(t, "build.log", []byte("a line\n"))}}); r.Error != "" {
+		t.Fatalf("send: %+v", r)
+	}
+	eventually(t, "bob to be told of the message", func() bool {
+		return len(b.do(proto.Request{Op: proto.OpNotices, Session: "bbbbbb"}).Messages) > 0
+	})
+	b.stop()
+	settings := filepath.Join(b.gitDir, brand.StateDir, "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"sendFiles":true,"receiveFiles":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.start()
+	eventually(t, "the file to be fetched", func() bool {
+		got, _ := filepath.Glob(filepath.Join(b.gitDir, brand.StateDir, "files", "*", "build.log"))
+		return len(got) == 1
+	})
+}
