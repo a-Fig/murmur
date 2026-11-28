@@ -2292,8 +2292,11 @@ func (d *Daemon) pruneInboxes() {
 	}
 	// What waits for a name in no session's inbox goes as a stopped session's inbox does.
 	for name, box := range d.st.NameInbox {
+		n := len(box)
 		kept := slices.DeleteFunc(box, func(m *inMsg) bool { return time.Since(m.Arrived) > d.opt.StoppedInbox })
-		if len(kept) != len(box) {
+		if len(kept) != n {
+			d.log.Printf("%d message(s) kept for %s went unread for %s, with no session taking the name; dropped",
+				n-len(kept), name, d.opt.StoppedInbox)
 			if len(kept) == 0 {
 				delete(d.st.NameInbox, name)
 			} else {

@@ -677,6 +677,11 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 	if kept := d.st.NameInbox[name]; len(kept) > 0 {
 		delete(d.st.NameInbox, name)
 		for _, m := range kept {
+			if d.mutedHereKeyLocked(tagKeyOf(name, s.id), m.Event) {
+				d.log.Printf("message %s is from %s, which %s has muted; dropped", m.Event.ID, m.Event.From, name)
+				d.mutedropLocked(s.id, m.Event)
+				continue
+			}
 			if !seen[m.Event.ID] {
 				seen[m.Event.ID] = true
 				box = append(box, m)
@@ -744,8 +749,14 @@ func (d *Daemon) adoptLocked(s *session, name string) bool {
 // /clear. A message in a kept inbox waits for the next session to take the name it carries
 // (adoptLocked); left with s, the conversation s came back as was handed another's message, and the
 // next session of the one it was for found nothing (#847). A session here that holds that name now
-// takes it at once. A message that names no name, from a daemon before #45 or sent to the address,
-// stays with s. Caller holds mu.
+// takes it at once. These stay with s, as they did before:
+//   - a message that names no name, from a daemon before #45 or sent to the address;
+//   - one being handed over now (Pushing) or that may have been (Attempted), which the handoff's
+//     end looks for in s's inbox (outOfInboxLocked);
+//   - one for a name whose next session may be on another device (nameNextHereLocked), which only
+//     this device's NameInbox would never reach.
+//
+// A session back with its name still pending moves nothing, then or later. Caller holds mu.
 func (d *Daemon) keepForNamesLocked(s *session) {
 	if s.name == "" {
 		return
@@ -754,14 +765,18 @@ func (d *Daemon) keepForNamesLocked(s *session) {
 	moved := map[string]bool{}
 	for _, m := range d.st.Inbox[s.id] {
 		to := m.Event.ToName
-		if to == "" || to == s.name {
+		if to == "" || to == s.name || m.Pushing || m.Attempted || !d.nameNextHereLocked(to) {
 			mine = append(mine, m)
 			continue
 		}
 		if d.st.NameInbox == nil {
 			d.st.NameInbox = map[string][]*inMsg{}
 		}
-		d.st.NameInbox[to] = append(d.st.NameInbox[to], m)
+		box := append(d.st.NameInbox[to], m)
+		if len(box) > maxInbox {
+			box = box[len(box)-maxInbox:]
+		}
+		d.st.NameInbox[to] = box
 		moved[to] = true
 	}
 	if len(moved) == 0 {
@@ -781,6 +796,31 @@ func (d *Daemon) keepForNamesLocked(s *session) {
 		}
 	}
 	d.saveLocked()
+}
+
+// nameNextHereLocked says the next session to take name is one of this device's, as far as it
+// knows: the registry has the name down for a session here, or this device's own last holder of it
+// is, and no other device's presence shows a session by that name. Where the name went to another
+// device (a clone that came back with new keys, say), what is kept for it here would wait for
+// nobody. Caller holds mu.
+func (d *Daemon) nameNextHereLocked(name string) bool {
+	if addr := d.st.Used[name]; addr != "" {
+		if dev, _ := bus.SplitAddr(addr); dev != d.device {
+			return false
+		}
+	}
+	for _, p := range d.peers {
+		for _, s := range p.pres.Sessions {
+			if s.Name == name {
+				return false
+			}
+		}
+	}
+	if d.st.NameHolders[name] != "" {
+		return true
+	}
+	dev, _ := bus.SplitAddr(d.st.Used[name])
+	return dev == d.device
 }
 
 // hookSessionsLocked finds the live sessions a hook speaks for, given the Claude Code session ID it

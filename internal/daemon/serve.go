@@ -1632,9 +1632,13 @@ func (d *Daemon) newSessionLocked(h *proto.Hello, agent, branch, key string) *se
 		}
 	}
 	d.saveLocked()
+	last := d.st.SessionNames[h.ID] // the name it had as it stopped
 	// After its own inbox is settled, which an expired stop empties: the name may bring more.
 	d.setNameLocked(s, d.nameForKeyLocked(s, key))
-	if back {
+	// Only a session whose name changed across the stop, as a resume to a conversation it had left
+	// does. A daemon's stop or kill stops every session (stoppedWithDaemonLocked), and one back
+	// under the name it had keeps what it had unread, as a running session does (Opus's review).
+	if back && last != "" && s.name != "" && s.name != last {
 		d.keepForNamesLocked(s)
 	}
 	d.sessions[h.ID] = s
