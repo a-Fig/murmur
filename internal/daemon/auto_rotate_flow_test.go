@@ -216,7 +216,7 @@ func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
 	}
 	eventually(t, "the check starts again", func() bool { return la.count(stale) == 3 })
 	eventually(t, "the fresh lookup finds nobody gone", func() bool { return la.count(same) == 2 })
-	settled("rotated by hand during a lookup", 7, 3, 2)
+	settled("rotated by hand during a lookup", 7, 3, 3) // the key made by hand has its roster
 
 	// Handed to b while a lookup is out: a writes nothing, though nobody is left in what it gets.
 	h = holdNext()
@@ -229,12 +229,15 @@ func TestAnAutomaticCheckFollowsTheOwnersChanges(t *testing.T) {
 	if r := a.do(proto.Request{Op: proto.OpTransferOwner, To: b.self()}); r.Error != "" {
 		t.Fatalf("transfer: %+v", r)
 	}
+	// The new owner may be handed the mesh before it is granted the key made by hand. Its check then
+	// can't read that key's roster, and can't rotate without the key, so it waits for the grant and
+	// checks again when it comes, not at the hour's retry (test-linux on 8034d2c9).
 	eventually(t, "the new owner checks", func() bool { return lb.count(same) == 1 })
 	release(h, []string{})
 	eventually(t, "the old owner's check starts again", func() bool { return la.count(stale) == 4 })
-	settled("transferred during a lookup", 8, 3, 2)
-	if n := bListed.Load(); n != 1 {
-		t.Fatalf("the new owner looked up collaborators %d times, want 1", n)
+	settled("transferred during a lookup", 8, 3, 3)
+	if n, want := bListed.Load(), 1+int32(lb.count("hasn't been granted every team key")); n != want {
+		t.Fatalf("the new owner looked up collaborators %d times, want %d", n, want)
 	}
 }
 
