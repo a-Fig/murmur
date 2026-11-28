@@ -258,6 +258,21 @@ printf 0000
 	}
 }
 
+// The remote chooses its default branch's name, and init prints it. git allows a C1 control such
+// as U+009B (CSI) in one, so a name a terminal would act on is refused, not printed (#1332).
+func TestPushRefusesADefaultBranchNamedWithEscapes(t *testing.T) {
+	remote, _, clone := remoteWithClone(t)
+	g(t, remote, "update-ref", "refs/heads/main\u009b31m", "main")
+	g(t, remote, "symbolic-ref", "HEAD", "refs/heads/main\u009b31m")
+	_, err := Push(context.Background(), clone)
+	if err == nil {
+		t.Fatal("init pushed to a default branch named with a CSI in it")
+	}
+	if msg := err.Error(); strings.ContainsRune(msg, 0x9b) || !strings.Contains(msg, "main\\u009b31m") {
+		t.Errorf("the error: %q, want the name with its CSI written out, not raw", msg)
+	}
+}
+
 // A CLAUDE.md that is a link to AGENTS.md stays a link, and the section goes into AGENTS.md once.
 func TestPushFollowsALinkInTheCommit(t *testing.T) {
 	remote, seed, clone := remoteWithClone(t)

@@ -17,6 +17,7 @@ func TestClean(t *testing.T) {
 		{"DCS", "a\x1bPq#0;2;0;0;0\x1b\\b", "ab"},
 		{"two-character escapes", "a\x1bcb\x1b(Bc\x1b7d", "abcd"},
 		{"an OSC cut short ends at the next escape", "a\x1b]8;;x\x1b[2Kb", "ab"},
+		{"a string never ended stops at the line break", "remote: \x1b]0;title\nerror: failed to push some refs", "remote: \nerror: failed to push some refs"},
 		{"an escape at the end", "a\x1b", "a"},
 		{"a CSI at the end", "a\x1b[12", "a"},
 		{"carriage return can't overwrite a line", "remote: real\rremote: fake", "remote: real\nremote: fake"},

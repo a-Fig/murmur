@@ -91,12 +91,16 @@ func skipCSI(rs []rune, j int) int {
 }
 
 // skipString is the index of the end of a control string whose text starts at rs[j]: BEL, ST as
-// one C1 character, or ESC \. With no end, the rest of the text is the string's.
+// one C1 character, or ESC \. A line break also ends one, and stays: a string never ended would
+// otherwise take every line after it, git's own among them. With no end, the rest of the text is
+// the string's.
 func skipString(rs []rune, j int) int {
 	for ; j < len(rs); j++ {
 		switch rs[j] {
 		case 0x07, 0x9c:
 			return j
+		case 0x0a, 0x0d: // a line break
+			return j - 1
 		case 0x1b:
 			if j+1 < len(rs) && rs[j+1] == '\\' {
 				return j + 1
